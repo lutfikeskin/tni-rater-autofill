@@ -40,6 +40,8 @@ const state = {
   autoTimer: null,
   autoPending: false,
   layoutsSent: new Set(),
+  // Carrier buttons already clicked in this quote (Verify DOT, Bill plan options, …).
+  doneActions: new Set(),
 };
 
 function h(tag, props = {}, ...children) {
@@ -82,6 +84,7 @@ async function loadFile(file) {
   state.intake = { ...result, fileName: file.name, done: [] };
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
   state.filled = new Map();
+  state.doneActions = new Set();
   await store.set('session', usage.startSession(summary.intakeId));
   usage.log({ type: 'intake_loaded', ...summary });
   uploadNow();
@@ -257,6 +260,7 @@ async function refreshTab() {
     state.labels = new Map();
     state.autoPages = new Set();
     state.agentKeys = new Map();
+    state.doneActions = new Set();
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null } : null;
   renderSite();
@@ -289,7 +293,7 @@ function onRecorderMessage(msg, sender) {
   if (msg.event === 'page_view') {
     usage.log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
     // Setting "Fill each new page as soon as it opens": wait for the page to settle, then fill.
-    if ($('auto-pages').checked && msg.fields > 0 && !state.autoPages.has(samePage(msg.page))) {
+    if ($('auto-pages').checked && msg.fields > 0 && onQuotePage()) {
       setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 800);
     }
     return;
@@ -314,8 +318,13 @@ function onRecorderMessage(msg, sender) {
 // (revealed by an answer, or in a panel that opens) are filled with the intake/standard answers.
 // Fields that already have a value, or that the agent changed, are left alone.
 
+// Automatic fills only run on the carrier's quote pages (never e.g. its quote-search page).
+const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUrl || state.tab.carrier.autoFillUrl.test(state.tab.url ?? ''));
+
+const fillOptions = (carrier, extra = {}) => ({ optional: carrier.optional ?? [], doneActions: [...state.doneActions], ...extra });
+
 function scheduleAutoFill(page) {
-  if (!$('auto-followups').checked || !state.autoPages.has(page) || !state.tab?.carrier) return;
+  if (!$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage()) return;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
   state.autoTimer = setTimeout(() => autoFill(page), 1200);
@@ -331,10 +340,10 @@ async function autoFill(page) {
   try {
     const plan = buildPlan(state.intake.record, carrier, state.active);
     const skip = [...(state.agentKeys.get(page) ?? [])];
-    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, { overwrite: false, skip, keepMarks: true }]);
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite: false, skip, keepMarks: true })]);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
-    const n = frames.reduce((k, f) => k + f.filled.length, 0);
+    const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n) {
       usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)) }));
       const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
@@ -381,6 +390,7 @@ async function recordLayout(page) {
 }
 
 function rememberFill(frames) {
+  for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
   for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
   for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
 }
@@ -431,7 +441,7 @@ async function fillPage({ auto = false } = {}) {
   await ensureRecorder();
   await tellRecorder('pause');
   try {
-    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, { overwrite }]);
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite })]);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
     state.autoPages.add(page);
@@ -474,6 +484,7 @@ function renderReport(frames) {
     group('r-failed', "Couldn't fill", failed, (x) => [h('b', {}, x.label), ` — ${x.reason}`, x.options?.length ? h('div', { class: 'muted' }, `Options: ${x.options.join(' · ')}`) : null], true),
     group('r-needs', 'Needs you', needs, (x) => [h('b', {}, x.label), ` — ${x.why}`], true),
     group('r-filled', 'Filled', filled, (x) => [h('b', {}, x.label), ` ← ${x.shown}`]),
+    group('r-kept', 'Clicked', all('actions'), (x) => h('b', {}, x.text || x.id)),
     group('r-kept', 'Already had a value (left alone)', kept, (x) => h('b', {}, x.label)),
   );
 }

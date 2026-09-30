@@ -137,6 +137,7 @@ export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms,
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,
     failed: all('failed').length, leftRequired: all('leftRequired').length,
+    clicked: all('actions').map((a) => a.id),
   }];
   const item = (result) => (x) => ({
     type: 'fill_field', carrier, page, result, q: x.q ?? null, label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,

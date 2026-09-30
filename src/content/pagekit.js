@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 7) return;
+  if (globalThis.__raterKit?.version === 8) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -213,7 +213,7 @@
     for (const g of groups.values()) {
       g.options = g.radios.map((r) => {
         const item = extCmp(r);
-        return { el: r, cmp: item, text: oneLine(item?.boxLabel ?? '') || oneLine([...(r.labels ?? [])].map(textOutsideControls).join(' ')) || r.value, value: r.value };
+        return { el: r, cmp: item, text: oneLine(String(item?.boxLabel ?? '').replace(/<[^>]+>/g, ' ')) || oneLine([...(r.labels ?? [])].map(textOutsideControls).join(' ')) || r.value, value: r.value };
       });
       g.label = dctCaption(g.cmp) ?? radioGroupLabel(g.radios, g.options.map((o) => o.text));
       g.q = dctQuestionId(g.cmp?.id ?? g.el.id) ?? (String(g.el.name).match(/^[a-z]+_([0-9A-F]+)/)?.[1] ?? null);
@@ -509,17 +509,48 @@
   }
 
   // ---------------------------------------------------------------------------------------------
+  // Clicking buttons (carrier "actions": Verify DOT, Lookup VIN, Add a Commodity, …)
+
+  // Never clicked, whatever a rule says: moving on or committing is always the agent's call.
+  const NEVER_CLICK = /\b(continue|next|finish|buy|bind|purchase|submit|save|delete|remove|cancel|logout|log out|sign out)\b/i;
+
+  const currentPage = () => (new URLSearchParams(location.search).get('pageName') || location.pathname).replace(/-Reload$/, '');
+
+  function findButton(step) {
+    const re = step.text ? new RegExp(step.text, 'i') : null;
+    let best = null;
+    for (const el of deepQueryAll(document, 'a, button, [role=button], [role=link], input[type=button], input[type=submit], .x-btn, [onclick]')) {
+      if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+      const text = oneLine(el.value || el.textContent);
+      if (NEVER_CLICK.test(text)) continue;
+      const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
+        ...[...el.attributes].filter((a) => a.name.startsWith('data-')).map((a) => a.value)].join(' ');
+      const hit = (re && text.length <= 80 && re.test(text)) || (step.token && attrs.includes(step.token));
+      // Prefer the innermost match (the link itself, not the table cell around it).
+      if (hit && (!best || best.contains(el))) best = el;
+    }
+    return best;
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Public API
 
   // Fills in rounds: each round re-reads the page, handles every step that now has a field, and
   // on pages that talk to their server after each answer (ExtJS/Duck Creek) stops after one
   // answer and waits. New questions that appear because of an answer get picked up next round.
   // `skip`: field keys to leave alone (ones the agent changed; used by automatic follow-up fills).
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false } = {}) {
+  // `optional`: question ids never flagged as "needs you" (middle initial, suffix, DBA, …).
+  // `doneActions`: button actions already clicked earlier in this quote.
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [] } = {}) {
     const skipKeys = new Set(skip);
+    const quiet = new Set(optional);
+    const actions = plan.filter((s) => s.kind === 'action');
+    plan = plan.filter((s) => s.kind !== 'action');
+    const clicked = new Set(doneActions);
+    const startPage = currentPage();
     if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
-    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], rounds: 0 };
+    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], rounds: 0 };
     const serverBacked = !!ext();
     await settle({ quietMs: 200, maxMs: 5000 });
 
@@ -532,6 +563,7 @@
       for (const { step, control: c } of pairs) {
         const item = { label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind };
         if (step.note || step.value == null) {
+          if (quiet.has(c.q)) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note });
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
           continue;
@@ -555,8 +587,29 @@
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
         }
       }
+      // Nothing left to type or pick: click the next button whose turn it is.
+      if (!changed && window === window.top) changed = clickNextAction(controls);
       if (!changed) break;
       await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
+      if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+    }
+
+    function clickNextAction(controls) {
+      const pairs = assign(controls, plan);
+      const has = (path) => pairs.some(({ step, control }) => step.path === path && hasValue(control));
+      for (const a of actions) {
+        if (clicked.has(a.action) || (a.page && a.page !== currentPage())) continue;
+        if (a.after.length && !a.after.some(has)) continue;
+        if (a.afterActions.some((id) => !clicked.has(id))) continue;
+        if (a.unless.some(has)) { clicked.add(a.action); continue; }
+        const button = findButton(a);
+        if (!button) continue;
+        clicked.add(a.action);
+        report.actions.push({ id: a.action, text: oneLine(button.value || button.textContent).slice(0, 60) });
+        button.click();
+        return true;
+      }
+      return false;
     }
 
     // The page may have redrawn while filling, so mark the final fields.
@@ -570,7 +623,7 @@
     report.labels = controls.map((c) => [fieldKey(c), c.label]);
     const matched = new Set(pairs.map((p) => p.control));
     for (const c of controls) {
-      if (!matched.has(c) && c.required && !hasValue(c)) {
+      if (!matched.has(c) && c.required && !hasValue(c) && !quiet.has(c.q)) {
         report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind });
         mark(c, 'needs', 'required, and not on the intake form');
       }
@@ -631,5 +684,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 7, fill, capture, clear };
+  globalThis.__raterKit = { version: 8, fill, capture, clear };
 })();

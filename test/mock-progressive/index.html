@@ -55,11 +55,14 @@
         radioQ('1ED', 'Does the customer have a USDOT Number?', ['Yes - the customer has a USDOT number', 'No - and the customer will not have a USDOT number', 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days']),
       ];
       if (server['1ED']?.startsWith('Yes')) list.push(textQ('1F3', "USDOT Number associated with the customer's business:", 15));
+      // Progressive only asks whether the USDOT number is the customer's after "Verify DOT".
+      if (server['1F3'] && !server.verified) list.push({ xtype: 'button', text: 'Verify DOT', handler: () => { server.verified = true; changes.push('verify'); form.mask('Loading...'); setTimeout(render, 500); } });
+      if (server.verified) list.push(radioQ('20F', "Does this USDOT Number belong to the customer's business?", ['Yes', 'No']));
       // After the USDOT lookup: registered address offered, but "Enter a different address" is
       // pre-selected with manual boxes showing (as seen on a live quote).
       // No USDOT number: nothing to pick, the address boxes are the only option.
       if (server['1ED']?.startsWith('No')) list.push(textQ('2A0', 'Street Address', 60), textQ('2A2', 'City', 40));
-      if (server['1F3']) {
+      if (server.verified) {
         server['277'] ??= 'Enter a different address';
         list.push(radioQ('277', 'Primary Business Address', ['125 MAPLE LEAF DR APT 4 SPRINGFIELD IL 62704 (USDOT Address)', 'Enter a different address']));
         if (server['277'] === 'Enter a different address') list.push(textQ('2A0', 'Street Address', 60), textQ('2A2', 'City', 40));
@@ -82,8 +85,10 @@
         comboQ('1D97', 'Bodily Injury and Property Damage Liability', ['Not selected', '$100k CSL', '$300k CSL', '$750k CSL', '$1 million CSL', '$1.5 million CSL']),
         comboQ('216F', 'Motor Trucking Cargo', ['Not selected', '$50k with a $1,000 Deductible', '$100k with a $1,000 Deductible', '$100k with a $2,500 Deductible']),
       );
+      // Must never be clicked by the filler.
+      list.push({ xtype: 'button', text: 'Continue', handler: () => { server.continued = true; changes.push('continue'); } });
       // Duck Creek shows the caption as separate text above each field.
-      return list.flatMap((cfg) => [{ xtype: 'component', cls: 'caption', html: cfg.dctCaption }, cfg]);
+      return list.flatMap((cfg) => (cfg.dctCaption ? [{ xtype: 'component', cls: 'caption', html: cfg.dctCaption }, cfg] : [cfg]));
     }
 
     let form;

@@ -33,7 +33,7 @@ test('garaging address without commas is split and flagged', () => {
 test('drivers: license prefix removed, two-word first name flagged, short dates fixed', () => {
   assert.equal(record.drivers.length, 2);
   const [d1, d2] = record.drivers;
-  assert.equal(d1.licenseNumber, 'S12345678901');
+  assert.equal(d1.licenseNumber, 'ILS12345678901', 'leading state code stays in the number');
   assert.equal(d1.licenseState, 'IL');
   assert.equal(d1.first, 'Jordan Avery', 'kept as written, not guessed');
   assert.match(msgs, /drivers\[0\]\.first: .*more than one word/);
@@ -83,9 +83,10 @@ test('helpers', () => {
   assert.match(vinProblem('1FTBR3X87MKA1234'), /16 characters/);
   assert.match(vinProblem('1FTBR3X87MKAO2345'), /I, O or Q/);
   assert.deepEqual(parseLimitDeductible('$100K/$2.5K Ded'), { limit: 100000, deductible: 2500 });
-  assert.deepEqual(parseLicense('MD - 10123456789'), { state: 'MD', number: '10123456789' });
+  assert.deepEqual(parseLicense('MD - 10123456789'), { state: 'MD', number: 'MD10123456789' });
   assert.deepEqual(parseLicense('D123-456-789'), { state: null, number: 'D123456789' }, 'no dashes, ever');
-  assert.deepEqual(parseLicense('md 1234 5678 901'), { state: 'MD', number: '12345678901' });
+  assert.deepEqual(parseLicense('md 1234 5678 901'), { state: 'MD', number: 'MD12345678901' });
+  assert.equal(parseAddress('3528 Carriage Hill Ci Apt 101 Randallstown MD 21133').street, '3528 Carriage Hill Cir');
   assert.equal(parseAddress('100 Main St, Rock Hill, SC 29730').city, 'Rock Hill');
   assert.equal(parseAddress('100 Main St, Rock Hill, SC 29730').confident, true);
   assert.equal(parseAddress('9 Oak Ave N Fort Worth TX 76102').city, 'Fort Worth');
@@ -111,7 +112,7 @@ test('carrier detection', () => {
 
 test('redaction list covers names and IDs but not makes or states', () => {
   const terms = redactionTerms(record);
-  for (const t of ['Sample Expedite LLC', 'Jordan', 'Sample', 'Casey', '1234567', 'S12345678901', '1FTBR3X87MKA12345', 'Springfield']) {
+  for (const t of ['Sample Expedite LLC', 'Jordan', 'Sample', 'Casey', '1234567', 'ILS12345678901', '1FTBR3X87MKA12345', 'Springfield']) {
     assert.ok(terms.includes(t), t);
   }
   for (const t of ['FORD', 'IL', 'LLC', 'Van']) assert.ok(!terms.includes(t), t);
@@ -135,18 +136,16 @@ test('progressive: intake answers are translated into Progressive wording', () =
   assert.equal(byQ('2B9D').value, 501, 'Unlimited radius picks "More than 500 miles"');
   assert.equal(byQ('2C05').value, 'Business Only');
   assert.equal(byQ('2C1A').value, true, 'has an MC number, so for-hire');
-  assert.equal(byQ('2CA7').value, null, 'ownership blank on the intake: left for the agent');
+  assert.equal(byQ('2CA7').value, 'No', 'loan/lease: always No');
   assert.equal(byQ('2CCE').value, '$0 to $2,000');
   assert.equal(byQ('216F').value, '$100000/$1000');
   assert.equal(byQ('28AC').value, 'IL');
   assert.equal(byQ('81').value, true);
 });
 
-test('progressive: loan/lease follows vehicle ownership once the agent fills it in', () => {
+test('progressive: cargo not wanted means "Not selected"', () => {
   const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
   const r = structuredClone(record);
-  r.operations.vehicleOwnership = 'Financed';
-  assert.equal(buildPlan(r, carrier).find((s) => s.q === '2CA7').value, 'Yes - Loan');
   r.coverage.cargo = false;
   assert.equal(buildPlan(r, carrier).find((s) => s.q === '216F').value, 'Not selected');
 });
@@ -185,7 +184,7 @@ test('progressive: fixes from the first live usage log', () => {
   // Without a registered address the owner's home address boxes get the intake's address.
   assert.equal(byQ('2AA').value, '125 Maple Leaf Dr');
   assert.equal(byQ('2AE').value, '62704');
-  assert.equal(byQ('28B9').value, 'S12345678901');
+  assert.equal(byQ('28B9').value, 'ILS12345678901');
 });
 
 test('progressive: standard answers for follow-up questions', () => {
@@ -215,4 +214,32 @@ test('progressive: standard answers for follow-up questions', () => {
   const other = structuredClone(record);
   other.operations.whatHaul = 'Auto parts';
   assert.equal(byQ('216A', other).value, null);
+});
+
+test('progressive: second live quote — business type, standard vehicle answers, buttons', () => {
+  const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
+  const plan = buildPlan(record, carrier, {});
+  const byQ = (q, r = record) => buildPlan(r, carrier).find((s) => s.q === q);
+  assert.equal(byQ('239').value, 'Other For Hire Trucking', 'Expediter');
+  const other = structuredClone(record);
+  other.operations.businessClass = 'Dry Van';
+  assert.equal(byQ('239', other).value, 'Dry Van', 'anything else: as on the intake');
+  assert.equal(byQ('2CA7').value, 'No');
+  assert.equal(byQ('2CCE').value, '$0 to $2,000');
+  assert.equal(byQ('2CE3').value, true);
+  assert.equal(byQ('2CE8').value, 45000);
+  assert.equal(byQ('27E').value, '125 Maple Leaf Dr');
+  assert.equal(byQ('3E98').value, 'Automatic payments');
+  assert.equal(byQ('32CC').value, true);
+  const actions = plan.filter((s) => s.kind === 'action');
+  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'vehicleTile', 'lookupVin', 'openCargo', 'addCommodity', 'billPlan', 'print', 'printSend']);
+  assert.equal(actions.find((a) => a.action === 'vehicleTile').text, '^Cargo Van$');
+  assert.deepEqual(actions.find((a) => a.action === 'lookupVin').after, ['vehicles[0].vin']);
+  const noCargo = structuredClone(record);
+  noCargo.coverage.cargo = false;
+  const noCargoActions = buildPlan(noCargo, carrier).filter((s) => s.kind === 'action').map((a) => a.action);
+  assert.ok(!noCargoActions.includes('openCargo'));
+  assert.deepEqual(buildPlan(noCargo, carrier).find((s) => s.action === 'billPlan').after, ['coverage.autoLiabLimit']);
+  assert.ok(carrier.autoFillUrl.test('https://clpolicy.foragentsonly.com/Express/Default.aspx?pageName=AddVehicle'));
+  assert.ok(!carrier.autoFillUrl.test('https://www.foragentsonly.com/newbusiness/quotesearch/'));
 });

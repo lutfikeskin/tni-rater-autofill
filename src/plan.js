@@ -12,6 +12,38 @@ import { get, listOf } from './util.js';
  */
 export function buildPlan(record, carrier, active = {}) {
   const rules = [...(carrier?.rules ?? []), ...GENERIC_RULES];
+  return [...fieldSteps(rules, record, carrier, active), ...actionSteps(carrier, record, active)];
+}
+
+const withIndex = (path, active) => {
+  const list = listOf(path);
+  return list ? path.replace('[]', `[${active[list] ?? 0}]`) : path;
+};
+
+// Buttons to click (carrier.actions), resolved for this client. The page script clicks each at
+// most once per quote, on its page, once its `after` fields have values.
+function actionSteps(carrier, record, active) {
+  const resolve = (v) => (typeof v === 'function' ? v(record, active) : v);
+  return (carrier?.actions ?? [])
+    .filter((a) => !a.when || a.when(record))
+    .map((a) => ({
+      id: `action:${a.id}`,
+      kind: 'action',
+      action: a.id,
+      path: `action.${a.id}`,
+      name: `Click ${a.id}`,
+      page: a.page ?? null,
+      text: resolve(a.text) ?? null,
+      token: a.token ?? null,
+      after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
+      unless: (resolve(a.unless) ?? []).map((p) => withIndex(p, active)),
+      afterActions: a.afterActions ?? [],
+      value: null,
+    }))
+    .filter((s) => s.text || s.token);
+}
+
+function fieldSteps(rules, record, carrier, active) {
   return rules.map((rule, id) => {
     const list = rule.path ? listOf(rule.path) : null;
     const path = rule.path

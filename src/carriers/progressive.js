@@ -39,10 +39,8 @@ const insuredWithProgressive = (r) => {
 // in the generic address rules).
 const registered = (prefer) => ({ kind: 'pick-not', value: () => ({ not: '^enter a different', prefer }) });
 
-const equipment = (r) => {
-  const v = r.operations.equipVehicle;
-  return v == null ? '$0 to $2,000' : v > 2000 ? 'More than $2,000' : '$0 to $2,000';
-};
+// Always "$0 to $2,000" at TNI; the agent changes it for the rare exception.
+const equipment = () => '$0 to $2,000';
 
 const cargo = (r) => {
   const c = r.coverage;
@@ -58,12 +56,40 @@ const commodity = (r) => COMMODITIES.find((c) => c.match.test(r.operations.whatH
 
 const filings = (r) => (r.operations.filingsRequired ? true : null);
 
+// Progressive's business type for what the intake calls the business.
+const businessType = (r) => (/expedit/i.test(r.operations.businessClass ?? '') ? 'Other For Hire Trucking' : r.operations.businessClass);
+
+// Vehicle picker tile for the intake's vehicle type.
+const VEHICLE_TILES = { Van: 'Cargo Van' };
+const vehicleTile = (r, a) => {
+  const type = r.vehicles[a.vehicles ?? 0]?.type;
+  return type ? `^${(VEHICLE_TILES[type] ?? type).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$` : null;
+};
+
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
   hosts: [/(^|\.)foragentsonly\.com$/, /(^|\.)progressive\.com$/],
   // ExtJS components are only reachable from the page's own JavaScript world.
   world: 'MAIN',
+  // Only the quote flow is filled automatically (not the home or quote-search pages).
+  autoFillUrl: /\/Express\/Default\.aspx/i,
+  // Never flagged as "needs you" when empty: the agent fills these only when they apply.
+  optional: ['296', '298', '233', '1CC', '2899', '2A9'],
+  // Buttons the filler clicks, in order, each once per quote, only on its page and only once
+  // `after` (any of these fields) has a value. `unless`: skip when any of these has a value.
+  // `text` is a regex on the button's text, `token` a string in its id/href/onclick.
+  // Never clicked, whatever a rule says: Continue, Next, Finish, Buy, Bind, Submit, Save.
+  actions: [
+    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'] },
+    { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile },
+    { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'] },
+    { id: 'openCargo', page: 'CoveragesRates', text: '^(motor truck(ing)? )?cargo$', token: 'MTC_open', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true },
+    { id: 'addCommodity', page: 'CoveragesRates', text: '^add (a|another) commodity$', token: 'AddAnotherCommodity', after: ['progressive.q216B'] },
+    { id: 'billPlan', page: 'CoveragesRates', text: '^bill plan options?$', after: (r) => (r.coverage.cargo ? ['progressive.q2150', 'progressive.q216F'] : ['coverage.autoLiabLimit']) },
+    { id: 'print', page: 'CoveragesRates', text: '^print$', afterActions: ['billPlan'] },
+    { id: 'printSend', page: 'PrintEmailFax', text: '^print ?/ ?send$', after: ['progressive.q32CC'] },
+  ],
   rules: [
     // --- Named Insured and Business Overview (pageName=BusinessOwnerInfo) ---------------------
     { q: '198', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive },
@@ -82,6 +108,11 @@ export const progressive = {
     { q: '2AA', path: 'garaging.street', name: 'Owner home street' },
     { q: '2AE', path: 'garaging.zip', name: 'Owner home ZIP' },
     { q: '2B0', path: 'garaging.city', name: 'Owner home city' },
+    // Business address boxes, when there's no registered address to pick.
+    { q: '27E', path: 'garaging.street', name: 'Business street' },
+    { q: '284', path: 'garaging.zip', name: 'Business ZIP' },
+    { q: '286', path: 'garaging.city', name: 'Business city' },
+    { q: '239', name: 'Business type', kind: 'choice', label: 'business type', value: businessType },
     { q: '22D', name: 'Business structure', kind: 'choice', label: 'business structured', value: (r) => (/\b(llc|l\.l\.c|inc|corp|corporation|company|co)\.?$/i.test(r.applicant.name ?? '') ? 'Corporation or LLC / Non-Profit' : null) },
     { q: '267', path: 'operations.businessClass', name: 'Type of trucker', kind: 'choice', label: 'type of trucker' },
     { q: '295', name: 'Owner first name', label: '^first name$', value: (r) => owner(r).first },
@@ -114,9 +145,11 @@ export const progressive = {
     { q: '2B9D', name: 'Farthest one-way distance', kind: 'int', label: 'farthest one way distance', value: (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null) },
     { q: '2C05', name: 'Business / personal use', kind: 'choice', label: 'used for business personal', value: (r) => (r.operations.personalUse === false ? 'Business Only' : r.operations.personalUse ? 'Business & Personal' : null) },
     { q: '2C1A', name: 'Hauls for hire', kind: 'bool', label: 'for hire basis', value: (r) => (r.applicant.mc ? true : null) },
-    { q: '2CA7', name: 'Loan / lease', kind: 'choice', label: 'loan lease', value: (r) => ({ Financed: 'Yes - Loan', Leased: 'Yes - Lease', Owned: 'No' })[r.operations.vehicleOwnership] ?? null },
+    { q: '2CA7', name: 'Loan / lease (standard: No)', kind: 'choice', label: 'loan lease', value: () => 'No' },
     { q: '2CCC', name: 'Comprehensive / collision (standard: Yes)', kind: 'bool', label: 'comprehensive or collision', value: () => true },
-    { q: '2CCE', name: 'Attached equipment value', kind: 'choice', value: equipment },
+    { q: '2CCE', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment },
+    { q: '2CE3', name: 'Vehicle has no equipment (standard)', kind: 'bool', label: 'vehicle has no equipment', value: () => true },
+    { q: '2CE8', path: 'vehicles[].value', name: 'Vehicle value if sold today', label: 'sold today' },
 
     // --- Add driver (AddDriver) ------------------------------------------------------------------
     { q: '2898', path: 'drivers[].first' },
@@ -130,13 +163,20 @@ export const progressive = {
 
     // --- Coverages and rates (CoveragesRates) ----------------------------------------------------
     { q: '1D97', path: 'coverage.autoLiabLimit', label: 'bodily injury and property damage liability' },
-    { q: '207F', name: 'Attached equipment value', kind: 'choice', value: equipment },
+    { q: '207F', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment },
     { q: '2158', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', label: 'mobile modular homes', value: () => false },
     { q: '215A', name: 'Cargo for business documents (standard: No)', kind: 'bool', label: 'business documents or non negotiable', value: () => false },
     { q: '216A', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null },
     { q: '216B', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
     { q: '216F', name: 'Motor truck cargo', kind: 'choice', value: cargo },
     { q: '2150', name: 'Motor truck cargo', kind: 'choice', value: cargo },
+
+    // --- Bill plan options (ChangePaymentPlan) ---------------------------------------------------
+    { q: '3E98', name: 'Payment method (standard: automatic payments)', kind: 'choice', label: 'payment method', value: () => 'Automatic payments' },
+
+    // --- Print (PrintEmailFax) ---------------------------------------------------------------
+    { q: '32B0', name: 'Documents (standard: insurance quote)', kind: 'choice', value: () => 'Insurance Quote (with all bill plans)' },
+    { q: '32CC', name: 'Print (standard)', kind: 'bool', value: () => true },
 
     // --- Finish & buy (AdditionalDetails) --------------------------------------------------------
     { q: '3E3', path: 'applicant.fein', label: 'employer identification' },

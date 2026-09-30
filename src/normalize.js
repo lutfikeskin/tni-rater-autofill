@@ -123,6 +123,8 @@ export function parseAddress(raw) {
   }
   const u = streetPart.match(/^(.*?)[,\s]+((?:apt|apartment|unit|ste|suite|lot|bldg|building|rm|room|trlr)\.?\s*#?\s*[\w-]+|#\s*[\w-]+)$/i);
   if (u) { out.street = u[1]; out.unit = u[2]; } else out.street = streetPart;
+  // "Ci" isn't a street suffix; clients mean "Cir" (and USDOT records say CIR).
+  out.street = out.street.replace(/\bCi\.?$/i, 'Cir');
   return out;
 }
 
@@ -137,7 +139,8 @@ export function parseLimitDeductible(v) {
 // License numbers are entered plain: letters (rare) and digits only, never dashes or spaces.
 const plain = (s) => String(s).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 
-// "MD - 10123456789" -> { state: 'MD', number: '10123456789' }
+// "MD - 10123456789" -> { state: 'MD', number: 'MD10123456789' }: a leading state code tells us
+// the license state, but it stays in the number (agents enter it that way).
 export function parseLicense(v) {
   const s = clean(v);
   if (s == null) return { state: null, number: null };
@@ -145,7 +148,7 @@ export function parseLicense(v) {
   if (m) {
     const st = (m[1] ?? m[3]).toUpperCase();
     const rest = m[2] ?? m[4];
-    if (STATES[st] && plain(rest).length >= 5) return { state: st, number: plain(rest) };
+    if (STATES[st] && plain(rest).length >= 5) return { state: st, number: plain(s) };
   }
   return { state: null, number: plain(s) };
 }
@@ -323,12 +326,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       if (lic.state && !d.licenseState) d.licenseState = lic.state;
       if (lic.state && d.licenseState && lic.state !== d.licenseState) {
         check('license.state-mismatch', p('licenseState'), `${who}: license box says ${lic.state} but DL state dropdown says ${d.licenseState}.`);
-      } else if (lic.state) {
-        info('license.state-prefix-removed', p('licenseNumber'), `${who}: removed the state prefix from the license number ("${rawLic}" → ${lic.number}).`);
       }
     } else check('license.missing', p('licenseNumber'), `${who}: no driver's license number.`);
     if (!d.licenseState) check('license-state.missing', p('licenseState'), `${who}: no license state.`);
-    if (rawLic && !parseLicense(rawLic).state && plain(rawLic) !== rawLic.toUpperCase()) {
+    if (rawLic && plain(rawLic) !== rawLic.toUpperCase()) {
       info('license.cleaned', p('licenseNumber'), `${who}: license number written as "${rawLic}", entered as ${d.licenseNumber} (letters and digits only).`);
     }
 
