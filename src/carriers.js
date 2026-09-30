@@ -30,8 +30,17 @@ export const CARRIERS = [
   },
 ];
 
+// Practice copies of carrier pages served from this repo (test/replay, test/mock-progressive).
+// They get the real carrier's rules, but aren't real quotes, so usage isn't recorded for them.
+const PRACTICE = [{ path: /^\/test\/(replay|mock-progressive)\//, carrier: 'progressive' }];
+
 export function carrierForUrl(url) {
-  let host;
-  try { host = new URL(url).hostname; } catch { return null; }
-  return CARRIERS.find((c) => c.hosts.some((re) => re.test(host))) ?? null;
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  if (/^(localhost|127\.0\.0\.1)$/.test(u.hostname)) {
+    const practice = PRACTICE.find((p) => p.path.test(u.pathname));
+    const real = practice && CARRIERS.find((c) => c.id === practice.carrier);
+    if (real) return { ...real, name: `${real.name} (practice)`, practice: true, autoFillUrl: null };
+  }
+  return CARRIERS.find((c) => c.hosts.some((re) => re.test(u.hostname))) ?? null;
 }

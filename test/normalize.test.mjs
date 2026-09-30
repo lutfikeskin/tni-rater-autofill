@@ -257,3 +257,12 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.ok(carrier.autoFillUrl.test('https://clpolicy.foragentsonly.com/Express/Default.aspx?pageName=AddVehicle'));
   assert.ok(!carrier.autoFillUrl.test('https://www.foragentsonly.com/newbusiness/quotesearch/'));
 });
+
+test('practice pages get the Progressive rules, marked as practice', () => {
+  const c = carrierForUrl('http://localhost:8792/test/replay/?bakeoff=1&pageName=AddVehicle');
+  assert.equal(c.id, 'progressive');
+  assert.equal(c.practice, true);
+  assert.equal(c.world, 'MAIN');
+  assert.equal(carrierForUrl('http://localhost:8792/test/mock-rater/index.html').id, 'test');
+  assert.equal(carrierForUrl('https://clpolicy.foragentsonly.com/Express/Default.aspx').practice, undefined);
+});

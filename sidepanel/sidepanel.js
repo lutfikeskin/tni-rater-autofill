@@ -278,7 +278,7 @@ const pageOf = (url) => { try { const u = new URL(url); return samePage(u.search
 
 // Watch the rater tab while an intake is loaded. Only carrier pages; never other sites.
 async function ensureRecorder() {
-  if (!inExtension || !state.intake || !state.tab?.carrier) return;
+  if (!inExtension || !state.intake || !state.tab?.carrier || state.tab.carrier.practice) return;
   try {
     await chrome.scripting.executeScript({ target: { tabId: state.tab.id, allFrames: true }, files: ['src/content/recorder.js'] });
   } catch { /* page not ready or not allowed; tried again on the next tab update */ }
@@ -356,7 +356,7 @@ async function autoFill(page) {
     rememberFill(frames);
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n) {
-      usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)) }));
+      if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)) }));
       const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
       $('report').append(note);
       recordLayout(page);
@@ -375,6 +375,7 @@ async function autoFill(page) {
 // quote. scripts/build-layouts.mjs turns them into test pages.
 async function recordLayout(page) {
   const { id: tabId, carrier } = state.tab;
+  if (carrier.practice) return;
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
       [buildPlan(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
@@ -458,7 +459,7 @@ async function fillPage({ auto = false } = {}) {
     rememberFill(frames);
     state.autoPages.add(page);
     recordLayout(page);
-    usage.log(...fillEvents(frames, {
+    if (!carrier.practice) usage.log(...fillEvents(frames, {
       carrier: carrier.id, page, overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
     }));
     renderReport(frames);
