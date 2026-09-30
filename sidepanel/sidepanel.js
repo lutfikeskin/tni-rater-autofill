@@ -411,7 +411,9 @@ function rememberFill(frames) {
 function renderSite() {
   const site = $('site');
   const carrier = state.tab?.carrier;
-  site.textContent = !inExtension ? 'Preview only' : carrier ? carrier.name : 'Not a rater page';
+  // No URL means the browser isn't letting the extension see this site (site access / permissions).
+  const noAccess = inExtension && state.tab && !state.tab.url;
+  site.textContent = !inExtension ? 'Preview only' : carrier ? carrier.name : noAccess ? 'No access to this page' : 'Not a rater page';
   site.classList.toggle('on', !!carrier);
   const canFill = inExtension && !!carrier && !!state.intake;
   $('fill').disabled = !canFill;
@@ -419,7 +421,9 @@ function renderSite() {
   $('fill-hint').textContent = !inExtension
     ? 'Filling works when this runs as the Chrome extension.'
     : carrier ? 'Fills what it can on the page you are looking at. Nothing is submitted — review, then click Next yourself.'
-      : 'Open a Progressive or GEICO rater page to fill it.';
+      : noAccess
+        ? "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page."
+        : 'Open a Progressive or GEICO rater page to fill it.';
 }
 
 // ---------------------------------------------------------------------------------------------
