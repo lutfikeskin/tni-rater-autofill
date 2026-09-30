@@ -5,6 +5,8 @@ import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { get, set } from '../src/util.js';
+import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
+import * as usage from './usage-log.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -25,6 +27,9 @@ const state = {
   intake: null, // { record, warnings, stats, fileName, done: number[] }
   active: { drivers: 0, vehicles: 0, trailers: 0 },
   tab: null, // { id, url, carrier }
+  // What autofill put in each field on the current tab (field key -> { path, shown }), so the
+  // usage log can tell the agent's corrections apart from agreement.
+  filled: new Map(),
 };
 
 function h(tag, props = {}, ...children) {
@@ -50,8 +55,10 @@ async function loadFile(file) {
     return showLoadError('That is not a PDF.');
   }
   let raw;
+  let bytes;
   try {
-    raw = await readIntakeFields(pdfjs, new Uint8Array(await file.arrayBuffer()));
+    bytes = new Uint8Array(await file.arrayBuffer());
+    raw = await readIntakeFields(pdfjs, bytes.slice());
   } catch (e) {
     return showLoadError(`Couldn't read that PDF (${e.message}).`);
   }
@@ -60,10 +67,16 @@ async function loadFile(file) {
   }
   const result = normalizeIntake(raw);
   if (result.error) return showLoadError(result.error);
+  const summary = await intakeSummary(bytes, raw, result);
+  if (state.intake) usage.log({ type: 'intake_closed', reason: 'replaced' });
   state.intake = { ...result, fileName: file.name, done: [] };
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
+  state.filled = new Map();
+  await store.set('session', usage.startSession(summary.intakeId));
+  usage.log({ type: 'intake_loaded', ...summary });
   await save();
   render();
+  refreshTab();
 }
 
 function showLoadError(msg) {
@@ -121,6 +134,8 @@ function renderWarnings() {
 }
 
 async function toggleDone(i, isDone) {
+  const w = state.intake.warnings[i];
+  usage.log({ type: 'warning_checked', code: w.code, path: w.path, checked: isDone });
   const done = new Set(state.intake.done);
   if (isDone) done.add(i); else done.delete(i);
   state.intake.done = [...done];
@@ -174,7 +189,12 @@ function fieldRow(path, label, kind, flagged) {
     input.value = value ?? '';
   }
   input.addEventListener('change', async () => {
-    set(state.intake.record, path, parseEdit(kind, input.value));
+    const before = get(state.intake.record, path);
+    const after = parseEdit(kind, input.value);
+    set(state.intake.record, path, after);
+    // Log that the agent corrected the intake here (and whether it was flagged), not the value.
+    const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
+    usage.log({ type: 'intake_edit', path, kind, change: before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
     await save();
   });
   return h('div', { class: `field${flagged ? ' flagged' : ''}${value == null ? ' empty' : ''}`, dataset: { path } },
@@ -221,8 +241,41 @@ function renderPickers() {
 async function refreshTab() {
   if (!inExtension) { state.tab = null; return renderSite(); }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id !== state.tab?.id) state.filled = new Map();
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null } : null;
   renderSite();
+  ensureRecorder();
+}
+
+// ---------------------------------------------------------------------------------------------
+// Usage recording (see src/usage.js for what is and isn't kept)
+
+const pageOf = (url) => { try { const u = new URL(url); return u.searchParams.get('pageName') || u.pathname; } catch { return null; } };
+
+// Watch the rater tab while an intake is loaded. Only carrier pages; never other sites.
+async function ensureRecorder() {
+  if (!inExtension || !state.intake || !state.tab?.carrier) return;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: state.tab.id, allFrames: true }, files: ['src/content/recorder.js'] });
+  } catch { /* page not ready or not allowed; tried again on the next tab update */ }
+}
+
+function tellRecorder(cmd) {
+  if (!state.tab) return Promise.resolve();
+  return chrome.tabs.sendMessage(state.tab.id, { ra: 'recorder', cmd }).catch(() => {});
+}
+
+function onRecorderMessage(msg, sender) {
+  if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
+  const carrier = state.tab.carrier?.id ?? null;
+  if (msg.event === 'page_view') {
+    usage.log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
+    return;
+  }
+  if (msg.event === 'field_changes') {
+    const ctx = { record: state.intake.record, filled: state.filled, redact: redactor(redactionTerms(state.intake.record)) };
+    usage.log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
+  }
 }
 
 function renderSite() {
@@ -261,12 +314,23 @@ async function fillPage() {
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
   $('report').replaceChildren(h('p', { class: 'muted small' }, 'Filling one answer at a time where the page checks each answer with its server. Keep this tab open.'));
+  const started = Date.now();
+  // Our own fills aren't the agent's changes: pause the recorder while filling.
+  await ensureRecorder();
+  await tellRecorder('pause');
   try {
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, { overwrite }]);
-    renderReport(results.map((r) => r.result).filter(Boolean));
+    const frames = results.map((r) => r.result).filter(Boolean);
+    for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
+    usage.log(...fillEvents(frames, {
+      carrier: carrier.id, page: pageOf(state.tab.url), overwrite, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
+    }));
+    renderReport(frames);
   } catch (e) {
+    usage.log({ type: 'fill_error', carrier: carrier.id, page: pageOf(state.tab.url), error: String(e.message).slice(0, 200) });
     $('report').replaceChildren(h('p', { class: 'error' }, `Couldn't fill this page: ${e.message}`));
   } finally {
+    await tellRecorder('resume');
     $('fill').disabled = false;
     $('fill').textContent = 'Fill this page';
   }
@@ -333,6 +397,54 @@ async function capturePage() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Usage log panel and problem reports
+
+async function renderUsage() {
+  const n = await usage.count();
+  const { agent = '', lastExport } = await usage.settings();
+  $('usage-count').textContent = `${n.toLocaleString()} event${n === 1 ? '' : 's'} saved on this computer${lastExport ? ` · last export ${new Date(lastExport).toLocaleDateString()}` : ' · not exported yet'}`;
+  if (document.activeElement !== $('agent')) $('agent').value = agent;
+  $('recording').hidden = !state.intake;
+}
+
+function wireUsage() {
+  $('agent').addEventListener('change', async (e) => {
+    await usage.saveSettings({ agent: e.target.value.trim().toUpperCase().slice(0, 6) || null });
+    renderUsage();
+  });
+  $('export-usage').addEventListener('click', async () => {
+    const n = await usage.exportLog();
+    $('usage-note').textContent = `Exported ${n} events to your Downloads.`;
+    renderUsage();
+  });
+  $('clear-usage').addEventListener('click', async () => {
+    const { lastExportCount = 0 } = await usage.settings();
+    const n = await usage.count();
+    const msg = n > lastExportCount
+      ? `${n - lastExportCount} events haven't been exported yet. Delete all ${n} anyway?`
+      : `Delete the ${n} exported events from this computer?`;
+    if (!confirm(msg)) return;
+    await usage.clearLog();
+    $('usage-note').textContent = 'Usage log cleared.';
+    renderUsage();
+  });
+  $('report-problem').addEventListener('click', () => {
+    $('problem-form').hidden = !$('problem-form').hidden;
+    if (!$('problem-form').hidden) $('problem-text').focus();
+  });
+  $('send-problem').addEventListener('click', () => {
+    const text = $('problem-text').value.trim();
+    if (!text) return;
+    const redact = state.intake ? redactor(redactionTerms(state.intake.record)) : (x) => x;
+    usage.log({ type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page: state.tab?.url ? pageOf(state.tab.url) : null, text: redact(text).slice(0, 1000) });
+    $('problem-text').value = '';
+    $('problem-form').hidden = true;
+    $('usage-note').textContent = 'Thanks — saved with the usage log.';
+  });
+  setInterval(renderUsage, 5000);
+}
+
+// ---------------------------------------------------------------------------------------------
 // Wiring
 
 function wire() {
@@ -347,15 +459,20 @@ function wire() {
     t.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
   }
   $('clear-client').addEventListener('click', async () => {
+    usage.log({ type: 'intake_closed', reason: 'cleared' });
     state.intake = null;
+    usage.restoreSession(null);
     await store.remove('intake');
+    await store.remove('session');
     $('report').replaceChildren();
     render();
   });
   $('fill').addEventListener('click', fillPage);
   $('unmark').addEventListener('click', clearMarks);
   $('capture').addEventListener('click', capturePage);
+  wireUsage();
   if (inExtension) {
+    chrome.runtime.onMessage.addListener(onRecorderMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onUpdated.addListener((id, change) => { if (id === state.tab?.id && (change.url || change.status === 'complete')) refreshTab(); });
     chrome.windows.onFocusChanged.addListener(refreshTab);
@@ -366,7 +483,9 @@ async function init() {
   wire();
   state.intake = (await store.get('intake')) ?? null;
   state.active = (await store.get('active')) ?? state.active;
+  usage.restoreSession((await store.get('session')) ?? null);
   render();
+  renderUsage();
   await refreshTab();
 }
 

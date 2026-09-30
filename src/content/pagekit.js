@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 4) return;
+  if (globalThis.__raterKit?.version === 5) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -251,6 +251,11 @@
     if (c.cmp) return oneLine(c.cmp.getRawValue?.() ?? '') || null;
     const o = c.el.selectedOptions?.[0];
     return o && !isPlaceholderOption(o.text) ? oneLine(o.text) : null;
+  }
+
+  // Same key the usage recorder (recorder.js) uses, so its changes can be tied to our fills.
+  function fieldKey(c) {
+    return c.q ?? ((c.kind === 'radio' ? c.el.name : c.el.name || c.el.id) || c.label);
   }
 
   function safeMatches(el, selector) {
@@ -516,7 +521,7 @@
       const pairs = assign(controls, plan).filter(({ step }) => !handled.has(step.id));
       let changed = false;
       for (const { step, control: c } of pairs) {
-        const item = { label: c.label, path: step.path, name: step.name };
+        const item = { label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind };
         if (step.note || step.value == null) {
           report.noData.push({ ...item, note: step.note });
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
@@ -553,7 +558,7 @@
     const matched = new Set(pairs.map((p) => p.control));
     for (const c of controls) {
       if (!matched.has(c) && c.required && !hasValue(c)) {
-        report.leftRequired.push({ label: c.label });
+        report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind });
         mark(c, 'needs', 'required, and not on the intake form');
       }
     }
@@ -613,5 +618,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 4, fill, capture, clear };
+  globalThis.__raterKit = { version: 5, fill, capture, clear };
 })();

@@ -45,6 +45,35 @@ Until a carrier has exact mappings, the extension matches fields by their labels
 - Column headers for the per-vehicle coverages (comp/collision/rental/…).
 - Variants: other states (CA, NY, NJ, FL, TX have their own questions), trailers, hazmat, filings = Yes, ELD = Yes, several drivers/vehicles, box truck / tractor.
 
+## Usage log (pilot)
+
+While an intake is loaded, the extension records how it's used on Progressive and GEICO quote pages, so the mappings can be improved from real quotes. A "Recording usage" label shows in the side panel header, and the **Usage log** section at the bottom of the panel explains it to agents. **Tell agents in writing before rollout** (several states require notice of electronic monitoring of employees).
+
+What's recorded (`src/usage.js`, `src/content/recorder.js`):
+
+| Event | Contents |
+| --- | --- |
+| `intake_loaded` | intake fingerprint (SHA-256 of the PDF), form version, state, business class, vehicle types, driver/vehicle/trailer counts, requested coverages, warning codes |
+| `warning_checked`, `intake_edit` | which warning (code) the agent checked off; which intake field they corrected in the panel (added/changed/cleared) |
+| `fill_run`, `fill_field` | per fill: carrier, page, what was filled/kept/failed and why; chosen dropdown/radio options (not typed text) |
+| `field_change` | a field that changed on the rater page, by the agent or by the page: for dropdowns/radios the from/to option; for text boxes only whether it matches what autofill typed (same / format / different) and which intake field the new value equals, e.g. `drivers[0].dob`, worked out on the agent's computer |
+| `page_view` | carrier page switches (for time per page) |
+| `problem_report` | the agent's note from "Report a problem on this page" (client names redacted) |
+
+Never recorded: client names, numbers, addresses, or anything typed into text boxes; screenshots; keystrokes; other websites. Client names are also redacted from labels and options.
+
+For the pilot the log stays on each computer (`chrome.storage.local`, up to 20,000 events) until an agent clicks **Export log**. To review exports:
+
+```bash
+node scripts/summarize-usage.mjs rater-usage-*.json
+```
+
+That lists intake problems by warning code, autofill answers agents changed, fields agents filled that autofill didn't (with the intake field the value matched, which makes them candidates for new mapping rules), fill failures, and time per page. To find the intake PDF behind a log entry, search a folder of intakes by fingerprint; this runs locally and prints file paths:
+
+```bash
+node scripts/find-intake.mjs <folder of intake PDFs> rater-usage-LK-2026-10-01.json
+```
+
 ## Files
 
 | Path | What it does |
@@ -58,6 +87,8 @@ Until a carrier has exact mappings, the extension matches fields by their labels
 | `src/plan.js` | Resolves values into fill steps; builds the capture redaction list |
 | `src/content/pagekit.js` | Runs inside the rater page: find fields, fill, highlight, capture |
 | `captures/` | Page layouts captured from real quotes (no client data) |
+| `src/usage.js`, `sidepanel/usage-log.js`, `src/content/recorder.js` | Usage log: event building, local storage/export, page recorder |
+| `scripts/` | `summarize-usage.mjs` and `find-intake.mjs` for reviewing exported logs |
 | `test/tools/` | Capture snippets for following a live quote without the extension |
 | `lib/` | pdf.js, vendored (MV3 can't load remote code). Refresh with `npm run vendor`. |
 

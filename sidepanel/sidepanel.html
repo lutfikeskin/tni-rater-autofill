@@ -9,7 +9,10 @@
 <body>
   <header class="top">
     <h1>Rater Autofill</h1>
-    <span id="site" class="site">…</span>
+    <span class="top-right">
+      <span id="recording" class="recording" title="How this extension is used on rater pages is recorded (no client details). See Usage log below." hidden>● Recording usage</span>
+      <span id="site" class="site">…</span>
+    </span>
   </header>
 
   <main>
@@ -35,6 +38,21 @@
       <div id="warnings"></div>
       <div id="sections"></div>
     </section>
+
+    <details id="usage" class="usage">
+      <summary>Usage log</summary>
+      <div class="usage-body">
+        <p class="small">While an intake is loaded, this extension records how it's used on Progressive and GEICO pages, to improve it: which intake (by fingerprint, not name), which fields it filled, what you changed afterwards, and problems you report.</p>
+        <p class="small muted">Not recorded: client names, numbers or anything you type into text boxes (typing is only compared with the intake on this computer), screenshots, keystrokes, or other websites.</p>
+        <p id="usage-count" class="small"></p>
+        <label class="usage-agent small">Your initials <input id="agent" type="text" maxlength="6" autocomplete="off"></label>
+        <div class="actions">
+          <button type="button" id="export-usage" class="ghost">Export log</button>
+          <button type="button" id="clear-usage" class="ghost">Clear log</button>
+        </div>
+        <p id="usage-note" class="small muted" aria-live="polite"></p>
+      </div>
+    </details>
   </main>
 
   <footer id="fillbar" class="fillbar" hidden>
@@ -46,7 +64,14 @@
     </div>
     <p id="fill-hint" class="muted small"></p>
     <div id="report"></div>
-    <button type="button" id="capture" class="link small">Capture page layout (for setup)</button>
+    <div class="links">
+      <button type="button" id="report-problem" class="link small">Report a problem on this page</button>
+      <button type="button" id="capture" class="link small">Capture page layout (for setup)</button>
+    </div>
+    <div id="problem-form" class="problem" hidden>
+      <textarea id="problem-text" rows="3" placeholder="What went wrong? (Don't include client names or numbers.)"></textarea>
+      <button type="button" id="send-problem" class="ghost">Save report</button>
+    </div>
   </footer>
 
   <script type="module" src="sidepanel.js"></script>
