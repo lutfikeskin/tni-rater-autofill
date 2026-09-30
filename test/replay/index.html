@@ -4,10 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Layout Replay</title>
-  <!-- Rebuilds carrier pages from a layout file (captures/<carrier>/*.json, hand-made or built
-       by scripts/build-layouts.mjs) as working ExtJS pages with Duck Creek-style ids, captions
-       and a server round-trip after each answer, then runs the real fill engine on them.
-       Serve the repo root (python3 -m http.server 8792) and open /test/replay/.
+  <!-- Rebuilds carrier pages from a layout file (captures/<carrier>/*.json, one built by
+       scripts/build-layouts.mjs, or a bake-off course in test/bakeoff/) as working ExtJS pages
+       with Duck Creek-style ids, captions and a server round-trip after each answer.
+       Serve the repo root (npm run replay) and open /test/replay/.
+
+       Modes
+         default       fill pages with the extension's engine; coverage report; save results
+         ?bakeoff=1    for a browser agent (or a person): only the quote pages, their buttons,
+                       "Next page ›" and a "Continue ›" that must never be clicked; timed;
+                       "Finish & save results" at the end
+
        Built from recorded structure only; no carrier HTML or code is copied. -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/classic/theme-classic/resources/theme-classic-all.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/ext-all.js"></script>
@@ -16,32 +23,38 @@
     header { position: sticky; top: 0; z-index: 10; background: #f3f4f6; border-bottom: 1px solid #ddd; padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     header input[type=text] { width: 420px; max-width: 100%; font: inherit; padding: 4px 6px; }
     header select, header button { font: inherit; padding: 4px 8px; }
-    main { display: grid; grid-template-columns: minmax(0, 600px) minmax(0, 1fr); gap: 16px; padding: 16px; }
+    main { display: grid; grid-template-columns: minmax(0, 620px) minmax(0, 1fr); gap: 16px; padding: 16px; }
     @media (max-width: 1200px) { main { grid-template-columns: 1fr; } }
     #report { overflow-x: auto; }
     #report ul { margin: 0; padding-left: 16px; }
+    h2.page-title { font-size: 16px; margin: 0 0 8px; }
     .caption { margin: 12px 0 3px; font-weight: 600; }
     .tag { font-weight: 400; font-size: 11px; color: #92400e; background: #fef3c7; border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+    .buttons { margin-top: 18px; display: grid; gap: 8px; }
     #report table { border-collapse: collapse; width: 100%; font-size: 12px; }
     #report th, #report td { border-bottom: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; vertical-align: top; }
     #report .num { text-align: right; }
     .muted { color: #6b7280; }
     .err { color: #b91c1c; }
+    body.bakeoff .dev { display: none !important; }
+    body:not(.bakeoff) .bakeoff-only { display: none !important; }
   </style>
 </head>
 <body>
   <header>
-    <label>Layout <input id="layout" type="text" value="/captures/progressive/MD_for-hire-expediter_1-van_2026-09-30.json"></label>
-    <button id="load">Load</button>
+    <label class="dev">Layout <input id="layout" type="text" value="/test/bakeoff/course-MD-expediter-van.json"></label>
+    <button id="load" class="dev">Load</button>
     <label>Page <select id="page"></select></label>
-    <label>Intake <input id="pdf" type="file" accept="application/pdf"></label>
-    <button id="fill-one">Fill this page</button>
-    <button id="fill-all">Fill every page</button>
+    <label class="dev">Intake <input id="pdf" type="file" accept="application/pdf"></label>
+    <button id="fill-one" class="dev">Fill this page</button>
+    <button id="fill-all" class="dev">Fill every page</button>
+    <button id="start" class="bakeoff-only">Start</button>
+    <button id="save">Finish &amp; save results</button>
     <span id="status" class="muted"></span>
   </header>
   <main>
-    <section><div id="form"></div></section>
-    <section id="report"><p class="muted">Load a layout, then fill a page or every page. The intake defaults to the fake sample (test/fixtures/sample-intake.pdf).</p></section>
+    <section><h2 id="page-title" class="page-title"></h2><div id="form"></div><div id="buttons" class="buttons"></div></section>
+    <section id="report" class="dev"><p class="muted">Load a layout, then fill a page or every page. The intake defaults to the fake sample (test/fixtures/sample-intake.pdf).</p></section>
   </main>
 
   <script>
@@ -53,20 +66,24 @@
     Ext.define('Replay.Text', { extend: 'Ext.form.field.Text', alias: 'widget.dctinputstringfield' });
     Ext.define('Replay.Check', { extend: 'Ext.form.field.Checkbox', alias: 'widget.dctcheckboxfield' });
 
-    window.replay = { answers: {}, form: null, fields: [], page: null };
+    // Per page: answers[q] = the component value (combo code / radio text / checkbox bool / text),
+    // texts[q] = what it shows. clicks: every button pressed, in order.
+    window.replay = { byPage: {}, form: null, fields: [], page: null, clicks: [], started: null };
+    const store = (page) => (window.replay.byPage[page] ??= { answers: {}, texts: {} });
 
     function idFor(f, i) {
       // Layout fields without a question id get a stable made-up one, so they still render.
       const q = f.q && /^[0-9A-F]+$/.test(f.q) ? f.q : `F${(1000 + i).toString(16).toUpperCase()}`;
       return { id: `f_a${GUID}${q}_8_1`, q };
     }
+    const optionsOf = (f) => (f.opts ?? []).filter((o) => o && !/^…/.test(o));
 
     function fieldConfig(f, i) {
       const { id, q } = idFor(f, i);
-      const answers = window.replay.answers;
+      const { answers, texts } = store(window.replay.page);
       const common = { id, dctCaption: f.caption || '(no caption)', dctRequired: !!f.req };
-      const answer = (v) => { answers[q] = v; window.replay.roundTrip(); };
-      const opts = (f.opts ?? []).filter((o) => o && !/^…/.test(o));
+      const answer = (v, text) => { answers[q] = v; texts[q] = text ?? v; window.replay.roundTrip(); };
+      const opts = optionsOf(f);
       if (f.kind === 'radio' || f.kind === 'checkgroup') {
         const list = opts.length ? opts : ['Yes', 'No'];
         return { ...common, xtype: 'dctradiogroup', columns: 1, vertical: true,
@@ -75,27 +92,64 @@
       }
       if (f.kind === 'checkbox') {
         return { ...common, xtype: 'dctcheckboxfield', name: `boolean_${q}`, boxLabel: f.caption, value: answers[q] === true,
-          listeners: { change: (c, v) => answer(v) } };
+          listeners: { change: (c, v) => answer(v, v ? 'checked' : 'unchecked') } };
       }
       if (f.kind === 'combo' && opts.length) {
-        return { ...common, xtype: 'dctcombofield', queryMode: 'local', editable: true, forceSelection: true,
+        return { ...common, xtype: 'dctcombofield', queryMode: 'local', editable: true, forceSelection: true, anyMatch: true,
           store: { fields: ['code', 'text'], data: opts.map((t, j) => ({ code: `${q}-${j}`, text: t })) },
           displayField: 'text', valueField: 'code', value: answers[q] ?? null,
-          listeners: { blur: (c) => { if ((answers[q] ?? null) !== c.getValue()) answer(c.getValue()); } } };
+          listeners: { blur: (c) => { if ((answers[q] ?? null) !== c.getValue()) answer(c.getValue(), c.getRawValue()); } } };
       }
       return { ...common, xtype: 'dctinputstringfield', name: `string_${q}|`, maxLength: f.max, enforceMaxLength: !!f.max, value: answers[q] ?? '',
         listeners: { blur: (c) => { if ((answers[q] ?? '') !== c.getValue()) answer(c.getValue()); } } };
     }
 
+    // Answers the carrier pre-selects (layout field `default`), set the first time a page opens.
+    window.replay.applyDefaults = function applyDefaults(page, fields) {
+      const s = store(page);
+      if (s.defaulted) return;
+      s.defaulted = true;
+      fields.forEach((f, i) => {
+        if (f.default === undefined) return;
+        const { q } = idFor(f, i);
+        const j = optionsOf(f).indexOf(f.default);
+        s.answers[q] = f.kind === 'combo' ? `${q}-${j}` : f.default;
+        s.texts[q] = f.default;
+      });
+    };
+
+    window.replay.click = function click(text, row) {
+      window.replay.clicks.push({ page: window.replay.page, text, row: row ?? null, at: new Date().toISOString() });
+      document.getElementById('status').textContent = `Clicked "${text}"${row ? ` (${row})` : ''}`;
+      if (row && window.replay.fields.some((f) => f.showAfter === row)) window.replay.roundTrip();
+    };
+
     window.replay.render = function render() {
       const r = window.replay;
       if (r.form) r.form.destroy();
       r.form = Ext.create('Ext.form.Panel', {
-        renderTo: 'form', border: false, width: 580, defaults: { width: 560 },
-        items: r.fields.flatMap((f, i) => [
-          { xtype: 'component', cls: 'caption', html: `${Ext.htmlEncode(f.caption || '(no caption)')}${f.q ? ` <span class="muted">q${f.q}</span>` : ''}${f.cond ? '<span class="tag">follow-up</span>' : ''}` },
+        renderTo: 'form', border: false, width: 600, defaults: { width: 580 },
+        // `showAfter`: the question only appears once that row's button was clicked (cargo after "+").
+        items: r.fields.flatMap((f, i) => (f.showAfter && !r.clicks.some((c) => c.page === r.page && c.row === f.showAfter) ? [] : [
+          { xtype: 'component', cls: 'caption', html: `${Ext.htmlEncode(f.caption || '(no caption)')}${f.cond ? '<span class="tag">follow-up</span>' : ''}` },
           fieldConfig(f, i),
-        ]),
+        ])),
+      });
+      // Page buttons (from the layout), then navigation.
+      if (r.buttonsPanel) r.buttonsPanel.destroy();
+      const buttons = (r.pageButtons ?? []).map((b) => (b.row
+        ? { xtype: 'container', layout: 'hbox', items: [{ xtype: 'component', html: `${Ext.htmlEncode(b.row)}&nbsp;&nbsp;`, width: 220 }, { xtype: 'button', text: b.text, handler: () => r.click(b.text, b.row) }] }
+        : { xtype: 'button', text: b.text, handler: () => r.click(b.text) }));
+      r.buttonsPanel = Ext.create('Ext.container.Container', {
+        renderTo: 'buttons', layout: { type: 'vbox', align: 'left' }, defaults: { margin: '4 0' },
+        items: [
+          ...buttons,
+          { xtype: 'container', layout: 'hbox', margin: '16 0 0 0', items: [
+            { xtype: 'button', text: 'Continue ›', handler: () => r.click('Continue ›') },
+            { xtype: 'component', width: 24 },
+            ...(document.body.classList.contains('bakeoff') ? [{ xtype: 'button', text: 'Next page ›', handler: () => r.nextPage() }] : []),
+          ] },
+        ],
       });
     };
 
@@ -116,7 +170,11 @@
     pdfjs.GlobalWorkerOptions.workerSrc = '/lib/pdf.worker.min.mjs';
     const $ = (id) => document.getElementById(id);
     const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    const params = new URLSearchParams(location.search);
+    const bakeoff = params.get('bakeoff') === '1';
+    if (bakeoff) document.body.classList.add('bakeoff');
     let layout = null;
+    let runner = params.get('runner') ?? (bakeoff ? 'agent' : 'extension');
 
     await new Promise((res) => { const s = document.createElement('script'); s.src = '/src/content/pagekit.js'; s.onload = res; document.head.append(s); });
 
@@ -131,28 +189,72 @@
     async function load() {
       $('status').textContent = 'Loading…';
       layout = await (await fetch($('layout').value)).json();
-      $('page').replaceChildren(...Object.keys(layout.pages).map((p) => new Option(`${p} (${layout.pages[p].fields?.length ?? 0})`, p)));
+      window.replay.byPage = {};
+      window.replay.clicks = [];
+      $('page').replaceChildren(...Object.keys(layout.pages).map((p) => new Option(p, p)));
       showPage(Object.keys(layout.pages)[0]);
-      const c = layout.context ?? {};
-      $('status').textContent = `${layout.carrier}: ${[c.state, c.businessClass ?? c.operation, (c.vehicleTypes ?? []).join('+') || c.units].filter(Boolean).join(' · ')}`;
+      $('status').textContent = bakeoff ? 'Press Start when you begin.' : (layout.name ?? layout.carrier);
     }
 
     function showPage(name) {
       $('page').value = name;
-      Object.assign(window.replay, { answers: {}, page: name, fields: layout.pages[name].fields ?? [] });
+      $('page-title').textContent = name;
+      const fields = layout.pages[name].fields ?? [];
+      window.replay.applyDefaults(name, fields);
+      Object.assign(window.replay, { page: name, fields, pageButtons: layout.pages[name].buttons ?? [] });
+      // The fill engine reads the page name from the URL, as on Progressive.
+      const u = new URL(location.href);
+      u.searchParams.set('pageName', name);
+      history.replaceState(null, '', u);
       window.replay.render();
     }
+    window.replay.nextPage = () => {
+      const pages = Object.keys(layout.pages);
+      const i = pages.indexOf(window.replay.page);
+      if (i < pages.length - 1) showPage(pages[i + 1]);
+      else $('status').textContent = 'Last page. Press "Finish & save results".';
+    };
 
-    // Fills the page on screen and describes what happened to each question.
+    function results() {
+      const r = window.replay;
+      const finished = new Date();
+      return {
+        kind: 'bakeoff-result',
+        runner,
+        course: $('layout').value,
+        startedAt: r.started?.toISOString() ?? null,
+        finishedAt: finished.toISOString(),
+        seconds: r.started ? Math.round((finished - r.started) / 1000) : null,
+        answers: Object.fromEntries(Object.entries(r.byPage).map(([page, s]) => [page, s.texts])),
+        clicks: r.clicks,
+      };
+    }
+    function save() {
+      const data = results();
+      window.replay.lastResults = data;
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+      const a = Object.assign(document.createElement('a'), { href: url, download: `bakeoff-${runner}-${Date.now()}.json` });
+      a.click();
+      $('status').textContent = `Saved ${a.download}${data.seconds != null ? ` (${data.seconds} s)` : ''}`;
+    }
+
+    // --- Extension run -----------------------------------------------------------------------
+    const done = { actions: new Set(), pages: new Set() };
     async function fillPage(record) {
       const carrier = CARRIERS.find((c) => c.id === layout.carrier) ?? null;
       const plan = buildPlan(record, carrier, {});
       const before = window.__raterKit.capture(plan, []).controls;
-      const r = await window.__raterKit.fill(plan, {});
+      const r = await window.__raterKit.fill(plan, {
+        optional: carrier?.optional ?? [], replaceChoices: !!carrier?.replaceChoices,
+        doneActions: [...done.actions], visitedPages: [...done.pages],
+      });
+      r.actions.forEach((a) => done.actions.add(a.id));
+      done.pages.add(window.replay.page);
       const how = (x) => (x.path?.startsWith(`${carrier?.id}.`) ? 'standard/computed' : 'intake');
       return {
         questions: before.length,
         filled: r.filled.map((x) => ({ label: x.label, shown: x.shown, how: how(x) })),
+        clicked: r.actions.map((a) => a.text),
         noData: r.noData.map((x) => x.label + (x.note ? ` (${x.note})` : '')),
         failed: r.failed.map((x) => `${x.label}: ${x.reason}`),
         unmapped: before.filter((c) => !c.wouldFill).map((c) => c.label),
@@ -164,22 +266,21 @@
       const total = (k) => rows.reduce((n, r) => n + (Array.isArray(r[k]) ? r[k].length : r[k]), 0);
       $('report').innerHTML = `
         <p><b>${total('filled')} of ${total('questions')} questions filled</b> across ${rows.length} page(s) ·
-          ${total('noData')} not on intake · ${total('failed')} failed · ${total('unmapped')} with no rule</p>
-        <table><thead><tr><th>Page</th><th class="num">Qs</th><th class="num">Filled</th><th>Failed</th><th>No rule (candidates)</th><th>Not on intake</th></tr></thead>
+          ${total('clicked')} buttons clicked · ${total('noData')} not on intake · ${total('failed')} failed · ${total('unmapped')} with no rule</p>
+        <table><thead><tr><th>Page</th><th class="num">Qs</th><th class="num">Filled</th><th>Clicked</th><th>Failed</th><th>No rule</th><th>Not on intake</th></tr></thead>
         <tbody>${rows.map((r) => `<tr><td>${esc(r.page)}</td><td class="num">${r.questions}</td><td class="num">${r.filled.length}</td>
-          <td class="err">${list(r.failed)}</td><td>${list(r.unmapped)}</td><td>${list(r.noData)}</td></tr>`).join('')}</tbody></table>`;
+          <td>${list(r.clicked)}</td><td class="err">${list(r.failed)}</td><td>${list(r.unmapped)}</td><td>${list(r.noData)}</td></tr>`).join('')}</tbody></table>`;
       window.replay.lastReport = rows;
     }
 
     async function run(all) {
-      // The replay page's own controls aren't part of the carrier page: disabled controls are
-      // ignored by the fill engine.
       const own = [...document.querySelectorAll('header input, header select, header button')];
       own.forEach((el) => { el.disabled = true; });
       try {
         $('status').textContent = 'Reading intake…';
         const record = await intakeRecord();
         const pages = all ? Object.keys(layout.pages) : [window.replay.page];
+        if (all) { window.replay.started = new Date(); done.actions.clear(); done.pages.clear(); }
         const rows = [];
         for (const p of pages) {
           $('status').textContent = `Filling ${p}…`;
@@ -199,12 +300,14 @@
     $('page').addEventListener('change', (e) => showPage(e.target.value));
     $('fill-one').addEventListener('click', () => run(false));
     $('fill-all').addEventListener('click', () => run(true));
+    $('save').addEventListener('click', save);
+    $('start').addEventListener('click', () => { window.replay.started = new Date(); $('start').disabled = true; $('status').textContent = 'Started. Go through every page with "Next page ›".'; });
     Ext.onReady(() => {
-      const fromUrl = new URLSearchParams(location.search).get('layout');
+      const fromUrl = params.get('layout');
       if (fromUrl) $('layout').value = fromUrl;
       load();
     });
-    window.replay.run = run;
+    Object.assign(window.replay, { run, results, save, setRunner: (r) => { runner = r; } });
   </script>
 </body>
 </html>

@@ -5,6 +5,13 @@
 
 const KIND = { select: 'combo', radio: 'radio', checkbox: 'checkbox' };
 
+// Same option seen with different spacing/markup in different quotes: keep one.
+const tidy = (o) => String(o).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+function dedupe(options) {
+  const seen = new Set();
+  return options.map(tidy).filter((o) => o && !seen.has(o.toLowerCase()) && seen.add(o.toLowerCase()));
+}
+
 export const layoutKey = (carrier, c = {}) => [
   carrier,
   c.state ?? 'XX',
@@ -33,7 +40,7 @@ export function buildLayouts(events) {
         kind: f.type === 'dctinputdatefield' ? 'date' : KIND[f.kind] ?? 'text',
         caption: f.label,
         req: f.required || undefined,
-        opts: [...new Set([...(prev?.opts ?? []), ...(f.options ?? [])])].filter((o) => o !== ''),
+        opts: dedupe([...(prev?.opts ?? []), ...(f.options ?? [])]),
         mapped: f.mapped ?? prev?.mapped ?? null,
         seen: (prev?.seen ?? 0) + 1,
       });

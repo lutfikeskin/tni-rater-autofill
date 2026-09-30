@@ -11,7 +11,8 @@
     "learn": "node scripts/learn-rules.mjs server-data",
     "layouts": "node scripts/build-layouts.mjs server-data",
     "summary": "node scripts/summarize-usage.mjs server-data",
-    "replay": "echo 'Open http://localhost:8792/test/replay/' && python3 -m http.server 8792 --bind 127.0.0.1"
+    "replay": "echo 'Open http://localhost:8792/test/replay/' && python3 -m http.server 8792 --bind 127.0.0.1",
+    "bakeoff:score": "node scripts/bakeoff-score.mjs test/bakeoff/answer-key.json"
   },
   "devDependencies": {
     "pdfjs-dist": "^4.10.38"

@@ -1,0 +1,83 @@
+# Bake-off task: quote a trucking client on the practice Progressive pages
+
+You are an insurance agent at Truckers National Insurance (TNI). Fill in a Progressive commercial auto quote for the client in **`test/bakeoff/intake.md`** (a made-up test client), following TNI's rules below.
+
+**Where:** http://localhost:8792/test/replay/?bakeoff=1&runner=codex. These are practice copies of Progressive's quote pages, not the real site.
+
+## How to work the practice pages
+
+1. Press **Start** at the top before anything else. It starts the timer.
+2. Fill each page, clicking the buttons the rules call for. Some questions only appear after you click a button.
+3. Move to the next page with **Next page ›**.
+4. **Never click "Continue ›".** On the real site moving on is the agent's call, and here it counts as a mistake.
+5. On the last page (PrintEmailFax), finish that page, then press **Finish & save results** at the top. That saves your answers; the run is over.
+6. Don't change the "Page" dropdown or anything else in the grey bar except Start and Finish.
+
+Leave a question as it is when the rules and the intake don't say anything about it. The page's own pre-selected answers are not always right: change them when the rules say so.
+
+## TNI's rules, page by page
+
+### BusinessOwnerInfo (named insured and business)
+- **Is the customer currently insured with Progressive Commercial Auto?** Yes only if the intake's current insurance is a Progressive **commercial** auto policy with a limit and an expiration date. A personal auto policy doesn't count.
+- **Does the customer have a USDOT number?** "Yes" if the intake has one. If not, "Not Yet…" if they'll have one within 60 days, otherwise "No…".
+- Enter the USDOT number (digits only), then click **Verify DOT**.
+- **Does this USDOT Number belong to the customer's business?** Yes.
+- **Business Name** and **Business Address**: pick the USDOT-registered option, not "Enter a different…".
+- **Home Address**: the option marked "(Primary Business Address)".
+- **How is the business structured?** "Corporation or LLC / Non-Profit" when the company name ends in LLC, Inc, Corp or Co.
+- **Business type list**: "For Hire Trucking" for expediters. **Type of Trucker**: "Other For-Hire Trucking" for expediters. For other businesses, use what the intake says.
+- **Business owner's first and last name** and **date of birth**: from the intake. The owner is the driver with the same last name; use that driver row's first name exactly as written.
+- **Phone**: split into area code, prefix and line number.
+- **Hazardous material placard?**: from the intake.
+- Leave empty: middle initial, suffix, DBA name (unless the intake has one), quote vendor code. Don't touch agent code or policy start date.
+
+### MostCommonVehicles (vehicle picker)
+- Click the tile for the intake's vehicle type. A "Van" is **Cargo Van**.
+
+### AddVehicle
+- Enter the VIN, then click **Lookup VIN** right away, before the other questions.
+- **ZIP where the vehicle is located**: the garaging address ZIP.
+- **Farthest one-way distance**: the intake's radius in miles. "Unlimited" or long haul is **More than 500 miles**.
+- **Business, personal or both?**: "Business Only" unless the intake says the vehicle is also for personal use.
+- **Haul goods for hire?**: Yes when the client has an MC number.
+- **Loan/lease?**: always No.
+- **Comprehensive or collision?**: Yes.
+- **Total value of permanently attached equipment**: always "$0 to $2,000". Also tick **Vehicle has no equipment**.
+- **If this vehicle was sold today, how much would it be?**: the intake's vehicle value, as a plain number (e.g. 45000).
+
+### AddDriver
+- **License state**: full state name.
+- **License number**: letters and digits only, no dashes or spaces. If the intake writes the state in front ("IL - S123…"), keep those letters in the number ("ILS123…").
+- **Exclude this driver?**: No.
+- **Accidents, claims or violations in the past 3 years?**: from the intake's claims answer. The claims box sometimes has extra lines that answer other questions; the first line is the claims answer.
+
+### MoreAboutBusiness
+- **Customer email**: from the intake.
+- **Currently insured?**: Yes when the intake lists current insurance.
+- **Continuous coverage?**: Yes.
+- **Current bodily injury limit** and **current policy expiration**: from the intake, as written ("State Minimum" is "State Minimum or less").
+- **Other coverages for the business?**: None.
+- Leave the additional insured and waiver questions as they are.
+- **State or federal filings required?**: Yes when the intake says filings are required. The page pre-selects No.
+- **ELD required?**: from the intake.
+
+### Filings (only when filings are required)
+- **Will this quote include all the customer's commercially owned and operated vehicles?**: Yes.
+- Tick **Federal** and **MCS-90**.
+
+### CoveragesRates
+- **Bodily injury and property damage liability**: the intake's requested limit. "$1M CSL" is "$1 million CSL". The page pre-selects $750k.
+- **Rental** (the "$… per day" dropdown): "$40 per day, $1,200 max".
+- **Total value of permanently attached equipment**: "$0 to $2,000".
+- Cargo, when the intake asks for it: click the **+** in the **Motor Truck Cargo** row (not another row's +). Then:
+  - Special cargo (mobile/modular homes; business documents): both No.
+  - Commodity category "Consumer Goods", commodity "Other Consumer Goods" for "General freight".
+  - Motor truck cargo limit: the intake's limit and deductible, e.g. "$100K/$1K Ded" is "$100k with a $1,000 Deductible" (both cargo dropdowns).
+- Leave the other coverages as they are.
+- Then click **View Bill plan options**.
+
+### ChangePaymentPlan
+- **Payment method**: Automatic payments. Then click **Print, Email, Fax**.
+
+### PrintEmailFax
+- Choose **Insurance Quote (with all bill plans)** and tick **Print**. Click **Print/Send**, then press **Finish & save results**.

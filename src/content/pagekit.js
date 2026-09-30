@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 9) return;
+  if (globalThis.__raterKit?.version === 10) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -314,7 +314,14 @@
   }
 
   function matchOption(options, step) {
-    const usable = options.filter((o) => squash(o.text) && !isPlaceholderOption(o.text));
+    // Options that read the same are the same choice (pages sometimes list one twice).
+    const seenText = new Set();
+    const usable = options.filter((o) => {
+      const k = squash(o.text);
+      if (!k || isPlaceholderOption(o.text) || seenText.has(k)) return false;
+      seenText.add(k);
+      return true;
+    });
     // "Any option except …" (e.g. the registered USDOT address instead of "Enter a different
     // address"), preferring one that matches `prefer` when there are several.
     if (step.kind === 'pick-not') {
@@ -741,5 +748,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 9, fill, capture, clear };
+  globalThis.__raterKit = { version: 10, fill, capture, clear };
 })();

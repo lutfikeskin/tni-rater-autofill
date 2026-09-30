@@ -1,0 +1,118 @@
+{
+ "kind": "bakeoff-answer-key",
+ "course": "/test/bakeoff/course-MD-expediter-van.json",
+ "intake": "test/fixtures/sample-intake.pdf (fake data)",
+ "status": "DRAFT: generated from the TNI rules by the extension run on 2026-10-01; an agent must review it",
+ "answers": {
+  "BusinessOwnerInfo": {
+   "198": "No",
+   "239": "For Hire Trucking",
+   "267": "Other For-Hire Trucking",
+   "277": "[client]R [client] [client] MD [client] (USDOT Address)",
+   "295": "Jordan Avery",
+   "297": "Sample",
+   "1ED": "Yes - the customer has a USDOT number",
+   "20F": "Yes",
+   "22F": "[client]",
+   "2A5": "[client]R [client] [client] MD [client] (Primary Business Address)",
+   "22D": "Corporation or LLC / Non-Profit",
+   "2BB": "02/03/1988",
+   "2DB": "555",
+   "2DD": "201",
+   "2DF": "0199",
+   "2F6": "No",
+   "F3ED": "1234567"
+  },
+  "AddVehicle": {
+   "2B20": "1FTBR3X87MKA12345",
+   "2B92": "62704",
+   "2B9D": "More than 500 miles",
+   "2C05": "Business Only",
+   "2C1A": "Yes",
+   "2CA7": "No",
+   "2CCC": "Yes",
+   "2CCE": "$0 to $2,000",
+   "2CE3": "checked",
+   "2CE8": "45000"
+  },
+  "AddDriver": {
+   "28AC": "Illinois",
+   "28B9": "ILS12345678901",
+   "28C1": "No",
+   "28F5": "No"
+  },
+  "MoreAboutBusiness": {
+   "77": "dispatch@sampleexpedite.test",
+   "81": "Yes",
+   "83": "Yes",
+   "95": "State Minimum or less",
+   "B7": "0",
+   "B8": "0",
+   "BE": "No",
+   "C1": "No",
+   "CA": "Yes",
+   "9D": "10/31/2026",
+   "A2": "None",
+   "D1": "No"
+  },
+  "Filings": {
+   "F11": "Yes",
+   "F21": "checked",
+   "F22": "checked"
+  },
+  "CoveragesRates": {
+   "2150": "$100k with a $1,000 Deductible",
+   "2158": "No",
+   "1D97": "$1 million CSL",
+   "1FF2": "$40 per day, $1,200 max",
+   "207F": "$0 to $2,000",
+   "215A": "No",
+   "216A": "Consumer Goods",
+   "216B": "Other Consumer Goods",
+   "216F": "$100k with a $1,000 Deductible"
+  },
+  "ChangePaymentPlan": {
+   "3E98": "Automatic payments from checking account Save with lower fees – and a discount if eligible!"
+  },
+  "PrintEmailFax": {
+   "32B0": "Insurance Quote (with all bill plans)",
+   "32CC": "checked"
+  }
+ },
+ "clicks": {
+  "required": [
+   {
+    "page": "BusinessOwnerInfo",
+    "text": "Verify DOT"
+   },
+   {
+    "page": "MostCommonVehicles",
+    "text": "Cargo Van"
+   },
+   {
+    "page": "AddVehicle",
+    "text": "Lookup VIN"
+   },
+   {
+    "page": "CoveragesRates",
+    "text": "+",
+    "row": "Motor Truck Cargo"
+   },
+   {
+    "page": "CoveragesRates",
+    "text": "View Bill plan options"
+   },
+   {
+    "page": "ChangePaymentPlan",
+    "text": "Print, Email, Fax"
+   },
+   {
+    "page": "PrintEmailFax",
+    "text": "Print/Send"
+   }
+  ],
+  "forbidden": [
+   "Continue ›"
+  ]
+ }
+}
