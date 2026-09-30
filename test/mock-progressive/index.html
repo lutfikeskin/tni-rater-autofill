@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mock Duck Creek Page</title>
+  <!-- Stand-in for Progressive's ForAgentsOnly quote pages, built only from what the page
+       captures showed: ExtJS 6 components with Duck Creek style ids and dctCaption configs, a
+       server round-trip (mask + full redraw) after every answer, and questions that appear only
+       after certain answers. Not a copy of Progressive's page. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/classic/theme-classic/resources/theme-classic-all.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/ext-all.js"></script>
+  <style>
+    body { font: 13px system-ui, sans-serif; margin: 0; padding: 16px; background: #fff; }
+    .caption { margin: 12px 0 3px; font-weight: 600; }
+    pre { background: #111827; color: #d1fae5; padding: 8px; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <h1>Mock Duck Creek quote page</h1>
+  <div id="form"></div>
+  <h3>Server state</h3>
+  <pre id="server"></pre>
+  <script>
+    const GUID = 'A8BF9205B84D84AF79F30CD043C8464E';
+    const idFor = (q) => `f_a${GUID}${q}_8_1`;
+
+    Ext.define('Mock.Combo', { extend: 'Ext.form.field.ComboBox', alias: 'widget.dctcombofield' });
+    Ext.define('Mock.RadioGroup', { extend: 'Ext.form.RadioGroup', alias: 'widget.dctradiogroup' });
+    Ext.define('Mock.Radio', { extend: 'Ext.form.field.Radio', alias: 'widget.dctradiofield' });
+    Ext.define('Mock.Text', { extend: 'Ext.form.field.Text', alias: 'widget.dctinputstringfield' });
+
+    // What the "server" knows. Last name is pre-filled, as Progressive does from the USDOT lookup.
+    const server = { '297': 'SAMPLE' };
+    const changes = [];
+
+    const radioQ = (q, caption, options) => ({
+      xtype: 'dctradiogroup', id: idFor(q), dctCaption: caption, dctRequired: true, columns: 1, vertical: true,
+      items: options.map((o, i) => ({ xtype: 'dctradiofield', id: `${idFor(q)}_${i}`, name: `string_${q}`, boxLabel: o, inputValue: o, checked: server[q] === o })),
+      listeners: { change: (g, v) => answer(q, v[`string_${q}`]) },
+    });
+    const textQ = (q, caption, maxLength) => ({
+      xtype: 'dctinputstringfield', id: idFor(q), name: `string_${q}|`, dctCaption: caption, dctRequired: true, maxLength, enforceMaxLength: true, value: server[q] ?? '',
+      listeners: { blur: (f) => { if ((server[q] ?? '') !== f.getValue()) answer(q, f.getValue()); } },
+    });
+    const comboQ = (q, caption, options) => ({
+      xtype: 'dctcombofield', id: idFor(q), dctCaption: caption, dctRequired: true, queryMode: 'local', editable: true, forceSelection: true,
+      store: { fields: ['code', 'text'], data: options.map((t, i) => ({ code: `${q}-${i}`, text: t })) },
+      displayField: 'text', valueField: 'code', value: server[q] ?? null,
+      listeners: { blur: (f) => { if ((server[q] ?? null) !== f.getValue()) answer(q, f.getValue()); } },
+    });
+
+    function items() {
+      const list = [
+        radioQ('1ED', 'Does the customer have a USDOT Number?', ['Yes - the customer has a USDOT number', 'No - and the customer will not have a USDOT number', 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days']),
+      ];
+      if (server['1ED']?.startsWith('Yes')) list.push(textQ('1F3', "USDOT Number associated with the customer's business:", 15));
+      list.push(
+        radioQ('22D', "How is the customer's business structured?", ['Individual / Sole Proprietor', 'Partnership', 'Corporation or LLC / Non-Profit']),
+        textQ('295', 'First Name', 22),
+        textQ('296', 'Middle initial', 1),
+        textQ('297', 'Last Name', 31),
+        textQ('2BB', 'Date of Birth', 30),
+        textQ('2DB', 'Phone area code', 3), textQ('2DD', 'Phone prefix', 3), textQ('2DF', 'Phone line', 4),
+        radioQ('2F6', 'Information disclosure: may we order reports?', ['Yes', 'No']),
+        comboQ('2B9D', 'Farthest one-way distance this vehicle typically travels (90% or more of the time)', ['50 miles', '100 miles', '200 miles', '300 miles', '500 miles', 'More than 500 miles']),
+        radioQ('2C05', 'Is this vehicle used for business, personal or both?', ['Business Only', 'Business & Personal', 'Personal Only']),
+      );
+      if (server['2C05'] === 'Business Only') list.push(radioQ('2C1A', 'Is this vehicle used to haul goods on a For-Hire basis?', ['Yes', 'No']));
+      list.push(
+        radioQ('2CA7', 'Is there a loan/lease on this vehicle?', ['Yes - Loan', 'Yes - Lease', 'No']),
+        comboQ('28AC', "Driver's License State", ['US States', 'Illinois', 'Indiana', 'Maryland', 'Texas']),
+        comboQ('1D97', 'Bodily Injury and Property Damage Liability', ['Not selected', '$100k CSL', '$300k CSL', '$750k CSL', '$1 million CSL', '$1.5 million CSL']),
+        comboQ('216F', 'Motor Trucking Cargo', ['Not selected', '$50k with a $1,000 Deductible', '$100k with a $1,000 Deductible', '$100k with a $2,500 Deductible']),
+      );
+      // Duck Creek shows the caption as separate text above each field.
+      return list.flatMap((cfg) => [{ xtype: 'component', cls: 'caption', html: cfg.dctCaption }, cfg]);
+    }
+
+    let form;
+    function render() {
+      if (form) form.destroy();
+      form = Ext.create('Ext.form.Panel', { renderTo: 'form', border: false, width: 560, defaults: { width: 520 }, items: items() });
+      document.getElementById('server').textContent = JSON.stringify({ server, changes }, null, 1);
+    }
+
+    // Each answer goes to the "server": mask, wait, redraw the whole form (new DOM nodes).
+    function answer(q, value) {
+      server[q] = value;
+      changes.push(q);
+      form.mask('Loading...');
+      setTimeout(render, 500);
+    }
+
+    Ext.onReady(render);
+  </script>
+</body>
+</html>

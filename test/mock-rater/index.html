@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mock Rater</title>
+  <!-- A stand-in for a carrier quoting page: React controlled inputs, labels in several styles,
+       styled radios, a pre-filled field, a password field, and a required field the intake
+       doesn't cover. Used to test the fill engine; not a copy of any real carrier page. -->
+  <style>
+    body { font: 14px/1.4 system-ui, sans-serif; margin: 0; background: #f3f4f6; color: #111; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 20px 16px 60px; }
+    h1 { font-size: 20px; }
+    section { background: #fff; border-radius: 8px; padding: 14px 16px; margin: 12px 0; }
+    h2 { font-size: 15px; margin: 0 0 10px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px 14px; }
+    .grid > div { display: grid; gap: 3px; }
+    .grid label, .q { font-size: 12px; color: #444; }
+    input, select { font: inherit; padding: 5px 6px; border: 1px solid #bbb; border-radius: 4px; }
+    .radios { display: flex; gap: 6px; }
+    .radios input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .radios label { border: 1px solid #bbb; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-size: 13px; color: #111; }
+    .radios input:checked + label { background: #1d4ed8; color: #fff; border-color: #1d4ed8; }
+    pre { background: #111827; color: #d1fae5; padding: 10px; border-radius: 6px; font-size: 11px; overflow: auto; }
+  </style>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/htm@3.1.1/dist/htm.umd.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    const html = htm.bind(React.createElement);
+    const { useState } = React;
+    const STATES = ['Alabama', 'Illinois', 'Indiana', 'Maryland', 'Texas'];
+    const YEARS = Array.from({ length: 13 }, (_, i) => String(2027 - i));
+
+    function Field({ id, label, value, set, type = 'text', options, required, placeholder, readOnly }) {
+      const input = options
+        ? html`<select id=${id} value=${value} onChange=${(e) => set(e.target.value)} required=${required}>
+            <option value="">-- Select --</option>
+            ${options.map((o) => html`<option key=${o} value=${o}>${o}</option>`)}
+          </select>`
+        : html`<input id=${id} type=${type} value=${value} placeholder=${placeholder} readOnly=${readOnly}
+            onChange=${(e) => set(e.target.value)} required=${required} />`;
+      return html`<div><label htmlFor=${id}>${label}${required ? ' *' : ''}</label>${input}</div>`;
+    }
+
+    function App() {
+      const [s, setS] = useState({ businessName: 'SAMPLE EXPEDITE LLC' });
+      const f = (key) => ({ id: key, value: s[key] ?? '', set: (v) => setS((p) => ({ ...p, [key]: v })) });
+      return html`<div class="wrap">
+        <h1>Commercial Auto Quote (mock)</h1>
+        <section><h2>Business</h2><div class="grid">
+          <${Field} ...${f('businessName')} label="Named Insured / Business Name" required />
+          <${Field} ...${f('usdot')} label="USDOT #" />
+          <${Field} ...${f('mc')} label="MC Number" />
+          <${Field} ...${f('phone')} label="Business Phone" type="tel" />
+          <${Field} ...${f('email')} label="Email Address" type="email" />
+          <${Field} ...${f('yib')} label="Years in Business" options=${['Less than 1', '1', '2', '3-4', '5+']} />
+          <${Field} ...${f('pin')} label="Agent PIN" type="password" />
+        </div></section>
+
+        <section><h2>Garaging Address</h2><div class="grid">
+          <${Field} ...${f('street')} label="Street Address" />
+          <${Field} ...${f('apt')} label="Apt / Suite" />
+          <${Field} ...${f('city')} label="City" />
+          <${Field} ...${f('state')} label="State" options=${STATES} />
+          <${Field} ...${f('zip')} label="ZIP Code" />
+          <${Field} ...${f('radius')} label="Radius of Operation" options=${['0-50 miles', '51-200 miles', '201-500 miles', 'Over 500 miles']} />
+          <${Field} ...${f('use')} label="Vehicle Use" options=${['Business', 'Commercial', 'Farm']} required />
+        </div></section>
+
+        <section><h2>Driver</h2><div class="grid">
+          <${Field} ...${f('first')} label="First Name" required />
+          <${Field} ...${f('mi')} label="Middle Initial" />
+          <${Field} ...${f('last')} label="Last Name" required />
+          <${Field} ...${f('dob')} label="Date of Birth" type="date" />
+          <${Field} ...${f('dl')} label="Driver's License Number" />
+          <${Field} ...${f('dlState')} label="License State" options=${['IL', 'IN', 'MD', 'TX']} />
+          <${Field} ...${f('marital')} label="Marital Status" options=${['Single', 'Married', 'Divorced', 'Widowed']} />
+          <div role="radiogroup">
+            <span class="q">Does this driver hold a CDL?</span>
+            <div class="radios">
+              ${['Yes', 'No'].map((o) => html`<span key=${o}>
+                <input type="radio" id=${'cdl' + o} name="cdl" value=${o} checked=${s.cdl === o} onChange=${() => setS((p) => ({ ...p, cdl: o }))} />
+                <label htmlFor=${'cdl' + o}>${o}</label></span>`)}
+            </div>
+          </div>
+        </div></section>
+
+        <section><h2>Vehicle</h2><div class="grid">
+          <${Field} ...${f('vin')} label="VIN" />
+          <${Field} ...${f('year')} label="Year" options=${YEARS} />
+          <${Field} ...${f('make')} label="Make" />
+          <${Field} ...${f('model')} label="Model" />
+          <${Field} ...${f('stated')} label="Stated Amount" type="number" />
+        </div></section>
+
+        <section><h2>Coverage</h2><div class="grid">
+          <${Field} ...${f('liab')} label="Liability Limit" options=${['$300,000 CSL', '$750,000 CSL', '$1,000,000 CSL']} />
+          <${Field} ...${f('cargo')} label="Motor Truck Cargo Limit" options=${['$25,000', '$50,000', '$100,000']} />
+          <${Field} ...${f('cargoDed')} label="Cargo Deductible" options=${['$500', '$1,000', '$2,500']} />
+          <${Field} ...${f('priorCarrier')} label="Prior Carrier" />
+          <${Field} ...${f('priorExp')} label="Prior Policy Expiration" placeholder="MM/DD/YYYY" />
+          <${Field} ...${f('effective')} label="Effective Date" readOnly placeholder="pick a date" />
+        </div></section>
+
+        <button type="button" onClick=${() => alert('Next clicked')}>Next</button>
+        <h2>React state</h2>
+        <pre id="state">${JSON.stringify(s, null, 1)}</pre>
+      </div>`;
+    }
+    ReactDOM.createRoot(document.getElementById('root')).render(html`<${App} />`);
+  </script>
+</body>
+</html>

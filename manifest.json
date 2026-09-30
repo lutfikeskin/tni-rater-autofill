@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "TNI Rater Autofill",
+  "version": "0.1.0",
+  "description": "Fills Progressive and GEICO rater pages from a TNI Commercial Quote Application PDF.",
+  "minimum_chrome_version": "116",
+  "permissions": ["sidePanel", "scripting", "storage"],
+  "host_permissions": [
+    "https://*.foragentsonly.com/*",
+    "https://*.progressive.com/*",
+    "https://*.geico.com/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "side_panel": { "default_path": "sidepanel/sidepanel.html" },
+  "action": { "default_title": "Open Rater Autofill" }
+}

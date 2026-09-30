@@ -1,0 +1,93 @@
+// Progressive commercial auto, ForAgentsOnly (clpolicy.foragentsonly.com).
+//
+// The quote flow is an ExtJS 6 + Duck Creek ("DCT") single-page app. Every field is keyed by a
+// Duck Creek question id (`q`), taken from the element id / field name; `label` is a fallback
+// regex on the question text in case Progressive renumbers. Mapped from a live MD for-hire
+// expediter quote (captures/progressive/MD_for-hire-expediter_1-van_2026-09-30.json). Questions
+// that exist only in other states or for other products are skipped when they aren't on the page,
+// and the generic label rules still apply to anything not listed here.
+//
+// Rules either read a record path, or compute a value with `value(record, active)` when
+// Progressive words the answer differently from the intake form. `note` rules are questions the
+// agent must answer themselves (consents, report orders); they're marked, never filled.
+
+const digits = (s) => String(s ?? '').replace(/\D/g, '');
+
+// The business owner, matched to their driver row (for date of birth and a clean name split).
+function owner(r) {
+  const full = r.applicant.owner1 ?? '';
+  const last = full.split(/\s+/).at(-1)?.toLowerCase();
+  const driver = r.drivers.find((d) => last && d.last?.toLowerCase() === last) ?? null;
+  const first = driver?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
+  return { driver, first: first || null, middle: driver?.middle ?? null, last: driver?.last ?? full.split(/\s+/).at(-1) ?? null };
+}
+
+const equipment = (r) => {
+  const v = r.operations.equipVehicle;
+  return v == null ? '$0 to $2,000' : v > 2000 ? 'More than $2,000' : '$0 to $2,000';
+};
+
+const cargo = (r) => {
+  const c = r.coverage;
+  if (c.cargo === false) return 'Not selected';
+  return c.cargoLimit && c.cargoDeductible ? `$${c.cargoLimit}/$${c.cargoDeductible}` : null;
+};
+
+export const progressive = {
+  id: 'progressive',
+  name: 'Progressive',
+  hosts: [/(^|\.)foragentsonly\.com$/, /(^|\.)progressive\.com$/],
+  // ExtJS components are only reachable from the page's own JavaScript world.
+  world: 'MAIN',
+  rules: [
+    // --- Named Insured and Business Overview (pageName=BusinessOwnerInfo) ---------------------
+    { q: '1ED', name: 'Has a USDOT number', kind: 'choice', value: (r) => (r.applicant.dot ? 'Yes - the customer has a USDOT number' : r.applicant.mcDotWithin60Days ? 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days' : null) },
+    { q: '1F3', path: 'applicant.dot', label: 'usdot number' },
+    { q: '22D', name: 'Business structure', kind: 'choice', label: 'business structured', value: (r) => (/\b(llc|l\.l\.c|inc|corp|corporation|company|co)\.?$/i.test(r.applicant.name ?? '') ? 'Corporation or LLC / Non-Profit' : null) },
+    { q: '267', path: 'operations.businessClass', name: 'Type of trucker', kind: 'choice', label: 'type of trucker' },
+    { q: '295', name: 'Owner first name', label: '^first name$', value: (r) => owner(r).first },
+    { q: '296', name: 'Owner middle initial', value: (r) => owner(r).middle?.[0] ?? null },
+    { q: '297', name: 'Owner last name', label: '^last name$', value: (r) => owner(r).last },
+    { q: '2BB', name: 'Owner date of birth', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
+    { q: '2DB', name: 'Phone area code', value: (r) => digits(r.applicant.phone).slice(0, 3) || null },
+    { q: '2DD', name: 'Phone prefix', value: (r) => digits(r.applicant.phone).slice(3, 6) || null },
+    { q: '2DF', name: 'Phone line number', value: (r) => digits(r.applicant.phone).slice(6, 10) || null },
+    { q: '2F6', name: 'Information disclosure', note: 'Consent question — ask the customer' },
+
+    // --- More about the business (MoreAboutBusiness) -------------------------------------------
+    { q: '77', path: 'applicant.email', label: 'customer email' },
+    { q: '81', name: 'Currently insured', kind: 'bool', label: 'currently insured', value: (r) => (r.priorInsurance.length ? true : null) },
+    { q: '95', path: 'priorInsurance[0].limit', kind: 'choice', label: 'current bodily injury' },
+    { q: '9D', path: 'priorInsurance[0].expiration', label: 'current policy expiration' },
+    { q: 'CA', path: 'operations.filingsRequired', label: 'filings required' },
+    { q: 'D1', path: 'operations.usesEld', label: 'electronic logging' },
+
+    // --- Add vehicle (AddVehicle) ----------------------------------------------------------------
+    { q: '2B20', path: 'vehicles[].vin' },
+    { q: '2B92', path: 'garaging.zip', label: 'zip code where the vehicle' },
+    // "Unlimited" / long haul becomes 501 miles, which picks "More than 500 miles".
+    { q: '2B9D', name: 'Farthest one-way distance', kind: 'int', label: 'farthest one way distance', value: (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null) },
+    { q: '2C05', name: 'Business / personal use', kind: 'choice', label: 'used for business personal', value: (r) => (r.operations.personalUse === false ? 'Business Only' : r.operations.personalUse ? 'Business & Personal' : null) },
+    { q: '2C1A', name: 'Hauls for hire', kind: 'bool', label: 'for hire basis', value: (r) => (r.applicant.mc ? true : null) },
+    { q: '2CA7', name: 'Loan / lease', kind: 'choice', label: 'loan lease', value: (r) => ({ Financed: 'Yes - Loan', Leased: 'Yes - Lease', Owned: 'No' })[r.operations.vehicleOwnership] ?? null },
+    { q: '2CCE', name: 'Attached equipment value', kind: 'choice', value: equipment },
+
+    // --- Add driver (AddDriver) ------------------------------------------------------------------
+    { q: '2898', path: 'drivers[].first' },
+    { q: '2899', name: 'Driver middle initial', value: (r, a) => r.drivers[a.drivers ?? 0]?.middle?.[0] ?? null },
+    { q: '289A', path: 'drivers[].last' },
+    { q: '28A7', path: 'drivers[].dob' },
+    { q: '28AC', path: 'drivers[].licenseState', label: 'drivers license state' },
+    { q: '28F5', path: 'claims.hasClaims', name: 'Accidents / claims / violations (3 yrs)', kind: 'bool', label: 'accidents claims or violations' },
+
+    // --- Coverages and rates (CoveragesRates) ----------------------------------------------------
+    { q: '1D97', path: 'coverage.autoLiabLimit', label: 'bodily injury and property damage liability' },
+    { q: '207F', name: 'Attached equipment value', kind: 'choice', value: equipment },
+    { q: '216F', name: 'Motor truck cargo', kind: 'choice', value: cargo },
+    { q: '2150', name: 'Motor truck cargo', kind: 'choice', value: cargo },
+
+    // --- Finish & buy (AdditionalDetails) --------------------------------------------------------
+    { q: '3E3', path: 'applicant.fein', label: 'employer identification' },
+    { q: '450', name: 'Order MVR/CLUE reports', note: 'Agent decision — not filled' },
+  ],
+};

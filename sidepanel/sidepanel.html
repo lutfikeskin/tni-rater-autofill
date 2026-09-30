@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rater Autofill</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Rater Autofill</h1>
+    <span id="site" class="site">…</span>
+  </header>
+
+  <main>
+    <section id="load" class="drop" tabindex="0">
+      <input id="file" type="file" accept="application/pdf,.pdf" hidden>
+      <p class="drop-title">Drop the client's intake PDF here</p>
+      <p class="muted">or <button type="button" id="choose" class="link">choose a file</button></p>
+      <p class="muted small">Read on this computer only. Cleared when Chrome closes.</p>
+      <p id="load-error" class="error" hidden></p>
+    </section>
+
+    <section id="client" hidden>
+      <div class="client-head">
+        <div>
+          <h2 id="client-name"></h2>
+          <p id="client-meta" class="muted small"></p>
+        </div>
+        <div class="client-actions">
+          <button type="button" id="replace" class="ghost">Replace</button>
+          <button type="button" id="clear-client" class="ghost">Clear</button>
+        </div>
+      </div>
+      <div id="warnings"></div>
+      <div id="sections"></div>
+    </section>
+  </main>
+
+  <footer id="fillbar" class="fillbar" hidden>
+    <div id="pickers" class="pickers"></div>
+    <label class="check"><input type="checkbox" id="overwrite"> Replace values already on the page</label>
+    <div class="actions">
+      <button type="button" id="fill" class="primary">Fill this page</button>
+      <button type="button" id="unmark" class="ghost">Clear marks</button>
+    </div>
+    <p id="fill-hint" class="muted small"></p>
+    <div id="report"></div>
+    <button type="button" id="capture" class="link small">Capture page layout (for setup)</button>
+  </footer>
+
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>
