@@ -121,8 +121,12 @@
       if (!before && !c.v) continue;
       if ((before?.v ?? '') !== c.v) changes.push({ key, q: c.q, label: c.label, kind: c.kind, before: before?.v ?? '', after: c.v, agent });
     }
+    const appeared = [...cur.keys()].filter((k) => !prev.has(k));
     prev = cur;
     if (changes.length) send({ event: 'field_changes', page, changes });
+    // New questions (follow-ups revealed by an answer, or a panel that opened): the side panel
+    // may fill them automatically.
+    if (appeared.length) send({ event: 'new_fields', page, keys: appeared });
   }
 
   // Only the top frame reports page switches; embedded frames (ads, trackers) would be noise.

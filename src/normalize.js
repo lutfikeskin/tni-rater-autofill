@@ -134,6 +134,9 @@ export function parseLimitDeductible(v) {
   return { limit: toMoney(a?.replace(/ded.*/i, '')), deductible: b ? toMoney(b.replace(/ded.*/i, '')) : null };
 }
 
+// License numbers are entered plain: letters (rare) and digits only, never dashes or spaces.
+const plain = (s) => String(s).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
+
 // "MD - 10123456789" -> { state: 'MD', number: '10123456789' }
 export function parseLicense(v) {
   const s = clean(v);
@@ -142,25 +145,10 @@ export function parseLicense(v) {
   if (m) {
     const st = (m[1] ?? m[3]).toUpperCase();
     const rest = m[2] ?? m[4];
-    if (STATES[st] && rest.replace(/[\s-]/g, '').length >= 5) {
-      return { state: st, number: rest.replace(/[\s-]/g, '').toUpperCase() };
-    }
+    if (STATES[st] && plain(rest).length >= 5) return { state: st, number: plain(rest) };
   }
-  return { state: null, number: s.replace(/\s/g, '').toUpperCase() };
+  return { state: null, number: plain(s) };
 }
-
-// Usual driver's license number formats for states we see often. A mismatch is only a warning:
-// states have older formats too.
-const LICENSE_FORMATS = {
-  MD: [/^[A-Z]\d{12}$/, '1 letter + 12 digits'],
-  FL: [/^[A-Z]\d{12}$/, '1 letter + 12 digits'],
-  NJ: [/^[A-Z]\d{14}$/, '1 letter + 14 digits'],
-  IL: [/^[A-Z]\d{11}$/, '1 letter + 11 digits'],
-  CA: [/^[A-Z]\d{7}$/, '1 letter + 7 digits'],
-  TX: [/^\d{7,8}$/, '8 digits'],
-  PA: [/^\d{8}$/, '8 digits'],
-  VA: [/^([A-Z]\d{8}|\d{9})$/, '1 letter + 8 digits, or 9 digits'],
-};
 
 const KNOWN_FIELDS = new Set([
   'date_of_application', 'email', 'dot_number', 'mc_number', 'mc_dot_60days', 'phone_number', 'company_name',
@@ -340,9 +328,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       }
     } else check('license.missing', p('licenseNumber'), `${who}: no driver's license number.`);
     if (!d.licenseState) check('license-state.missing', p('licenseState'), `${who}: no license state.`);
-    const format = LICENSE_FORMATS[d.licenseState];
-    if (d.licenseNumber && format && !format[0].test(d.licenseNumber)) {
-      check('license.format', p('licenseNumber'), `${who}: license number ${d.licenseNumber} doesn't look like a ${d.licenseState} license (usually ${format[1]}). Check it against the license.`);
+    if (rawLic && !parseLicense(rawLic).state && plain(rawLic) !== rawLic.toUpperCase()) {
+      info('license.cleaned', p('licenseNumber'), `${who}: license number written as "${rawLic}", entered as ${d.licenseNumber} (letters and digits only).`);
     }
 
     if (d.first && /\s/.test(d.first)) {
@@ -412,10 +399,6 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (txt('ins_exp_1') && !prior.expiration) { prior.expiration = txt('ins_exp_1'); check('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`); }
   if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
-    const exp = prior.expiration?.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-    if (exp && new Date(+exp[3], +exp[1] - 1, +exp[2]) < new Date(today.getFullYear(), today.getMonth(), today.getDate())) {
-      check('prior.expired', 'priorInsurance[0].expiration', `Current policy expiration ${prior.expiration} is already past. Was it renewed? Raters want the current expiration date.`);
-    }
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
   }
 

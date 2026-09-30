@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 6) return;
+  if (globalThis.__raterKit?.version === 7) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -314,8 +314,12 @@
 
   function matchOption(options, step) {
     const usable = options.filter((o) => squash(o.text) && !isPlaceholderOption(o.text));
-    // "Any option except …", e.g. the registered USDOT address instead of "Enter a different address".
-    if (step.kind === 'pick-not') return usable.find((o) => !new RegExp(step.value, 'i').test(o.text)) ?? null;
+    // "Any option except …" (e.g. the registered USDOT address instead of "Enter a different
+    // address"), preferring one that matches `prefer` when there are several.
+    if (step.kind === 'pick-not') {
+      const allowed = usable.filter((o) => !new RegExp(step.value.not, 'i').test(o.text));
+      return (step.value.prefer && allowed.find((o) => new RegExp(step.value.prefer, 'i').test(o.text))) || allowed[0] || null;
+    }
     const cands = candidates(step);
     for (const c of cands) {
       const hit = usable.find((o) => squash(o.text) === c || squash(o.value) === c);
@@ -510,8 +514,10 @@
   // Fills in rounds: each round re-reads the page, handles every step that now has a field, and
   // on pages that talk to their server after each answer (ExtJS/Duck Creek) stops after one
   // answer and waits. New questions that appear because of an answer get picked up next round.
-  async function fill(plan, { overwrite = false, maxRounds = 60 } = {}) {
-    clear();
+  // `skip`: field keys to leave alone (ones the agent changed; used by automatic follow-up fills).
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false } = {}) {
+    const skipKeys = new Set(skip);
+    if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
     const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], rounds: 0 };
     const serverBacked = !!ext();
@@ -521,7 +527,7 @@
       report.rounds = round + 1;
       const controls = collectControls();
       report.fields = Math.max(report.fields, controls.length);
-      const pairs = assign(controls, plan).filter(({ step }) => !handled.has(step.id));
+      const pairs = assign(controls, plan).filter(({ step, control }) => !handled.has(step.id) && !skipKeys.has(fieldKey(control)));
       let changed = false;
       for (const { step, control: c } of pairs) {
         const item = { label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind };
@@ -531,7 +537,7 @@
           continue;
         }
         // A pre-selected "Enter a different …" isn't an answer worth keeping for pick-not steps.
-        const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value, 'i').test(selectedText(c) ?? '');
+        const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '');
         if (!overwrite && hasValue(c) && !presetToReplace) {
           report.kept.push(item);
           handled.set(step.id, { status: null });
@@ -625,5 +631,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 6, fill, capture, clear };
+  globalThis.__raterKit = { version: 7, fill, capture, clear };
 })();

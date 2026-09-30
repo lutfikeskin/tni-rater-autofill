@@ -128,11 +128,11 @@ export function fieldChangeEvent(change, { record, filled, redact, labels }) {
 }
 
 // Fill results, minus typed values (text boxes) and client names.
-export function fillEvents(frames, { carrier, page, overwrite, ms, redact }) {
+export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms, redact }) {
   const all = (k) => frames.flatMap((f) => f[k] ?? []);
   const isChoice = (x) => x.controlKind && x.controlKind !== 'text';
   const events = [{
-    type: 'fill_run', carrier, page, overwrite, ms,
+    type: 'fill_run', carrier, page, overwrite, auto, ms,
     fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0),
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,

@@ -84,7 +84,8 @@ test('helpers', () => {
   assert.match(vinProblem('1FTBR3X87MKAO2345'), /I, O or Q/);
   assert.deepEqual(parseLimitDeductible('$100K/$2.5K Ded'), { limit: 100000, deductible: 2500 });
   assert.deepEqual(parseLicense('MD - 10123456789'), { state: 'MD', number: '10123456789' });
-  assert.deepEqual(parseLicense('D123-456-789'), { state: null, number: 'D123-456-789' });
+  assert.deepEqual(parseLicense('D123-456-789'), { state: null, number: 'D123456789' }, 'no dashes, ever');
+  assert.deepEqual(parseLicense('md 1234 5678 901'), { state: 'MD', number: '12345678901' });
   assert.equal(parseAddress('100 Main St, Rock Hill, SC 29730').city, 'Rock Hill');
   assert.equal(parseAddress('100 Main St, Rock Hill, SC 29730').confident, true);
   assert.equal(parseAddress('9 Oak Ave N Fort Worth TX 76102').city, 'Fort Worth');
@@ -150,22 +151,24 @@ test('progressive: loan/lease follows vehicle ownership once the agent fills it 
   assert.equal(buildPlan(r, carrier).find((s) => s.q === '216F').value, 'Not selected');
 });
 
-test('license format and expired prior policy are flagged', () => {
-  // Fixture license S12345678901 is a valid IL shape; an 11-digit MD number is not.
-  assert.doesNotMatch(msgs, /license\.format|doesn't look like a IL license/);
-  const r = normalizeIntake({ ...raw, drv_lic_1: 'MD - 10123456789', drv_state_1: 'MD', ins_exp_1: '08/14/2026' }, { today: new Date('2026-09-30') });
-  const codes = r.warnings.map((w) => w.code);
-  assert.ok(codes.includes('license.format'));
-  assert.ok(codes.includes('prior.expired'));
-  assert.ok(!normalizeIntake({ ...raw, ins_exp_1: '12/31/2026' }, { today: new Date('2026-09-30') }).warnings.some((w) => w.code === 'prior.expired'));
+test('current policy dates are used as written (no expiry warning)', () => {
+  const r = normalizeIntake({ ...raw, ins_exp_1: '08/14/2025' }, { today: new Date('2026-09-30') });
+  assert.equal(r.record.priorInsurance[0].expiration, '08/14/2025');
+  assert.ok(!r.warnings.some((w) => /expir/.test(w.code)));
 });
 
 test('progressive: fixes from the first live usage log', () => {
   const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
   const plan = buildPlan(record, carrier, {});
   const byQ = (q) => plan.find((s) => s.q === q);
-  // Prior policy is Progressive *personal* auto: not "insured with Progressive Commercial Auto".
-  assert.equal(byQ('198').value, false);
+  // Current insurance section names Progressive and has a limit and a date: yes.
+  assert.equal(byQ('198').value, true);
+  const noLimit = structuredClone(record);
+  noLimit.priorInsurance[0].limit = null;
+  assert.equal(buildPlan(noLimit, carrier).find((s) => s.q === '198').value, false);
+  const other = structuredClone(record);
+  other.priorInsurance[0].carrier = 'GEICO';
+  assert.equal(buildPlan(other, carrier).find((s) => s.q === '198').value, false);
   assert.equal(byQ('81').re, '^is the customer currently insured$');
   // 2F6 is the hazmat placard question, not a consent question.
   assert.equal(byQ('2F6').value, false);
@@ -173,7 +176,40 @@ test('progressive: fixes from the first live usage log', () => {
   // USDOT-registered name/addresses are picked over "Enter a different ...".
   for (const q of ['22F', '277', '2A5']) {
     assert.equal(byQ(q).kind, 'pick-not');
-    assert.equal(byQ(q).value, '^enter a different');
+    assert.equal(byQ(q).value.not, '^enter a different');
   }
+  assert.equal(byQ('2A5').value.prefer, 'primary business address');
+  // Without a registered address the owner's home address boxes get the intake's address.
+  assert.equal(byQ('2AA').value, '125 Maple Leaf Dr');
+  assert.equal(byQ('2AE').value, '62704');
   assert.equal(byQ('28B9').value, 'S12345678901');
+});
+
+test('progressive: standard answers for follow-up questions', () => {
+  const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
+  const byQ = (q, r = record) => buildPlan(r, carrier).find((s) => s.q === q);
+  assert.equal(byQ('2CCC').value, true, 'comprehensive/collision: yes');
+  assert.equal(byQ('2158').value, false, 'special cargo: no');
+  assert.equal(byQ('215A').value, false, 'special cargo: no');
+  assert.equal(byQ('216A').value, 'Consumer Goods', '"General freight hauler"');
+  assert.equal(byQ('216B').value, 'Other Consumer Goods');
+  assert.equal(byQ('83').value, true);
+  assert.equal(byQ('A2').value, 'None');
+  assert.equal(byQ('28C1').value, false);
+  // Filings: both answers only when the intake says filings are needed.
+  assert.equal(byQ('F11').value, true);
+  assert.equal(byQ('F20').value, true);
+  const noFilings = structuredClone(record);
+  noFilings.operations.filingsRequired = false;
+  assert.equal(byQ('F11', noFilings).value, null);
+  assert.equal(byQ('CA', noFilings).value, false);
+  // No USDOT and not getting one: "No".
+  const noDot = structuredClone(record);
+  noDot.applicant.dot = null;
+  assert.equal(byQ('1ED', noDot).value, 'No - and the customer will not have a USDOT number');
+  assert.equal(byQ('20F', noDot).value, null);
+  // Other freight descriptions aren't guessed.
+  const other = structuredClone(record);
+  other.operations.whatHaul = 'Auto parts';
+  assert.equal(byQ('216A', other).value, null);
 });

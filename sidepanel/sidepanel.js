@@ -32,6 +32,13 @@ const state = {
   filled: new Map(),
   // Question text per field key, from the fill engine (better than the recorder's guess).
   labels: new Map(),
+  // Automatic follow-up fills: pages the agent has filled in this tab, and per page the fields
+  // the agent changed themselves (never refilled automatically).
+  autoPages: new Set(),
+  agentKeys: new Map(),
+  filling: false,
+  autoTimer: null,
+  autoPending: false,
 };
 
 function h(tag, props = {}, ...children) {
@@ -243,7 +250,12 @@ function renderPickers() {
 async function refreshTab() {
   if (!inExtension) { state.tab = null; return renderSite(); }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id !== state.tab?.id) { state.filled = new Map(); state.labels = new Map(); }
+  if (tab?.id !== state.tab?.id) {
+    state.filled = new Map();
+    state.labels = new Map();
+    state.autoPages = new Set();
+    state.agentKeys = new Map();
+  }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null } : null;
   renderSite();
   ensureRecorder();
@@ -252,7 +264,9 @@ async function refreshTab() {
 // ---------------------------------------------------------------------------------------------
 // Usage recording (see src/usage.js for what is and isn't kept)
 
-const pageOf = (url) => { try { const u = new URL(url); return u.searchParams.get('pageName') || u.pathname; } catch { return null; } };
+// Progressive re-renders a page as "<Page>-Reload"; it's the same page.
+const samePage = (p) => (p ?? '').replace(/-Reload$/, '');
+const pageOf = (url) => { try { const u = new URL(url); return samePage(u.searchParams.get('pageName') || u.pathname); } catch { return null; } };
 
 // Watch the rater tab while an intake is loaded. Only carrier pages; never other sites.
 async function ensureRecorder() {
@@ -277,7 +291,61 @@ function onRecorderMessage(msg, sender) {
   if (msg.event === 'field_changes') {
     const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, redact: redactor(redactionTerms(state.intake.record)) };
     usage.log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
+    const byAgent = msg.changes.filter((c) => c.agent);
+    if (byAgent.length) {
+      const page = samePage(msg.page);
+      const keys = state.agentKeys.get(page) ?? new Set();
+      byAgent.forEach((c) => keys.add(c.key));
+      state.agentKeys.set(page, keys);
+      scheduleAutoFill(page);
+    }
   }
+  if (msg.event === 'new_fields') scheduleAutoFill(samePage(msg.page));
+}
+
+// ---------------------------------------------------------------------------------------------
+// Automatic follow-up fills: once the agent has filled a page, questions that appear later
+// (revealed by an answer, or in a panel that opens) are filled with the intake/standard answers.
+// Fields that already have a value, or that the agent changed, are left alone.
+
+function scheduleAutoFill(page) {
+  if (!$('auto-followups').checked || !state.autoPages.has(page) || !state.tab?.carrier) return;
+  if (state.filling) { state.autoPending = true; return; }
+  clearTimeout(state.autoTimer);
+  state.autoTimer = setTimeout(() => autoFill(page), 1200);
+}
+
+async function autoFill(page) {
+  if (state.filling || pageOf(state.tab?.url) !== page) return;
+  const { id: tabId, carrier } = state.tab;
+  state.filling = true;
+  state.autoPending = false;
+  const started = Date.now();
+  await tellRecorder('pause');
+  try {
+    const plan = buildPlan(state.intake.record, carrier, state.active);
+    const skip = [...(state.agentKeys.get(page) ?? [])];
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, { overwrite: false, skip, keepMarks: true }]);
+    const frames = results.map((r) => r.result).filter(Boolean);
+    rememberFill(frames);
+    const n = frames.reduce((k, f) => k + f.filled.length, 0);
+    if (n) {
+      usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)) }));
+      const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
+      $('report').append(note);
+    }
+  } catch (e) {
+    usage.log({ type: 'fill_error', carrier: carrier.id, page, auto: true, error: String(e.message).slice(0, 200) });
+  } finally {
+    await tellRecorder('resume');
+    state.filling = false;
+    if (state.autoPending) scheduleAutoFill(page);
+  }
+}
+
+function rememberFill(frames) {
+  for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
+  for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
 }
 
 function renderSite() {
@@ -310,7 +378,11 @@ async function runKit(tabId, carrier, func, args = []) {
 }
 
 async function fillPage() {
+  if (state.filling) return;
+  state.filling = true;
+  clearTimeout(state.autoTimer);
   const { id: tabId, carrier } = state.tab;
+  const page = pageOf(state.tab.url);
   const plan = buildPlan(state.intake.record, carrier, state.active);
   const overwrite = $('overwrite').checked;
   $('fill').disabled = true;
@@ -323,10 +395,10 @@ async function fillPage() {
   try {
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, { overwrite }]);
     const frames = results.map((r) => r.result).filter(Boolean);
-    for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
-    for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
+    rememberFill(frames);
+    state.autoPages.add(page);
     usage.log(...fillEvents(frames, {
-      carrier: carrier.id, page: pageOf(state.tab.url), overwrite, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
+      carrier: carrier.id, page, overwrite, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
     }));
     renderReport(frames);
   } catch (e) {
@@ -334,6 +406,7 @@ async function fillPage() {
     $('report').replaceChildren(h('p', { class: 'error' }, `Couldn't fill this page: ${e.message}`));
   } finally {
     await tellRecorder('resume');
+    state.filling = false;
     $('fill').disabled = false;
     $('fill').textContent = 'Fill this page';
   }
@@ -411,6 +484,7 @@ async function renderUsage() {
 }
 
 function wireUsage() {
+  $('auto-followups').addEventListener('change', (e) => usage.saveSettings({ autoFollowUps: e.target.checked }));
   $('agent').addEventListener('change', async (e) => {
     await usage.saveSettings({ agent: e.target.value.trim().toUpperCase().slice(0, 6) || null });
     renderUsage();
@@ -487,6 +561,7 @@ async function init() {
   state.intake = (await store.get('intake')) ?? null;
   state.active = (await store.get('active')) ?? state.active;
   usage.restoreSession((await store.get('session')) ?? null);
+  $('auto-followups').checked = (await usage.settings()).autoFollowUps ?? true;
   render();
   renderUsage();
   await refreshTab();

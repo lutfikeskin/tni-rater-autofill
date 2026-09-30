@@ -2,14 +2,17 @@
 //
 // The quote flow is an ExtJS 6 + Duck Creek ("DCT") single-page app. Every field is keyed by a
 // Duck Creek question id (`q`), taken from the element id / field name; `label` is a fallback
-// regex on the question text in case Progressive renumbers. Mapped from a live MD for-hire
-// expediter quote (captures/progressive/MD_for-hire-expediter_1-van_2026-09-30.json). Questions
-// that exist only in other states or for other products are skipped when they aren't on the page,
-// and the generic label rules still apply to anything not listed here.
+// regex on the question text in case Progressive renumbers. Mapped from live MD for-hire
+// expediter quotes (captures/progressive/). Questions that exist only in other states or for
+// other products are skipped when they aren't on the page, and the generic label rules still
+// apply to anything not listed here.
 //
 // Rules either read a record path, or compute a value with `value(record, active)` when
 // Progressive words the answer differently from the intake form. `note` rules are questions the
-// agent must answer themselves (consents, report orders); they're marked, never filled.
+// agent must answer themselves; they're marked, never filled.
+//
+// Follow-up questions the intake doesn't cover use TNI's standard answers (the agent's own
+// choices on live quotes). The agent changes them for the exceptions.
 
 const digits = (s) => String(s ?? '').replace(/\D/g, '');
 
@@ -22,19 +25,19 @@ function owner(r) {
   return { driver, first: first || null, middle: driver?.middle ?? null, last: driver?.last ?? full.split(/\s+/).at(-1) ?? null };
 }
 
-// "Is the customer currently insured with Progressive Commercial Auto?" Only yes when the
-// current policy is a Progressive commercial auto policy (a Progressive personal auto policy
-// doesn't count; an agent corrected exactly that on a live quote).
-const withProgressiveCommercial = (r) => {
+// "Is the customer currently insured with Progressive Commercial Auto?" Yes only when the
+// intake's current-insurance section names Progressive and is filled out with the coverage
+// (limit) and the expiration date.
+const insuredWithProgressive = (r) => {
   const p = r.priorInsurance[0];
-  if (!p) return null;
-  return /progressive/i.test(p.carrier ?? '') && p.type === 'Commercial Auto';
+  return !!(p && /progressive/i.test(p.carrier ?? '') && p.limit && p.expiration);
 };
 
 // After a USDOT lookup Progressive offers the registered business name / address as a choice,
-// next to "Enter a different …". Agents pick the registered one, so do the same instead of
-// typing the intake's version into the manual boxes.
-const REGISTERED = { kind: 'pick-not', value: () => '^enter a different' };
+// next to "Enter a different …". Agents pick the registered one. Without a USDOT number there is
+// no such choice: the manual boxes are the only option and get the intake's values (below and
+// in the generic address rules).
+const registered = (prefer) => ({ kind: 'pick-not', value: () => ({ not: '^enter a different', prefer }) });
 
 const equipment = (r) => {
   const v = r.operations.equipVehicle;
@@ -47,6 +50,14 @@ const cargo = (r) => {
   return c.cargoLimit && c.cargoDeductible ? `$${c.cargoLimit}/$${c.cargoDeductible}` : null;
 };
 
+// What the intake calls the freight -> Progressive's commodity category and commodity.
+const COMMODITIES = [
+  { match: /general\s*freight/i, category: 'Consumer Goods', commodity: 'Other Consumer Goods' },
+];
+const commodity = (r) => COMMODITIES.find((c) => c.match.test(r.operations.whatHaul ?? '')) ?? null;
+
+const filings = (r) => (r.operations.filingsRequired ? true : null);
+
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
@@ -55,12 +66,22 @@ export const progressive = {
   world: 'MAIN',
   rules: [
     // --- Named Insured and Business Overview (pageName=BusinessOwnerInfo) ---------------------
-    { q: '198', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: withProgressiveCommercial },
-    { q: '1ED', name: 'Has a USDOT number', kind: 'choice', value: (r) => (r.applicant.dot ? 'Yes - the customer has a USDOT number' : r.applicant.mcDotWithin60Days ? 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days' : null) },
+    { q: '198', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive },
+    { q: '1ED', name: 'Has a USDOT number', kind: 'choice', value: (r) => {
+      if (r.applicant.dot) return 'Yes - the customer has a USDOT number';
+      if (r.applicant.mcDotWithin60Days === true) return 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days';
+      if (r.applicant.mcDotWithin60Days === false) return 'No - and the customer will not have a USDOT number';
+      return null;
+    } },
     { q: '1F3', path: 'applicant.dot', label: 'usdot number' },
-    { q: '22F', name: 'Business name (USDOT record)', ...REGISTERED },
-    { q: '277', name: 'Primary business address (USDOT record)', ...REGISTERED },
-    { q: '2A5', name: 'Owner home address (USDOT record)', ...REGISTERED },
+    { q: '20F', name: 'Question after USDOT lookup (standard: Yes)', kind: 'bool', value: (r) => (r.applicant.dot ? true : null) },
+    { q: '22F', name: 'Business name (USDOT record)', ...registered() },
+    { q: '277', name: 'Primary business address (USDOT record)', ...registered() },
+    { q: '2A5', name: 'Owner home address', ...registered('primary business address') },
+    // Owner home address boxes, shown when there's no registered address to pick.
+    { q: '2AA', path: 'garaging.street', name: 'Owner home street' },
+    { q: '2AE', path: 'garaging.zip', name: 'Owner home ZIP' },
+    { q: '2B0', path: 'garaging.city', name: 'Owner home city' },
     { q: '22D', name: 'Business structure', kind: 'choice', label: 'business structured', value: (r) => (/\b(llc|l\.l\.c|inc|corp|corporation|company|co)\.?$/i.test(r.applicant.name ?? '') ? 'Corporation or LLC / Non-Profit' : null) },
     { q: '267', path: 'operations.businessClass', name: 'Type of trucker', kind: 'choice', label: 'type of trucker' },
     { q: '295', name: 'Owner first name', label: '^first name$', value: (r) => owner(r).first },
@@ -75,10 +96,16 @@ export const progressive = {
     // --- More about the business (MoreAboutBusiness) -------------------------------------------
     { q: '77', path: 'applicant.email', label: 'customer email' },
     { q: '81', name: 'Currently insured', kind: 'bool', label: '^is the customer currently insured$', value: (r) => (r.priorInsurance.length ? true : null) },
+    { q: '83', name: 'Continuous coverage (standard: Yes)', kind: 'bool', label: 'continuous coverage', value: () => true },
     { q: '95', path: 'priorInsurance[0].limit', kind: 'choice', label: 'current bodily injury' },
     { q: '9D', path: 'priorInsurance[0].expiration', label: 'current policy expiration' },
+    { q: 'A2', name: 'Other business coverages (standard: None)', kind: 'choice', label: 'other coverages for the business', value: () => 'None' },
     { q: 'CA', path: 'operations.filingsRequired', label: 'filings required' },
     { q: 'D1', path: 'operations.usesEld', label: 'electronic logging' },
+
+    // --- Filings (pageName=Filings; only reached when filings are required) --------------------
+    { q: 'F11', name: 'Filings acknowledgement', kind: 'bool', value: filings },
+    { q: 'F20', name: 'Filing selected', kind: 'bool', value: filings },
 
     // --- Add vehicle (AddVehicle) ----------------------------------------------------------------
     { q: '2B20', path: 'vehicles[].vin' },
@@ -88,6 +115,7 @@ export const progressive = {
     { q: '2C05', name: 'Business / personal use', kind: 'choice', label: 'used for business personal', value: (r) => (r.operations.personalUse === false ? 'Business Only' : r.operations.personalUse ? 'Business & Personal' : null) },
     { q: '2C1A', name: 'Hauls for hire', kind: 'bool', label: 'for hire basis', value: (r) => (r.applicant.mc ? true : null) },
     { q: '2CA7', name: 'Loan / lease', kind: 'choice', label: 'loan lease', value: (r) => ({ Financed: 'Yes - Loan', Leased: 'Yes - Lease', Owned: 'No' })[r.operations.vehicleOwnership] ?? null },
+    { q: '2CCC', name: 'Comprehensive / collision (standard: Yes)', kind: 'bool', label: 'comprehensive or collision', value: () => true },
     { q: '2CCE', name: 'Attached equipment value', kind: 'choice', value: equipment },
 
     // --- Add driver (AddDriver) ------------------------------------------------------------------
@@ -95,13 +123,18 @@ export const progressive = {
     { q: '2899', name: 'Driver middle initial', value: (r, a) => r.drivers[a.drivers ?? 0]?.middle?.[0] ?? null },
     { q: '289A', path: 'drivers[].last' },
     { q: '28A7', path: 'drivers[].dob' },
-    { q: '28B9', path: 'drivers[].licenseNumber', label: 'drivers license number' },
     { q: '28AC', path: 'drivers[].licenseState', label: 'drivers license state' },
+    { q: '28B9', path: 'drivers[].licenseNumber', label: 'drivers license number' },
+    { q: '28C1', name: 'Exclude driver (standard: No)', kind: 'bool', label: 'exclude this driver', value: () => false },
     { q: '28F5', path: 'claims.hasClaims', name: 'Accidents / claims / violations (3 yrs)', kind: 'bool', label: 'accidents claims or violations' },
 
     // --- Coverages and rates (CoveragesRates) ----------------------------------------------------
     { q: '1D97', path: 'coverage.autoLiabLimit', label: 'bodily injury and property damage liability' },
     { q: '207F', name: 'Attached equipment value', kind: 'choice', value: equipment },
+    { q: '2158', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', label: 'mobile modular homes', value: () => false },
+    { q: '215A', name: 'Cargo for business documents (standard: No)', kind: 'bool', label: 'business documents or non negotiable', value: () => false },
+    { q: '216A', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null },
+    { q: '216B', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
     { q: '216F', name: 'Motor truck cargo', kind: 'choice', value: cargo },
     { q: '2150', name: 'Motor truck cargo', kind: 'choice', value: cargo },
 

@@ -57,6 +57,8 @@
       if (server['1ED']?.startsWith('Yes')) list.push(textQ('1F3', "USDOT Number associated with the customer's business:", 15));
       // After the USDOT lookup: registered address offered, but "Enter a different address" is
       // pre-selected with manual boxes showing (as seen on a live quote).
+      // No USDOT number: nothing to pick, the address boxes are the only option.
+      if (server['1ED']?.startsWith('No')) list.push(textQ('2A0', 'Street Address', 60), textQ('2A2', 'City', 40));
       if (server['1F3']) {
         server['277'] ??= 'Enter a different address';
         list.push(radioQ('277', 'Primary Business Address', ['125 MAPLE LEAF DR APT 4 SPRINGFIELD IL 62704 (USDOT Address)', 'Enter a different address']));
