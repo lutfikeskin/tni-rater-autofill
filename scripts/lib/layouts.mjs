@@ -1,0 +1,62 @@
+// Merges page_layout events (recorded after every fill) into one layout per carrier, state and
+// product: every page, every question seen, its options, and whether it only sometimes shows
+// (a follow-up question). Same shape as the hand-made captures in captures/<carrier>/, so the
+// replay test page can load either.
+
+const KIND = { select: 'combo', radio: 'radio', checkbox: 'checkbox' };
+
+export const layoutKey = (carrier, c = {}) => [
+  carrier,
+  c.state ?? 'XX',
+  (c.businessClass ?? 'unknown').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+  (c.vehicleTypes ?? []).map((t) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-')).sort().join('+') || 'no-vehicles',
+  c.trailers ? 'trailers' : null,
+].filter(Boolean).join('_');
+
+export function buildLayouts(events) {
+  const layouts = new Map();
+  for (const e of events) {
+    if (e.type !== 'page_layout' || !e.carrier || !e.page) continue;
+    const key = layoutKey(e.carrier, e.context);
+    const layout = layouts.get(key) ?? {
+      carrier: e.carrier, context: { ...e.context }, sessions: new Set(), from: e.t, to: e.t, pages: new Map(),
+    };
+    layout.sessions.add(e.session);
+    layout.to = e.t;
+    const page = layout.pages.get(e.page) ?? { snapshots: 0, fields: new Map() };
+    page.snapshots++;
+    for (const f of e.fields ?? []) {
+      const k = f.q ?? `${f.kind}:${f.label}`;
+      const prev = page.fields.get(k);
+      page.fields.set(k, {
+        q: f.q ?? null,
+        kind: f.type === 'dctinputdatefield' ? 'date' : KIND[f.kind] ?? 'text',
+        caption: f.label,
+        req: f.required || undefined,
+        opts: [...new Set([...(prev?.opts ?? []), ...(f.options ?? [])])].filter((o) => o !== ''),
+        mapped: f.mapped ?? prev?.mapped ?? null,
+        seen: (prev?.seen ?? 0) + 1,
+      });
+    }
+    layout.pages.set(e.page, page);
+    layouts.set(key, layout);
+  }
+
+  return [...layouts].map(([key, l]) => ({
+    key,
+    layout: {
+      carrier: l.carrier,
+      context: l.context,
+      generated: { from: l.from, to: l.to, quotes: l.sessions.size, by: 'scripts/build-layouts.mjs' },
+      pages: Object.fromEntries([...l.pages].map(([name, p]) => [name, {
+        fields: [...p.fields.values()].map((f) => ({
+          ...f,
+          opts: f.opts.length ? f.opts : undefined,
+          // Not on every snapshot of the page: shows only after certain answers.
+          cond: f.seen < p.snapshots || undefined,
+          seen: undefined,
+        })),
+      }])),
+    },
+  }));
+}

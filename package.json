@@ -6,7 +6,12 @@
   "description": "Chrome extension that fills Progressive and GEICO rater pages from a TNI quote application PDF",
   "scripts": {
     "vendor": "cp node_modules/pdfjs-dist/build/pdf.min.mjs node_modules/pdfjs-dist/build/pdf.worker.min.mjs lib/",
-    "test": "node --test \"test/*.test.mjs\""
+    "test": "node --test \"test/*.test.mjs\"",
+    "server": "node server/index.mjs",
+    "learn": "node scripts/learn-rules.mjs server-data",
+    "layouts": "node scripts/build-layouts.mjs server-data",
+    "summary": "node scripts/summarize-usage.mjs server-data",
+    "replay": "echo 'Open http://localhost:8792/test/replay/' && python3 -m http.server 8792 --bind 127.0.0.1"
   },
   "devDependencies": {
     "pdfjs-dist": "^4.10.38"

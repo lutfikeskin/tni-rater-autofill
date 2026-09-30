@@ -209,6 +209,7 @@ details.section > summary .title { flex: 1; }
 .usage > summary { cursor: pointer; font-weight: 600; font-size: 12px; color: var(--muted); }
 .usage-body { display: grid; gap: 8px; padding-top: 8px; }
 .usage-agent { display: flex; gap: 8px; align-items: center; color: var(--muted); }
+.usage-agent #server-url, .usage-agent #server-token { width: auto; flex: 1; text-transform: none; }
 .usage-agent input { width: 80px; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; text-transform: uppercase; }
 
 .report { display: grid; gap: 6px; }

@@ -1,2 +1,5 @@
 node_modules/
 .DS_Store
+server-data/
+# Layouts built from agents' usage logs: review before committing any.
+captures/*/generated/

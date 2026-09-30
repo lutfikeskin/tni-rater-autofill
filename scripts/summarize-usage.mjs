@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Turns exported usage logs into a to-do list for improving the extension.
 //
-//   node scripts/summarize-usage.mjs rater-usage-*.json [--json]
+//   node scripts/summarize-usage.mjs server-data [rater-usage-*.json ...] [--json]
 //
 // Sections:
 //   intakes      how many, which warning codes come up, which intake fields agents correct
@@ -11,22 +11,17 @@
 //   failures     fields autofill couldn't set, and why
 //   pages        time spent per carrier page, fill runs and results
 
-import fs from 'node:fs';
+import { loadEvents } from './lib/events.mjs';
 
 const args = process.argv.slice(2);
 const asJson = args.includes('--json');
 const files = args.filter((a) => !a.startsWith('--'));
 if (!files.length) {
-  console.error('usage: node scripts/summarize-usage.mjs <usage-log.json>... [--json]');
+  console.error('usage: node scripts/summarize-usage.mjs <server-data folder | usage-log.json>... [--json]');
   process.exit(1);
 }
 
-// Older logs: events may lack the agent's initials (set only at export) and may name the same
-// page "<Page>-Reload".
-const events = files.flatMap((f) => {
-  const log = JSON.parse(fs.readFileSync(f, 'utf8'));
-  return (log.events ?? []).map((e) => ({ ...e, agent: e.agent ?? log.agent ?? null, page: e.page?.replace(/-Reload$/, '') }));
-}).filter((e) => e.page !== 'blank');
+const events = loadEvents(files);
 const tally = (map, key, n = 1) => map.set(key, (map.get(key) ?? 0) + n);
 const top = (map, n = 25) => [...map].sort((a, b) => b[1] - a[1]).slice(0, n);
 const fieldName = (e) => `${e.carrier ?? '?'} ${e.page ?? '?'} ${e.q ? `q${e.q} ` : ''}"${e.label ?? ''}"`;

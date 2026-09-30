@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Layout Replay</title>
+  <!-- Rebuilds carrier pages from a layout file (captures/<carrier>/*.json, hand-made or built
+       by scripts/build-layouts.mjs) as working ExtJS pages with Duck Creek-style ids, captions
+       and a server round-trip after each answer, then runs the real fill engine on them.
+       Serve the repo root (python3 -m http.server 8792) and open /test/replay/.
+       Built from recorded structure only; no carrier HTML or code is copied. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/classic/theme-classic/resources/theme-classic-all.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/ext-all.js"></script>
+  <style>
+    body { font: 13px system-ui, sans-serif; margin: 0; background: #fff; color: #111; }
+    header { position: sticky; top: 0; z-index: 10; background: #f3f4f6; border-bottom: 1px solid #ddd; padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    header input[type=text] { width: 420px; max-width: 100%; font: inherit; padding: 4px 6px; }
+    header select, header button { font: inherit; padding: 4px 8px; }
+    main { display: grid; grid-template-columns: minmax(0, 600px) minmax(0, 1fr); gap: 16px; padding: 16px; }
+    @media (max-width: 1200px) { main { grid-template-columns: 1fr; } }
+    #report { overflow-x: auto; }
+    #report ul { margin: 0; padding-left: 16px; }
+    .caption { margin: 12px 0 3px; font-weight: 600; }
+    .tag { font-weight: 400; font-size: 11px; color: #92400e; background: #fef3c7; border-radius: 4px; padding: 1px 5px; margin-left: 6px; }
+    #report table { border-collapse: collapse; width: 100%; font-size: 12px; }
+    #report th, #report td { border-bottom: 1px solid #e5e7eb; padding: 4px 6px; text-align: left; vertical-align: top; }
+    #report .num { text-align: right; }
+    .muted { color: #6b7280; }
+    .err { color: #b91c1c; }
+  </style>
+</head>
+<body>
+  <header>
+    <label>Layout <input id="layout" type="text" value="/captures/progressive/MD_for-hire-expediter_1-van_2026-09-30.json"></label>
+    <button id="load">Load</button>
+    <label>Page <select id="page"></select></label>
+    <label>Intake <input id="pdf" type="file" accept="application/pdf"></label>
+    <button id="fill-one">Fill this page</button>
+    <button id="fill-all">Fill every page</button>
+    <span id="status" class="muted"></span>
+  </header>
+  <main>
+    <section><div id="form"></div></section>
+    <section id="report"><p class="muted">Load a layout, then fill a page or every page. The intake defaults to the fake sample (test/fixtures/sample-intake.pdf).</p></section>
+  </main>
+
+  <script>
+    // --- Duck Creek-style components (same idea as test/mock-progressive) ----------------------
+    const GUID = 'A8BF9205B84D84AF79F30CD043C8464E';
+    Ext.define('Replay.Combo', { extend: 'Ext.form.field.ComboBox', alias: 'widget.dctcombofield' });
+    Ext.define('Replay.RadioGroup', { extend: 'Ext.form.RadioGroup', alias: 'widget.dctradiogroup' });
+    Ext.define('Replay.Radio', { extend: 'Ext.form.field.Radio', alias: 'widget.dctradiofield' });
+    Ext.define('Replay.Text', { extend: 'Ext.form.field.Text', alias: 'widget.dctinputstringfield' });
+    Ext.define('Replay.Check', { extend: 'Ext.form.field.Checkbox', alias: 'widget.dctcheckboxfield' });
+
+    window.replay = { answers: {}, form: null, fields: [], page: null };
+
+    function idFor(f, i) {
+      // Layout fields without a question id get a stable made-up one, so they still render.
+      const q = f.q && /^[0-9A-F]+$/.test(f.q) ? f.q : `F${(1000 + i).toString(16).toUpperCase()}`;
+      return { id: `f_a${GUID}${q}_8_1`, q };
+    }
+
+    function fieldConfig(f, i) {
+      const { id, q } = idFor(f, i);
+      const answers = window.replay.answers;
+      const common = { id, dctCaption: f.caption || '(no caption)', dctRequired: !!f.req };
+      const answer = (v) => { answers[q] = v; window.replay.roundTrip(); };
+      const opts = (f.opts ?? []).filter((o) => o && !/^…/.test(o));
+      if (f.kind === 'radio' || f.kind === 'checkgroup') {
+        const list = opts.length ? opts : ['Yes', 'No'];
+        return { ...common, xtype: 'dctradiogroup', columns: 1, vertical: true,
+          items: list.map((o, j) => ({ xtype: 'dctradiofield', id: `${id}_${j}`, name: `string_${q}`, boxLabel: o, inputValue: o, checked: answers[q] === o })),
+          listeners: { change: (g, v) => answer(v[`string_${q}`]) } };
+      }
+      if (f.kind === 'checkbox') {
+        return { ...common, xtype: 'dctcheckboxfield', name: `boolean_${q}`, boxLabel: f.caption, value: answers[q] === true,
+          listeners: { change: (c, v) => answer(v) } };
+      }
+      if (f.kind === 'combo' && opts.length) {
+        return { ...common, xtype: 'dctcombofield', queryMode: 'local', editable: true, forceSelection: true,
+          store: { fields: ['code', 'text'], data: opts.map((t, j) => ({ code: `${q}-${j}`, text: t })) },
+          displayField: 'text', valueField: 'code', value: answers[q] ?? null,
+          listeners: { blur: (c) => { if ((answers[q] ?? null) !== c.getValue()) answer(c.getValue()); } } };
+      }
+      return { ...common, xtype: 'dctinputstringfield', name: `string_${q}|`, maxLength: f.max, enforceMaxLength: !!f.max, value: answers[q] ?? '',
+        listeners: { blur: (c) => { if ((answers[q] ?? '') !== c.getValue()) answer(c.getValue()); } } };
+    }
+
+    window.replay.render = function render() {
+      const r = window.replay;
+      if (r.form) r.form.destroy();
+      r.form = Ext.create('Ext.form.Panel', {
+        renderTo: 'form', border: false, width: 580, defaults: { width: 560 },
+        items: r.fields.flatMap((f, i) => [
+          { xtype: 'component', cls: 'caption', html: `${Ext.htmlEncode(f.caption || '(no caption)')}${f.q ? ` <span class="muted">q${f.q}</span>` : ''}${f.cond ? '<span class="tag">follow-up</span>' : ''}` },
+          fieldConfig(f, i),
+        ]),
+      });
+    };
+
+    // Every answer goes to the "server": mask, wait, redraw (new DOM), like Duck Creek.
+    window.replay.roundTrip = function roundTrip() {
+      window.replay.form.mask('Loading...');
+      setTimeout(window.replay.render, 250);
+    };
+  </script>
+
+  <script type="module">
+    import * as pdfjs from '/lib/pdf.min.mjs';
+    import { readIntakeFields } from '/src/intake.js';
+    import { normalizeIntake } from '/src/normalize.js';
+    import { buildPlan } from '/src/plan.js';
+    import { CARRIERS } from '/src/carriers.js';
+
+    pdfjs.GlobalWorkerOptions.workerSrc = '/lib/pdf.worker.min.mjs';
+    const $ = (id) => document.getElementById(id);
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+    let layout = null;
+
+    await new Promise((res) => { const s = document.createElement('script'); s.src = '/src/content/pagekit.js'; s.onload = res; document.head.append(s); });
+
+    async function intakeRecord() {
+      const file = $('pdf').files[0];
+      const bytes = file ? new Uint8Array(await file.arrayBuffer()) : new Uint8Array(await (await fetch('/test/fixtures/sample-intake.pdf')).arrayBuffer());
+      const result = normalizeIntake(await readIntakeFields(pdfjs, bytes));
+      if (result.error) throw new Error(result.error);
+      return result.record;
+    }
+
+    async function load() {
+      $('status').textContent = 'Loading…';
+      layout = await (await fetch($('layout').value)).json();
+      $('page').replaceChildren(...Object.keys(layout.pages).map((p) => new Option(`${p} (${layout.pages[p].fields?.length ?? 0})`, p)));
+      showPage(Object.keys(layout.pages)[0]);
+      const c = layout.context ?? {};
+      $('status').textContent = `${layout.carrier}: ${[c.state, c.businessClass ?? c.operation, (c.vehicleTypes ?? []).join('+') || c.units].filter(Boolean).join(' · ')}`;
+    }
+
+    function showPage(name) {
+      $('page').value = name;
+      Object.assign(window.replay, { answers: {}, page: name, fields: layout.pages[name].fields ?? [] });
+      window.replay.render();
+    }
+
+    // Fills the page on screen and describes what happened to each question.
+    async function fillPage(record) {
+      const carrier = CARRIERS.find((c) => c.id === layout.carrier) ?? null;
+      const plan = buildPlan(record, carrier, {});
+      const before = window.__raterKit.capture(plan, []).controls;
+      const r = await window.__raterKit.fill(plan, {});
+      const how = (x) => (x.path?.startsWith(`${carrier?.id}.`) ? 'standard/computed' : 'intake');
+      return {
+        questions: before.length,
+        filled: r.filled.map((x) => ({ label: x.label, shown: x.shown, how: how(x) })),
+        noData: r.noData.map((x) => x.label + (x.note ? ` (${x.note})` : '')),
+        failed: r.failed.map((x) => `${x.label}: ${x.reason}`),
+        unmapped: before.filter((c) => !c.wouldFill).map((c) => c.label),
+      };
+    }
+
+    function reportRows(rows) {
+      const list = (xs) => (xs.length ? `<ul>${xs.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : '<span class="muted">–</span>');
+      const total = (k) => rows.reduce((n, r) => n + (Array.isArray(r[k]) ? r[k].length : r[k]), 0);
+      $('report').innerHTML = `
+        <p><b>${total('filled')} of ${total('questions')} questions filled</b> across ${rows.length} page(s) ·
+          ${total('noData')} not on intake · ${total('failed')} failed · ${total('unmapped')} with no rule</p>
+        <table><thead><tr><th>Page</th><th class="num">Qs</th><th class="num">Filled</th><th>Failed</th><th>No rule (candidates)</th><th>Not on intake</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr><td>${esc(r.page)}</td><td class="num">${r.questions}</td><td class="num">${r.filled.length}</td>
+          <td class="err">${list(r.failed)}</td><td>${list(r.unmapped)}</td><td>${list(r.noData)}</td></tr>`).join('')}</tbody></table>`;
+      window.replay.lastReport = rows;
+    }
+
+    async function run(all) {
+      // The replay page's own controls aren't part of the carrier page: disabled controls are
+      // ignored by the fill engine.
+      const own = [...document.querySelectorAll('header input, header select, header button')];
+      own.forEach((el) => { el.disabled = true; });
+      try {
+        $('status').textContent = 'Reading intake…';
+        const record = await intakeRecord();
+        const pages = all ? Object.keys(layout.pages) : [window.replay.page];
+        const rows = [];
+        for (const p of pages) {
+          $('status').textContent = `Filling ${p}…`;
+          if (all) showPage(p);
+          rows.push({ page: p, ...(await fillPage(record)) });
+        }
+        reportRows(rows);
+        $('status').textContent = 'Done';
+      } catch (e) {
+        $('status').textContent = `Error: ${e.message}`;
+      } finally {
+        own.forEach((el) => { el.disabled = false; });
+      }
+    }
+
+    $('load').addEventListener('click', load);
+    $('page').addEventListener('change', (e) => showPage(e.target.value));
+    $('fill-one').addEventListener('click', () => run(false));
+    $('fill-all').addEventListener('click', () => run(true));
+    Ext.onReady(() => {
+      const fromUrl = new URLSearchParams(location.search).get('layout');
+      if (fromUrl) $('layout').value = fromUrl;
+      load();
+    });
+    window.replay.run = run;
+  </script>
+</body>
+</html>

@@ -96,7 +96,7 @@ test('fill results drop typed values but keep chosen options', () => {
 test('summary script turns a log into corrections and mapping candidates', async () => {
   const s = await intakeSummary(bytes, raw, result);
   const base = { v: '0.1.0', agent: 'LK', session: 's1', intakeId: s.intakeId };
-  const log = { events: [
+  const log = { kind: 'usage-log', events: [
     { ...base, t: '2026-10-01T10:00:00Z', type: 'intake_loaded', ...s },
     { ...base, t: '2026-10-01T10:00:05Z', type: 'page_view', carrier: 'progressive', page: 'AddVehicle' },
     { ...base, t: '2026-10-01T10:00:09Z', type: 'fill_run', carrier: 'progressive', page: 'AddVehicle', filled: 5, failed: 1, noData: 1, ms: 8000 },

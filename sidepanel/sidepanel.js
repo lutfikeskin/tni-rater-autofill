@@ -39,6 +39,7 @@ const state = {
   filling: false,
   autoTimer: null,
   autoPending: false,
+  layoutsSent: new Set(),
 };
 
 function h(tag, props = {}, ...children) {
@@ -83,6 +84,7 @@ async function loadFile(file) {
   state.filled = new Map();
   await store.set('session', usage.startSession(summary.intakeId));
   usage.log({ type: 'intake_loaded', ...summary });
+  uploadNow();
   await save();
   render();
   refreshTab();
@@ -286,6 +288,10 @@ function onRecorderMessage(msg, sender) {
   const carrier = state.tab.carrier?.id ?? null;
   if (msg.event === 'page_view') {
     usage.log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
+    // Setting "Fill each new page as soon as it opens": wait for the page to settle, then fill.
+    if ($('auto-pages').checked && msg.fields > 0 && !state.autoPages.has(samePage(msg.page))) {
+      setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 800);
+    }
     return;
   }
   if (msg.event === 'field_changes') {
@@ -333,6 +339,7 @@ async function autoFill(page) {
       usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)) }));
       const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
       $('report').append(note);
+      recordLayout(page);
     }
   } catch (e) {
     usage.log({ type: 'fill_error', carrier: carrier.id, page, auto: true, error: String(e.message).slice(0, 200) });
@@ -341,6 +348,36 @@ async function autoFill(page) {
     state.filling = false;
     if (state.autoPending) scheduleAutoFill(page);
   }
+}
+
+// Each page's question layout (ids, question text, options; no answers) goes into the usage
+// log once per session, so layouts for every state and product collect themselves as agents
+// quote. scripts/build-layouts.mjs turns them into test pages.
+async function recordLayout(page) {
+  const { id: tabId, carrier } = state.tab;
+  try {
+    const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
+      [buildPlan(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
+    const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => ({
+      q: c.q ?? null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
+      // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
+      options: c.options?.length && !/agent|producer/i.test(c.label ?? '') ? c.options : undefined, mapped: c.wouldFill ?? null,
+    }));
+    const signature = `${usage.currentSession()?.id}|${page}|${fields.map((f) => f.q ?? f.label).join(',')}`;
+    if (!fields.length || state.layoutsSent.has(signature)) return;
+    state.layoutsSent.add(signature);
+    const r = state.intake.record;
+    const context = {
+      state: r.garaging?.state ?? null,
+      businessClass: r.operations.businessClass,
+      vehicleTypes: [...new Set(r.vehicles.map((v) => v.type).filter(Boolean))],
+      trailers: r.trailers.length > 0,
+      drivers: r.drivers.length,
+      vehicles: r.vehicles.length,
+      coverages: Object.entries(r.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
+    };
+    usage.log({ type: 'page_layout', carrier: carrier.id, page, context, fields });
+  } catch { /* layout capture is best-effort */ }
 }
 
 function rememberFill(frames) {
@@ -377,14 +414,15 @@ async function runKit(tabId, carrier, func, args = []) {
   return chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), func, args });
 }
 
-async function fillPage() {
-  if (state.filling) return;
+// `auto`: 'page' when started because a new page opened (setting "Fill each new page").
+async function fillPage({ auto = false } = {}) {
+  if (state.filling || !state.intake || !state.tab?.carrier) return;
   state.filling = true;
   clearTimeout(state.autoTimer);
   const { id: tabId, carrier } = state.tab;
   const page = pageOf(state.tab.url);
   const plan = buildPlan(state.intake.record, carrier, state.active);
-  const overwrite = $('overwrite').checked;
+  const overwrite = auto ? false : $('overwrite').checked;
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
   $('report').replaceChildren(h('p', { class: 'muted small' }, 'Filling one answer at a time where the page checks each answer with its server. Keep this tab open.'));
@@ -397,8 +435,9 @@ async function fillPage() {
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
     state.autoPages.add(page);
+    recordLayout(page);
     usage.log(...fillEvents(frames, {
-      carrier: carrier.id, page, overwrite, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
+      carrier: carrier.id, page, overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
     }));
     renderReport(frames);
   } catch (e) {
@@ -477,14 +516,42 @@ async function capturePage() {
 
 async function renderUsage() {
   const n = await usage.count();
-  const { agent = '', lastExport } = await usage.settings();
-  $('usage-count').textContent = `${n.toLocaleString()} event${n === 1 ? '' : 's'} saved on this computer${lastExport ? ` · last export ${new Date(lastExport).toLocaleDateString()}` : ' · not exported yet'}`;
-  if (document.activeElement !== $('agent')) $('agent').value = agent;
+  const { agent = '', serverUrl = usage.DEFAULT_SERVER, serverToken = '' } = await usage.settings();
+  $('usage-count').textContent = n
+    ? `${n.toLocaleString()} event${n === 1 ? '' : 's'} waiting on this computer`
+    : 'Nothing waiting on this computer.';
+  const up = usage.lastUpload();
+  const when = up.at ? new Date(up.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  $('upload-status').textContent = {
+    ok: `Uploaded to the server at ${when}.`,
+    error: `Upload failed at ${when}: ${up.message}. Events stay here and are retried every minute.`,
+    off: 'No server set: use Export log to hand in the usage log.',
+    idle: serverUrl ? `Uploads to ${serverUrl} every minute.` : '',
+  }[up.state] ?? '';
+  for (const [id, v] of [['agent', agent], ['server-url', serverUrl], ['server-token', serverToken]]) {
+    if (document.activeElement !== $(id)) $(id).value = v;
+  }
   $('recording').hidden = !state.intake;
+}
+
+async function uploadNow() {
+  await usage.upload();
+  renderUsage();
 }
 
 function wireUsage() {
   $('auto-followups').addEventListener('change', (e) => usage.saveSettings({ autoFollowUps: e.target.checked }));
+  $('auto-pages').addEventListener('change', (e) => usage.saveSettings({ autoPages: e.target.checked }));
+  $('server-url').addEventListener('change', async (e) => {
+    const v = e.target.value.trim();
+    // Blank means "no server" (export only); anything else must be an http(s) URL.
+    if (v && !/^https?:\/\/[^\s]+$/i.test(v)) { $('usage-note').textContent = 'Server must look like http://host:port'; return; }
+    await usage.saveSettings({ serverUrl: v });
+    uploadNow();
+  });
+  $('server-token').addEventListener('change', async (e) => { await usage.saveSettings({ serverToken: e.target.value.trim() }); uploadNow(); });
+  $('upload-usage').addEventListener('click', uploadNow);
+  setInterval(uploadNow, 60_000);
   $('agent').addEventListener('change', async (e) => {
     await usage.saveSettings({ agent: e.target.value.trim().toUpperCase().slice(0, 6) || null });
     renderUsage();
@@ -498,7 +565,7 @@ function wireUsage() {
     const { lastExportCount = 0 } = await usage.settings();
     const n = await usage.count();
     const msg = n > lastExportCount
-      ? `${n - lastExportCount} events haven't been exported yet. Delete all ${n} anyway?`
+      ? `${n} events are waiting here and haven't been uploaded or exported. Delete them anyway?`
       : `Delete the ${n} exported events from this computer?`;
     if (!confirm(msg)) return;
     await usage.clearLog();
@@ -544,7 +611,7 @@ function wire() {
     $('report').replaceChildren();
     render();
   });
-  $('fill').addEventListener('click', fillPage);
+  $('fill').addEventListener('click', () => fillPage());
   $('unmark').addEventListener('click', clearMarks);
   $('capture').addEventListener('click', capturePage);
   wireUsage();
@@ -561,7 +628,10 @@ async function init() {
   state.intake = (await store.get('intake')) ?? null;
   state.active = (await store.get('active')) ?? state.active;
   usage.restoreSession((await store.get('session')) ?? null);
-  $('auto-followups').checked = (await usage.settings()).autoFollowUps ?? true;
+  const saved = await usage.settings();
+  $('auto-followups').checked = saved.autoFollowUps ?? true;
+  $('auto-pages').checked = saved.autoPages ?? false;
+  uploadNow();
   render();
   renderUsage();
   await refreshTab();

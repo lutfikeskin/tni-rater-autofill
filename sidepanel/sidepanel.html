@@ -45,8 +45,12 @@
         <p class="small">While an intake is loaded, this extension records how it's used on Progressive and GEICO pages, to improve it: which intake (by fingerprint, not name), which fields it filled, what you changed afterwards, and problems you report.</p>
         <p class="small muted">Not recorded: client names, numbers or anything you type into text boxes (typing is only compared with the intake on this computer), screenshots, keystrokes, or other websites.</p>
         <p id="usage-count" class="small"></p>
+        <p id="upload-status" class="small muted"></p>
         <label class="usage-agent small">Your initials <input id="agent" type="text" maxlength="6" autocomplete="off"></label>
+        <label class="usage-agent small">Server <input id="server-url" type="url" placeholder="http://localhost:8787" autocomplete="off"></label>
+        <label class="usage-agent small">Token <input id="server-token" type="password" placeholder="if the server needs one" autocomplete="off"></label>
         <div class="actions">
+          <button type="button" id="upload-usage" class="ghost">Upload now</button>
           <button type="button" id="export-usage" class="ghost">Export log</button>
           <button type="button" id="clear-usage" class="ghost">Clear log</button>
         </div>
@@ -58,6 +62,7 @@
   <footer id="fillbar" class="fillbar" hidden>
     <div id="pickers" class="pickers"></div>
     <label class="check"><input type="checkbox" id="auto-followups" checked> Fill follow-up questions automatically</label>
+    <label class="check"><input type="checkbox" id="auto-pages"> Fill each new page as soon as it opens</label>
     <label class="check"><input type="checkbox" id="overwrite"> Replace values already on the page</label>
     <div class="actions">
       <button type="button" id="fill" class="primary">Fill this page</button>

@@ -9,6 +9,7 @@ The agent stays in control. The extension fills what it can on the page in front
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and pick this folder.
 3. Pin the extension, then click its icon to open the side panel.
+4. Under **Usage log**, enter your initials. **Server** defaults to `http://localhost:8787` (start it with `npm run server`).
 
 ## Using it
 
@@ -62,17 +63,36 @@ What's recorded (`src/usage.js`, `src/content/recorder.js`):
 
 Never recorded: client names, numbers, addresses, or anything typed into text boxes; screenshots; keystrokes; other websites. Client names are also redacted from labels and options.
 
-For the pilot the log stays on each computer (`chrome.storage.local`, up to 20,000 events) until an agent clicks **Export log**. To review exports:
+Events wait in `chrome.storage.local` on the agent's computer and are uploaded every minute to the collection server set under **Usage log → Server** (default `http://localhost:8787`). They're removed from the computer only once the server has stored them, so nothing is lost while the server is down. **Export log** still works as a fallback.
+
+### Collection server
 
 ```bash
-node scripts/summarize-usage.mjs rater-usage-*.json
+npm run server
 ```
 
-That lists intake problems by warning code, autofill answers agents changed, fields agents filled that autofill didn't (with the intake field the value matched, which makes them candidates for new mapping rules), fill failures, and time per page. To find the intake PDF behind a log entry, search a folder of intakes by fingerprint; this runs locally and prints file paths:
+Plain Node, no dependencies. It listens on `127.0.0.1:8787` and appends events to `server-data/events/YYYY-MM-DD.jsonl`, one file per day. It accepts only known event types and fields, drops agency staff lists from layouts, and ignores duplicates, so retried uploads are safe. Settings: `PORT`, `HOST`, `DATA_DIR`, `RATER_TOKEN`. Before running it anywhere other than this computer, set `RATER_TOKEN` (the extension sends it as a Bearer token), put it behind HTTPS, and add the server's address to `host_permissions` in `manifest.json`.
+
+### Weekly review
+
+Every script reads the server folder, exported logs, or both:
 
 ```bash
-node scripts/find-intake.mjs <folder of intake PDFs> rater-usage-LK-2026-10-01.json
+npm run learn     # rule suggestions: standard answers, per-state answers, new intake mappings, rules agents keep correcting
+npm run layouts   # carrier page layouts per state/product -> captures/<carrier>/generated/
+npm run summary   # intake problems, corrections, failures, time per page
+node scripts/find-intake.mjs <folder of intake PDFs> server-data   # which intake a session used
 ```
+
+`learn` prints rule lines ready to paste into `src/carriers/<carrier>.js`. **Review each one**: a consistent answer isn't always a correct one. Generated layouts are git-ignored; review them before committing any.
+
+### Replay test pages
+
+```bash
+npm run replay
+```
+
+Open `http://localhost:8792/test/replay/`. It rebuilds a carrier's pages from any layout file (the hand-made `captures/progressive/*.json`, or one from `npm run layouts`) as working ExtJS pages with Progressive-style ids and server round-trips, then runs the real fill engine. **Fill every page** gives a coverage table: questions per page, how many were filled, what failed, and which have no rule yet. It's built from recorded structure only; no carrier HTML or code is copied.
 
 ## Files
 
@@ -88,7 +108,9 @@ node scripts/find-intake.mjs <folder of intake PDFs> rater-usage-LK-2026-10-01.j
 | `src/content/pagekit.js` | Runs inside the rater page: find fields, fill, highlight, capture |
 | `captures/` | Page layouts captured from real quotes (no client data) |
 | `src/usage.js`, `sidepanel/usage-log.js`, `src/content/recorder.js` | Usage log: event building, local storage/export, page recorder |
-| `scripts/` | `summarize-usage.mjs` and `find-intake.mjs` for reviewing exported logs |
+| `server/` | Usage collection server |
+| `scripts/` | Review tools: `learn-rules`, `build-layouts`, `summarize-usage`, `find-intake` (shared code in `scripts/lib/`) |
+| `test/replay/` | Replay test pages built from layout files |
 | `test/tools/` | Capture snippets for following a live quote without the extension |
 | `lib/` | pdf.js, vendored (MV3 can't load remote code). Refresh with `npm run vendor`. |
 

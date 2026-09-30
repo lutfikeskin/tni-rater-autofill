@@ -1,0 +1,70 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createServer } from '../server/index.mjs';
+
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
+const ev = (over = {}) => ({ id: crypto.randomUUID(), t: new Date().toISOString(), type: 'fill_run', carrier: 'progressive', page: 'AddVehicle', filled: 3, ...over });
+
+async function withServer(opts, fn) {
+  const server = createServer(opts);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const post = (body, headers = {}) => fetch(`${base}/v1/events`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) });
+  try { await fn({ base, post }); } finally { await new Promise((r) => server.close(r)); }
+}
+
+const stored = (dir) => fs.readdirSync(path.join(dir, 'events')).flatMap((f) => fs.readFileSync(path.join(dir, 'events', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+
+test('stores events once, even when an upload is retried', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post, base }) => {
+    const events = [ev(), ev({ type: 'page_view', from: 'X', fields: 4 })];
+    const r1 = await (await post({ agent: 'AYAZ', events })).json();
+    assert.deepEqual([r1.accepted, r1.duplicates], [2, 0]);
+    const r2 = await (await post({ agent: 'AYAZ', events })).json();
+    assert.deepEqual([r2.accepted, r2.duplicates], [0, 2]);
+    assert.equal((await (await fetch(`${base}/v1/health`)).json()).events, 2);
+  });
+  const rows = stored(dataDir);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].agent, 'AYAZ', 'agent filled from the request when the event has none');
+  assert.ok(rows[0].receivedAt);
+  // A restarted server still knows which ids it has.
+  await withServer({ dataDir }, async ({ post }) => {
+    assert.equal((await (await post({ events: [ev({ id: rows[0].id })] })).json()).duplicates, 1);
+  });
+});
+
+test('keeps only known event types and fields', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'field_change', q: '2B9D', kind: 'select', from: 'a', to: 'b', typedValue: '02/03/1988' }),
+      ev({ type: 'screenshot', image: 'x' }),
+      ev({ id: 'x' }),
+      ev({ type: 'page_layout', context: { state: 'MD' }, fields: [{ q: '396', label: 'Agent of Record', options: ['JANE DOE-1'] }, { q: '2B9D', label: 'Distance', options: ['50 miles'] }] }),
+    ] })).json();
+    assert.equal(r.accepted, 2);
+    assert.equal(r.rejected.length, 2);
+  });
+  const [change, layout] = stored(dataDir);
+  assert.equal(change.typedValue, undefined, 'unexpected fields are dropped');
+  assert.equal(change.to, 'b');
+  assert.equal(layout.fields[0].options, undefined, 'agency staff lists are dropped');
+  assert.deepEqual(layout.fields[1].options, ['50 miles']);
+});
+
+test('token, content type and size checks', async () => {
+  await withServer({ dataDir: tmp(), token: 'secret' }, async ({ post, base }) => {
+    assert.equal((await post({ events: [ev()] })).status, 401);
+    assert.equal((await post({ events: [ev()] }, { authorization: 'Bearer wrong!' })).status, 401);
+    assert.equal((await post({ events: [ev()] }, { authorization: 'Bearer secret' })).status, 200);
+    const form = await fetch(`${base}/v1/events`, { method: 'POST', headers: { authorization: 'Bearer secret', 'content-type': 'text/plain' }, body: '{}' });
+    assert.equal(form.status, 415, 'plain-text posts (what a web page can send without asking) are refused');
+    assert.equal((await post({ events: 'nope' }, { authorization: 'Bearer secret' })).status, 400);
+    assert.equal((await post({ events: Array.from({ length: 2001 }, () => ev()) }, { authorization: 'Bearer secret' })).status, 413);
+  });
+});
