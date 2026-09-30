@@ -86,7 +86,7 @@ test('helpers', () => {
   assert.deepEqual(parseLicense('MD - 10123456789'), { state: 'MD', number: 'MD10123456789' });
   assert.deepEqual(parseLicense('D123-456-789'), { state: null, number: 'D123456789' }, 'no dashes, ever');
   assert.deepEqual(parseLicense('md 1234 5678 901'), { state: 'MD', number: 'MD12345678901' });
-  assert.equal(parseAddress('3528 Carriage Hill Ci Apt 101 Randallstown MD 21133').street, '3528 Carriage Hill Cir');
+  assert.equal(parseAddress('77 Birch Hollow Ci Apt 2 Dover DE 19901').street, '77 Birch Hollow Cir');
   assert.equal(parseAddress('100 Main St, Rock Hill, SC 29730').city, 'Rock Hill');
   assert.equal(parseAddress('100 Main St, Rock Hill, SC 29730').confident, true);
   assert.equal(parseAddress('9 Oak Ave N Fort Worth TX 76102').city, 'Fort Worth');
