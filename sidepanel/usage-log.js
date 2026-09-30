@@ -51,7 +51,7 @@ export async function count() {
 
 export async function exportLog() {
   await queue;
-  const events = (await local.get(LOG_KEY)) ?? [];
+  const events = [...((await local.get(REJECTED_KEY)) ?? []), ...((await local.get(LOG_KEY)) ?? [])];
   const { agent } = await settings();
   const data = { tool: 'tni-rater-autofill', kind: 'usage-log', version, exportedAt: new Date().toISOString(), agent: agent ?? null, events };
   const day = new Date().toISOString().slice(0, 10);
@@ -69,6 +69,7 @@ export async function exportLog() {
 // Upload to the collection server
 
 export const DEFAULT_SERVER = 'http://localhost:8787';
+const REJECTED_KEY = 'usageRejected';
 const BATCH = 500;
 let uploadStatus = { state: 'idle' }; // idle | ok | error | off
 
@@ -81,6 +82,9 @@ export function upload() {
     const { serverUrl = DEFAULT_SERVER, serverToken = '', agent = null } = await settings();
     if (!serverUrl) { uploadStatus = { state: 'off' }; return; }
     let sent = 0;
+    // Events recorded before ids existed get one now (the server needs ids to skip duplicates).
+    const pending = (await local.get(LOG_KEY)) ?? [];
+    if (pending.some((e) => !e.id)) await local.set(LOG_KEY, pending.map((e) => (e.id ? e : { ...e, id: crypto.randomUUID() })));
     for (;;) {
       const list = (await local.get(LOG_KEY)) ?? [];
       const batch = list.slice(0, BATCH);
@@ -102,11 +106,16 @@ export function upload() {
         return;
       }
       const body = await res.json().catch(() => ({}));
-      // Rejected events would be rejected again; drop them too, but say so.
+      // Events the server refused would be refused again, so they leave the upload queue, but
+      // they're kept aside (and still exported) rather than deleted.
+      const refused = (body.rejected ?? []).map((r) => ({ ...batch[r.index], rejectedBecause: r.error }));
+      if (refused.length) {
+        console.warn('usage upload: server rejected', body.rejected);
+        await local.set(REJECTED_KEY, [...((await local.get(REJECTED_KEY)) ?? []), ...refused].slice(-MAX_EVENTS));
+      }
       const ids = new Set(batch.map((e) => e.id));
       await local.set(LOG_KEY, list.filter((e) => !ids.has(e.id)));
-      sent += batch.length;
-      if (body.rejected?.length) console.warn('usage upload: server rejected', body.rejected);
+      sent += batch.length - refused.length;
     }
     uploadStatus = { state: 'ok', at: new Date().toISOString(), sent };
   }).catch((e) => { uploadStatus = { state: 'error', message: String(e.message) }; });
