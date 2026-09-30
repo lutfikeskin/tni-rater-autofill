@@ -200,7 +200,7 @@ test('progressive: standard answers for follow-up questions', () => {
   assert.equal(byQ('28C1').value, false);
   // Filings: both answers only when the intake says filings are needed.
   assert.equal(byQ('F11').value, true);
-  assert.equal(byQ('F20').value, true);
+  assert.equal(buildPlan(record, carrier).find((s) => s.re === '^mcs ?90$').value, true);
   const noFilings = structuredClone(record);
   noFilings.operations.filingsRequired = false;
   assert.equal(byQ('F11', noFilings).value, null);
@@ -220,10 +220,18 @@ test('progressive: second live quote — business type, standard vehicle answers
   const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
   const plan = buildPlan(record, carrier, {});
   const byQ = (q, r = record) => buildPlan(r, carrier).find((s) => s.q === q);
-  assert.equal(byQ('239').value, 'Other For Hire Trucking', 'Expediter');
+  assert.equal(byQ('239').value, 'For Hire Trucking', 'Expediter');
+  assert.equal(byQ('267').value, 'Other For-Hire Trucking', 'Expediter');
   const other = structuredClone(record);
   other.operations.businessClass = 'Dry Van';
   assert.equal(byQ('239', other).value, 'Dry Van', 'anything else: as on the intake');
+  assert.equal(byQ('267', other).value, 'Dry Van');
+  assert.equal(byQ('1FF2').value, '$40 per day, $1,200 max');
+  assert.equal(carrier.replaceChoices, true);
+  const federal = plan.find((s) => s.re === '^federal$');
+  assert.equal(federal.value, true, 'filings needed: Federal ticked');
+  assert.equal(plan.find((s) => s.re === '^mcs ?90$').value, true);
+  assert.equal(byQ('F11').value, true);
   assert.equal(byQ('2CA7').value, 'No');
   assert.equal(byQ('2CCE').value, '$0 to $2,000');
   assert.equal(byQ('2CE3').value, true);
@@ -232,7 +240,13 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.equal(byQ('3E98').value, 'Automatic payments');
   assert.equal(byQ('32CC').value, true);
   const actions = plan.filter((s) => s.kind === 'action');
-  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'vehicleTile', 'lookupVin', 'openCargo', 'addCommodity', 'billPlan', 'print', 'printSend']);
+  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'vehicleTile', 'lookupVin', 'openCargo', 'billPlan', 'print', 'print', 'printSend']);
+  assert.ok(actions.find((a) => a.action === 'lookupVin').immediate);
+  assert.equal(actions.find((a) => a.action === 'openCargo').near, 'motor truck cargo');
+  const printRe = new RegExp(actions.find((a) => a.action === 'print').text, 'i');
+  for (const t of ['Print, Email, Fax', 'Print/Email/Fax', 'Print, Email or Fax', 'Print']) assert.ok(printRe.test(t), t);
+  assert.ok(!printRe.test('Print/Send'));
+  assert.ok(new RegExp(actions.find((a) => a.action === 'billPlan').text, 'i').test('View Bill plan options'));
   assert.equal(actions.find((a) => a.action === 'vehicleTile').text, '^Cargo Van$');
   assert.deepEqual(actions.find((a) => a.action === 'lookupVin').after, ['vehicles[0].vin']);
   const noCargo = structuredClone(record);

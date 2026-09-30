@@ -56,8 +56,13 @@ const commodity = (r) => COMMODITIES.find((c) => c.match.test(r.operations.whatH
 
 const filings = (r) => (r.operations.filingsRequired ? true : null);
 
-// Progressive's business type for what the intake calls the business.
-const businessType = (r) => (/expedit/i.test(r.operations.businessClass ?? '') ? 'Other For Hire Trucking' : r.operations.businessClass);
+// Progressive's business type (and, for trucking, the type of trucker) for what the intake
+// calls the business. Expediters are "For Hire Trucking" / "Other For-Hire Trucking".
+const isExpediter = (r) => /expedit/i.test(r.operations.businessClass ?? '');
+const businessType = (r) => (isExpediter(r) ? 'For Hire Trucking' : r.operations.businessClass);
+const truckerType = (r) => (isExpediter(r) ? 'Other For-Hire Trucking' : r.operations.businessClass);
+
+const PRINT_EMAIL_FAX = '^print(,? ?[/,]? ?e-?mail)?(,? ?[/,]? ?(and |or )?fax)?$';
 
 // Vehicle picker tile for the intake's vehicle type.
 const VEHICLE_TILES = { Van: 'Cargo Van' };
@@ -76,18 +81,24 @@ export const progressive = {
   autoFillUrl: /\/Express\/Default\.aspx/i,
   // Never flagged as "needs you" when empty: the agent fills these only when they apply.
   optional: ['296', '298', '233', '1CC', '2899', '2A9'],
+  // Progressive pre-selects some answers (filings No, $750k CSL, manual payments, rental "Not
+  // selected"). Those are replaced when ours differ; anything the agent changed is left alone.
+  replaceChoices: true,
   // Buttons the filler clicks, in order, each once per quote, only on its page and only once
   // `after` (any of these fields) has a value. `unless`: skip when any of these has a value.
   // `text` is a regex on the button's text, `token` a string in its id/href/onclick.
   // Never clicked, whatever a rule says: Continue, Next, Finish, Buy, Bind, Submit, Save.
   actions: [
-    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'] },
+    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true },
     { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile },
-    { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'] },
-    { id: 'openCargo', page: 'CoveragesRates', text: '^(motor truck(ing)? )?cargo$', token: 'MTC_open', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true },
-    { id: 'addCommodity', page: 'CoveragesRates', text: '^add (a|another) commodity$', token: 'AddAnotherCommodity', after: ['progressive.q216B'] },
-    { id: 'billPlan', page: 'CoveragesRates', text: '^bill plan options?$', after: (r) => (r.coverage.cargo ? ['progressive.q2150', 'progressive.q216F'] : ['coverage.autoLiabLimit']) },
-    { id: 'print', page: 'CoveragesRates', text: '^print$', afterActions: ['billPlan'] },
+    { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true },
+    // The "+" in the Motor Truck Cargo row (every coverage has one).
+    { id: 'openCargo', page: 'CoveragesRates', text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true },
+    { id: 'billPlan', page: 'CoveragesRates', text: '^(view )?bill plan options?$', after: (r) => (r.coverage.cargo ? ['progressive.q2150', 'progressive.q216F'] : ['coverage.autoLiabLimit']) },
+    // "Print, Email, Fax": from the bill plan page once automatic payments is chosen, or back on
+    // coverages after the bill plan page.
+    { id: 'print', page: 'ChangePaymentPlan', text: PRINT_EMAIL_FAX, afterValue: ['progressive.q3E98', 'automatic'] },
+    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, afterPages: ['ChangePaymentPlan'] },
     { id: 'printSend', page: 'PrintEmailFax', text: '^print ?/ ?send$', after: ['progressive.q32CC'] },
   ],
   rules: [
@@ -114,7 +125,7 @@ export const progressive = {
     { q: '286', path: 'garaging.city', name: 'Business city' },
     { q: '239', name: 'Business type', kind: 'choice', label: 'business type', value: businessType },
     { q: '22D', name: 'Business structure', kind: 'choice', label: 'business structured', value: (r) => (/\b(llc|l\.l\.c|inc|corp|corporation|company|co)\.?$/i.test(r.applicant.name ?? '') ? 'Corporation or LLC / Non-Profit' : null) },
-    { q: '267', path: 'operations.businessClass', name: 'Type of trucker', kind: 'choice', label: 'type of trucker' },
+    { q: '267', name: 'Type of trucker', kind: 'choice', label: 'type of trucker', value: truckerType },
     { q: '295', name: 'Owner first name', label: '^first name$', value: (r) => owner(r).first },
     { q: '296', name: 'Owner middle initial', value: (r) => owner(r).middle?.[0] ?? null },
     { q: '297', name: 'Owner last name', label: '^last name$', value: (r) => owner(r).last },
@@ -135,8 +146,9 @@ export const progressive = {
     { q: 'D1', path: 'operations.usesEld', label: 'electronic logging' },
 
     // --- Filings (pageName=Filings; only reached when filings are required) --------------------
-    { q: 'F11', name: 'Filings acknowledgement', kind: 'bool', value: filings },
-    { q: 'F20', name: 'Filing selected', kind: 'bool', value: filings },
+    { q: 'F11', name: 'All commercially owned vehicles on this quote', kind: 'bool', label: 'all the customers commercially owned', value: filings },
+    { label: '^federal$', name: 'Federal filing', kind: 'bool', value: filings },
+    { label: '^mcs ?90$', name: 'MCS-90', kind: 'bool', value: filings },
 
     // --- Add vehicle (AddVehicle) ----------------------------------------------------------------
     { q: '2B20', path: 'vehicles[].vin' },
@@ -163,6 +175,7 @@ export const progressive = {
 
     // --- Coverages and rates (CoveragesRates) ----------------------------------------------------
     { q: '1D97', path: 'coverage.autoLiabLimit', label: 'bodily injury and property damage liability' },
+    { q: '1FF2', name: 'Rental reimbursement (standard: $40/day, $1,200 max)', kind: 'choice', value: () => '$40 per day, $1,200 max' },
     { q: '207F', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment },
     { q: '2158', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', label: 'mobile modular homes', value: () => false },
     { q: '215A', name: 'Cargo for business documents (standard: No)', kind: 'bool', label: 'business documents or non negotiable', value: () => false },

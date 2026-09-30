@@ -26,18 +26,22 @@ function actionSteps(carrier, record, active) {
   const resolve = (v) => (typeof v === 'function' ? v(record, active) : v);
   return (carrier?.actions ?? [])
     .filter((a) => !a.when || a.when(record))
-    .map((a) => ({
-      id: `action:${a.id}`,
+    .map((a, i) => ({
+      id: `action:${a.id}:${i}`,
       kind: 'action',
       action: a.id,
       path: `action.${a.id}`,
       name: `Click ${a.id}`,
-      page: a.page ?? null,
+      pages: [].concat(a.page ?? []),
       text: resolve(a.text) ?? null,
       token: a.token ?? null,
+      near: a.near ?? null,
+      immediate: !!a.immediate,
       after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
       unless: (resolve(a.unless) ?? []).map((p) => withIndex(p, active)),
       afterActions: a.afterActions ?? [],
+      afterPages: a.afterPages ?? [],
+      afterValue: a.afterValue ?? null,
       value: null,
     }))
     .filter((s) => s.text || s.token);

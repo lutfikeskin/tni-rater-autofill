@@ -30,8 +30,11 @@
     Ext.define('Mock.Radio', { extend: 'Ext.form.field.Radio', alias: 'widget.dctradiofield' });
     Ext.define('Mock.Text', { extend: 'Ext.form.field.Text', alias: 'widget.dctinputstringfield' });
 
-    // What the "server" knows. Last name is pre-filled, as Progressive does from the USDOT lookup.
-    const server = { '297': 'SAMPLE' };
+    // What the "server" knows. Last name is pre-filled, as Progressive does from the USDOT lookup;
+    // liability is pre-selected at $750k, as Progressive does.
+    const server = { '297': 'SAMPLE', '1D97': '1D97-3' };
+    // Business type list: type-ahead, only holds what matches the typed text.
+    const BUSINESS_TYPES = ['Accountant', 'Actor/Actress', 'Ad Agency', 'Florist', 'For Hire Trucking', 'Trailer Park', 'Trucking for Hire (Local)'];
     const changes = [];
 
     const radioQ = (q, caption, options) => ({
@@ -82,6 +85,11 @@
       list.push(
         radioQ('2CA7', 'Is there a loan/lease on this vehicle?', ['Yes - Loan', 'Yes - Lease', 'No']),
         comboQ('28AC', "Driver's License State", ['US States', 'Illinois', 'Indiana', 'Maryland', 'Texas']),
+        { ...comboQ('239', 'Business type list', BUSINESS_TYPES.slice(0, 3)),
+          doQuery(q) { this.store.loadData(BUSINESS_TYPES.filter((t) => t.toLowerCase().includes(String(q).toLowerCase())).map((t) => ({ code: `239-${BUSINESS_TYPES.indexOf(t)}`, text: t }))); } },
+        // Coverage rows, each with a "+"; only cargo's should be clicked.
+        { xtype: 'container', layout: 'hbox', items: [{ xtype: 'component', html: 'Hired Auto Liability&nbsp;' }, { xtype: 'button', text: '+', handler: () => { server.hiredAutoAdded = true; render(); } }] },
+        { xtype: 'container', layout: 'hbox', items: [{ xtype: 'component', html: 'Motor Truck Cargo&nbsp;' }, { xtype: 'button', text: '+', handler: () => { server.cargoOpened = true; changes.push('cargo+'); render(); } }] },
         comboQ('1D97', 'Bodily Injury and Property Damage Liability', ['Not selected', '$100k CSL', '$300k CSL', '$750k CSL', '$1 million CSL', '$1.5 million CSL']),
         comboQ('216F', 'Motor Trucking Cargo', ['Not selected', '$50k with a $1,000 Deductible', '$100k with a $1,000 Deductible', '$100k with a $2,500 Deductible']),
       );

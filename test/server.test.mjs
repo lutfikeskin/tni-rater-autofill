@@ -68,3 +68,14 @@ test('token, content type and size checks', async () => {
     assert.equal((await post({ events: Array.from({ length: 2001 }, () => ev()) }, { authorization: 'Bearer secret' })).status, 413);
   });
 });
+
+test('answers the browser preflight for extensions only', async () => {
+  await withServer({ dataDir: tmp() }, async ({ base }) => {
+    const ext = await fetch(`${base}/v1/events`, { method: 'OPTIONS', headers: { origin: 'chrome-extension://abcdefghijklmnop', 'access-control-request-method': 'POST' } });
+    assert.equal(ext.status, 204);
+    assert.equal(ext.headers.get('access-control-allow-origin'), 'chrome-extension://abcdefghijklmnop');
+    const web = await fetch(`${base}/v1/events`, { method: 'OPTIONS', headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' } });
+    assert.equal(web.status, 403);
+    assert.equal(web.headers.get('access-control-allow-origin'), null);
+  });
+});

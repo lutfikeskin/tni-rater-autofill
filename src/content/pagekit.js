@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 8) return;
+  if (globalThis.__raterKit?.version === 9) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -206,7 +206,8 @@
         c.kind = 'select';
         c.options = cmp.store.getRange().map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
       }
-      c.label = dctCaption(cmp) ?? labelFor(el);
+      // A checkbox in a group ("Filings: [ ] Federal [ ] MCS-90") is named by its own box label.
+      c.label = (c.kind === 'checkbox' && cmp?.boxLabel ? oneLine(String(cmp.boxLabel).replace(/<[^>]+>/g, ' ')) : null) ?? dctCaption(cmp) ?? labelFor(el);
       c.q = dctQuestionId(cmp?.id ?? el.id);
       out.push(c);
     }
@@ -400,7 +401,7 @@
   });
 
   // Returns { ok: true, shown } or { ok: false, reason, options? }.
-  function apply(step, c) {
+  async function apply(step, c) {
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
     if (c.kind === 'text') {
@@ -441,7 +442,18 @@
 
   // ExtJS pages: go through the components so the page's own change/blur handlers run (Duck
   // Creek sends each answer to the server when the field loses focus).
-  function applyExt(step, c) {
+  // Type-ahead lists (e.g. Progressive's business type list) only hold what matches the typed
+  // text: type the value, wait for the list to load, then pick.
+  async function queryCombo(cmp, text) {
+    if (typeof cmp.doQuery !== 'function') return null;
+    cmp.doQuery(text, false, true);
+    const start = Date.now();
+    await sleep(200);
+    while (cmp.store?.isLoading?.() && Date.now() - start < 6000) await sleep(100);
+    return cmp.store.getRange().map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
+  }
+
+  async function applyExt(step, c) {
     const { cmp, el } = c;
     if (c.kind === 'radio') {
       const opt = matchOption(c.options, step);
@@ -453,7 +465,14 @@
     }
     if (cmp?.readOnly) return { ok: false, reason: 'the field is read-only — set it by hand' };
     if (c.kind === 'select') {
-      const opt = matchOption(c.options, step);
+      let opt = matchOption(c.options, step);
+      if (!opt && step.kind !== 'bool') {
+        for (const q of [String(step.value), String(step.value).split(/\s+/).slice(0, 2).join(' ')]) {
+          const loaded = await queryCombo(cmp, q);
+          opt = loaded && matchOption(loaded, step);
+          if (opt) break;
+        }
+      }
       if (!opt) return noMatch(step, c.options);
       extFocusAndBlur(cmp, el, () => {
         cmp.setValue(opt.value);
@@ -508,6 +527,14 @@
     return n;
   }
 
+  // Does the field already hold the answer we'd give?
+  function agreesWith(step, c) {
+    if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!c.cmp.getValue() : c.el.checked) === step.value;
+    const current = selectedText(c);
+    const opt = matchOption(optionsOf(c), step);
+    return !!opt && oneLine(opt.text) === oneLine(current ?? '');
+  }
+
   // ---------------------------------------------------------------------------------------------
   // Clicking buttons (carrier "actions": Verify DOT, Lookup VIN, Add a Commodity, …)
 
@@ -526,10 +553,23 @@
       const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
         ...[...el.attributes].filter((a) => a.name.startsWith('data-')).map((a) => a.value)].join(' ');
       const hit = (re && text.length <= 80 && re.test(text)) || (step.token && attrs.includes(step.token));
+      if (!hit || (step.near && !isNear(el, step.near, re))) continue;
       // Prefer the innermost match (the link itself, not the table cell around it).
-      if (hit && (!best || best.contains(el))) best = el;
+      if (!best || best.contains(el)) best = el;
     }
     return best;
+  }
+
+  // For look-alike buttons ("+" next to every coverage): the button's section must mention
+  // `near`, and the smallest block around it that does must hold no other such button.
+  function isNear(el, near, re) {
+    const want = near.toLowerCase();
+    for (let p = el.parentElement, i = 0; p && i < 10; p = p.parentElement, i++) {
+      if (!p.textContent.toLowerCase().includes(want)) continue;
+      const alike = [...p.querySelectorAll('a, button, [role=button], .x-btn, [onclick]')].filter((b) => re && re.test(oneLine(b.value || b.textContent)));
+      return alike.filter((b) => !b.contains(el) && !el.contains(b)).length === 0;
+    }
+    return false;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -541,12 +581,16 @@
   // `skip`: field keys to leave alone (ones the agent changed; used by automatic follow-up fills).
   // `optional`: question ids never flagged as "needs you" (middle initial, suffix, DBA, …).
   // `doneActions`: button actions already clicked earlier in this quote.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [] } = {}) {
+  // `replaceChoices`: a dropdown/radio/checkbox answer the page pre-selected (not the agent) is
+  // replaced when it differs from ours; agent changes are protected by `skip`.
+  // `visitedPages`: pages already seen in this quote (for actions that wait on a page).
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [] } = {}) {
     const skipKeys = new Set(skip);
     const quiet = new Set(optional);
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
+    const visited = new Set(visitedPages);
     const startPage = currentPage();
     if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
@@ -558,6 +602,12 @@
       report.rounds = round + 1;
       const controls = collectControls();
       report.fields = Math.max(report.fields, controls.length);
+      // Buttons that must come right after their field (Verify DOT, Lookup VIN) go first.
+      if (window === window.top && clickNextAction(controls, true)) {
+        await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
+        if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+        continue;
+      }
       const pairs = assign(controls, plan).filter(({ step, control }) => !handled.has(step.id) && !skipKeys.has(fieldKey(control)));
       let changed = false;
       for (const { step, control: c } of pairs) {
@@ -570,13 +620,15 @@
         }
         // A pre-selected "Enter a different …" isn't an answer worth keeping for pick-not steps.
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '');
-        if (!overwrite && hasValue(c) && !presetToReplace) {
+        const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
+        const differs = isChoice && replaceChoices && !agreesWith(step, c);
+        if (!overwrite && hasValue(c) && !presetToReplace && !differs) {
           report.kept.push(item);
           handled.set(step.id, { status: null });
           continue;
         }
         let result;
-        try { result = apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
+        try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
         if (result.ok) {
           report.filled.push({ ...item, shown: result.shown });
           handled.set(step.id, { status: 'filled', note: `filled from intake: ${step.name}` });
@@ -594,13 +646,15 @@
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
     }
 
-    function clickNextAction(controls) {
+    function clickNextAction(controls, immediateOnly = false) {
       const pairs = assign(controls, plan);
       const has = (path) => pairs.some(({ step, control }) => step.path === path && hasValue(control));
-      for (const a of actions) {
-        if (clicked.has(a.action) || (a.page && a.page !== currentPage())) continue;
+      for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
+        if (clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;
         if (a.after.length && !a.after.some(has)) continue;
         if (a.afterActions.some((id) => !clicked.has(id))) continue;
+        if (a.afterPages.length && !a.afterPages.some((p) => visited.has(p))) continue;
+        if (a.afterValue && !pairs.some(({ step, control }) => step.path === a.afterValue[0] && new RegExp(a.afterValue[1], 'i').test(selectedText(control) ?? ''))) continue;
         if (a.unless.some(has)) { clicked.add(a.action); continue; }
         const button = findButton(a);
         if (!button) continue;
@@ -664,6 +718,9 @@
         // follow-up questions appear.
         selected: c.kind === 'text' ? undefined : r(selectedText(c) ?? ''),
       })),
+      // Buttons and links on the page (text only), so button actions can be written from layouts.
+      buttons: [...new Set(deepQueryAll(document, 'a, button, [role=button], input[type=button], input[type=submit], .x-btn')
+        .filter((el) => el.getClientRects().length).map((el) => r(oneLine(el.value || el.textContent)).slice(0, 60)).filter(Boolean))].slice(0, 80),
       customWidgets: deepQueryAll(document, '[role=combobox]:not(input):not(select), [role=listbox], [contenteditable=true]')
         .filter(isVisible).slice(0, 50).map((el) => ({ role: el.getAttribute('role') ?? 'contenteditable', label: r(labelFor(el)), selector: cssPath(el) })),
     };
@@ -684,5 +741,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 8, fill, capture, clear };
+  globalThis.__raterKit = { version: 9, fill, capture, clear };
 })();

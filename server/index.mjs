@@ -35,7 +35,7 @@ const EVENT_FIELDS = {
   intake_edit: ['path', 'kind', 'change', 'warnings'],
   warning_checked: ['code', 'path', 'checked'],
   page_view: ['from', 'fields'],
-  page_layout: ['context', 'fields'],
+  page_layout: ['context', 'fields', 'buttons'],
   fill_run: ['overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'clicked'],
   fill_field: ['result', 'q', 'label', 'path', 'controlKind', 'shown', 'reason', 'options'],
   fill_error: ['auto', 'error'],
@@ -87,19 +87,41 @@ export function createServer({ dataDir, token = '' } = {}) {
     if (lines) fs.appendFileSync(file, `${lines}\n`);
   }
 
-  const send = (res, status, body) => {
-    res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  // Browsers may ask permission (CORS preflight) before an extension posts JSON. Only browser
+  // extensions get it; web pages still can't send or read anything.
+  const corsHeaders = (req) => {
+    const origin = String(req.headers.origin ?? '');
+    if (!/^(chrome|moz)-extension:\/\/[a-z0-9-]+$/i.test(origin)) return {};
+    return {
+      'access-control-allow-origin': origin,
+      'access-control-allow-methods': 'POST, GET',
+      'access-control-allow-headers': 'content-type, authorization',
+      'access-control-allow-private-network': 'true',
+      'access-control-max-age': '600',
+      vary: 'origin',
+    };
+  };
+
+  const send = (res, status, body, headers = {}) => {
+    res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers });
     res.end(JSON.stringify(body));
   };
 
   return http.createServer((req, res) => {
     const started = Date.now();
+    const cors = corsHeaders(req);
     const done = (status, body, note = '') => {
-      send(res, status, body);
+      send(res, status, body, cors);
       console.log(`${new Date().toISOString()} ${req.method} ${req.url} ${status} ${Date.now() - started}ms ${note}`);
     };
     const url = new URL(req.url, 'http://x');
 
+    if (req.method === 'OPTIONS') {
+      if (!cors['access-control-allow-origin']) return done(403, { error: 'not allowed' });
+      res.writeHead(204, cors);
+      res.end();
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/v1/health') return done(200, { ok: true, events: seen.size });
     if (url.pathname !== '/v1/events') return done(404, { error: 'not found' });
     if (req.method !== 'POST') return done(405, { error: 'use POST' });

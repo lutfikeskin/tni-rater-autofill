@@ -42,6 +42,7 @@ const state = {
   layoutsSent: new Set(),
   // Carrier buttons already clicked in this quote (Verify DOT, Bill plan options, …).
   doneActions: new Set(),
+  visitedPages: new Set(),
 };
 
 function h(tag, props = {}, ...children) {
@@ -261,6 +262,7 @@ async function refreshTab() {
     state.autoPages = new Set();
     state.agentKeys = new Map();
     state.doneActions = new Set();
+    state.visitedPages = new Set();
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null } : null;
   renderSite();
@@ -291,6 +293,7 @@ function onRecorderMessage(msg, sender) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier?.id ?? null;
   if (msg.event === 'page_view') {
+    if (msg.from) state.visitedPages.add(samePage(msg.from));
     usage.log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
     // Setting "Fill each new page as soon as it opens": wait for the page to settle, then fill.
     if ($('auto-pages').checked && msg.fields > 0 && onQuotePage()) {
@@ -321,7 +324,15 @@ function onRecorderMessage(msg, sender) {
 // Automatic fills only run on the carrier's quote pages (never e.g. its quote-search page).
 const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUrl || state.tab.carrier.autoFillUrl.test(state.tab.url ?? ''));
 
-const fillOptions = (carrier, extra = {}) => ({ optional: carrier.optional ?? [], doneActions: [...state.doneActions], ...extra });
+const fillOptions = (carrier, extra = {}) => ({
+  optional: carrier.optional ?? [],
+  replaceChoices: !!carrier.replaceChoices,
+  doneActions: [...state.doneActions],
+  visitedPages: [...state.visitedPages],
+  // Never change what the agent changed on this page, whether the fill is manual or automatic.
+  skip: [...(state.agentKeys.get(pageOf(state.tab?.url)) ?? [])],
+  ...extra,
+});
 
 function scheduleAutoFill(page) {
   if (!$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage()) return;
@@ -367,6 +378,7 @@ async function recordLayout(page) {
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
       [buildPlan(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
+    const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => ({
       q: c.q ?? null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
@@ -385,7 +397,7 @@ async function recordLayout(page) {
       vehicles: r.vehicles.length,
       coverages: Object.entries(r.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     };
-    usage.log({ type: 'page_layout', carrier: carrier.id, page, context, fields });
+    usage.log({ type: 'page_layout', carrier: carrier.id, page, context, fields, buttons });
   } catch { /* layout capture is best-effort */ }
 }
 
