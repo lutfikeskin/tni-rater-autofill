@@ -161,12 +161,15 @@ test('progressive: fixes from the first live usage log', () => {
   const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
   const plan = buildPlan(record, carrier, {});
   const byQ = (q) => plan.find((s) => s.q === q);
-  // Current insurance section names Progressive and has a limit and a date: yes.
-  assert.equal(byQ('198').value, true);
-  const noLimit = structuredClone(record);
+  // Fixture's current insurance is Progressive *personal* auto: doesn't count.
+  assert.equal(byQ('198').value, false);
+  const commercial = structuredClone(record);
+  commercial.priorInsurance[0].type = 'Commercial Auto';
+  assert.equal(buildPlan(commercial, carrier).find((s) => s.q === '198').value, true);
+  const noLimit = structuredClone(commercial);
   noLimit.priorInsurance[0].limit = null;
   assert.equal(buildPlan(noLimit, carrier).find((s) => s.q === '198').value, false);
-  const other = structuredClone(record);
+  const other = structuredClone(commercial);
   other.priorInsurance[0].carrier = 'GEICO';
   assert.equal(buildPlan(other, carrier).find((s) => s.q === '198').value, false);
   assert.equal(byQ('81').re, '^is the customer currently insured$');

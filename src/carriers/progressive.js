@@ -26,11 +26,11 @@ function owner(r) {
 }
 
 // "Is the customer currently insured with Progressive Commercial Auto?" Yes only when the
-// intake's current-insurance section names Progressive and is filled out with the coverage
-// (limit) and the expiration date.
+// intake's current-insurance section is a Progressive *commercial* auto policy filled out with
+// the coverage (limit) and the expiration date. A Progressive personal auto policy doesn't count.
 const insuredWithProgressive = (r) => {
   const p = r.priorInsurance[0];
-  return !!(p && /progressive/i.test(p.carrier ?? '') && p.limit && p.expiration);
+  return !!(p && p.type === 'Commercial Auto' && /progressive/i.test(p.carrier ?? '') && p.limit && p.expiration);
 };
 
 // After a USDOT lookup Progressive offers the registered business name / address as a choice,
