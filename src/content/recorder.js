@@ -36,9 +36,10 @@
     w.currentNode = el;
     for (let i = 0; i < 12 && w.previousNode(); i++) {
       const p = w.currentNode.parentElement;
-      if (!p || p.closest('script, style, option, label, button')) continue;
+      // Skip other fields' answers, validation messages and bare numbers (ZIPs, dates).
+      if (!p || p.closest('script, style, option, label, button, [role=alert], [class*="error"], [class*="invalid"], [class*="boxLabel"], [class*="cb-label"]')) continue;
       const t = oneLine(w.currentNode.nodeValue);
-      if (t.length > 2) return t.slice(0, 160);
+      if (t.length > 2 && !/^[\d\s/().,$-]+$/.test(t) && !/^(mm\/dd\/yyyy|continue|back|next)$/i.test(t)) return t.slice(0, 160);
     }
     return '';
   }
@@ -52,7 +53,12 @@
     return labels.get(key);
   }
 
-  const isCombo = (el) => el.getAttribute('role') === 'combobox' || !!el.closest('.x-form-trigger-wrap')?.querySelector('.x-form-trigger');
+  // ExtJS dropdowns have an arrow trigger. Date pickers also have a trigger (and ARIA role
+  // combobox), but what's in them is typed text, so they must stay 'text'.
+  const isCombo = (el) => {
+    const trigger = el.closest('.x-form-trigger-wrap')?.querySelector('.x-form-trigger');
+    return !!trigger && /arrow|combo/.test(trigger.className) && !/date|time|picker-date/.test(trigger.className);
+  };
 
   function snapshot() {
     const out = new Map();
@@ -85,7 +91,9 @@
     return out;
   }
 
-  const pageKey = () => new URLSearchParams(location.search).get('pageName') || location.pathname;
+  // Progressive reloads a page as "<Page>-Reload" after some answers; it's the same page.
+  const pageKey = () => (new URLSearchParams(location.search).get('pageName') || location.pathname).replace(/-Reload$/, '');
+  const isTop = window === window.top;
 
   let paused = false;
   let page = pageKey();
@@ -101,8 +109,7 @@
     const nowPage = pageKey();
     const cur = snapshot();
     if (nowPage !== page) {
-      send({ event: 'page_view', page: nowPage, from: page, fields: cur.size, title: document.title });
-      page = nowPage;
+      pageChanged(nowPage, cur);
       prev = cur;
       return;
     }
@@ -118,17 +125,30 @@
     if (changes.length) send({ event: 'field_changes', page, changes });
   }
 
+  // Only the top frame reports page switches; embedded frames (ads, trackers) would be noise.
+  function pageChanged(nowPage, cur) {
+    if (isTop) send({ event: 'page_view', page: nowPage, from: page, fields: cur.size, title: document.title });
+    page = nowPage;
+  }
+
+  // After a pause (autofill running) the page may have moved on; report that, then start fresh.
+  function rebaseline() {
+    const cur = snapshot();
+    if (pageKey() !== page) pageChanged(pageKey(), cur);
+    prev = cur;
+  }
+
   const timer = setInterval(tick, TICK_MS);
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.ra !== 'recorder') return;
     if (msg.cmd === 'pause') paused = true;
-    if (msg.cmd === 'resume') { prev = snapshot(); page = pageKey(); paused = false; }
+    if (msg.cmd === 'resume') { rebaseline(); paused = false; }
   });
 
   globalThis.__raterRecorder = {
-    rebaseline() { prev = snapshot(); page = pageKey(); },
+    rebaseline,
   };
 
-  send({ event: 'page_view', page, from: null, fields: prev.size, title: document.title });
+  if (isTop) send({ event: 'page_view', page, from: null, fields: prev.size, title: document.title });
 })();

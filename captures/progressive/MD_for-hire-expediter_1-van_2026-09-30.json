@@ -42,7 +42,8 @@
         { "q": "2DB", "kind": "text", "caption": "Phone area code", "max": 3 },
         { "q": "2DD", "kind": "text", "caption": "Phone prefix", "max": 3 },
         { "q": "2DF", "kind": "text", "caption": "Phone line number", "max": 4 },
-        { "q": "2F6", "kind": "radio", "caption": "Information Disclosure (consent question)", "opts": ["Yes", "No"], "note": "Agent must ask the customer; never auto-answer" }
+        { "q": "2F6", "kind": "radio", "caption": "Do any listed vehicles or the load require a hazardous material placard?", "opts": ["Yes", "No"], "note": "Corrected from the 2026-09-30 usage log; it is not a consent question" },
+        { "q": "22F", "kind": "radio", "caption": "Business name choice after USDOT lookup", "opts": ["[client] (USDOT registered name)", "Enter a different Business Name"], "note": "From the 2026-09-30 usage log; agent picked the registered name" }
       ]
     },
     "AddVehicle": {
@@ -126,6 +127,8 @@
     "Type of Trucker options (BusinessOwnerInfo q 267)",
     "Vehicle type picker and the VIN / Year-Make-Model choice before the VIN box",
     "Column headers for the per-vehicle coverages (1FCD, 1FD2, 1FF2, 2000, 200F)",
+    "Question 20F (appears after the USDOT lookup; agent answered Yes)",
+    "Filings page (pageName=Filings): F11 and the F20 filing checkboxes, reached when filings = Yes",
     "Anything that appears only with trailers, hazmat, filings = Yes, ELD = Yes, more than one driver/vehicle, or other states"
   ]
 }

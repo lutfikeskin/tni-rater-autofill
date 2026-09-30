@@ -30,6 +30,8 @@ const state = {
   // What autofill put in each field on the current tab (field key -> { path, shown }), so the
   // usage log can tell the agent's corrections apart from agreement.
   filled: new Map(),
+  // Question text per field key, from the fill engine (better than the recorder's guess).
+  labels: new Map(),
 };
 
 function h(tag, props = {}, ...children) {
@@ -241,7 +243,7 @@ function renderPickers() {
 async function refreshTab() {
   if (!inExtension) { state.tab = null; return renderSite(); }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id !== state.tab?.id) state.filled = new Map();
+  if (tab?.id !== state.tab?.id) { state.filled = new Map(); state.labels = new Map(); }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null } : null;
   renderSite();
   ensureRecorder();
@@ -273,7 +275,7 @@ function onRecorderMessage(msg, sender) {
     return;
   }
   if (msg.event === 'field_changes') {
-    const ctx = { record: state.intake.record, filled: state.filled, redact: redactor(redactionTerms(state.intake.record)) };
+    const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, redact: redactor(redactionTerms(state.intake.record)) };
     usage.log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
   }
 }
@@ -322,6 +324,7 @@ async function fillPage() {
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, { overwrite }]);
     const frames = results.map((r) => r.result).filter(Boolean);
     for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
+    for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
     usage.log(...fillEvents(frames, {
       carrier: carrier.id, page: pageOf(state.tab.url), overwrite, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
     }));

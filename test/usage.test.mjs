@@ -113,3 +113,17 @@ test('summary script turns a log into corrections and mapping candidates', async
   assert.equal(out.pages.find((p) => p.page === 'progressive AddVehicle').avgSeconds, 85);
   assert.ok(out.intakeWarnings.some((w) => w.code === 'vin.invalid'));
 });
+
+test('typed dates in date pickers are never logged, even if they look like dropdowns', () => {
+  const e = fieldChangeEvent({ key: '9D', q: '9D', label: 'Current Policy Expiration Date', kind: 'select', before: '08/14/2026', after: '10/14/2026', agent: true }, { record, filled: new Map(), redact });
+  assert.equal(e.kind, 'text');
+  assert.equal(e.from, undefined);
+  assert.equal(e.to, undefined);
+  assert.ok(!JSON.stringify(e).includes('2026'));
+});
+
+test('labels from the fill engine replace the recorder guess', () => {
+  const labels = new Map([['2F6', 'Do any listed vehicles or the load require a hazardous material placard?']]);
+  const e = fieldChangeEvent({ key: '2F6', q: '2F6', label: 'Four digit suffix of phone', kind: 'radio', before: '', after: 'No', agent: true }, { record, filled: new Map(), redact, labels });
+  assert.match(e.label, /hazardous material placard/);
+});

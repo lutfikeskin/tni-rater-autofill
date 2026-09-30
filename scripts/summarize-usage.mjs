@@ -21,7 +21,12 @@ if (!files.length) {
   process.exit(1);
 }
 
-const events = files.flatMap((f) => JSON.parse(fs.readFileSync(f, 'utf8')).events ?? []);
+// Older logs: events may lack the agent's initials (set only at export) and may name the same
+// page "<Page>-Reload".
+const events = files.flatMap((f) => {
+  const log = JSON.parse(fs.readFileSync(f, 'utf8'));
+  return (log.events ?? []).map((e) => ({ ...e, agent: e.agent ?? log.agent ?? null, page: e.page?.replace(/-Reload$/, '') }));
+}).filter((e) => e.page !== 'blank');
 const tally = (map, key, n = 1) => map.set(key, (map.get(key) ?? 0) + n);
 const top = (map, n = 25) => [...map].sort((a, b) => b[1] - a[1]).slice(0, n);
 const fieldName = (e) => `${e.carrier ?? '?'} ${e.page ?? '?'} ${e.q ? `q${e.q} ` : ''}"${e.label ?? ''}"`;

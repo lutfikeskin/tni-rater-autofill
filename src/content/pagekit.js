@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 5) return;
+  if (globalThis.__raterKit?.version === 6) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -140,9 +140,10 @@
     return null;
   }
 
+  // Only the field itself (or its radio group) says whether it's required; outer containers
+  // carrying dctRequired made optional fields like Suffix and DBA look required.
   function dctRequired(cmp) {
-    for (let c = cmp, i = 0; c && i < 6; c = c.ownerCt, i++) if (c.dctCaption || c.dctRequired) return !!c.dctRequired;
-    return false;
+    return !!cmp?.dctRequired;
   }
 
   // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>.
@@ -313,6 +314,8 @@
 
   function matchOption(options, step) {
     const usable = options.filter((o) => squash(o.text) && !isPlaceholderOption(o.text));
+    // "Any option except …", e.g. the registered USDOT address instead of "Enter a different address".
+    if (step.kind === 'pick-not') return usable.find((o) => !new RegExp(step.value, 'i').test(o.text)) ?? null;
     const cands = candidates(step);
     for (const c of cands) {
       const hit = usable.find((o) => squash(o.text) === c || squash(o.value) === c);
@@ -527,7 +530,9 @@
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
           continue;
         }
-        if (!overwrite && hasValue(c)) {
+        // A pre-selected "Enter a different …" isn't an answer worth keeping for pick-not steps.
+        const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value, 'i').test(selectedText(c) ?? '');
+        if (!overwrite && hasValue(c) && !presetToReplace) {
           report.kept.push(item);
           handled.set(step.id, { status: null });
           continue;
@@ -555,6 +560,8 @@
       const h = handled.get(step.id);
       if (h?.status) mark(control, h.status, h.note);
     }
+    // Question text for every field on the page, keyed like the usage recorder's changes.
+    report.labels = controls.map((c) => [fieldKey(c), c.label]);
     const matched = new Set(pairs.map((p) => p.control));
     for (const c of controls) {
       if (!matched.has(c) && c.required && !hasValue(c)) {
@@ -618,5 +625,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 5, fill, capture, clear };
+  globalThis.__raterKit = { version: 6, fill, capture, clear };
 })();

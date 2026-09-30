@@ -22,6 +22,20 @@ function owner(r) {
   return { driver, first: first || null, middle: driver?.middle ?? null, last: driver?.last ?? full.split(/\s+/).at(-1) ?? null };
 }
 
+// "Is the customer currently insured with Progressive Commercial Auto?" Only yes when the
+// current policy is a Progressive commercial auto policy (a Progressive personal auto policy
+// doesn't count; an agent corrected exactly that on a live quote).
+const withProgressiveCommercial = (r) => {
+  const p = r.priorInsurance[0];
+  if (!p) return null;
+  return /progressive/i.test(p.carrier ?? '') && p.type === 'Commercial Auto';
+};
+
+// After a USDOT lookup Progressive offers the registered business name / address as a choice,
+// next to "Enter a different …". Agents pick the registered one, so do the same instead of
+// typing the intake's version into the manual boxes.
+const REGISTERED = { kind: 'pick-not', value: () => '^enter a different' };
+
 const equipment = (r) => {
   const v = r.operations.equipVehicle;
   return v == null ? '$0 to $2,000' : v > 2000 ? 'More than $2,000' : '$0 to $2,000';
@@ -41,8 +55,12 @@ export const progressive = {
   world: 'MAIN',
   rules: [
     // --- Named Insured and Business Overview (pageName=BusinessOwnerInfo) ---------------------
+    { q: '198', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: withProgressiveCommercial },
     { q: '1ED', name: 'Has a USDOT number', kind: 'choice', value: (r) => (r.applicant.dot ? 'Yes - the customer has a USDOT number' : r.applicant.mcDotWithin60Days ? 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days' : null) },
     { q: '1F3', path: 'applicant.dot', label: 'usdot number' },
+    { q: '22F', name: 'Business name (USDOT record)', ...REGISTERED },
+    { q: '277', name: 'Primary business address (USDOT record)', ...REGISTERED },
+    { q: '2A5', name: 'Owner home address (USDOT record)', ...REGISTERED },
     { q: '22D', name: 'Business structure', kind: 'choice', label: 'business structured', value: (r) => (/\b(llc|l\.l\.c|inc|corp|corporation|company|co)\.?$/i.test(r.applicant.name ?? '') ? 'Corporation or LLC / Non-Profit' : null) },
     { q: '267', path: 'operations.businessClass', name: 'Type of trucker', kind: 'choice', label: 'type of trucker' },
     { q: '295', name: 'Owner first name', label: '^first name$', value: (r) => owner(r).first },
@@ -52,11 +70,11 @@ export const progressive = {
     { q: '2DB', name: 'Phone area code', value: (r) => digits(r.applicant.phone).slice(0, 3) || null },
     { q: '2DD', name: 'Phone prefix', value: (r) => digits(r.applicant.phone).slice(3, 6) || null },
     { q: '2DF', name: 'Phone line number', value: (r) => digits(r.applicant.phone).slice(6, 10) || null },
-    { q: '2F6', name: 'Information disclosure', note: 'Consent question — ask the customer' },
+    { q: '2F6', path: 'operations.hazPlacard', name: 'Hazmat placard required', label: 'hazardous material placard' },
 
     // --- More about the business (MoreAboutBusiness) -------------------------------------------
     { q: '77', path: 'applicant.email', label: 'customer email' },
-    { q: '81', name: 'Currently insured', kind: 'bool', label: 'currently insured', value: (r) => (r.priorInsurance.length ? true : null) },
+    { q: '81', name: 'Currently insured', kind: 'bool', label: '^is the customer currently insured$', value: (r) => (r.priorInsurance.length ? true : null) },
     { q: '95', path: 'priorInsurance[0].limit', kind: 'choice', label: 'current bodily injury' },
     { q: '9D', path: 'priorInsurance[0].expiration', label: 'current policy expiration' },
     { q: 'CA', path: 'operations.filingsRequired', label: 'filings required' },
@@ -77,6 +95,7 @@ export const progressive = {
     { q: '2899', name: 'Driver middle initial', value: (r, a) => r.drivers[a.drivers ?? 0]?.middle?.[0] ?? null },
     { q: '289A', path: 'drivers[].last' },
     { q: '28A7', path: 'drivers[].dob' },
+    { q: '28B9', path: 'drivers[].licenseNumber', label: 'drivers license number' },
     { q: '28AC', path: 'drivers[].licenseState', label: 'drivers license state' },
     { q: '28F5', path: 'claims.hasClaims', name: 'Accidents / claims / violations (3 yrs)', kind: 'bool', label: 'accidents claims or violations' },
 

@@ -55,7 +55,7 @@ test('vehicles: values parsed, bad VIN flagged, N/A trailer rows dropped', () =>
 });
 
 test('claims box holding other answers is flagged, ownership hint surfaced once', () => {
-  assert.equal(record.claims.hasClaims, null);
+  assert.equal(record.claims.hasClaims, false, 'first line "No" answers the claims question');
   assert.match(msgs, /claims\.text: Claims box has 4 lines/);
   const own = warnings.filter((w) => w.path === 'operations.vehicleOwnership');
   assert.equal(own.length, 1);
@@ -130,8 +130,7 @@ test('progressive: intake answers are translated into Progressive wording', () =
   assert.equal(byQ('297').value, 'Sample');
   assert.equal(byQ('2BB').value, '02/03/1988');
   assert.deepEqual(['2DB', '2DD', '2DF'].map((q) => byQ(q).value), ['555', '201', '0199']);
-  assert.equal(byQ('2F6').value, null);
-  assert.ok(byQ('2F6').note, 'consent question is marked for the agent, never filled');
+  assert.ok(byQ('450').note, 'MVR/CLUE order is marked for the agent, never filled');
   assert.equal(byQ('2B9D').value, 501, 'Unlimited radius picks "More than 500 miles"');
   assert.equal(byQ('2C05').value, 'Business Only');
   assert.equal(byQ('2C1A').value, true, 'has an MC number, so for-hire');
@@ -149,4 +148,32 @@ test('progressive: loan/lease follows vehicle ownership once the agent fills it 
   assert.equal(buildPlan(r, carrier).find((s) => s.q === '2CA7').value, 'Yes - Loan');
   r.coverage.cargo = false;
   assert.equal(buildPlan(r, carrier).find((s) => s.q === '216F').value, 'Not selected');
+});
+
+test('license format and expired prior policy are flagged', () => {
+  // Fixture license S12345678901 is a valid IL shape; an 11-digit MD number is not.
+  assert.doesNotMatch(msgs, /license\.format|doesn't look like a IL license/);
+  const r = normalizeIntake({ ...raw, drv_lic_1: 'MD - 10123456789', drv_state_1: 'MD', ins_exp_1: '08/14/2026' }, { today: new Date('2026-09-30') });
+  const codes = r.warnings.map((w) => w.code);
+  assert.ok(codes.includes('license.format'));
+  assert.ok(codes.includes('prior.expired'));
+  assert.ok(!normalizeIntake({ ...raw, ins_exp_1: '12/31/2026' }, { today: new Date('2026-09-30') }).warnings.some((w) => w.code === 'prior.expired'));
+});
+
+test('progressive: fixes from the first live usage log', () => {
+  const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
+  const plan = buildPlan(record, carrier, {});
+  const byQ = (q) => plan.find((s) => s.q === q);
+  // Prior policy is Progressive *personal* auto: not "insured with Progressive Commercial Auto".
+  assert.equal(byQ('198').value, false);
+  assert.equal(byQ('81').re, '^is the customer currently insured$');
+  // 2F6 is the hazmat placard question, not a consent question.
+  assert.equal(byQ('2F6').value, false);
+  assert.equal(byQ('2F6').note, null);
+  // USDOT-registered name/addresses are picked over "Enter a different ...".
+  for (const q of ['22F', '277', '2A5']) {
+    assert.equal(byQ(q).kind, 'pick-not');
+    assert.equal(byQ(q).value, '^enter a different');
+  }
+  assert.equal(byQ('28B9').value, 'S12345678901');
 });

@@ -87,22 +87,29 @@ export function redactor(terms) {
 // ---------------------------------------------------------------------------------------------
 // Events
 
+// Values that look typed rather than picked from a list. If the recorder ever mistakes a typed
+// box for a dropdown (date pickers look like dropdowns), these still never reach the log.
+const LOOKS_TYPED = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|@|\d{5,}/;
+
 /**
  * Turns one field change seen on the rater page into a log event.
  * @param {{key, q, label, kind, before, after, agent}} change  from the page recorder (raw values)
- * @param {{record, filled: Map, redact: Function}} ctx  filled: field key -> what autofill put there
+ * @param {{record, filled: Map, redact: Function, labels?: Map}} ctx  filled: field key -> what
+ *   autofill put there; labels: field key -> question text as the fill engine read it (more
+ *   reliable than the recorder's guess)
  */
-export function fieldChangeEvent(change, { record, filled, redact }) {
+export function fieldChangeEvent(change, { record, filled, redact, labels }) {
   const ours = filled.get(change.key) ?? null;
+  const kind = change.kind !== 'text' && (LOOKS_TYPED.test(redact(change.before ?? '')) || LOOKS_TYPED.test(redact(change.after ?? ''))) ? 'text' : change.kind;
   const base = {
     type: 'field_change',
     q: change.q ?? null,
-    label: redact(change.label),
-    kind: change.kind,
+    label: redact(labels?.get(change.key) ?? change.label),
+    kind,
     by: change.agent ? 'agent' : 'page',
     autofilled: ours ? ours.path : null,
   };
-  if (change.kind === 'text') {
+  if (kind === 'text') {
     const before = String(change.before ?? '');
     const after = String(change.after ?? '');
     return {

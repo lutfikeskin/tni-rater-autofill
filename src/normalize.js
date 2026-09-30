@@ -149,6 +149,19 @@ export function parseLicense(v) {
   return { state: null, number: s.replace(/\s/g, '').toUpperCase() };
 }
 
+// Usual driver's license number formats for states we see often. A mismatch is only a warning:
+// states have older formats too.
+const LICENSE_FORMATS = {
+  MD: [/^[A-Z]\d{12}$/, '1 letter + 12 digits'],
+  FL: [/^[A-Z]\d{12}$/, '1 letter + 12 digits'],
+  NJ: [/^[A-Z]\d{14}$/, '1 letter + 14 digits'],
+  IL: [/^[A-Z]\d{11}$/, '1 letter + 11 digits'],
+  CA: [/^[A-Z]\d{7}$/, '1 letter + 7 digits'],
+  TX: [/^\d{7,8}$/, '8 digits'],
+  PA: [/^\d{8}$/, '8 digits'],
+  VA: [/^([A-Z]\d{8}|\d{9})$/, '1 letter + 8 digits, or 9 digits'],
+};
+
 const KNOWN_FIELDS = new Set([
   'date_of_application', 'email', 'dot_number', 'mc_number', 'mc_dot_60days', 'phone_number', 'company_name',
   'year_established', 'owner_name_1', 'owner_name_2', 'owner_drives', 'years_experience', 'garaging_address',
@@ -327,6 +340,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       }
     } else check('license.missing', p('licenseNumber'), `${who}: no driver's license number.`);
     if (!d.licenseState) check('license-state.missing', p('licenseState'), `${who}: no license state.`);
+    const format = LICENSE_FORMATS[d.licenseState];
+    if (d.licenseNumber && format && !format[0].test(d.licenseNumber)) {
+      check('license.format', p('licenseNumber'), `${who}: license number ${d.licenseNumber} doesn't look like a ${d.licenseState} license (usually ${format[1]}). Check it against the license.`);
+    }
 
     if (d.first && /\s/.test(d.first)) {
       check('name.multi-word-first', p('first'), `${who}: first-name box has more than one word ("${d.first}"). Check the license for which part is the middle name.`);
@@ -395,6 +412,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (txt('ins_exp_1') && !prior.expiration) { prior.expiration = txt('ins_exp_1'); check('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`); }
   if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
+    const exp = prior.expiration?.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (exp && new Date(+exp[3], +exp[1] - 1, +exp[2]) < new Date(today.getFullYear(), today.getMonth(), today.getDate())) {
+      check('prior.expired', 'priorInsurance[0].expiration', `Current policy expiration ${prior.expiration} is already past. Was it renewed? Raters want the current expiration date.`);
+    }
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
   }
 
@@ -414,6 +435,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     if (lines.length === 1 && /^(no|none|no claims?)\.?$/i.test(lines[0])) record.claims.hasClaims = false;
     else if (lines.length === 1 && /^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
     else {
+      // The first line usually answers the claims question; the rest answers others.
+      if (/^(no|none|no claims?)\.?$/i.test(lines[0])) record.claims.hasClaims = false;
+      else if (/^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
       check('claims.multi-line', 'claims.text', `Claims box has ${lines.length} lines (${lines.map((l) => `"${l}"`).join(', ')}). The client may have answered other questions here — read it.`);
       const own = claims.match(/\b(owned|leased|financed|rented)\b/i);
       if (own && !ops.vehicleOwnership) {

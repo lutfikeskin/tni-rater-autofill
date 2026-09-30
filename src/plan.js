@@ -49,7 +49,7 @@ export function redactionTerms(record) {
   const g = record.garaging ?? {};
   const names = [a.name, a.owner1, a.owner2, ...(record.drivers ?? []).flatMap((d) => [d.first, d.middle, d.last])];
   const exact = [
-    a.email, a.phone, a.phone?.replace(/\D/g, ''), a.dot, a.mc, a.fein, g.street, g.unit, g.city,
+    a.email, a.phone, a.phone?.replace(/\D/g, ''), a.dot, a.mc, a.fein, g.street, g.unit, g.city, g.zip,
     record.operations?.licensePlate,
     ...(record.drivers ?? []).flatMap((d) => [d.dob, d.licenseNumber]),
     ...[...(record.vehicles ?? []), ...(record.trailers ?? [])].map((u) => u.vin),
