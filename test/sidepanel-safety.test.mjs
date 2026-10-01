@@ -231,7 +231,7 @@ test('warning rows render accessible dismiss buttons bound to their field and pa
 
 test('warning-only automatic follow-ups render and log unfamiliar fields without pausing', async () => {
   const frames = [{ fields: 1, filled: [], actions: [], unknown: [{ key: 'new', label: 'New question' }], halted: false }];
-  const logged = [], rendered = [], layouts = [];
+  const logged = [], rendered = [], layouts = [], assisted = [];
   const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false };
   const context = {
     state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
@@ -239,6 +239,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }],
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events) },
+    runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
   };
   vm.runInNewContext(extractFunction('autoFill'), context);
   await context.autoFill('Rates');
@@ -247,4 +248,9 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   assert.equal(rendered.length, 1);
   assert.equal(logged[0].result, 'unfamiliar');
   assert.deepEqual(layouts, ['Rates']);
+  // The AI assistant gets the flagged questions, only once the fill has let go of the page.
+  assert.equal(assisted.length, 1);
+  assert.deepEqual(assisted[0].result, frames);
+  assert.equal(assisted[0].ctx.page, 'Rates');
+  assert.equal(assisted[0].filling, false);
 });

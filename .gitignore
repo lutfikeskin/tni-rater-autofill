@@ -1,5 +1,8 @@
 node_modules/
 .DS_Store
-server-data/
+server-data
 # Layouts built from agents' usage logs: review before committing any.
 captures/*/generated/
+dist/
+# Weekly review reports (npm run review): built from usage logs, review before sharing.
+reviews/

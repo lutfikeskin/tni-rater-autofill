@@ -12,6 +12,8 @@ const ROWS = [1, 2, 3, 4];
 const MARITAL_FIELDS = ['marital_stat_1.0', 'marital_stat_1.1', 'marital_stat_1.2.0', 'marital_stat_1.2.1'];
 
 const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
+// Radius answers that mean the widest band (same words carriers/progressive.js maps to 500+).
+const LONG_HAUL = /unlimited|long|nation|otr|48|any/i;
 
 export function clean(v) {
   if (v == null || typeof v !== 'string') return v ?? null;
@@ -254,7 +256,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       glLimit: txt('gen_liab_limit'),
       reeferBreakdown: yesNo(raw.reefer_breakdown),
     },
-    claims: { text: cleanMultiline(raw.claims_details), hasClaims: null },
+    claims: { text: cleanMultiline(raw.claims_details), hasClaims: null, notes: null },
     crossSell: [
       raw.cross_personal_auto && 'Personal auto', raw.cross_life && 'Life', raw.cross_homeowners && 'Homeowners',
       raw.cross_renters && 'Renters', raw.cross_other && (txt('cross_other_text') ?? 'Other'),
@@ -387,7 +389,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (ops.radius) {
     const miles = toInt(ops.radius);
     if (miles != null) ops.radiusMiles = miles;
-    else check('radius.not-miles', 'operations.radius', `Radius is "${ops.radius}", not a number of miles. Raters usually want miles or a band (e.g. 500+).`);
+    // "Unlimited", long haul, OTR, 48 states: the carrier rules pick their widest band (500+).
+    else if (!LONG_HAUL.test(ops.radius)) check('radius.not-miles', 'operations.radius', `Radius is "${ops.radius}", not a number of miles. Raters usually want miles or a band (e.g. 500+).`);
   } else check('radius.missing', 'operations.radius', 'No radius of operations.');
   if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.');
   if (ops.filingsRequired && !ops.filingsWhich) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.');
@@ -422,22 +425,18 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'Wants general liability but no limit chosen.');
 
   // --- Claims box -----------------------------------------------------------------------------
-  // Clients sometimes use this box for answers to other questions, so read it but don't trust it.
+  // Clients use this box for answers to other questions too. A leading yes/no answers the claims
+  // question; everything else is kept as notes (no warning) for the agent and the AI assistant.
   const claims = record.claims.text;
   if (claims) {
     const lines = claims.split('\n');
-    if (lines.length === 1 && /^(no|none|no claims?)\.?$/i.test(lines[0])) record.claims.hasClaims = false;
-    else if (lines.length === 1 && /^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
-    else {
-      // The first line usually answers the claims question; the rest answers others.
-      if (/^(no|none|no claims?)\.?$/i.test(lines[0])) record.claims.hasClaims = false;
-      else if (/^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
-      check('claims.multi-line', 'claims.text', `Claims box has ${lines.length} lines (${lines.map((l) => `"${l}"`).join(', ')}). The client may have answered other questions here — read it.`);
-      const own = claims.match(/\b(owned|leased|financed|rented)\b/i);
-      if (own && !ops.vehicleOwnership) {
-        check('ownership.hint-in-claims', 'operations.vehicleOwnership', `Vehicle ownership is blank, but the claims box says "${own[1]}". Probably the ownership answer.`);
-      }
-    }
+    if (/^(no|none|no claims?)\.?$/i.test(lines[0])) record.claims.hasClaims = false;
+    else if (/^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
+    const notes = (record.claims.hasClaims == null ? lines : lines.slice(1)).filter(Boolean);
+    record.claims.notes = notes.length ? notes.join('\n') : null;
+    // A blank ownership answer that turns up in the notes ("Financed") is the ownership answer.
+    const own = record.claims.notes?.match(/\b(owned|leased|financed)\b/i);
+    if (own && !ops.vehicleOwnership) ops.vehicleOwnership = own[1][0].toUpperCase() + own[1].slice(1).toLowerCase();
   } else check('claims.blank', 'claims.text', 'Claims question left blank.');
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
     check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.');

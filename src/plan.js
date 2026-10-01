@@ -39,6 +39,7 @@ function actionSteps(carrier, record, active) {
       text: resolve(a.text) ?? null,
       token: a.token ?? null,
       near: a.near ?? null,
+      opener: a.opener ?? null,
       immediate: !!a.immediate,
       after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
       afterAny: (resolve(a.afterAny) ?? []).map((p) => withIndex(p, active)),

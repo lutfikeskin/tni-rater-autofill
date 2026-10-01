@@ -96,6 +96,7 @@ export const SECTIONS = [
   { id: 'claims', title: 'Claims (last 36 months)', fields: [
     ['claims.hasClaims', 'Any claims / violations', 'bool'],
     ['claims.text', 'Claims box, as written', 'textarea'],
+    ['claims.notes', 'Notes (other answers in the claims box)', 'textarea'],
   ] },
 ];
 

@@ -41,6 +41,10 @@ const EVENT_FIELDS = {
   fill_error: ['auto', 'error'],
   field_change: ['q', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   problem_report: ['text'],
+  // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
+  // setting) acted on. Choices are option texts; typed text suggestions are never logged.
+  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'cached'],
+  ai_decision: ['q', 'label', 'controlKind', 'decision', 'choice', 'confidence', 'basis', 'intakePath', 'reason'],
 };
 
 export function createServer({ dataDir, token = '' } = {}) {

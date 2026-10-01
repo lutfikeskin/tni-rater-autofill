@@ -7,6 +7,7 @@ import { carrierForUrl } from '../src/carriers.js';
 import { get, set } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import * as usage from './usage-log.js';
+import { collectItems, buildRequest, callModel, parseResponse, usageOf, AssistError, DEFAULT_MODEL } from '../src/ai/assist.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -45,6 +46,10 @@ const state = {
   // Carrier buttons already clicked in this quote (Verify DOT, Bill plan options, …).
   doneActions: new Set(),
   visitedPages: new Set(),
+  // AI assistant: the latest request (older answers arriving late are dropped) and suggestions
+  // per page and set of questions, so a refill doesn't ask again.
+  aiRun: 0,
+  aiCache: new Map(),
 };
 
 function h(tag, props = {}, ...children) {
@@ -96,6 +101,7 @@ async function loadFile(file) {
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
   state.filled = new Map();
   state.doneActions = new Set();
+  state.aiCache.clear();
   await store.set('session', usage.startSession(summary.intakeId));
   usage.log({ type: 'intake_loaded', ...summary });
   uploadNow();
@@ -309,7 +315,13 @@ function onRecorderMessage(msg, sender) {
     if (msg.from) state.visitedPages.add(samePage(msg.from));
     usage.log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
     // Setting "Fill each new page as soon as it opens": wait for the page to settle, then fill.
-    if ($('auto-pages').checked && msg.fields > 0 && onQuotePage()) {
+    // Coming back to a page filled earlier in this quote (Rates after the bill plan) refills it
+    // with the follow-up setting, so its next buttons (Recalculate, Print) run. Pages with only
+    // buttons for us (Add Vehicle) count too.
+    const page = samePage(msg.page);
+    const hasButtons = (state.tab.carrier?.actions ?? []).some((a) => [].concat(a.page ?? []).includes(page));
+    const wanted = $('auto-pages').checked || ($('auto-followups').checked && state.autoPages.has(page));
+    if (wanted && (msg.fields > 0 || hasButtons) && onQuotePage()) {
       setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 800);
     }
     return;
@@ -340,8 +352,9 @@ const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUr
 const fillOptions = (carrier, extra = {}) => ({
   optional: carrier.optional ?? [],
   replaceChoices: !!carrier.replaceChoices,
-  // Click the page's Continue when nothing is left for the agent (setting below).
-  advance: $('auto-advance').checked && carrier.advance ? carrier.advance : null,
+  // Click the page's Continue when nothing is left for the agent (setting below), but never
+  // while the agent hasn't approved the AI's selections on this page.
+  advance: $('auto-advance').checked && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
   doneActions: [...state.doneActions],
   visitedPages: [...state.visitedPages],
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
@@ -362,6 +375,7 @@ async function autoFill(page) {
   state.filling = true;
   state.autoPending = false;
   const started = Date.now();
+  let assistFrames = null;
   await tellRecorder('pause');
   try {
     const plan = buildPlan(state.intake.record, carrier, state.active);
@@ -370,7 +384,7 @@ async function autoFill(page) {
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
     const hasWarnings = frames.some((f) => f.unknown?.length);
-    if (state.autoPaused || hasWarnings) renderReport(frames);
+    if (state.autoPaused || hasWarnings) { renderReport(frames); assistFrames = frames; }
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings) {
       if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)) }));
@@ -389,6 +403,7 @@ async function autoFill(page) {
     state.filling = false;
     if (state.autoPending) scheduleAutoFill(page);
   }
+  if (assistFrames) runAssist(assistFrames, { tabId, page, carrier });
 }
 
 // Each page's question layout (ids, question text, options; no answers) goes into the usage
@@ -486,6 +501,7 @@ async function fillPage({ auto = false } = {}) {
   $('fill').textContent = 'Filling…';
   $('report').replaceChildren(h('p', { class: 'muted small' }, 'Filling one answer at a time where the page checks each answer with its server. Keep this tab open.'));
   const started = Date.now();
+  let assistFrames = null;
   // Our own fills aren't the agent's changes: pause the recorder while filling.
   await ensureRecorder();
   await tellRecorder('pause');
@@ -499,6 +515,7 @@ async function fillPage({ auto = false } = {}) {
       carrier: carrier.id, page, overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
     }));
     renderReport(frames);
+    assistFrames = frames;
   } catch (e) {
     state.autoPaused = true;
     usage.log({ type: 'fill_error', carrier: carrier.id, page: pageOf(state.tab.url), error: String(e.message).slice(0, 200) });
@@ -509,6 +526,8 @@ async function fillPage({ auto = false } = {}) {
     $('fill').disabled = false;
     $('fill').textContent = 'Fill this page';
   }
+  await remarkAi({ tabId, page, carrier });
+  if (assistFrames && !assistFrames.some((f) => f.halted)) runAssist(assistFrames, { tabId, page, carrier });
 }
 
 async function ignoreReview(key, tabId, page) {
@@ -535,7 +554,7 @@ function renderReport(frames) {
     x.key ? h('button', { class: 'ignore-review', type: 'button', title: 'Ignore this field and continue', 'aria-label': `Ignore ${x.label} and continue`, onclick: () => ignoreReview(x.key, tabId, page) }, '×') : null,
   ];
   box.className = 'report';
-  if (!fields) {
+  if (!fields && !all('actions').length) {
     const halted = frames.find((f) => f.halted);
     box.replaceChildren(h('p', { class: halted ? 'error' : 'muted' }, halted ? `Automatic filling and helpers paused. ${halted.reason ?? 'Review this page before retrying.'}` : 'No form fields found on this page.'));
     return;
@@ -551,7 +570,7 @@ function renderReport(frames) {
     frames.some((f) => f.halted) ? h('p', { class: 'error' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then click Fill this page to retry.`) : null,
     h('p', { class: 'report-summary' }, `Filled ${filled.length} of ${fields} fields on this page${advanced ? ` · clicked "${advanced}"` : blockers.length ? ` · ${blockers.length} thing${blockers.length === 1 ? '' : 's'} to look at before Continue` : ''}`),
     group('r-needs', 'Unfamiliar questions — left for you', all('unknown'), (x) => reviewLine(x, [h('b', {}, x.label), x.required ? ' (required)' : '']), true),
-    group('r-failed', "Couldn't fill", failed, (x) => reviewLine(x, [h('b', {}, x.label), ` — ${x.reason}`, x.options?.length ? h('div', { class: 'muted' }, `Options: ${x.options.join(' · ')}`) : null]), true),
+    group('r-failed', "Couldn't fill", failed, (x) => reviewLine(x, [h('b', {}, x.label), ` — ${x.reason}`, x.options?.length ? h('div', { class: 'muted' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null]), true),
     group('r-needs', 'Needs you', needs, (x) => reviewLine(x, [h('b', {}, x.label), ` — ${x.why}`]), true),
     group('r-needs', 'Page already had a different value (kept)', kept.filter((x) => x.differs), (x) => reviewLine(x, [h('b', {}, x.label)]), true),
     group('r-needs', 'Buttons waiting', all('blocked'), (x) => [h('b', {}, x.id), ` — ${x.why}`]),
@@ -593,6 +612,231 @@ async function capturePage() {
   } catch (e) {
     $('report').replaceChildren(h('p', { class: 'error' }, `Couldn't capture this page: ${e.message}`));
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// AI assistant (src/ai/assist.js): after a fill, suggests answers for the questions left for the
+// agent. Suggestions go in only when the agent accepts them, or, with "Let the AI select answers
+// it's sure of", when the answer comes straight from the intake or a written TNI rule.
+
+async function aiSettings() {
+  const { aiOn = false, aiAuto = false, aiKey = '', aiModel = '' } = await usage.settings();
+  return { on: aiOn, auto: aiAuto, apiKey: aiKey, model: aiModel || DEFAULT_MODEL };
+}
+
+// ctx: { tabId, page, carrier } of the fill these frames came from.
+async function runAssist(frames, ctx) {
+  const cfg = await aiSettings();
+  if (!cfg.on || !state.intake) return;
+  const { items, blocked } = collectItems(frames);
+  if (!items.length) return;
+  const holder = h('div', { class: 'ai-box' });
+  $('report').append(holder);
+  if (!cfg.apiKey) {
+    holder.append(h('p', { class: 'muted small' }, 'The AI assistant is on but has no API key. Add one under AI assistant.'));
+    return;
+  }
+  const run = ++state.aiRun;
+  const stale = () => run !== state.aiRun || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page || !holder.isConnected;
+  const sig = [ctx.tabId, ctx.page, cfg.model, ...items.map((x) => `${x.key}|${x.label}|${x.current}|${x.options.length}`)].join('\n');
+  let suggestions = state.aiCache.get(sig);
+  if (!suggestions) {
+    holder.replaceChildren(h('p', { class: 'muted small ai-wait' }, `Asking the AI about ${items.length} question${items.length === 1 ? '' : 's'} left for you…`));
+    const started = Date.now();
+    const onPage = frames.flatMap((f) => f.filled ?? []).map((x) => ({ question: x.label, answer: x.shown }));
+    const body = buildRequest(items, { record: state.intake.record, carrier: ctx.carrier.id, page: ctx.page, active: state.active, onPage }, cfg);
+    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: items.length, blocked: blocked.length };
+    try {
+      const json = await callModel({ apiKey: cfg.apiKey, body });
+      suggestions = parseResponse(json, items, state.intake.record);
+      state.aiCache.set(sig, suggestions);
+      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: suggestions.filter((x) => !x.leave).length, leave: suggestions.filter((x) => x.leave).length, autoOk: suggestions.filter((x) => x.autoOk).length, ...usageOf(json) });
+    } catch (e) {
+      const msg = e instanceof AssistError ? e.message : `Something went wrong (${String(e?.message ?? e).slice(0, 120)}).`;
+      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+      if (!stale()) holder.replaceChildren(h('p', { class: 'error small' }, `AI assistant: ${msg}`));
+      return;
+    }
+  }
+  if (stale()) return;
+  if (cfg.auto) {
+    const picks = suggestions.filter((x) => x.autoOk && !x.done && !x.dismissed);
+    if (picks.length) await applyAi(picks, ctx, 'auto');
+  }
+  if (!stale()) renderAi(holder, suggestions, ctx);
+  syncAiBanner(ctx);
+}
+
+// AI selections on this tab's page that the agent hasn't approved or rejected yet. While there
+// are any, the page's Continue is never clicked automatically.
+function pendingAi(tabId, page) {
+  const out = [];
+  for (const [sig, list] of state.aiCache) {
+    const [t, p] = sig.split('\n');
+    if (t === String(tabId) && p === page) out.push(...list.filter((x) => x.done === 'auto' && !x.approved && !x.rejected));
+  }
+  return out;
+}
+
+// A new fill clears the page's marks: put the purple back on the AI's answers on this page.
+async function remarkAi(ctx) {
+  const answered = [];
+  for (const [sig, list] of state.aiCache) {
+    const [t, p] = sig.split('\n');
+    if (t === String(ctx.tabId) && p === ctx.page) answered.push(...list.filter((x) => x.done && !x.rejected));
+  }
+  if (!answered.length) return;
+  try {
+    await runKit(ctx.tabId, ctx.carrier, (list) => list.forEach(([k, l, n]) => globalThis.__raterKit.markKey(k, l, 'ai', n)),
+      [answered.map((x) => [x.key, x.label, x.done === 'auto' && !x.approved ? 'selected by the AI: approve it in the side panel' : 'AI answer'])]);
+  } catch { /* page navigating */ }
+  await syncAiBanner(ctx);
+}
+
+// The note at the bottom of the rater page listing the selections waiting for approval.
+async function syncAiBanner(ctx) {
+  if (state.tab?.id !== ctx.tabId) return;
+  const lines = pendingAi(ctx.tabId, ctx.page).map((x) => `${x.label}: ${x.choice}`);
+  try { await runKit(ctx.tabId, ctx.carrier, (l) => globalThis.__raterKit.aiBanner(l), [lines]); } catch { /* page navigating */ }
+}
+
+// Puts AI answers into the page through the fill engine, which checks the page kept each one.
+// decision: 'accepted' (the agent clicked Accept) or 'auto' (the auto-select setting).
+async function applyAi(list, ctx, decision) {
+  if (state.filling) return false;
+  if (state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return false;
+  state.filling = true;
+  await tellRecorder('pause');
+  try {
+    const answers = list.map((x) => ({
+      key: x.key, label: x.label, value: x.choice,
+      note: `${decision === 'auto' ? 'selected by the AI' : 'AI suggestion you accepted'}: ${x.tip}`.slice(0, 240),
+    }));
+    const results = (await runKit(ctx.tabId, ctx.carrier, (a) => globalThis.__raterKit.answer(a), [answers])).flatMap((r) => r.result ?? []);
+    const keys = state.agentKeys.get(ctx.page) ?? new Set();
+    for (const x of list) {
+      const mine = results.filter((r) => r.key === x.key && r.label === x.label);
+      const ok = mine.find((r) => r.ok);
+      const problem = mine.find((r) => !r.ok && !/no longer on this page/.test(r.reason ?? '')) ?? mine[0];
+      x.done = ok ? decision : null;
+      x.error = ok ? null : problem?.reason ?? 'the question is no longer on this page';
+      if (ok) {
+        // Decided now: later fills leave this question alone instead of asking again.
+        keys.add(x.key);
+        state.filled.set(x.key, { path: null, shown: ok.shown });
+      }
+      if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
+    }
+    state.agentKeys.set(ctx.page, keys);
+    return true;
+  } catch (e) {
+    for (const x of list) x.error = `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
+    return false;
+  } finally {
+    await tellRecorder('resume');
+    state.filling = false;
+    if (state.autoPending) scheduleAutoFill(ctx.page);
+  }
+}
+
+function aiDecisionEvent(x, ctx, decision) {
+  const redact = redactor(redactionTerms(state.intake.record));
+  return {
+    type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
+    decision, choice: x.controlKind !== 'text' && x.choice ? redact(x.choice) : undefined,
+    confidence: x.confidence, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
+  };
+}
+
+function renderAi(holder, suggestions, ctx) {
+  const rerender = () => { if (holder.isConnected) renderAi(holder, suggestions, ctx); };
+  const act = async (list, decision, button) => {
+    if (state.filling) { $('ai-note').textContent = 'Wait for the fill to finish, then try again.'; return; }
+    if (button) { button.disabled = true; button.textContent = 'Putting it in…'; }
+    await applyAi(list, ctx, decision);
+    rerender();
+  };
+  const sure = suggestions.filter((x) => x.autoOk && !x.done && !x.dismissed);
+  const pending = suggestions.filter((x) => x.done === 'auto' && !x.approved && !x.rejected);
+  const canContinue = $('auto-advance').checked && !!ctx.carrier.advance;
+  const decide = async (list, decision) => {
+    for (const x of list) {
+      if (decision === 'approved') x.approved = true; else x.rejected = true;
+      if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, decision));
+    }
+    if (decision === 'rejected') {
+      for (const x of list) {
+        try { await runKit(ctx.tabId, ctx.carrier, (k, l, n) => globalThis.__raterKit.markKey(k, l, 'needs', n), [x.key, x.label, 'AI choice rejected: set this answer yourself']); } catch { /* page navigating */ }
+      }
+    }
+    await syncAiBanner(ctx);
+    rerender();
+    // Approved and nothing else left: the normal fill clicks Continue (when that setting is on).
+    if (decision === 'approved' && canContinue && !pendingAi(ctx.tabId, ctx.page).length
+      && state.tab?.id === ctx.tabId && pageOf(state.tab?.url) === ctx.page) fillPage();
+  };
+  const why = (x) => [
+    x.basis === 'intake' ? `from the intake: ${x.intakePath}` : x.basis === 'tni_rule' ? 'TNI rule' : x.basis === 'page' ? 'from other answers on the page' : x.basis === 'judgement' ? 'AI judgement' : null,
+    x.status === 'failed' ? 'autofill couldn\'t fill it' : x.status === 'unfamiliar' ? 'no TNI rule yet' : x.status === 'not_on_intake' ? 'not on the intake' : 'required',
+  ].filter(Boolean).join(' · ');
+  const line = (x) => {
+    const chip = x.rejected ? h('span', { class: 'ai-chip bad' }, 'rejected')
+      : x.done === 'auto' && !x.approved ? h('span', { class: 'ai-chip high' }, 'selected by AI · needs your OK')
+        : x.done ? h('span', { class: 'ai-chip done' }, x.done === 'auto' ? 'selected by AI · approved' : 'accepted')
+      : x.dismissed ? h('span', { class: 'ai-chip' }, 'dismissed')
+        : x.error ? h('span', { class: 'ai-chip bad' }, 'not taken')
+          : x.leave ? h('span', { class: 'ai-chip' }, 'yours to decide')
+            : h('span', { class: `ai-chip ${x.confidence === 'high' ? 'high' : ''}` }, `${x.confidence} confidence`);
+    const canAct = !x.leave && !x.done && !x.dismissed && x.applyable;
+    return [
+      h('b', {}, x.label),
+      h('div', { class: 'ai-line' },
+        x.leave ? h('span', { class: 'muted' }, 'Leave for you') : h('span', { class: 'ai-choice' }, x.controlKind === 'text' ? `Type “${x.choice}”` : x.choice),
+        chip),
+      x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null,
+      h('div', { class: 'ai-why' }, why(x)),
+      ...x.checks.map((c) => h('div', { class: 'ai-check' }, `Checked by the extension: ${c}`)),
+      x.error ? h('div', { class: 'ai-check' }, `Not taken by the page: ${x.error}`) : null,
+      canAct ? h('div', { class: 'ai-actions' },
+        h('button', { type: 'button', class: 'ghost accept', onclick: (e) => act([x], 'accepted', e.target) }, 'Accept'),
+        h('button', { type: 'button', class: 'ghost', onclick: () => { x.dismissed = true; if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } }, 'Dismiss')) : null,
+    ];
+  };
+  const open = suggestions.filter((x) => !x.done);
+  const done = suggestions.filter((x) => x.done);
+  holder.replaceChildren(...[
+    h('details', { class: 'r-ai', open: true },
+      h('summary', {}, `AI suggestions (${open.length} open${done.length ? `, ${done.length} put in` : ''})`),
+      sure.length > 1 ? h('button', { type: 'button', class: 'ghost ai-all', onclick: (e) => act(sure, 'accepted', e.target) }, `Accept all ${sure.length} suggested answers`) : null,
+      h('ul', {}, [...open, ...done].map((x) => h('li', {}, line(x))))),
+    // End of the page report: what the AI selected by itself, waiting for the agent's OK.
+    pending.length ? h('div', { class: 'ai-approve' },
+      h('p', { class: 'ai-approve-title' }, `The AI selected ${pending.length} answer${pending.length === 1 ? '' : 's'} on this page`),
+      h('p', { class: 'muted small' }, canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.'),
+      h('ul', {}, pending.map((x) => h('li', {},
+        h('span', {}, h('b', {}, x.label), ' ← ', h('span', { class: 'ai-choice' }, x.choice)),
+        h('button', { type: 'button', class: 'link small ai-reject', onclick: () => decide([x], 'rejected') }, 'Reject')))),
+      h('div', { class: 'ai-actions' },
+        h('button', { type: 'button', class: 'ghost accept', onclick: () => decide(pending, 'approved') }, canContinue ? 'Approve and continue' : `Approve ${pending.length === 1 ? 'it' : `all ${pending.length}`}`))) : null,
+  ].filter(Boolean));
+}
+
+function wireAi() {
+  const save = (patch) => usage.saveSettings(patch).then(renderAiSettings);
+  $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
+  $('ai-auto').addEventListener('change', (e) => save({ aiAuto: e.target.checked }));
+  $('ai-key').addEventListener('change', (e) => save({ aiKey: e.target.value.trim() }));
+  $('ai-model').addEventListener('change', (e) => save({ aiModel: e.target.value.trim() }));
+}
+
+async function renderAiSettings() {
+  const cfg = await aiSettings();
+  $('ai-on').checked = cfg.on;
+  $('ai-auto').checked = cfg.auto;
+  $('ai-auto').disabled = !cfg.on;
+  if (document.activeElement !== $('ai-key')) $('ai-key').value = cfg.apiKey;
+  if (document.activeElement !== $('ai-model')) $('ai-model').value = cfg.model === DEFAULT_MODEL ? '' : cfg.model;
+  $('ai-note').textContent = !cfg.on ? 'Off.' : !cfg.apiKey ? 'On, but needs an API key.' : `On · ${cfg.model}${cfg.auto ? ' · makes selections, you approve them before Continue' : ' · suggestions only'}`;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -700,6 +944,7 @@ function wire() {
   $('unmark').addEventListener('click', clearMarks);
   $('capture').addEventListener('click', capturePage);
   wireUsage();
+  wireAi();
   if (inExtension) {
     chrome.runtime.onMessage.addListener(onRecorderMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
@@ -720,6 +965,7 @@ async function init() {
   uploadNow();
   render();
   renderUsage();
+  renderAiSettings();
   await refreshTab();
 }
 

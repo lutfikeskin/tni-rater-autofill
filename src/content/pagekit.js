@@ -1,5 +1,5 @@
 // Injected into rater pages (every frame) by the side panel. Classic script, no imports.
-// Exposes globalThis.__raterKit = { fill, capture, clear }.
+// Exposes globalThis.__raterKit = { fill, answer, markKey, aiBanner, capture, clear }.
 //
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
 // page already filled alone.
@@ -11,11 +11,12 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 17) return;
+  if (globalThis.__raterKit?.version === 20) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
-  const COLORS = { filled: '#16a34a', needs: '#d97706', failed: '#dc2626' };
+  // ai: an answer the AI assistant chose (accepted by the agent or auto-selected); check it.
+  const COLORS = { filled: '#16a34a', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed' };
   const STATE_NAMES = {
     AL: 'alabama', AK: 'alaska', AZ: 'arizona', AR: 'arkansas', CA: 'california', CO: 'colorado', CT: 'connecticut',
     DE: 'delaware', DC: 'district of columbia', FL: 'florida', GA: 'georgia', HI: 'hawaii', ID: 'idaho', IL: 'illinois',
@@ -235,6 +236,14 @@
 
   const isPlaceholderOption = (text) => /^(-+|select\b|choose\b|please\b|\s*$)/i.test(oneLine(text));
 
+  // What the AI assistant needs to know about a field left for the agent: its choices (never
+  // agency staff lists), the heading it sits under, and what the page shows now.
+  function describe(c) {
+    const options = /agent|producer/i.test(c.label ?? '') ? []
+      : [...new Set(optionsOf(c).map((o) => o.text).filter((t) => t && !isPlaceholderOption(t)))].slice(0, 80);
+    return { options, section: sectionOf(c.el), current: c.kind === 'text' ? (c.el.value ? 'has a value' : null) : selectedText(c) };
+  }
+
   function hasValue(c) {
     if (c.kind === 'radio') return c.options.some((o) => (o.cmp ? !!o.cmp.getValue() : o.el.checked));
     if (c.cmp && c.kind === 'select') {
@@ -365,6 +374,8 @@
         || (step.value.fallback && usable.find((o) => new RegExp(step.value.fallback, 'i').test(o.text))) || null;
     }
     if (step.kind === 'selected-option') return usable.find((o) => /^selected\b/i.test(o.text)) ?? null;
+    // Always the page's first choice (e.g. the first offered home address).
+    if (step.kind === 'first-option') return usable[0] ?? null;
     const cands = candidates(step);
     for (const c of cands) {
       const hit = usable.find((o) => squash(o.text) === c || squash(o.value) === c);
@@ -446,8 +457,40 @@
     options: options.filter((o) => !isPlaceholderOption(o.text)).map((o) => o.text).slice(0, 25),
   });
 
+  // Address boxes with the carrier's own address suggestions: type the whole one-line address,
+  // wait for the suggestion list, pick its first entry (which fills street, city and ZIP).
+  // No suggestion means the address needs the agent; the ZIP/city rules then check the rest.
+  const SUGGESTION_SELECTOR = '[role=option], .x-boundlist-item, .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li';
+  const shownSuggestions = () => deepQueryAll(document, SUGGESTION_SELECTOR).filter((el) => el.getClientRects().length && oneLine(el.textContent));
+  async function applyAddress(step, c) {
+    const text = String(step.value);
+    const { el, cmp } = c;
+    const before = new Set(shownSuggestions());
+    el.focus?.({ preventScroll: true });
+    if (cmp) cmp.setValue(text);
+    else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, text);
+    // Suggestion lists listen for typing: send the events typing would.
+    for (const type of ['input', 'keydown', 'keyup']) el.dispatchEvent(new Event(type, { bubbles: true }));
+    try { cmp?.fireEvent?.('change', cmp, text); } catch { /* page handler expected a real event */ }
+    let first = null;
+    for (const start = Date.now(); !first && Date.now() - start < 6000;) {
+      await sleep(200);
+      first = shownSuggestions().find((x) => !before.has(x)) ?? null;
+    }
+    if (!first) {
+      el.blur?.();
+      return { ok: false, reason: "the page offered no address suggestion; check the address, city and ZIP" };
+    }
+    const shown = oneLine(first.textContent).slice(0, 120);
+    for (const type of ['mousedown', 'mouseup']) first.dispatchEvent(new Event(type, { bubbles: true }));
+    first.click?.();
+    await settle({ quietMs: 300, maxMs: 5000 });
+    return { ok: true, shown };
+  }
+
   // Returns { ok: true, shown } or { ok: false, reason, options? }.
   async function apply(step, c) {
+    if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
     if (c.kind === 'text') {
@@ -554,13 +597,14 @@
         el.dataset.raPrevTitle = el.getAttribute('title') ?? '';
       }
       el.setAttribute(MARK, status);
-      el.style.outline = `2px ${status === 'filled' ? 'solid' : 'dashed'} ${COLORS[status]}`;
+      el.style.outline = `2px ${status === 'filled' || status === 'ai' ? 'solid' : 'dashed'} ${COLORS[status]}`;
       el.style.outlineOffset = '1px';
       if (note) el.setAttribute('title', `Rater Autofill: ${note}`);
     }
   }
 
   function clear() {
+    aiBanner([]);
     let n = 0;
     for (const el of deepQueryAll(document, `[${MARK}]`)) {
       el.style.outline = el.dataset.raPrevOutline ?? '';
@@ -575,6 +619,8 @@
 
   // Does the field already hold the answer we'd give?
   function agreesWith(step, c) {
+    // The chosen suggestion rewrites the typed address in the page's own format.
+    if (step.kind === 'address-suggest') return c.kind === 'text' && hasValue(c);
     if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!c.cmp.getValue() : c.el.checked) === step.value;
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
@@ -674,6 +720,7 @@
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
+    const openersTried = new Set();
     const visited = new Set(visitedPages);
     const startPage = currentPage();
     if (!keepMarks) clear();
@@ -715,12 +762,12 @@
       const flag = (list, item) => { if (!list.some((x) => x.key === item.key && x.label === item.label)) list.push(item); };
       for (const c of controls) {
         if (mapped.has(c) || quiet.has(c.q) || skipKeys.has(fieldKey(c))) continue;
-        flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, controlKind: c.kind, required: c.required });
+        flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, controlKind: c.kind, required: c.required, ...describe(c) });
         mark(c, 'needs', 'Unfamiliar question — left for you.');
       }
       for (const c of controls) {
         if (!mapped.has(c) || skipKeys.has(fieldKey(c)) || !hasValue(c) || !invalidControl(c)) continue;
-        flag(report.failed, { label: c.label, key: fieldKey(c), q: c.q, reason: 'The page marks this answer invalid.' });
+        flag(report.failed, { label: c.label, key: fieldKey(c), q: c.q, controlKind: c.kind, reason: 'The page marks this answer invalid.', ...describe(c) });
         mark(c, 'failed', 'the page marks this answer invalid');
       }
       for (const { step, control } of allPairs) {
@@ -761,7 +808,7 @@
         if (step.ignore) { handled.set(step.id, { status: null }); continue; }
         if (step.note || step.value == null) {
           if (quiet.has(c.q)) { handled.set(step.id, { status: null }); continue; }
-          report.noData.push({ ...item, note: step.note });
+          report.noData.push({ ...item, note: step.note, ...describe(c) });
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
           continue;
         }
@@ -780,14 +827,16 @@
           const settled = await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
           const currentControls = collectControls();
           const fresh = assign(currentControls, plan).find((p) => p.step.id === step.id)?.control;
-          const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : summaryAccepted(step, currentControls);
+          // An address box may collapse once a suggestion is picked; the ZIP/city rules check it.
+          const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : step.kind === 'address-suggest' || summaryAccepted(step, currentControls);
           if (!settled || !accepted || report.halted) {
             result = { ok: false, reason: !settled ? 'the page did not settle after the answer' : !fresh ? 'the field disappeared after the answer; check the page' : report.halted ? 'the agent interrupted filling' : 'the page did not keep the answer; check it' };
           }
         }
         if (result.ok) {
           if (currentPage() === 'CoveragesRates') {
-            for (const id of ['recalculate', 'billPlan', 'print', 'printSend', ...(/^21/.test(c.q ?? '') ? ['doneCargo'] : [])]) {
+            // The bill plan (payment method) stays chosen; the premium needs recalculating.
+            for (const id of ['recalculate', 'print', 'printSend', ...(/^21/.test(c.q ?? '') ? ['doneCargo'] : [])]) {
               clicked.delete(id);
               report.actions = report.actions.filter((x) => x.id !== id);
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
@@ -798,7 +847,7 @@
           changed = true;
           break;
         } else {
-          report.failed.push({ ...item, reason: result.reason, options: result.options });
+          report.failed.push({ ...item, reason: result.reason, ...describe(c) });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
           retry = true;
           if (report.halted) break;
@@ -857,7 +906,8 @@
         }
         if (a.unless.some(has) || (a.unlessActions ?? []).some((id) => clicked.has(id))) { clicked.add(a.action); continue; }
         const button = findButton(a);
-        if (!button) continue;
+        // Menu items ("Add Vehicle" under "Add") only show once their menu button is opened.
+        if (!button && !a.opener) continue;
         const ready = (!a.afterAny?.length || a.afterAny.some(has))
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
@@ -866,6 +916,14 @@
           && (!a.afterPages.length || a.afterPages.some((p) => visited.has(p)))
           && (!a.afterValue || pairs.some(({ step, control }) => step.path === a.afterValue[0] && new RegExp(a.afterValue[1], 'i').test(selectedText(control) ?? '')));
         if (!ready) { blocked.push(a.action); report.blocked.push({ id: a.action, why: 'waiting for its prerequisites' }); continue; }
+        if (!button) {
+          const opener = !openersTried.has(a.action) && findButton({ text: a.opener });
+          if (!opener) continue;
+          openersTried.add(a.action);
+          report.actions.push({ id: `${a.action}:menu`, text: oneLine(opener.value || opener.textContent).slice(0, 60) });
+          opener.click();
+          return true;
+        }
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: oneLine(button.value || button.textContent).slice(0, 60) });
         pendingAction = a;
@@ -890,7 +948,7 @@
     for (const c of controls) {
       if (!matched.has(c) && report.unknown.some((x) => x.key === fieldKey(c)) && !skipKeys.has(fieldKey(c))) mark(c, 'needs', 'Unfamiliar question — left for you.');
       if (!matched.has(c) && c.required && !hasValue(c) && !quiet.has(c.q) && !skipKeys.has(fieldKey(c))) {
-        report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind });
+        report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
         mark(c, 'needs', 'required, and not on the intake form');
       }
     }
@@ -918,6 +976,75 @@
       document.removeEventListener('input', protectEdit, true);
       document.removeEventListener('change', protectEdit, true);
     }
+  }
+
+  // Puts answers the agent accepted from the AI assistant (or that it was allowed to pick itself)
+  // into their fields: [{ key, label, value, note }], `value` being one of the field's option
+  // texts, 'checked'/'unchecked' for a checkbox, or text. Same apply-and-verify path as fill():
+  // an answer counts only once the page has settled and still shows it.
+  async function answer(answers) {
+    const serverBacked = !!ext();
+    const find = (key, label) => {
+      const same = collectControls().filter((c) => fieldKey(c) === key);
+      return same.length > 1 ? same.find((c) => c.label === label) ?? null : same[0] ?? null;
+    };
+    const results = [];
+    for (const a of answers) {
+      const c = find(a.key, a.label);
+      if (!c) { results.push({ key: a.key, label: a.label, ok: false, reason: 'the question is no longer on this page' }); continue; }
+      const step = c.kind === 'checkbox'
+        ? { id: `ai:${a.key}`, name: 'AI suggestion', kind: 'bool', value: /^(checked|yes|true)$/i.test(String(a.value)) }
+        : { id: `ai:${a.key}`, name: 'AI suggestion', value: String(a.value) };
+      let result;
+      try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
+      if (result.ok) {
+        const settled = await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
+        const fresh = find(a.key, a.label);
+        if (!settled) result = { ok: false, reason: 'the page did not settle after the answer' };
+        else if (!fresh) result = { ok: false, reason: 'the field disappeared after the answer; check the page' };
+        else if (invalidControl(fresh) || !agreesWith(step, fresh)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
+        else mark(fresh, 'ai', a.note ?? 'answer suggested by the AI assistant — check it');
+      }
+      if (!result.ok) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `AI answer not accepted: ${result.reason}`); }
+      results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, reason: result.reason ?? null });
+    }
+    return results;
+  }
+
+  // Re-marks one field (e.g. an AI choice the agent rejected). Returns whether it was found.
+  function markKey(key, label, status, note) {
+    const same = collectControls().filter((c) => fieldKey(c) === key);
+    const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
+    if (c) mark(c, status, note);
+    return !!c;
+  }
+
+  // A small note at the bottom of the rater page listing what the AI selected and still needs
+  // the agent's approval in the side panel. No buttons or inputs, so the fill engine and the
+  // page's own scripts never pick it up. An empty list removes it.
+  const BANNER_ID = 'rater-autofill-ai-banner';
+  function aiBanner(lines) {
+    if (window !== window.top) return;
+    document.getElementById(BANNER_ID)?.remove();
+    if (!lines?.length) return;
+    const box = document.createElement('div');
+    box.id = BANNER_ID;
+    box.setAttribute('role', 'status');
+    box.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;max-width:360px;padding:10px 12px;'
+      + 'background:#f5f1ff;border:2px solid #7c3aed;border-radius:8px;color:#2e1065;font:13px/1.4 system-ui,sans-serif;'
+      + 'box-shadow:0 4px 14px rgba(0,0,0,.15)';
+    const head = document.createElement('div');
+    head.style.cssText = 'font-weight:700;margin-bottom:4px';
+    head.textContent = `AI selected ${lines.length} answer${lines.length === 1 ? '' : 's'} on this page (purple). Approve in the side panel before Continue.`;
+    const list = document.createElement('ul');
+    list.style.cssText = 'margin:0;padding-left:18px';
+    for (const line of lines.slice(0, 12)) {
+      const li = document.createElement('li');
+      li.textContent = line;
+      list.append(li);
+    }
+    box.append(head, list);
+    document.body.append(box);
   }
 
   // Describes this page's form so exact mappings can be written. Records no typed values (only
@@ -978,5 +1105,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 17, fill, capture, clear };
+  globalThis.__raterKit = { version: 20, fill, answer, markKey, aiBanner, capture, clear };
 })();

@@ -83,7 +83,9 @@ test('Progressive standard answers: USDOT belongs to the business, filings, MCS-
   const plan = buildPlan(record, progressive, {});
   assert.equal(byQ(plan, '2C1A').value, true, 'for-hire is the supported workflow default');
   assert.equal(byQ(plan, '29F').value, true, 'owner-as-driver follows the intake');
-  assert.equal(byQ(plan, '2A5').value.prefer, 'primary business address');
+  assert.equal(byQ(plan, '2A5').kind, 'first-option', 'home address: always the first choice');
+  assert.equal(byQ(plan, '208A').value, true, 'no equipment, other-state id');
+  assert.equal(byQ(plan, '1FDD').value, 'Not selected', 'UMPD');
   assert.equal(byQ(plan, '20F').value, true);
   assert.equal(byQ(plan, '20F').note, null);
   assert.equal(byQ(plan, 'F11').value, true);
@@ -120,10 +122,18 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const actions = plan.filter((step) => step.kind === 'action');
   const recalc = actions.find((step) => step.action === 'recalculate');
   const bill = actions.find((step) => step.action === 'billPlan');
+  // Cargo, then bill plan options (automatic payments), back to Rates, then Recalculate.
   assert.deepEqual(recalc.afterActions, ['doneCargo']);
+  assert.deepEqual(recalc.afterPages, ['ChangePaymentPlan']);
   assert.equal(recalc.verify, 'premium');
-  assert.equal(bill.needsPremium, true);
-  assert.deepEqual(bill.afterActions, ['recalculate']);
+  assert.equal(bill.needsPremium, false);
+  assert.deepEqual(bill.afterActions, ['doneCargo']);
+  assert.ok(new RegExp(bill.text, 'i').test('Billing Options'));
+  const print = actions.find((step) => step.action === 'print');
+  assert.deepEqual(print.afterActions, ['recalculate']);
+  const gl = structuredClone(record);
+  gl.coverage.gl = true;
+  assert.ok(!buildPlan(gl, progressive, {}).some((step) => step.action === 'billPlan'), 'with GL the agent does the rates page');
   assert.ok(bill.afterAny.includes('progressive.q216F'));
   const multi = structuredClone(record);
   multi.vehicles.push({ type: 'Van', year: 2021, make: 'FORD', model: 'Transit', vin: '1FTBR3X87MKA12345', value: 40000 });
