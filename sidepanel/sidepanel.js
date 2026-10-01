@@ -875,6 +875,23 @@ async function renderUsage() {
     if (document.activeElement !== $(id)) $(id).value = v;
   }
   $('recording').hidden = !state.intake;
+  renderHealth({ n, agent, serverUrl, up });
+}
+
+// The version this browser is running, and setup problems that otherwise go unnoticed until a
+// review shows missing data: an old build, the usage server down, no initials, no AI key.
+async function renderHealth({ n, agent, serverUrl, up }) {
+  $('version').textContent = `v${inExtension ? chrome.runtime.getManifest().version : 'dev'}`;
+  const ai = await aiSettings();
+  const open = (id) => () => { $(id).open = true; $(id).scrollIntoView({ block: 'start', behavior: 'smooth' }); };
+  const problems = [
+    up.state === 'error' && { level: 'bad', text: `Usage server not reachable (${up.message}). ${n.toLocaleString()} event${n === 1 ? '' : 's'} waiting on this computer; they're sent once it's back (npm run server).`, go: open('usage') },
+    up.state === 'off' && { level: 'warn', text: 'No usage server set: nothing is recorded centrally (Export log only).', go: open('usage') },
+    !agent && { level: 'warn', text: 'Your initials are empty: your quotes are recorded without a name.', go: open('usage') },
+    ai.on && !ai.apiKey && { level: 'warn', text: 'The AI assistant is on but has no API key.', go: open('ai') },
+  ].filter(Boolean);
+  $('health').hidden = !problems.length;
+  $('health').replaceChildren(...problems.map((p) => h('button', { type: 'button', class: `health-item ${p.level}`, onclick: p.go }, p.text)));
 }
 
 async function uploadNow() {

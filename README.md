@@ -103,6 +103,15 @@ npm run replay
 
 Open `http://localhost:8792/test/replay/`. It rebuilds a carrier's pages from any layout file (the hand-made `captures/progressive/*.json`, or one from `npm run layouts`) as working ExtJS pages with Progressive-style ids and server round-trips, then runs the real fill engine. **Fill every page** gives a coverage table: questions per page, how many were filled, what failed, and which have no rule yet. It's built from recorded structure only; no carrier HTML or code is copied.
 
+### Replay regression run (before every release)
+
+```bash
+npm run e2e              # every recorded layout (state/product), real fill engine, real browser
+npm run e2e -- --update  # accept the current results as the baseline
+```
+
+Fills every layout (bake-off course, captures, and the per-state layouts from `npm run layouts`) on the replay page in Playwright's Chromium and compares with `test/e2e-baseline.json`: fewer answers filled, a new failure, or Continue clicked with questions still open fails the run. Report: `reviews/e2e-<date>.md`. One-time setup: `npx playwright install chromium`. The replay page doesn't imitate Progressive's address suggestions, so those stay "failed" there.
+
 ## Files
 
 | Path | What it does |

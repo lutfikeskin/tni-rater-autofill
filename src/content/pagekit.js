@@ -244,10 +244,16 @@
     return { options, section: sectionOf(c.el), current: c.kind === 'text' ? (c.el.value ? 'has a value' : null) : selectedText(c) };
   }
 
+  // An ExtJS field's value. A combo whose list was never loaded (or was torn down by a redraw)
+  // throws from getValue(); its box text is then the best answer there is.
+  function cmpValue(cmp, el) {
+    try { return cmp.getValue(); } catch { return el?.value || null; }
+  }
+
   function hasValue(c) {
-    if (c.kind === 'radio') return c.options.some((o) => (o.cmp ? !!o.cmp.getValue() : o.el.checked));
+    if (c.kind === 'radio') return c.options.some((o) => (o.cmp ? !!cmpValue(o.cmp, o.el) : o.el.checked));
     if (c.cmp && c.kind === 'select') {
-      const v = c.cmp.getValue();
+      const v = cmpValue(c.cmp, c.el);
       return v != null && v !== '' && !isPlaceholderOption(c.cmp.getRawValue?.() ?? '');
     }
     if (c.kind === 'text') return c.el.value.trim() !== '';
@@ -258,7 +264,7 @@
 
   function selectedText(c) {
     if (c.kind === 'checkbox') return c.el.checked ? 'checked' : 'unchecked';
-    if (c.kind === 'radio') return c.options.find((o) => (o.cmp ? o.cmp.getValue() : o.el.checked))?.text ?? null;
+    if (c.kind === 'radio') return c.options.find((o) => (o.cmp ? cmpValue(o.cmp, o.el) : o.el.checked))?.text ?? null;
     if (c.cmp) return oneLine(c.cmp.getRawValue?.() ?? '') || null;
     const o = c.el.selectedOptions?.[0];
     return o && !isPlaceholderOption(o.text) ? oneLine(o.text) : null;
@@ -621,7 +627,7 @@
   function agreesWith(step, c) {
     // The chosen suggestion rewrites the typed address in the page's own format.
     if (step.kind === 'address-suggest') return c.kind === 'text' && hasValue(c);
-    if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!c.cmp.getValue() : c.el.checked) === step.value;
+    if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) === step.value;
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
       if (loose(c.el.value) === loose(textFor(step, c))) return true;
@@ -851,6 +857,9 @@
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
           retry = true;
           if (report.halted) break;
+          // On pages that redraw after every answer, a failed answer may have redrawn it too: the
+          // controls read this round may be gone, so read the page again before the next one.
+          if (serverBacked) break;
         }
       }
       if (report.halted) break;

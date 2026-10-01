@@ -92,6 +92,17 @@ export function upload() {
       await local.set(LOG_KEY, [...retry.filter((e) => !ids.has(e.id)).map(({ rejectedBecause, ...e }) => e), ...queued]);
       await local.set(REJECTED_KEY, parked.filter((e) => !retry.includes(e)));
     }
+    // Nothing to send: still check the server is there, so a stopped server shows up in the
+    // panel before a quote's events start piling up on this computer.
+    if (!((await local.get(LOG_KEY)) ?? []).length) {
+      try {
+        const res = await fetch(new URL('/v1/health', serverUrl), { headers: serverToken ? { authorization: `Bearer ${serverToken}` } : {} });
+        uploadStatus = res.ok ? { state: 'ok', at: new Date().toISOString(), sent: 0 } : { state: 'error', at: new Date().toISOString(), message: `server said ${res.status}` };
+      } catch {
+        uploadStatus = { state: 'error', at: new Date().toISOString(), message: `can't reach ${serverUrl}` };
+      }
+      return;
+    }
     // Events recorded before ids existed get one now (the server needs ids to skip duplicates).
     const pending = (await local.get(LOG_KEY)) ?? [];
     if (pending.some((e) => !e.id)) await local.set(LOG_KEY, pending.map((e) => (e.id ? e : { ...e, id: crypto.randomUUID() })));

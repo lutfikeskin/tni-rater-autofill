@@ -9,12 +9,14 @@
 <body>
   <header class="top">
     <img class="top-logo" src="logo.png" alt="">
-    <h1 class="brand-text"><strong>Truckers National</strong><span>Rater Autofill</span></h1>
+    <h1 class="brand-text"><strong>Truckers National</strong><span>Rater Autofill <b id="version"></b></span></h1>
     <span class="top-right">
       <span id="recording" class="recording" title="How this extension is used on rater pages is recorded (no client details). See Usage log below." hidden>● Recording usage</span>
       <span id="site" class="site">…</span>
     </span>
   </header>
+  <!-- Setup problems that silently cost data or features: no usage server, no initials, no AI key. -->
+  <div id="health" class="health" role="status" hidden></div>
 
   <main>
     <section id="load" class="drop" tabindex="0">

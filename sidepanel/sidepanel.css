@@ -86,6 +86,7 @@ button:disabled { cursor: not-allowed; opacity: 0.5; }
 .top-logo { width: 32px; height: 32px; object-fit: contain; flex: 0 0 auto; }
 .brand-text { display: grid; min-width: 0; line-height: 1.1; }
 .brand-text strong { font-size: 13.5px; font-weight: 600; letter-spacing: -0.015em; color: var(--ink-strong); }
+.brand-text span b { font-weight: 700; color: var(--brand-dark); letter-spacing: 0.02em; text-transform: none; }
 .brand-text span { margin-top: 2px; color: var(--ink-muted); font: 500 10px/1.2 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; }
 .top-right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .site {
@@ -307,3 +308,10 @@ details.section > summary .title { flex: 1; }
 .ai-approve ul { margin: 6px 0; padding-left: 16px; }
 .ai-approve li { margin: 3px 0; }
 .ai-reject { float: right; margin-left: 8px; color: var(--signal-dark); }
+
+/* Setup problems under the header: red = data being lost or stuck, amber = missing setting */
+.health { display: grid; gap: 1px; border-bottom: 1px solid var(--border); }
+.health-item { display: block; width: 100%; padding: 6px 14px; border: 0; text-align: left; font-size: 12px; line-height: 1.35; }
+.health-item.bad { background: var(--signal-soft); color: var(--signal-dark); }
+.health-item.warn { background: var(--warning-soft); color: #8a6a12; }
+.health-item:hover { text-decoration: underline; }
