@@ -1143,3 +1143,20 @@ test('Recalculate is skipped (not waited for) when the rates are current, and Pr
   assert.equal(print._clicked, true);
   assert.ok(!report.blocked.some((b) => b.id === 'recalculate'));
 });
+
+test('a helper that waited earlier in the fill and was clicked later does not keep Continue waiting', async () => {
+  const h = harness({ search: '?pageName=AddVehicle' });
+  const vin = makeInput({ id: 'vin', ariaLabel: 'VIN' });
+  const lookup = addButton(h, 'Lookup VIN');
+  lookup.onclick = () => { lookup._clicked = true; };
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  h.document.body.append(vin);
+  const report = await h.kit.fill([
+    { id: 'vin-step', selector: '#vin', path: 'vehicles[0].vin', kind: 'text', value: '1FTBR3X87MKA12345' },
+    { id: 'lookup', kind: 'action', action: 'lookupVin:0', text: '^lookup vin$', pages: [], after: ['vehicles[0].vin'], afterActions: [], afterPages: [], unless: [], immediate: true },
+  ], { maxRounds: 6, advance: { text: '^continue$' } });
+  assert.equal(lookup._clicked, true);
+  assert.equal(report.blocked.length, 0);
+  assert.equal(next._clicked, true, 'nothing left: Continue');
+});

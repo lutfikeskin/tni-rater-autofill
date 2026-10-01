@@ -123,7 +123,7 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const recalc = actions.find((step) => step.action === 'recalculate');
   const bill = actions.find((step) => step.action === 'billPlan');
   // Cargo, then bill plan options (automatic payments), back to Rates, then Recalculate.
-  assert.deepEqual(recalc.afterActions, ['doneCargo']);
+  assert.deepEqual(recalc.afterActions, []);
   assert.deepEqual(recalc.afterPages, ['ChangePaymentPlan']);
   assert.equal(recalc.verify, 'premium');
   assert.equal(bill.needsPremium, false);
@@ -132,8 +132,8 @@ test('Progressive coverage and helper ordering are conservative', () => {
   // Back from the bill plan, Recalculate only when the rates are stale; Print doesn't wait for it.
   assert.equal(recalc.needsRecalculation, true);
   const print = actions.find((step) => step.action === 'print');
-  assert.deepEqual(print.afterActions, ['doneCargo']);
-  assert.equal(print.needsPremium, true);
+  assert.deepEqual(print.afterActions, []);
+  assert.deepEqual(print.afterPages, ['ChangePaymentPlan']);
   const addDriver = actions.find((step) => step.action === 'addDriver:0');
   assert.deepEqual(addDriver.unlessActions, ['driverEntered:0']);
   assert.equal(progressive.driverList, 'DriverSummary');

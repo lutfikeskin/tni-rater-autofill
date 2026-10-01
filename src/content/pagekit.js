@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 21) return;
+  if (globalThis.__raterKit?.version === 22) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -977,6 +977,8 @@
         mark(c, 'needs', 'required, and not on the intake form');
       }
     }
+    // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
+    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findIndex((x) => x.id === b.id) === i);
     // Anything the agent should look at before moving on.
     report.blockers = [
       // An unfamiliar question with no answer yet is left for the agent even when the page
@@ -1132,5 +1134,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 21, fill, answer, markKey, aiBanner, capture, clear };
+  globalThis.__raterKit = { version: 22, fill, answer, markKey, aiBanner, capture, clear };
 })();
