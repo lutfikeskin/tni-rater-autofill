@@ -401,7 +401,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     type: txt('ins_type_1'), carrier: txt('ins_carrier_1'), limit: txt('ins_limit_1'), expiration: toDate(raw.ins_exp_1),
   };
   if (txt('ins_exp_1') && !prior.expiration) { prior.expiration = txt('ins_exp_1'); check('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`); }
-  if (prior.type || prior.carrier || prior.limit || prior.expiration) {
+  // "NO POP" (no proof of prior), "None", "No prior": the client has no current insurance.
+  const noPrior = /^(no\s*(pop|prior|insurance|ins|coverage)|none|n\/?a)\b/i.test(prior.carrier ?? '') && !prior.limit && !prior.expiration;
+  if (noPrior) info('prior.none', 'priorInsurance', `Current insurance says "${prior.carrier}": treated as not currently insured.`);
+  if (!noPrior && (prior.type || prior.carrier || prior.limit || prior.expiration)) {
     record.priorInsurance.push(prior);
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
     const missing = [

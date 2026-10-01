@@ -66,7 +66,8 @@ const equipment = () => '$0 to $2,000';
 const cargo = (r) => {
   const c = r.coverage;
   if (c.cargo === false) return 'Not selected';
-  return c.cargoLimit && c.cargoDeductible ? `$${c.cargoLimit}/$${c.cargoDeductible}` : null;
+  // No deductible on the intake: TNI's standard $1,000.
+  return c.cargoLimit ? `$${c.cargoLimit}/$${c.cargoDeductible ?? 1000}` : null;
 };
 
 // What the intake calls the freight -> Progressive's commodity category and commodity.
@@ -84,8 +85,8 @@ const filingsNote = (r) => (r.operations.filingsRequired === true && !r.applican
   : null);
 const usesEld = (r) => explicitBoolean(r, 'operations.usesEld');
 const eldNote = (r) => (usesEld(r) == null ? 'The intake does not answer the ELD question.' : null);
-const cargoNote = (r) => r.coverage.cargo === true && !(r.coverage.cargoLimit && r.coverage.cargoDeductible)
-  ? 'Cargo was requested without both a limit and deductible; an agent must choose them.'
+const cargoNote = (r) => r.coverage.cargo === true && !r.coverage.cargoLimit
+  ? 'Cargo was requested without a limit; an agent must choose it.'
   : null;
 const glNote = (r) => r.coverage.gl === true
   ? 'Progressive General Liability mappings are not validated; an agent must review this coverage manually.'
@@ -168,7 +169,7 @@ export const progressive = {
   // turn an unvalidated field (especially optional contact or GL fields) into an assertion.
   useGenericRules: false,
   // Never flagged as "needs you" when empty: the agent fills these only when they apply.
-  optional: ['296', '298', '233', '1CC', '2899'],
+  optional: ['296', '298', '233', '1CC', '2899', '1B80', '1B82'],
   // Progressive pre-selects some answers (filings No, $750k CSL, manual payments, rental "Not
   // selected"). Those are replaced when ours differ; anything the agent changed is left alone.
   replaceChoices: true,
@@ -263,6 +264,18 @@ export const progressive = {
     { q: '2DF', name: 'Phone line number (optional)', ignore: true },
     { q: '2F6', path: 'operations.hazPlacard', name: 'Hazmat placard required', label: 'hazardous material placard' },
 
+    // --- Owner not found by Progressive's lookup (NoHit) ----------------------------------------
+    // The owner's details again, for a second search. The SSN is never filled.
+    { q: '1B7F', name: 'Owner first name (NoHit)', value: (r) => owner(r).first },
+    { q: '1B80', name: 'Owner middle initial (NoHit, optional)', ignore: true },
+    { q: '1B81', name: 'Owner last name (NoHit)', value: (r) => owner(r).last },
+    { q: '1B82', name: 'Owner suffix (NoHit, optional)', ignore: true },
+    { q: '1B84', name: 'Owner home address (NoHit)', value: (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null },
+    { q: '1B85', path: 'garaging.city', name: 'Owner home city (NoHit)' },
+    { q: '1B89', path: 'garaging.zip', name: 'Owner home ZIP (NoHit)' },
+    { q: '1B8B', name: 'Owner date of birth (NoHit)', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
+    { q: '1B8D', name: 'Social Security Number', note: 'Social Security Number: the agent enters it or leaves it; never filled.' },
+
     // --- More about the business (MoreAboutBusiness) -------------------------------------------
     { q: '77', name: 'Customer email (optional in this workflow)', ignore: true },
     { q: '81', name: 'Currently insured', kind: 'bool', label: '^is the customer currently insured$', value: currentlyInsured },
@@ -325,6 +338,13 @@ export const progressive = {
     // --- Coverages and rates (CoveragesRates) ----------------------------------------------------
     { q: '1D97', path: 'coverage.autoLiabLimit', label: 'bodily injury and property damage liability' },
     { q: '1DEE', name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
+    // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
+    ...['1DCA', '1DDE', '1DD8'].map((q) => ({ q, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
+    // Pennsylvania first-party benefits: not on the intake means not bought, except medical
+    // expense, which PA requires (its lowest, $5,000).
+    { q: '1E66', name: 'PA medical expense benefits (required: lowest, $5,000)', kind: 'choice', value: () => '$5,000' },
+    ...[['1E69', 'extraordinary medical expense'], ['1E6E', 'income loss'], ['1E71', 'funeral expense'], ['1E74', 'accidental death']]
+      .map(([q, what]) => ({ q, name: `PA ${what} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
     { q: '1E7C', name: 'PIP (preserve prefilled state choice)', ignore: true },
     { q: '1FCD', name: 'Comprehensive deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'comprehensiveDeductible'), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '1FD2', name: 'Collision deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'collisionDeductible'), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },

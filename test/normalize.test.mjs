@@ -310,3 +310,9 @@ test('a blank DOT/MC section is a valid absence, not a missing-data warning', ()
   assert.equal(noDot.record.applicant.mcDotWithin60Days, null);
   assert.equal(noDot.warnings.some((warning) => warning.code === 'dot.missing'), false);
 });
+
+test('"NO POP" as the current carrier means not currently insured, without a warning', () => {
+  const r = normalizeIntake({ ...raw, ins_type_1: 'Select*', ins_carrier_1: 'NO POP ', ins_limit_1: 'Select*', ins_exp_1: 'n/a' }, { today: new Date('2026-09-30') });
+  assert.equal(r.record.priorInsurance.length, 0);
+  assert.ok(!r.warnings.some((w) => w.code === 'prior.incomplete'));
+});

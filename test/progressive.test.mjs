@@ -191,3 +191,19 @@ test('search-style business type (IN), other-coverage checkboxes, vehicle list',
   assert.equal(progressive.vehicleList, 'VehicleSummary');
   assert.ok(new RegExp(plan.find((s) => s.action === 'addVehicle:0').text, 'i').test('Add another'));
 });
+
+test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () => {
+  const record = baseRecord();
+  record.coverage.cargo = true;
+  record.coverage.cargoLimit = 100000;
+  record.coverage.cargoDeductible = null;
+  const plan = buildPlan(record, progressive, {});
+  assert.equal(byQ(plan, '216F').value, '$100000/$1000', 'standard $1,000 cargo deductible');
+  assert.equal(byQ(plan, '216F').note, null);
+  for (const q of ['1DCA', '1DDE', '1DD8']) assert.equal(byQ(plan, q).value, '$100k CSL');
+  assert.equal(byQ(plan, '1E66').value, '$5,000');
+  for (const q of ['1E69', '1E6E', '1E71', '1E74']) assert.equal(byQ(plan, q).value, 'Not Selected');
+  assert.ok(byQ(plan, '1B8D').note, 'SSN is never filled');
+  assert.equal(byQ(plan, '1B8D').value, null);
+  assert.ok(progressive.optional.includes('1B80'));
+});

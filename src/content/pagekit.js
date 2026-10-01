@@ -954,7 +954,9 @@
     }
     // Anything the agent should look at before moving on.
     report.blockers = [
-      ...report.unknown.filter((x) => x.required).map((x) => `unfamiliar: ${x.label}`),
+      // An unfamiliar question with no answer yet is left for the agent even when the page
+      // doesn't mark it required (Progressive validates some only on Continue).
+      ...report.unknown.filter((x) => x.required || x.current == null).map((x) => `unfamiliar: ${x.label}`),
       ...report.noData.map((x) => `needs you: ${x.label}`),
       ...report.failed.map((x) => `failed: ${x.label}`),
       ...report.leftRequired.map((x) => `required: ${x.label}`),

@@ -1107,3 +1107,17 @@ test('business type list picks For Hire Trucking when offered, else General Frei
     assert.equal(report.failed.length, 0);
   }
 });
+
+test('an empty unfamiliar question keeps Continue from being clicked, even when not marked required', async () => {
+  for (const answered of [false, true]) {
+    const h = harness({ search: '?pageName=MoreAboutBusiness' });
+    const odd = new SelectNode([{ text: '', value: '' }, { text: 'Yes', value: 'y' }, { text: 'No', value: 'n' }], { id: 'odd', ariaLabel: 'Some new optional question' });
+    if (answered) odd.value = 'n';
+    const next = addButton(h, 'Continue');
+    next.onclick = () => { next._clicked = true; };
+    h.document.body.append(odd);
+    const report = await h.kit.fill([], { maxRounds: 2, advance: { text: '^continue$' } });
+    assert.equal(!!next._clicked, answered, answered ? 'answered: Continue' : 'unanswered: wait for the agent');
+    assert.equal(report.blockers.some((b) => /Some new optional question/.test(b)), !answered);
+  }
+});
