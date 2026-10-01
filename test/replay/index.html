@@ -255,7 +255,7 @@
       return {
         questions: before.length,
         filled: r.filled.map((x) => ({ label: x.label, shown: x.shown, how: how(x) })),
-        clicked: r.actions.map((a) => a.text),
+        clicked: [...r.actions.map((a) => a.text), ...(r.advanced ? [r.advanced] : [])],
         noData: r.noData.map((x) => x.label + (x.note ? ` (${x.note})` : '')),
         failed: r.failed.map((x) => `${x.label}: ${x.reason}`),
         unmapped: before.filter((c) => !c.wouldFill).map((c) => c.label),
