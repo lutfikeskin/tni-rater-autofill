@@ -1,0 +1,137 @@
+{
+  "tool": "tni-rater-autofill",
+  "version": 1,
+  "carrier": "progressive",
+  "capturedAt": "2026-10-01T00:28:57.302Z",
+  "context": {
+    "state": "MD",
+    "businessClass": "Expediter",
+    "vehicleTypes": [
+      "Van"
+    ],
+    "hasTrailers": false,
+    "coverages": [
+      "autoLiability",
+      "cargo"
+    ]
+  },
+  "frames": [
+    {
+      "buttons": [
+        "Quote Comments",
+        "Cancel",
+        "Print/Send",
+        "Privacy Statement",
+        "Terms of Use",
+        "Contact Us",
+        "Site Map",
+        "Do Not Sell or Share My Personal Information (CA Residents O",
+        "CA Notice at Collection"
+      ],
+      "controls": [
+        {
+          "id": "f_uE8B98401887B471A9918BE3C0C1AB92332B0_6_1_0-inputEl",
+          "kind": "radio",
+          "label": "Insurance Quote (with all bill plans)",
+          "name": "string_32B0",
+          "options": [
+            "Insurance Quote (with all bill plans)",
+            "Document Set"
+          ],
+          "pageHasValue": true,
+          "q": "32B0",
+          "required": true,
+          "section": "",
+          "selected": "Insurance Quote (with all bill plans)",
+          "selector": "input[name=\"string_32B0\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.q32B0"
+        },
+        {
+          "id": "f_uE8B98401887B471A9918BE3C0C1AB92332C8_6_1-inputEl",
+          "kind": "text",
+          "label": "Welcome Letter Closing Message",
+          "name": "string_32C8|",
+          "options": [],
+          "pageHasValue": false,
+          "q": "32C8",
+          "required": true,
+          "section": "",
+          "selector": "input[name=\"string_32C8|\"]",
+          "type": "dctinputstringfield",
+          "wouldFill": "progressive.q32C8"
+        },
+        {
+          "id": "f_uE8B98401887B471A9918BE3C0C1AB92332CC_6_1-inputEl",
+          "kind": "checkbox",
+          "label": "Print",
+          "name": "boolean_32CC",
+          "options": [],
+          "pageHasValue": true,
+          "q": "32CC",
+          "required": false,
+          "section": "",
+          "selected": "checked",
+          "selector": "input[name=\"boolean_32CC\"]",
+          "type": "dctcheckboxfield",
+          "wouldFill": "progressive.q32CC"
+        },
+        {
+          "id": "f_uE8B98401887B471A9918BE3C0C1AB92332CE_6_1-inputEl",
+          "kind": "checkbox",
+          "label": "Agent Fax Cover Page",
+          "name": "boolean_32CE",
+          "options": [],
+          "pageHasValue": true,
+          "q": "32CE",
+          "required": false,
+          "section": "",
+          "selected": "checked",
+          "selector": "input[name=\"boolean_32CE\"]",
+          "type": "dctcheckboxfield",
+          "wouldFill": null
+        },
+        {
+          "id": "f_uE8B98401887B471A9918BE3C0C1AB92332D0_6_1-inputEl",
+          "kind": "checkbox",
+          "label": "Email",
+          "name": "boolean_32D0",
+          "options": [],
+          "pageHasValue": false,
+          "q": "32D0",
+          "required": false,
+          "section": "",
+          "selected": "unchecked",
+          "selector": "input[name=\"boolean_32D0\"]",
+          "type": "dctcheckboxfield",
+          "wouldFill": "progressive.q32D0"
+        },
+        {
+          "id": "f_uE8B98401887B471A9918BE3C0C1AB92332DD_6_1-inputEl",
+          "kind": "checkbox",
+          "label": "Fax",
+          "name": "boolean_32DD",
+          "options": [],
+          "pageHasValue": false,
+          "q": "32DD",
+          "required": false,
+          "section": "",
+          "selected": "unchecked",
+          "selector": "input[name=\"boolean_32DD\"]",
+          "type": "dctcheckboxfield",
+          "wouldFill": "progressive.q32DD"
+        }
+      ],
+      "customWidgets": [],
+      "frame": "https://clpolicy.foragentsonly.com/Express/Default.aspx",
+      "headings": [
+        "Print Email Fax",
+        "Select Documents",
+        "What do you want to do?"
+      ],
+      "isTopFrame": true,
+      "page": "PrintEmailFax",
+      "title": "Print Email Fax - Progressive Commercial Auto"
+    }
+  ]
+}

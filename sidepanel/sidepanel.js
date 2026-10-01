@@ -35,10 +35,12 @@ const state = {
   // Automatic follow-up fills: pages the agent has filled in this tab, and per page the fields
   // the agent changed themselves (never refilled automatically).
   autoPages: new Set(),
+  tabSessions: new Map(),
   agentKeys: new Map(),
   filling: false,
   autoTimer: null,
   autoPending: false,
+  autoPaused: false,
   layoutsSent: new Set(),
   // Carrier buttons already clicked in this quote (Verify DOT, Bill plan options, …).
   doneActions: new Set(),
@@ -82,6 +84,14 @@ async function loadFile(file) {
   if (result.error) return showLoadError(result.error);
   const summary = await intakeSummary(bytes, raw, result);
   if (state.intake) usage.log({ type: 'intake_closed', reason: 'replaced' });
+  clearTimeout(state.autoTimer);
+  state.autoPending = false;
+  state.autoPaused = false;
+  state.tabSessions.clear();
+  state.autoPages = new Set();
+  state.agentKeys = new Map();
+  state.labels = new Map();
+  state.visitedPages = new Set();
   state.intake = { ...result, fileName: file.name, done: [] };
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
   state.filled = new Map();
@@ -257,12 +267,15 @@ async function refreshTab() {
   if (!inExtension) { state.tab = null; return renderSite(); }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id !== state.tab?.id) {
-    state.filled = new Map();
-    state.labels = new Map();
-    state.autoPages = new Set();
-    state.agentKeys = new Map();
-    state.doneActions = new Set();
-    state.visitedPages = new Set();
+    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages'];
+    if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
+    const previous = state.tabSessions.get(tab?.id);
+    Object.assign(state, previous ?? {
+      filled: new Map(), labels: new Map(), autoPages: new Set(), autoPaused: false,
+      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(),
+    });
+    clearTimeout(state.autoTimer);
+    state.autoPending = false;
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null } : null;
   renderSite();
@@ -327,6 +340,8 @@ const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUr
 const fillOptions = (carrier, extra = {}) => ({
   optional: carrier.optional ?? [],
   replaceChoices: !!carrier.replaceChoices,
+  // Click the page's Continue when nothing is left for the agent (setting below).
+  advance: $('auto-advance').checked && carrier.advance ? carrier.advance : null,
   doneActions: [...state.doneActions],
   visitedPages: [...state.visitedPages],
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
@@ -335,14 +350,14 @@ const fillOptions = (carrier, extra = {}) => ({
 });
 
 function scheduleAutoFill(page) {
-  if (!$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage()) return;
+  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage()) return;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
   state.autoTimer = setTimeout(() => autoFill(page), 1200);
 }
 
 async function autoFill(page) {
-  if (state.filling || pageOf(state.tab?.url) !== page) return;
+  if (state.autoPaused || state.filling || pageOf(state.tab?.url) !== page) return;
   const { id: tabId, carrier } = state.tab;
   state.filling = true;
   state.autoPending = false;
@@ -354,14 +369,20 @@ async function autoFill(page) {
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite: false, skip, keepMarks: true })]);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
+    const hasWarnings = frames.some((f) => f.unknown?.length);
+    if (state.autoPaused || hasWarnings) renderReport(frames);
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
-    if (n) {
+    if (n || hasWarnings) {
       if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)) }));
-      const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
-      $('report').append(note);
+      if (n) {
+        const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
+        $('report').append(note);
+      }
       recordLayout(page);
     }
   } catch (e) {
+    state.autoPaused = true;
+    $('report').append(h('p', { class: 'error' }, 'Automatic filling paused after an error. Review the page, then click Fill this page to retry.'));
     usage.log({ type: 'fill_error', carrier: carrier.id, page, auto: true, error: String(e.message).slice(0, 200) });
   } finally {
     await tellRecorder('resume');
@@ -403,6 +424,16 @@ async function recordLayout(page) {
 }
 
 function rememberFill(frames) {
+  const page = pageOf(state.tab?.url);
+  const keys = state.agentKeys.get(page) ?? new Set();
+  for (const key of frames.flatMap((f) => f.protectedKeys ?? [])) keys.add(key);
+  state.agentKeys.set(page, keys);
+  if (frames.some((f) => f.halted)) {
+    state.autoPaused = true;
+    state.autoPending = false;
+    clearTimeout(state.autoTimer);
+  }
+  for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) state.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
   for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
   for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
@@ -443,7 +474,8 @@ async function runKit(tabId, carrier, func, args = []) {
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 async function fillPage({ auto = false } = {}) {
-  if (state.filling || !state.intake || !state.tab?.carrier) return;
+  if (state.filling || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
+  if (!auto) state.autoPaused = false;
   state.filling = true;
   clearTimeout(state.autoTimer);
   const { id: tabId, carrier } = state.tab;
@@ -468,6 +500,7 @@ async function fillPage({ auto = false } = {}) {
     }));
     renderReport(frames);
   } catch (e) {
+    state.autoPaused = true;
     usage.log({ type: 'fill_error', carrier: carrier.id, page: pageOf(state.tab.url), error: String(e.message).slice(0, 200) });
     $('report').replaceChildren(h('p', { class: 'error' }, `Couldn't fill this page: ${e.message}`));
   } finally {
@@ -476,6 +509,14 @@ async function fillPage({ auto = false } = {}) {
     $('fill').disabled = false;
     $('fill').textContent = 'Fill this page';
   }
+}
+
+async function ignoreReview(key, tabId, page) {
+  if (!key || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
+  const keys = state.agentKeys.get(page) ?? new Set();
+  keys.add(key);
+  state.agentKeys.set(page, keys);
+  await fillPage();
 }
 
 function renderReport(frames) {
@@ -487,23 +528,38 @@ function renderReport(frames) {
   const kept = all('kept');
   const fields = frames.reduce((n, f) => n + f.fields, 0);
   const box = $('report');
+  const tabId = state.tab?.id;
+  const page = pageOf(state.tab?.url);
+  const reviewLine = (x, children) => [
+    h('span', {}, children),
+    x.key ? h('button', { class: 'ignore-review', type: 'button', title: 'Ignore this field and continue', 'aria-label': `Ignore ${x.label} and continue`, onclick: () => ignoreReview(x.key, tabId, page) }, '×') : null,
+  ];
   box.className = 'report';
   if (!fields) {
-    box.replaceChildren(h('p', { class: 'muted' }, 'No form fields found on this page.'));
+    const halted = frames.find((f) => f.halted);
+    box.replaceChildren(h('p', { class: halted ? 'error' : 'muted' }, halted ? `Automatic filling and helpers paused. ${halted.reason ?? 'Review this page before retrying.'}` : 'No form fields found on this page.'));
     return;
   }
   const group = (cls, title, items, line, open = false) => items.length
     ? h('details', { class: cls, open }, h('summary', {}, `${title} (${items.length})`), h('ul', {}, items.map((x) => h('li', {}, line(x)))))
     : null;
-  const needs = [...noData.map((x) => ({ ...x, why: x.note ?? 'not on intake' })), ...leftRequired.map((x) => ({ ...x, why: 'required' }))];
-  box.replaceChildren(
-    h('p', { class: 'report-summary' }, `Filled ${filled.length} of ${fields} fields on this page`),
-    group('r-failed', "Couldn't fill", failed, (x) => [h('b', {}, x.label), ` — ${x.reason}`, x.options?.length ? h('div', { class: 'muted' }, `Options: ${x.options.join(' · ')}`) : null], true),
-    group('r-needs', 'Needs you', needs, (x) => [h('b', {}, x.label), ` — ${x.why}`], true),
+  const unknownKeys = new Set(all('unknown').map((x) => x.key));
+  const needs = [...noData.map((x) => ({ ...x, why: x.note ?? 'not on intake' })), ...leftRequired.filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, why: 'required' }))];
+  const advanced = frames.find((f) => f.advanced)?.advanced;
+  const blockers = all('blockers');
+  box.replaceChildren(...[
+    frames.some((f) => f.halted) ? h('p', { class: 'error' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then click Fill this page to retry.`) : null,
+    h('p', { class: 'report-summary' }, `Filled ${filled.length} of ${fields} fields on this page${advanced ? ` · clicked "${advanced}"` : blockers.length ? ` · ${blockers.length} thing${blockers.length === 1 ? '' : 's'} to look at before Continue` : ''}`),
+    group('r-needs', 'Unfamiliar questions — left for you', all('unknown'), (x) => reviewLine(x, [h('b', {}, x.label), x.required ? ' (required)' : '']), true),
+    group('r-failed', "Couldn't fill", failed, (x) => reviewLine(x, [h('b', {}, x.label), ` — ${x.reason}`, x.options?.length ? h('div', { class: 'muted' }, `Options: ${x.options.join(' · ')}`) : null]), true),
+    group('r-needs', 'Needs you', needs, (x) => reviewLine(x, [h('b', {}, x.label), ` — ${x.why}`]), true),
+    group('r-needs', 'Page already had a different value (kept)', kept.filter((x) => x.differs), (x) => reviewLine(x, [h('b', {}, x.label)]), true),
+    group('r-needs', 'Buttons waiting', all('blocked'), (x) => [h('b', {}, x.id), ` — ${x.why}`]),
+    group('r-kept', 'Ignored (left unchanged)', all('skipped'), (x) => h('b', {}, x.label)),
     group('r-filled', 'Filled', filled, (x) => [h('b', {}, x.label), ` ← ${x.shown}`]),
     group('r-kept', 'Clicked', all('actions'), (x) => h('b', {}, x.text || x.id)),
-    group('r-kept', 'Already had a value (left alone)', kept, (x) => h('b', {}, x.label)),
-  );
+    group('r-kept', 'Already had a value (left alone)', kept.filter((x) => !x.differs), (x) => h('b', {}, x.label)),
+  ].filter((node) => node != null && node !== false));
 }
 
 async function clearMarks() {
@@ -570,6 +626,7 @@ async function uploadNow() {
 function wireUsage() {
   $('auto-followups').addEventListener('change', (e) => usage.saveSettings({ autoFollowUps: e.target.checked }));
   $('auto-pages').addEventListener('change', (e) => usage.saveSettings({ autoPages: e.target.checked }));
+  $('auto-advance').addEventListener('change', (e) => usage.saveSettings({ autoAdvance: e.target.checked }));
   $('server-url').addEventListener('change', async (e) => {
     const v = e.target.value.trim();
     // Blank means "no server" (export only); anything else must be an http(s) URL.
@@ -659,6 +716,7 @@ async function init() {
   const saved = await usage.settings();
   $('auto-followups').checked = saved.autoFollowUps ?? true;
   $('auto-pages').checked = saved.autoPages ?? false;
+  $('auto-advance').checked = saved.autoAdvance ?? true;
   uploadNow();
   render();
   renderUsage();

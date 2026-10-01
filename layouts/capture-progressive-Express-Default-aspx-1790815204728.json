@@ -1,0 +1,114 @@
+{
+  "tool": "tni-rater-autofill",
+  "version": 1,
+  "carrier": "progressive",
+  "capturedAt": "2026-10-01T00:40:04.727Z",
+  "context": {
+    "state": "OH",
+    "businessClass": "Expediter",
+    "vehicleTypes": [
+      "Van"
+    ],
+    "hasTrailers": false,
+    "coverages": [
+      "autoLiability",
+      "cargo"
+    ]
+  },
+  "frames": [
+    {
+      "buttons": [
+        "Quote Comments",
+        "See additional plans",
+        "Continue",
+        "Privacy Statement",
+        "Terms of Use",
+        "Contact Us",
+        "Site Map",
+        "Do Not Sell or Share My Personal Information (CA Residents O",
+        "CA Notice at Collection"
+      ],
+      "controls": [
+        {
+          "id": "f_u82DF0A28759344DE8E275C8FA0E9585C3E96_6_1_0-inputEl",
+          "kind": "radio",
+          "label": "Policy length",
+          "name": "string_3E96",
+          "options": [
+            "6 month",
+            "12 month"
+          ],
+          "pageHasValue": true,
+          "q": "3E96",
+          "required": true,
+          "section": "",
+          "selected": "12 month",
+          "selector": "input[name=\"string_3E96\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.q3E96"
+        },
+        {
+          "id": "f_u82DF0A28759344DE8E275C8FA0E9585C3E97_6_1_0-inputEl",
+          "kind": "radio",
+          "label": "How will the customer pay?",
+          "name": "string_3E97",
+          "options": [
+            "Installments",
+            "Pay In Full Get our biggest savings!"
+          ],
+          "pageHasValue": true,
+          "q": "3E97",
+          "required": true,
+          "section": "",
+          "selected": "Installments",
+          "selector": "input[name=\"string_3E97\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.q3E97"
+        },
+        {
+          "id": "f_bF51F20ABBA604C1DA6B3F30A1D50FC6A3E98_6_1_0-inputEl",
+          "kind": "radio",
+          "label": "Payment method",
+          "name": "boolean_3E98",
+          "options": [
+            "Automatic payments from checking account Save with lower fees – and a discount if eligible!",
+            "Manual payments (send a bill)"
+          ],
+          "pageHasValue": true,
+          "q": "3E98",
+          "required": true,
+          "section": "",
+          "selected": "Automatic payments from checking account Save with lower fees – and a discount if eligible!",
+          "selector": "input[name=\"boolean_3E98\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.q3E98"
+        },
+        {
+          "id": "f_bF51F20ABBA604C1DA6B3F30A1D50FC6A3EA4_6_1_0-inputEl",
+          "kind": "radio",
+          "label": "",
+          "name": "string_3EA4",
+          "options": [
+            "$1,244.59 (16.67%) today + 10 monthly payments of $627.15 Lowest down payment!"
+          ],
+          "pageHasValue": true,
+          "q": "3EA4",
+          "required": true,
+          "section": "",
+          "selected": "$1,244.59 (16.67%) today + 10 monthly payments of $627.15 Lowest down payment!",
+          "selector": "input[name=\"string_3EA4\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.q3EA4"
+        }
+      ],
+      "customWidgets": [],
+      "frame": "https://clpolicy.foragentsonly.com/Express/Default.aspx",
+      "headings": [
+        "Select Payment Plan Options"
+      ],
+      "isTopFrame": true,
+      "page": "ChangePaymentPlan",
+      "title": "Change Payment Plan - Progressive Commercial Auto"
+    }
+  ]
+}

@@ -122,6 +122,17 @@ test('typed dates in date pickers are never logged, even if they look like dropd
   assert.ok(!JSON.stringify(e).includes('2026'));
 });
 
+test('unfamiliar warnings are logged for training without entered values', () => {
+  const events = fillEvents([{ fields: 1, rounds: 1, filled: [], unknown: [{ q: 'ABCD', label: 'New question', key: 'ABCD', controlKind: 'text', shown: 'private typed answer' }] }], { carrier: 'progressive', page: 'AddVehicle', redact: (s) => s });
+  assert.equal(events[0].unknown, 1);
+  const warning = events.find((event) => event.result === 'unfamiliar');
+  assert.equal(warning.q, 'ABCD');
+  assert.equal(warning.label, 'New question');
+  assert.equal(warning.controlKind, 'text');
+  assert.equal(warning.shown, undefined);
+  assert.ok(!JSON.stringify(events).includes('private typed answer'));
+});
+
 test('labels from the fill engine replace the recorder guess', () => {
   const labels = new Map([['2F6', 'Do any listed vehicles or the load require a hazardous material placard?']]);
   const e = fieldChangeEvent({ key: '2F6', q: '2F6', label: 'Four digit suffix of phone', kind: 'radio', before: '', after: 'No', agent: true }, { record, filled: new Map(), redact, labels });

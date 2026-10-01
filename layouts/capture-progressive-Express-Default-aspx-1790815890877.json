@@ -1,0 +1,230 @@
+{
+  "tool": "tni-rater-autofill",
+  "version": 1,
+  "carrier": "progressive",
+  "capturedAt": "2026-10-01T00:51:30.876Z",
+  "context": {
+    "state": "NC",
+    "businessClass": "Freight Hauler",
+    "vehicleTypes": [
+      "Box Truck"
+    ],
+    "hasTrailers": false,
+    "coverages": [
+      "autoLiability",
+      "cargo"
+    ]
+  },
+  "frames": [
+    {
+      "buttons": [
+        "Quote Comments",
+        "START",
+        "VEHICLES",
+        "DRIVERS",
+        "BUSINESS",
+        "RATES",
+        "FINAL DETAILS",
+        "PAYMENT",
+        "COMPLETE",
+        "Continue",
+        "Help Text For",
+        "Back",
+        "Save & Return Later",
+        "Privacy Statement",
+        "Terms of Use",
+        "Contact Us",
+        "Site Map",
+        "Do Not Sell or Share My Personal Information (CA Residents O",
+        "CA Notice at Collection"
+      ],
+      "controls": [
+        {
+          "id": "f_a12092DE00E5F497EB927AD3A045BC8EC77_8_1-inputEl",
+          "kind": "text",
+          "label": "Customer Email Address",
+          "name": "string_77|",
+          "options": [],
+          "pageHasValue": false,
+          "q": "77",
+          "required": true,
+          "section": "",
+          "selector": "input[name=\"string_77|\"]",
+          "type": "dctinputstringfield",
+          "wouldFill": "progressive.q77"
+        },
+        {
+          "id": "f_mD6936A3300E9422187689557E69AE27881_8_1_0-inputEl",
+          "kind": "radio",
+          "label": "Is the customer currently insured?",
+          "name": "string_81",
+          "options": [
+            "Yes",
+            "No"
+          ],
+          "pageHasValue": true,
+          "q": "81",
+          "required": true,
+          "section": "",
+          "selected": "No",
+          "selector": "input[name=\"string_81\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.q81"
+        },
+        {
+          "id": "f_mD6936A3300E9422187689557E69AE278A2_8_1_0-inputEl",
+          "kind": "radio",
+          "label": "Does the customer have other coverages for the business?",
+          "name": "string_A2_1",
+          "options": [
+            "General Liability",
+            "Business Owner's Policy",
+            "None"
+          ],
+          "pageHasValue": true,
+          "q": "A2",
+          "required": true,
+          "section": "",
+          "selected": "None",
+          "selector": "input[name=\"string_A2_1\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.qA2"
+        },
+        {
+          "id": "f_mD6936A3300E9422187689557E69AE278B7_8_1-inputEl",
+          "kind": "select",
+          "label": "Number of Named Additional Insureds",
+          "name": "f_mD6936A3300E9422187689557E69AE278B7_8_1-inputEl",
+          "options": [
+            "",
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "More than 5"
+          ],
+          "pageHasValue": true,
+          "q": "B7",
+          "required": true,
+          "section": "Named Additional Insureds & Waivers of Subrogation",
+          "selected": "0",
+          "selector": "div > div > div:nth-of-type(2) > div:nth-of-type(1) > input",
+          "type": "dctcombofield",
+          "wouldFill": "progressive.qB7"
+        },
+        {
+          "id": "f_mD6936A3300E9422187689557E69AE278B8_8_1-inputEl",
+          "kind": "select",
+          "label": "Number of Named Waiver of Subrogation Holders",
+          "name": "f_mD6936A3300E9422187689557E69AE278B8_8_1-inputEl",
+          "options": [
+            "",
+            "0",
+            "1",
+            "2",
+            "3",
+            "4",
+            "5",
+            "More than 5"
+          ],
+          "pageHasValue": true,
+          "q": "B8",
+          "required": true,
+          "section": "Named Additional Insureds & Waivers of Subrogation",
+          "selected": "0",
+          "selector": "div > div > div:nth-of-type(2) > div:nth-of-type(1) > input",
+          "type": "dctcombofield",
+          "wouldFill": "progressive.qB8"
+        },
+        {
+          "id": "f_a12092DE00E5F497EB927AD3A045BC8ECBE_8_1_0-inputEl",
+          "kind": "radio",
+          "label": "Is a Blanket Additional Insured endorsement needed by contract?",
+          "name": "string_BE",
+          "options": [
+            "Yes",
+            "No"
+          ],
+          "pageHasValue": true,
+          "q": "BE",
+          "required": true,
+          "section": "",
+          "selected": "No",
+          "selector": "input[name=\"string_BE\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.qBE"
+        },
+        {
+          "id": "f_a12092DE00E5F497EB927AD3A045BC8ECC1_8_1_0-inputEl",
+          "kind": "radio",
+          "label": "Is a Blanket Waiver of Subrogation endorsement needed by contract?",
+          "name": "string_C1",
+          "options": [
+            "Yes",
+            "No"
+          ],
+          "pageHasValue": true,
+          "q": "C1",
+          "required": true,
+          "section": "",
+          "selected": "No",
+          "selector": "input[name=\"string_C1\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.qC1"
+        },
+        {
+          "id": "f_mD6936A3300E9422187689557E69AE278CA_8_1_0-inputEl",
+          "kind": "radio",
+          "label": "Are state or federal filings required?",
+          "name": "boolean_CA",
+          "options": [
+            "Yes",
+            "No"
+          ],
+          "pageHasValue": true,
+          "q": "CA",
+          "required": true,
+          "section": "",
+          "selected": "No",
+          "selector": "input[name=\"boolean_CA\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.qCA"
+        },
+        {
+          "id": "f_p7F2D00A5B70F4E1A8B420A0BC06C6AFDD1_8_1_0-inputEl",
+          "kind": "radio",
+          "label": "Is an Electronic Logging Device (ELD) required to record hours of service?",
+          "name": "string_D1",
+          "options": [
+            "Yes",
+            "No"
+          ],
+          "pageHasValue": true,
+          "q": "D1",
+          "required": true,
+          "section": "",
+          "selected": "No",
+          "selector": "input[name=\"string_D1\"]",
+          "type": "dctradiogroup",
+          "wouldFill": "progressive.qD1"
+        }
+      ],
+      "customWidgets": [],
+      "frame": "https://clpolicy.foragentsonly.com/Express/Default.aspx",
+      "headings": [
+        "Tell us more about the customer's business",
+        "About The Business",
+        "Insurance History",
+        "Other Business Insurance",
+        "Named Additional Insureds & Waivers of Subrogation",
+        "Blanket Additional Insured & Waiver of Subrogation Endorsements",
+        "Filing/Proof of Insurance"
+      ],
+      "isTopFrame": true,
+      "page": "MoreAboutBusiness",
+      "title": "More Business Info - Progressive Commercial Auto"
+    }
+  ]
+}

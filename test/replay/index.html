@@ -247,6 +247,7 @@
       const r = await window.__raterKit.fill(plan, {
         optional: carrier?.optional ?? [], replaceChoices: !!carrier?.replaceChoices,
         doneActions: [...done.actions], visitedPages: [...done.pages],
+        advance: carrier?.advance ?? null,
       });
       r.actions.forEach((a) => done.actions.add(a.id));
       done.pages.add(window.replay.page);

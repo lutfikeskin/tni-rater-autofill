@@ -137,7 +137,10 @@ export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms,
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,
     failed: all('failed').length, leftRequired: all('leftRequired').length,
+    unknown: all('unknown').length,
     clicked: all('actions').map((a) => a.id),
+    blockers: all('blockers').length,
+    advanced: frames.find((f) => f.advanced)?.advanced ?? null,
   }];
   const item = (result) => (x) => ({
     type: 'fill_field', carrier, page, result, q: x.q ?? null, label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
@@ -146,6 +149,6 @@ export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms,
     options: x.options?.map(redact),
   });
   events.push(...all('filled').map(item('filled')), ...all('failed').map(item('failed')), ...all('noData').map(item('noData')),
-    ...all('kept').map(item('kept')), ...all('leftRequired').map(item('leftRequired')));
+    ...all('kept').map(item('kept')), ...all('leftRequired').map(item('leftRequired')), ...all('unknown').map(item('unfamiliar')));
   return events;
 }

@@ -279,8 +279,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     if (!a.phone) { a.phone = txt('phone_number'); check('phone.invalid', 'applicant.phone', `Phone "${a.phone}" isn't a 10-digit US number.`); }
   }
   if (a.email && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(a.email)) check('email.invalid', 'applicant.email', `Email "${a.email}" looks malformed.`);
-  if (!a.dot && !a.mc) {
-    check('dot.missing', 'applicant.dot', a.mcDotWithin60Days ? 'No DOT/MC yet — client says they will have one within 60 days.' : 'No DOT or MC number on the form.');
+  if (!a.dot && !a.mc && a.mcDotWithin60Days === true) {
+    info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
   }
   if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
 
@@ -401,6 +401,16 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
+    const missing = [
+      ['type', prior.type], ['carrier', prior.carrier], ['limit', prior.limit], ['expiration', prior.expiration],
+    ].filter(([, value]) => !value).map(([name]) => name);
+    if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance is missing ${missing.join(', ')}; confirm the policy details before quoting.`);
+    if (prior.expiration && /^\d{2}\/\d{2}\/\d{4}$/.test(prior.expiration)) {
+      const [mm, dd, yyyy] = prior.expiration.split('/').map(Number);
+      const expiry = Date.UTC(yyyy, mm - 1, dd);
+      const current = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+      if (expiry < current) check('prior-expiration.expired', 'priorInsurance[0].expiration', `Current policy expiration ${prior.expiration} is before today; use the intake date and have an agent review it.`);
+    }
   }
 
   // --- Coverage -------------------------------------------------------------------------------

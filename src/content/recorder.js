@@ -25,8 +25,8 @@
   }
 
   // Duck Creek question id from an element id (f_<letter><32 hex><q>_<page>_<row>) or field name.
-  const questionId = (el) => el.id?.match(/^f_[a-z]([0-9A-F]{32})([0-9A-F]+)_\d+_\d+/)?.[2]
-    ?? el.name?.match(/^[a-z]+_([0-9A-F]+)(\||$)/)?.[1] ?? null;
+  const questionId = (el) => el.id?.match(/^f_[a-z]([0-9A-F]{32})([0-9A-F]+)_\d+_\d+/i)?.[2]?.toUpperCase()
+    ?? el.name?.match(/^[a-z]+_([0-9A-F]+)(\||$)/i)?.[1]?.toUpperCase() ?? null;
 
   const isVisible = (el) => el.getClientRects().length > 0 || [...(el.labels ?? [])].some((l) => l.getClientRects().length);
 

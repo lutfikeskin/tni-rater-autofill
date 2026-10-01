@@ -9,7 +9,7 @@ You are an insurance agent at Truckers National Insurance (TNI). Fill in a Progr
 1. Press **Start** at the top before anything else. It starts the timer.
 2. Fill each page, clicking the buttons the rules call for. Some questions only appear after you click a button.
 3. Move to the next page with **Next page ›**.
-4. **Never click "Continue ›".** On the real site moving on is the agent's call, and here it counts as a mistake.
+4. Click **"Continue ›"** only when the page has nothing left to check (every question you could answer is answered). Clicking it with open questions counts as a mistake.
 5. On the last page (PrintEmailFax), finish that page, then press **Finish & save results** at the top. That saves your answers; the run is over.
 6. Don't change the "Page" dropdown or anything else in the grey bar except Start and Finish.
 

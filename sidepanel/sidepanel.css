@@ -218,6 +218,7 @@ details.section > summary .title { flex: 1; }
 .report details > summary { cursor: pointer; font-size: 12px; font-weight: 600; }
 .report ul { margin: 4px 0 2px; padding-left: 16px; font-size: 12px; }
 .report li { margin: 2px 0; overflow-wrap: anywhere; }
+.ignore-review { float: right; margin-left: 6px; padding: 0 6px; border: 1px solid currentColor; border-radius: 4px; background: transparent; font-size: 17px; line-height: 1.2; }
 .r-filled { background: var(--ok-bg); }
 .r-filled > summary { color: var(--ok); }
 .r-needs { background: var(--warn-bg); }

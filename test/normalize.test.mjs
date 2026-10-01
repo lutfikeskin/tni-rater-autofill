@@ -131,7 +131,8 @@ test('progressive: intake answers are translated into Progressive wording', () =
   assert.equal(byQ('295').value, 'Jordan Avery');
   assert.equal(byQ('297').value, 'Sample');
   assert.equal(byQ('2BB').value, '02/03/1988');
-  assert.deepEqual(['2DB', '2DD', '2DF'].map((q) => byQ(q).value), ['555', '201', '0199']);
+  assert.deepEqual(['2DB', '2DD', '2DF'].map((q) => byQ(q).value), [null, null, null]);
+  assert.ok(['2DB', '2DD', '2DF'].every((q) => byQ(q).ignore), 'optional phone is deliberately left blank');
   assert.ok(byQ('450').note, 'MVR/CLUE order is marked for the agent, never filled');
   assert.equal(byQ('2B9D').value, 501, 'Unlimited radius picks "More than 500 miles"');
   assert.equal(byQ('2C05').value, 'Business Only');
@@ -150,10 +151,10 @@ test('progressive: cargo not wanted means "Not selected"', () => {
   assert.equal(buildPlan(r, carrier).find((s) => s.q === '216F').value, 'Not selected');
 });
 
-test('current policy dates are used as written (no expiry warning)', () => {
+test('current policy dates are used as written and expired dates are warned', () => {
   const r = normalizeIntake({ ...raw, ins_exp_1: '08/14/2025' }, { today: new Date('2026-09-30') });
   assert.equal(r.record.priorInsurance[0].expiration, '08/14/2025');
-  assert.ok(!r.warnings.some((w) => /expir/.test(w.code)));
+  assert.ok(r.warnings.some((w) => w.code === 'prior-expiration.expired'));
 });
 
 test('progressive: fixes from the first live usage log', () => {
@@ -198,18 +199,20 @@ test('progressive: standard answers for follow-up questions', () => {
   assert.equal(byQ('83').value, true);
   assert.equal(byQ('A2').value, 'None');
   assert.equal(byQ('28C1').value, false);
-  // Filings: both answers only when the intake says filings are needed.
+  // Filings: "all vehicles on quote" and Federal only when the intake says filings are needed;
+  // MCS-90 is ticked by the page with Federal, so it's left alone.
   assert.equal(byQ('F11').value, true);
-  assert.equal(buildPlan(record, carrier).find((s) => s.re === '^mcs ?90$').value, true);
+  assert.equal(buildPlan(record, carrier).find((s) => s.re === '^mcs ?-?90$').ignore, true);
   const noFilings = structuredClone(record);
   noFilings.operations.filingsRequired = false;
-  assert.equal(byQ('F11', noFilings).value, null);
+  assert.equal(byQ('F11', noFilings).value, false);
   assert.equal(byQ('CA', noFilings).value, false);
-  // No USDOT and not getting one: "No".
+  // No USDOT and not getting one: "No"; the "belongs to the business" question only exists with one.
   const noDot = structuredClone(record);
   noDot.applicant.dot = null;
   assert.equal(byQ('1ED', noDot).value, 'No - and the customer will not have a USDOT number');
-  assert.equal(byQ('20F', noDot).value, null);
+  assert.equal(byQ('20F', noDot).ignore, true);
+  assert.equal(byQ('20F').value, true, 'standard: the USDOT number belongs to the business');
   // Other freight descriptions aren't guessed.
   const other = structuredClone(record);
   other.operations.whatHaul = 'Auto parts';
@@ -224,36 +227,48 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.equal(byQ('267').value, 'Other For-Hire Trucking', 'Expediter');
   const other = structuredClone(record);
   other.operations.businessClass = 'Dry Van';
-  assert.equal(byQ('239', other).value, 'Dry Van', 'anything else: as on the intake');
-  assert.equal(byQ('267', other).value, 'Dry Van');
+  assert.equal(byQ('239', other).value, 'Dry Van', 'other classes: as written on the intake');
+  assert.equal(byQ('267', other).ignore, true, 'type of trucker only exists for For Hire Trucking');
   assert.equal(byQ('1FF2').value, '$40 per day, $1,200 max');
+  // Two vehicles on the fixture: the active vehicle's row is picked by its year/make/model.
+  assert.deepEqual(byQ('1FF2').vehicleHint, ['2021', 'ford', 'transit 350']);
+  assert.deepEqual(buildPlan(record, carrier, { vehicles: 1 }).find((s) => s.q === '1FF2').vehicleHint, ['2019', 'isuzu', 'npr hd']);
   assert.equal(carrier.replaceChoices, true);
-  const federal = plan.find((s) => s.re === '^federal$');
+  const federal = plan.find((s) => s.re === '^federal( liability)?( filing)?$');
   assert.equal(federal.value, true, 'filings needed: Federal ticked');
-  assert.equal(plan.find((s) => s.re === '^mcs ?90$').value, true);
+  assert.equal(plan.find((s) => s.re === '^mcs ?-?90$').ignore, true);
   assert.equal(byQ('F11').value, true);
   assert.equal(byQ('2CA7').value, 'No');
   assert.equal(byQ('2CCE').value, '$0 to $2,000');
   assert.equal(byQ('2CE3').value, true);
+  assert.equal(byQ('1FCD').value, '$1,000 Deductible');
+  assert.equal(byQ('1FD2').value, '$1,000 Deductible');
+  assert.equal(byQ('2BB4').ignore, true, 'GVW comes from the VIN lookup');
+  assert.equal(byQ('28E6').value, false, 'driver 1 has no CDL');
+  assert.ok(carrier.advance.exceptPages.includes('AdditionalDetails'));
+  assert.ok(new RegExp(carrier.advance.text, 'i').test('Ok, start quote.'));
+  assert.ok(new RegExp(carrier.advance.text, 'i').test('Continue'));
+  assert.ok(!new RegExp(carrier.advance.text, 'i').test('Finish & Buy'));
   assert.equal(byQ('2CE8').value, 45000);
   assert.equal(byQ('27E').value, '125 Maple Leaf Dr');
-  assert.equal(byQ('3E98').value, 'Automatic payments');
+  assert.equal(byQ('3E98').value, 'Automatic payments from checking account');
   assert.equal(byQ('32CC').value, true);
   const actions = plan.filter((s) => s.kind === 'action');
-  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'vehicleTile', 'lookupVin', 'openCargo', 'billPlan', 'print', 'print', 'printSend']);
-  assert.ok(actions.find((a) => a.action === 'lookupVin').immediate);
+  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'addVehicle:0', 'vehicleTile:0', 'lookupVin:0', 'openCargo', 'addCargoCommodity', 'doneCargo', 'recalculate', 'billPlan', 'print', 'print', 'printSend']);
+  assert.deepEqual(actions.find((a) => a.action === 'addVehicle:0').unlessActions, ['lookupVin:0']);
+  assert.ok(actions.find((a) => a.action === 'lookupVin:0').immediate);
   assert.equal(actions.find((a) => a.action === 'openCargo').near, 'motor truck cargo');
   const printRe = new RegExp(actions.find((a) => a.action === 'print').text, 'i');
   for (const t of ['Print, Email, Fax', 'Print/Email/Fax', 'Print, Email or Fax', 'Print']) assert.ok(printRe.test(t), t);
   assert.ok(!printRe.test('Print/Send'));
   assert.ok(new RegExp(actions.find((a) => a.action === 'billPlan').text, 'i').test('View Bill plan options'));
-  assert.equal(actions.find((a) => a.action === 'vehicleTile').text, '^Cargo Van$');
-  assert.deepEqual(actions.find((a) => a.action === 'lookupVin').after, ['vehicles[0].vin']);
+  assert.equal(actions.find((a) => a.action === 'vehicleTile:0').text, '^Cargo Van$');
+  assert.deepEqual(actions.find((a) => a.action === 'lookupVin:0').after, ['vehicles[0].vin']);
   const noCargo = structuredClone(record);
   noCargo.coverage.cargo = false;
   const noCargoActions = buildPlan(noCargo, carrier).filter((s) => s.kind === 'action').map((a) => a.action);
   assert.ok(!noCargoActions.includes('openCargo'));
-  assert.deepEqual(buildPlan(noCargo, carrier).find((s) => s.action === 'billPlan').after, ['coverage.autoLiabLimit']);
+  assert.deepEqual(buildPlan(noCargo, carrier).find((s) => s.action === 'billPlan').afterAny, ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F']);
   assert.ok(carrier.autoFillUrl.test('https://clpolicy.foragentsonly.com/Express/Default.aspx?pageName=AddVehicle'));
   assert.ok(!carrier.autoFillUrl.test('https://www.foragentsonly.com/newbusiness/quotesearch/'));
 });
@@ -265,4 +280,11 @@ test('practice pages get the Progressive rules, marked as practice', () => {
   assert.equal(c.world, 'MAIN');
   assert.equal(carrierForUrl('http://localhost:8792/test/mock-rater/index.html').id, 'test');
   assert.equal(carrierForUrl('https://clpolicy.foragentsonly.com/Express/Default.aspx').practice, undefined);
+});
+
+test('a blank DOT/MC section is a valid absence, not a missing-data warning', () => {
+  const noDot = normalizeIntake({ ...raw, dot_number: '', mc_number: '', mc_dot_60days: '' });
+  assert.equal(noDot.record.applicant.dot, null);
+  assert.equal(noDot.record.applicant.mcDotWithin60Days, null);
+  assert.equal(noDot.warnings.some((warning) => warning.code === 'dot.missing'), false);
 });

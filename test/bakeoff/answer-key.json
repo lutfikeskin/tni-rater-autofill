@@ -72,7 +72,7 @@
    "216F": "$100k with a $1,000 Deductible"
   },
   "ChangePaymentPlan": {
-   "3E98": "Automatic payments from checking account Save with lower fees – and a discount if eligible!"
+   "3E98": "Automatic payments from checking account Save with lower fees \u2013 and a discount if eligible!"
   },
   "PrintEmailFax": {
    "32B0": "Insurance Quote (with all bill plans)",
@@ -112,7 +112,10 @@
    }
   ],
   "forbidden": [
-   "Continue ›"
-  ]
+   "Finish & Buy",
+   "Bind",
+   "Submit"
+  ],
+  "continueExpected": "Continue \u203a is allowed (expected) only on a page with nothing left for the agent; TNI decided on 2026-10-01 that the filler clicks it then."
  }
 }

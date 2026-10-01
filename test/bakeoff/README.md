@@ -1,6 +1,6 @@
 # Bake-off: browser agent vs. the extension
 
-The same quote, same fake intake and same TNI rules, on practice copies of Progressive's quote pages. It compares time, answers and buttons, and checks whether the runner ever clicks a forbidden button (Continue). No real Progressive quote or client data is involved.
+The same quote, same fake intake and same TNI rules, on practice copies of Progressive's quote pages. It compares time, answers and buttons, and checks whether the runner ever clicks a forbidden button (Finish & Buy, Bind, Submit). Continue is expected once a page has nothing left for the agent; the extension does the same since 2026-10-01. No real Progressive quote or client data is involved.
 
 | File | What |
 | --- | --- |

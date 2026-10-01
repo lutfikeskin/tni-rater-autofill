@@ -11,7 +11,7 @@ import { get, listOf } from './util.js';
  * @param {{drivers?: number, vehicles?: number, trailers?: number}} active  which driver/vehicle/trailer this page is about
  */
 export function buildPlan(record, carrier, active = {}) {
-  const rules = [...(carrier?.rules ?? []), ...GENERIC_RULES];
+  const rules = [...(carrier?.rules ?? []), ...(carrier?.useGenericRules === false ? [] : GENERIC_RULES)];
   return [...fieldSteps(rules, record, carrier, active), ...actionSteps(carrier, record, active)];
 }
 
@@ -25,11 +25,14 @@ const withIndex = (path, active) => {
 function actionSteps(carrier, record, active) {
   const resolve = (v) => (typeof v === 'function' ? v(record, active) : v);
   return (carrier?.actions ?? [])
-    .filter((a) => !a.when || a.when(record))
+    .filter((a) => !a.when || a.when(record, active))
     .map((a, i) => ({
       id: `action:${a.id}:${i}`,
       kind: 'action',
-      action: a.id,
+      // Vehicle helpers must be tracked per active vehicle so one VIN lookup cannot satisfy a
+      // later vehicle. Other workflow actions remain quote-scoped and keep their stable names.
+      action: a.scope === 'vehicle' ? `${a.id}:${active.vehicles ?? 0}` : a.id,
+      baseAction: a.id,
       path: `action.${a.id}`,
       name: `Click ${a.id}`,
       pages: [].concat(a.page ?? []),
@@ -38,10 +41,17 @@ function actionSteps(carrier, record, active) {
       near: a.near ?? null,
       immediate: !!a.immediate,
       after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
+      afterAny: (resolve(a.afterAny) ?? []).map((p) => withIndex(p, active)),
       unless: (resolve(a.unless) ?? []).map((p) => withIndex(p, active)),
-      afterActions: a.afterActions ?? [],
-      afterPages: a.afterPages ?? [],
-      afterValue: a.afterValue ?? null,
+      unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (a.scope === 'vehicle' || /:vehicle$/.test(id) ? `${id.replace(/:vehicle$/, '')}:${active.vehicles ?? 0}` : id)),
+      afterActions: resolve(a.afterActions) ?? [],
+      afterPages: resolve(a.afterPages) ?? [],
+      afterValue: resolve(a.afterValue) ?? null,
+      needsPremium: !!resolve(a.needsPremium),
+      needsRecalculation: !!resolve(a.needsRecalculation),
+      verify: resolve(a.verify) ?? null,
+      scope: resolve(a.scope) ?? null,
+      scopeIndex: resolve(a.scopeIndex),
       value: null,
     }))
     .filter((s) => s.text || s.token);
@@ -54,14 +64,22 @@ function fieldSteps(rules, record, carrier, active) {
       ? (list ? rule.path.replace('[]', `[${active[list] ?? 0}]`) : rule.path)
       : `${carrier?.id ?? 'carrier'}.q${rule.q ?? id}`;
     const info = rule.path ? fieldInfo(rule.path) : { label: rule.name ?? path, kind: 'text' };
+    const note = typeof rule.note === 'function' ? rule.note(record, active) : rule.note ?? null;
     let value = null;
-    if (!rule.note) {
+    if (!note) {
       try {
         value = rule.value ? rule.value(record, active) : get(record, path);
       } catch {
         value = null;
       }
     }
+    const ignore = typeof rule.ignore === 'function' ? !!rule.ignore(record, active) : !!rule.ignore;
+    const scope = typeof rule.scope === 'function' ? rule.scope(record, active) : rule.scope ?? null;
+    const scopeIndex = typeof rule.scopeIndex === 'function' ? rule.scopeIndex(record, active) : rule.scopeIndex;
+    // Per-vehicle questions repeat once per vehicle, labelled "2021 MERCEDES-BENZ SPRINTER": the
+    // active vehicle's year/make/model picks its row when there are several.
+    const v = scope === 'vehicle' && (record.vehicles?.length ?? 0) > 1 ? record.vehicles[active.vehicles ?? 0] : null;
+    const vehicleHint = v ? [v.year, v.make, v.model].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).filter((x) => x.length >= 2) : null;
     return {
       id,
       path,
@@ -71,7 +89,14 @@ function fieldSteps(rules, record, carrier, active) {
       selector: rule.selector ?? null,
       re: rule.label ?? null,
       ex: rule.not ?? null,
-      note: rule.note ?? null,
+      note,
+      ignore,
+      verifyOnly: !!rule.verifyOnly,
+      summaryAfter: typeof rule.summaryAfter === 'function' ? rule.summaryAfter(record, active) : rule.summaryAfter ?? null,
+      choiceAliases: typeof rule.choiceAliases === 'function' ? rule.choiceAliases(record, active) : rule.choiceAliases ?? [],
+      scope,
+      scopeIndex,
+      vehicleHint: vehicleHint?.length ? vehicleHint : null,
       value: value === undefined || value === '' ? null : value,
     };
   });
