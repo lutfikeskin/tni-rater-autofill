@@ -320,7 +320,7 @@ function onRecorderMessage(msg, sender) {
     // buttons for us (Add Vehicle) count too.
     const page = samePage(msg.page);
     const hasButtons = (state.tab.carrier?.actions ?? []).some((a) => [].concat(a.page ?? []).includes(page));
-    const wanted = $('auto-pages').checked || ($('auto-followups').checked && state.autoPages.has(page));
+    const wanted = $('auto-pages').checked || ($('auto-followups').checked && (state.autoPages.has(page) || (hasButtons && !msg.fields)));
     if (wanted && (msg.fields > 0 || hasButtons) && onQuotePage()) {
       setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 800);
     }
@@ -372,6 +372,7 @@ function scheduleAutoFill(page) {
 async function autoFill(page) {
   if (state.autoPaused || state.filling || pageOf(state.tab?.url) !== page) return;
   const { id: tabId, carrier } = state.tab;
+  await pickListVehicle(carrier, page);
   state.filling = true;
   state.autoPending = false;
   const started = Date.now();
@@ -495,6 +496,7 @@ async function fillPage({ auto = false } = {}) {
   clearTimeout(state.autoTimer);
   const { id: tabId, carrier } = state.tab;
   const page = pageOf(state.tab.url);
+  await pickListVehicle(carrier, page);
   const plan = buildPlan(state.intake.record, carrier, state.active);
   const overwrite = auto ? false : $('overwrite').checked;
   $('fill').disabled = true;
@@ -528,6 +530,19 @@ async function fillPage({ auto = false } = {}) {
   }
   await remarkAi({ tabId, page, carrier });
   if (assistFrames && !assistFrames.some((f) => f.halted)) runAssist(assistFrames, { tabId, page, carrier });
+}
+
+// On the carrier's vehicle list page, work on the first intake vehicle not added yet (its Add
+// Vehicle or VIN lookup not done in this quote). When every vehicle is in, the active one stays
+// and nothing is left to add, so the page's Continue is clicked.
+async function pickListVehicle(carrier, page) {
+  if (!carrier?.vehicleList || page !== carrier.vehicleList) return;
+  const vehicles = state.intake?.record.vehicles ?? [];
+  const next = vehicles.findIndex((_, i) => !state.doneActions.has(`lookupVin:${i}`) && !state.doneActions.has(`addVehicle:${i}`));
+  if (next < 0 || next === state.active.vehicles) return;
+  state.active.vehicles = next;
+  await save();
+  renderPickers();
 }
 
 async function ignoreReview(key, tabId, page) {

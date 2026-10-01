@@ -181,7 +181,12 @@ export const progressive = {
     // Vehicle summary: "Add a Vehicle" for a vehicle not entered yet (its VIN lookup not done).
     // The vehicles found by the USDOT lookup are listed there too; ours is added with Add Vehicle,
     // which sits in the "Add" menu.
-    { id: 'addVehicle', page: 'VehicleSummary', text: '^add (a |another )?vehicle$', opener: '^add$', unlessActions: ['lookupVin:vehicle'], scope: 'vehicle' },
+    // The side panel moves the active vehicle to the next one not added yet (vehicleList below);
+    // once all are added nothing is left on the page and its Continue is clicked.
+    { id: 'addVehicle', page: 'VehicleSummary', text: '^add (a |another )?vehicle$|^add another$', opener: '^add$', unlessActions: ['lookupVin:vehicle'], scope: 'vehicle' },
+    // Some states (IN, OH) show the business type as a box with a Search next to it, which opens
+    // the business type list (BECAPopup).
+    { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
     { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, scope: 'vehicle' },
     { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle' },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
@@ -198,6 +203,9 @@ export const progressive = {
     // document and delivery controls establish readiness; no in-memory navigation history is needed.
     { id: 'printSend', page: 'PrintEmailFax', text: '^print ?/ ?send$', after: ['progressive.q32B0', 'progressive.q32CC'], verify: 'download' },
   ],
+  // The page listing the quote's vehicles: the side panel works on the next intake vehicle not
+  // added yet there, so Add Vehicle repeats until all are in, then Continue.
+  vehicleList: 'VehicleSummary',
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is
   // clicked. Never on the finish/buy pages.
   advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFaxConfirm'] },
@@ -234,6 +242,12 @@ export const progressive = {
     { q: '27E', path: 'garaging.street', name: 'Business street' },
     { q: '284', path: 'garaging.zip', name: 'Business ZIP' },
     { q: '286', path: 'garaging.city', name: 'Business city' },
+    // Search-style business type (IN, OH): the box itself is left alone (typing filters the list
+    // away); the result list (BECAPopup q36) gets For Hire Trucking, or General Freight Trucking
+    // when the list doesn't have it. Options read "<name> <description>".
+    { q: '24D', name: 'Business type box (filled by the search)', ignore: true },
+    { q: '1D', name: 'Business type search box', ignore: true },
+    { q: '36', name: 'Business type (search list: For Hire Trucking, else General Freight Trucking)', kind: 'choice', value: () => 'For Hire Trucking', choiceAliases: () => ['General Freight Trucking'] },
     { q: '239', name: 'Business type', kind: 'choice', label: '^business type(?: list)?$', value: businessType, choiceAliases: businessAliases, summaryAfter: (r) => isExpediter(r) ? '267' : '22D' },
     { q: '22D', name: 'Business structure', kind: 'choice', label: 'business structured', value: businessStructure },
     { q: '267', name: 'Type of trucker', kind: 'choice', label: 'type of trucker', value: truckerType, ignore: (r) => !isExpediter(r) },
@@ -256,6 +270,11 @@ export const progressive = {
     { q: '95', path: 'priorInsurance[0].limit', kind: 'choice', label: 'current bodily injury', ignore: (r) => !currentlyInsured(r) },
     { q: '9D', path: 'priorInsurance[0].expiration', label: 'current policy expiration', ignore: (r) => !currentlyInsured(r) },
     { q: 'A2', name: 'Other business coverages (standard: None)', kind: 'choice', label: 'other coverages for the business', value: () => 'None' },
+    // Checkbox version of the same questions (IN): a coverage the intake doesn't mention is No,
+    // so "None of the above" in both groups and the coverages themselves left unticked.
+    { q: 'AA', name: 'Other coverages: None of the above (coverage not on the intake = No)', kind: 'bool', value: () => true },
+    { q: 'B2', name: 'Other coverages: None of the above (coverage not on the intake = No)', kind: 'bool', value: () => true },
+    ...['A7', 'A8', 'A9', 'AF', 'B0'].map((q) => ({ q, name: 'Other coverage (not on the intake = No)', kind: 'bool', value: () => false })),
     { q: 'B7', name: 'Named additional insured count (preserve prefilled value)', ignore: true },
     { q: 'B8', name: 'Named waiver count (preserve prefilled value)', ignore: true },
     { q: 'BE', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },

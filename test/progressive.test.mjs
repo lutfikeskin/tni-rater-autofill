@@ -175,3 +175,19 @@ test('Type of Trucker is Other For-Hire Trucking for expediters and left alone o
     assert.equal(step.ignore, !expediter);
   }
 });
+
+test('search-style business type (IN), other-coverage checkboxes, vehicle list', () => {
+  const plan = buildPlan(baseRecord(), progressive, {});
+  const q36 = byQ(plan, '36');
+  assert.equal(q36.value, 'For Hire Trucking');
+  assert.deepEqual(q36.choiceAliases, ['General Freight Trucking']);
+  assert.equal(byQ(plan, '24D').ignore, true, 'the search box itself is not typed into');
+  assert.equal(byQ(plan, '1D').ignore, true);
+  assert.equal(byQ(plan, 'AA').value, true, 'coverage not on the intake = None of the above');
+  assert.equal(byQ(plan, 'B2').value, true);
+  assert.equal(byQ(plan, 'A8').value, false);
+  const search = plan.find((s) => s.action === 'businessTypeSearch');
+  assert.equal(search.near, 'business type');
+  assert.equal(progressive.vehicleList, 'VehicleSummary');
+  assert.ok(new RegExp(plan.find((s) => s.action === 'addVehicle:0').text, 'i').test('Add another'));
+});

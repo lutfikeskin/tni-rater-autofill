@@ -18,6 +18,7 @@ export const TNI_RULES = `
 - USDOT number belongs to the customer's business: Yes.
 - Business name / business address: the USDOT-registered option, not "Enter a different…". Home address: always the first option offered. If that is "Enter a different address", type the whole address in the address box and pick Progressive's first suggestion.
 - Business structure: "Corporation or LLC / Non-Profit" when the company name ends in LLC, Inc, Corp or Co; otherwise "Individual / Sole Proprietor". Partnerships are never guessed.
+- Business type search list (some states, e.g. IN): "For Hire Trucking" if it is in the list, otherwise "General Freight Trucking". Don't type in the search box.
 - Business type: "For Hire Trucking" for expediters, then Type of Trucker "Other For-Hire Trucking". General freight haulers are "General Freight Hauler" (portal wording may be "General Freight Trucking"). Otherwise use the closest match to what the intake says the business does.
 - Owner name and date of birth from the intake; the owner is usually the driver with the same last name.
 - Hazardous material placard: from the intake.
@@ -43,7 +44,7 @@ export const TNI_RULES = `
 ## More about the business (MoreAboutBusiness)
 - Currently insured: Yes when the intake lists current insurance with a limit and expiration.
 - Continuous coverage: Yes. Current bodily injury limit and expiration: as written in the intake ("State Minimum" is "State Minimum or less").
-- Other coverages for the business: None. Additional insured, waiver and blanket endorsement questions: leave as the page has them (0 / No).
+- Other coverages for the business: None. A coverage the intake doesn't mention means No: tick "None of the above" and leave the coverages unticked. Additional insured, waiver and blanket endorsement questions: leave as the page has them (0 / No).
 - State or federal filings required: Yes when the intake says filings are required.
 - ELD required: from the intake.
 

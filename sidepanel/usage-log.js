@@ -82,6 +82,16 @@ export function upload() {
     const { serverUrl = DEFAULT_SERVER, serverToken = '', agent = null } = await settings();
     if (!serverUrl) { uploadStatus = { state: 'off' }; return; }
     let sent = 0;
+    // Events an older server refused because it didn't know their type yet (e.g. the AI events)
+    // go back in the queue: a newer server takes them, an old one refuses them again.
+    const parked = (await local.get(REJECTED_KEY)) ?? [];
+    const retry = parked.filter((e) => /unknown event type/.test(e.rejectedBecause ?? ''));
+    if (retry.length) {
+      const queued = (await local.get(LOG_KEY)) ?? [];
+      const ids = new Set(queued.map((e) => e.id));
+      await local.set(LOG_KEY, [...retry.filter((e) => !ids.has(e.id)).map(({ rejectedBecause, ...e }) => e), ...queued]);
+      await local.set(REJECTED_KEY, parked.filter((e) => !retry.includes(e)));
+    }
     // Events recorded before ids existed get one now (the server needs ids to skip duplicates).
     const pending = (await local.get(LOG_KEY)) ?? [];
     if (pending.some((e) => !e.id)) await local.set(LOG_KEY, pending.map((e) => (e.id ? e : { ...e, id: crypto.randomUUID() })));

@@ -1089,3 +1089,21 @@ test('Add Vehicle inside the Add menu: the menu is opened first, then Add Vehicl
   assert.equal(addVehicle._clicked, true);
   assert.deepEqual(Array.from(report.actions, (x) => x.id), ['addVehicle:0:menu', 'addVehicle:0']);
 });
+
+test('business type list picks For Hire Trucking when offered, else General Freight Trucking', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  for (const offered of [false, true]) {
+    const h = harness({ search: '?pageName=BECAPopup' });
+    const names = [
+      'Expediters/Hotshotters Express delivery of packages or time sensitive materials over a 50-mile radius.',
+      ...(offered ? ['For Hire Trucking Haul goods for others.'] : []),
+      'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).',
+    ];
+    const radios = names.map((value, i) => makeInput({ id: i ? `bt-${i}` : `f_U${'A'.repeat(32)}36_1_1`, name: 'bt_36', type: 'radio', value }));
+    h.document.body.append(...radios);
+    const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 3 });
+    const picked = radios.find((r) => r.checked)?.value ?? '';
+    assert.match(picked, offered ? /^For Hire Trucking/ : /^General Freight Trucking/);
+    assert.equal(report.failed.length, 0);
+  }
+});
