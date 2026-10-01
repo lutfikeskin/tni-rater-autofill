@@ -129,8 +129,15 @@ test('Progressive coverage and helper ordering are conservative', () => {
   assert.equal(bill.needsPremium, false);
   assert.deepEqual(bill.afterActions, ['doneCargo']);
   assert.ok(new RegExp(bill.text, 'i').test('Billing Options'));
+  // Back from the bill plan, Recalculate only when the rates are stale; Print doesn't wait for it.
+  assert.equal(recalc.needsRecalculation, true);
   const print = actions.find((step) => step.action === 'print');
-  assert.deepEqual(print.afterActions, ['recalculate']);
+  assert.deepEqual(print.afterActions, ['doneCargo']);
+  assert.equal(print.needsPremium, true);
+  const addDriver = actions.find((step) => step.action === 'addDriver:0');
+  assert.deepEqual(addDriver.unlessActions, ['driverEntered:0']);
+  assert.equal(progressive.driverList, 'DriverSummary');
+  assert.ok(progressive.agentPages.NoHit);
   const gl = structuredClone(record);
   gl.coverage.gl = true;
   assert.ok(!buildPlan(gl, progressive, {}).some((step) => step.action === 'billPlan'), 'with GL the agent does the rates page');

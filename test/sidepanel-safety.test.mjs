@@ -240,7 +240,8 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }],
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events) },
     runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
-    pickListVehicle: async () => {},
+    pickListItem: async () => {},
+    afterFill: () => {},
   };
   vm.runInNewContext(extractFunction('autoFill'), context);
   await context.autoFill('Rates');

@@ -36,7 +36,7 @@ const EVENT_FIELDS = {
   warning_checked: ['code', 'path', 'checked'],
   page_view: ['from', 'fields'],
   page_layout: ['context', 'fields', 'buttons'],
-  fill_run: ['overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'advanced'],
+  fill_run: ['overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced'],
   fill_field: ['result', 'q', 'label', 'path', 'controlKind', 'shown', 'reason', 'options'],
   fill_error: ['auto', 'error'],
   field_change: ['q', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],

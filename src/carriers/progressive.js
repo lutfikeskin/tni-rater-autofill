@@ -185,6 +185,9 @@ export const progressive = {
     // The side panel moves the active vehicle to the next one not added yet (vehicleList below);
     // once all are added nothing is left on the page and its Continue is clicked.
     { id: 'addVehicle', page: 'VehicleSummary', text: '^add (a |another )?vehicle$|^add another$', opener: '^add$', unlessActions: ['lookupVin:vehicle'], scope: 'vehicle' },
+    // Driver list: Add for each intake driver not entered yet (the side panel moves the active
+    // driver, see driverList), then Continue.
+    { id: 'addDriver', page: 'DriverSummary', text: '^add (a |another )?driver$|^add another$', opener: '^add$', unlessActions: ['driverEntered'], scope: 'driver' },
     // Some states (IN, OH) show the business type as a box with a Search next to it, which opens
     // the business type list (BECAPopup).
     { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
@@ -198,8 +201,10 @@ export const progressive = {
     // plan options, pick automatic payments there, come back (Continue), then Recalculate, then
     // Print, Email, Fax. With GL requested the agent does the rates page by hand.
     { id: 'billPlan', page: 'CoveragesRates', text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.gl !== true },
-    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: ['coverage.autoLiabLimit'], afterPages: ['ChangePaymentPlan'], afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], verify: 'premium' },
-    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, afterActions: ['recalculate'], afterPages: ['ChangePaymentPlan'], needsPremium: true },
+    // Back from the bill plan Progressive has usually recalculated already (Recalculate is gone,
+    // Print, Email, Fax is there): Recalculate only when the rates say they're out of date.
+    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: ['coverage.autoLiabLimit'], afterPages: ['ChangePaymentPlan'], afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], needsRecalculation: true, verify: 'premium' },
+    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, afterPages: ['ChangePaymentPlan'], afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], needsPremium: true },
     // This page may have been opened by the agent or restored after a panel reload. Its own
     // document and delivery controls establish readiness; no in-memory navigation history is needed.
     { id: 'printSend', page: 'PrintEmailFax', text: '^print ?/ ?send$', after: ['progressive.q32B0', 'progressive.q32CC'], verify: 'download' },
@@ -207,6 +212,13 @@ export const progressive = {
   // The page listing the quote's vehicles: the side panel works on the next intake vehicle not
   // added yet there, so Add Vehicle repeats until all are in, then Continue.
   vehicleList: 'VehicleSummary',
+  // Same for drivers: the AddDriver page marks its driver entered once filled.
+  driverList: 'DriverSummary',
+  driverPage: 'AddDriver',
+  // Pages that need the agent whatever the intake says; the side panel says so at the top.
+  agentPages: {
+    NoHit: "Progressive couldn't verify the business owner. Check the owner's name, date of birth and home address with the client (and enter the SSN if they gave it), then Continue.",
+  },
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is
   // clicked. Never on the finish/buy pages.
   advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFaxConfirm'] },

@@ -113,7 +113,9 @@ for (const [layout, now] of layouts.filter((l) => results[l]).map((l) => [l, res
     const b = before.pages?.[pageName];
     if (!b) continue;
     if (p.filled < b.filled) regressions.push(`${layout} ${pageName}: filled ${b.filled} → ${p.filled}`);
-    const newFails = p.failed.filter((f) => !b.failed.includes(f));
+    // Diagnostics in parentheses (e.g. which elements appeared) don't make a failure new.
+    const core = (f) => f.replace(/\s*\([^)]*\)\s*$/, '');
+    const newFails = p.failed.filter((f) => !b.failed.map(core).includes(core(f)));
     for (const f of newFails) regressions.push(`${layout} ${pageName}: new failure: ${f}`);
   }
 }

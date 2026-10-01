@@ -372,7 +372,7 @@ function scheduleAutoFill(page) {
 async function autoFill(page) {
   if (state.autoPaused || state.filling || pageOf(state.tab?.url) !== page) return;
   const { id: tabId, carrier } = state.tab;
-  await pickListVehicle(carrier, page);
+  await pickListItem(carrier, page);
   state.filling = true;
   state.autoPending = false;
   const started = Date.now();
@@ -384,6 +384,7 @@ async function autoFill(page) {
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite: false, skip, keepMarks: true })]);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
+    afterFill(frames, { carrier, page });
     const hasWarnings = frames.some((f) => f.unknown?.length);
     if (state.autoPaused || hasWarnings) { renderReport(frames); assistFrames = frames; }
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
@@ -496,7 +497,7 @@ async function fillPage({ auto = false } = {}) {
   clearTimeout(state.autoTimer);
   const { id: tabId, carrier } = state.tab;
   const page = pageOf(state.tab.url);
-  await pickListVehicle(carrier, page);
+  await pickListItem(carrier, page);
   const plan = buildPlan(state.intake.record, carrier, state.active);
   const overwrite = auto ? false : $('overwrite').checked;
   $('fill').disabled = true;
@@ -512,6 +513,7 @@ async function fillPage({ auto = false } = {}) {
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
     state.autoPages.add(page);
+    afterFill(frames, { carrier, page });
     recordLayout(page);
     if (!carrier.practice) usage.log(...fillEvents(frames, {
       carrier: carrier.id, page, overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
@@ -534,15 +536,32 @@ async function fillPage({ auto = false } = {}) {
 
 // On the carrier's vehicle list page, work on the first intake vehicle not added yet (its Add
 // Vehicle or VIN lookup not done in this quote). When every vehicle is in, the active one stays
-// and nothing is left to add, so the page's Continue is clicked.
-async function pickListVehicle(carrier, page) {
-  if (!carrier?.vehicleList || page !== carrier.vehicleList) return;
-  const vehicles = state.intake?.record.vehicles ?? [];
-  const next = vehicles.findIndex((_, i) => !state.doneActions.has(`lookupVin:${i}`) && !state.doneActions.has(`addVehicle:${i}`));
-  if (next < 0 || next === state.active.vehicles) return;
-  state.active.vehicles = next;
-  await save();
-  renderPickers();
+// and nothing is left to add, so the page's Continue is clicked. The driver list works the same
+// way (a driver counts as entered once its driver page was filled).
+async function pickListItem(carrier, page) {
+  const lists = [
+    [carrier?.vehicleList, 'vehicles', (i) => ['lookupVin', 'addVehicle'].some((a) => state.doneActions.has(`${a}:${i}`))],
+    [carrier?.driverList, 'drivers', (i) => ['driverEntered', 'addDriver'].some((a) => state.doneActions.has(`${a}:${i}`))],
+  ];
+  for (const [listPage, list, done] of lists) {
+    if (!listPage || page !== listPage) continue;
+    const next = (state.intake?.record[list] ?? []).findIndex((_, i) => !done(i));
+    if (next < 0 || next === state.active[list]) continue;
+    state.active[list] = next;
+    await save();
+    renderPickers();
+  }
+}
+
+// Bookkeeping after a fill: the driver page marks its driver entered; a click that opens more
+// questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
+function afterFill(frames, { carrier, page }) {
+  if (carrier.driverPage && carrier.driverPage === page && frames.some((f) => f.filled?.length)) {
+    state.doneActions.add(`driverEntered:${state.active.drivers ?? 0}`);
+  }
+  const clicked = frames.some((f) => (f.actions ?? []).length);
+  const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
+  if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 1500);
 }
 
 async function ignoreReview(key, tabId, page) {
@@ -581,7 +600,9 @@ function renderReport(frames) {
   const needs = [...noData.map((x) => ({ ...x, why: x.note ?? 'not on intake' })), ...leftRequired.filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, why: 'required' }))];
   const advanced = frames.find((f) => f.advanced)?.advanced;
   const blockers = all('blockers');
+  const agentPage = state.tab?.carrier?.agentPages?.[page];
   box.replaceChildren(...[
+    agentPage ? h('p', { class: 'agent-page' }, agentPage) : null,
     frames.some((f) => f.halted) ? h('p', { class: 'error' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then click Fill this page to retry.`) : null,
     h('p', { class: 'report-summary' }, `Filled ${filled.length} of ${fields} fields on this page${advanced ? ` · clicked "${advanced}"` : blockers.length ? ` · ${blockers.length} thing${blockers.length === 1 ? '' : 's'} to look at before Continue` : ''}`),
     group('r-needs', 'Unfamiliar questions — left for you', all('unknown'), (x) => reviewLine(x, [h('b', {}, x.label), x.required ? ' (required)' : '']), true),

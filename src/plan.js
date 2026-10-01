@@ -31,7 +31,7 @@ function actionSteps(carrier, record, active) {
       kind: 'action',
       // Vehicle helpers must be tracked per active vehicle so one VIN lookup cannot satisfy a
       // later vehicle. Other workflow actions remain quote-scoped and keep their stable names.
-      action: a.scope === 'vehicle' ? `${a.id}:${active.vehicles ?? 0}` : a.id,
+      action: a.scope === 'vehicle' ? `${a.id}:${active.vehicles ?? 0}` : a.scope === 'driver' ? `${a.id}:${active.drivers ?? 0}` : a.id,
       baseAction: a.id,
       path: `action.${a.id}`,
       name: `Click ${a.id}`,
@@ -44,7 +44,9 @@ function actionSteps(carrier, record, active) {
       after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
       afterAny: (resolve(a.afterAny) ?? []).map((p) => withIndex(p, active)),
       unless: (resolve(a.unless) ?? []).map((p) => withIndex(p, active)),
-      unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (a.scope === 'vehicle' || /:vehicle$/.test(id) ? `${id.replace(/:vehicle$/, '')}:${active.vehicles ?? 0}` : id)),
+      unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (/:driver$/.test(id) || (a.scope === 'driver' && !/:/.test(id))
+        ? `${id.replace(/:driver$/, '')}:${active.drivers ?? 0}`
+        : a.scope === 'vehicle' || /:vehicle$/.test(id) ? `${id.replace(/:vehicle$/, '')}:${active.vehicles ?? 0}` : id)),
       afterActions: resolve(a.afterActions) ?? [],
       afterPages: resolve(a.afterPages) ?? [],
       afterValue: resolve(a.afterValue) ?? null,

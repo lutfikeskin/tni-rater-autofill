@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 20) return;
+  if (globalThis.__raterKit?.version === 21) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -478,14 +478,26 @@
     // Suggestion lists listen for typing: send the events typing would.
     for (const type of ['input', 'keydown', 'keyup']) el.dispatchEvent(new Event(type, { bubbles: true }));
     try { cmp?.fireEvent?.('change', cmp, text); } catch { /* page handler expected a real event */ }
+    // What the page adds while it thinks: when no known list shows up, the reason names the new
+    // elements (tag.class), so the carrier's suggestion list can be recognised next time.
+    const added = [];
+    const mo = typeof MutationObserver === 'function' ? new MutationObserver((records) => {
+      for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1 && added.length < 40) added.push(n);
+    }) : null;
+    mo?.observe(document.body, { subtree: true, childList: true });
     let first = null;
-    for (const start = Date.now(); !first && Date.now() - start < 6000;) {
-      await sleep(200);
-      first = shownSuggestions().find((x) => !before.has(x)) ?? null;
+    try {
+      for (const start = Date.now(); !first && Date.now() - start < 6000;) {
+        await sleep(200);
+        first = shownSuggestions().find((x) => !before.has(x)) ?? null;
+      }
+    } finally {
+      mo?.disconnect();
     }
     if (!first) {
       el.blur?.();
-      return { ok: false, reason: "the page offered no address suggestion; check the address, city and ZIP" };
+      const seen = [...new Set(added.filter((n) => n.getClientRects?.().length).map((n) => `${n.tagName.toLowerCase()}${n.id ? `#${String(n.id).replace(/\d{3,}/g, '#')}` : ''}${typeof n.className === 'string' && n.className.trim() ? `.${n.className.trim().split(/\s+/).slice(0, 3).join('.')}` : ''}${n.getAttribute?.('role') ? `[role=${n.getAttribute('role')}]` : ''}`))].slice(0, 8);
+      return { ok: false, reason: `the page offered no address suggestion; check the address, city and ZIP${seen.length ? ` (new on the page: ${seen.join(', ')})` : ''}` };
     }
     const shown = oneLine(first.textContent).slice(0, 120);
     for (const type of ['mousedown', 'mouseup']) first.dispatchEvent(new Event(type, { bubbles: true }));
@@ -631,6 +643,8 @@
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
       if (loose(c.el.value) === loose(textFor(step, c))) return true;
+      // Carriers standardize addresses to ZIP+4: 17101-1234 is the intake's 17101.
+      if (/zip/i.test(step.path ?? '') && /^\d{5}$/.test(String(step.value))) return String(c.el.value).replace(/\D/g, '').slice(0, 5) === String(step.value);
       if (step.kind === 'money') {
         const amount = (v) => /^\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*$/.test(String(v)) ? Number(String(v).replace(/[$,\s]/g, '')) : null;
         const actual = amount(c.el.value), wanted = amount(step.value);
@@ -914,6 +928,8 @@
           continue;
         }
         if (a.unless.some(has) || (a.unlessActions ?? []).some((id) => clicked.has(id))) { clicked.add(a.action); continue; }
+        // Recalculate only when the rates are out of date; otherwise it isn't waited for.
+        if (a.needsRecalculation && !ratesStale()) continue;
         const button = findButton(a);
         // Menu items ("Add Vehicle" under "Add") only show once their menu button is opened.
         if (!button && !a.opener) continue;
@@ -1116,5 +1132,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 20, fill, answer, markKey, aiBanner, capture, clear };
+  globalThis.__raterKit = { version: 21, fill, answer, markKey, aiBanner, capture, clear };
 })();

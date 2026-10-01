@@ -1121,3 +1121,25 @@ test('an empty unfamiliar question keeps Continue from being clicked, even when 
     assert.equal(report.blockers.some((b) => /Some new optional question/.test(b)), !answered);
   }
 });
+
+test('a ZIP+4 from the carrier agrees with the intake ZIP', async () => {
+  const h = harness();
+  const zip = makeInput({ id: 'zip', ariaLabel: 'Zip code where the vehicle is located', value: '17101-1234' });
+  h.document.body.append(zip);
+  const report = await h.kit.fill([{ id: 'zip-step', selector: '#zip', path: 'garaging.zip', kind: 'text', value: '17101' }], { maxRounds: 1 });
+  assert.ok(!report.kept.some((x) => x.differs), 'not "the page says something different"');
+  assert.equal(report.blockers.length, 0);
+});
+
+test('Recalculate is skipped (not waited for) when the rates are current, and Print goes ahead', async () => {
+  const h = harness({ search: '?pageName=CoveragesRates' });
+  h.document.body.innerText = 'Total premium: $4,321.00';
+  const print = addButton(h, 'Print, Email, Fax');
+  print.onclick = () => { print._clicked = true; };
+  const report = await h.kit.fill([
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [], needsRecalculation: true },
+    { id: 'print', kind: 'action', action: 'print', text: '^print, email, fax$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [], needsPremium: true },
+  ], { maxRounds: 3 });
+  assert.equal(print._clicked, true);
+  assert.ok(!report.blocked.some((b) => b.id === 'recalculate'));
+});

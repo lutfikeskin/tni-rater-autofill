@@ -315,3 +315,6 @@ details.section > summary .title { flex: 1; }
 .health-item.bad { background: var(--signal-soft); color: var(--signal-dark); }
 .health-item.warn { background: var(--warning-soft); color: #8a6a12; }
 .health-item:hover { text-decoration: underline; }
+
+/* A page only the agent can answer (e.g. Progressive couldn't verify the owner) */
+.agent-page { padding: 8px 10px; border: 2px solid var(--signal); border-radius: var(--radius-sm); background: var(--signal-soft); color: var(--signal-dark); font-weight: 600; }

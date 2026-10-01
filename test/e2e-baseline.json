@@ -286,7 +286,7 @@
     "filled": 20,
     "failed": [
      "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
-     "Home Address: the page offered no address suggestion; check the address, city and ZIP",
+     "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])",
      "Business type list: no option matches \"For Hire Trucking\""
     ],
     "noData": 0,
@@ -483,7 +483,7 @@
     "filled": 14,
     "failed": [
      "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
-     "Home Address: the page offered no address suggestion; check the address, city and ZIP"
+     "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])"
     ],
     "noData": 0,
     "unmapped": 0,
