@@ -1160,3 +1160,20 @@ test('a helper that waited earlier in the fill and was clicked later does not ke
   assert.equal(report.blocked.length, 0);
   assert.equal(next._clicked, true, 'nothing left: Continue');
 });
+
+test('each filled answer carries its timing and side effects (revealed / removed / changed)', async () => {
+  const h = harness();
+  const first = makeInput({ id: 'first', ariaLabel: 'First question' });
+  const second = makeInput({ id: 'second', ariaLabel: 'Second question' });
+  // Answering the first reveals a new question, like a Progressive follow-up.
+  first.addEventListener('change', () => { if (!h.document.body.children.some((n) => n.id === 'follow')) h.document.body.append(makeInput({ id: 'follow', ariaLabel: 'Follow-up' })); });
+  h.document.body.append(first, second);
+  const report = await h.kit.fill([
+    { id: 'a', selector: '#first', path: 'x.first', kind: 'text', value: 'one' },
+    { id: 'b', selector: '#second', path: 'x.second', kind: 'text', value: 'two' },
+  ], { maxRounds: 4 });
+  const [a, b] = ['x.first', 'x.second'].map((p) => report.filled.find((x) => x.path === p));
+  assert.ok(a.timing.ms >= 0 && a.timing.settleMs >= 0);
+  assert.equal(a.timing.revealed, 1, 'the follow-up question appeared');
+  assert.equal(b.timing.revealed + b.timing.removed + b.timing.changed, 0, 'independent answer');
+});

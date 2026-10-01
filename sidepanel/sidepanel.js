@@ -322,7 +322,7 @@ function onRecorderMessage(msg, sender) {
     const hasButtons = (state.tab.carrier?.actions ?? []).some((a) => [].concat(a.page ?? []).includes(page));
     const wanted = $('auto-pages').checked || ($('auto-followups').checked && (state.autoPages.has(page) || (hasButtons && !msg.fields)));
     if (wanted && (msg.fields > 0 || hasButtons) && onQuotePage()) {
-      setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 800);
+      setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 400);
     }
     return;
   }
@@ -366,7 +366,7 @@ function scheduleAutoFill(page) {
   if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage()) return;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
-  state.autoTimer = setTimeout(() => autoFill(page), 1200);
+  state.autoTimer = setTimeout(() => autoFill(page), 600);
 }
 
 async function autoFill(page) {
@@ -561,7 +561,7 @@ function afterFill(frames, { carrier, page }) {
   }
   const clicked = frames.some((f) => (f.actions ?? []).length);
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
-  if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 1500);
+  if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 900);
 }
 
 async function ignoreReview(key, tabId, page) {

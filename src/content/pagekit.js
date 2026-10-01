@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 22) return;
+  if (globalThis.__raterKit?.version === 23) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -161,16 +161,16 @@
   }
 
   // Wait until the page stops changing: not busy and no new nodes for `quietMs`.
-  async function settle({ quietMs = 400, maxMs = 15000 } = {}) {
+  async function settle({ quietMs = 250, maxMs = 15000 } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
     mo.observe(document.body, { subtree: true, childList: true });
     const start = Date.now();
     try {
-      await sleep(100);
+      await sleep(60);
       while (Date.now() - start < maxMs) {
         if (!pageBusy() && Date.now() - last >= quietMs) return true;
-        await sleep(120);
+        await sleep(60);
       }
       return false;
     } finally {
@@ -487,7 +487,7 @@
     mo?.observe(document.body, { subtree: true, childList: true });
     let first = null;
     try {
-      for (const start = Date.now(); !first && Date.now() - start < 6000;) {
+      for (const start = Date.now(); !first && Date.now() - start < 4000;) {
         await sleep(200);
         first = shownSuggestions().find((x) => !before.has(x)) ?? null;
       }
@@ -741,6 +741,10 @@
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
     const openersTried = new Set();
+    // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
+    let ajaxCount = 0;
+    const countAjax = () => { ajaxCount++; };
+    try { ext()?.Ajax?.on?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
     const visited = new Set(visitedPages);
     const startPage = currentPage();
     if (!keepMarks) clear();
@@ -841,11 +845,27 @@
           handled.set(step.id, { status: null });
           continue;
         }
+        // Timing and side effects of this answer, for working out which questions could be
+        // answered together: did it reach the server, did questions appear or disappear, did
+        // other answers change.
+        const snap = (list) => new Map(list.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
+        const before = snap(controls);
+        const t0 = Date.now();
+        const requests0 = ajaxCount;
         let result;
         try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
+        const tApplied = Date.now();
         if (result.ok) {
-          const settled = await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
+          const settled = await settle(serverBacked ? {} : { quietMs: 150, maxMs: 3000 });
           const currentControls = collectControls();
+          const after = snap(currentControls);
+          const mine = `${fieldKey(c)}|${c.label}`;
+          item.timing = {
+            ms: Date.now() - t0, settleMs: Date.now() - tApplied, ajax: ajaxCount - requests0,
+            revealed: [...after.keys()].filter((k) => !before.has(k)).length,
+            removed: [...before.keys()].filter((k) => !after.has(k)).length,
+            changed: [...before.keys()].filter((k) => k !== mine && after.has(k) && after.get(k) !== before.get(k)).length,
+          };
           const fresh = assign(currentControls, plan).find((p) => p.step.id === step.id)?.control;
           // An address box may collapse once a suggestion is picked; the ZIP/city rules check it.
           const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : step.kind === 'address-suggest' || summaryAccepted(step, currentControls);
@@ -1001,6 +1021,7 @@
     }
     return report;
     } finally {
+      try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
       for (const type of gestureTypes) document.removeEventListener(type, trackGesture, true);
       document.removeEventListener('input', protectEdit, true);
       document.removeEventListener('change', protectEdit, true);
@@ -1134,5 +1155,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 22, fill, answer, markKey, aiBanner, capture, clear };
+  globalThis.__raterKit = { version: 23, fill, answer, markKey, aiBanner, capture, clear };
 })();

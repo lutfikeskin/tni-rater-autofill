@@ -114,6 +114,38 @@ else {
   }
 }
 
+// --- Speed: how long each answer takes, and which answers change nothing else ---------------
+p('## Speed', '');
+const timed = recent.filter((e) => e.type === 'fill_field' && e.result === 'filled' && e.timing);
+if (!timed.length) p('No timing yet (recorded from version 0.3.5 on).', '');
+else {
+  const byQ = new Map();
+  for (const e of timed) {
+    const key = `${e.carrier} ${e.page} ${e.q ? `q${e.q}` : ''} "${e.label ?? ''}"`;
+    const row = byQ.get(key) ?? { page: e.page, n: 0, ms: [], settle: [], ajax: 0, effects: 0, revealed: 0, removed: 0, changed: 0 };
+    row.n++; row.ms.push(e.timing.ms); row.settle.push(e.timing.settleMs);
+    if (e.timing.ajax > 0) row.ajax++;
+    if (e.timing.revealed || e.timing.removed || e.timing.changed) row.effects++;
+    row.revealed += e.timing.revealed; row.removed += e.timing.removed; row.changed += e.timing.changed;
+    byQ.set(key, row);
+  }
+  const rows = [...byQ.entries()].map(([key, r]) => ({ key, ...r, med: median(r.ms) }));
+  const pages = new Map();
+  for (const r of rows) {
+    const x = pages.get(r.page) ?? { answers: 0, ms: 0, free: 0, freeMs: 0 };
+    x.answers++; x.ms += r.med;
+    if (!r.effects) { x.free++; x.freeMs += r.med; }
+    pages.set(r.page, x);
+  }
+  p('Per page: time spent waiting on answers (median per answer, summed), and how much of it is answers that never changed anything else on the page (candidates for answering together).', '');
+  p('| Page | Answers | Time on answers | Independent answers | Their time |', '| --- | --- | --- | --- | --- |');
+  for (const [page, x] of [...pages.entries()].sort((a, b) => b[1].ms - a[1].ms)) p(`| ${page} | ${x.answers} | ${(x.ms / 1000).toFixed(1)} s | ${x.free} | ${(x.freeMs / 1000).toFixed(1)} s |`);
+  p('', 'Per question (slowest first). Independent = never revealed, removed or changed another question in any quote so far.', '');
+  p('| Question | Seen | Median ms | Server request | Independent | Side effects (revealed/removed/changed) |', '| --- | --- | --- | --- | --- | --- |');
+  for (const r of rows.sort((a, b) => b.med - a.med)) p(`| ${r.key.replace(/\|/g, '/')} | ${r.n} | ${r.med} | ${r.ajax}/${r.n} | ${r.effects ? 'no' : 'yes'} | ${r.effects ? `${r.revealed}/${r.removed}/${r.changed}` : '—'} |`);
+  p('');
+}
+
 p('## Problem reports', '');
 if (!problems.length) p('None.', '');
 else p(...problems.map((e) => `- ${e.t?.slice(0, 16).replace('T', ' ')} · ${e.agent ?? '?'} · ${e.page ?? '?'}: ${String(e.text ?? '').trim().replace(/\n+/g, '\n  ')}`), '');
