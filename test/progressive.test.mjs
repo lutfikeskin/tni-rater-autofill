@@ -241,7 +241,8 @@ test('AmWINS rules: fields by id, standard answers, declaration left to the agen
   assert.equal(bySel('#entityType').value, 'LLC');
   assert.equal(bySel('#yrsInBusiness').value, '3');
   assert.equal(bySel('#natureOfBusiness').value, 'TRANSPORTATION');
-  assert.equal(bySel('#phone').ignore, true, "the agency's phone is not the client's");
+  assert.equal(bySel('#phone').ignore, false, 'Contact Information is the client (third quote)');
+  assert.equal(bySel('#email').ignore, true, 'contact email stays as the page has it');
   assert.equal(byName(/^Radius$/).value, 501, 'Unlimited picks the top band (201 + MILES)');
   assert.equal(byName(/^Usage type/).value, 'FOR HIRE');
   assert.equal(byName(/^Rental/).value, '$40 day / $1,200 total');
@@ -281,4 +282,33 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
   assert.equal(sel('#autoSymbol6').value, true);
   assert.equal(sel('#autoSymbol1').value, false);
   assert.equal(plan.find((x) => x.action === 'importVins').immediate, true);
+});
+
+test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, underwriting defaults, Save & Continue, start page', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.applicant.phone = '(402) 555-0100';
+  record.vehicles = [{ type: 'Box Truck', vin: '1FTBR3X87MKA12345' }];
+  const plan = buildPlan(record, amwins, {});
+  const sel = (s) => plan.find((x) => x.selector === s);
+  const named = (re) => plan.filter((x) => re.test(x.name ?? ''));
+  assert.equal(sel('#phone').value, '4025550100');
+  assert.ok(sel('#contactName').value);
+  assert.equal(named(/^Garage (street|city|state|ZIP)$/).length, 4);
+  assert.equal(named(/^Garage city$/)[0].value, record.garaging.city);
+  const exclusions = named(/^Exclude /);
+  assert.equal(exclusions.length, 6, 'one rule per box: a rule fills one field');
+  for (const label of ['Exclude Medical Payments', 'Exclude Uninsured Motorists', 'Exclude Comprehensive Coverage', 'Exclude Collision Coverage',
+    'Exlucde Transportation Expense/ Rental Reimbursement', 'Exlude Towing & Labor']) {
+    assert.equal(exclusions.filter((s) => new RegExp(s.re, 'i').test(label)).length, 1, label);
+  }
+  assert.ok(plan.some((s) => s.re && new RegExp(s.re, 'i').test('code voilation')), 'the page spells it "voilation"');
+  assert.equal(named(/^Vehicles leased/)[0].value, false, 'second section: always No');
+  assert.equal(named(/^Body type/)[0].replace, true);
+  assert.equal(named(/^Other topics/)[0].replace, true, 'Yes again after Default all answers to No');
+  const actions = plan.filter((s) => s.kind === 'action');
+  assert.ok(new RegExp(actions.find((a) => a.action === 'defaultNo').text, 'i').test('Default all answers to "No"'));
+  assert.deepEqual(actions.find((a) => a.action === 'openApplication').after, ['amwins.riskState']);
+  assert.ok(new RegExp(amwins.advance.text, 'i').test('Save & Continue'));
+  assert.ok(!new RegExp(amwins.advance.text, 'i').test('Save & Exit'));
 });

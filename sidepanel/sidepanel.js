@@ -436,7 +436,8 @@ function scheduleAutoFill(page) {
 }
 
 async function autoFill(page) {
-  if (state.autoPaused || state.filling || pageOf(state.tab?.url) !== page) return;
+  // The client may have been cleared while this fill was waiting to run.
+  if (state.autoPaused || state.filling || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   const { id: tabId, carrier } = state.tab;
   await pickListItem(carrier, page);
   state.filling = true;

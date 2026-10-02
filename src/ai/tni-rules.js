@@ -68,14 +68,16 @@ export const TNI_RULES = `
 - Print: "Insurance Quote (with all bill plans)" and Print; leave Email and Fax unticked.
 
 # AmWINS Admitted Placement (Business Auto)
-- Agency details, effective/expiration dates and inspection contacts: leave as the page has them. Single contact: Yes. Additional interest: No. Waiver type: NONE.
-- Named insured: the company name; with no company, the owner's full name. Owner name: the owner's full name. Garage address: same as mailing.
+- Start on the Commercial Lines dashboard: Auto, risk state = the garaging state, Open New Application.
+- Agency details, effective/expiration dates and inspection contacts: leave as the page has them. Contact information: the client's name (the owner's full name) and phone only; single contact stays Yes. Additional interest: No. Waiver type: NONE.
+- Named insured: the company name; with no company, the owner's full name. Owner name: the owner's full name. Garage address: same as mailing, and the garage street, city, state and ZIP boxes are the intake's garaging address.
 - Years in business: the intake's years in business, else its years under own authority (5 or more is "5+"). Year established blank on the intake: this year.
 - Entity type: LLC, CORPORATION (Inc/Corp) or SOLE PROPRIETOR. Nature of business: TRANSPORTATION. Retail/service operations: 0%. Non-profit: No.
 - Classification: 484122 (general freight trucking, long-distance, LTL) for expediters and general freight haulers (cargo vans, box trucks); otherwise only a confident match for the intake's business. Description of operations: "Trucking for Hire - Other for hire trucking" for those, otherwise the intake's wording. Prior carrier: NO PRIOR. Filing counts: leave empty without filings or a DOT/MC number.
 - Drivers: gender MALE unless the name is clearly a woman's (then tell the agent); year licensed = birth year + 17.
-- Vehicles: body type as on the intake (Van is Cargo Van); usage FOR HIRE; radius band from the intake ("Unlimited" is 201+ MILES); permanently attached equipment: No; vehicle value from the intake.
-- Coverages: CSL limit from the intake; liability auto symbol 6 only; medical payments $5,000; uninsured motorists Yes with $100K; comprehensive and collision $1,000; waiver of collision No; towing and labor $75; rental $40 day / $1,200 total; nothing excluded.
-- Underwriting questions (both sections): No, except leased vehicles when the intake says leased, prior losses from the claims answer and hazardous material from the intake. "Any other topics to disclose": Yes, with the disclosure details built from the intake (cargo, radius, proof of prior insurance).
+- Vehicles: body type as on the intake (Van is Cargo Van), even when Import Data wrote something else; usage FOR HIRE; radius band from the intake ("Unlimited" is 201+ MILES); permanently attached equipment: No; vehicle value from the intake.
+- Coverages: CSL limit from the intake; liability auto symbol 6 only; medical payments $5,000; uninsured motorists Yes with $100K; comprehensive and collision $1,000; waiver of collision No; towing and labor $75; rental $40 day / $1,200 total; nothing excluded (every "Exclude …" box unticked).
+- Underwriting questions: General Information via "Default all answers to No"; the second section is always No (hazardous material from the intake). "Any other topics to disclose": Yes, with the disclosure details built from the intake (cargo, radius, proof of prior insurance).
+- Each step ends with Save & Continue once nothing is left for the agent. Never Save & Exit or Submit.
 - The declaration ("I declare that the information provided is true…") is always the agent's; the quote stops there.
 `.trim();

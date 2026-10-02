@@ -556,7 +556,11 @@
       .find((n) => n && n !== select && /\bselect2\b/.test(String(n.className))) ?? null;
     const opener = container?.querySelectorAll?.('.select2-selection')?.[0] ?? container;
     if (!opener) return { ok: false, reason: 'the search box for this list was not found; pick it yourself' };
-    for (const type of ['mousedown', 'mouseup', 'click']) opener.dispatchEvent(new Event(type, { bubbles: true }));
+    // select2 opens on a left-button mousedown (it checks the event's button), so a plain Event
+    // isn't enough.
+    const Mouse = typeof MouseEvent === 'function' ? MouseEvent : Event;
+    const press = (el) => { for (const type of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new Mouse(type, { bubbles: true, cancelable: true, button: 0 })); };
+    press(opener);
     let box = null;
     for (const start = Date.now(); !box && Date.now() - start < 3000;) {
       await sleep(100);
@@ -575,10 +579,10 @@
     }
     if (hits.length !== 1) {
       box.dispatchEvent(new Event('keydown', { bubbles: true }));
-      document.body.dispatchEvent(new Event('mousedown', { bubbles: true }));
+      document.body.dispatchEvent(new Mouse('mousedown', { bubbles: true, button: 0 }));
       return { ok: false, reason: hits.length ? `${hits.length} results match "${step.value}"; pick the right one` : `no confident match for "${step.value}"; pick it yourself` };
     }
-    for (const type of ['mousedown', 'mouseup', 'click']) hits[0].dispatchEvent(new Event(type, { bubbles: true }));
+    press(hits[0]);
     await settle({ quietMs: 250, maxMs: 4000 });
     return squash(selectedText(c) ?? '').includes(want) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
   }
@@ -765,7 +769,9 @@
     for (const el of deepQueryAll(document, 'a, button, [role=button], input[type=button], input[type=submit], .x-btn')) {
       if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]')) continue;
       const text = oneLine(el.value || el.textContent);
-      if (text.length > 40 || NEVER_ADVANCE.test(text) || !re.test(text)) continue;
+      // "Save & Continue" (AmWINS) only saves the draft and opens the next step.
+      const committing = NEVER_ADVANCE.test(text.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue'));
+      if (text.length > 40 || committing || !re.test(text)) continue;
       if (!best || best.contains(el)) best = el;
     }
     return best;
@@ -821,6 +827,11 @@
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
     const openersTried = new Set();
+    // Answers the page changed or cleared after we gave them (a lookup redrawing its boxes, a
+    // panel re-rendering), or didn't keep the first time: given again, at most twice each.
+    const retries = new Map();
+    const refill = new Set();
+    const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
     // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
     let ajaxCount = 0;
     const countAjax = () => { ajaxCount++; };
@@ -879,16 +890,23 @@
         if (step.verifyOnly && !agreesWith(step, control)) {
           flag(report.failed, { label: control.label, key: fieldKey(control), q: control.q, reason: 'The looked-up value differs from the intake. Check the VIN.' });
           mark(control, 'failed', 'lookup result differs from the intake');
-        } else if (!step.verifyOnly && !step.ignore && !step.note && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id)) {
+        } else if (!step.verifyOnly && !step.ignore && !step.note && !step.replace && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id)) {
           // The page already had a different value (e.g. from the USDOT lookup): keep it, show it.
           flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, differs: true });
           mark(control, 'needs', `page says something different from the intake (${step.name})`);
           handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
         }
       }
-      for (const previous of report.filled) {
+      for (const previous of [...report.filled]) {
         const pair = allPairs.find(({ step }) => step.id === previous.stepId);
-        if (pair && !skipKeys.has(fieldKey(pair.control)) && hasValue(pair.control) && !agreesWith(pair.step, pair.control)) {
+        if (!pair || skipKeys.has(fieldKey(pair.control)) || agreesWith(pair.step, pair.control)) continue;
+        if (retryOnce(pair.step.id)) {
+          report.filled = report.filled.filter((x) => x !== previous);
+          handled.delete(pair.step.id);
+          refill.add(pair.step.id);
+          continue;
+        }
+        if (hasValue(pair.control)) {
           report.failed.push({ ...previous, reason: 'A later server response changed this answer; check it.' });
           report.filled = report.filled.filter((x) => x !== previous);
           handled.set(pair.step.id, { status: 'failed', note: 'a later server response changed this answer' });
@@ -897,7 +915,8 @@
       if (report.halted) break;
       // Buttons that must come right after their field (Verify DOT, Lookup VIN) go first.
       if (window === window.top && clickNextAction(controls, true)) {
-        if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
+        // A lookup (Import Data) may wait on its server without changing the page for a while.
+        if (!await settle(serverBacked ? {} : { quietMs: 800, maxMs: 8000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
         if (!verifyAction()) break;
         if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
         continue;
@@ -920,7 +939,7 @@
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '') && !agreesWith(step, c);
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
         const differs = isChoice && replaceChoices && !agreesWith(step, c);
-        if (!overwrite && hasValue(c) && !presetToReplace && !differs) {
+        if (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c))) {
           report.kept.push(item);
           handled.set(step.id, { status: null });
           continue;
@@ -966,6 +985,11 @@
           handled.set(step.id, { status: 'filled', note: `filled from intake: ${step.name}` });
           changed = true;
           break;
+        } else if (/did not keep/.test(result.reason ?? '') && !report.halted && retryOnce(step.id)) {
+          // Often a later redraw resets it (a coverage list reloading): try again next round.
+          refill.add(step.id);
+          retry = true;
+          if (serverBacked) break;
         } else {
           report.failed.push({ ...item, reason: result.reason, ...describe(c) });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
@@ -1058,6 +1082,12 @@
       return false;
     }
 
+    // Answers still waiting for another try when the fill ended are left for the agent.
+    for (const { step, control } of assign(collectControls(), plan)) {
+      if (!refill.has(step.id) || handled.has(step.id) || skipKeys.has(fieldKey(control)) || agreesWith(step, control)) continue;
+      report.failed.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, reason: 'the page did not keep the answer; check it', ...describe(control) });
+      handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: the page did not keep the answer` });
+    }
     if (progressed && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
     // The page may have redrawn while filling, so mark the final fields.
     const controls = collectControls();
@@ -1235,5 +1265,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 27, fill, answer, markKey, aiBanner, capture, clear };
+  globalThis.__raterKit = { version: 28, fill, answer, markKey, aiBanner, capture, clear };
 })();

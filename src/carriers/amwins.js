@@ -11,7 +11,13 @@
 // Second quote (2026-10-02): the agent's notes became the rules below (years under own authority,
 // class code search, description, NO PRIOR, gender, license year, VIN import, coverages, the
 // underwriting questions all No except "other topics", and the disclosure text). The quote stops
-// at the declaration: Save & Continue, Save & Exit and Submit stay the agent's.
+// at the declaration: Save & Exit and Submit stay the agent's.
+//
+// Third quote (2026-10-02): the contact is the client (name and phone), the garage address boxes
+// (no ids) are filled from the intake, each "Exclude …" box gets its own rule, "Default all
+// answers to No" is clicked on the underwriting step, the second underwriting section is always
+// No, Save & Continue is clicked when a step is done, and the quote starts on the Commercial
+// Lines dashboard (Auto, risk state, Open New Application).
 
 import { owner } from './progressive.js';
 
@@ -89,7 +95,7 @@ const licenseYear = (r, a) => {
 // Underwriting questions TNI answers No (both sections), by the field names AmWINS uses.
 const UNDERWRITING_NO = [
   'subsidiary to other', 'subsidiary', 'safety info', 'hazard exposure', 'other insurance', 'coverage denial',
-  'past criminal activity', 'criminal activity in past ?5 ?years', 'code vo?i?olation', 'finacial default', 'financial default',
+  'past criminal activity', 'criminal activity in past ?5 ?years', 'code vo\\w*ation', 'finacial default', 'financial default',
   'finacial judgement', 'financial judgement', 'trust', 'foreign operations', 'other venture', 'own drones',
   'hire other to operate drones', 'use their auto', 'vehicle maintenance program', 'vehicle used by family',
   'recruiting method', 'covered by wc', 'convictions moving violations',
@@ -102,6 +108,15 @@ const noFilingCounts = (r) => filings(r) !== true || (!r.applicant.dot && !r.app
 // haul is the top band.
 const radius = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null);
 
+// The dashboard's address is spelled both ways.
+const START_PAGES = ['/commerciallines', '/CommercialLines'];
+
+// Garage panel boxes have no ids: second row is City / State / Zip.
+const GARAGE_ROW = '#garagePanel > div > div:nth-of-type(4)';
+
+// Coverages that each have an "Exclude …" box (spelled Exclude / Exlucde / Exlude on the page).
+const EXCLUSIONS = ['medical', 'uninsured', 'comprehensive', 'collision', 'transportation|rental', 'towing'];
+
 const vehicleValueNote = (r, a) => {
   const v = r.vehicles?.[a.vehicles ?? 0]?.value;
   return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
@@ -113,15 +128,27 @@ export const amwins = {
   hosts: [/(^|\.)amwinsadmittedplacement\.com$/],
   // Import Data right after the VIN list is filled, before the vehicle boxes, which it fills.
   actions: [
+    // Start: the Auto tile opens the risk state box; Open New Application once the state is in.
+    { id: 'autoApplication', page: START_PAGES, text: '^auto$', unlessActions: ['openApplication'] },
+    { id: 'openApplication', page: START_PAGES, text: '^open new application$', after: ['amwins.riskState'] },
     { id: 'importVins', text: '^import data$', after: ['amwins.vinList'], immediate: true },
+    // Underwriting: answers every General Information question No in one go (before the rules
+    // below answer them one at a time; "other topics" is set back to Yes afterwards).
+    { id: 'defaultNo', text: '^default all answers to\\W*no\\W*$', immediate: true },
   ],
+  // Each step ends with Save & Continue (saves the draft, opens the next step) once nothing is
+  // left for the agent. The declaration step never gets there: the declaration is the agent's.
+  advance: { text: '^save\\s*(&|and)\\s*continue$' },
   rules: [
     // --- Start (/commerciallines) --------------------------------------------------------------
-    { name: 'Risk state', label: 'select a risk state', path: 'garaging.state' },
+    { name: 'Risk state', label: 'select a risk state', path: 'amwins.riskState', kind: 'state', value: (r) => r.garaging?.state ?? null },
 
     // --- Insured Info --------------------------------------------------------------------------
     // The agency's own details, effective dates and inspection contacts are left as the page has them.
-    ...['#agnecyName', '#contactName', '#phone', '#email', '#website', '#effectiveDate', '#expirationDate', '#dba',
+    // Contact information: the client (name and phone only); single contact stays Yes.
+    { selector: '#contactName', name: 'Contact name (the owner)', value: ownerFull },
+    { selector: '#phone', name: 'Contact phone', value: (r) => digits(r.applicant.phone) },
+    ...['#agnecyName', '#email', '#website', '#effectiveDate', '#expirationDate', '#dba',
       '#inspectionContactName', '#inspectionContactEmail', '#inspectionContactOfficePhone', '#inspectionContactMobilePhone']
       .map((selector) => ({ selector, name: `Left as the page has it (${selector.slice(1)})`, ignore: true })),
     { selector: '#name', name: 'Named insured (company, else the owner)', value: (r) => r.applicant.name || ownerFull(r) },
@@ -138,6 +165,11 @@ export const amwins = {
     { name: 'Non-profit (standard: No)', label: '^is non profit$', kind: 'bool', value: () => false },
     { name: 'Single contact (standard: Yes)', label: '^is single contact$', kind: 'bool', value: () => true },
     { name: 'Garage address same as mailing (standard)', label: '^same as mailing address', kind: 'bool', value: () => true },
+    // The box doesn't copy the address over: the garage boxes are filled too.
+    { selector: '#garagePanel > div > div:nth-of-type(3) input', name: 'Garage street', value: street },
+    { selector: `${GARAGE_ROW} > div:nth-of-type(1) input`, name: 'Garage city', path: 'garaging.city' },
+    { selector: `${GARAGE_ROW} select, #garagePanel select`, name: 'Garage state', kind: 'state', value: (r) => r.garaging?.state ?? null },
+    { selector: `${GARAGE_ROW} > div:nth-of-type(3) input`, name: 'Garage ZIP', path: 'garaging.zip' },
     { selector: '#natureOfBusiness', name: 'Nature of business', kind: 'choice', value: () => 'TRANSPORTATION' },
     { selector: '#retailOrServiceOperationPert', name: 'Retail / service operations % (trucking: 0)', value: () => '0' },
     { selector: '#classCodeAndDescription', name: 'Classification (484122 for expediters / general freight)', kind: 'search-select', search: classSearch, value: classSearch },
@@ -162,7 +194,8 @@ export const amwins = {
     // --- Vehicles --------------------------------------------------------------------------------
     { name: 'File upload (not used)', label: '^select file', ignore: true },
     { selector: '#vehLookupVin', path: 'amwins.vinList', name: 'VINs to look up (one per line)', value: (r) => r.vehicles.map((v) => v.vin).filter(Boolean).join('\n') || null },
-    { name: 'Body type (as on the intake)', label: '^body type$', value: bodyType },
+    // Import Data writes its own body type; the intake's wins (Box Truck, Cargo Van).
+    { name: 'Body type (as on the intake)', label: '^body type$', value: bodyType, replace: true },
     { name: 'Vehicle location (the first, the insured)', label: '^location$', kind: 'first-option', value: () => 'first option' },
     { selector: '#marketValue', path: 'vehicles[].value', name: 'Vehicle value', note: vehicleValueNote },
     { name: 'Usage type (standard: For hire)', label: '^usage type$', kind: 'choice', value: () => 'FOR HIRE' },
@@ -181,17 +214,18 @@ export const amwins = {
     { selector: '#towingAndLaborReimbursement', name: 'Towing and labor (standard: $75)', kind: 'choice', value: () => '$75' },
     // Liability auto symbol: 6 only.
     ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ selector: `#autoSymbol${n}`, name: `Auto symbol ${n}${n === 6 ? ' (TNI: 6)' : ''}`, kind: 'bool', value: () => n === 6 })),
-    // Nothing is excluded (the page spells it Exclude / Exlucde / Exlude).
-    { name: 'Exclusions (standard: none)', label: '^ex\\w*de\\b', kind: 'bool', value: () => false },
+    // Nothing is excluded: one rule per box (a rule fills one field).
+    ...EXCLUSIONS.map((topic) => ({ name: `Exclude ${topic.split('|')[0]} (standard: not excluded)`, label: `^ex\\w*de\\b.*(${topic})`, kind: 'bool', value: () => false })),
 
     // --- Underwriting questions --------------------------------------------------------------------
     { name: 'Vehicles not owned (standard: No)', label: '^any vehicle not owned$', kind: 'bool', value: () => false },
-    { name: 'Vehicles leased', label: '^vehicle leased$', kind: 'bool', value: (r) => /leas/i.test(r.operations.vehicleOwnership ?? '') },
+    { name: 'Vehicles leased (standard: No)', label: '^vehicle leased$', kind: 'bool', value: () => false },
     { name: 'MVR verification (agent answer: No)', label: '^mvr verification$', kind: 'bool', value: () => false },
     { name: 'Owned unscheduled vehicles (standard: No)', label: '^owned unscheduled vehicle$', kind: 'bool', value: () => false },
     { name: 'Hazardous material', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat' },
     ...UNDERWRITING_NO.map((q) => ({ name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', value: () => false })),
-    { name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', value: () => true },
+    // Yes again after "Default all answers to No".
+    { name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', value: () => true, replace: true },
     { name: 'Disclosure details (from the intake)', label: '^disclosure details$', value: disclosure },
     // The declaration is the agent's to make.
     { name: 'Declaration', label: 'i declare|true,? complete', note: 'The declaration is yours to confirm; never filled.' },

@@ -1256,3 +1256,30 @@ test('a dropdown with no usable label is found by one of its options', async () 
   await h.kit.fill([{ id: 'np', withOption: 'NO PRIOR', path: 'x.np', kind: 'choice', value: 'NO PRIOR' }], { maxRounds: 2 });
   assert.equal(carrier.value, 'np');
 });
+
+test('an answer the page clears or overwrites after it was kept is given again; a step marked replace overwrites a lookup value', async () => {
+  const h = harness();
+  const year = makeInput({ id: 'licenseYear', ariaLabel: 'License Year (First issued)' });
+  const body = makeInput({ id: 'bodyType', ariaLabel: 'Body Type', value: 'STRAIGHT TRUCK' });
+  h.document.body.append(year, body);
+  let cleared = 0;
+  year.addEventListener('change', () => { if (!cleared++) setTimeout(() => { year.value = ''; }, 300); });
+  const report = await h.kit.fill([
+    { id: 'year', selector: '#licenseYear', path: 'x.year', kind: 'text', value: '1985' },
+    { id: 'body', selector: '#bodyType', path: 'x.body', kind: 'text', value: 'Box Truck', replace: true },
+  ], { maxRounds: 8 });
+  assert.equal(year.value, '1985', 'filled again after the page cleared it');
+  assert.equal(body.value, 'Box Truck', "the intake's body type replaces the lookup's");
+  assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+  assert.ok(!report.kept.some((x) => x.differs));
+});
+
+test('Save & Continue counts as Continue; Save & Exit and Submit never do', async () => {
+  for (const [text, expected] of [['Save & Continue', true], ['Save & Exit', false], ['Submit', false]]) {
+    const h = harness({ pathname: '/application/businessauto' });
+    const button = addButton(h, text);
+    button.onclick = () => { button._clicked = true; };
+    await h.kit.fill([], { maxRounds: 1, advance: { text: '^(save\\s*(&|and)\\s*continue|save & exit|submit)$' } });
+    assert.equal(!!button._clicked, expected, text);
+  }
+});
