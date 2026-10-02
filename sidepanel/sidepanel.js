@@ -352,7 +352,14 @@ async function refreshTab() {
 
 // Progressive re-renders a page as "<Page>-Reload"; it's the same page.
 const samePage = (p) => (p ?? '').replace(/-Reload$/, '');
-const pageOf = (url) => { try { const u = new URL(url); return samePage(u.searchParams.get('pageName') || u.pathname); } catch { return null; } };
+// Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
+const pageOf = (url) => {
+  try {
+    const u = new URL(url);
+    const route = (u.pathname + (u.hash.startsWith('#/') ? u.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id');
+    return samePage(u.searchParams.get('pageName') || route);
+  } catch { return null; }
+};
 
 // Watch the rater tab while an intake is loaded. Only carrier pages; never other sites.
 async function ensureRecorder() {
@@ -540,7 +547,7 @@ function renderSite() {
     : carrier ? 'Nothing is submitted. Review the page, then click Next yourself.'
       : noAccess
         ? "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page."
-        : 'Open a Progressive or GEICO rater page to fill it.';
+        : 'Open a Progressive, GEICO or AmWINS quote page to fill it.';
 }
 
 // ---------------------------------------------------------------------------------------------

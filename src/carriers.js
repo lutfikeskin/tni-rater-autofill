@@ -23,6 +23,15 @@ export const CARRIERS = [
     rules: [],
   },
   {
+    // AmWINS Admitted Placement (myagency.amwinsadmittedplacement.com). Being mapped from the first
+    // recorded quotes; until then the generic label rules fill what they recognise, the rest goes
+    // to the agent (and the AI assistant).
+    id: 'amwins',
+    name: 'AmWINS',
+    hosts: [/(^|\.)amwinsadmittedplacement\.com$/],
+    rules: [],
+  },
+  {
     id: 'test',
     name: 'Local test page',
     hosts: [/^(localhost|127\.0\.0\.1)$/],

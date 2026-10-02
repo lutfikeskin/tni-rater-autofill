@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 24) return;
+  if (globalThis.__raterKit?.version === 25) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -692,7 +692,8 @@
   // Never clicked, whatever a rule says: moving on or committing is always the agent's call.
   const NEVER_CLICK = /\b(continue|next|start quote|finish|buy|bind|purchase|submit|save|delete|remove|cancel|logout|log out|sign out)\b/i;
 
-  const currentPage = () => (new URLSearchParams(location.search).get('pageName') || location.pathname).replace(/-Reload$/, '');
+  // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
+  const currentPage = () => (new URLSearchParams(location.search).get('pageName') || (location.pathname + ((location.hash ?? '').startsWith('#/') ? location.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
 
   function ratesStale() {
     const text = document.body.innerText ?? '';
@@ -1136,7 +1137,7 @@
     const controls = collectControls();
     const matched = new Map(plan ? assign(controls, plan).map((p) => [p.control, p.step.path]) : []);
     const path = location.pathname.replace(/\d{5,}/g, ':id');
-    const pageName = new URLSearchParams(location.search).get('pageName');
+    const pageName = currentPage();
     return {
       frame: location.origin + path,
       page: pageName,
@@ -1184,5 +1185,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 24, fill, answer, markKey, aiBanner, capture, clear };
+  globalThis.__raterKit = { version: 25, fill, answer, markKey, aiBanner, capture, clear };
 })();

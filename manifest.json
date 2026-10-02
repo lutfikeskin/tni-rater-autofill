@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "TNI Rater Autofill",
-  "version": "0.4.1",
-  "description": "Fills Progressive and GEICO rater pages from a TNI Commercial Quote Application PDF, with AI tips for questions left for the agent.",
+  "version": "0.5.0",
+  "description": "Fills Progressive, GEICO and AmWINS rater pages from a TNI Commercial Quote Application PDF, with AI tips for questions left for the agent.",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon-16.png",
@@ -19,6 +19,7 @@
     "https://*.foragentsonly.com/*",
     "https://*.progressive.com/*",
     "https://*.geico.com/*",
+    "https://*.amwinsadmittedplacement.com/*",
     "https://api.openai.com/*",
     "http://localhost/*",
     "http://127.0.0.1/*"

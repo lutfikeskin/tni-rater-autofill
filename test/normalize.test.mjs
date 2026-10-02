@@ -318,3 +318,10 @@ test('"NO POP" as the current carrier means not currently insured, without a war
   assert.equal(r.record.priorInsurance.length, 0);
   assert.ok(!r.warnings.some((w) => w.code === 'prior.incomplete'));
 });
+
+test('AmWINS pages are recognised as a carrier, not as practice', () => {
+  const c = carrierForUrl('https://myagency.amwinsadmittedplacement.com/quote/123/vehicles');
+  assert.equal(c.id, 'amwins');
+  assert.equal(c.practice, undefined);
+  assert.equal(carrierForUrl('https://amwinsadmittedplacement.com.evil.test/'), null);
+});

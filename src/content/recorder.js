@@ -92,7 +92,8 @@
   }
 
   // Progressive reloads a page as "<Page>-Reload" after some answers; it's the same page.
-  const pageKey = () => (new URLSearchParams(location.search).get('pageName') || location.pathname).replace(/-Reload$/, '');
+  // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
+  const pageKey = () => (new URLSearchParams(location.search).get('pageName') || (location.pathname + ((location.hash ?? '').startsWith('#/') ? location.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
   const isTop = window === window.top;
 
   let paused = false;
