@@ -12,6 +12,7 @@
 // Host patterns also need a matching entry in manifest.json "host_permissions".
 
 import { progressive } from './carriers/progressive.js';
+import { amwins } from './carriers/amwins.js';
 
 export const CARRIERS = [
   progressive,
@@ -22,15 +23,7 @@ export const CARRIERS = [
     // Empty until we capture GEICO's quote pages; the generic label rules do the work meanwhile.
     rules: [],
   },
-  {
-    // AmWINS Admitted Placement (myagency.amwinsadmittedplacement.com). Being mapped from the first
-    // recorded quotes; until then the generic label rules fill what they recognise, the rest goes
-    // to the agent (and the AI assistant).
-    id: 'amwins',
-    name: 'AmWINS',
-    hosts: [/(^|\.)amwinsadmittedplacement\.com$/],
-    rules: [],
-  },
+  amwins,
   {
     id: 'test',
     name: 'Local test page',

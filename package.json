@@ -1,6 +1,6 @@
 {
   "name": "tni-rater-autofill",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "type": "module",
   "description": "Chrome extension that fills Progressive and GEICO rater pages from a TNI quote application PDF",

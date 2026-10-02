@@ -66,4 +66,13 @@ export const TNI_RULES = `
 ## Payment and printing
 - Order on the rates page (no GL requested): add cargo, open the bill plan / billing options, choose automatic payments from a checking account (keep the pre-selected plan), come back to rates, Recalculate, then Print, Email, Fax.
 - Print: "Insurance Quote (with all bill plans)" and Print; leave Email and Fax unticked.
+
+# AmWINS Admitted Placement (Business Auto)
+- Agency details, effective/expiration dates and inspection contacts: leave as the page has them. Single contact: Yes.
+- Named insured, owner name and date of birth, mailing address and business phone from the intake. Garage address: same as mailing.
+- Entity type: LLC, CORPORATION (Inc/Corp) or SOLE PROPRIETOR from the business name. Nature of business: TRANSPORTATION. Retail/service operations: 0%. Non-profit: No.
+- Vehicles: usage FOR HIRE; radius band from the intake ("Unlimited" is 201+ MILES); permanently attached equipment: No; vehicle value from the intake.
+- Coverages: CSL limit from the intake; uninsured motorists: Yes; rental: $40 day / $1,200 total; physical damage deductibles $1,000.
+- Underwriting questions: vehicles not owned No, owned unscheduled vehicles No, valued loss runs No, prior losses from the claims answer, leased vehicles only when the intake says leased, hazardous material from the intake. Questions about criminal history, financial defaults, other ventures and similar facts about the client: leave for the agent unless the intake answers them.
+- The declaration ("I declare that the information provided is true…") is always the agent's.
 `.trim();

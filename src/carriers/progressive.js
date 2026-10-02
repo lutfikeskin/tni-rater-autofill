@@ -24,7 +24,7 @@ const explicitBoolean = (record, path) => {
 };
 
 // The business owner, matched to their driver row (for date of birth and a clean name split).
-function owner(r) {
+export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const last = full.split(/\s+/).at(-1)?.toLowerCase();
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');

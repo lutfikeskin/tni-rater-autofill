@@ -774,19 +774,29 @@ async function runAssist(frames, ctx) {
   }
   const run = ++state.aiRun;
   const stale = () => run !== state.aiRun || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page || !holder.isConnected;
-  const sig = [ctx.tabId, ctx.page, cfg.model, ...items.map((x) => `${x.key}|${x.label}|${x.current}|${x.options.length}`)].join('\n');
-  let suggestions = state.aiCache.get(sig);
-  if (!suggestions) {
-    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking the AI about ${items.length} question${items.length === 1 ? '' : 's'} left for you…`));
+  // One cache entry per question (tab, page, model, question, options): a question the AI has
+  // answered is never asked again, so the many follow-up fills of a page cost nothing.
+  const sigOf = (x) => [ctx.tabId, ctx.page, cfg.model, `${x.key}|${x.label}|${x.options.join('¦')}`].join('\n');
+  const missing = items.filter((x) => !state.aiCache.has(sigOf(x)));
+  if (missing.length) {
+    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking the AI about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
     const started = Date.now();
     const onPage = frames.flatMap((f) => f.filled ?? []).map((x) => ({ question: x.label, answer: x.shown }));
-    const body = buildRequest(items, { record: state.intake.record, carrier: ctx.carrier.id, page: ctx.page, active: state.active, onPage }, cfg);
-    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: items.length, blocked: blocked.length };
+    const context = { record: state.intake.record, carrier: ctx.carrier.id, page: ctx.page, active: state.active, onPage };
+    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
     try {
-      const json = await callModel({ apiKey: cfg.apiKey, body });
-      suggestions = parseResponse(json, items, state.intake.record);
-      state.aiCache.set(sig, suggestions);
-      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: suggestions.filter((x) => !x.leave).length, leave: suggestions.filter((x) => x.leave).length, autoOk: suggestions.filter((x) => x.autoOk).length, ...usageOf(json) });
+      let json;
+      try {
+        json = await callModel({ apiKey: cfg.apiKey, body: buildRequest(missing, context, cfg) });
+      } catch (e) {
+        // A page's option texts can break the provider's schema rules: ask again with plain
+        // strings (the answers are still checked against the options here).
+        if (!(e instanceof AssistError) || !/schema/i.test(e.message)) throw e;
+        json = await callModel({ apiKey: cfg.apiKey, body: buildRequest(missing, context, { ...cfg, enums: false }) });
+      }
+      const fresh = parseResponse(json, missing, state.intake.record);
+      fresh.forEach((x) => state.aiCache.set(sigOf(x), x));
+      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter((x) => !x.leave).length, leave: fresh.filter((x) => x.leave).length, autoOk: fresh.filter((x) => x.autoOk).length, ...usageOf(json) });
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : `Something went wrong (${String(e?.message ?? e).slice(0, 120)}).`;
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
@@ -794,6 +804,7 @@ async function runAssist(frames, ctx) {
       return;
     }
   }
+  const suggestions = items.map((x) => state.aiCache.get(sigOf(x))).filter(Boolean);
   if (stale()) return;
   if (cfg.auto) {
     const picks = suggestions.filter((x) => x.autoOk && !x.done && !x.dismissed);
@@ -807,9 +818,9 @@ async function runAssist(frames, ctx) {
 // are any, the page's Continue is never clicked automatically.
 function pendingAi(tabId, page) {
   const out = [];
-  for (const [sig, list] of state.aiCache) {
+  for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
-    if (t === String(tabId) && p === page) out.push(...list.filter((x) => x.done === 'auto' && !x.approved && !x.rejected));
+    if (t === String(tabId) && p === page && x.done === 'auto' && !x.approved && !x.rejected) out.push(x);
   }
   return out;
 }
@@ -817,9 +828,9 @@ function pendingAi(tabId, page) {
 // A new fill clears the page's marks: put the purple back on the AI's answers on this page.
 async function remarkAi(ctx) {
   const answered = [];
-  for (const [sig, list] of state.aiCache) {
+  for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
-    if (t === String(ctx.tabId) && p === ctx.page) answered.push(...list.filter((x) => x.done && !x.rejected));
+    if (t === String(ctx.tabId) && p === ctx.page && x.done && !x.rejected) answered.push(x);
   }
   if (!answered.length) return;
   try {

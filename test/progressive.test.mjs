@@ -227,3 +227,25 @@ test('a vehicle value that is not a dollar amount goes to the agent instead of b
   record.vehicles[0].value = 40000;
   assert.equal(byQ(buildPlan(record, progressive, {}), '2CE8').value, 40000);
 });
+
+test('AmWINS rules: fields by id, standard answers, declaration left to the agent', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.applicant.name = 'Sample Expedite LLC';
+  record.applicant.yearsInBusiness = 3;
+  record.operations.radius = 'Unlimited';
+  record.operations.radiusMiles = null;
+  const plan = buildPlan(record, amwins, {});
+  const bySel = (sel) => plan.find((s) => s.selector === sel);
+  const byName = (re) => plan.find((s) => re.test(s.name ?? ''));
+  assert.equal(bySel('#entityType').value, 'LLC');
+  assert.equal(bySel('#yrsInBusiness').value, '3');
+  assert.equal(bySel('#natureOfBusiness').value, 'TRANSPORTATION');
+  assert.equal(bySel('#phone').ignore, true, "the agency's phone is not the client's");
+  assert.equal(byName(/^Radius$/).value, 501, 'Unlimited picks the top band (201 + MILES)');
+  assert.equal(byName(/^Usage type/).value, 'FOR HIRE');
+  assert.equal(byName(/^Rental/).value, '$40 day / $1,200 total');
+  assert.ok(byName(/^Declaration$/).note, 'never filled');
+  record.vehicles.push({ vin: '1FTBR3X87MKA12345' });
+  assert.match(buildPlan(record, amwins, {}).find((s) => s.selector === '#vehLookupVin').value, /1FTBR3X87MKA12345$/);
+});

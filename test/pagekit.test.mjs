@@ -1209,3 +1209,16 @@ test('Google address autocomplete (hidden .pac-item list): first suggestion pick
   assert.equal(report.failed.length, 0);
   assert.ok(!report.kept.some((x) => x.differs));
 });
+
+test('labels: our own mark tooltip and a date picker calendar are never taken as the question', async () => {
+  const h = harness();
+  const wrapper = new FakeNode('div');
+  const field = makeInput({ id: 'agnecyName' });
+  wrapper.append(field);
+  h.document.body.append(wrapper);
+  // A first fill marks the unfamiliar field with our tooltip.
+  await h.kit.fill([], { maxRounds: 1 });
+  assert.match(field.getAttribute('title') ?? '', /^Rater Autofill:/);
+  const again = await h.kit.fill([], { maxRounds: 1, keepMarks: true });
+  assert.equal(again.unknown[0].label, 'agnecy name', 'falls back to the field id, not our tooltip');
+});

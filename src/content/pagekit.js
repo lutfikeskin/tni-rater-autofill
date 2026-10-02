@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 25) return;
+  if (globalThis.__raterKit?.version === 26) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -79,18 +79,28 @@
     if (labelledBy) for (const id of labelledBy.split(/\s+/)) { const n = byId(el, id); if (n) parts.push(n.textContent); }
     for (const l of el.labels ?? []) parts.push(textOutsideControls(l));
     if (el.getAttribute('aria-label')) parts.push(el.getAttribute('aria-label'));
-    // No explicit label: use the text of the smallest wrapper that holds only this field.
+    // No explicit label: the smallest wrapper that holds only this field, preferring its label
+    // element; a date picker's calendar (Su Mo Tu …, month names) is not part of the question.
     if (!oneLine(parts.join(''))) {
       let p = el.parentElement;
       for (let i = 0; i < 5 && p && p !== document.body; i++, p = p.parentElement) {
         if (countControls(p) > 1) break;
-        const t = textOutsideControls(p);
+        const own = p.querySelector?.('label, .control-label, .form-label');
+        const t = withoutCalendar(own ? textOutsideControls(own) : textOutsideControls(p));
         if (t) { parts.push(t); break; }
       }
     }
     if (!oneLine(parts.join('')) && el.placeholder) parts.push(el.placeholder);
-    if (!oneLine(parts.join('')) && el.title) parts.push(el.title);
+    // The tooltip our own marks put on a field is never its question.
+    const title = el.dataset?.raPrevTitle ?? (/^Rater Autofill:/.test(el.title ?? '') ? '' : el.title);
+    if (!oneLine(parts.join('')) && title) parts.push(title);
     return oneLine(parts.join(' ')).slice(0, 160) || oneLine(humanize(el.name || el.id));
+  }
+
+  function withoutCalendar(text) {
+    const t = oneLine(text);
+    const cut = t.search(/\b(su mo tu we th fr sa|mo tu we th fr sa su)\b|[«»]/i);
+    return (cut >= 0 ? t.slice(0, cut) : t).trim();
   }
 
   function radioGroupLabel(radios, optionTexts) {
@@ -1185,5 +1195,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 25, fill, answer, markKey, aiBanner, capture, clear };
+  globalThis.__raterKit = { version: 26, fill, answer, markKey, aiBanner, capture, clear };
 })();
