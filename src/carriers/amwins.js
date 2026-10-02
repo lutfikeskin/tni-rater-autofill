@@ -197,6 +197,8 @@ export const amwins = {
     // Import Data writes its own body type; the intake's wins (Box Truck, Cargo Van).
     { name: 'Body type (as on the intake)', label: '^body type$', value: bodyType, replace: true },
     { name: 'Vehicle location (the first, the insured)', label: '^location$', kind: 'first-option', value: () => 'first option' },
+    // Import Data fills it from the VIN.
+    { name: 'GVW (from Import Data)', label: 'gross vehicle weight|\\bgvw\\b', ignore: true },
     { selector: '#marketValue', path: 'vehicles[].value', name: 'Vehicle value', note: vehicleValueNote },
     { name: 'Usage type (standard: For hire)', label: '^usage type$', kind: 'choice', value: () => 'FOR HIRE' },
     { name: 'Radius', label: '^radius$', kind: 'int', value: radius },
