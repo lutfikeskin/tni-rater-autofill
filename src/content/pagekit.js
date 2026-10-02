@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 26) return;
+  if (globalThis.__raterKit?.version === 27) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -340,6 +340,8 @@
         else c = same[0] ?? null;
       }
       if (!c && s.selector) c = controls.find((x) => !used.has(x) && (safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector))));
+      // A dropdown with no usable label, known by one of its options ("NO PRIOR").
+      if (!c && s.withOption) c = controls.find((x) => !used.has(x) && optionsOf(x).some((o) => squash(o.text) === squash(s.withOption)));
       if (c) take(s, c);
     }
     for (const field of ['text', 'hint']) {
@@ -545,9 +547,46 @@
     return e;
   }
 
+  // Type-ahead dropdowns (select2: a hidden <select> with a search box the page fills from its
+  // server). Open it, type `step.search`, and pick the one result containing `step.value`; no
+  // such result (or several) means no confident match, and the agent picks.
+  async function applySearchSelect(step, c) {
+    const select = c.el;
+    const container = [select.nextElementSibling, ...(select.parentElement?.children ?? [])]
+      .find((n) => n && n !== select && /\bselect2\b/.test(String(n.className))) ?? null;
+    const opener = container?.querySelectorAll?.('.select2-selection')?.[0] ?? container;
+    if (!opener) return { ok: false, reason: 'the search box for this list was not found; pick it yourself' };
+    for (const type of ['mousedown', 'mouseup', 'click']) opener.dispatchEvent(new Event(type, { bubbles: true }));
+    let box = null;
+    for (const start = Date.now(); !box && Date.now() - start < 3000;) {
+      await sleep(100);
+      box = deepQueryAll(document, '.select2-search__field').find((n) => n.getClientRects().length) ?? null;
+    }
+    if (!box) return { ok: false, reason: "the list's search box didn't open; pick it yourself" };
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, String(step.search ?? step.value));
+    for (const type of ['input', 'keyup']) box.dispatchEvent(new Event(type, { bubbles: true }));
+    const want = squash(step.value);
+    let hits = [];
+    for (const start = Date.now(); Date.now() - start < 6000;) {
+      await sleep(200);
+      const results = deepQueryAll(document, '.select2-results__option').filter((n) => n.getClientRects().length && !/loading|message/.test(String(n.className)));
+      hits = results.filter((n) => squash(n.textContent).includes(want));
+      if (results.length) break;
+    }
+    if (hits.length !== 1) {
+      box.dispatchEvent(new Event('keydown', { bubbles: true }));
+      document.body.dispatchEvent(new Event('mousedown', { bubbles: true }));
+      return { ok: false, reason: hits.length ? `${hits.length} results match "${step.value}"; pick the right one` : `no confident match for "${step.value}"; pick it yourself` };
+    }
+    for (const type of ['mousedown', 'mouseup', 'click']) hits[0].dispatchEvent(new Event(type, { bubbles: true }));
+    await settle({ quietMs: 250, maxMs: 4000 });
+    return squash(selectedText(c) ?? '').includes(want) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
+  }
+
   // Returns { ok: true, shown } or { ok: false, reason, options? }.
   async function apply(step, c) {
     if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
+    if (step.kind === 'search-select') return applySearchSelect(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
     if (c.kind === 'text') {
@@ -678,6 +717,7 @@
   function agreesWith(step, c) {
     // The chosen suggestion rewrites the typed address in the page's own format.
     if (step.kind === 'address-suggest') return c.kind === 'text' && hasValue(c);
+    if (step.kind === 'search-select') return squash(selectedText(c) ?? '').includes(squash(step.value));
     if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) === step.value;
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
@@ -1195,5 +1235,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 26, fill, answer, markKey, aiBanner, capture, clear };
+  globalThis.__raterKit = { version: 27, fill, answer, markKey, aiBanner, capture, clear };
 })();

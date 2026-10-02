@@ -249,3 +249,36 @@ test('AmWINS rules: fields by id, standard answers, declaration left to the agen
   record.vehicles.push({ vin: '1FTBR3X87MKA12345' });
   assert.match(buildPlan(record, amwins, {}).find((s) => s.selector === '#vehLookupVin').value, /1FTBR3X87MKA12345$/);
 });
+
+test('AmWINS second-quote rules: owner from a first-name-only box, years under authority, disclosure text', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.applicant.name = null;
+  record.applicant.owner1 = 'IBRAHIM';
+  record.applicant.yearsInBusiness = null;
+  record.applicant.yearsExperience = 7;
+  record.applicant.yearEstablished = null;
+  record.drivers = [{ first: 'IBRAHIM A', last: 'ALHARAZ', dob: '01/01/1968' }];
+  record.operations.businessClass = 'Expediter';
+  record.operations.whatHaul = 'General freight hauler';
+  record.operations.radius = 'Unlimited';
+  record.operations.radiusMiles = null;
+  record.coverage = { ...record.coverage, cargo: true, cargoLimit: 100000, cargoDeductible: 1000 };
+  record.priorInsurance = [{ type: 'Commercial Auto', carrier: 'PROGRESSIVE', limit: '$1M CSL', expiration: '12/01/2026' }];
+  const plan = buildPlan(record, amwins, {});
+  const sel = (s) => plan.find((x) => x.selector === s);
+  const named = (re) => plan.find((x) => re.test(x.name ?? ''));
+  assert.equal(sel('#name').value, 'IBRAHIM ALHARAZ', 'no company: the owner, full name from the driver row');
+  assert.equal(sel('#ownerName').value, 'IBRAHIM ALHARAZ');
+  assert.equal(sel('#ownerDob').value, '01/01/1968');
+  assert.equal(sel('#yrsInBusiness').value, '5+', 'years under own authority 7');
+  assert.equal(sel('#yearBusinessEstablished').value, new Date().getFullYear());
+  assert.equal(sel('#classCodeAndDescription').kind, 'search-select');
+  assert.equal(sel('#classCodeAndDescription').search, '484122');
+  assert.equal(named(/^Prior carrier/).withOption, 'NO PRIOR');
+  assert.equal(named(/^Year licensed/).value, '1985');
+  assert.equal(named(/^Disclosure/).value, 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026');
+  assert.equal(sel('#autoSymbol6').value, true);
+  assert.equal(sel('#autoSymbol1').value, false);
+  assert.equal(plan.find((x) => x.action === 'importVins').immediate, true);
+});

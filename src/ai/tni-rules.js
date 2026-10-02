@@ -68,11 +68,14 @@ export const TNI_RULES = `
 - Print: "Insurance Quote (with all bill plans)" and Print; leave Email and Fax unticked.
 
 # AmWINS Admitted Placement (Business Auto)
-- Agency details, effective/expiration dates and inspection contacts: leave as the page has them. Single contact: Yes.
-- Named insured, owner name and date of birth, mailing address and business phone from the intake. Garage address: same as mailing.
-- Entity type: LLC, CORPORATION (Inc/Corp) or SOLE PROPRIETOR from the business name. Nature of business: TRANSPORTATION. Retail/service operations: 0%. Non-profit: No.
-- Vehicles: usage FOR HIRE; radius band from the intake ("Unlimited" is 201+ MILES); permanently attached equipment: No; vehicle value from the intake.
-- Coverages: CSL limit from the intake; uninsured motorists: Yes; rental: $40 day / $1,200 total; physical damage deductibles $1,000.
-- Underwriting questions: vehicles not owned No, owned unscheduled vehicles No, valued loss runs No, prior losses from the claims answer, leased vehicles only when the intake says leased, hazardous material from the intake. Questions about criminal history, financial defaults, other ventures and similar facts about the client: leave for the agent unless the intake answers them.
-- The declaration ("I declare that the information provided is true…") is always the agent's.
+- Agency details, effective/expiration dates and inspection contacts: leave as the page has them. Single contact: Yes. Additional interest: No. Waiver type: NONE.
+- Named insured: the company name; with no company, the owner's full name. Owner name: the owner's full name. Garage address: same as mailing.
+- Years in business: the intake's years in business, else its years under own authority (5 or more is "5+"). Year established blank on the intake: this year.
+- Entity type: LLC, CORPORATION (Inc/Corp) or SOLE PROPRIETOR. Nature of business: TRANSPORTATION. Retail/service operations: 0%. Non-profit: No.
+- Classification: 484122 (general freight trucking, long-distance, LTL) for expediters and general freight haulers (cargo vans, box trucks); otherwise only a confident match for the intake's business. Description of operations: "Trucking for Hire - Other for hire trucking" for those, otherwise the intake's wording. Prior carrier: NO PRIOR. Filing counts: leave empty without filings or a DOT/MC number.
+- Drivers: gender MALE unless the name is clearly a woman's (then tell the agent); year licensed = birth year + 17.
+- Vehicles: body type as on the intake (Van is Cargo Van); usage FOR HIRE; radius band from the intake ("Unlimited" is 201+ MILES); permanently attached equipment: No; vehicle value from the intake.
+- Coverages: CSL limit from the intake; liability auto symbol 6 only; medical payments $5,000; uninsured motorists Yes with $100K; comprehensive and collision $1,000; waiver of collision No; towing and labor $75; rental $40 day / $1,200 total; nothing excluded.
+- Underwriting questions (both sections): No, except leased vehicles when the intake says leased, prior losses from the claims answer and hazardous material from the intake. "Any other topics to disclose": Yes, with the disclosure details built from the intake (cargo, radius, proof of prior insurance).
+- The declaration ("I declare that the information provided is true…") is always the agent's; the quote stops there.
 `.trim();

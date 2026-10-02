@@ -1222,3 +1222,37 @@ test('labels: our own mark tooltip and a date picker calendar are never taken as
   const again = await h.kit.fill([], { maxRounds: 1, keepMarks: true });
   assert.equal(again.unknown[0].label, 'agnecy name', 'falls back to the field id, not our tooltip');
 });
+
+test('type-ahead list (select2): types the search, picks the single result that matches; several or none go to the agent', async () => {
+  for (const [results, expectOk] of [[['484122 - General freight trucking, long-distance, less-than-truckload (LTL)', '484121 - General freight trucking, long-distance, truckload'], true], [['484110 - Local'], false]]) {
+    const h = harness();
+    const select = new SelectNode([{ text: '', value: '' }], { id: 'classCodeAndDescription', ariaLabel: 'Classification' });
+    const container = new FakeNode('span', { className: 'select2 select2-container' });
+    const opener = new FakeNode('span', { className: 'select2-selection' });
+    container.append(opener);
+    h.document.body.append(select, container);
+    opener.addEventListener('mousedown', () => {
+      const search = makeInput({ className: 'select2-search__field' });
+      search.className = 'select2-search__field';
+      search.addEventListener('keyup', () => {
+        for (const text of results) {
+          const li = new FakeNode('li', { className: 'select2-results__option', textContent: text });
+          li.addEventListener('mouseup', () => { select.append(new FakeNode('option', { textContent: text })); select.options = [...select.options, { text, value: text.slice(0, 6) }]; select.value = text.slice(0, 6); });
+          h.document.body.append(li);
+        }
+      });
+      h.document.body.append(search);
+    });
+    const report = await h.kit.fill([{ id: 'cls', selector: '#classCodeAndDescription', path: 'x.cls', kind: 'search-select', value: '484122', search: '484122' }], { maxRounds: 3 });
+    if (expectOk) assert.equal(report.filled.length, 1, JSON.stringify(report.failed));
+    else assert.match(report.failed[0].reason, /no confident match/);
+  }
+});
+
+test('a dropdown with no usable label is found by one of its options', async () => {
+  const h = harness();
+  const carrier = new SelectNode([{ text: '', value: '' }, { text: 'ALLIANZ', value: 'a' }, { text: 'NO PRIOR', value: 'np' }], { id: 'x1', ariaLabel: 'Delete Coverage' });
+  h.document.body.append(carrier);
+  await h.kit.fill([{ id: 'np', withOption: 'NO PRIOR', path: 'x.np', kind: 'choice', value: 'NO PRIOR' }], { maxRounds: 2 });
+  assert.equal(carrier.value, 'np');
+});
