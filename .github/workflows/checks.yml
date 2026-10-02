@@ -1,0 +1,34 @@
+# Checks on every pull request and push to main: unit tests, the AmWINS mock (all five steps,
+# every answer checked) and the packaged extension driven through its side panel on the mock.
+# The Progressive replay run (npm run e2e) needs layouts built from local usage logs, so it stays
+# a local check before releases.
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Unit tests
+        run: npm test
+      - name: AmWINS mock
+        run: npm run mock:amwins
+      - name: Package
+        run: npm run package
+      - name: Extension on the AmWINS mock
+        run: |
+          python3 -m http.server 8792 --bind 127.0.0.1 > /dev/null 2>&1 &
+          sleep 1
+          npm run e2e:extension
