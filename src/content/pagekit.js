@@ -1036,11 +1036,15 @@
       }
       if (report.halted) break;
       // Nothing left to type or pick: click the next button whose turn it is.
-      if (!changed && window === window.top) changed = clickNextAction(controls);
+      let helperClicked = false;
+      if (!changed && window === window.top) changed = helperClicked = clickNextAction(controls);
       progressed = changed;
       if (!changed && !retry) break;
       if (!changed) continue;
-      if (!await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: 3000 })) { halt('The page did not settle after the helper.'); break; }
+      // An answer given one at a time has already waited for the page (above); only a helper
+      // click or a batch of answers still needs the wait. (Waiting twice cost Progressive about
+      // 0.3 s per answer.)
+      if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: 3000 })) { halt('The page did not settle after the helper.'); break; }
       if (!verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
     }

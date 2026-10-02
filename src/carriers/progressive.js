@@ -7,6 +7,12 @@
 // other products are skipped when absent. Unmapped questions require agent review; only
 // the narrow, reviewed label rules below are used as fallbacks.
 //
+// Checked against a full saved IA quote (2026-10-02, layouts/fao-html and fao-pdf, kept local):
+// every question shown on Business Owner Info, Most Common Vehicles, Add Vehicle, Vehicle and
+// Driver Summary, Add Driver, More About Business, Coverages & Rates and Change Payment Plan has
+// a rule here (53 of 53). The saved pages hold no combo option lists (Progressive loads them at
+// runtime) and no hidden follow-up questions (it builds those on its server when revealed).
+//
 // Rules either read a record path, or compute a value with `value(record, active)` when
 // Progressive words the answer differently from the intake form. `note` rules are questions the
 // agent must answer themselves; they're marked, never filled.
