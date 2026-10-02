@@ -318,6 +318,19 @@ function renderPickers() {
 async function refreshTab() {
   if (!inExtension) { state.tab = null; return renderSite(); }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  // During a quote the agent may look at another site (email, the intake PDF): the panel stays
+  // on the tab of the quote and keeps filling it in the background. Another rater tab is followed.
+  const activeIsRater = !!(tab?.url && carrierForUrl(tab.url));
+  if (!activeIsRater && state.intake && state.tab?.carrier && tab?.id !== state.tab.id) {
+    const quote = await chrome.tabs.get(state.tab.id).catch(() => null);
+    const carrier = quote?.url ? carrierForUrl(quote.url) : null;
+    if (carrier) {
+      state.tab = { id: quote.id, url: quote.url, carrier, background: true };
+      renderSite();
+      ensureRecorder();
+      return;
+    }
+  }
   if (tab?.id !== state.tab?.id) {
     const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
@@ -329,7 +342,7 @@ async function refreshTab() {
     clearTimeout(state.autoTimer);
     state.autoPending = false;
   }
-  state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null } : null;
+  state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false } : null;
   renderSite();
   ensureRecorder();
 }
@@ -514,7 +527,8 @@ function renderSite() {
   const carrier = state.tab?.carrier;
   // No URL means the browser isn't letting the extension see this site (site access / permissions).
   const noAccess = inExtension && state.tab && !state.tab.url;
-  site.textContent = !inExtension ? 'Preview only' : carrier ? carrier.name : noAccess ? 'No access to this page' : 'Not a rater page';
+  site.textContent = !inExtension ? 'Preview only' : carrier ? `${carrier.name}${state.tab.background ? ' · in background' : ''}` : noAccess ? 'No access to this page' : 'Not a rater page';
+  site.title = state.tab?.background ? 'You are on another tab. The panel keeps working on the quote tab; go back to it to see the marks.' : '';
   site.classList.toggle('on', !!carrier);
   const canFill = inExtension && !!carrier && !!state.intake;
   $('fill').disabled = !canFill || state.filling;
@@ -522,6 +536,7 @@ function renderSite() {
   $('capture').disabled = !(inExtension && carrier);
   $('fill-hint').textContent = !inExtension
     ? 'Filling works when this runs as the Chrome extension.'
+    : carrier && state.tab.background ? 'Working on the quote tab in the background. Fill this page fills that tab; go back to it to review.'
     : carrier ? 'Nothing is submitted. Review the page, then click Next yourself.'
       : noAccess
         ? "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page."
