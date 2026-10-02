@@ -132,6 +132,12 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
       res.end();
       return;
     }
+    // Public privacy policy page (linked from the Chrome Web Store listing).
+    if (req.method === 'GET' && url.pathname === '/privacy') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=3600' });
+      res.end(fs.readFileSync(new URL('./privacy.html', import.meta.url)));
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/v1/health') return done(200, { ok: true, events: seen.size });
     if (req.method === 'GET' && (url.pathname === '/v1/days' || url.pathname === '/v1/export')) {
       if (!isAdmin(req)) return done(401, { error: 'admin token required' });

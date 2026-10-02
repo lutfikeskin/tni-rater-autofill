@@ -45,6 +45,13 @@ test('the manifest allows every carrier site and the usage server', () => {
   assert.ok(hosts.includes(new URL(DEFAULT_SERVER).hostname), 'the usage server needs a host permission');
 });
 
+test('the manifest fits the Chrome Web Store limits', () => {
+  const manifest = JSON.parse(read('manifest.json'));
+  assert.ok(manifest.description.length <= 132, `description is ${manifest.description.length} characters; the store allows 132`);
+  assert.ok(manifest.name.length <= 75, 'name over 75 characters');
+  assert.match(manifest.version, /^\d+(\.\d+){0,3}$/, 'version must be up to four dot-separated numbers');
+});
+
 test('manifest and package versions match', () => {
   assert.equal(JSON.parse(read('manifest.json')).version, JSON.parse(read('package.json')).version);
 });
