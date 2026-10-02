@@ -339,3 +339,23 @@ test('AmWINS standard answers from the agent: current carrier 1-2 years with a D
   assert.equal(marital().value, 'Single');
   assert.equal(marital().warn, null);
 });
+
+test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN lookup, PD-only and PIP not selected', () => {
+  const record = baseRecord();
+  record.applicant.dot = '4123456';
+  record.applicant.name = null;
+  record.applicant.owner1 = 'Amina Kone';
+  const plan = buildPlan(record, progressive, {});
+  assert.equal(byQ(plan, '21E').value, true, 'obtained within 60 days: Yes');
+  assert.equal(byQ(plan, '21E').ignore, false);
+  assert.equal(byQ(plan, '230').ignore, false, 'business name typed in even with a USDOT number');
+  assert.equal(byQ(plan, '230').value, 'Amina Kone', 'no company: the owner');
+  for (const q of ['2BA1', '2BAC', '2BAE']) {
+    assert.equal(byQ(plan, q).ignore, true, q);
+    assert.match(byQ(plan, q).emptyNote, /VIN lookup/);
+  }
+  assert.equal(byQ(plan, '1DB8').value, 'Not Selected');
+  assert.equal(byQ(plan, '1E8D').value, '$10k w/ $0 Deductible');
+  record.applicant.dot = null;
+  assert.equal(byQ(buildPlan(record, progressive, {}), '21E').ignore, true);
+});

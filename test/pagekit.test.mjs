@@ -1328,3 +1328,23 @@ test('batch mode answers every visible question in one round and still checks ea
   assert.equal(report.failed.length, 1, 'a page that rejects an answer is still reported');
   assert.ok(report.rounds <= 4, `rounds: ${report.rounds}`);
 });
+
+test('an answer the page marks invalid after another change is picked again, then left to the agent if it stays invalid', async () => {
+  for (const sticky of [false, true]) {
+    const h = harness();
+    const limit = makeInput({ id: 'limit', ariaLabel: 'Liability limit' });
+    const pip = makeInput({ id: 'pip', ariaLabel: 'PIP' });
+    h.document.body.append(limit, pip);
+    let sets = 0;
+    limit.addEventListener('change', () => { sets++; if (!sticky) limit.setAttribute('aria-invalid', 'false'); });
+    pip.addEventListener('change', () => { limit.setAttribute('aria-invalid', 'true'); });
+    const report = await h.kit.fill([
+      { id: 'l', selector: '#limit', path: 'x.limit', kind: 'text', value: '$1M' },
+      { id: 'p', selector: '#pip', path: 'x.pip', kind: 'text', value: '$10k' },
+    ], { maxRounds: 10 });
+    if (!sticky) {
+      assert.ok(sets >= 2, 'limit given again after PIP invalidated it');
+      assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+    } else assert.ok(report.failed.some((x) => x.key === 'limit'), 'still invalid: the agent\'s');
+  }
+});
