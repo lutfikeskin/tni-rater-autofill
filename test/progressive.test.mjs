@@ -241,8 +241,9 @@ test('AmWINS rules: fields by id, standard answers, declaration left to the agen
   assert.equal(bySel('#entityType').value, 'LLC');
   assert.equal(bySel('#yrsInBusiness').value, '3');
   assert.equal(bySel('#natureOfBusiness').value, 'TRANSPORTATION');
-  assert.equal(bySel('#phone').ignore, false, 'Contact Information is the client (third quote)');
-  assert.equal(bySel('#email').ignore, true, 'contact email stays as the page has it');
+  assert.equal(bySel('#phone').ignore, true, "Agency Information: the agency's phone, not the client's");
+  assert.equal(bySel('#contactName').ignore, true);
+  assert.equal(bySel('#email').ignore, true);
   assert.equal(byName(/^Radius$/).value, 501, 'Unlimited picks the top band (201 + MILES)');
   assert.equal(byName(/^Usage type/).value, 'FOR HIRE');
   assert.equal(byName(/^Rental/).value, '$40 day / $1,200 total');
@@ -276,7 +277,7 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
   assert.equal(sel('#yearBusinessEstablished').value, new Date().getFullYear());
   assert.equal(sel('#classCodeAndDescription').kind, 'search-select');
   assert.equal(sel('#classCodeAndDescription').search, '484122');
-  assert.equal(named(/^Prior carrier/).withOption, 'NO PRIOR');
+  assert.deepEqual(plan.filter((x) => /^Prior carrier/.test(x.name)).map((x) => [x.selector, x.value]), [0, 1, 2].map((n) => [`#priorCarrierCoveragePanel${n} [data-id="carrierName"]`, 'NO PRIOR']));
   assert.equal(named(/^Year licensed/).value, '1985');
   assert.equal(named(/^Disclosure/).value, 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026');
   assert.equal(sel('#autoSymbol6').value, true);
@@ -292,8 +293,8 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
   const plan = buildPlan(record, amwins, {});
   const sel = (s) => plan.find((x) => x.selector === s);
   const named = (re) => plan.filter((x) => re.test(x.name ?? ''));
-  assert.equal(sel('#phone').value, '4025550100');
-  assert.ok(sel('#contactName').value);
+  assert.equal(sel('#inspectionContactOfficePhone').value, '4025550100', 'Contact Information is the client');
+  assert.ok(sel('#inspectionContactName').value);
   assert.equal(named(/^Garage (street|city|state|ZIP)$/).length, 4);
   assert.equal(named(/^Garage city$/)[0].value, record.garaging.city);
   const exclusions = named(/^Exclude /);

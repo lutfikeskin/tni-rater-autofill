@@ -126,7 +126,8 @@
   }
 
   function isRequired(el, label) {
-    return el.required || el.getAttribute('aria-required') === 'true' || /\*/.test(label);
+    // app-valid-rq: AmWINS marks its required fields this way.
+    return el.required || el.getAttribute('aria-required') === 'true' || el.getAttribute('app-valid-rq') === '1' || !!el.closest?.('table[app-valid-rq="1"]') || /\*/.test(label);
   }
 
   function sectionOf(el) {
@@ -831,6 +832,8 @@
     // panel re-rendering), or didn't keep the first time: given again, at most twice each.
     const retries = new Map();
     const refill = new Set();
+    // A lookup box its helper has already used (the VIN list Import Data empties) isn't given again.
+    const consumedPaths = () => new Set(actions.filter((a) => clicked.has(a.action)).flatMap((a) => a.after));
     const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
     // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
     let ajaxCount = 0;
@@ -897,9 +900,10 @@
           handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
         }
       }
+      const consumed = consumedPaths();
       for (const previous of [...report.filled]) {
         const pair = allPairs.find(({ step }) => step.id === previous.stepId);
-        if (!pair || skipKeys.has(fieldKey(pair.control)) || agreesWith(pair.step, pair.control)) continue;
+        if (!pair || skipKeys.has(fieldKey(pair.control)) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path)) continue;
         if (retryOnce(pair.step.id)) {
           report.filled = report.filled.filter((x) => x !== previous);
           handled.delete(pair.step.id);
@@ -928,7 +932,7 @@
       for (const { step, control: c } of pairs) {
         const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind };
         if (step.verifyOnly) { report.kept.push(item); handled.set(step.id, { status: null }); continue; }
-        if (step.ignore) { handled.set(step.id, { status: null }); continue; }
+        if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { handled.set(step.id, { status: null }); continue; }
         if (step.note || step.value == null) {
           if (quiet.has(c.q)) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note, ...describe(c) });
@@ -1082,8 +1086,14 @@
       return false;
     }
 
-    // Answers still waiting for another try when the fill ended are left for the agent.
+    // Answers still waiting for another try when the fill ended are left for the agent, and so is
+    // a field the page should have filled itself (emptyNote) but didn't.
     for (const { step, control } of assign(collectControls(), plan)) {
+      if (step.emptyNote && !hasValue(control) && !skipKeys.has(fieldKey(control))) {
+        report.noData.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, note: step.emptyNote, ...describe(control) });
+        handled.set(step.id, { status: 'needs', note: step.emptyNote });
+        continue;
+      }
       if (!refill.has(step.id) || handled.has(step.id) || skipKeys.has(fieldKey(control)) || agreesWith(step, control)) continue;
       report.failed.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, reason: 'the page did not keep the answer; check it', ...describe(control) });
       handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: the page did not keep the answer` });

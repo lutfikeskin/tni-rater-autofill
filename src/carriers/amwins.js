@@ -18,6 +18,26 @@
 // answers to No" is clicked on the underwriting step, the second underwriting section is always
 // No, Save & Continue is clicked when a step is done, and the quote starts on the Commercial
 // Lines dashboard (Auto, risk state, Open New Application).
+//
+// Saved pages of every step (2026-10-02, layouts/amwins-html, not committed): repeating sections
+// (garage, prior carrier years, drivers, vehicles) have no element ids but every field carries a
+// stable data-id, so those rules target [data-id=…]. What the page's own script does, read from
+// the saved application.cl.bauto.js:
+// - "Contact name / Phone / Email" at the top are the AGENCY's (Agency Information); the client's
+//   contact is the inspection contact (#inspectionContact*). Single contact Yes hides the
+//   accounting and claims contacts.
+// - One prior carrier panel per prior year: Years in Business 1-3 gives that many, 4 / 5+ / Lapse
+//   three (#priorCarrierCoveragePanel0-2).
+// - Import Data only opens a preview; the vehicles are added by its "Import Valid Records" button,
+//   which redraws the vehicle rows (VIN, year, make, model, body type, GVW from the decoder) and
+//   empties the VIN list. Typing a VIN into a row decodes it too (body type and GVW overwritten).
+// - GVW is required unless the body type is a trailer.
+// - Filing required Yes shows BMC-91, MCS-90, BMC-32, how long the authority has been active, how
+//   long with the current carrier, and "can provide claim-free loss runs"; the DOT / MC boxes
+//   show their number fields.
+// - Personal Injury Protection shows for FL HI KS KY MA MI MN NJ NY ND PA UT AR DE MD OR TX NH SD
+//   VA WA WI DC.
+// - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { owner } from './progressive.js';
 
@@ -102,7 +122,6 @@ const UNDERWRITING_NO = [
 ];
 
 const filings = (r) => (r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
-const noFilingCounts = (r) => filings(r) !== true || (!r.applicant.dot && !r.applicant.mc);
 
 // Radius bands: "< 50 MILES", "51 - 100 MILES", "101- 200 MILES", "201 + MILES". Unlimited / long
 // haul is the top band.
@@ -111,8 +130,24 @@ const radius = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48
 // The dashboard's address is spelled both ways.
 const START_PAGES = ['/commerciallines', '/CommercialLines'];
 
-// Garage panel boxes have no ids: second row is City / State / Zip.
-const GARAGE_ROW = '#garagePanel > div > div:nth-of-type(4)';
+// Fields in repeating sections, by the data-id the page gives them.
+const dataId = (id, within = '') => `${within ? `${within} ` : ''}[data-id="${id}"]`;
+const DRIVER = '#driversPanel';
+const VEHICLE = '#vehiclesPanel';
+
+// "How long has the insured's current federal operating authority been active?", from the
+// intake's years under its own authority.
+const authorityAge = (r) => {
+  const n = r.applicant.yearsExperience;
+  if (n == null) return !r.applicant.mc && !r.applicant.dot ? 'NO AUTHORITY' : null;
+  return n < 1 ? 'LESS THAN 1 YEAR' : n < 2 ? '1 TO 2 YEARS' : n < 3 ? '2 TO 3 YEARS' : 'MORE THAN 3 YEARS';
+};
+// Federal filings from the intake's "which filings": liability means BMC-91 (MCS-90 comes with
+// it); cargo means BMC-32. Unknown when the intake doesn't say which.
+const filingsText = (r) => (filings(r) ? r.operations.filingsWhich ?? null : null);
+const federalLiability = (r) => { const t = filingsText(r); return t == null ? null : /liab|bmc.?91|mcs.?90|federal/i.test(t); };
+const federalCargo = (r) => { const t = filingsText(r); return t == null ? null : /cargo|bmc.?3[24]/i.test(t); };
+const PIP_NOTE = 'Personal Injury Protection is asked in this state; TNI has no standard answer yet.';
 
 // Coverages that each have an "Exclude …" box (spelled Exclude / Exlucde / Exlude on the page).
 const EXCLUSIONS = ['medical', 'uninsured', 'comprehensive', 'collision', 'transportation|rental', 'towing'];
@@ -132,6 +167,8 @@ export const amwins = {
     { id: 'autoApplication', page: START_PAGES, text: '^auto$', unlessActions: ['openApplication'] },
     { id: 'openApplication', page: START_PAGES, text: '^open new application$', after: ['amwins.riskState'] },
     { id: 'importVins', text: '^import data$', after: ['amwins.vinList'], immediate: true },
+    // Import Data only shows a preview: this adds the vehicles (and redraws their rows).
+    { id: 'importVinRecords', text: '^import valid records$', afterActions: ['importVins'], immediate: true },
     // Underwriting: answers every General Information question No in one go (before the rules
     // below answer them one at a time; "other topics" is set back to Yes afterwards).
     { id: 'defaultNo', text: '^default all answers to\\W*no\\W*$', immediate: true },
@@ -145,12 +182,14 @@ export const amwins = {
 
     // --- Insured Info --------------------------------------------------------------------------
     // The agency's own details, effective dates and inspection contacts are left as the page has them.
-    // Contact information: the client (name and phone only); single contact stays Yes.
-    { selector: '#contactName', name: 'Contact name (the owner)', value: ownerFull },
-    { selector: '#phone', name: 'Contact phone', value: (r) => digits(r.applicant.phone) },
-    ...['#agnecyName', '#email', '#website', '#effectiveDate', '#expirationDate', '#dba',
-      '#inspectionContactName', '#inspectionContactEmail', '#inspectionContactOfficePhone', '#inspectionContactMobilePhone']
+    // Agency Information (#agnecyName, #contactName, #phone, #email are the agency's), website,
+    // DBA and policy dates stay as the page has them.
+    ...['#agnecyName', '#contactName', '#phone', '#email', '#website', '#effectiveDate', '#expirationDate', '#dba',
+      '#inspectionContactEmail', '#inspectionContactMobilePhone']
       .map((selector) => ({ selector, name: `Left as the page has it (${selector.slice(1)})`, ignore: true })),
+    // Contact Information: the client, name and phone only; single contact stays Yes.
+    { selector: '#inspectionContactName', name: 'Contact name (the owner)', value: ownerFull },
+    { selector: '#inspectionContactOfficePhone', name: 'Contact phone', value: (r) => digits(r.applicant.phone) },
     { selector: '#name', name: 'Named insured (company, else the owner)', value: (r) => r.applicant.name || ownerFull(r) },
     { selector: '#ownerName', name: 'Owner full name', value: ownerFull },
     { selector: '#ownerDob', name: 'Owner date of birth', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
@@ -166,42 +205,65 @@ export const amwins = {
     { name: 'Single contact (standard: Yes)', label: '^is single contact$', kind: 'bool', value: () => true },
     { name: 'Garage address same as mailing (standard)', label: '^same as mailing address', kind: 'bool', value: () => true },
     // The box doesn't copy the address over: the garage boxes are filled too.
-    { selector: '#garagePanel > div > div:nth-of-type(3) input', name: 'Garage street', value: street },
-    { selector: `${GARAGE_ROW} > div:nth-of-type(1) input`, name: 'Garage city', path: 'garaging.city' },
-    { selector: `${GARAGE_ROW} select, #garagePanel select`, name: 'Garage state', kind: 'state', value: (r) => r.garaging?.state ?? null },
-    { selector: `${GARAGE_ROW} > div:nth-of-type(3) input`, name: 'Garage ZIP', path: 'garaging.zip' },
+    { selector: dataId('address', '#garagePanel'), name: 'Garage street', value: street },
+    { selector: dataId('city', '#garagePanel'), name: 'Garage city', path: 'garaging.city' },
+    { selector: dataId('state', '#garagePanel'), name: 'Garage state', kind: 'state', value: (r) => r.garaging?.state ?? null },
+    { selector: dataId('zip', '#garagePanel'), name: 'Garage ZIP', path: 'garaging.zip' },
     { selector: '#natureOfBusiness', name: 'Nature of business', kind: 'choice', value: () => 'TRANSPORTATION' },
     { selector: '#retailOrServiceOperationPert', name: 'Retail / service operations % (trucking: 0)', value: () => '0' },
     { selector: '#classCodeAndDescription', name: 'Classification (484122 for expediters / general freight)', kind: 'search-select', search: classSearch, value: classSearch },
     { selector: '#operationDescription', name: 'Description of operations', value: operationsDescription },
     { name: 'Additional interest (standard: No)', label: '^has additional interest$', kind: 'bool', value: () => false },
     { selector: '#waiverType', name: 'Waiver type (standard: NONE)', kind: 'choice', value: () => 'NONE' },
-    // Filing counts only matter with filings and a DOT/MC number.
-    ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map((selector) => ({ selector, name: 'Filing count', ignore: noFilingCounts })),
-    { name: 'Prior carrier (standard: NO PRIOR)', withOption: 'NO PRIOR', kind: 'choice', value: () => 'NO PRIOR' },
+    // Filing counts: skipped (TNI).
+    ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map((selector) => ({ selector, name: 'Filing count (skipped)', ignore: true })),
+    // Every prior year's carrier: NO PRIOR (the proof of prior insurance goes in the disclosure).
+    ...[0, 1, 2].map((n) => ({ selector: dataId('carrierName', `#priorCarrierCoveragePanel${n}`), name: `Prior carrier, year ${n} (standard: NO PRIOR)`, kind: 'choice', value: () => 'NO PRIOR' })),
     { name: 'Filings required', label: '^filling required$', kind: 'bool', value: filings },
     { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', value: (r) => !!r.applicant.dot },
     { selector: '#hasMcNumber', name: 'Has an MC number', kind: 'bool', value: (r) => !!r.applicant.mc },
     { selector: '#noNumber', name: 'No DOT / MC number', kind: 'bool', value: (r) => !r.applicant.dot && !r.applicant.mc },
+    { selector: '#dotNumber', name: 'DOT number', value: (r) => digits(r.applicant.dot) },
+    { selector: '#mcNumber', name: 'MC number', value: (r) => digits(r.applicant.mc) },
+    // Shown with Filing required Yes.
+    { selector: '#howLongFederalOperatingAuthorityActive', name: 'Federal authority active for (years under own authority)', kind: 'choice', value: authorityAge },
+    { name: 'Federal BMC-91', label: '^federal bmc91$', kind: 'bool', value: federalLiability },
+    { name: 'Federal liability MCS-90', label: '^federal liability mcs90$', kind: 'bool', value: federalLiability },
+    { name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', value: federalCargo },
+    { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier', note: 'Not on the intake: how long the client has been with its current carrier.' },
+    { name: 'Claim-free loss runs', label: '^can provide claim free loss run$', kind: 'bool', note: 'Not on the intake: can the client provide claim-free loss runs?' },
     { name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', value: () => false },
     { name: 'Any prior loss', label: '^any prior loss$', kind: 'bool', path: 'claims.hasClaims' },
 
     // --- Drivers ---------------------------------------------------------------------------------
-    { name: 'Gender (standard: MALE)', label: '^gender$', kind: 'choice', value: () => 'MALE' },
-    { name: 'Year licensed (birth year + 17)', label: 'year (first )?licen[cs]ed|licen[cs]e(d)? (issue(d)? )?year|year licen[cs]e issued|licensed since', value: licenseYear },
-    { name: 'Middle name (only when the intake has one)', label: '^middle name$', path: 'drivers[].middle', ignore: (r, a) => !r.drivers?.[a.drivers ?? 0]?.middle },
+    // Names and license number first: they retitle the driver panel; gender, marital status and
+    // license year after them.
+    { selector: dataId('firstName', DRIVER), path: 'drivers[].first' },
+    { selector: dataId('middleName', DRIVER), name: 'Middle name (only when the intake has one)', path: 'drivers[].middle', ignore: (r, a) => !r.drivers?.[a.drivers ?? 0]?.middle },
+    { selector: dataId('lastName', DRIVER), path: 'drivers[].last' },
+    { selector: dataId('dateOfBirth', DRIVER), path: 'drivers[].dob' },
+    { selector: dataId('licenseNumber', DRIVER), path: 'drivers[].licenseNumber' },
+    { selector: dataId('licenseState', DRIVER), path: 'drivers[].licenseState' },
+    { selector: dataId('gender', DRIVER), name: 'Gender (standard: MALE)', kind: 'choice', value: () => 'MALE' },
+    { selector: dataId('martialStatus', DRIVER), path: 'drivers[].maritalStatus' },
+    { selector: dataId('licenseYear', DRIVER), name: 'Year licensed (birth year + 17)', value: licenseYear },
 
     // --- Vehicles --------------------------------------------------------------------------------
-    { name: 'File upload (not used)', label: '^select file', ignore: true },
+    { name: 'File upload (not used)', label: '^select files?', ignore: true },
     { selector: '#vehLookupVin', path: 'amwins.vinList', name: 'VINs to look up (one per line)', value: (r) => r.vehicles.map((v) => v.vin).filter(Boolean).join('\n') || null },
-    // Import Data writes its own body type; the intake's wins (Box Truck, Cargo Van).
-    { name: 'Body type (as on the intake)', label: '^body type$', value: bodyType, replace: true },
-    { name: 'Vehicle location (the first, the insured)', label: '^location$', kind: 'first-option', value: () => 'first option' },
-    // Import Data fills it from the VIN.
-    { name: 'GVW (from Import Data)', label: 'gross vehicle weight|\\bgvw\\b', ignore: true },
+    { selector: dataId('locationNumber', VEHICLE), name: 'Vehicle location (the first, the insured)', kind: 'first-option', value: () => 'first option' },
+    // VIN, year, make, model come from Import Data; typed only when it found nothing.
+    { selector: dataId('vin', VEHICLE), path: 'vehicles[].vin' },
+    { selector: dataId('year', VEHICLE), path: 'vehicles[].year' },
+    { selector: dataId('make', VEHICLE), path: 'vehicles[].make' },
+    { selector: dataId('model', VEHICLE), path: 'vehicles[].model' },
+    // The VIN decoder writes its own body type; the intake's wins (Box Truck, Cargo Van).
+    { selector: dataId('bodyType', VEHICLE), name: 'Body type (as on the intake)', value: bodyType, replace: true },
+    // From the VIN decoder; required, so flagged only when it stays empty.
+    { selector: dataId('grossVehicleWeight', VEHICLE), name: 'GVW (from Import Data)', ignore: true, emptyNote: 'GVW comes from Import Data / the VIN; it stayed empty, so enter it from the registration.' },
     { selector: '#marketValue', path: 'vehicles[].value', name: 'Vehicle value', note: vehicleValueNote },
-    { name: 'Usage type (standard: For hire)', label: '^usage type$', kind: 'choice', value: () => 'FOR HIRE' },
-    { name: 'Radius', label: '^radius$', kind: 'int', value: radius },
+    { selector: dataId('usageType', VEHICLE), name: 'Usage type (standard: For hire)', kind: 'choice', value: () => 'FOR HIRE' },
+    { selector: dataId('radius', VEHICLE), name: 'Radius', kind: 'int', value: radius },
     { name: 'Permanently attached equipment (standard: No)', label: '^permanently attached equipment', kind: 'bool', value: () => false },
 
     // --- Coverages -------------------------------------------------------------------------------
@@ -214,6 +276,8 @@ export const amwins = {
     { selector: '#collisionDeductible', name: 'Collision deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000' },
     { name: 'Waiver of collision (standard: No)', label: '^has waiver of collision$', kind: 'bool', value: () => false },
     { selector: '#towingAndLaborReimbursement', name: 'Towing and labor (standard: $75)', kind: 'choice', value: () => '$75' },
+    { name: 'Personal Injury Protection', label: '^personal injury protection$', kind: 'bool', note: PIP_NOTE },
+    { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit', note: PIP_NOTE },
     // Liability auto symbol: 6 only.
     ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ selector: `#autoSymbol${n}`, name: `Auto symbol ${n}${n === 6 ? ' (TNI: 6)' : ''}`, kind: 'bool', value: () => n === 6 })),
     // Nothing is excluded: one rule per box (a rule fills one field).
@@ -230,6 +294,6 @@ export const amwins = {
     { name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', value: () => true, replace: true },
     { name: 'Disclosure details (from the intake)', label: '^disclosure details$', value: disclosure },
     // The declaration is the agent's to make.
-    { name: 'Declaration', label: 'i declare|true,? complete', note: 'The declaration is yours to confirm; never filled.' },
+    { selector: '#accept', name: 'Declaration', kind: 'bool', note: 'The declaration is yours to confirm; never ticked. Then Submit (yours too).' },
   ],
 };

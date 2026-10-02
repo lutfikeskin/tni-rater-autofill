@@ -112,6 +112,15 @@ npm run e2e -- --update  # accept the current results as the baseline
 
 Fills every layout (bake-off course, captures, and the per-state layouts from `npm run layouts`) on the replay page in Playwright's Chromium and compares with `test/e2e-baseline.json`: fewer answers filled, a new failure, or Continue clicked with questions still open fails the run. Report: `reviews/e2e-<date>.md`. One-time setup: `npx playwright install chromium`. The replay page doesn't imitate Progressive's address suggestions, so those stay "failed" there.
 
+### AmWINS mock (before every AmWINS rule change)
+
+```bash
+npm run mock:amwins              # all five steps, real fill engine, real browser
+npm run mock:amwins -- --headed  # watch it
+```
+
+`test/fixtures/amwins/application.html` is the Business Auto application saved from the live site (client details and the site's scripts removed); `test/fixtures/amwins/mock.js` plays what the site's own script does (show/hide rules, Save & Continue between steps, Import Data's preview and Import Valid Records, the VIN decoder, Default all answers to No, the classification search). The run fills every step the way the side panel does, answers the two questions the intake can't, and checks all answers against TNI's rules. It fails on a wrong answer, a step that stops early, or Submit being clicked.
+
 ## Files
 
 | Path | What it does |

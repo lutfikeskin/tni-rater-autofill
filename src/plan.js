@@ -97,6 +97,8 @@ function fieldSteps(rules, record, carrier, active) {
       verifyOnly: !!rule.verifyOnly,
       // Our answer replaces what the page put there (e.g. a lookup's body type).
       replace: !!rule.replace,
+      // An ignored field the page fills itself (a lookup): flagged only if it stays empty.
+      emptyNote: rule.emptyNote ?? null,
       summaryAfter: typeof rule.summaryAfter === 'function' ? rule.summaryAfter(record, active) : rule.summaryAfter ?? null,
       choiceAliases: typeof rule.choiceAliases === 'function' ? rule.choiceAliases(record, active) : rule.choiceAliases ?? [],
       scope,

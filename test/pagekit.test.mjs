@@ -1283,3 +1283,14 @@ test('Save & Continue counts as Continue; Save & Exit and Submit never do', asyn
     assert.equal(!!button._clicked, expected, text);
   }
 });
+
+test('a field the page fills itself (emptyNote) is flagged only when it stays empty', async () => {
+  for (const value of ['', '14500']) {
+    const h = harness();
+    const gvw = makeInput({ id: 'gvw', ariaLabel: 'Gross Vehicle Weight (GVW)', value });
+    h.document.body.append(gvw);
+    const report = await h.kit.fill([{ id: 'gvw', selector: '#gvw', path: 'x.gvw', kind: 'text', ignore: true, emptyNote: 'enter it yourself' }], { maxRounds: 2 });
+    assert.equal(report.noData.length, value ? 0 : 1, value || 'empty');
+    assert.equal(report.unknown.length, 0);
+  }
+});
