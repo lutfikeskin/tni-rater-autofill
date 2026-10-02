@@ -254,7 +254,9 @@ export const progressive = {
     { q: '2AE', path: 'garaging.zip', name: 'Owner home ZIP' },
     { q: '2B0', path: 'garaging.city', name: 'Owner home city' },
     // Business address boxes, when there's no registered address to pick.
-    { q: '27E', path: 'garaging.street', name: 'Business street' },
+    // Business street with Google's address suggestions, like the home address box: the whole
+    // address, then the first suggestion, which fills ZIP and city (checked by their rules).
+    { q: '27E', name: 'Business address (with suggestion)', kind: 'address-suggest', value: oneLineAddress, fallback: (r) => r.garaging?.street ?? null },
     { q: '284', path: 'garaging.zip', name: 'Business ZIP' },
     { q: '286', path: 'garaging.city', name: 'Business city' },
     // Search-style business type (IN, OH): the box itself is left alone (typing filters the list
@@ -353,7 +355,7 @@ export const progressive = {
     { q: '1D97', path: 'coverage.autoLiabLimit', label: 'bodily injury and property damage liability' },
     { q: '1DEE', name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
     // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
-    ...['1DCA', '1DDE', '1DD8'].map((q) => ({ q, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
+    ...['1DCA', '1DDE', '1DD8', '1DBF'].map((q) => ({ q, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
     // Pennsylvania first-party benefits: not on the intake means not bought, except medical
     // expense, which PA requires (its lowest, $5,000).
     { q: '1E66', name: 'PA medical expense benefits (required: lowest, $5,000)', kind: 'choice', value: () => '$5,000' },

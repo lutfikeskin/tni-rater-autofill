@@ -123,7 +123,8 @@
     "noData": 0,
     "unmapped": 0,
     "clicked": [
-     "Lookup VIN"
+     "Lookup VIN",
+     "Continue ›"
     ]
    },
    "AddDriver": {
@@ -189,16 +190,26 @@
    }
   }
  },
- "captures/progressive/generated/progressive_IN_expediter_van.json": {
-  "questions": 112,
-  "filled": 75,
-  "failed": 0,
-  "unmapped": 4,
+ "captures/progressive/generated/progressive_IA_expediter_van.json": {
+  "questions": 97,
+  "filled": 62,
+  "failed": 1,
+  "unmapped": 1,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
-    "questions": 23,
+    "questions": 22,
     "filled": 12,
+    "failed": [
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
+    ],
+    "noData": 0,
+    "unmapped": 0,
+    "clicked": []
+   },
+   "MostCommonVehicles": {
+    "questions": 6,
+    "filled": 5,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
@@ -206,15 +217,90 @@
      "Continue ›"
     ]
    },
-   "BECAPopup": {
-    "questions": 25,
-    "filled": 13,
+   "AddVehicle": {
+    "questions": 9,
+    "filled": 8,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
     "clicked": [
      "Continue ›"
     ]
+   },
+   "AddDriver": {
+    "questions": 5,
+    "filled": 5,
+    "failed": [],
+    "noData": 0,
+    "unmapped": 0,
+    "clicked": [
+     "Continue ›"
+    ]
+   },
+   "NoHit": {
+    "questions": 19,
+    "filled": 11,
+    "failed": [],
+    "noData": 1,
+    "unmapped": 0,
+    "clicked": []
+   },
+   "MoreAboutBusiness": {
+    "questions": 12,
+    "filled": 7,
+    "failed": [],
+    "noData": 0,
+    "unmapped": 0,
+    "clicked": [
+     "Continue ›"
+    ]
+   },
+   "CoveragesRates": {
+    "questions": 20,
+    "filled": 13,
+    "failed": [],
+    "noData": 0,
+    "unmapped": 1,
+    "clicked": []
+   },
+   "ChangePaymentPlan": {
+    "questions": 4,
+    "filled": 1,
+    "failed": [],
+    "noData": 0,
+    "unmapped": 0,
+    "clicked": [
+     "Continue ›"
+    ]
+   }
+  }
+ },
+ "captures/progressive/generated/progressive_IN_expediter_van.json": {
+  "questions": 112,
+  "filled": 75,
+  "failed": 2,
+  "unmapped": 2,
+  "issues": [],
+  "pages": {
+   "BusinessOwnerInfo": {
+    "questions": 23,
+    "filled": 11,
+    "failed": [
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
+    ],
+    "noData": 0,
+    "unmapped": 0,
+    "clicked": []
+   },
+   "BECAPopup": {
+    "questions": 25,
+    "filled": 12,
+    "failed": [
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
+    ],
+    "noData": 0,
+    "unmapped": 0,
+    "clicked": []
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -248,18 +334,18 @@
    },
    "MoreAboutBusiness": {
     "questions": 29,
-    "filled": 22,
+    "filled": 23,
     "failed": [],
     "noData": 0,
-    "unmapped": 2,
+    "unmapped": 1,
     "clicked": []
    },
    "CoveragesRates": {
     "questions": 12,
-    "filled": 10,
+    "filled": 11,
     "failed": [],
     "noData": 0,
-    "unmapped": 2,
+    "unmapped": 1,
     "clicked": []
    },
    "ChangePaymentPlan": {
@@ -277,8 +363,8 @@
  "captures/progressive/generated/progressive_MD_expediter_van.json": {
   "questions": 105,
   "filled": 67,
-  "failed": 3,
-  "unmapped": 9,
+  "failed": 4,
+  "unmapped": 8,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
@@ -287,10 +373,11 @@
     "failed": [
      "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
      "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])",
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP",
      "Business type list: no option matches \"For Hire Trucking\""
     ],
     "noData": 0,
-    "unmapped": 4,
+    "unmapped": 3,
     "clicked": []
    },
    "AddVehicle": {
@@ -385,16 +472,17 @@
  },
  "captures/progressive/generated/progressive_NC_freight-hauler_box-truck.json": {
   "questions": 95,
-  "filled": 60,
-  "failed": 2,
+  "filled": 58,
+  "failed": 4,
   "unmapped": 1,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
     "questions": 25,
-    "filled": 14,
+    "filled": 13,
     "failed": [
      "Home Address: the page offered no address suggestion; check the address, city and ZIP",
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP",
      "Business type list: no option matches \"For Hire Trucking\""
     ],
     "noData": 0,
@@ -451,13 +539,13 @@
    },
    "VehicleSummary": {
     "questions": 20,
-    "filled": 11,
-    "failed": [],
+    "filled": 10,
+    "failed": [
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
+    ],
     "noData": 0,
     "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
+    "clicked": []
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -473,17 +561,18 @@
  },
  "captures/progressive/generated/progressive_OH_expediter_van.json": {
   "questions": 104,
-  "filled": 65,
-  "failed": 3,
+  "filled": 63,
+  "failed": 5,
   "unmapped": 1,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
     "questions": 26,
-    "filled": 14,
+    "filled": 13,
     "failed": [
      "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
-     "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])"
+     "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])",
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
     ],
     "noData": 0,
     "unmapped": 0,
@@ -491,9 +580,10 @@
    },
    "BECAPopup": {
     "questions": 26,
-    "filled": 14,
+    "filled": 13,
     "failed": [
-     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP"
+     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
     ],
     "noData": 0,
     "unmapped": 0,
@@ -570,21 +660,21 @@
   }
  },
  "captures/progressive/generated/progressive_PA_expediter_van.json": {
-  "questions": 102,
-  "filled": 83,
-  "failed": 0,
+  "questions": 111,
+  "filled": 85,
+  "failed": 1,
   "unmapped": 0,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
     "questions": 22,
-    "filled": 13,
-    "failed": [],
+    "filled": 12,
+    "failed": [
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
+    ],
     "noData": 0,
     "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
+    "clicked": []
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -635,8 +725,18 @@
     ]
    },
    "CoveragesRates": {
-    "questions": 20,
-    "filled": 20,
+    "questions": 25,
+    "filled": 22,
+    "failed": [],
+    "noData": 0,
+    "unmapped": 0,
+    "clicked": [
+     "Continue ›"
+    ]
+   },
+   "ChangePaymentPlan": {
+    "questions": 4,
+    "filled": 1,
     "failed": [],
     "noData": 0,
     "unmapped": 0,

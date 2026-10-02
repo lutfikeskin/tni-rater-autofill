@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 23) return;
+  if (globalThis.__raterKit?.version === 24) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -283,7 +283,8 @@
   function loose(v) {
     const s = String(v ?? '').trim();
     const m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/) ?? s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (m) return m[0].startsWith(m[3]) ? `d${m[3]}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}` : `d${m[1]}${m[2]}${m[3]}`;
+    // 1/5/1980, 01/05/1980 and 1980-01-05 are the same date.
+    if (m) return m[0].startsWith(m[3]) ? `d${m[3]}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}` : `d${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}${m[3]}`;
     return s.toLowerCase().replace(/[^a-z0-9]/g, '');
   }
 
@@ -472,7 +473,14 @@
     const text = String(step.value);
     const { el, cmp } = c;
     const before = new Set(shownSuggestions());
+    // Google's address autocomplete (Progressive uses it): its list (.pac-item) is only shown
+    // while the box has focus, which it doesn't while the agent works in the side panel. The
+    // suggestions are still there, hidden; they're picked the way the keyboard does (↓, Enter).
+    const pacBefore = new Map(deepQueryAll(document, '.pac-item').map((x) => [x, x.textContent]));
+    const houseNumber = text.match(/^\s*(\d+)/)?.[1] ?? null;
+    const freshPac = () => deepQueryAll(document, '.pac-item').find((x) => pacBefore.get(x) !== x.textContent && oneLine(x.textContent) && (!houseNumber || x.textContent.includes(houseNumber))) ?? null;
     el.focus?.({ preventScroll: true });
+    el.dispatchEvent(new Event('focus'));
     if (cmp) cmp.setValue(text);
     else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, text);
     // Suggestion lists listen for typing: send the events typing would.
@@ -489,21 +497,42 @@
     try {
       for (const start = Date.now(); !first && Date.now() - start < 4000;) {
         await sleep(200);
-        first = shownSuggestions().find((x) => !before.has(x)) ?? null;
+        first = freshPac() ?? shownSuggestions().find((x) => !before.has(x)) ?? null;
       }
     } finally {
       mo?.disconnect();
     }
     if (!first) {
+      // A box with its own city/ZIP boxes gets back just the street.
+      if (step.fallback) {
+        if (cmp) cmp.setValue(step.fallback);
+        else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, step.fallback);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
       el.blur?.();
       const seen = [...new Set(added.filter((n) => n.getClientRects?.().length).map((n) => `${n.tagName.toLowerCase()}${n.id ? `#${String(n.id).replace(/\d{3,}/g, '#')}` : ''}${typeof n.className === 'string' && n.className.trim() ? `.${n.className.trim().split(/\s+/).slice(0, 3).join('.')}` : ''}${n.getAttribute?.('role') ? `[role=${n.getAttribute('role')}]` : ''}`))].slice(0, 8);
       return { ok: false, reason: `the page offered no address suggestion; check the address, city and ZIP${seen.length ? ` (new on the page: ${seen.join(', ')})` : ''}` };
     }
     const shown = oneLine(first.textContent).slice(0, 120);
+    if (first.classList?.contains('pac-item') || / pac-item /.test(` ${first.className} `)) {
+      for (const [key, code] of [['ArrowDown', 40], ['Enter', 13]]) el.dispatchEvent(keyEvent('keydown', key, code));
+      await settle({ quietMs: 300, maxMs: 5000 });
+      // Still the typed text: Google didn't take the keys; click the suggestion instead.
+      if (el.value !== text) return { ok: true, shown };
+    }
     for (const type of ['mousedown', 'mouseup']) first.dispatchEvent(new Event(type, { bubbles: true }));
     first.click?.();
     await settle({ quietMs: 300, maxMs: 5000 });
     return { ok: true, shown };
+  }
+
+  // A key press as page scripts read it (Google's autocomplete looks at keyCode).
+  function keyEvent(type, key, code) {
+    const e = typeof KeyboardEvent === 'function' ? new KeyboardEvent(type, { key, bubbles: true, cancelable: true }) : new Event(type, { bubbles: true });
+    for (const prop of ['keyCode', 'which']) { try { Object.defineProperty(e, prop, { get: () => code }); } catch { /* read-only */ } }
+    if (!('key' in e)) e.key = key;
+    return e;
   }
 
   // Returns { ok: true, shown } or { ok: false, reason, options? }.
@@ -1155,5 +1184,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 23, fill, answer, markKey, aiBanner, capture, clear };
+  globalThis.__raterKit = { version: 24, fill, answer, markKey, aiBanner, capture, clear };
 })();

@@ -100,6 +100,8 @@ function fieldSteps(rules, record, carrier, active) {
       scope,
       scopeIndex,
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
+      // What an address box gets when the page offers no suggestion (e.g. just the street).
+      fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,
       value: value === undefined || value === '' ? null : value,
     };
   });

@@ -242,6 +242,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
     pickListItem: async () => {},
     afterFill: () => {},
+    runPendingPage: () => {},
   };
   vm.runInNewContext(extractFunction('autoFill'), context);
   await context.autoFill('Rates');

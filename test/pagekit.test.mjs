@@ -899,7 +899,9 @@ test('blank optional address detail and blank DOT do not stop standard business-
     assert.equal(report.halted, false);
     assert.equal(report.noData.length, 0);
     assert.equal(detail.value, unit ?? '');
+    // No suggestion list on this page: the street alone goes back in, flagged for the agent.
     assert.equal(street.value, '1 Example St');
+    assert.ok(report.failed.some((x) => /no address suggestion/.test(x.reason)));
     assert.equal(dot.value, 'no');
     assert.equal(name.value, 'Example LLC');
     assert.equal(dotNumber.value, '');
@@ -1176,4 +1178,34 @@ test('each filled answer carries its timing and side effects (revealed / removed
   assert.ok(a.timing.ms >= 0 && a.timing.settleMs >= 0);
   assert.equal(a.timing.revealed, 1, 'the follow-up question appeared');
   assert.equal(b.timing.revealed + b.timing.removed + b.timing.changed, 0, 'independent answer');
+});
+
+test('Google address autocomplete (hidden .pac-item list): first suggestion picked with arrow down + enter', async () => {
+  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  const street = makeInput({ id: `f_U${'A'.repeat(32)}27E_1_1`, ariaLabel: 'Street Address' });
+  const zip = makeInput({ id: `f_U${'A'.repeat(32)}284_1_1`, ariaLabel: 'Zip Code' });
+  const city = makeInput({ id: `f_U${'A'.repeat(32)}286_1_1`, ariaLabel: 'City' });
+  h.document.body.append(street, zip, city);
+  // Google keeps its list hidden while the box isn't focused; the items exist anyway.
+  const container = new FakeNode('div', { className: 'pac-container' });
+  container._visible = false;
+  h.document.body.append(container);
+  street.addEventListener('input', () => {
+    for (const t of ['5001 Sheridan Street Davenport, IA, USA', '5001 Sheridan Road Sunol, CA, USA']) {
+      const item = new FakeNode('div', { className: 'pac-item', textContent: t });
+      item._visible = false;
+      container.append(item);
+    }
+  });
+  let downs = 0;
+  street.addEventListener('keydown', (e) => {
+    if (e.keyCode === 40) downs++;
+    if (e.keyCode === 13 && downs) { street.value = '5001 Sheridan St'; zip.value = '52806'; city.value = 'Davenport'; }
+  });
+  const record = { applicant: {}, garaging: { street: '5001 Sheridan St', city: 'Davenport', state: 'IA', zip: '52806' }, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 8 });
+  assert.equal(street.value, '5001 Sheridan St');
+  assert.equal(zip.value, '52806');
+  assert.equal(report.failed.length, 0);
+  assert.ok(!report.kept.some((x) => x.differs));
 });

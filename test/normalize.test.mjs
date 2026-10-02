@@ -271,7 +271,9 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.ok(new RegExp(carrier.advance.text, 'i').test('Continue'));
   assert.ok(!new RegExp(carrier.advance.text, 'i').test('Finish & Buy'));
   assert.equal(byQ('2CE8').value, 45000);
-  assert.equal(byQ('27E').value, '125 Maple Leaf Dr');
+  assert.equal(byQ('27E').kind, 'address-suggest');
+  assert.equal(byQ('27E').value, '125 Maple Leaf Dr Apt 4, Springfield, IL 62704');
+  assert.equal(byQ('27E').fallback, '125 Maple Leaf Dr');
   assert.equal(byQ('3E98').value, 'Automatic payments from checking account');
   assert.equal(byQ('32CC').value, true);
   const actions = plan.filter((s) => s.kind === 'action');

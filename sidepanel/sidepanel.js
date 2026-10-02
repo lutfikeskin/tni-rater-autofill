@@ -405,7 +405,14 @@ async function autoFill(page) {
     state.filling = false;
     if (state.autoPending) scheduleAutoFill(page);
   }
+  runPendingPage();
   if (assistFrames) runAssist(assistFrames, { tabId, page, carrier });
+}
+
+function runPendingPage() {
+  const pending = state.pagePending;
+  state.pagePending = null;
+  if (pending && pending === pageOf(state.tab?.url)) setTimeout(() => fillPage({ auto: 'page' }), 300);
 }
 
 // Each page's question layout (ids, question text, options; no answers) goes into the usage
@@ -491,6 +498,9 @@ async function runKit(tabId, carrier, func, args = []) {
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 async function fillPage({ auto = false } = {}) {
+  // A new page that opens while the previous one is still finishing its fill is filled right
+  // after it (it used to be skipped: "it stopped here").
+  if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
   if (state.filling || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
   if (!auto) state.autoPaused = false;
   state.filling = true;
@@ -530,6 +540,7 @@ async function fillPage({ auto = false } = {}) {
     $('fill').disabled = false;
     $('fill').textContent = 'Fill this page';
   }
+  runPendingPage();
   await remarkAi({ tabId, page, carrier });
   if (assistFrames && !assistFrames.some((f) => f.halted)) runAssist(assistFrames, { tabId, page, carrier });
 }
