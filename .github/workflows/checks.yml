@@ -1,7 +1,8 @@
 # Checks on every pull request and push to main: unit tests, the AmWINS mock (all five steps,
 # every answer checked) and the packaged extension driven through its side panel on the mock.
-# The Progressive replay run (npm run e2e) needs layouts built from local usage logs, so it stays
-# a local check before releases.
+# The Progressive replay runs on the committed per-state layouts (test/fixtures/progressive,
+# refreshed with npm run fixtures:progressive); locally npm run e2e also uses the freshest ones
+# built from the usage log.
 name: Checks
 
 on:
@@ -25,6 +26,8 @@ jobs:
         run: npm test
       - name: AmWINS mock
         run: npm run mock:amwins
+      - name: Progressive replay (committed per-state layouts)
+        run: npm run e2e -- --fixtures
       - name: Package
         run: npm run package
       - name: Extension on the AmWINS mock

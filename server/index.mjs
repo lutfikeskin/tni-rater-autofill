@@ -32,8 +32,8 @@ const MAX_EVENTS_PER_REQUEST = 2000;
 const MAX_EVENT_BYTES = 32 * 1024;
 
 // Event type -> fields kept. Anything else in an event is dropped.
-const COMMON = ['id', 't', 'v', 'agent', 'session', 'intakeId', 'type', 'carrier', 'page'];
-const EVENT_FIELDS = {
+export const COMMON = ['id', 't', 'v', 'agent', 'session', 'intakeId', 'type', 'carrier', 'page'];
+export const EVENT_FIELDS = {
   intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings'],
   intake_closed: ['reason'],
   intake_edit: ['path', 'kind', 'change', 'warnings'],

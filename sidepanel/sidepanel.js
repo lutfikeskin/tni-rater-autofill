@@ -514,6 +514,8 @@ async function recordLayout(page) {
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => ({
       q: c.q ?? null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
+      // Element ids (stable ones only) and data-ids: how id-based rules (AmWINS) find the field.
+      id: c.id && !/\d{5,}|ext-|-inputEl$/.test(c.id) ? c.id : null, dataId: c.dataId ?? null, name: c.name ?? null,
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
       options: c.options?.length && !/agent|producer/i.test(c.label ?? '') ? c.options : undefined, mapped: c.wouldFill ?? null,
     }));

@@ -15,6 +15,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadEvents } from './lib/events.mjs';
+import { loadLayouts, report as coverageReport } from './coverage.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -150,6 +151,9 @@ p('## Problem reports', '');
 if (!problems.length) p('None.', '');
 else p(...problems.map((e) => `- ${e.t?.slice(0, 16).replace('T', ' ')} · ${e.agent ?? '?'} · ${e.page ?? '?'}: ${String(e.text ?? '').trim().replace(/\n+/g, '\n  ')}`), '');
 
+// Questions met on live pages that no rule claims (or, for AmWINS, that the mock lacks).
+const { markdown: coverageMd } = coverageReport(loadLayouts(inputs));
+p('## Rule coverage of live pages (all data)', '', 'Questions agents met that no rule claims are left to them as "unfamiliar": a missing TNI rule, or the carrier changed its page. "Not in the mock" means the AmWINS page has a field the mock lacks.', '', coverageMd || 'No layouts yet.', '');
 p('## Rule suggestions (all data)', '', learn, '');
 p('## Usage summary (this period)', '', '```', summary, '```', '');
 p('## Page layouts (all data)', '', 'Open these on the replay page (`npm run replay`, then the Layout box) to see what fills on each state/product.', '', '```', layouts, '```', '');

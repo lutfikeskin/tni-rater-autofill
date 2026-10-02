@@ -1305,6 +1305,8 @@
         label: r(c.label),
         name: c.el.name || null,
         id: c.el.id || null,
+        // Repeating sections without ids (AmWINS drivers/vehicles) still name their fields.
+        dataId: c.el.getAttribute('data-id') || null,
         selector: cssPath(c.el),
         required: c.required,
         section: r(sectionOf(c.el)),
