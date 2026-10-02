@@ -99,6 +99,12 @@ class FakeNode {
     return nodes.at(-1);
   }
 
+  remove() {
+    if (!this.parentElement) return;
+    this.parentElement.children = this.parentElement.children.filter((c) => c !== this);
+    this.parentElement = null;
+  }
+
   replaceChild(next, old) {
     const i = this.children.indexOf(old);
     if (i < 0) throw new Error('old child is not present');
@@ -241,6 +247,7 @@ class FakeDocument extends FakeNode {
 
   getRootNode() { return this; }
   getElementById(id) { return this.querySelectorAll('*').find((el) => el.id === id) ?? null; }
+  createElement(tag) { const el = new FakeNode(tag); el.ownerDocument = this; return el; }
   createTreeWalker() { return { nextNode: () => false, currentNode: null }; }
 
   addEventListener(type, fn) {
@@ -892,7 +899,9 @@ test('blank optional address detail and blank DOT do not stop standard business-
     assert.equal(report.halted, false);
     assert.equal(report.noData.length, 0);
     assert.equal(detail.value, unit ?? '');
+    // No suggestion list on this page: the street alone goes back in, flagged for the agent.
     assert.equal(street.value, '1 Example St');
+    assert.ok(report.failed.some((x) => /no address suggestion/.test(x.reason)));
     assert.equal(dot.value, 'no');
     assert.equal(name.value, 'Example LLC');
     assert.equal(dotNumber.value, '');
@@ -933,7 +942,7 @@ test('For Hire Trucking collapses to a verified summary and the revealed trucker
   }
 });
 
-test('home address prefers offered Primary Business Address with or without DOT and collapses manual boxes', async () => {
+test('home address takes the first offered option with or without DOT and collapses manual boxes', async () => {
   for (const hasDot of [false, true]) {
     const h = harness({ search: '?pageName=BusinessOwnerInfo' });
     const record = {
@@ -956,11 +965,11 @@ test('home address prefers offered Primary Business Address with or without DOT 
     };
     const report = await h.kit.fill(buildPlan(record, progressive), { replaceChoices: true });
     assert.equal(report.halted, false);
-    assert.equal(primary.checked, true);
+    // The first option on the page, whatever it says.
+    assert.equal((hasDot ? usdot : primary).checked, true);
+    assert.equal((hasDot ? primary : usdot).checked, false);
     assert.equal(manual.checked, false);
-    assert.equal(usdot.checked, false);
-    assert.equal(street.value, '', 'manual boxes must not be filled before selecting the offered address');
-    assert.equal(report.filled.length, 1);
+    if (!hasDot) assert.equal(street.value, '', 'manual boxes must not be filled before selecting the offered address');
   }
 });
 
@@ -985,4 +994,218 @@ test('home address uses offered USDOT address when Primary Business Address is a
   assert.equal(report.halted, false);
   assert.equal(offered.checked, true);
   assert.equal(manual.checked, false);
+});
+
+test('unfamiliar questions carry their options for the AI, and answer() puts in a choice and marks it purple', async () => {
+  const h = harness();
+  const commodity = new SelectNode([
+    { text: 'Select one', value: '' },
+    { text: 'Consumer Goods', value: 'cg' },
+    { text: 'Building Materials', value: 'bm' },
+  ], { id: 'commodity', ariaLabel: 'Commodity category' });
+  h.document.body.append(commodity);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const item = report.unknown.find((x) => x.label === 'Commodity category');
+  assert.deepEqual([...item.options], ['Consumer Goods', 'Building Materials']);
+  assert.equal(item.current, null);
+
+  const [ok] = await h.kit.answer([{ key: item.key, label: item.label, value: 'Consumer Goods' }]);
+  assert.equal(ok.ok, true);
+  assert.equal(commodity.value, 'cg');
+  assert.equal(commodity.getAttribute('data-rater-autofill'), 'ai');
+  assert.ok(commodity.style.outline.includes('#7c3aed'));
+
+  const [gone] = await h.kit.answer([{ key: 'missing', label: 'Nope', value: 'Yes' }]);
+  assert.equal(gone.ok, false);
+  assert.match(gone.reason, /no longer on this page/);
+  const [bad] = await h.kit.answer([{ key: item.key, label: item.label, value: 'Livestock' }]);
+  assert.equal(bad.ok, false);
+  assert.equal(commodity.value, 'cg');
+});
+
+test('AI banner lists pending selections at the bottom of the page and markKey re-marks a field', async () => {
+  const h = harness();
+  const field = new SelectNode([{ text: 'Yes', value: 'y' }, { text: 'No', value: 'n' }], { id: 'tow', ariaLabel: 'Tows for others' });
+  h.document.body.append(field);
+  h.kit.aiBanner(['Tows for others: No']);
+  const banner = h.document.body.children.find((c) => c.id === 'rater-autofill-ai-banner');
+  assert.ok(banner, 'banner added');
+  assert.match(banner.children[0].textContent, /AI selected 1 answer/);
+  h.kit.aiBanner([]);
+  assert.equal(h.document.body.children.some((c) => c.id === 'rater-autofill-ai-banner'), false);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const key = report.unknown[0].key;
+  assert.equal(h.kit.markKey(key, 'Tows for others', 'needs', 'AI choice rejected'), true);
+  assert.equal(field.getAttribute('data-rater-autofill'), 'needs');
+  assert.equal(h.kit.markKey('nope', 'x', 'needs', 'n'), false);
+});
+
+test('home address box: whole address typed, first suggestion picked, ZIP/city then checked', async () => {
+  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  const address = makeInput({ id: `f_U${'A'.repeat(32)}2A9_1_1`, ariaLabel: 'Home Address' });
+  const zip = makeInput({ id: `f_U${'A'.repeat(32)}2AE_1_1`, ariaLabel: 'ZIP Code' });
+  const city = makeInput({ id: `f_U${'A'.repeat(32)}2B0_1_1`, ariaLabel: 'City' });
+  h.document.body.append(address, zip, city);
+  // The page's suggestion list: appears after typing; picking an entry fills ZIP and city.
+  address.addEventListener('keyup', () => {
+    const pick = (text, z) => {
+      const item = new FakeNode('li', { textContent: text, role: 'option' });
+      item.onclick = () => { address.value = text; zip.value = z; city.value = 'Springfield'; };
+      return item;
+    };
+    h.document.body.append(pick('125 MAPLE LEAF DR APT 4, SPRINGFIELD IL 62704', '62704'), pick('125 MAPLE LEAF CT, SPRINGFIELD IL 62711', '62711'));
+  });
+  const record = {
+    applicant: {}, garaging: { street: '125 Maple Leaf Dr', unit: 'Apt 4', city: 'Springfield', state: 'IL', zip: '62704' },
+    operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {},
+  };
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 8 });
+  assert.equal(address.value, '125 MAPLE LEAF DR APT 4, SPRINGFIELD IL 62704');
+  assert.equal(zip.value, '62704');
+  assert.ok(report.filled.some((x) => /home address/i.test(x.name)));
+  assert.equal(report.failed.length, 0);
+  assert.ok(!report.kept.some((x) => x.differs), 'suggested ZIP/city agree with the intake');
+});
+
+test('home address box without a suggestion is flagged for the agent', async () => {
+  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  const address = makeInput({ id: `f_U${'A'.repeat(32)}2A9_1_1`, ariaLabel: 'Home Address' });
+  h.document.body.append(address);
+  const record = { applicant: {}, garaging: { street: '1 Nowhere Rd', city: 'X', state: 'IL', zip: '60000' }, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 3 });
+  const failed = report.failed.find((x) => /home address/i.test(x.name));
+  assert.match(failed.reason, /no address suggestion/);
+  assert.equal(address.getAttribute('data-rater-autofill'), 'failed');
+});
+
+test('Add Vehicle inside the Add menu: the menu is opened first, then Add Vehicle clicked', async () => {
+  const h = harness({ search: '?pageName=VehicleSummary' });
+  const add = addButton(h, 'Add');
+  const addVehicle = addButton(h, 'Add Vehicle');
+  addVehicle._visible = false;
+  add.onclick = () => { addVehicle._visible = true; add._opened = (add._opened ?? 0) + 1; };
+  addVehicle.onclick = () => { addVehicle._clicked = true; };
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [{ type: 'Van', vin: '1FTBR3X87MKA12345' }], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 4 });
+  assert.equal(add._opened, 1);
+  assert.equal(addVehicle._clicked, true);
+  assert.deepEqual(Array.from(report.actions, (x) => x.id), ['addVehicle:0:menu', 'addVehicle:0']);
+});
+
+test('business type list picks For Hire Trucking when offered, else General Freight Trucking', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  for (const offered of [false, true]) {
+    const h = harness({ search: '?pageName=BECAPopup' });
+    const names = [
+      'Expediters/Hotshotters Express delivery of packages or time sensitive materials over a 50-mile radius.',
+      ...(offered ? ['For Hire Trucking Haul goods for others.'] : []),
+      'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).',
+    ];
+    const radios = names.map((value, i) => makeInput({ id: i ? `bt-${i}` : `f_U${'A'.repeat(32)}36_1_1`, name: 'bt_36', type: 'radio', value }));
+    h.document.body.append(...radios);
+    const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 3 });
+    const picked = radios.find((r) => r.checked)?.value ?? '';
+    assert.match(picked, offered ? /^For Hire Trucking/ : /^General Freight Trucking/);
+    assert.equal(report.failed.length, 0);
+  }
+});
+
+test('an empty unfamiliar question keeps Continue from being clicked, even when not marked required', async () => {
+  for (const answered of [false, true]) {
+    const h = harness({ search: '?pageName=MoreAboutBusiness' });
+    const odd = new SelectNode([{ text: '', value: '' }, { text: 'Yes', value: 'y' }, { text: 'No', value: 'n' }], { id: 'odd', ariaLabel: 'Some new optional question' });
+    if (answered) odd.value = 'n';
+    const next = addButton(h, 'Continue');
+    next.onclick = () => { next._clicked = true; };
+    h.document.body.append(odd);
+    const report = await h.kit.fill([], { maxRounds: 2, advance: { text: '^continue$' } });
+    assert.equal(!!next._clicked, answered, answered ? 'answered: Continue' : 'unanswered: wait for the agent');
+    assert.equal(report.blockers.some((b) => /Some new optional question/.test(b)), !answered);
+  }
+});
+
+test('a ZIP+4 from the carrier agrees with the intake ZIP', async () => {
+  const h = harness();
+  const zip = makeInput({ id: 'zip', ariaLabel: 'Zip code where the vehicle is located', value: '17101-1234' });
+  h.document.body.append(zip);
+  const report = await h.kit.fill([{ id: 'zip-step', selector: '#zip', path: 'garaging.zip', kind: 'text', value: '17101' }], { maxRounds: 1 });
+  assert.ok(!report.kept.some((x) => x.differs), 'not "the page says something different"');
+  assert.equal(report.blockers.length, 0);
+});
+
+test('Recalculate is skipped (not waited for) when the rates are current, and Print goes ahead', async () => {
+  const h = harness({ search: '?pageName=CoveragesRates' });
+  h.document.body.innerText = 'Total premium: $4,321.00';
+  const print = addButton(h, 'Print, Email, Fax');
+  print.onclick = () => { print._clicked = true; };
+  const report = await h.kit.fill([
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [], needsRecalculation: true },
+    { id: 'print', kind: 'action', action: 'print', text: '^print, email, fax$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [], needsPremium: true },
+  ], { maxRounds: 3 });
+  assert.equal(print._clicked, true);
+  assert.ok(!report.blocked.some((b) => b.id === 'recalculate'));
+});
+
+test('a helper that waited earlier in the fill and was clicked later does not keep Continue waiting', async () => {
+  const h = harness({ search: '?pageName=AddVehicle' });
+  const vin = makeInput({ id: 'vin', ariaLabel: 'VIN' });
+  const lookup = addButton(h, 'Lookup VIN');
+  lookup.onclick = () => { lookup._clicked = true; };
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  h.document.body.append(vin);
+  const report = await h.kit.fill([
+    { id: 'vin-step', selector: '#vin', path: 'vehicles[0].vin', kind: 'text', value: '1FTBR3X87MKA12345' },
+    { id: 'lookup', kind: 'action', action: 'lookupVin:0', text: '^lookup vin$', pages: [], after: ['vehicles[0].vin'], afterActions: [], afterPages: [], unless: [], immediate: true },
+  ], { maxRounds: 6, advance: { text: '^continue$' } });
+  assert.equal(lookup._clicked, true);
+  assert.equal(report.blocked.length, 0);
+  assert.equal(next._clicked, true, 'nothing left: Continue');
+});
+
+test('each filled answer carries its timing and side effects (revealed / removed / changed)', async () => {
+  const h = harness();
+  const first = makeInput({ id: 'first', ariaLabel: 'First question' });
+  const second = makeInput({ id: 'second', ariaLabel: 'Second question' });
+  // Answering the first reveals a new question, like a Progressive follow-up.
+  first.addEventListener('change', () => { if (!h.document.body.children.some((n) => n.id === 'follow')) h.document.body.append(makeInput({ id: 'follow', ariaLabel: 'Follow-up' })); });
+  h.document.body.append(first, second);
+  const report = await h.kit.fill([
+    { id: 'a', selector: '#first', path: 'x.first', kind: 'text', value: 'one' },
+    { id: 'b', selector: '#second', path: 'x.second', kind: 'text', value: 'two' },
+  ], { maxRounds: 4 });
+  const [a, b] = ['x.first', 'x.second'].map((p) => report.filled.find((x) => x.path === p));
+  assert.ok(a.timing.ms >= 0 && a.timing.settleMs >= 0);
+  assert.equal(a.timing.revealed, 1, 'the follow-up question appeared');
+  assert.equal(b.timing.revealed + b.timing.removed + b.timing.changed, 0, 'independent answer');
+});
+
+test('Google address autocomplete (hidden .pac-item list): first suggestion picked with arrow down + enter', async () => {
+  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  const street = makeInput({ id: `f_U${'A'.repeat(32)}27E_1_1`, ariaLabel: 'Street Address' });
+  const zip = makeInput({ id: `f_U${'A'.repeat(32)}284_1_1`, ariaLabel: 'Zip Code' });
+  const city = makeInput({ id: `f_U${'A'.repeat(32)}286_1_1`, ariaLabel: 'City' });
+  h.document.body.append(street, zip, city);
+  // Google keeps its list hidden while the box isn't focused; the items exist anyway.
+  const container = new FakeNode('div', { className: 'pac-container' });
+  container._visible = false;
+  h.document.body.append(container);
+  street.addEventListener('input', () => {
+    for (const t of ['5001 Sheridan Street Davenport, IA, USA', '5001 Sheridan Road Sunol, CA, USA']) {
+      const item = new FakeNode('div', { className: 'pac-item', textContent: t });
+      item._visible = false;
+      container.append(item);
+    }
+  });
+  let downs = 0;
+  street.addEventListener('keydown', (e) => {
+    if (e.keyCode === 40) downs++;
+    if (e.keyCode === 13 && downs) { street.value = '5001 Sheridan St'; zip.value = '52806'; city.value = 'Davenport'; }
+  });
+  const record = { applicant: {}, garaging: { street: '5001 Sheridan St', city: 'Davenport', state: 'IA', zip: '52806' }, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 8 });
+  assert.equal(street.value, '5001 Sheridan St');
+  assert.equal(zip.value, '52806');
+  assert.equal(report.failed.length, 0);
+  assert.ok(!report.kept.some((x) => x.differs));
 });

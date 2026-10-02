@@ -54,12 +54,25 @@ test('vehicles: values parsed, bad VIN flagged, N/A trailer rows dropped', () =>
   assert.equal(record.trailers.length, 0);
 });
 
-test('claims box holding other answers is flagged, ownership hint surfaced once', () => {
+test('claims box: first line answers claims, the rest are notes (no warning), ownership read from them', () => {
   assert.equal(record.claims.hasClaims, false, 'first line "No" answers the claims question');
-  assert.match(msgs, /claims\.text: Claims box has 4 lines/);
-  const own = warnings.filter((w) => w.path === 'operations.vehicleOwnership');
-  assert.equal(own.length, 1);
-  assert.match(own[0].msg, /Financed/);
+  assert.equal(record.claims.notes, '3 Years\nFinanced\nDec page will be provided');
+  assert.doesNotMatch(msgs, /claims\.text/);
+  assert.equal(record.operations.vehicleOwnership, 'Financed');
+  assert.equal(warnings.filter((w) => w.path === 'operations.vehicleOwnership').length, 0);
+});
+
+test('"Unlimited" radius needs no warning; an unreadable one still does', () => {
+  assert.equal(record.operations.radius, 'Unlimited');
+  assert.doesNotMatch(msgs, /operations\.radius/);
+  const odd = normalizeIntake({ ...raw, avg_radius: 'around town' }, { today: new Date('2026-09-30') });
+  assert.ok(odd.warnings.some((w) => w.code === 'radius.not-miles'));
+});
+
+test('claims box without a yes/no keeps everything as notes and leaves the claims answer open', () => {
+  const r = normalizeIntake({ ...raw, claims_details: 'Leased\nNew venture' }, { today: new Date('2026-09-30') }).record;
+  assert.equal(r.claims.hasClaims, null);
+  assert.equal(r.claims.notes, 'Leased\nNew venture');
 });
 
 test('coverage', () => {
@@ -137,7 +150,11 @@ test('progressive: intake answers are translated into Progressive wording', () =
   assert.equal(byQ('2B9D').value, 501, 'Unlimited radius picks "More than 500 miles"');
   assert.equal(byQ('2C05').value, 'Business Only');
   assert.equal(byQ('2C1A').value, true, 'has an MC number, so for-hire');
-  assert.equal(byQ('2CA7').value, 'No', 'loan/lease: always No');
+  assert.equal(byQ('2CA7').value, 'Yes - Loan', 'loan/lease: "Financed" in the claims-box notes');
+  const loan = (ownership) => buildPlan({ ...record, operations: { ...record.operations, vehicleOwnership: ownership } }, carrier, {}).find((s) => s.q === '2CA7').value;
+  assert.equal(loan('Owned'), 'No');
+  assert.equal(loan(null), 'No');
+  assert.equal(loan('Leased'), 'Yes - Lease');
   assert.equal(byQ('2CCE').value, '$0 to $2,000');
   assert.equal(byQ('216F').value, '$100000/$1000');
   assert.equal(byQ('28AC').value, 'IL');
@@ -177,13 +194,17 @@ test('progressive: fixes from the first live usage log', () => {
   assert.equal(byQ('2F6').value, false);
   assert.equal(byQ('2F6').note, null);
   // USDOT-registered name/addresses are picked over "Enter a different ...".
-  for (const q of ['22F', '277', '2A5']) {
+  for (const q of ['22F', '277']) {
     assert.equal(byQ(q).kind, 'pick-not');
     assert.equal(byQ(q).value.not, '^enter a different');
   }
-  assert.equal(byQ('2A5').value.prefer, 'primary business address');
-  // Without a registered address the owner's home address boxes get the intake's address.
-  assert.equal(byQ('2AA').value, '125 Maple Leaf Dr');
+  assert.equal(byQ('2A5').kind, 'first-option');
+  // Without a registered address the owner's home address box gets the whole address, then
+  // Progressive's first suggestion.
+  assert.equal(byQ('2AA').kind, 'address-suggest');
+  assert.equal(byQ('2AA').value, '125 Maple Leaf Dr Apt 4, Springfield, IL 62704');
+  assert.equal(byQ('2A9').value, '125 Maple Leaf Dr Apt 4, Springfield, IL 62704');
+  assert.equal(byQ('2091').value, 45000);
   assert.equal(byQ('2AE').value, '62704');
   assert.equal(byQ('28B9').value, 'ILS12345678901');
 });
@@ -238,7 +259,7 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.equal(federal.value, true, 'filings needed: Federal ticked');
   assert.equal(plan.find((s) => s.re === '^mcs ?-?90$').ignore, true);
   assert.equal(byQ('F11').value, true);
-  assert.equal(byQ('2CA7').value, 'No');
+  assert.equal(byQ('2CA7').value, 'Yes - Loan', 'financed (claims-box notes)');
   assert.equal(byQ('2CCE').value, '$0 to $2,000');
   assert.equal(byQ('2CE3').value, true);
   assert.equal(byQ('1FCD').value, '$1,000 Deductible');
@@ -250,12 +271,15 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.ok(new RegExp(carrier.advance.text, 'i').test('Continue'));
   assert.ok(!new RegExp(carrier.advance.text, 'i').test('Finish & Buy'));
   assert.equal(byQ('2CE8').value, 45000);
-  assert.equal(byQ('27E').value, '125 Maple Leaf Dr');
+  assert.equal(byQ('27E').kind, 'address-suggest');
+  assert.equal(byQ('27E').value, '125 Maple Leaf Dr Apt 4, Springfield, IL 62704');
+  assert.equal(byQ('27E').fallback, '125 Maple Leaf Dr');
   assert.equal(byQ('3E98').value, 'Automatic payments from checking account');
   assert.equal(byQ('32CC').value, true);
   const actions = plan.filter((s) => s.kind === 'action');
-  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'addVehicle:0', 'vehicleTile:0', 'lookupVin:0', 'openCargo', 'addCargoCommodity', 'doneCargo', 'recalculate', 'billPlan', 'print', 'print', 'printSend']);
+  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'addVehicle:0', 'addDriver:0', 'businessTypeSearch', 'vehicleTile:0', 'lookupVin:0', 'openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print', 'printSend']);
   assert.deepEqual(actions.find((a) => a.action === 'addVehicle:0').unlessActions, ['lookupVin:0']);
+  assert.equal(actions.find((a) => a.action === 'addVehicle:0').opener, '^add$');
   assert.ok(actions.find((a) => a.action === 'lookupVin:0').immediate);
   assert.equal(actions.find((a) => a.action === 'openCargo').near, 'motor truck cargo');
   const printRe = new RegExp(actions.find((a) => a.action === 'print').text, 'i');
@@ -287,4 +311,10 @@ test('a blank DOT/MC section is a valid absence, not a missing-data warning', ()
   assert.equal(noDot.record.applicant.dot, null);
   assert.equal(noDot.record.applicant.mcDotWithin60Days, null);
   assert.equal(noDot.warnings.some((warning) => warning.code === 'dot.missing'), false);
+});
+
+test('"NO POP" as the current carrier means not currently insured, without a warning', () => {
+  const r = normalizeIntake({ ...raw, ins_type_1: 'Select*', ins_carrier_1: 'NO POP ', ins_limit_1: 'Select*', ins_exp_1: 'n/a' }, { today: new Date('2026-09-30') });
+  assert.equal(r.record.priorInsurance.length, 0);
+  assert.ok(!r.warnings.some((w) => w.code === 'prior.incomplete'));
 });

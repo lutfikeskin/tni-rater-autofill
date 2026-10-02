@@ -1,5 +1,5 @@
 // Injected into rater pages (every frame) by the side panel. Classic script, no imports.
-// Exposes globalThis.__raterKit = { fill, capture, clear }.
+// Exposes globalThis.__raterKit = { fill, answer, markKey, aiBanner, capture, clear }.
 //
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
 // page already filled alone.
@@ -11,11 +11,12 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 17) return;
+  if (globalThis.__raterKit?.version === 24) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
-  const COLORS = { filled: '#16a34a', needs: '#d97706', failed: '#dc2626' };
+  // ai: an answer the AI assistant chose (accepted by the agent or auto-selected); check it.
+  const COLORS = { filled: '#16a34a', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed' };
   const STATE_NAMES = {
     AL: 'alabama', AK: 'alaska', AZ: 'arizona', AR: 'arkansas', CA: 'california', CO: 'colorado', CT: 'connecticut',
     DE: 'delaware', DC: 'district of columbia', FL: 'florida', GA: 'georgia', HI: 'hawaii', ID: 'idaho', IL: 'illinois',
@@ -160,16 +161,16 @@
   }
 
   // Wait until the page stops changing: not busy and no new nodes for `quietMs`.
-  async function settle({ quietMs = 400, maxMs = 15000 } = {}) {
+  async function settle({ quietMs = 250, maxMs = 15000 } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
     mo.observe(document.body, { subtree: true, childList: true });
     const start = Date.now();
     try {
-      await sleep(100);
+      await sleep(60);
       while (Date.now() - start < maxMs) {
         if (!pageBusy() && Date.now() - last >= quietMs) return true;
-        await sleep(120);
+        await sleep(60);
       }
       return false;
     } finally {
@@ -235,10 +236,24 @@
 
   const isPlaceholderOption = (text) => /^(-+|select\b|choose\b|please\b|\s*$)/i.test(oneLine(text));
 
+  // What the AI assistant needs to know about a field left for the agent: its choices (never
+  // agency staff lists), the heading it sits under, and what the page shows now.
+  function describe(c) {
+    const options = /agent|producer/i.test(c.label ?? '') ? []
+      : [...new Set(optionsOf(c).map((o) => o.text).filter((t) => t && !isPlaceholderOption(t)))].slice(0, 80);
+    return { options, section: sectionOf(c.el), current: c.kind === 'text' ? (c.el.value ? 'has a value' : null) : selectedText(c) };
+  }
+
+  // An ExtJS field's value. A combo whose list was never loaded (or was torn down by a redraw)
+  // throws from getValue(); its box text is then the best answer there is.
+  function cmpValue(cmp, el) {
+    try { return cmp.getValue(); } catch { return el?.value || null; }
+  }
+
   function hasValue(c) {
-    if (c.kind === 'radio') return c.options.some((o) => (o.cmp ? !!o.cmp.getValue() : o.el.checked));
+    if (c.kind === 'radio') return c.options.some((o) => (o.cmp ? !!cmpValue(o.cmp, o.el) : o.el.checked));
     if (c.cmp && c.kind === 'select') {
-      const v = c.cmp.getValue();
+      const v = cmpValue(c.cmp, c.el);
       return v != null && v !== '' && !isPlaceholderOption(c.cmp.getRawValue?.() ?? '');
     }
     if (c.kind === 'text') return c.el.value.trim() !== '';
@@ -249,7 +264,7 @@
 
   function selectedText(c) {
     if (c.kind === 'checkbox') return c.el.checked ? 'checked' : 'unchecked';
-    if (c.kind === 'radio') return c.options.find((o) => (o.cmp ? o.cmp.getValue() : o.el.checked))?.text ?? null;
+    if (c.kind === 'radio') return c.options.find((o) => (o.cmp ? cmpValue(o.cmp, o.el) : o.el.checked))?.text ?? null;
     if (c.cmp) return oneLine(c.cmp.getRawValue?.() ?? '') || null;
     const o = c.el.selectedOptions?.[0];
     return o && !isPlaceholderOption(o.text) ? oneLine(o.text) : null;
@@ -268,7 +283,8 @@
   function loose(v) {
     const s = String(v ?? '').trim();
     const m = s.match(/^(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})$/) ?? s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (m) return m[0].startsWith(m[3]) ? `d${m[3]}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}` : `d${m[1]}${m[2]}${m[3]}`;
+    // 1/5/1980, 01/05/1980 and 1980-01-05 are the same date.
+    if (m) return m[0].startsWith(m[3]) ? `d${m[3]}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}` : `d${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}${m[3]}`;
     return s.toLowerCase().replace(/[^a-z0-9]/g, '');
   }
 
@@ -365,6 +381,8 @@
         || (step.value.fallback && usable.find((o) => new RegExp(step.value.fallback, 'i').test(o.text))) || null;
     }
     if (step.kind === 'selected-option') return usable.find((o) => /^selected\b/i.test(o.text)) ?? null;
+    // Always the page's first choice (e.g. the first offered home address).
+    if (step.kind === 'first-option') return usable[0] ?? null;
     const cands = candidates(step);
     for (const c of cands) {
       const hit = usable.find((o) => squash(o.text) === c || squash(o.value) === c);
@@ -446,8 +464,80 @@
     options: options.filter((o) => !isPlaceholderOption(o.text)).map((o) => o.text).slice(0, 25),
   });
 
+  // Address boxes with the carrier's own address suggestions: type the whole one-line address,
+  // wait for the suggestion list, pick its first entry (which fills street, city and ZIP).
+  // No suggestion means the address needs the agent; the ZIP/city rules then check the rest.
+  const SUGGESTION_SELECTOR = '[role=option], .x-boundlist-item, .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li';
+  const shownSuggestions = () => deepQueryAll(document, SUGGESTION_SELECTOR).filter((el) => el.getClientRects().length && oneLine(el.textContent));
+  async function applyAddress(step, c) {
+    const text = String(step.value);
+    const { el, cmp } = c;
+    const before = new Set(shownSuggestions());
+    // Google's address autocomplete (Progressive uses it): its list (.pac-item) is only shown
+    // while the box has focus, which it doesn't while the agent works in the side panel. The
+    // suggestions are still there, hidden; they're picked the way the keyboard does (↓, Enter).
+    const pacBefore = new Map(deepQueryAll(document, '.pac-item').map((x) => [x, x.textContent]));
+    const houseNumber = text.match(/^\s*(\d+)/)?.[1] ?? null;
+    const freshPac = () => deepQueryAll(document, '.pac-item').find((x) => pacBefore.get(x) !== x.textContent && oneLine(x.textContent) && (!houseNumber || x.textContent.includes(houseNumber))) ?? null;
+    el.focus?.({ preventScroll: true });
+    el.dispatchEvent(new Event('focus'));
+    if (cmp) cmp.setValue(text);
+    else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, text);
+    // Suggestion lists listen for typing: send the events typing would.
+    for (const type of ['input', 'keydown', 'keyup']) el.dispatchEvent(new Event(type, { bubbles: true }));
+    try { cmp?.fireEvent?.('change', cmp, text); } catch { /* page handler expected a real event */ }
+    // What the page adds while it thinks: when no known list shows up, the reason names the new
+    // elements (tag.class), so the carrier's suggestion list can be recognised next time.
+    const added = [];
+    const mo = typeof MutationObserver === 'function' ? new MutationObserver((records) => {
+      for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1 && added.length < 40) added.push(n);
+    }) : null;
+    mo?.observe(document.body, { subtree: true, childList: true });
+    let first = null;
+    try {
+      for (const start = Date.now(); !first && Date.now() - start < 4000;) {
+        await sleep(200);
+        first = freshPac() ?? shownSuggestions().find((x) => !before.has(x)) ?? null;
+      }
+    } finally {
+      mo?.disconnect();
+    }
+    if (!first) {
+      // A box with its own city/ZIP boxes gets back just the street.
+      if (step.fallback) {
+        if (cmp) cmp.setValue(step.fallback);
+        else Object.getOwnPropertyDescriptor(c.el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value').set.call(el, step.fallback);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      el.blur?.();
+      const seen = [...new Set(added.filter((n) => n.getClientRects?.().length).map((n) => `${n.tagName.toLowerCase()}${n.id ? `#${String(n.id).replace(/\d{3,}/g, '#')}` : ''}${typeof n.className === 'string' && n.className.trim() ? `.${n.className.trim().split(/\s+/).slice(0, 3).join('.')}` : ''}${n.getAttribute?.('role') ? `[role=${n.getAttribute('role')}]` : ''}`))].slice(0, 8);
+      return { ok: false, reason: `the page offered no address suggestion; check the address, city and ZIP${seen.length ? ` (new on the page: ${seen.join(', ')})` : ''}` };
+    }
+    const shown = oneLine(first.textContent).slice(0, 120);
+    if (first.classList?.contains('pac-item') || / pac-item /.test(` ${first.className} `)) {
+      for (const [key, code] of [['ArrowDown', 40], ['Enter', 13]]) el.dispatchEvent(keyEvent('keydown', key, code));
+      await settle({ quietMs: 300, maxMs: 5000 });
+      // Still the typed text: Google didn't take the keys; click the suggestion instead.
+      if (el.value !== text) return { ok: true, shown };
+    }
+    for (const type of ['mousedown', 'mouseup']) first.dispatchEvent(new Event(type, { bubbles: true }));
+    first.click?.();
+    await settle({ quietMs: 300, maxMs: 5000 });
+    return { ok: true, shown };
+  }
+
+  // A key press as page scripts read it (Google's autocomplete looks at keyCode).
+  function keyEvent(type, key, code) {
+    const e = typeof KeyboardEvent === 'function' ? new KeyboardEvent(type, { key, bubbles: true, cancelable: true }) : new Event(type, { bubbles: true });
+    for (const prop of ['keyCode', 'which']) { try { Object.defineProperty(e, prop, { get: () => code }); } catch { /* read-only */ } }
+    if (!('key' in e)) e.key = key;
+    return e;
+  }
+
   // Returns { ok: true, shown } or { ok: false, reason, options? }.
   async function apply(step, c) {
+    if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
     if (c.kind === 'text') {
@@ -554,13 +644,14 @@
         el.dataset.raPrevTitle = el.getAttribute('title') ?? '';
       }
       el.setAttribute(MARK, status);
-      el.style.outline = `2px ${status === 'filled' ? 'solid' : 'dashed'} ${COLORS[status]}`;
+      el.style.outline = `2px ${status === 'filled' || status === 'ai' ? 'solid' : 'dashed'} ${COLORS[status]}`;
       el.style.outlineOffset = '1px';
       if (note) el.setAttribute('title', `Rater Autofill: ${note}`);
     }
   }
 
   function clear() {
+    aiBanner([]);
     let n = 0;
     for (const el of deepQueryAll(document, `[${MARK}]`)) {
       el.style.outline = el.dataset.raPrevOutline ?? '';
@@ -575,10 +666,14 @@
 
   // Does the field already hold the answer we'd give?
   function agreesWith(step, c) {
-    if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!c.cmp.getValue() : c.el.checked) === step.value;
+    // The chosen suggestion rewrites the typed address in the page's own format.
+    if (step.kind === 'address-suggest') return c.kind === 'text' && hasValue(c);
+    if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) === step.value;
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
       if (loose(c.el.value) === loose(textFor(step, c))) return true;
+      // Carriers standardize addresses to ZIP+4: 17101-1234 is the intake's 17101.
+      if (/zip/i.test(step.path ?? '') && /^\d{5}$/.test(String(step.value))) return String(c.el.value).replace(/\D/g, '').slice(0, 5) === String(step.value);
       if (step.kind === 'money') {
         const amount = (v) => /^\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*$/.test(String(v)) ? Number(String(v).replace(/[$,\s]/g, '')) : null;
         const actual = amount(c.el.value), wanted = amount(step.value);
@@ -674,6 +769,11 @@
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
+    const openersTried = new Set();
+    // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
+    let ajaxCount = 0;
+    const countAjax = () => { ajaxCount++; };
+    try { ext()?.Ajax?.on?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
     const visited = new Set(visitedPages);
     const startPage = currentPage();
     if (!keepMarks) clear();
@@ -715,12 +815,12 @@
       const flag = (list, item) => { if (!list.some((x) => x.key === item.key && x.label === item.label)) list.push(item); };
       for (const c of controls) {
         if (mapped.has(c) || quiet.has(c.q) || skipKeys.has(fieldKey(c))) continue;
-        flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, controlKind: c.kind, required: c.required });
+        flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, controlKind: c.kind, required: c.required, ...describe(c) });
         mark(c, 'needs', 'Unfamiliar question — left for you.');
       }
       for (const c of controls) {
         if (!mapped.has(c) || skipKeys.has(fieldKey(c)) || !hasValue(c) || !invalidControl(c)) continue;
-        flag(report.failed, { label: c.label, key: fieldKey(c), q: c.q, reason: 'The page marks this answer invalid.' });
+        flag(report.failed, { label: c.label, key: fieldKey(c), q: c.q, controlKind: c.kind, reason: 'The page marks this answer invalid.', ...describe(c) });
         mark(c, 'failed', 'the page marks this answer invalid');
       }
       for (const { step, control } of allPairs) {
@@ -761,7 +861,7 @@
         if (step.ignore) { handled.set(step.id, { status: null }); continue; }
         if (step.note || step.value == null) {
           if (quiet.has(c.q)) { handled.set(step.id, { status: null }); continue; }
-          report.noData.push({ ...item, note: step.note });
+          report.noData.push({ ...item, note: step.note, ...describe(c) });
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
           continue;
         }
@@ -774,20 +874,38 @@
           handled.set(step.id, { status: null });
           continue;
         }
+        // Timing and side effects of this answer, for working out which questions could be
+        // answered together: did it reach the server, did questions appear or disappear, did
+        // other answers change.
+        const snap = (list) => new Map(list.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
+        const before = snap(controls);
+        const t0 = Date.now();
+        const requests0 = ajaxCount;
         let result;
         try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
+        const tApplied = Date.now();
         if (result.ok) {
-          const settled = await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
+          const settled = await settle(serverBacked ? {} : { quietMs: 150, maxMs: 3000 });
           const currentControls = collectControls();
+          const after = snap(currentControls);
+          const mine = `${fieldKey(c)}|${c.label}`;
+          item.timing = {
+            ms: Date.now() - t0, settleMs: Date.now() - tApplied, ajax: ajaxCount - requests0,
+            revealed: [...after.keys()].filter((k) => !before.has(k)).length,
+            removed: [...before.keys()].filter((k) => !after.has(k)).length,
+            changed: [...before.keys()].filter((k) => k !== mine && after.has(k) && after.get(k) !== before.get(k)).length,
+          };
           const fresh = assign(currentControls, plan).find((p) => p.step.id === step.id)?.control;
-          const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : summaryAccepted(step, currentControls);
+          // An address box may collapse once a suggestion is picked; the ZIP/city rules check it.
+          const accepted = fresh ? !invalidControl(fresh) && agreesWith(step, fresh) : step.kind === 'address-suggest' || summaryAccepted(step, currentControls);
           if (!settled || !accepted || report.halted) {
             result = { ok: false, reason: !settled ? 'the page did not settle after the answer' : !fresh ? 'the field disappeared after the answer; check the page' : report.halted ? 'the agent interrupted filling' : 'the page did not keep the answer; check it' };
           }
         }
         if (result.ok) {
           if (currentPage() === 'CoveragesRates') {
-            for (const id of ['recalculate', 'billPlan', 'print', 'printSend', ...(/^21/.test(c.q ?? '') ? ['doneCargo'] : [])]) {
+            // The bill plan (payment method) stays chosen; the premium needs recalculating.
+            for (const id of ['recalculate', 'print', 'printSend', ...(/^21/.test(c.q ?? '') ? ['doneCargo'] : [])]) {
               clicked.delete(id);
               report.actions = report.actions.filter((x) => x.id !== id);
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
@@ -798,10 +916,13 @@
           changed = true;
           break;
         } else {
-          report.failed.push({ ...item, reason: result.reason, options: result.options });
+          report.failed.push({ ...item, reason: result.reason, ...describe(c) });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
           retry = true;
           if (report.halted) break;
+          // On pages that redraw after every answer, a failed answer may have redrawn it too: the
+          // controls read this round may be gone, so read the page again before the next one.
+          if (serverBacked) break;
         }
       }
       if (report.halted) break;
@@ -856,8 +977,11 @@
           continue;
         }
         if (a.unless.some(has) || (a.unlessActions ?? []).some((id) => clicked.has(id))) { clicked.add(a.action); continue; }
+        // Recalculate only when the rates are out of date; otherwise it isn't waited for.
+        if (a.needsRecalculation && !ratesStale()) continue;
         const button = findButton(a);
-        if (!button) continue;
+        // Menu items ("Add Vehicle" under "Add") only show once their menu button is opened.
+        if (!button && !a.opener) continue;
         const ready = (!a.afterAny?.length || a.afterAny.some(has))
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
@@ -866,6 +990,14 @@
           && (!a.afterPages.length || a.afterPages.some((p) => visited.has(p)))
           && (!a.afterValue || pairs.some(({ step, control }) => step.path === a.afterValue[0] && new RegExp(a.afterValue[1], 'i').test(selectedText(control) ?? '')));
         if (!ready) { blocked.push(a.action); report.blocked.push({ id: a.action, why: 'waiting for its prerequisites' }); continue; }
+        if (!button) {
+          const opener = !openersTried.has(a.action) && findButton({ text: a.opener });
+          if (!opener) continue;
+          openersTried.add(a.action);
+          report.actions.push({ id: `${a.action}:menu`, text: oneLine(opener.value || opener.textContent).slice(0, 60) });
+          opener.click();
+          return true;
+        }
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: oneLine(button.value || button.textContent).slice(0, 60) });
         pendingAction = a;
@@ -890,13 +1022,17 @@
     for (const c of controls) {
       if (!matched.has(c) && report.unknown.some((x) => x.key === fieldKey(c)) && !skipKeys.has(fieldKey(c))) mark(c, 'needs', 'Unfamiliar question — left for you.');
       if (!matched.has(c) && c.required && !hasValue(c) && !quiet.has(c.q) && !skipKeys.has(fieldKey(c))) {
-        report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind });
+        report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
         mark(c, 'needs', 'required, and not on the intake form');
       }
     }
+    // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
+    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findIndex((x) => x.id === b.id) === i);
     // Anything the agent should look at before moving on.
     report.blockers = [
-      ...report.unknown.filter((x) => x.required).map((x) => `unfamiliar: ${x.label}`),
+      // An unfamiliar question with no answer yet is left for the agent even when the page
+      // doesn't mark it required (Progressive validates some only on Continue).
+      ...report.unknown.filter((x) => x.required || x.current == null).map((x) => `unfamiliar: ${x.label}`),
       ...report.noData.map((x) => `needs you: ${x.label}`),
       ...report.failed.map((x) => `failed: ${x.label}`),
       ...report.leftRequired.map((x) => `required: ${x.label}`),
@@ -914,10 +1050,80 @@
     }
     return report;
     } finally {
+      try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
       for (const type of gestureTypes) document.removeEventListener(type, trackGesture, true);
       document.removeEventListener('input', protectEdit, true);
       document.removeEventListener('change', protectEdit, true);
     }
+  }
+
+  // Puts answers the agent accepted from the AI assistant (or that it was allowed to pick itself)
+  // into their fields: [{ key, label, value, note }], `value` being one of the field's option
+  // texts, 'checked'/'unchecked' for a checkbox, or text. Same apply-and-verify path as fill():
+  // an answer counts only once the page has settled and still shows it.
+  async function answer(answers) {
+    const serverBacked = !!ext();
+    const find = (key, label) => {
+      const same = collectControls().filter((c) => fieldKey(c) === key);
+      return same.length > 1 ? same.find((c) => c.label === label) ?? null : same[0] ?? null;
+    };
+    const results = [];
+    for (const a of answers) {
+      const c = find(a.key, a.label);
+      if (!c) { results.push({ key: a.key, label: a.label, ok: false, reason: 'the question is no longer on this page' }); continue; }
+      const step = c.kind === 'checkbox'
+        ? { id: `ai:${a.key}`, name: 'AI suggestion', kind: 'bool', value: /^(checked|yes|true)$/i.test(String(a.value)) }
+        : { id: `ai:${a.key}`, name: 'AI suggestion', value: String(a.value) };
+      let result;
+      try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
+      if (result.ok) {
+        const settled = await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
+        const fresh = find(a.key, a.label);
+        if (!settled) result = { ok: false, reason: 'the page did not settle after the answer' };
+        else if (!fresh) result = { ok: false, reason: 'the field disappeared after the answer; check the page' };
+        else if (invalidControl(fresh) || !agreesWith(step, fresh)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
+        else mark(fresh, 'ai', a.note ?? 'answer suggested by the AI assistant — check it');
+      }
+      if (!result.ok) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `AI answer not accepted: ${result.reason}`); }
+      results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, reason: result.reason ?? null });
+    }
+    return results;
+  }
+
+  // Re-marks one field (e.g. an AI choice the agent rejected). Returns whether it was found.
+  function markKey(key, label, status, note) {
+    const same = collectControls().filter((c) => fieldKey(c) === key);
+    const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
+    if (c) mark(c, status, note);
+    return !!c;
+  }
+
+  // A small note at the bottom of the rater page listing what the AI selected and still needs
+  // the agent's approval in the side panel. No buttons or inputs, so the fill engine and the
+  // page's own scripts never pick it up. An empty list removes it.
+  const BANNER_ID = 'rater-autofill-ai-banner';
+  function aiBanner(lines) {
+    if (window !== window.top) return;
+    document.getElementById(BANNER_ID)?.remove();
+    if (!lines?.length) return;
+    const box = document.createElement('div');
+    box.id = BANNER_ID;
+    box.setAttribute('role', 'status');
+    box.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;max-width:360px;padding:10px 12px;'
+      + 'background:#f5f1ff;border:2px solid #7c3aed;border-radius:8px;color:#2e1065;font:13px/1.4 system-ui,sans-serif;'
+      + 'box-shadow:0 4px 14px rgba(0,0,0,.15)';
+    const head = document.createElement('div');
+    head.style.cssText = 'font-weight:700;margin-bottom:4px';
+    head.textContent = `AI selected ${lines.length} answer${lines.length === 1 ? '' : 's'} on this page (purple). Approve in the side panel before Continue.`;
+    const list = document.createElement('ul');
+    list.style.cssText = 'margin:0;padding-left:18px';
+    for (const line of lines.slice(0, 12)) {
+      const li = document.createElement('li');
+      li.textContent = line;
+      list.append(li);
+    }
+    box.append(head, list);
+    document.body.append(box);
   }
 
   // Describes this page's form so exact mappings can be written. Records no typed values (only
@@ -978,5 +1184,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 17, fill, capture, clear };
+  globalThis.__raterKit = { version: 24, fill, answer, markKey, aiBanner, capture, clear };
 })();

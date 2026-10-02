@@ -140,6 +140,8 @@ export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms,
     unknown: all('unknown').length,
     clicked: all('actions').map((a) => a.id),
     blockers: all('blockers').length,
+    // Why the page wasn't continued: "differs: Zip code", "button: recalculate", … (no values).
+    blockerList: all('blockers').slice(0, 12).map((b) => redact(String(b)).slice(0, 120)),
     advanced: frames.find((f) => f.advanced)?.advanced ?? null,
   }];
   const item = (result) => (x) => ({
@@ -147,6 +149,8 @@ export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms,
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
     reason: x.reason ? redact(x.reason) : undefined,
     options: x.options?.map(redact),
+    // Per-answer timing and side effects (filled answers only): see scripts/review.mjs, Speed.
+    ...(x.timing ? { timing: x.timing } : {}),
   });
   events.push(...all('filled').map(item('filled')), ...all('failed').map(item('failed')), ...all('noData').map(item('noData')),
     ...all('kept').map(item('kept')), ...all('leftRequired').map(item('leftRequired')), ...all('unknown').map(item('unfamiliar')));

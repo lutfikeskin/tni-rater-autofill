@@ -1,6 +1,6 @@
 {
   "name": "tni-rater-autofill",
-  "version": "0.1.0",
+  "version": "0.3.7",
   "private": true,
   "type": "module",
   "description": "Chrome extension that fills Progressive and GEICO rater pages from a TNI quote application PDF",
@@ -12,9 +12,13 @@
     "layouts": "node scripts/build-layouts.mjs server-data",
     "summary": "node scripts/summarize-usage.mjs server-data",
     "replay": "echo 'Open http://localhost:8792/test/replay/' && python3 -m http.server 8792 --bind 127.0.0.1",
-    "bakeoff:score": "node scripts/bakeoff-score.mjs test/bakeoff/answer-key.json"
+    "bakeoff:score": "node scripts/bakeoff-score.mjs test/bakeoff/answer-key.json",
+    "package": "node scripts/package.mjs",
+    "review": "node scripts/review.mjs server-data",
+    "e2e": "node scripts/e2e.mjs"
   },
   "devDependencies": {
-    "pdfjs-dist": "^4.10.38"
+    "pdfjs-dist": "^4.10.38",
+    "playwright": "^1.63.0"
   }
 }

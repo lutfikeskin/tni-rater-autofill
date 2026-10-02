@@ -23,13 +23,13 @@ Leave a question as it is when the rules and the intake don't say anything about
 - Enter the USDOT number (digits only), then click **Verify DOT**.
 - **Does this USDOT Number belong to the customer's business?** Yes.
 - **Business Name** and **Business Address**: pick the USDOT-registered option, not "Enter a different…".
-- **Home Address**: the option marked "(Primary Business Address)".
+- **Home Address**: always the first option. If it's "Enter a different address", type the whole address in the address box and pick the first suggestion.
 - **How is the business structured?** "Corporation or LLC / Non-Profit" when the company name ends in LLC, Inc, Corp or Co.
 - **Business type list**: "For Hire Trucking" for expediters. **Type of Trucker**: "Other For-Hire Trucking" for expediters. For other businesses, use what the intake says.
 - **Business owner's first and last name** and **date of birth**: from the intake. The owner is the driver with the same last name; use that driver row's first name exactly as written.
 - **Phone**: split into area code, prefix and line number.
 - **Hazardous material placard?**: from the intake.
-- Leave empty: middle initial, suffix, DBA name (unless the intake has one), quote vendor code. Don't touch agent code or policy start date.
+- Leave empty: middle initial, suffix, DBA name (always), quote vendor code. Don't touch agent code or policy start date.
 
 ### MostCommonVehicles (vehicle picker)
 - Click the tile for the intake's vehicle type. A "Van" is **Cargo Van**.
@@ -40,7 +40,7 @@ Leave a question as it is when the rules and the intake don't say anything about
 - **Farthest one-way distance**: the intake's radius in miles. "Unlimited" or long haul is **More than 500 miles**.
 - **Business, personal or both?**: "Business Only" unless the intake says the vehicle is also for personal use.
 - **Haul goods for hire?**: Yes when the client has an MC number.
-- **Loan/lease?**: always No.
+- **Loan/lease?**: "Yes - Loan" when the intake says the vehicle is financed (the claims box sometimes says so), "Yes - Lease" when leased, otherwise No.
 - **Comprehensive or collision?**: Yes.
 - **Total value of permanently attached equipment**: always "$0 to $2,000". Also tick **Vehicle has no equipment**.
 - **If this vehicle was sold today, how much would it be?**: the intake's vehicle value, as a plain number (e.g. 45000).
@@ -74,10 +74,11 @@ Leave a question as it is when the rules and the intake don't say anything about
   - Commodity category "Consumer Goods", commodity "Other Consumer Goods" for "General freight".
   - Motor truck cargo limit: the intake's limit and deductible, e.g. "$100K/$1K Ded" is "$100k with a $1,000 Deductible" (both cargo dropdowns).
 - Leave the other coverages as they are.
-- Then click **View Bill plan options**.
+- **UMPD limit**: Not selected. Comprehensive and collision deductibles: $1,000.
+- Then click **View Bill plan options** (no GL requested).
 
 ### ChangePaymentPlan
-- **Payment method**: Automatic payments. Then click **Print, Email, Fax**.
+- **Payment method**: Automatic payments. Then go back to the rates page (Continue), click **Recalculate**, then **Print, Email, Fax**.
 
 ### PrintEmailFax
 - Choose **Insurance Quote (with all bill plans)** and tick **Print**. Click **Print/Send**, then press **Finish & save results**.

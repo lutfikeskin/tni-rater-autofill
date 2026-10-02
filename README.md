@@ -1,10 +1,12 @@
 # TNI Rater Autofill
 
-A Chrome extension that reads a client's **TNI Commercial Insurance Quote Application** (the fillable PDF) and fills in Progressive and GEICO rater pages from it.
+A Chrome extension that reads a client's **TNI Commercial Insurance Quote Application** (the fillable PDF) and fills in Progressive and GEICO rater pages from it. An optional AI assistant (OpenAI GPT-6 Luna) suggests answers, with a short tip, for the questions the rules leave for the agent.
 
 The agent stays in control. The extension fills what it can on the page in front of them and marks everything else. It never clicks Next or Submit, never touches password fields, and by default leaves anything the rater already filled in (for example from a DOT lookup) alone.
 
-## Install (for testing)
+## Install
+
+Agents install it from its private Chrome Web Store listing (see [docs/chrome-web-store.md](docs/chrome-web-store.md)). For development:
 
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and pick this folder.
@@ -22,7 +24,13 @@ The agent stays in control. The extension fills what it can on the page in front
    - **red dashed**: couldn't fill (for example, no dropdown option matched). The side panel lists the options it saw.
 5. Review, then click Next yourself and repeat on the next page.
 
-The client data lives only in Chrome's session storage (in memory). It never leaves the computer, and it's cleared when Chrome closes or you click **Clear**.
+### AI assistant
+
+Turn it on under **AI assistant** in the side panel and paste your OpenAI API key (model: `gpt-6-luna` unless you set another). After each fill it looks at the yellow, red and amber questions and suggests an answer with a one-line reason; **Accept** puts it in (marked **purple** on the page), **Dismiss** drops it. It only picks from the page's own options, a cited intake value must exist, and the page must keep the answer, or it's marked red. MVR/CLUE orders, driver exclusions, signatures/authorisations, payment details and typed identifiers are never sent to it. **Let the AI make selections on the page** lets it pick dropdown/radio/checkbox answers itself (not when it's unsure, never typed text). Its picks are listed at the end of the panel's report and in a note at the bottom of the rater page, and Continue is not clicked until the agent approves them (**Approve and continue**, or **Reject** one to answer it yourself). Architecture, safety rules and roadmap: [docs/ai-assistant.md](docs/ai-assistant.md).
+
+With the AI assistant on, the questions on the page, the intake and TNI's rules are sent to OpenAI with the agent's key.
+
+The client data lives only in Chrome's session storage (in memory) and is cleared when Chrome closes or you click **Clear**. It leaves the computer only when the AI assistant is on (sent to OpenAI with the agent's key).
 
 ## Setting up a carrier: page captures
 
@@ -75,9 +83,10 @@ Plain Node, no dependencies. It listens on `127.0.0.1:8787` and appends events t
 
 ### Weekly review
 
-Every script reads the server folder, exported logs, or both:
+Every script reads the server folder, exported logs, or both. `npm run review` runs them all and adds what the AI assistant did and the agents' problem reports, in one Markdown file (`reviews/review-<date>.md`, covering what's new since the last review):
 
 ```bash
+npm run review    # everything below, plus AI accept/reject per question and problem reports
 npm run learn     # rule suggestions: standard answers, per-state answers, new intake mappings, rules agents keep correcting
 npm run layouts   # carrier page layouts per state/product -> captures/<carrier>/generated/
 npm run summary   # intake problems, corrections, failures, time per page
@@ -94,6 +103,15 @@ npm run replay
 
 Open `http://localhost:8792/test/replay/`. It rebuilds a carrier's pages from any layout file (the hand-made `captures/progressive/*.json`, or one from `npm run layouts`) as working ExtJS pages with Progressive-style ids and server round-trips, then runs the real fill engine. **Fill every page** gives a coverage table: questions per page, how many were filled, what failed, and which have no rule yet. It's built from recorded structure only; no carrier HTML or code is copied.
 
+### Replay regression run (before every release)
+
+```bash
+npm run e2e              # every recorded layout (state/product), real fill engine, real browser
+npm run e2e -- --update  # accept the current results as the baseline
+```
+
+Fills every layout (bake-off course, captures, and the per-state layouts from `npm run layouts`) on the replay page in Playwright's Chromium and compares with `test/e2e-baseline.json`: fewer answers filled, a new failure, or Continue clicked with questions still open fails the run. Report: `reviews/e2e-<date>.md`. One-time setup: `npx playwright install chromium`. The replay page doesn't imitate Progressive's address suggestions, so those stay "failed" there.
+
 ## Files
 
 | Path | What it does |
@@ -105,7 +123,8 @@ Open `http://localhost:8792/test/replay/`. It rebuilds a carrier's pages from an
 | `src/rules.js` | Generic label → field rules |
 | `src/carriers.js`, `src/carriers/` | Per-carrier domains and exact mappings (Progressive in `carriers/progressive.js`) |
 | `src/plan.js` | Resolves values into fill steps; builds the capture redaction list |
-| `src/content/pagekit.js` | Runs inside the rater page: find fields, fill, highlight, capture |
+| `src/content/pagekit.js` | Runs inside the rater page: find fields, fill, put in AI answers, highlight, capture |
+| `src/ai/` | AI assistant: request/response checks (`assist.js`) and TNI's rules as the model reads them (`tni-rules.js`) |
 | `captures/` | Page layouts captured from real quotes (no client data) |
 | `src/usage.js`, `sidepanel/usage-log.js`, `src/content/recorder.js` | Usage log: event building, local storage/export, page recorder |
 | `server/` | Usage collection server |
@@ -113,6 +132,7 @@ Open `http://localhost:8792/test/replay/`. It rebuilds a carrier's pages from an
 | `test/replay/` | Replay test pages built from layout files |
 | `test/tools/` | Capture snippets for following a live quote without the extension |
 | `lib/` | pdf.js, vendored (MV3 can't load remote code). Refresh with `npm run vendor`. |
+| `icons/`, `scripts/package.mjs` | Store icons; `npm run package` builds the Web Store zip in `dist/` |
 
 ## Development
 

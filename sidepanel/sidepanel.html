@@ -9,12 +9,14 @@
 <body>
   <header class="top">
     <img class="top-logo" src="logo.png" alt="">
-    <h1 class="brand-text"><strong>Truckers National</strong><span>Rater Autofill</span></h1>
+    <h1 class="brand-text"><strong>Truckers National</strong><span>Rater Autofill <b id="version"></b></span></h1>
     <span class="top-right">
       <span id="recording" class="recording" title="How this extension is used on rater pages is recorded (no client details). See Usage log below." hidden>● Recording usage</span>
       <span id="site" class="site">…</span>
     </span>
   </header>
+  <!-- Setup problems that silently cost data or features: no usage server, no initials, no AI key. -->
+  <div id="health" class="health" role="status" hidden></div>
 
   <main>
     <section id="load" class="drop" tabindex="0">
@@ -39,6 +41,19 @@
       <div id="warnings"></div>
       <div id="sections"></div>
     </section>
+
+    <details id="ai" class="usage">
+      <summary>AI assistant</summary>
+      <div class="usage-body">
+        <p class="small">After each fill, the AI looks at the questions left for you (yellow, red and amber) and suggests an answer with a short tip. It only picks from the page's own options, and nothing goes in until you click Accept.</p>
+        <p class="small muted">The questions on the page, the intake and TNI's quoting rules are sent to OpenAI with your API key. MVR/CLUE orders, driver exclusions, signatures and payment details are never sent.</p>
+        <label class="check"><input type="checkbox" id="ai-on"> Suggest answers for questions left for me</label>
+        <label class="check"><input type="checkbox" id="ai-auto"> Let the AI make selections on the page (purple; Continue waits for your approval)</label>
+        <label class="usage-agent small">API key <input id="ai-key" type="password" placeholder="sk-…" autocomplete="off"></label>
+        <label class="usage-agent small">Model <input id="ai-model" type="text" placeholder="gpt-6-luna" autocomplete="off" spellcheck="false"></label>
+        <p id="ai-note" class="small muted" aria-live="polite"></p>
+      </div>
+    </details>
 
     <details id="usage" class="usage">
       <summary>Usage log</summary>

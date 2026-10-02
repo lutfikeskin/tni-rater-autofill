@@ -83,7 +83,9 @@ test('Progressive standard answers: USDOT belongs to the business, filings, MCS-
   const plan = buildPlan(record, progressive, {});
   assert.equal(byQ(plan, '2C1A').value, true, 'for-hire is the supported workflow default');
   assert.equal(byQ(plan, '29F').value, true, 'owner-as-driver follows the intake');
-  assert.equal(byQ(plan, '2A5').value.prefer, 'primary business address');
+  assert.equal(byQ(plan, '2A5').kind, 'first-option', 'home address: always the first choice');
+  assert.equal(byQ(plan, '208A').value, true, 'no equipment, other-state id');
+  assert.equal(byQ(plan, '1FDD').value, 'Not selected', 'UMPD');
   assert.equal(byQ(plan, '20F').value, true);
   assert.equal(byQ(plan, '20F').note, null);
   assert.equal(byQ(plan, 'F11').value, true);
@@ -120,10 +122,25 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const actions = plan.filter((step) => step.kind === 'action');
   const recalc = actions.find((step) => step.action === 'recalculate');
   const bill = actions.find((step) => step.action === 'billPlan');
-  assert.deepEqual(recalc.afterActions, ['doneCargo']);
+  // Cargo, then bill plan options (automatic payments), back to Rates, then Recalculate.
+  assert.deepEqual(recalc.afterActions, []);
+  assert.deepEqual(recalc.afterPages, ['ChangePaymentPlan']);
   assert.equal(recalc.verify, 'premium');
-  assert.equal(bill.needsPremium, true);
-  assert.deepEqual(bill.afterActions, ['recalculate']);
+  assert.equal(bill.needsPremium, false);
+  assert.deepEqual(bill.afterActions, ['doneCargo']);
+  assert.ok(new RegExp(bill.text, 'i').test('Billing Options'));
+  // Back from the bill plan, Recalculate only when the rates are stale; Print doesn't wait for it.
+  assert.equal(recalc.needsRecalculation, true);
+  const print = actions.find((step) => step.action === 'print');
+  assert.deepEqual(print.afterActions, []);
+  assert.deepEqual(print.afterPages, ['ChangePaymentPlan']);
+  const addDriver = actions.find((step) => step.action === 'addDriver:0');
+  assert.deepEqual(addDriver.unlessActions, ['driverEntered:0']);
+  assert.equal(progressive.driverList, 'DriverSummary');
+  assert.ok(progressive.agentPages.NoHit);
+  const gl = structuredClone(record);
+  gl.coverage.gl = true;
+  assert.ok(!buildPlan(gl, progressive, {}).some((step) => step.action === 'billPlan'), 'with GL the agent does the rates page');
   assert.ok(bill.afterAny.includes('progressive.q216F'));
   const multi = structuredClone(record);
   multi.vehicles.push({ type: 'Van', year: 2021, make: 'FORD', model: 'Transit', vin: '1FTBR3X87MKA12345', value: 40000 });
@@ -164,4 +181,37 @@ test('Type of Trucker is Other For-Hire Trucking for expediters and left alone o
     assert.equal(step.value, expediter ? 'Other For-Hire Trucking' : null);
     assert.equal(step.ignore, !expediter);
   }
+});
+
+test('search-style business type (IN), other-coverage checkboxes, vehicle list', () => {
+  const plan = buildPlan(baseRecord(), progressive, {});
+  const q36 = byQ(plan, '36');
+  assert.equal(q36.value, 'For Hire Trucking');
+  assert.deepEqual(q36.choiceAliases, ['General Freight Trucking']);
+  assert.equal(byQ(plan, '24D').ignore, true, 'the search box itself is not typed into');
+  assert.equal(byQ(plan, '1D').ignore, true);
+  assert.equal(byQ(plan, 'AA').value, true, 'coverage not on the intake = None of the above');
+  assert.equal(byQ(plan, 'B2').value, true);
+  assert.equal(byQ(plan, 'A8').value, false);
+  const search = plan.find((s) => s.action === 'businessTypeSearch');
+  assert.equal(search.near, 'business type');
+  assert.equal(progressive.vehicleList, 'VehicleSummary');
+  assert.ok(new RegExp(plan.find((s) => s.action === 'addVehicle:0').text, 'i').test('Add another'));
+});
+
+test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () => {
+  const record = baseRecord();
+  record.coverage.cargo = true;
+  record.coverage.cargoLimit = 100000;
+  record.coverage.cargoDeductible = null;
+  const plan = buildPlan(record, progressive, {});
+  assert.equal(byQ(plan, '216F').value, '$100000/$1000', 'standard $1,000 cargo deductible');
+  assert.equal(byQ(plan, '216F').note, null);
+  for (const q of ['1DCA', '1DDE', '1DD8']) assert.equal(byQ(plan, q).value, '$100k CSL');
+  assert.equal(byQ(plan, '1E66').value, '$5,000');
+  assert.equal(byQ(plan, '1FE4').value, '$5,000 per person');
+  for (const q of ['1E69', '1E6E', '1E71', '1E74']) assert.equal(byQ(plan, q).value, 'Not Selected');
+  assert.ok(byQ(plan, '1B8D').note, 'SSN is never filled');
+  assert.equal(byQ(plan, '1B8D').value, null);
+  assert.ok(progressive.optional.includes('1B80'));
 });
