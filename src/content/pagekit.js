@@ -455,6 +455,10 @@
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    // Date boxes with a vanillajs-datepicker (AmWINS): the page reads the picker's date, not the
+    // box, and the picker only takes typed text on Tab / Enter / leaving the box. Tab is handled
+    // the same whether its calendar is open or not.
+    if (el.classList?.contains('datepicker-input')) el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', code: 'Tab', bubbles: true, cancelable: true }));
     el.blur();
   }
 
@@ -575,7 +579,9 @@
     for (const start = Date.now(); Date.now() - start < 6000;) {
       await sleep(200);
       const results = deepQueryAll(document, '.select2-results__option').filter((n) => n.getClientRects().length && !/loading|message/.test(String(n.className)));
-      hits = results.filter((n) => squash(n.textContent).includes(want));
+      // The result that is exactly the wanted text wins over others that only contain it.
+      const exact = results.filter((n) => squash(n.textContent) === want);
+      hits = exact.length ? exact : results.filter((n) => squash(n.textContent).includes(want));
       if (results.length) break;
     }
     if (hits.length !== 1) {
@@ -825,7 +831,9 @@
   // see is given in one pass and checked on the spot, with one wait for the page per round
   // instead of one per answer. What an answer reveals or redraws is picked up next round, and
   // anything the page changes later is given again (see `refill`).
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false } = {}) {
+  // `doneSteps`: steps of a one-address application (stepKey) already continued from: a step the
+  // agent goes back to is theirs, never continued again.
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [] } = {}) {
     const skipKeys = new Set(skip);
     const quiet = new Set(optional);
     const actions = plan.filter((s) => s.kind === 'action');
@@ -1154,8 +1162,9 @@
       ...report.blocked.map((x) => `button: ${x.id}`),
       ...(report.halted ? [report.reason] : []),
     ];
+    report.stepKey = stepKey();
     if (advance && window === window.top && !report.blockers.length && currentPage() === startPage && !pageBusy()
-      && !(advance.exceptPages ?? []).includes(currentPage())) {
+      && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)) {
       const button = findAdvanceButton(advance.text);
       if (button) {
         report.advanced = oneLine(button.value || button.textContent).slice(0, 40);
@@ -1300,10 +1309,15 @@
     return parts.join(' > ');
   }
 
+  // Which step of a one-address application is on screen: its visible headings.
+  function stepKey() {
+    return deepQueryAll(document, 'h1, h2, h3').filter(isVisible).map((h) => oneLine(h.textContent)).filter(Boolean).slice(0, 4).join(' / ');
+  }
+
   // The questions on screen, to tell when a step that keeps the same address has changed.
   function signature() {
     return collectControls().map((c) => `${fieldKey(c)}|${c.label}`).join('\n');
   }
 
-  globalThis.__raterKit = { version: 29, fill, answer, markKey, aiBanner, capture, clear, signature };
+  globalThis.__raterKit = { version: 30, fill, answer, markKey, aiBanner, capture, clear, signature };
 })();

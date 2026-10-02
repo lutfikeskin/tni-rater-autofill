@@ -40,7 +40,7 @@ const EXPECT = [
   ['radio:isNonProfit', 'No'], ['#inspectionContactName', 'SAMPLE DRIVER'], ['#inspectionContactOfficePhone', '4025550100'],
   ['#inspectionContactEmail', ''], ['radio:isSingleContact', 'Yes'], ['#sameAsMailingAddress0_0_', true],
   ['#garagePanel [data-id="address"]', '1 Test Way'], ['#garagePanel [data-id="city"]', 'Omaha'], ['#garagePanel [data-id="state"]', 'Nebraska'], ['#garagePanel [data-id="zip"]', '68102'],
-  ['#natureOfBusiness', 'TRANSPORTATION'], ['#classCodeAndDescription', /^484122/], ['#operationDescription', 'Trucking for Hire - Other for hire trucking'],
+  ['#natureOfBusiness', 'TRANSPORTATION'], ['#classCodeAndDescription', '484122 - General freight trucking, long-distance, less-than-truckload (LTL)'], ['#operationDescription', 'Trucking for Hire - Other for hire trucking'],
   ['#retailOrServiceOperationPert', '0'],
   ...[0, 1, 2].map((n) => [`#priorCarrierCoveragePanel${n} [data-id="carrierName"]`, 'NO PRIOR']),
   ['radio:valuedLossRuns', 'No'], ['radio:anyPriorLoss', 'No'], ['radio:hasAdditionalInterest', 'No'], ['#waiverType', 'NONE'],
@@ -125,6 +125,8 @@ const actual = await page.evaluate((expect) => expect.map(([sel]) => {
   const el = document.querySelector(sel);
   if (!el) return '(not on the page)';
   if (el.type === 'checkbox') return el.checked;
+  // A date counts once the date picker took it (that's what the site saves).
+  if (el.classList.contains('datepicker-input')) return el._pickerDate ?? '(not taken by the date picker)';
   if (el.tagName === 'SELECT') return el.selectedOptions[0]?.text.trim() ?? '';
   return el.value;
 }), EXPECT);

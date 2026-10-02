@@ -36,6 +36,8 @@ const state = {
   // Automatic follow-up fills: pages the agent has filled in this tab, and per page the fields
   // the agent changed themselves (never refilled automatically).
   autoPages: new Set(),
+  // "page|step" of one-address applications already continued from (AmWINS steps).
+  doneSteps: new Set(),
   tabSessions: new Map(),
   agentKeys: new Map(),
   filling: false,
@@ -101,6 +103,7 @@ async function loadFile(file) {
   state.agentKeys = new Map();
   state.labels = new Map();
   state.visitedPages = new Set();
+  state.doneSteps = new Set();
   state.intake = { ...result, fileName: file.name, done: [] };
   // Start on Check intake when something on the intake needs a look, else straight on Fill.
   state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
@@ -332,12 +335,12 @@ async function refreshTab() {
     }
   }
   if (tab?.id !== state.tab?.id) {
-    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages'];
+    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
     const previous = state.tabSessions.get(tab?.id);
     Object.assign(state, previous ?? {
       filled: new Map(), labels: new Map(), autoPages: new Set(), autoPaused: false,
-      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(),
+      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(),
     });
     clearTimeout(state.autoTimer);
     state.autoPending = false;
@@ -422,6 +425,9 @@ const fillOptions = (carrier, extra = {}) => ({
   replaceChoices: !!carrier.replaceChoices,
   // Carriers whose pages never wait on a server per answer are filled a round at a time.
   batch: !!carrier.batch,
+  // Steps of a one-address application already continued from (a step the agent goes back to
+  // isn't continued again).
+  doneSteps: [...state.doneSteps].filter((s) => s.startsWith(`${pageOf(state.tab?.url)}|`)).map((s) => s.slice(s.indexOf('|') + 1)),
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
   advance: $('auto-advance').checked && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
@@ -649,7 +655,10 @@ function afterFill(frames, { carrier, page }) {
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
   if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 900);
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
-  if (advanced) watchNextStep(carrier, page, advanced.signatureBefore);
+  if (advanced) {
+    if (advanced.stepKey) state.doneSteps.add(`${page}|${advanced.stepKey}`);
+    watchNextStep(carrier, page, advanced.signatureBefore);
+  }
 }
 
 // After Continue on an application that keeps one address for every step (AmWINS' Save &

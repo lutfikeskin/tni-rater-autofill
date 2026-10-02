@@ -38,12 +38,18 @@ for (let i = 0; i < 60; i++) {
   if (i % 3 === 0) console.log(i, step);
   if (step && JSON.parse(step).steps.includes('Underwriting')) { await panel.waitForTimeout(4000); break; }
 }
+// The agent goes back a step: the panel must leave them there (no second Save & Continue).
+const savesBefore = await mock.evaluate(() => window.__amwinsMock.saves);
+await mock.evaluate(() => document.querySelector('.form-tab:not([style*="none"]) [data-id="prevButton"], [data-id="prevButton"]:not([style*="none"])')?.click());
+await mock.waitForTimeout(6000);
+const stayed = await mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), saves: window.__amwinsMock.saves }));
+console.log('After Prev:', JSON.stringify(stayed));
 const lastMock = await mock.evaluate(() => JSON.stringify(window.__amwinsMock));
 console.log('MOCK', lastMock);
 console.log('REPORT', (await panel.textContent('#report')).replace(/\s+/g, ' ').slice(0, 1500));
 if (process.argv[2]) await panel.screenshot({ path: path.join(process.argv[2], 'panel.png'), fullPage: true });
 await ctx.close();
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = result.steps.at(-1) === 'Underwriting' && result.saves === 4 && !result.submitted;
-console.log(ok ? 'OK: one click filled every step up to the declaration.' : 'FAILED: the panel did not go through every step by itself.');
+const ok = result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? 'OK: one click filled every step up to the declaration, and going back a step stays there.' : 'FAILED: the panel did not go through every step by itself, or pushed the agent forward after Prev.');
 process.exit(ok ? 0 : 1);

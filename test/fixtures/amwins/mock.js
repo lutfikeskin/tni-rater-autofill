@@ -9,7 +9,11 @@
 //   answers on the row cleared) and the VIN list emptied;
 // - typing a VIN into a vehicle row decodes it the same way (overwrites body type and GVW);
 // - Default all answers to "No" answers the first underwriting section;
-// - the classification box is a select2 type-ahead that opens on a left-button mousedown.
+// - the classification box is a select2 type-ahead that opens on a left-button mousedown, with
+//   several results for 484122 (as on the live site);
+// - date boxes keep their date in a vanillajs-datepicker: text typed into the box only counts
+//   once Tab / Enter is pressed, and a step shows what was saved when it is opened again;
+// - Prev goes back a step.
 // What happened is kept in window.__amwinsMock for the runner (scripts/amwins-mock.mjs).
 (() => {
   const $ = (s, root = document) => root.querySelector(s);
@@ -26,6 +30,9 @@
     current = i;
     const last = i === tabs.length - 1;
     $$('[data-id="saveAndContinueButton"]').forEach((b) => { b.style.display = last ? 'none' : ''; });
+    $$('[data-id="prevButton"]').forEach((b) => { b.style.display = i === 0 ? 'none' : ''; });
+    // The step is drawn from what was saved: a date the picker never took is gone.
+    for (const box of $$('.datepicker-input', tabs[i])) box.value = box._pickerDate ?? '';
     $$('[data-id="submitButton"]').forEach((b) => { b.style.display = last ? '' : 'none'; });
     state.steps.push(tabs[i].getAttribute('data-title'));
     window.scrollTo(0, 0);
@@ -37,6 +44,7 @@
     const id = button.getAttribute('data-id');
     if (id === 'saveAndContinueButton') { state.saves++; later(150, () => showStep(Math.min(current + 1, tabs.length - 1))); }
     if (id === 'submitButton') state.submitted = true;
+    if (id === 'prevButton') { state.prevs = (state.prevs ?? 0) + 1; later(150, () => showStep(Math.max(current - 1, 0))); }
   }, true);
 
   // --- Show / hide (the site's setupAppRelativeShowHide / onAppRelativeChange) ---------------------
@@ -98,6 +106,13 @@
     }
   });
 
+  // --- Date pickers ---------------------------------------------------------------------------------
+  document.addEventListener('keydown', (e) => {
+    if (e.target.classList?.contains('datepicker-input') && (e.key === 'Tab' || e.key === 'Enter')) {
+      e.target._pickerDate = /^\d{2}\/\d{2}\/\d{4}$/.test(e.target.value) ? e.target.value : null;
+    }
+  }, true);
+
   // --- Vehicles -----------------------------------------------------------------------------------
   const DECODED = { year: '2019', make: 'ISUZU', model: 'NPR', bodyType: 'INCOMPLETE - STRAIGHT TRUCK', grossVehicleWeight: '14500' };
   const row = () => $('#vehiclesPanelAccordion0');
@@ -143,7 +158,8 @@
   });
 
   // --- Classification (select2) -------------------------------------------------------------------
-  const CLASSES = ['484122 - General freight trucking, long-distance, less-than-truckload (LTL)', '484121 - General freight trucking, long-distance, truckload', '484110 - General freight trucking, local'];
+  const CLASSES = ['484122 - General freight trucking, long-distance, less-than-truckload (LTL)', '484122 - Expedited freight, long-distance, LTL',
+    '484122 - General freight trucking, long-distance, LTL - hazmat', '484122 - Less-than-truckload carriers, long-distance', '484121 - General freight trucking, long-distance, truckload', '484110 - General freight trucking, local'];
   const select = $('#classCodeAndDescription');
   const opener = select?.parentElement?.querySelector('.select2-selection');
   opener?.addEventListener('mousedown', (e) => {

@@ -77,6 +77,9 @@ const yearEstablished = (r) => r.applicant.yearEstablished ?? new Date().getFull
 // taken. The description follows the same split.
 const isFreight = (r) => /expedit|general\s*freight/i.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
 const classSearch = (r) => (isFreight(r) ? '484122' : r.operations.businessClass ?? null);
+// AmWINS lists several results for 484122: the one TNI picks, in full.
+const CLASS_484122 = '484122 - General freight trucking, long-distance, less-than-truckload (LTL)';
+const classChoice = (r) => (isFreight(r) ? CLASS_484122 : r.operations.businessClass ?? null);
 const operationsDescription = (r) => (isFreight(r) ? 'Trucking for Hire - Other for hire trucking' : r.operations.businessClass ?? null);
 
 const moneyK = (n) => (n >= 1e6 ? `$${n / 1e6}M` : n >= 1e3 ? `$${n / 1e3}K` : `$${n}`);
@@ -214,7 +217,7 @@ export const amwins = {
     { selector: dataId('zip', '#garagePanel'), name: 'Garage ZIP', path: 'garaging.zip' },
     { selector: '#natureOfBusiness', name: 'Nature of business', kind: 'choice', value: () => 'TRANSPORTATION' },
     { selector: '#retailOrServiceOperationPert', name: 'Retail / service operations % (trucking: 0)', value: () => '0' },
-    { selector: '#classCodeAndDescription', name: 'Classification (484122 for expediters / general freight)', kind: 'search-select', search: classSearch, value: classSearch },
+    { selector: '#classCodeAndDescription', name: 'Classification (484122 for expediters / general freight)', kind: 'search-select', search: classSearch, value: classChoice },
     { selector: '#operationDescription', name: 'Description of operations', value: operationsDescription },
     { name: 'Additional interest (standard: No)', label: '^has additional interest$', kind: 'bool', value: () => false },
     { selector: '#waiverType', name: 'Waiver type (standard: NONE)', kind: 'choice', value: () => 'NONE' },
