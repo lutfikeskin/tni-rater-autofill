@@ -670,12 +670,13 @@ async function watchNextStep(carrier, page, before) {
   const tabId = state.tab?.id;
   if (!$('auto-followups').checked && !$('auto-pages').checked) return;
   let last = null;
-  for (let i = 0; i < 50; i++) {
+  for (let i = 0; i < 100; i++) {
     await new Promise((r) => setTimeout(r, 300));
     if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || !state.intake) return;
     let now = null;
     try {
-      const results = await runKit(tabId, carrier, () => globalThis.__raterKit.signature());
+      // While the page saves / reloads (its loading overlay) the step isn't ready yet.
+      const results = await runKit(tabId, carrier, () => (globalThis.__raterKit.busy() ? null : globalThis.__raterKit.signature()));
       now = results.find((r) => r.frameId === 0)?.result ?? null;
     } catch { return; }
     if (now != null && now !== before && now === last) {

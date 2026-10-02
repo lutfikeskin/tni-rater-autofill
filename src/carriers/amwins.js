@@ -201,7 +201,8 @@ export const amwins = {
     { selector: '#ownerDob', name: 'Owner date of birth', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
     { selector: '#mailingAddress', name: 'Mailing street', value: street },
     { selector: '#mailingCity', path: 'garaging.city' },
-    { selector: '#mailingState', path: 'garaging.state' },
+    // The list has no blank entry: it starts on Alabama, which isn't an answer.
+    { selector: '#mailingState', path: 'garaging.state', replace: true },
     { selector: '#mailingZip', path: 'garaging.zip' },
     { selector: '#businessPhone', name: 'Business phone', value: (r) => digits(r.applicant.phone) },
     { selector: '#entityType', name: 'Entity type', kind: 'choice', value: entityType },
@@ -224,7 +225,9 @@ export const amwins = {
     // Filing counts: skipped (TNI).
     ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map((selector) => ({ selector, name: 'Filing count (skipped)', ignore: true })),
     // Every prior year's carrier: NO PRIOR (the proof of prior insurance goes in the disclosure).
-    ...[0, 1, 2].map((n) => ({ selector: dataId('carrierName', `#priorCarrierCoveragePanel${n}`), name: `Prior carrier, year ${n} (standard: NO PRIOR)`, kind: 'choice', value: () => 'NO PRIOR' })),
+    // The 1 and 2 year prior panels only appear when the site reloads after Save & Continue, by
+    // then on a hidden step: they're filled from the next step (hidden) and saved with it.
+    ...[0, 1, 2].map((n) => ({ selector: dataId('carrierName', `#priorCarrierCoveragePanel${n}`), name: `Prior carrier, year ${n} (standard: NO PRIOR)`, kind: 'choice', value: () => 'NO PRIOR', hidden: n > 0 })),
     { name: 'Filings required', label: '^filling required$', kind: 'bool', value: filings },
     { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', value: (r) => !!r.applicant.dot },
     { selector: '#hasMcNumber', name: 'Has an MC number', kind: 'bool', value: (r) => !!r.applicant.mc },

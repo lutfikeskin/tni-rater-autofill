@@ -13,7 +13,13 @@
 //   several results for 484122 (as on the live site);
 // - date boxes keep their date in a vanillajs-datepicker: text typed into the box only counts
 //   once Tab / Enter is pressed, and a step shows what was saved when it is opened again;
-// - Prev goes back a step.
+// - Prev goes back a step;
+// - Save & Continue shows the next step at once but saves in the background (the loading
+//   overlay #loadingDefault), then redraws every step from what was saved: anything typed on the
+//   new step before that is lost (as on the live site, run of 2026-10-02);
+// - the dropdown lists load a moment after the page opens (overlay shown meanwhile);
+// - the 1 and 2 year prior carrier panels only appear with the reload after Save & Continue
+//   (by then on the hidden Insured Info step), as on the live site.
 // What happened is kept in window.__amwinsMock for the runner (scripts/amwins-mock.mjs).
 (() => {
   const $ = (s, root = document) => root.querySelector(s);
@@ -21,6 +27,36 @@
   const state = (window.__amwinsMock = { saves: 0, submitted: false, lookups: 0, imports: 0, decodes: 0, defaults: 0, steps: [] });
   const fire = (el, type = 'change') => el.dispatchEvent(new Event(type, { bubbles: true }));
   const later = (ms, fn) => setTimeout(fn, ms);
+
+  // --- Loading overlay, background save and reload ---------------------------------------------------
+  const overlay = $('#loadingDefault');
+  const loading = (on) => { if (overlay) overlay.style.display = on ? 'block' : 'none'; };
+  const FORM = 'input:not([type=button]):not([type=submit]):not([type=file]), select, textarea';
+  const snapshot = () => $$(FORM).map((el) => [el, el.type === 'checkbox' || el.type === 'radio' ? el.checked : el.value, el._pickerDate]);
+  const restore = (saved) => {
+    for (const [el, v, date] of saved) {
+      if (el.type === 'checkbox' || el.type === 'radio') el.checked = v; else el.value = v;
+      el._pickerDate = date;
+    }
+  };
+  const SAVE_MS = 1500;
+
+  // The lists arrive from the server after the page opens.
+  const LISTS = ['#mailingState', '#entityType', '#yrsInBusiness', '#natureOfBusiness', '#garagePanel [data-id="state"]'];
+  const held = LISTS.map((sel) => $(sel)).filter(Boolean).map((el) => [el, [...el.options].slice(1)]);
+  for (const [, opts] of held) opts.forEach((o) => o.remove());
+  loading(true);
+  later(1200, () => { for (const [el, opts] of held) el.append(...opts); loading(false); });
+
+  // The extra prior carrier years are added by the reload, not when Years in Business changes.
+  const priorYears = [1, 2].map((i) => $(`#priorCarrierCoveragePanel${i}`)?.closest('.app-rp-section')).filter(Boolean);
+  const priorParent = priorYears[0]?.parentElement;
+  priorYears.forEach((sec) => sec.remove());
+  const addPriorYears = () => {
+    const v = $('#yrsInBusiness')?.value ?? '';
+    const n = /^[123]$/.test(v) ? Number(v) : v && v !== 'New Venture' ? 3 : 0;
+    priorYears.forEach((sec, i) => { if (i + 1 < n && !sec.isConnected) { sec.style.display = ''; priorParent.append(sec); } });
+  };
 
   // --- Steps --------------------------------------------------------------------------------------
   const tabs = $$('.form-tab');
@@ -42,7 +78,14 @@
     const button = e.target.closest?.('button, input[type=button]');
     if (!button) return;
     const id = button.getAttribute('data-id');
-    if (id === 'saveAndContinueButton') { state.saves++; later(150, () => showStep(Math.min(current + 1, tabs.length - 1))); }
+    if (id === 'saveAndContinueButton') {
+      state.saves++;
+      const saved = snapshot();
+      loading(true);
+      later(150, () => showStep(Math.min(current + 1, tabs.length - 1)));
+      // The reload redraws every step from the save.
+      later(SAVE_MS, () => { restore(saved); addPriorYears(); loading(false); state.reloads = (state.reloads ?? 0) + 1; });
+    }
     if (id === 'submitButton') state.submitted = true;
     if (id === 'prevButton') { state.prevs = (state.prevs ?? 0) + 1; later(150, () => showStep(Math.max(current - 1, 0))); }
   }, true);
@@ -95,15 +138,7 @@
   };
   document.addEventListener('change', (e) => {
     if (e.target.matches?.(SOURCES)) relChange(e.target);
-    // One prior carrier panel per prior year.
-    if (e.target.id === 'yrsInBusiness') {
-      const v = e.target.value;
-      const n = /^[123]$/.test(v) ? Number(v) : v && v !== 'New Venture' ? 3 : 0;
-      [0, 1, 2].forEach((i) => {
-        const section = $(`#priorCarrierCoveragePanel${i}`)?.closest('.app-rp-section');
-        if (section) section.style.display = i < n ? '' : 'none';
-      });
-    }
+
   });
 
   // --- Date pickers ---------------------------------------------------------------------------------

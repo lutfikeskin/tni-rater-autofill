@@ -167,7 +167,9 @@
   function pageBusy() {
     const X = ext();
     if (X?.Ajax?.isLoading?.()) return true;
-    return [...document.querySelectorAll('.x-mask-msg, .x-mask-loading, [class*="loading-mask"], [class*="LoadingMessage"]')]
+    // #loadingDefault: AmWINS' overlay while it saves or reloads the application (it redraws every
+    // step when the reload lands, so nothing may be filled before that).
+    return [...document.querySelectorAll('.x-mask-msg, .x-mask-loading, [class*="loading-mask"], [class*="LoadingMessage"], #loadingDefault')]
       .some((m) => m.getClientRects().length && getComputedStyle(m).visibility !== 'hidden');
   }
 
@@ -192,13 +194,17 @@
   // ---------------------------------------------------------------------------------------------
   // Finding the fields on the page
 
+  // Selectors of rules allowed to fill a field that isn't on screen (set while a fill runs): a
+  // question the page adds to an earlier step of a one-address application after it was left.
+  let hiddenOk = [];
+
   function collectControls() {
     const out = [];
     const groups = new Map();
     for (const el of deepQueryAll(document, CONTROL_SELECTOR)) {
       const type = el.tagName === 'INPUT' ? (el.type || 'text').toLowerCase() : el.tagName.toLowerCase();
       if (el.tagName === 'INPUT' && SKIP_INPUT_TYPES.has(type)) continue;
-      if (el.disabled || !isVisible(el)) continue;
+      if (el.disabled || (!isVisible(el) && !hiddenOk.some((sel) => safeMatches(el, sel)))) continue;
       const cmp = extCmp(el);
       if (type === 'radio') {
         const extGroup = cmp?.up?.('radiogroup') ?? null;
@@ -612,8 +618,14 @@
       if (c.el.checked !== step.value) c.el.click();
       return { ok: true, shown: step.value ? 'checked' : 'unchecked' };
     }
-    const options = optionsOf(c);
-    const opt = matchOption(options, step);
+    let options = optionsOf(c);
+    let opt = matchOption(options, step);
+    // A list still waiting for its options (loaded after the page shows): give it a few seconds.
+    for (const start = Date.now(); !opt && c.kind === 'select' && options.filter((o) => oneLine(o.text)).length <= 1 && Date.now() - start < 6000;) {
+      await sleep(250);
+      options = optionsOf(c);
+      opt = matchOption(options, step);
+    }
     if (!opt) return noMatch(step, options);
     if (c.kind === 'select') setNativeValue(c.el, opt.value);
     else if (!opt.el.checked) opt.el.click();
@@ -846,6 +858,7 @@
     const refill = new Set();
     // A lookup box its helper has already used (the VIN list Import Data empties) isn't given again.
     const immediateAfter = new Set(actions.filter((a) => a.immediate).flatMap((a) => a.after));
+    hiddenOk = plan.filter((s) => s.hidden && s.selector).map((s) => s.selector);
     const consumedPaths = () => new Set(actions.filter((a) => clicked.has(a.action)).flatMap((a) => a.after));
     const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
     // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
@@ -860,7 +873,7 @@
     const serverBacked = !!ext();
     let pendingAction = null;
     let progressed = false; // did the last round fill or click anything?
-    if (!await settle({ quietMs: 400, maxMs: 5000 })) {
+    if (!await settle({ quietMs: 400, maxMs: 15000 })) {
       report.halted = true;
       report.reason = 'The page is still waiting on its server. Review and retry.';
       return report;
@@ -1179,6 +1192,7 @@
     }
     return report;
     } finally {
+      hiddenOk = [];
       try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
       for (const type of gestureTypes) document.removeEventListener(type, trackGesture, true);
       document.removeEventListener('input', protectEdit, true);
@@ -1323,5 +1337,5 @@
     return collectControls().map((c) => `${fieldKey(c)}|${c.label}`).join('\n');
   }
 
-  globalThis.__raterKit = { version: 30, fill, answer, markKey, aiBanner, capture, clear, signature };
+  globalThis.__raterKit = { version: 31, fill, answer, markKey, aiBanner, capture, clear, signature, busy: pageBusy };
 })();
