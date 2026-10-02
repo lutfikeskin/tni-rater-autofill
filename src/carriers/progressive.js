@@ -268,6 +268,8 @@ export const progressive = {
     // one the lookup can't find yet (then there's no registered name to pick).
     { q: '230', path: 'applicant.name', name: 'Business / sole proprietor name', value: (r) => r.applicant.name || [owner(r).first, owner(r).last].filter(Boolean).join(' ') || r.applicant.owner1 },
     { q: '233', name: 'DBA name (always left empty)', ignore: true },
+    // Save Quote page (the agent saves the quote for the client): its contact boxes are theirs.
+    ...['2D42', '2D4C', '2D4E', '2D50', '2D55'].map((q) => ({ q, name: 'Save Quote contact details (the agent\'s)', ignore: true })),
     // Owner home address box, shown when there's no registered address to pick ("2AA" after
     // "Enter a different address", "2A9" when there's no choice at all): the whole address,
     // then Progressive's first suggestion, which fills ZIP and city. The ZIP/city rules then

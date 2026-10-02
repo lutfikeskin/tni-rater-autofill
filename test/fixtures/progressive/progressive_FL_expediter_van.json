@@ -1,0 +1,1269 @@
+{
+ "carrier": "progressive",
+ "context": {
+  "businessClass": "Expediter",
+  "coverages": [
+   "autoLiability",
+   "cargo"
+  ],
+  "drivers": 1,
+  "state": "FL",
+  "trailers": false,
+  "vehicleTypes": [
+   "Van"
+  ],
+  "vehicles": 1
+ },
+ "generated": {
+  "from": "2026-10-02T13:18:12.396Z",
+  "to": "2026-10-02T14:02:06.249Z",
+  "quotes": 2,
+  "by": "scripts/build-layouts.mjs"
+ },
+ "pages": {
+  "BusinessOwnerInfo": {
+   "fields": [
+    {
+     "q": "18F",
+     "kind": "combo",
+     "caption": "Agent Code",
+     "req": true,
+     "mapped": "progressive.q18F"
+    },
+    {
+     "q": "194",
+     "kind": "date",
+     "caption": "When should this Progressive Commercial Auto policy start?",
+     "req": true,
+     "mapped": "progressive.q194"
+    },
+    {
+     "q": "198",
+     "kind": "radio",
+     "caption": "Is the customer currently insured with Progressive Commercial Auto?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.q198"
+    },
+    {
+     "q": "1CC",
+     "kind": "text",
+     "caption": "Quote Vendor Code",
+     "req": true,
+     "mapped": "progressive.q1CC"
+    },
+    {
+     "q": "1ED",
+     "kind": "radio",
+     "caption": "Does the customer have a USDOT Number?",
+     "req": true,
+     "opts": [
+      "Yes - the customer has a USDOT number",
+      "No - and the customer will not have a USDOT number",
+      "Not Yet - but the customer has applied/will apply for a USDOT number within 60 days"
+     ],
+     "mapped": "progressive.q1ED"
+    },
+    {
+     "q": "1F3",
+     "kind": "text",
+     "caption": "USDOT Number associated with the customer's business:",
+     "req": true,
+     "mapped": "applicant.dot"
+    },
+    {
+     "q": "21E",
+     "kind": "radio",
+     "caption": "Did the customer obtain their USDOT Number within the last 60 days?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.q21E"
+    },
+    {
+     "q": "22D",
+     "kind": "radio",
+     "caption": "How is the customer's business structured?",
+     "req": true,
+     "opts": [
+      "Individual / Sole Proprietor",
+      "Partnership",
+      "Corporation or LLC / Non-Profit"
+     ],
+     "mapped": "progressive.q22D"
+    },
+    {
+     "q": "230",
+     "kind": "text",
+     "caption": "Business Name",
+     "req": true,
+     "mapped": "applicant.name"
+    },
+    {
+     "q": "233",
+     "kind": "text",
+     "caption": "DBA Name",
+     "req": true,
+     "mapped": "progressive.q233"
+    },
+    {
+     "q": "267",
+     "kind": "combo",
+     "caption": "Type of Trucker",
+     "req": true,
+     "opts": [
+      "Most common types",
+      "Agricultural",
+      "Dirt, Sand and Gravel",
+      "General Freight / Other",
+      "Logging / Wood Chips",
+      "Refrigerated Goods",
+      "All types",
+      "Auto Hauler",
+      "Coal",
+      "Containers",
+      "Debris Removal",
+      "Escort Vehicles",
+      "Expediters",
+      "Fracking, Sand or Water",
+      "Freight Forwarder",
+      "Garbage & Trash",
+      "Hazardous Materials / Placards",
+      "Hotshot Transport",
+      "Household Goods Mover",
+      "Livestock",
+      "Machinery & Heavy Equipment",
+      "Mobile Home Toter",
+      "Oilfield Materials",
+      "Scrap Metal/Scrap Auto",
+      "Steel",
+      "Other For-Hire Trucking"
+     ],
+     "mapped": "progressive.q267"
+    },
+    {
+     "q": "27E",
+     "kind": "text",
+     "caption": "Street Address",
+     "req": true,
+     "mapped": "progressive.q27E"
+    },
+    {
+     "q": "280",
+     "kind": "text",
+     "caption": "Apt, Building, Floor, Suite, etc.",
+     "req": true,
+     "mapped": "garaging.unit"
+    },
+    {
+     "q": "284",
+     "kind": "text",
+     "caption": "Zip Code",
+     "req": true,
+     "mapped": "garaging.zip"
+    },
+    {
+     "q": "286",
+     "kind": "text",
+     "caption": "City",
+     "req": true,
+     "mapped": "garaging.city"
+    },
+    {
+     "q": "295",
+     "kind": "text",
+     "caption": "Business Owner's Name",
+     "req": true,
+     "mapped": "progressive.q295"
+    },
+    {
+     "q": "296",
+     "kind": "text",
+     "caption": "MIMiddle initial",
+     "req": true,
+     "mapped": "progressive.q296"
+    },
+    {
+     "q": "297",
+     "kind": "text",
+     "caption": "Last Name",
+     "req": true,
+     "mapped": "progressive.q297"
+    },
+    {
+     "q": "298",
+     "kind": "combo",
+     "caption": "Suffix",
+     "req": true,
+     "opts": [
+      "Jr",
+      "Sr",
+      "I",
+      "II",
+      "III",
+      "IV"
+     ],
+     "mapped": "progressive.q298"
+    },
+    {
+     "q": "29F",
+     "kind": "checkbox",
+     "caption": "[client] is a driver on the policy.",
+     "mapped": "applicant.ownerDrives"
+    },
+    {
+     "q": "2A5",
+     "kind": "radio",
+     "caption": "Home Address",
+     "req": true,
+     "opts": [
+      "[client] (Primary Business Address)",
+      "Enter a different address"
+     ],
+     "mapped": "progressive.q2A5"
+    },
+    {
+     "q": "2BB",
+     "kind": "date",
+     "caption": "Date of Birth",
+     "req": true,
+     "mapped": "progressive.q2BB"
+    },
+    {
+     "q": "2DB",
+     "kind": "text",
+     "caption": "Primary Phone Number",
+     "req": true,
+     "mapped": "progressive.q2DB"
+    },
+    {
+     "q": "2DD",
+     "kind": "text",
+     "caption": "Three digit prefix of phone",
+     "req": true,
+     "mapped": "progressive.q2DD"
+    },
+    {
+     "q": "2DF",
+     "kind": "text",
+     "caption": "Four digit suffix of phone",
+     "req": true,
+     "mapped": "progressive.q2DF"
+    },
+    {
+     "q": "2F6",
+     "kind": "radio",
+     "caption": "Do any listed vehicles or the load require a hazardous material placard?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "operations.hazPlacard"
+    }
+   ]
+  },
+  "MostCommonVehicles": {
+   "fields": [
+    {
+     "q": "2B00",
+     "kind": "radio",
+     "caption": "Add Vehicle By",
+     "req": true,
+     "opts": [
+      "Year, Make, Model",
+      "VIN"
+     ],
+     "mapped": "progressive.q2B00"
+    },
+    {
+     "q": "2B20",
+     "kind": "text",
+     "caption": "Vehicle Identification Number (VIN)",
+     "req": true,
+     "mapped": "vehicles[0].vin"
+    },
+    {
+     "q": "2B92",
+     "kind": "text",
+     "caption": "Zip code where the vehicle is located",
+     "req": true,
+     "mapped": "garaging.zip"
+    },
+    {
+     "q": "2B9D",
+     "kind": "combo",
+     "caption": "Farthest one-way distance this vehicle typically travels (90% or more of the time)",
+     "req": true,
+     "opts": [
+      "50 miles",
+      "100 miles",
+      "200 miles",
+      "300 miles",
+      "500 miles",
+      "More than 500 miles"
+     ],
+     "mapped": "progressive.q2B9D"
+    },
+    {
+     "q": "2BA1",
+     "kind": "radio",
+     "caption": "Anti-Lock Brakes?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.q2BA1"
+    },
+    {
+     "q": "2BAC",
+     "kind": "combo",
+     "caption": "Anti-Theft Device Discount",
+     "req": true,
+     "opts": [
+      "None",
+      "Standard",
+      "Recovery"
+     ],
+     "mapped": "progressive.q2BAC"
+    },
+    {
+     "q": "2BAE",
+     "kind": "radio",
+     "caption": "Driver-Side Airbag?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.q2BAE"
+    },
+    {
+     "q": "2C05",
+     "kind": "radio",
+     "caption": "Is this vehicle used for business, personal or both?",
+     "req": true,
+     "opts": [
+      "Business Only",
+      "Business & Personal",
+      "Personal Only"
+     ],
+     "mapped": "progressive.q2C05"
+    },
+    {
+     "q": "2CA7",
+     "kind": "radio",
+     "caption": "Is there a loan/lease on this vehicle?",
+     "req": true,
+     "opts": [
+      "Yes - Loan",
+      "Yes - Lease",
+      "No"
+     ],
+     "mapped": "progressive.q2CA7"
+    }
+   ]
+  },
+  "AddVehicle": {
+   "fields": [
+    {
+     "q": "2B20",
+     "kind": "text",
+     "caption": "Vehicle Identification Number (VIN)",
+     "req": true,
+     "mapped": "vehicles[0].vin"
+    },
+    {
+     "q": "2B92",
+     "kind": "text",
+     "caption": "Zip code where the vehicle is located",
+     "req": true,
+     "mapped": "garaging.zip"
+    },
+    {
+     "q": "2B9D",
+     "kind": "combo",
+     "caption": "Farthest one-way distance this vehicle typically travels (90% or more of the time)",
+     "req": true,
+     "opts": [
+      "50 miles",
+      "100 miles",
+      "200 miles",
+      "300 miles",
+      "500 miles",
+      "More than 500 miles"
+     ],
+     "mapped": "progressive.q2B9D"
+    },
+    {
+     "q": "2BA1",
+     "kind": "radio",
+     "caption": "Anti-Lock Brakes?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.q2BA1"
+    },
+    {
+     "q": "2BAC",
+     "kind": "combo",
+     "caption": "Anti-Theft Device Discount",
+     "req": true,
+     "opts": [
+      "None",
+      "Standard",
+      "Recovery"
+     ],
+     "mapped": "progressive.q2BAC"
+    },
+    {
+     "q": "2BAE",
+     "kind": "radio",
+     "caption": "Driver-Side Airbag?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.q2BAE"
+    },
+    {
+     "q": "2BCB",
+     "kind": "combo",
+     "caption": "Annual Mileage",
+     "req": true,
+     "opts": [
+      "0 - 3,999",
+      "4,000 - 7,999",
+      "8,000 - 11,999",
+      "12,000 - 15,999",
+      "16,000 - 19,999",
+      "20,000 - 23,999",
+      "24,000 - 27,999",
+      "28,000 - 31,999",
+      "32,000 - 35,999",
+      "36,000 - 39,999",
+      "40,000 - 59,999",
+      "60,000 - 79,999",
+      "80,000 - 99,999",
+      "100,000 - 149,999",
+      "150,000+"
+     ],
+     "mapped": "progressive.q2BCB"
+    },
+    {
+     "q": "2C05",
+     "kind": "radio",
+     "caption": "Is this vehicle used for business, personal or both?",
+     "req": true,
+     "opts": [
+      "Business Only",
+      "Business & Personal",
+      "Personal Only"
+     ],
+     "mapped": "progressive.q2C05"
+    },
+    {
+     "q": "2C1A",
+     "kind": "radio",
+     "caption": "Is this vehicle used to haul goods on a For-Hire basis?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.q2C1A"
+    },
+    {
+     "q": "2CA7",
+     "kind": "radio",
+     "caption": "Is there a loan/lease on this vehicle?",
+     "req": true,
+     "opts": [
+      "Yes - Loan",
+      "Yes - Lease",
+      "No"
+     ],
+     "mapped": "progressive.q2CA7"
+    },
+    {
+     "q": "2CE3",
+     "kind": "checkbox",
+     "caption": "Vehicle has no equipment",
+     "mapped": "progressive.q2CE3"
+    },
+    {
+     "q": "2CE8",
+     "kind": "text",
+     "caption": "If this vehicle was sold today, how much would it be worth (excluding any permanently attached equipment)?",
+     "req": true,
+     "mapped": "vehicles[0].value"
+    }
+   ]
+  },
+  "AddDriver": {
+   "fields": [
+    {
+     "q": "28AC",
+     "kind": "combo",
+     "caption": "Driver's License State",
+     "req": true,
+     "opts": [
+      "US States",
+      "Alabama",
+      "Alaska",
+      "Arizona",
+      "Arkansas",
+      "California",
+      "Colorado",
+      "Connecticut",
+      "Delaware",
+      "District of Columbia (DC)",
+      "Florida",
+      "Georgia",
+      "Hawaii",
+      "Idaho",
+      "Illinois",
+      "Indiana",
+      "Iowa",
+      "Kansas",
+      "Kentucky",
+      "Louisiana",
+      "Maine",
+      "Maryland",
+      "Massachusetts",
+      "Michigan",
+      "Minnesota",
+      "Mississippi",
+      "Missouri",
+      "Montana",
+      "Nebraska",
+      "Nevada",
+      "New Hampshire",
+      "New Jersey",
+      "New Mexico",
+      "New York",
+      "North Carolina",
+      "North Dakota",
+      "Ohio",
+      "Oklahoma",
+      "Oregon",
+      "Pennsylvania",
+      "Rhode Island",
+      "South Carolina",
+      "South Dakota",
+      "Tennessee",
+      "Texas",
+      "Utah",
+      "Vermont",
+      "Virginia",
+      "Washington",
+      "West Virginia",
+      "Wisconsin",
+      "Wyoming",
+      "US Territories",
+      "American Samoa",
+      "Guam",
+      "Puerto Rico",
+      "Virgin Islands",
+      "Canada",
+      "Alberta"
+     ],
+     "mapped": "drivers[0].licenseState"
+    },
+    {
+     "q": "28B9",
+     "kind": "text",
+     "caption": "Driver’s License Number",
+     "req": true,
+     "mapped": "drivers[0].licenseNumber",
+     "cond": true
+    },
+    {
+     "q": "28C1",
+     "kind": "radio",
+     "caption": "Exclude this driver from the policy?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.q28C1"
+    },
+    {
+     "q": "28E6",
+     "kind": "radio",
+     "caption": "Does this driver have a Commercial Driver's License (CDL)?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "drivers[0].cdl"
+    },
+    {
+     "q": "28F5",
+     "kind": "radio",
+     "caption": "Has this driver had any accidents, claims or violations in the past 5 years? (since 11/2021)",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "claims.hasClaims"
+    },
+    {
+     "q": "2898",
+     "kind": "text",
+     "caption": "Name",
+     "req": true,
+     "mapped": "drivers[0].first",
+     "cond": true
+    },
+    {
+     "q": "2899",
+     "kind": "text",
+     "caption": "MIMiddle initial",
+     "req": true,
+     "mapped": "progressive.q2899",
+     "cond": true
+    },
+    {
+     "q": "289A",
+     "kind": "text",
+     "caption": "Driver Last Name",
+     "req": true,
+     "mapped": "drivers[0].last",
+     "cond": true
+    },
+    {
+     "q": "28A7",
+     "kind": "date",
+     "caption": "Date of Birth",
+     "req": true,
+     "mapped": "drivers[0].dob",
+     "cond": true
+    }
+   ]
+  },
+  "NoHit": {
+   "fields": [
+    {
+     "q": "1B7F",
+     "kind": "text",
+     "caption": "Business Owner's Name",
+     "req": true,
+     "mapped": "progressive.q1B7F"
+    },
+    {
+     "q": "1B80",
+     "kind": "text",
+     "caption": "MIMiddle initial",
+     "req": true,
+     "mapped": "progressive.q1B80"
+    },
+    {
+     "q": "1B81",
+     "kind": "text",
+     "caption": "Last Name",
+     "req": true,
+     "mapped": "progressive.q1B81"
+    },
+    {
+     "q": "1B82",
+     "kind": "combo",
+     "caption": "Suffix",
+     "req": true,
+     "opts": [
+      "Jr",
+      "Sr",
+      "I",
+      "II",
+      "III",
+      "IV"
+     ],
+     "mapped": "progressive.q1B82"
+    },
+    {
+     "q": "1B84",
+     "kind": "text",
+     "caption": "Home Address",
+     "req": true,
+     "mapped": "progressive.q1B84"
+    },
+    {
+     "q": "1B85",
+     "kind": "text",
+     "caption": "City",
+     "req": true,
+     "mapped": "garaging.city"
+    },
+    {
+     "q": "1B89",
+     "kind": "text",
+     "caption": "Zip Code",
+     "req": true,
+     "mapped": "garaging.zip"
+    },
+    {
+     "q": "1B8B",
+     "kind": "date",
+     "caption": "Date of Birth",
+     "req": true,
+     "mapped": "progressive.q1B8B"
+    },
+    {
+     "q": "1B8D",
+     "kind": "text",
+     "caption": "Social Security Number",
+     "req": true,
+     "mapped": "progressive.q1B8D"
+    }
+   ]
+  },
+  "MoreAboutBusiness": {
+   "fields": [
+    {
+     "q": "77",
+     "kind": "text",
+     "caption": "Customer Email Address",
+     "req": true,
+     "mapped": "progressive.q77"
+    },
+    {
+     "q": "81",
+     "kind": "radio",
+     "caption": "Is the customer currently insured?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.q81"
+    },
+    {
+     "q": "83",
+     "kind": "radio",
+     "caption": "Has the customer had continuous coverage?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.q83"
+    },
+    {
+     "q": "95",
+     "kind": "combo",
+     "caption": "Current Bodily Injury Liability Limit",
+     "req": true,
+     "opts": [
+      "Physical Damage Only",
+      "Non Truck Liability",
+      "PIP/Property Damage Only (No BIPD)",
+      "State Minimum or less",
+      "$25,000 person/$50,000 accident",
+      "$50,000 person/$100,000 accident",
+      "$100,000 combined single limit",
+      "$100,000 person/$300,000 accident",
+      "$300,000 combined single limit",
+      "$350,000 combined single limit",
+      "$250,000 person/$500,000 accident",
+      "$500,000 combined single limit",
+      "$750,000 combined single limit",
+      "$1,000,000 combined single limit"
+     ],
+     "mapped": "priorInsurance[0].limit"
+    },
+    {
+     "q": "9D",
+     "kind": "date",
+     "caption": "Current Policy Expiration Date",
+     "req": true,
+     "mapped": "priorInsurance[0].expiration"
+    },
+    {
+     "q": "AA",
+     "kind": "checkbox",
+     "caption": "None of the above",
+     "mapped": "progressive.qAA"
+    },
+    {
+     "q": "B2",
+     "kind": "checkbox",
+     "caption": "None of the above",
+     "mapped": "progressive.qB2"
+    },
+    {
+     "q": "B7",
+     "kind": "combo",
+     "caption": "Number of Named Additional Insureds",
+     "req": true,
+     "opts": [
+      "0",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "More than 5"
+     ],
+     "mapped": "progressive.qB7"
+    },
+    {
+     "q": "B8",
+     "kind": "combo",
+     "caption": "Number of Named Waiver of Subrogation Holders",
+     "req": true,
+     "opts": [
+      "0",
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "More than 5"
+     ],
+     "mapped": "progressive.qB8"
+    },
+    {
+     "q": "BE",
+     "kind": "radio",
+     "caption": "Is a Blanket Additional Insured endorsement needed by contract?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.qBE"
+    },
+    {
+     "q": "C1",
+     "kind": "radio",
+     "caption": "Is a Blanket Waiver of Subrogation endorsement needed by contract?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.qC1"
+    },
+    {
+     "q": "CA",
+     "kind": "radio",
+     "caption": "Are state or federal filings required?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.qCA"
+    },
+    {
+     "q": "D1",
+     "kind": "radio",
+     "caption": "Is an Electronic Logging Device (ELD) required to record hours of service?",
+     "req": true,
+     "opts": [
+      "Yes",
+      "No"
+     ],
+     "mapped": "progressive.qD1"
+    }
+   ]
+  },
+  "CoveragesRates": {
+   "fields": [
+    {
+     "q": "1D97",
+     "kind": "combo",
+     "caption": "Bodily Injury and Property Damage Liability",
+     "req": true,
+     "opts": [
+      "Not selected",
+      "$25k/$50k/$25k",
+      "$50k/$100k/$25k",
+      "$125k/$250k/$50k",
+      "$100k/$300k/$50k",
+      "$250k/$500k/$100k",
+      "$50k CSL",
+      "$100k CSL",
+      "$300k CSL",
+      "$500k CSL",
+      "$750k CSL",
+      "$1 million CSL",
+      "$1.5 million CSL",
+      "$2 million CSL"
+     ],
+     "mapped": "coverage.autoLiabLimit",
+     "cond": true
+    },
+    {
+     "q": "1DB8",
+     "kind": "combo",
+     "caption": "Property Damage Liability Only",
+     "req": true,
+     "opts": [
+      "Not Selected"
+     ],
+     "mapped": "progressive.q1DB8",
+     "cond": true
+    },
+    {
+     "q": "1DEE",
+     "kind": "combo",
+     "caption": "Uninsured/Underinsured Motorist Bodily Injury Coverage Limit",
+     "req": true,
+     "opts": [
+      "Not selected",
+      "$10k/$20k",
+      "$50k CSL",
+      "$100k CSL",
+      "$300k CSL",
+      "$500k CSL",
+      "$750k CSL",
+      "$1 million CSL"
+     ],
+     "mapped": "progressive.q1DEE",
+     "cond": true
+    },
+    {
+     "q": "1E8D",
+     "kind": "combo",
+     "caption": "Personal Injury Protection",
+     "req": true,
+     "opts": [
+      "Not selected",
+      "$10k w/ $0 Deductible"
+     ],
+     "mapped": "progressive.q1E8D",
+     "cond": true
+    },
+    {
+     "q": "1FCD",
+     "kind": "combo",
+     "caption": "2025 RAM PROMASTER 2500",
+     "req": true,
+     "opts": [
+      "Not selected",
+      "$100 Deductible",
+      "$250 Deductible",
+      "$500 Deductible",
+      "$1,000 Deductible",
+      "$2,500 Deductible",
+      "$5,000 Deductible"
+     ],
+     "mapped": "progressive.q1FCD",
+     "cond": true
+    },
+    {
+     "q": "1FD2",
+     "kind": "combo",
+     "caption": "2025 RAM PROMASTER 2500",
+     "req": true,
+     "opts": [
+      "Not selected",
+      "$100 Deductible",
+      "$250 Deductible",
+      "$500 Deductible",
+      "$1,000 Deductible",
+      "$2,500 Deductible",
+      "$5,000 Deductible"
+     ],
+     "mapped": "progressive.q1FD2",
+     "cond": true
+    },
+    {
+     "q": "1FE4",
+     "kind": "combo",
+     "caption": "2025 RAM PROMASTER 2500",
+     "req": true,
+     "opts": [
+      "Not selected",
+      "$500 per person",
+      "$1,000 per person",
+      "$2,000 per person",
+      "$5,000 per person"
+     ],
+     "mapped": "progressive.q1FE4",
+     "cond": true
+    },
+    {
+     "q": "1FF2",
+     "kind": "combo",
+     "caption": "2025 RAM PROMASTER 2500",
+     "req": true,
+     "opts": [
+      "Not selected",
+      "$30 per day, $900 max",
+      "$40 per day, $1,200 max",
+      "$50 per day, $1,500 max"
+     ],
+     "mapped": "progressive.q1FF2",
+     "cond": true
+    },
+    {
+     "q": "2000",
+     "kind": "combo",
+     "caption": "2025 RAM PROMASTER 2500",
+     "req": true,
+     "opts": [
+      "Not selected",
+      "Selected w/ $0 Deductible"
+     ],
+     "mapped": "progressive.q2000",
+     "cond": true
+    },
+    {
+     "q": "200F",
+     "kind": "combo",
+     "caption": "2025 RAM PROMASTER 2500",
+     "req": true,
+     "opts": [
+      "Not selected",
+      "$100 Deductible",
+      "$250 Deductible",
+      "$500 Deductible",
+      "$1,000 Deductible",
+      "$2,500 Deductible",
+      "$5,000 Deductible"
+     ],
+     "mapped": "progressive.q200F",
+     "cond": true
+    },
+    {
+     "q": "208A",
+     "kind": "checkbox",
+     "caption": "Vehicle has no equipment",
+     "mapped": "progressive.q208A",
+     "cond": true
+    },
+    {
+     "q": "2091",
+     "kind": "text",
+     "caption": "If this vehicle was sold today, how much would it be worth (excluding any permanently attached equipment)?",
+     "req": true,
+     "mapped": "vehicles[0].value",
+     "cond": true
+    },
+    {
+     "q": "3E96",
+     "kind": "radio",
+     "caption": "Policy length",
+     "req": true,
+     "opts": [
+      "6 month",
+      "12 month"
+     ],
+     "mapped": "progressive.q3E96",
+     "cond": true
+    },
+    {
+     "q": "3E97",
+     "kind": "radio",
+     "caption": "How will the customer pay?",
+     "req": true,
+     "opts": [
+      "Installments",
+      "Pay In Full Get our biggest savings!"
+     ],
+     "mapped": "progressive.q3E97",
+     "cond": true
+    },
+    {
+     "q": "3E98",
+     "kind": "radio",
+     "caption": "Payment method",
+     "req": true,
+     "opts": [
+      "Automatic payments from checking account Save with lower fees – and a discount if eligible!",
+      "Manual payments (send a bill)"
+     ],
+     "mapped": "progressive.q3E98",
+     "cond": true
+    },
+    {
+     "q": "3EA4",
+     "kind": "radio",
+     "caption": "",
+     "req": true,
+     "opts": [
+      "$4,567.92 (16.67%) today + 10 monthly payments of $2,286.41 Lowest down payment!",
+      "$7,982.77 (16.67%) today + 10 monthly payments of $3,993.43 Lowest down payment!"
+     ],
+     "mapped": "progressive.q3EA4",
+     "cond": true
+    },
+    {
+     "q": "2150",
+     "kind": "combo",
+     "caption": "Motor Trucking Cargo",
+     "req": true,
+     "opts": [
+      "Not selected",
+      "$5k with a $500 Deductible",
+      "$5k with a $1,000 Deductible",
+      "$10k with a $500 Deductible",
+      "$10k with a $1,000 Deductible",
+      "$25k with a $500 Deductible",
+      "$25k with a $1,000 Deductible",
+      "$50k with a $500 Deductible",
+      "$50k with a $1,000 Deductible",
+      "$75k with a $1,000 Deductible",
+      "$100k with a $1,000 Deductible",
+      "$100k with a $2,500 Deductible",
+      "$200k with a $1,000 Deductible",
+      "$200k with a $2,500 Deductible",
+      "$250k with a $1,000 Deductible",
+      "$250k with a $2,500 Deductible"
+     ],
+     "mapped": "progressive.q2150",
+     "cond": true
+    },
+    {
+     "q": "32B0",
+     "kind": "radio",
+     "caption": "Insurance Quote (with all bill plans)",
+     "req": true,
+     "opts": [
+      "Insurance Quote (with all bill plans)",
+      "Document Set"
+     ],
+     "mapped": "progressive.q32B0",
+     "cond": true
+    },
+    {
+     "q": "32C8",
+     "kind": "text",
+     "caption": "Welcome Letter Closing Message",
+     "req": true,
+     "mapped": "progressive.q32C8",
+     "cond": true
+    },
+    {
+     "q": "32CC",
+     "kind": "checkbox",
+     "caption": "Print",
+     "mapped": "progressive.q32CC",
+     "cond": true
+    },
+    {
+     "q": "32D0",
+     "kind": "checkbox",
+     "caption": "Email",
+     "mapped": "progressive.q32D0",
+     "cond": true
+    },
+    {
+     "q": "32DD",
+     "kind": "checkbox",
+     "caption": "Fax",
+     "mapped": "progressive.q32DD",
+     "cond": true
+    }
+   ]
+  },
+  "ChangePaymentPlan": {
+   "fields": [
+    {
+     "q": "3E96",
+     "kind": "radio",
+     "caption": "Policy length",
+     "req": true,
+     "opts": [
+      "6 month",
+      "12 month"
+     ],
+     "mapped": "progressive.q3E96"
+    },
+    {
+     "q": "3E97",
+     "kind": "radio",
+     "caption": "How will the customer pay?",
+     "req": true,
+     "opts": [
+      "Installments",
+      "Pay In Full Get our biggest savings!"
+     ],
+     "mapped": "progressive.q3E97"
+    },
+    {
+     "q": "3E98",
+     "kind": "radio",
+     "caption": "Payment method",
+     "req": true,
+     "opts": [
+      "Automatic payments from checking account Save with lower fees – and a discount if eligible!",
+      "Manual payments (send a bill)"
+     ],
+     "mapped": "progressive.q3E98"
+    },
+    {
+     "q": "3EA4",
+     "kind": "radio",
+     "caption": "",
+     "req": true,
+     "opts": [
+      "$4,531.74 (16.67%) today + 10 monthly payments of $2,266.33 Lowest down payment!",
+      "$8,043.61 (16.67%) today + 10 monthly payments of $4,021.84 Lowest down payment!"
+     ],
+     "mapped": "progressive.q3EA4"
+    }
+   ]
+  },
+  "PrintEmailFax": {
+   "fields": [
+    {
+     "q": "32B0",
+     "kind": "radio",
+     "caption": "Insurance Quote (with all bill plans)",
+     "req": true,
+     "opts": [
+      "Insurance Quote (with all bill plans)",
+      "Document Set"
+     ],
+     "mapped": "progressive.q32B0"
+    },
+    {
+     "q": "32C8",
+     "kind": "text",
+     "caption": "Welcome Letter Closing Message",
+     "req": true,
+     "mapped": "progressive.q32C8"
+    },
+    {
+     "q": "32CC",
+     "kind": "checkbox",
+     "caption": "Print",
+     "mapped": "progressive.q32CC"
+    },
+    {
+     "q": "32CE",
+     "kind": "checkbox",
+     "caption": "Agent Fax Cover Page",
+     "mapped": "progressive.q32CE"
+    },
+    {
+     "q": "32D0",
+     "kind": "checkbox",
+     "caption": "Email",
+     "mapped": "progressive.q32D0"
+    },
+    {
+     "q": "32DD",
+     "kind": "checkbox",
+     "caption": "Fax",
+     "mapped": "progressive.q32DD"
+    }
+   ]
+  }
+ }
+}

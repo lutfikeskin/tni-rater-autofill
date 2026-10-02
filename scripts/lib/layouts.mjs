@@ -36,10 +36,15 @@ export function buildLayouts(events) {
     const page = layout.pages.get(e.page) ?? { snapshots: 0, fields: new Map() };
     page.snapshots++;
     for (const f of e.fields ?? []) {
-      const k = f.q ?? `${f.kind}:${f.label}`;
+      // Our own mark tooltips got into early layouts as captions; they aren't questions.
+      if (/^Rater Autofill:|^Su Mo Tu We/.test(f.label ?? '')) continue;
+      const k = f.q ?? (f.id ? `#${f.id}` : f.dataId ? `${f.dataId}:${f.label}` : `${f.kind}:${f.label}`);
       const prev = page.fields.get(k);
       page.fields.set(k, {
         q: f.q ?? null,
+        id: f.id ?? prev?.id ?? undefined,
+        dataId: f.dataId ?? prev?.dataId ?? undefined,
+        name: f.name ?? prev?.name ?? undefined,
         kind: f.type === 'dctinputdatefield' ? 'date' : KIND[f.kind] ?? 'text',
         caption: f.label,
         req: f.required || undefined,

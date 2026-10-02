@@ -7,6 +7,7 @@
 //   npm run e2e                 # all layouts; exits 1 on a regression
 //   npm run e2e -- --update     # accept the current results as the new baseline
 //   npm run e2e -- --headed     # watch it
+//   npm run e2e -- --fixtures   # only committed layouts (what CI runs: no usage logs there)
 //
 // Layouts: test/bakeoff/course-*.json, captures/progressive/*.json and the per-state layouts
 // npm run layouts builds (captures/progressive/generated/, git-ignored). Needs internet (the
@@ -24,10 +25,15 @@ const args = new Set(process.argv.slice(2));
 const baselineFile = path.join(root, 'test', 'e2e-baseline.json');
 const today = new Date().toISOString().slice(0, 10);
 
+// Committed per-state layouts (test/fixtures/progressive, refreshed by npm run fixtures:progressive)
+// run everywhere; the freshest generated copy of the same state replaces it locally.
+const generated = args.has('--fixtures') ? [] : list('captures/progressive/generated', /\.json$/);
+const fixtures = list('test/fixtures/progressive', /\.json$/).filter((f) => !generated.some((g) => path.basename(g) === path.basename(f)));
 const layouts = [
   ...list('test/bakeoff', /^course-.*\.json$/),
   ...list('captures/progressive', /\.json$/),
-  ...list('captures/progressive/generated', /\.json$/),
+  ...generated,
+  ...fixtures,
 ].filter((f) => {
   try { return !!JSON.parse(fs.readFileSync(path.join(root, f), 'utf8')).pages; } catch { return false; }
 });
@@ -136,7 +142,8 @@ fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, lines.join('\n'));
 
 if (args.has('--update')) {
-  fs.writeFileSync(baselineFile, JSON.stringify(results, null, 1) + '\n');
+  // Merged: layouts not run this time (generated ones CI doesn't have) keep their entries.
+  fs.writeFileSync(baselineFile, JSON.stringify({ ...(baseline ?? {}), ...results }, null, 1) + '\n');
   console.log(`\nBaseline updated: ${path.relative(root, baselineFile)}`);
 }
 console.log(`\n${path.relative(process.cwd(), out)}`);

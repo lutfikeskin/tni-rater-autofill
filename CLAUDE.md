@@ -48,6 +48,35 @@ Release habit: bump `version` in both `manifest.json` and `package.json` for eve
 
 The usual loop: the agent runs a live quote, leaves "Report a problem" notes, says "review the run". Run `npm run pull`, then read `server-data/events/<date>.jsonl` (types: `problem_report`, `fill_run` with `blockerList`/`advanced`, `fill_field` with `result`/`reason`/`timing`, `field_change` by `agent`, `page_layout`, `ai_suggest`/`ai_decision`), encode the notes as carrier rules (and `tni-rules.js`), add tests, run the suites, bump the version, package. Ask for TNI's standard answer when it can't be derived from the intake; never guess insurance answers. Saved carrier pages (HTML/PDF) and captures go under `layouts/`, which is git-ignored because they contain client data; never commit them, and scrub anything derived from them (names, addresses, license numbers, VINs) before it goes into `test/fixtures`.
 
+## Keeping it robust (tests and the learning loop)
+
+- `npm test` includes `test/consistency.test.mjs`: every event type the extension sends is accepted
+  by the server and no fill-event field is dropped; the manifest allows every carrier host and the
+  usage server; manifest and package versions match; committed fixtures/captures hold no client
+  data (`scripts/lib/privacy.mjs`); commands named in the docs exist.
+- `npm run coverage` (also a section of `npm run review` and the daily review issue): every
+  question agents met on live pages, per carrier/state/product, matched against the current rules
+  offline. "No rule" = a missing TNI rule or a changed carrier page; for AmWINS "not in the mock"
+  = the site has a field `test/fixtures/amwins` lacks. Layouts record element ids / data-ids from
+  0.8.1 on, so id-based rules (AmWINS) are checkable.
+- Progressive replay in CI: `npm run e2e -- --fixtures` runs the committed per-state layouts in
+  `test/fixtures/progressive/`. After new states or rule changes: `npm run pull`, `npm run layouts`,
+  `npm run fixtures:progressive` (refuses anything that looks like client data), then
+  `npm run e2e -- --update` (the baseline merge keeps entries CI doesn't run).
+- AmWINS mock: when the site changes (coverage shows "not in the mock"), save the page again
+  (Save page as, into `layouts/`), scrub, update `test/fixtures/amwins/` and `scripts/amwins-mock.mjs` EXPECT.
+
+## Adding a carrier (GEICO is next: generic label rules only so far)
+
+1. Capture pages during a live quote (side panel → Capture page layout, Report a problem notes) and
+   save full pages to `layouts/<carrier>-html|pdf` (git-ignored).
+2. `src/carriers/<carrier>.js` with rules and actions; register in `src/carriers.js`; add the host
+   to `manifest.json` (the consistency test fails otherwise); `world: 'MAIN'` only if widgets live
+   in the page's JS; `batch: true` only if answers never wait on the server (check the timing logs).
+3. A mock or fixtures: saved-page mock like AmWINS when the page works without its server,
+   layout fixtures + replay like Progressive when it doesn't. Add it to CI.
+4. A section in `src/ai/tni-rules.js`, tests in `test/`, then `npm run coverage` after the first runs.
+
 ## Never automated
 
 Bind, buy, finish, submit, Save & Exit, delete; MVR/CLUE orders, driver exclusions, signatures and
