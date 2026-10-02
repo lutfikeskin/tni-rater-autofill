@@ -225,7 +225,9 @@ export const amwins = {
     // Filing counts: skipped (TNI).
     ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map((selector) => ({ selector, name: 'Filing count (skipped)', ignore: true })),
     // Every prior year's carrier: NO PRIOR (the proof of prior insurance goes in the disclosure).
-    ...[0, 1, 2].map((n) => ({ selector: dataId('carrierName', `#priorCarrierCoveragePanel${n}`), name: `Prior carrier, year ${n} (standard: NO PRIOR)`, kind: 'choice', value: () => 'NO PRIOR' })),
+    // The 1 and 2 year prior panels only appear when the site reloads after Save & Continue, by
+    // then on a hidden step: they're filled from the next step (hidden) and saved with it.
+    ...[0, 1, 2].map((n) => ({ selector: dataId('carrierName', `#priorCarrierCoveragePanel${n}`), name: `Prior carrier, year ${n} (standard: NO PRIOR)`, kind: 'choice', value: () => 'NO PRIOR', hidden: n > 0 })),
     { name: 'Filings required', label: '^filling required$', kind: 'bool', value: filings },
     { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', value: (r) => !!r.applicant.dot },
     { selector: '#hasMcNumber', name: 'Has an MC number', kind: 'bool', value: (r) => !!r.applicant.mc },

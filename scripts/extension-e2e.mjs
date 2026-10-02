@@ -48,10 +48,11 @@ const kept = await mock.evaluate(() => {
     driverFirst: v('#driversPanel [data-id="firstName"]'), driverDob: v('#driversPanel [data-id="dateOfBirth"]'), gender: v('#driversPanel [data-id="gender"]'),
     usage: v('#vehiclesPanel [data-id="usageType"]'), bodyType: v('#vehiclesPanel [data-id="bodyType"]'),
     medicalPayment: v('#medicalPayment'), symbol6: v('#autoSymbol6'), towing: v('#towingAndLaborReimbursement'),
+    prior0: v('#priorCarrierCoveragePanel0 [data-id="carrierName"]'), prior1: v('#priorCarrierCoveragePanel1 [data-id="carrierName"]'), prior2: v('#priorCarrierCoveragePanel2 [data-id="carrierName"]'),
   };
 });
 // The sample intake: Illinois, vehicle 1 a Van (Cargo Van on AmWINS).
-const EXACT = { mailingState: 'Illinois', bodyType: 'Cargo Van', medicalPayment: '$5,000', towing: '$75', usage: 'FOR HIRE', natureOfBusiness: 'TRANSPORTATION' };
+const EXACT = { prior0: 'NO PRIOR', prior1: 'NO PRIOR', prior2: 'NO PRIOR', mailingState: 'Illinois', bodyType: 'Cargo Van', medicalPayment: '$5,000', towing: '$75', usage: 'FOR HIRE', natureOfBusiness: 'TRANSPORTATION' };
 const lost = Object.entries(kept).filter(([k, x]) => x === '' || x === false || x === '(missing)' || x === 'State' || (k in EXACT && x !== EXACT[k])).map(([k]) => k);
 console.log('Kept after the reloads:', JSON.stringify(kept));
 if (lost.length) console.log('LOST:', lost.join(', '));

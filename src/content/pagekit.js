@@ -194,13 +194,17 @@
   // ---------------------------------------------------------------------------------------------
   // Finding the fields on the page
 
+  // Selectors of rules allowed to fill a field that isn't on screen (set while a fill runs): a
+  // question the page adds to an earlier step of a one-address application after it was left.
+  let hiddenOk = [];
+
   function collectControls() {
     const out = [];
     const groups = new Map();
     for (const el of deepQueryAll(document, CONTROL_SELECTOR)) {
       const type = el.tagName === 'INPUT' ? (el.type || 'text').toLowerCase() : el.tagName.toLowerCase();
       if (el.tagName === 'INPUT' && SKIP_INPUT_TYPES.has(type)) continue;
-      if (el.disabled || !isVisible(el)) continue;
+      if (el.disabled || (!isVisible(el) && !hiddenOk.some((sel) => safeMatches(el, sel)))) continue;
       const cmp = extCmp(el);
       if (type === 'radio') {
         const extGroup = cmp?.up?.('radiogroup') ?? null;
@@ -854,6 +858,7 @@
     const refill = new Set();
     // A lookup box its helper has already used (the VIN list Import Data empties) isn't given again.
     const immediateAfter = new Set(actions.filter((a) => a.immediate).flatMap((a) => a.after));
+    hiddenOk = plan.filter((s) => s.hidden && s.selector).map((s) => s.selector);
     const consumedPaths = () => new Set(actions.filter((a) => clicked.has(a.action)).flatMap((a) => a.after));
     const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
     // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
@@ -1187,6 +1192,7 @@
     }
     return report;
     } finally {
+      hiddenOk = [];
       try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
       for (const type of gestureTypes) document.removeEventListener(type, trackGesture, true);
       document.removeEventListener('input', protectEdit, true);
