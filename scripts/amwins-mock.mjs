@@ -45,7 +45,7 @@ const EXPECT = [
   ...[0, 1, 2].map((n) => [`#priorCarrierCoveragePanel${n} [data-id="carrierName"]`, 'NO PRIOR']),
   ['radio:valuedLossRuns', 'No'], ['radio:anyPriorLoss', 'No'], ['radio:hasAdditionalInterest', 'No'], ['#waiverType', 'NONE'],
   ['radio:fillingRequired', 'Yes'], ['#hasDotNumber', true], ['#hasMcNumber', true], ['#noNumber', false], ['#dotNumber', '1234567'], ['#mcNumber', '765432'],
-  ['#howLongFederalOperatingAuthorityActive', 'MORE THAN 3 YEARS'], ['radio:federalBmc91', 'Yes'], ['radio:federalLiabilityMcs90', 'Yes'], ['radio:federalCargoBmc32', 'No'],
+  ['#howLongFederalOperatingAuthorityActive', 'MORE THAN 3 YEARS'], ['#howLongWithCurrentCarrier', '1 TO 2 YEARS'], ['radio:canProvideClaimFreeLossRun', 'No'], ['radio:federalBmc91', 'Yes'], ['radio:federalLiabilityMcs90', 'Yes'], ['radio:federalCargoBmc32', 'No'],
   ['#driversPanel [data-id="firstName"]', 'SAMPLE A'], ['#driversPanel [data-id="lastName"]', 'DRIVER'], ['#driversPanel [data-id="dateOfBirth"]', '01/02/1968'],
   ['#driversPanel [data-id="gender"]', 'MALE'], ['#driversPanel [data-id="martialStatus"]', 'MARRIED'], ['#driversPanel [data-id="licenseYear"]', '1985'],
   ['#driversPanel [data-id="licenseNumber"]', 'H1234567'], ['#driversPanel [data-id="licenseState"]', 'Nebraska'],
@@ -68,10 +68,8 @@ const EXPECT = [
 ];
 // Left for the agent on purpose: the runner answers them as the agent would, then fills again
 // (the side panel never touches a field the agent changed). The declaration ends the run.
-const AGENT_ANSWERS = [
-  [/how long with current carrier/i, '#howLongWithCurrentCarrier', 'LESS THAN 1 YEAR'],
-  [/claim free loss run/i, 'radio:canProvideClaimFreeLossRun', '0'],
-];
+// (none left since TNI gave standard answers for the current-carrier and loss-run questions)
+const AGENT_ANSWERS = [];
 const DECLARATION = /i declare/i;
 
 const browser = await chromium.launch({ headless: !headed });

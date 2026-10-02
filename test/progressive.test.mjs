@@ -313,3 +313,29 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
   assert.ok(new RegExp(amwins.advance.text, 'i').test('Save & Continue'));
   assert.ok(!new RegExp(amwins.advance.text, 'i').test('Save & Exit'));
 });
+
+test('AmWINS standard answers from the agent: current carrier 1-2 years with a DOT only, no claim-free loss runs, PIP left alone, Married to confirm', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.applicant.dot = '1234567';
+  let plan = buildPlan(record, amwins, {});
+  const sel = (s) => plan.find((x) => x.selector === s);
+  const named = (re) => plan.find((x) => re.test(x.name ?? ''));
+  assert.equal(sel('#howLongWithCurrentCarrier').value, '1 TO 2 YEARS');
+  assert.equal(sel('#howLongWithCurrentCarrier').ignore, false);
+  assert.equal(named(/^Claim-free loss runs/).value, false);
+  assert.equal(named(/^Personal Injury Protection \(/).ignore, true);
+  assert.equal(sel('#personalInjuryProtectionLimit').ignore, true);
+  const marital = () => sel('#driversPanel [data-id="martialStatus"]');
+  assert.equal(marital().value, record.drivers[0].maritalStatus ?? 'MARRIED');
+  record.drivers[0].maritalStatus = null;
+  record.applicant.dot = null;
+  plan = buildPlan(record, amwins, {});
+  assert.equal(marital().value, 'MARRIED');
+  assert.match(marital().warn, /no marital status/);
+  assert.equal(sel('#howLongWithCurrentCarrier').ignore, true, 'only asked of clients with a DOT number');
+  record.drivers[0].maritalStatus = 'Single';
+  plan = buildPlan(record, amwins, {});
+  assert.equal(marital().value, 'Single');
+  assert.equal(marital().warn, null);
+});

@@ -99,6 +99,8 @@ function fieldSteps(rules, record, carrier, active) {
       replace: !!rule.replace,
       // An ignored field the page fills itself (a lookup): flagged only if it stays empty.
       emptyNote: rule.emptyNote ?? null,
+      // A default the agent should confirm: filled, but marked yellow with this note.
+      warn: typeof rule.warn === 'function' ? rule.warn(record, active) : rule.warn ?? null,
       summaryAfter: typeof rule.summaryAfter === 'function' ? rule.summaryAfter(record, active) : rule.summaryAfter ?? null,
       choiceAliases: typeof rule.choiceAliases === 'function' ? rule.choiceAliases(record, active) : rule.choiceAliases ?? [],
       scope,

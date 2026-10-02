@@ -843,7 +843,7 @@
     const startPage = currentPage();
     if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
-    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], halted: false, rounds: 0 };
+    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], halted: false, rounds: 0 };
     const serverBacked = !!ext();
     let pendingAction = null;
     let progressed = false; // did the last round fill or click anything?
@@ -945,7 +945,11 @@
         const differs = isChoice && replaceChoices && !agreesWith(step, c);
         if (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c))) {
           report.kept.push(item);
-          handled.set(step.id, { status: null });
+          // Still our default from an earlier fill: still the agent's to confirm.
+          if (step.warn && agreesWith(step, c)) {
+            report.checks.push({ ...item, note: step.warn, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note: step.warn });
+          } else handled.set(step.id, { status: null });
           continue;
         }
         // Timing and side effects of this answer, for working out which questions could be
@@ -987,6 +991,10 @@
           }
           report.filled.push({ ...item, shown: result.shown });
           handled.set(step.id, { status: 'filled', note: `filled from intake: ${step.name}` });
+          if (step.warn) {
+            report.checks.push({ ...item, note: step.warn, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note: step.warn });
+          }
           changed = true;
           break;
         } else if (/did not keep/.test(result.reason ?? '') && !report.halted && retryOnce(step.id)) {
@@ -1128,6 +1136,7 @@
       ...report.failed.map((x) => `failed: ${x.label}`),
       ...report.leftRequired.map((x) => `required: ${x.label}`),
       ...report.kept.filter((x) => x.differs).map((x) => `differs: ${x.label}`),
+      ...report.checks.map((x) => `check: ${x.label}`),
       ...report.blocked.map((x) => `button: ${x.id}`),
       ...(report.halted ? [report.reason] : []),
     ];

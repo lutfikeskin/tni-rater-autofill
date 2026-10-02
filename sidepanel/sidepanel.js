@@ -676,6 +676,8 @@ function renderReport(frames) {
     ...all('noData').map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
     ...all('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
     ...kept.filter((x) => x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
+    // Defaults filled for the agent to confirm (e.g. marital status missing on the intake).
+    ...all('checks').map((x) => ({ ...x, mark: 'needs', why: x.note })),
   ];
   const waiting = all('blocked');
   const advanced = frames.find((f) => f.advanced)?.advanced;

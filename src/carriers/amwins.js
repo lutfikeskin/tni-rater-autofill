@@ -34,9 +34,10 @@
 // - GVW is required unless the body type is a trailer.
 // - Filing required Yes shows BMC-91, MCS-90, BMC-32, how long the authority has been active, how
 //   long with the current carrier, and "can provide claim-free loss runs"; the DOT / MC boxes
-//   show their number fields.
+//   show their number fields. TNI: 1 to 2 years with the current carrier (only with a DOT
+//   number), claim-free loss runs No.
 // - Personal Injury Protection shows for FL HI KS KY MA MI MN NJ NY ND PA UT AR DE MD OR TX NH SD
-//   VA WA WI DC.
+//   VA WA WI DC. TNI leaves it alone: medical payments $5K, and AmWINS applies the better one.
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { owner } from './progressive.js';
@@ -147,7 +148,6 @@ const authorityAge = (r) => {
 const filingsText = (r) => (filings(r) ? r.operations.filingsWhich ?? null : null);
 const federalLiability = (r) => { const t = filingsText(r); return t == null ? null : /liab|bmc.?91|mcs.?90|federal/i.test(t); };
 const federalCargo = (r) => { const t = filingsText(r); return t == null ? null : /cargo|bmc.?3[24]/i.test(t); };
-const PIP_NOTE = 'Personal Injury Protection is asked in this state; TNI has no standard answer yet.';
 
 // Coverages that each have an "Exclude …" box (spelled Exclude / Exlucde / Exlude on the page).
 const EXCLUSIONS = ['medical', 'uninsured', 'comprehensive', 'collision', 'transportation|rental', 'towing'];
@@ -230,8 +230,9 @@ export const amwins = {
     { name: 'Federal BMC-91', label: '^federal bmc91$', kind: 'bool', value: federalLiability },
     { name: 'Federal liability MCS-90', label: '^federal liability mcs90$', kind: 'bool', value: federalLiability },
     { name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', value: federalCargo },
-    { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier', note: 'Not on the intake: how long the client has been with its current carrier.' },
-    { name: 'Claim-free loss runs', label: '^can provide claim free loss run$', kind: 'bool', note: 'Not on the intake: can the client provide claim-free loss runs?' },
+    // TNI: 1 to 2 years, only asked of clients with a DOT number.
+    { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier (TNI: 1 to 2 years with a DOT)', kind: 'choice', value: () => '1 TO 2 YEARS', ignore: (r) => !r.applicant.dot },
+    { name: 'Claim-free loss runs (TNI: No)', label: '^can provide claim free loss run$', kind: 'bool', value: () => false },
     { name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', value: () => false },
     { name: 'Any prior loss', label: '^any prior loss$', kind: 'bool', path: 'claims.hasClaims' },
 
@@ -245,7 +246,9 @@ export const amwins = {
     { selector: dataId('licenseNumber', DRIVER), path: 'drivers[].licenseNumber' },
     { selector: dataId('licenseState', DRIVER), path: 'drivers[].licenseState' },
     { selector: dataId('gender', DRIVER), name: 'Gender (standard: MALE)', kind: 'choice', value: () => 'MALE' },
-    { selector: dataId('martialStatus', DRIVER), path: 'drivers[].maritalStatus' },
+    // Not on the intake: Married, flagged for the agent to confirm.
+    { selector: dataId('martialStatus', DRIVER), name: 'Marital status', kind: 'choice', value: (r, a) => r.drivers?.[a.drivers ?? 0]?.maritalStatus || 'MARRIED',
+      warn: (r, a) => (r.drivers?.[a.drivers ?? 0]?.maritalStatus ? null : 'The intake has no marital status: Married was picked. Check it.') },
     { selector: dataId('licenseYear', DRIVER), name: 'Year licensed (birth year + 17)', value: licenseYear },
 
     // --- Vehicles --------------------------------------------------------------------------------
@@ -276,8 +279,9 @@ export const amwins = {
     { selector: '#collisionDeductible', name: 'Collision deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000' },
     { name: 'Waiver of collision (standard: No)', label: '^has waiver of collision$', kind: 'bool', value: () => false },
     { selector: '#towingAndLaborReimbursement', name: 'Towing and labor (standard: $75)', kind: 'choice', value: () => '$75' },
-    { name: 'Personal Injury Protection', label: '^personal injury protection$', kind: 'bool', note: PIP_NOTE },
-    { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit', note: PIP_NOTE },
+    // TNI leaves PIP alone: medical payments $5K is chosen and AmWINS applies the better of the two.
+    { name: 'Personal Injury Protection (left alone)', label: '^personal injury protection$', ignore: true },
+    { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit (left alone)', ignore: true },
     // Liability auto symbol: 6 only.
     ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ selector: `#autoSymbol${n}`, name: `Auto symbol ${n}${n === 6 ? ' (TNI: 6)' : ''}`, kind: 'bool', value: () => n === 6 })),
     // Nothing is excluded: one rule per box (a rule fills one field).

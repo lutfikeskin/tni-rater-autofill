@@ -1294,3 +1294,22 @@ test('a field the page fills itself (emptyNote) is flagged only when it stays em
     assert.equal(report.unknown.length, 0);
   }
 });
+
+test('a default to confirm (warn) is filled, flagged yellow and holds Continue until the agent changes or dismisses it', async () => {
+  const h = harness();
+  const marital = new SelectNode([{ text: '', value: '' }, { text: 'SINGLE', value: 'S' }, { text: 'MARRIED', value: 'M' }], { id: 'marital', ariaLabel: 'Marital Status' });
+  const next = addButton(h, 'Save & Continue');
+  next.onclick = () => { next._clicked = true; };
+  h.document.body.append(marital);
+  const step = { id: 'm', selector: '#marital', path: 'x.marital', kind: 'choice', value: 'MARRIED', warn: 'Married was picked. Check it.' };
+  const first = await h.kit.fill([step], { maxRounds: 3, advance: { text: '^save & continue$' } });
+  assert.equal(marital.value, 'M');
+  assert.equal(first.checks.length, 1);
+  assert.ok(first.blockers.some((b) => /^check: /.test(b)));
+  assert.ok(!next._clicked, 'Continue waits for the agent');
+  const again = await h.kit.fill([step], { maxRounds: 3, advance: { text: '^save & continue$' } });
+  assert.equal(again.checks.length, 1, 'still flagged on a later fill while it is our default');
+  assert.ok(!next._clicked);
+  await h.kit.fill([step], { maxRounds: 3, skip: [again.checks[0].key], advance: { text: '^save & continue$' } });
+  assert.ok(next._clicked, 'dismissed (or changed) by the agent: Continue');
+});
