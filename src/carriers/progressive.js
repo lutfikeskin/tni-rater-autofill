@@ -221,7 +221,9 @@ export const progressive = {
     { id: 'billPlan', page: 'CoveragesRates', text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.gl !== true },
     // Back from the bill plan Progressive has usually recalculated already (Recalculate is gone,
     // Print, Email, Fax is there): Recalculate only when the rates say they're out of date.
-    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: ['coverage.autoLiabLimit'], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium' },
+    // Not gated on the liability answer matching: on the NJ run that kept Recalculate (and so
+    // Print, which only shows after it) waiting.
+    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium' },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal.
     { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, afterPages: ['ChangePaymentPlan'] },
@@ -361,6 +363,13 @@ export const progressive = {
     // Loan / lease: from the intake's vehicle ownership (also read from the claims-box notes);
     // owned or not stated is TNI's standard No.
     { q: '2CA7', name: 'Loan / lease (from ownership, standard: No)', kind: 'choice', label: 'loan lease', value: loanLease },
+    // The same answer shown again on Rates (NJ), with its own wording: Progressive carries it over.
+    { q: '2007', name: 'Loan / lease on Rates (carried over from Add Vehicle)', ignore: true },
+    // NJ: who the vehicle is registered to.
+    { q: '2C97', name: 'Vehicle registrant (standard: Named insured)', kind: 'choice', label: 'vehicle registrant', value: () => 'Named insured' },
+    // NJ safety equipment boxes: the VIN lookup ticks what the vehicle has; left as Progressive set them.
+    ...[['2C2C', 'Anti-lock brakes'], ['2C2D', 'Traction control'], ['2C2E', 'Five MPH bumpers'], ['2C45', 'Anti-theft device 1'], ['2C46', 'Anti-theft device 2'], ['2C47', 'Anti-theft device 3'], ['2C48', 'Anti-theft device 4']]
+      .map(([q, name]) => ({ q, name: `${name} (from VIN lookup)`, ignore: true })),
     { q: '2CCC', name: 'Comprehensive / collision (standard: Yes)', kind: 'bool', label: 'comprehensive or collision', value: () => true },
     { q: '2CE0', name: 'Attached equipment amount (only with more than $2,000)', ignore: true },
     { q: '2CCE', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment },

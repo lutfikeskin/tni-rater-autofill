@@ -359,3 +359,13 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   record.applicant.dot = null;
   assert.equal(byQ(buildPlan(record, progressive, {}), '21E').ignore, true);
 });
+
+test('Progressive NJ run: vehicle registrant, VIN-lookup safety boxes kept, Rates loan/lease left alone, Recalculate not gated on the liability answer', () => {
+  const plan = buildPlan(baseRecord(), progressive, {});
+  assert.equal(byQ(plan, '2C97').value, 'Named insured');
+  for (const q of ['2C2C', '2C2D', '2C2E', '2C45', '2C46', '2C47', '2C48']) assert.equal(byQ(plan, q).ignore, true, q);
+  assert.equal(byQ(plan, '2007').ignore, true);
+  const recalc = plan.find((s) => s.action === 'recalculate');
+  assert.deepEqual(recalc.after, []);
+  assert.deepEqual(recalc.afterPages, ['ChangePaymentPlan']);
+});
