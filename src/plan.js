@@ -11,8 +11,9 @@ import { get, listOf } from './util.js';
  * @param {{drivers?: number, vehicles?: number, trailers?: number}} active  which driver/vehicle/trailer this page is about
  */
 export function buildPlan(record, carrier, active = {}) {
-  const rules = [...(carrier?.rules ?? []), ...GENERIC_RULES];
-  return [...fieldSteps(rules, record, carrier, active), ...actionSteps(carrier, record, active)];
+  const rules = [...(carrier?.rules ?? []), ...(carrier?.strictReview ? [] : GENERIC_RULES)];
+  return [...fieldSteps(rules, record, carrier, active), ...actionSteps(carrier, record, active),
+    ...(carrier?.reviews ?? []).filter((r) => r.when(record)).map((r) => ({ kind: 'review', key: `review.${r.key}`, pages: [r.page], note: r.note }))];
 }
 
 const withIndex = (path, active) => {
@@ -29,7 +30,7 @@ function actionSteps(carrier, record, active) {
     .map((a, i) => ({
       id: `action:${a.id}:${i}`,
       kind: 'action',
-      action: a.id,
+      action: a.perRecord ? `${a.id}:${active[a.perRecord] ?? 0}` : a.id,
       path: `action.${a.id}`,
       name: `Click ${a.id}`,
       pages: [].concat(a.page ?? []),
@@ -37,9 +38,11 @@ function actionSteps(carrier, record, active) {
       token: a.token ?? null,
       near: a.near ?? null,
       immediate: !!a.immediate,
+      readiness: a.readiness ?? null,
+      afterAll: (resolve(a.afterAll) ?? []).map((p) => withIndex(p, active)),
       after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
       unless: (resolve(a.unless) ?? []).map((p) => withIndex(p, active)),
-      afterActions: a.afterActions ?? [],
+      afterActions: resolve(a.afterActions) ?? [],
       afterPages: a.afterPages ?? [],
       afterValue: a.afterValue ?? null,
       value: null,
@@ -54,8 +57,9 @@ function fieldSteps(rules, record, carrier, active) {
       ? (list ? rule.path.replace('[]', `[${active[list] ?? 0}]`) : rule.path)
       : `${carrier?.id ?? 'carrier'}.q${rule.q ?? id}`;
     const info = rule.path ? fieldInfo(rule.path) : { label: rule.name ?? path, kind: 'text' };
+    const review = rule.review?.(record, active) ?? rule.note ?? null;
     let value = null;
-    if (!rule.note) {
+    if (!review && !rule.ignore) {
       try {
         value = rule.value ? rule.value(record, active) : get(record, path);
       } catch {
@@ -71,7 +75,9 @@ function fieldSteps(rules, record, carrier, active) {
       selector: rule.selector ?? null,
       re: rule.label ?? null,
       ex: rule.not ?? null,
-      note: rule.note ?? null,
+      note: review,
+      ignore: !!rule.ignore,
+      pages: [].concat(rule.pages ?? rule.page ?? []),
       value: value === undefined || value === '' ? null : value,
     };
   });

@@ -25,8 +25,18 @@
   }
 
   // Duck Creek question id from an element id (f_<letter><32 hex><q>_<page>_<row>) or field name.
-  const questionId = (el) => el.id?.match(/^f_[a-z]([0-9A-F]{32})([0-9A-F]+)_\d+_\d+/)?.[2]
+  const questionId = (el) => el.id?.match(/^f_[a-zA-Z]([0-9A-F]{32})([0-9A-F]+)_\d+_\d+/)?.[2]
     ?? el.name?.match(/^[a-z]+_([0-9A-F]+)(\||$)/)?.[1] ?? null;
+
+  // Persist the field identity immediately, even when a server response reloads the page
+  // before the polling snapshot. Values are never sent by this event.
+  for (const type of ['input', 'change']) addEventListener(type, (e) => {
+    if (!e.isTrusted || !e.target?.matches?.('input, select, textarea')) return;
+    const el = e.target;
+    if (SKIP_TYPES.has(el.type)) return;
+    const key = questionId(el) ?? (el.name || el.id);
+    if (key) send({ event: 'agent_touch', page: pageKey(), key });
+  }, true);
 
   const isVisible = (el) => el.getClientRects().length > 0 || [...(el.labels ?? [])].some((l) => l.getClientRects().length);
 

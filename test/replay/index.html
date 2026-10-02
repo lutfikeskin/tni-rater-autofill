@@ -74,7 +74,7 @@
     function idFor(f, i) {
       // Layout fields without a question id get a stable made-up one, so they still render.
       const q = f.q && /^[0-9A-F]+$/.test(f.q) ? f.q : `F${(1000 + i).toString(16).toUpperCase()}`;
-      return { id: `f_a${GUID}${q}_8_1`, q };
+      return { id: `f_${i % 2 ? 'a' : 'U'}${GUID}${q}_8_1`, q };
     }
     const optionsOf = (f) => (f.opts ?? []).filter((o) => o && !/^…/.test(o));
 
@@ -245,18 +245,20 @@
       const plan = buildPlan(record, carrier, {});
       const before = window.__raterKit.capture(plan, []).controls;
       const r = await window.__raterKit.fill(plan, {
-        optional: carrier?.optional ?? [], replaceChoices: !!carrier?.replaceChoices,
+        optional: carrier?.optional ?? [], replaceChoices: !!carrier?.replaceChoices, strictReview: !!carrier?.strictReview,
         doneActions: [...done.actions], visitedPages: [...done.pages],
       });
-      r.actions.forEach((a) => done.actions.add(a.id));
+      (r.invalidatedActions ?? []).forEach((id) => done.actions.delete(id));
+      done.actions = new Set(r.completedActions ?? r.actions.map((a) => a.id));
       done.pages.add(window.replay.page);
       const how = (x) => (x.path?.startsWith(`${carrier?.id}.`) ? 'standard/computed' : 'intake');
       return {
+        halted: !!r.halted,
         questions: before.length,
         filled: r.filled.map((x) => ({ label: x.label, shown: x.shown, how: how(x) })),
         clicked: r.actions.map((a) => a.text),
         noData: r.noData.map((x) => x.label + (x.note ? ` (${x.note})` : '')),
-        failed: r.failed.map((x) => `${x.label}: ${x.reason}`),
+        failed: [...r.failed, ...(r.blockers ?? [])].map((x) => `${x.label}: ${x.reason}`),
         unmapped: before.filter((c) => !c.wouldFill).map((c) => c.label),
       };
     }
@@ -286,9 +288,10 @@
           $('status').textContent = `Filling ${p}…`;
           if (all) showPage(p);
           rows.push({ page: p, ...(await fillPage(record)) });
+          if (rows.at(-1).halted) break;
         }
         reportRows(rows);
-        $('status').textContent = 'Done';
+        $('status').textContent = rows.some((r) => r.halted) ? 'Stopped for agent review' : 'Done';
       } catch (e) {
         $('status').textContent = `Error: ${e.message}`;
       } finally {

@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 10) return;
+  if (globalThis.__raterKit?.version === 11) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -26,6 +26,11 @@
     RI: 'rhode island', SC: 'south carolina', SD: 'south dakota', TN: 'tennessee', TX: 'texas', UT: 'utah',
     VT: 'vermont', VA: 'virginia', WA: 'washington', WV: 'west virginia', WI: 'wisconsin', WY: 'wyoming',
   };
+
+  let userEditVersion = 0;
+  for (const event of ['input', 'change']) globalThis.addEventListener?.(event, (e) => {
+    if (e.isTrusted) userEditVersion++;
+  }, true);
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -148,7 +153,7 @@
 
   // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>.
   function dctQuestionId(id) {
-    return String(id ?? '').match(/^f_[a-z]([0-9A-F]{32})([0-9A-F]+)_\d+_\d+/)?.[2] ?? null;
+    return String(id ?? '').match(/^f_[a-zA-Z]([0-9A-F]{32})([0-9A-F]+)_\d+_\d+/)?.[2] ?? null;
   }
 
   // The page is waiting on its server or re-drawing after an answer.
@@ -270,9 +275,9 @@
     const used = new Set();
     const donePaths = new Set();
     const pairs = [];
-    const steps = plan.map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
+    const steps = plan.filter((s) => !s.pages?.length || s.pages.includes(currentPage())).map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
     const take = (s, c) => { used.add(c); donePaths.add(s.path); pairs.push({ step: s, control: c }); };
-    const fits = (s, c) => !(c.kind === 'checkbox' && s.kind !== 'bool');
+    const fits = (s, c) => s.ignore || !(c.kind === 'checkbox' && s.kind !== 'bool');
 
     for (const s of steps) {
       if (donePaths.has(s.path)) continue;
@@ -536,6 +541,7 @@
 
   // Does the field already hold the answer we'd give?
   function agreesWith(step, c) {
+    if (c.kind === 'text') return oneLine(c.el.value) === oneLine(textFor(step, c));
     if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!c.cmp.getValue() : c.el.checked) === step.value;
     const current = selectedText(c);
     const opt = matchOption(optionsOf(c), step);
@@ -546,7 +552,7 @@
   // Clicking buttons (carrier "actions": Verify DOT, Lookup VIN, Add a Commodity, …)
 
   // Never clicked, whatever a rule says: moving on or committing is always the agent's call.
-  const NEVER_CLICK = /\b(continue|next|finish|buy|bind|purchase|submit|save|delete|remove|cancel|logout|log out|sign out)\b/i;
+  const NEVER_CLICK = /\b(continue|next|finish|buy|bind|purchase|submit|save|start quote|order mvr|order clue|delete|remove|cancel|logout|log out|sign out)\b/i;
 
   const currentPage = () => (new URLSearchParams(location.search).get('pageName') || location.pathname).replace(/-Reload$/, '');
 
@@ -554,7 +560,7 @@
     const re = step.text ? new RegExp(step.text, 'i') : null;
     let best = null;
     for (const el of deepQueryAll(document, 'a, button, [role=button], [role=link], input[type=button], input[type=submit], .x-btn, [onclick]')) {
-      if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true') continue;
+      if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]')) continue;
       const text = oneLine(el.value || el.textContent);
       if (NEVER_CLICK.test(text)) continue;
       const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
@@ -591,27 +597,71 @@
   // `replaceChoices`: a dropdown/radio/checkbox answer the page pre-selected (not the agent) is
   // replaced when it differs from ours; agent changes are protected by `skip`.
   // `visitedPages`: pages already seen in this quote (for actions that wait on a page).
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [] } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], strictReview = false } = {}) {
     const skipKeys = new Set(skip);
     const quiet = new Set(optional);
     const actions = plan.filter((s) => s.kind === 'action');
-    plan = plan.filter((s) => s.kind !== 'action');
+    const reviews = plan.filter((s) => s.kind === 'review');
+    plan = plan.filter((s) => s.kind !== 'action' && s.kind !== 'review');
     const clicked = new Set(doneActions);
     const visited = new Set(visitedPages);
     const startPage = currentPage();
+    const startedAtEdit = userEditVersion;
     if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
-    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], rounds: 0 };
+    const report = { frame: location.origin + location.pathname, isTopFrame: window === window.top, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], blockers: [], halted: false, rounds: 0 };
     const serverBacked = !!ext();
-    await settle({ quietMs: 200, maxMs: 5000 });
+    const documentLinks = () => [...document.querySelectorAll('a[href], iframe[src], embed[src]')]
+      .map((el) => el.getAttribute('href') || el.getAttribute('src') || '')
+      .filter((url) => /(?:\.pdf(?:[?#]|$)|^blob:)/i.test(url));
+    let documentsBeforePrint = new Set();
+    if (!await settle({ quietMs: 200, maxMs: 5000 })) halt('Page is still loading. Review and retry.');
 
-    for (let round = 0; round < maxRounds; round++) {
+    function halt(reason, c) {
+      report.halted = true;
+      report.blockers.push({ reason, label: c?.label ?? 'Page review', key: c ? fieldKey(c) : null, canKeep: !!c && (c.kind === 'checkbox' || hasValue(c)) });
+      if (c) mark(c, 'needs', reason);
+    }
+
+    function preflight(controls) {
+      if (!strictReview) return;
+      for (const review of reviews) if (review.pages.includes(currentPage()) && !skipKeys.has(review.key)) {
+        halt(review.note);
+        Object.assign(report.blockers.at(-1), { key: review.key, canKeep: true, pageReview: true });
+      }
+      const pairs = assign(controls, plan);
+      const mapped = new Map(pairs.map((p) => [p.control, p.step]));
+      for (const c of controls) {
+        if (quiet.has(c.q)) continue;
+        // Repeated IDs are vehicle columns/rows whose identity is not yet proven.
+        if (c.q && controls.filter((other) => other.q === c.q).length > 1) {
+          halt('Repeated question needs vehicle/driver identification before filling.', c);
+          continue;
+        }
+        if (skipKeys.has(fieldKey(c))) {
+          if (c.required && c.kind !== 'checkbox' && !hasValue(c)) halt('Required answer is still empty after the agent edit.', c);
+          continue;
+        }
+        const step = mapped.get(c);
+        if (step?.ignore) continue;
+        if (!step) halt('Unfamiliar question. Answer or review it before retrying Fill this page.', c);
+        else if (step.q === c.q && step.re && c.text && !new RegExp(step.re, 'i').test(c.text)) {
+          halt('Question wording differs from the known mapping. Review before using the intake answer.', c);
+        }
+        else if (step.note || step.value == null) halt(step.note ?? 'No intake answer; agent review required.', c);
+      }
+    }
+
+    for (let round = 0; round < maxRounds && !report.halted; round++) {
       report.rounds = round + 1;
+      if (userEditVersion !== startedAtEdit) { halt('Agent edited the page during filling. Review and retry.'); break; }
       const controls = collectControls();
       report.fields = Math.max(report.fields, controls.length);
+      preflight(controls);
+      if (report.halted) break;
       // Buttons that must come right after their field (Verify DOT, Lookup VIN) go first.
       if (window === window.top && clickNextAction(controls, true)) {
-        await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
+        if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) halt('Page did not finish updating; review before retrying.');
         if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
         continue;
       }
@@ -619,6 +669,7 @@
       let changed = false;
       for (const { step, control: c } of pairs) {
         const item = { label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind };
+        if (step.ignore || quiet.has(c.q)) { handled.set(step.id, { status: null }); continue; }
         if (step.note || step.value == null) {
           if (quiet.has(c.q)) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note });
@@ -630,6 +681,10 @@
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
         const differs = isChoice && replaceChoices && !agreesWith(step, c);
         if (!overwrite && hasValue(c) && !presetToReplace && !differs) {
+          if (strictReview && !agreesWith(step, c)) {
+            halt('Existing value differs from the intake. Confirm or correct it before retrying.', c);
+            break;
+          }
           report.kept.push(item);
           handled.set(step.id, { status: null });
           continue;
@@ -637,42 +692,82 @@
         let result;
         try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
         if (result.ok) {
+          const settled = await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
+          const fresh = assign(collectControls(), [step]).find((p) => p.step.id === step.id)?.control;
+          if (!settled || !fresh || !agreesWith(step, fresh)) {
+            result = { ok: false, reason: !settled ? 'page update timed out' : 'value did not survive the page update, or its field disappeared; verify manually' };
+          }
+        }
+        if (result.ok) {
           report.filled.push({ ...item, shown: result.shown });
+          if (currentPage() === 'CoveragesRates') {
+            report.invalidatedActions = ['recalculate', 'billPlan', 'print', 'printSend'];
+            for (const id of report.invalidatedActions) clicked.delete(id);
+          }
           handled.set(step.id, { status: 'filled', note: `filled from intake: ${step.name}` });
           changed = true;
-          if (serverBacked) break;
+          break; // Recollect even plain controls: answers can reveal unfamiliar questions.
         } else {
           report.failed.push({ ...item, reason: result.reason, options: result.options });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
+          if (strictReview) { halt(result.reason, c); break; }
         }
       }
       // Nothing left to type or pick: click the next button whose turn it is.
-      if (!changed && window === window.top) changed = clickNextAction(controls);
+      if (!report.halted && !changed && window === window.top) changed = clickNextAction(controls);
       if (!changed) break;
-      await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
+      if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) halt('Page did not finish updating; review before retrying.');
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
     }
 
     function clickNextAction(controls, immediateOnly = false) {
+      if (report.halted) return false;
       const pairs = assign(controls, plan);
-      const has = (path) => pairs.some(({ step, control }) => step.path === path && hasValue(control));
+      const has = (path) => pairs.some(({ step, control }) => step.path === path && (agreesWith(step, control) || (skipKeys.has(fieldKey(control)) && hasValue(control))));
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         if (clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;
         if (a.after.length && !a.after.some(has)) continue;
+        if (a.afterAll?.some((path) => !has(path))) continue;
         if (a.afterActions.some((id) => !clicked.has(id))) continue;
         if (a.afterPages.length && !a.afterPages.some((p) => visited.has(p))) continue;
+        if (a.readiness === 'document') {
+          const channels = controls.filter((c) => c.kind === 'checkbox' && /^(email|e mail|fax)$/.test(c.text));
+          if (channels.length !== 2 || channels.some((c) => c.cmp ? c.cmp.getValue() : c.el.checked)) {
+            halt('Print-only output is not confirmed. Leave Email and Fax unchecked and review before printing.');
+            return false;
+          }
+        }
+        if (a.readiness === 'premium') {
+          const text = document.body.innerText ?? '';
+          const stale = /\*{4}|premium[^\n]*(?:out of date|not current)|(?:please|must|need to) recalculate/i.test(text);
+          const premium = /premium[^\n$]{0,80}\$[\d,]+(?:\.\d{2})?|\$[\d,]+(?:\.\d{2})?[^\n]{0,40}premium/i.test(text);
+          if (pageBusy() || stale || !premium) {
+            if (strictReview) halt('Refreshed premium is not confirmed. Recalculate and verify rates before bill plans.');
+            return false;
+          }
+        }
         if (a.afterValue && !pairs.some(({ step, control }) => step.path === a.afterValue[0] && new RegExp(a.afterValue[1], 'i').test(selectedText(control) ?? ''))) continue;
         if (a.unless.some(has)) { clicked.add(a.action); continue; }
         const button = findButton(a);
         if (!button) continue;
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: oneLine(button.value || button.textContent).slice(0, 60) });
+        if (a.readiness === 'document') documentsBeforePrint = new Set(documentLinks());
         button.click();
+        if (a.readiness === 'document') {
+          // A click cannot establish that a new-tab/download PDF was generated.
+          report.documentStatus = 'requested-unverified';
+        }
         return true;
       }
       return false;
     }
 
+    if (!report.halted && report.rounds >= maxRounds) halt('Fill round limit reached; review before retrying.');
+    if (report.documentStatus === 'requested-unverified') {
+      report.documentStatus = documentLinks().some((url) => !documentsBeforePrint.has(url))
+        ? 'document-link-available' : 'requested-unverified';
+    }
     // The page may have redrawn while filling, so mark the final fields.
     const controls = collectControls();
     const pairs = assign(controls, plan);
@@ -689,6 +784,7 @@
         mark(c, 'needs', 'required, and not on the intake form');
       }
     }
+    report.completedActions = [...clicked];
     return report;
   }
 
@@ -748,5 +844,5 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 10, fill, capture, clear };
+  globalThis.__raterKit = { version: 11, fill, capture, clear };
 })();

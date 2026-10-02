@@ -36,6 +36,7 @@ const state = {
   // the agent changed themselves (never refilled automatically).
   autoPages: new Set(),
   agentKeys: new Map(),
+  halted: false,
   filling: false,
   autoTimer: null,
   autoPending: false,
@@ -82,7 +83,11 @@ async function loadFile(file) {
   if (result.error) return showLoadError(result.error);
   const summary = await intakeSummary(bytes, raw, result);
   if (state.intake) usage.log({ type: 'intake_closed', reason: 'replaced' });
-  state.intake = { ...result, fileName: file.name, done: [] };
+  state.intake = { ...result, fileName: file.name, done: [], workflowId: crypto.randomUUID() };
+  state.agentKeys = new Map();
+  state.autoPages = new Set();
+  state.visitedPages = new Set();
+  state.halted = false;
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
   state.filled = new Map();
   state.doneActions = new Set();
@@ -263,6 +268,14 @@ async function refreshTab() {
     state.agentKeys = new Map();
     state.doneActions = new Set();
     state.visitedPages = new Set();
+    state.halted = false;
+    const saved = tab && await store.get(`workflow:${tab.id}`);
+    if (saved && saved.workflowId === state.intake?.workflowId) {
+      state.agentKeys = new Map(saved.agentKeys.map(([page, keys]) => [page, new Set(keys)]));
+      state.doneActions = new Set(saved.doneActions);
+      state.visitedPages = new Set(saved.visitedPages);
+      state.halted = saved.halted;
+    }
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null } : null;
   renderSite();
@@ -275,6 +288,10 @@ async function refreshTab() {
 // Progressive re-renders a page as "<Page>-Reload"; it's the same page.
 const samePage = (p) => (p ?? '').replace(/-Reload$/, '');
 const pageOf = (url) => { try { const u = new URL(url); return samePage(u.searchParams.get('pageName') || u.pathname); } catch { return null; } };
+
+// Identical portal IDs recur for each driver/vehicle. Keep corrections with the selected record.
+const correctionPage = (page) => page === 'AddDriver' ? `${page}:driver:${state.active.drivers}`
+  : page === 'AddVehicle' ? `${page}:vehicle:${state.active.vehicles}` : page;
 
 // Watch the rater tab while an intake is loaded. Only carrier pages; never other sites.
 async function ensureRecorder() {
@@ -289,11 +306,30 @@ function tellRecorder(cmd) {
   return chrome.tabs.sendMessage(state.tab.id, { ra: 'recorder', cmd }).catch(() => {});
 }
 
+function persistWorkflow() {
+  if (!state.tab || !state.intake?.workflowId) return;
+  return store.set(`workflow:${state.tab.id}`, {
+    workflowId: state.intake.workflowId,
+    agentKeys: [...state.agentKeys].map(([page, keys]) => [page, [...keys]]),
+    doneActions: [...state.doneActions], visitedPages: [...state.visitedPages], halted: state.halted,
+  });
+}
+
 function onRecorderMessage(msg, sender) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
+  if (msg.event === 'agent_touch') {
+    const page = samePage(msg.page);
+    const keys = state.agentKeys.get(correctionPage(page)) ?? new Set();
+    keys.add(msg.key);
+    if (page === 'CoveragesRates') for (const id of ['recalculate', 'billPlan', 'print', 'printSend']) state.doneActions.delete(id);
+    state.agentKeys.set(correctionPage(page), keys);
+    persistWorkflow();
+    return;
+  }
   const carrier = state.tab.carrier?.id ?? null;
   if (msg.event === 'page_view') {
     if (msg.from) state.visitedPages.add(samePage(msg.from));
+    persistWorkflow();
     usage.log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
     // Setting "Fill each new page as soon as it opens": wait for the page to settle, then fill.
     if ($('auto-pages').checked && msg.fields > 0 && onQuotePage()) {
@@ -307,9 +343,10 @@ function onRecorderMessage(msg, sender) {
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
-      const keys = state.agentKeys.get(page) ?? new Set();
+      const keys = state.agentKeys.get(correctionPage(page)) ?? new Set();
       byAgent.forEach((c) => keys.add(c.key));
-      state.agentKeys.set(page, keys);
+      state.agentKeys.set(correctionPage(page), keys);
+      persistWorkflow();
       scheduleAutoFill(page);
     }
   }
@@ -326,23 +363,24 @@ const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUr
 
 const fillOptions = (carrier, extra = {}) => ({
   optional: carrier.optional ?? [],
+  strictReview: !!carrier.strictReview,
   replaceChoices: !!carrier.replaceChoices,
   doneActions: [...state.doneActions],
   visitedPages: [...state.visitedPages],
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
-  skip: [...(state.agentKeys.get(pageOf(state.tab?.url)) ?? [])],
+  skip: [...(state.agentKeys.get(correctionPage(pageOf(state.tab?.url))) ?? [])],
   ...extra,
 });
 
 function scheduleAutoFill(page) {
-  if (!$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage()) return;
+  if (state.halted || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage()) return;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
   state.autoTimer = setTimeout(() => autoFill(page), 1200);
 }
 
 async function autoFill(page) {
-  if (state.filling || pageOf(state.tab?.url) !== page) return;
+  if (state.halted || state.filling || pageOf(state.tab?.url) !== page) return;
   const { id: tabId, carrier } = state.tab;
   state.filling = true;
   state.autoPending = false;
@@ -350,10 +388,11 @@ async function autoFill(page) {
   await tellRecorder('pause');
   try {
     const plan = buildPlan(state.intake.record, carrier, state.active);
-    const skip = [...(state.agentKeys.get(page) ?? [])];
+    const skip = [...(state.agentKeys.get(correctionPage(page)) ?? [])];
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite: false, skip, keepMarks: true })]);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
+    if (frames.some((f) => f.halted)) renderReport(frames);
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n) {
       if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)) }));
@@ -403,9 +442,18 @@ async function recordLayout(page) {
 }
 
 function rememberFill(frames) {
+  if (frames.some((f) => f.halted)) {
+    state.halted = true;
+    clearTimeout(state.autoTimer);
+    state.autoPending = false;
+  }
+  for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) state.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
+  const topFrame = frames.find((f) => f.isTopFrame);
+  if (topFrame?.completedActions) state.doneActions = new Set(topFrame.completedActions);
   for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
   for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
+  persistWorkflow();
 }
 
 function renderSite() {
@@ -443,7 +491,8 @@ async function runKit(tabId, carrier, func, args = []) {
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 async function fillPage({ auto = false } = {}) {
-  if (state.filling || !state.intake || !state.tab?.carrier) return;
+  if (state.filling || !state.intake || !state.tab?.carrier || (auto && state.halted)) return;
+  if (!auto) state.halted = false;
   state.filling = true;
   clearTimeout(state.autoTimer);
   const { id: tabId, carrier } = state.tab;
@@ -488,15 +537,33 @@ function renderReport(frames) {
   const fields = frames.reduce((n, f) => n + f.fields, 0);
   const box = $('report');
   box.className = 'report';
-  if (!fields) {
+  if (!fields && !frames.some((f) => f.halted || f.documentStatus || f.actions?.length)) {
     box.replaceChildren(h('p', { class: 'muted' }, 'No form fields found on this page.'));
     return;
   }
   const group = (cls, title, items, line, open = false) => items.length
     ? h('details', { class: cls, open }, h('summary', {}, `${title} (${items.length})`), h('ul', {}, items.map((x) => h('li', {}, line(x)))))
     : null;
+  const reportPage = pageOf(state.tab?.url);
+  const reportTabId = state.tab?.id;
+  const reportCorrectionPage = correctionPage(reportPage);
+  const keepAnswer = (item) => item.key && item.canKeep ? h('button', {
+    type: 'button', class: 'link small', onclick: (event) => {
+      if (state.tab?.id !== reportTabId || pageOf(state.tab?.url) !== reportPage || correctionPage(reportPage) !== reportCorrectionPage) return;
+      const key = reportCorrectionPage;
+      const keys = state.agentKeys.get(key) ?? new Set();
+      keys.add(item.key);
+      state.agentKeys.set(key, keys);
+      persistWorkflow();
+      event.currentTarget.disabled = true;
+      event.currentTarget.textContent = 'Current answer reviewed';
+    },
+  }, item.pageReview ? 'Reviewed on quote' : 'Keep current answer') : null;
   const needs = [...noData.map((x) => ({ ...x, why: x.note ?? 'not on intake' })), ...leftRequired.map((x) => ({ ...x, why: 'required' }))];
   box.replaceChildren(
+    frames.some((f) => f.halted) ? h('p', { class: 'error' }, 'Automatic filling stopped. Review the items below, correct or answer them on the quote, then click Fill this page to retry. New-page filling is paused too.') : null,
+    group('r-needs', 'Review before continuing', all('blockers'), (x) => [h('b', {}, x.label), ` — ${x.reason} `, keepAnswer(x)], true),
+    ...frames.filter((f) => f.documentStatus).map((f) => h('p', { class: 'muted' }, f.documentStatus === 'document-link-available' ? 'A document link is available. Open it and verify the quote PDF.' : 'Print requested. PDF generation/download has not been verified; check the portal or browser downloads.')),
     h('p', { class: 'report-summary' }, `Filled ${filled.length} of ${fields} fields on this page`),
     group('r-failed', "Couldn't fill", failed, (x) => [h('b', {}, x.label), ` — ${x.reason}`, x.options?.length ? h('div', { class: 'muted' }, `Options: ${x.options.join(' · ')}`) : null], true),
     group('r-needs', 'Needs you', needs, (x) => [h('b', {}, x.label), ` — ${x.why}`], true),

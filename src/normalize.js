@@ -391,13 +391,23 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   } else check('radius.missing', 'operations.radius', 'No radius of operations.');
   if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.');
   if (ops.filingsRequired && !ops.filingsWhich) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.');
+  if (ops.filingsRequired === true && !a.dot) check('filings.dot-mismatch', 'operations.filingsRequired', 'The form says filings are required but has no USDOT number; confirm the filing requirement before quoting.');
   if (ops.hazmat) check('hazmat.yes', 'operations.hazmat', 'Hauls hazmat, tobacco or prescription drugs — confirm which, most raters treat these differently.');
 
   // --- Current insurance ----------------------------------------------------------------------
   const prior = {
-    type: txt('ins_type_1'), carrier: txt('ins_carrier_1'), limit: txt('ins_limit_1'), expiration: toDate(raw.ins_exp_1),
+    type: txt('ins_type_1'), carrier: txt('ins_carrier_1'), limit: txt('ins_limit_1'), expiration: toDate(raw.ins_exp_1), expired: false,
   };
   if (txt('ins_exp_1') && !prior.expiration) { prior.expiration = txt('ins_exp_1'); check('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`); }
+  if (prior.expiration) {
+    const [mm, dd, yyyy] = prior.expiration.split('/').map(Number);
+    const expiration = new Date(yyyy, mm - 1, dd);
+    const asOf = new Date(year, today.getMonth(), today.getDate());
+    if (expiration < asOf) {
+      prior.expired = true;
+      check('prior-expiration.expired', 'priorInsurance[0].expiration', 'Current policy expiration is before the quote date; confirm the date with the agent instead of substituting a new date.');
+    }
+  }
   if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');

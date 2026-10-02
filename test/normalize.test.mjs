@@ -30,7 +30,7 @@ test('garaging address without commas is split and flagged', () => {
   assert.match(msgs, /garaging\.city: Address had no commas/);
 });
 
-test('drivers: license prefix removed, two-word first name flagged, short dates fixed', () => {
+test('drivers: license prefix preserved, two-word first name flagged, short dates fixed', () => {
   assert.equal(record.drivers.length, 2);
   const [d1, d2] = record.drivers;
   assert.equal(d1.licenseNumber, 'ILS12345678901', 'leading state code stays in the number');
@@ -98,7 +98,7 @@ test('plan resolves the chosen driver and vehicle', () => {
   const plan = buildPlan(record, carrierForUrl('https://www.foragentsonly.com/quote'), { drivers: 1, vehicles: 1 });
   const step = (p) => plan.find((s) => s.path === p);
   assert.equal(step('drivers[1].first').value, 'Casey');
-  assert.equal(step('vehicles[1].make').value, 'ISUZU');
+  assert.equal(step('vehicles[1].vin').value, '1FTBR3X80MKA12399');
   assert.equal(step('applicant.dot').value, '1234567');
   assert.equal(step('drivers[1].dob').kind, 'date');
 });
@@ -131,16 +131,27 @@ test('progressive: intake answers are translated into Progressive wording', () =
   assert.equal(byQ('295').value, 'Jordan Avery');
   assert.equal(byQ('297').value, 'Sample');
   assert.equal(byQ('2BB').value, '02/03/1988');
-  assert.deepEqual(['2DB', '2DD', '2DF'].map((q) => byQ(q).value), ['555', '201', '0199']);
+  assert.equal(byQ('29F').value, true, 'owner drives answer follows the intake');
+  for (const q of ['2DB', '2DD', '2DF', '77']) {
+    assert.equal(carrier.rules.find((rule) => rule.q === q).ignore, true, `${q} is intentionally left blank`);
+  }
   assert.ok(byQ('450').note, 'MVR/CLUE order is marked for the agent, never filled');
   assert.equal(byQ('2B9D').value, 501, 'Unlimited radius picks "More than 500 miles"');
   assert.equal(byQ('2C05').value, 'Business Only');
-  assert.equal(byQ('2C1A').value, true, 'has an MC number, so for-hire');
+  assert.equal(byQ('2C1A').value, true, 'for-hire hauling is the standard trucking answer');
   assert.equal(byQ('2CA7').value, 'No', 'loan/lease: always No');
-  assert.equal(byQ('2CCE').value, '$0 to $2,000');
+  assert.equal(byQ('2CCE').value, '$0 to $2,000', 'active vehicle entry uses the standard equipment range');
   assert.equal(byQ('216F').value, '$100000/$1000');
   assert.equal(byQ('28AC').value, 'IL');
   assert.equal(byQ('81').value, true);
+});
+
+test('progressive: loan/lease stays at the preliminary No default', () => {
+  const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
+  const r = structuredClone(record);
+  assert.equal(buildPlan(r, carrier).find((s) => s.q === '2CA7').value, 'No');
+  r.operations.vehicleOwnership = 'Financed';
+  assert.equal(buildPlan(r, carrier).find((s) => s.q === '2CA7').value, 'No');
 });
 
 test('progressive: cargo not wanted means "Not selected"', () => {
@@ -150,10 +161,15 @@ test('progressive: cargo not wanted means "Not selected"', () => {
   assert.equal(buildPlan(r, carrier).find((s) => s.q === '216F').value, 'Not selected');
 });
 
-test('current policy dates are used as written (no expiry warning)', () => {
+test('current policy dates are used as written and expired dates require review', () => {
   const r = normalizeIntake({ ...raw, ins_exp_1: '08/14/2025' }, { today: new Date('2026-09-30') });
   assert.equal(r.record.priorInsurance[0].expiration, '08/14/2025');
-  assert.ok(!r.warnings.some((w) => /expir/.test(w.code)));
+  assert.equal(r.record.priorInsurance[0].expired, true);
+  assert.ok(r.warnings.some((w) => w.code === 'prior-expiration.expired'));
+  const c = carrierForUrl('https://clpolicy.foragentsonly.com/');
+  const expiration = buildPlan(r.record, c).find((s) => s.q === '9D');
+  assert.match(expiration.note, /expired/);
+  assert.equal(expiration.value, null);
 });
 
 test('progressive: fixes from the first live usage log', () => {
@@ -180,7 +196,7 @@ test('progressive: fixes from the first live usage log', () => {
     assert.equal(byQ(q).kind, 'pick-not');
     assert.equal(byQ(q).value.not, '^enter a different');
   }
-  assert.equal(byQ('2A5').value.prefer, 'primary business address');
+  assert.equal(byQ('2A5').value.prefer, undefined);
   // Without a registered address the owner's home address boxes get the intake's address.
   assert.equal(byQ('2AA').value, '125 Maple Leaf Dr');
   assert.equal(byQ('2AE').value, '62704');
@@ -191,6 +207,8 @@ test('progressive: standard answers for follow-up questions', () => {
   const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
   const byQ = (q, r = record) => buildPlan(r, carrier).find((s) => s.q === q);
   assert.equal(byQ('2CCC').value, true, 'comprehensive/collision: yes');
+  assert.ok(byQ('1FCD').note, 'unresolved per-vehicle column is surfaced for review');
+  assert.ok(byQ('1FF2').note, 'multi-vehicle rental column is scoped for review');
   assert.equal(byQ('2158').value, false, 'special cargo: no');
   assert.equal(byQ('215A').value, false, 'special cargo: no');
   assert.equal(byQ('216A').value, 'Consumer Goods', '"General freight hauler"');
@@ -198,12 +216,20 @@ test('progressive: standard answers for follow-up questions', () => {
   assert.equal(byQ('83').value, true);
   assert.equal(byQ('A2').value, 'None');
   assert.equal(byQ('28C1').value, false);
-  // Filings: both answers only when the intake says filings are needed.
-  assert.equal(byQ('F11').value, true);
-  assert.equal(buildPlan(record, carrier).find((s) => s.re === '^mcs ?90$').value, true);
+  const single = structuredClone(record);
+  single.vehicles = [single.vehicles[0]];
+  const singleByQ = (q) => buildPlan(single, carrier).find((s) => s.q === q);
+  assert.equal(singleByQ('2CCE').value, '$0 to $2,000');
+  // Filings: the all-vehicles attestation is agent-controlled; Federal is checked only when the
+  // intake explicitly names it, and MCS-90 stays under portal/agent control.
+  assert.equal(byQ('F11').value, null);
+  assert.ok(carrier.rules.find((r) => r.q === 'F11').review);
+  assert.equal(buildPlan(record, carrier).find((s) => s.name === 'Federal filing').value, true);
+  assert.equal(buildPlan(record, carrier).find((s) => s.name === 'MCS-90 (preserve portal selection)').value, null);
   const noFilings = structuredClone(record);
   noFilings.operations.filingsRequired = false;
   assert.equal(byQ('F11', noFilings).value, null);
+  assert.equal(buildPlan(noFilings, carrier).find((s) => s.name === 'Federal filing').value, null);
   assert.equal(byQ('CA', noFilings).value, false);
   // No USDOT and not getting one: "No".
   const noDot = structuredClone(record);
@@ -216,10 +242,26 @@ test('progressive: standard answers for follow-up questions', () => {
   assert.equal(byQ('216A', other).value, null);
 });
 
+test('progressive: filings require matching evidence and do not infer Federal from USDOT alone', () => {
+  const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
+  const noDot = structuredClone(record);
+  noDot.applicant.dot = null;
+  const noDotPlan = buildPlan(noDot, carrier);
+  assert.equal(noDotPlan.find((s) => s.q === 'CA').value, null);
+  assert.match(noDotPlan.find((s) => s.q === 'CA').note, /no USDOT/);
+  assert.equal(noDotPlan.find((s) => s.name === 'Federal filing').value, null);
+
+  const stateOnly = structuredClone(record);
+  stateOnly.operations.filingsWhich = 'State filing';
+  assert.equal(buildPlan(stateOnly, carrier).find((s) => s.name === 'Federal filing').value, null);
+});
+
 test('progressive: second live quote — business type, standard vehicle answers, buttons', () => {
   const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
-  const plan = buildPlan(record, carrier, {});
-  const byQ = (q, r = record) => buildPlan(r, carrier).find((s) => s.q === q);
+  const single = structuredClone(record);
+  single.vehicles = [single.vehicles[0]];
+  const plan = buildPlan(single, carrier, {});
+  const byQ = (q, r = single) => buildPlan(r, carrier).find((s) => s.q === q);
   assert.equal(byQ('239').value, 'For Hire Trucking', 'Expediter');
   assert.equal(byQ('267').value, 'Other For-Hire Trucking', 'Expediter');
   const other = structuredClone(record);
@@ -228,32 +270,44 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.equal(byQ('267', other).value, 'Dry Van');
   assert.equal(byQ('1FF2').value, '$40 per day, $1,200 max');
   assert.equal(carrier.replaceChoices, true);
-  const federal = plan.find((s) => s.re === '^federal$');
+  const federal = plan.find((s) => s.name === 'Federal filing');
   assert.equal(federal.value, true, 'filings needed: Federal ticked');
-  assert.equal(plan.find((s) => s.re === '^mcs ?90$').value, true);
-  assert.equal(byQ('F11').value, true);
+  assert.equal(plan.find((s) => s.name === 'MCS-90 (preserve portal selection)').value, null);
+  assert.equal(byQ('F11').value, null);
   assert.equal(byQ('2CA7').value, 'No');
   assert.equal(byQ('2CCE').value, '$0 to $2,000');
-  assert.equal(byQ('2CE3').value, true);
+  assert.equal(byQ('2CE3').value, null, 'range alone does not prove there is no equipment');
+  const equipment = structuredClone(single);
+  equipment.operations.equipVehicle = 500;
+  assert.equal(buildPlan(equipment, carrier).find((s) => s.q === '2CE3').value, false, 'a stated equipment amount clears the no-equipment checkbox');
   assert.equal(byQ('2CE8').value, 45000);
   assert.equal(byQ('27E').value, '125 Maple Leaf Dr');
-  assert.equal(byQ('3E98').value, 'Automatic payments');
+  assert.equal(byQ('3E98').value, 'Automatic payments from checking account');
   assert.equal(byQ('32CC').value, true);
+  assert.equal(byQ('32D0').value, false);
+  assert.equal(byQ('32DD').value, false);
   const actions = plan.filter((s) => s.kind === 'action');
-  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'vehicleTile', 'lookupVin', 'openCargo', 'billPlan', 'print', 'print', 'printSend']);
-  assert.ok(actions.find((a) => a.action === 'lookupVin').immediate);
+  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'vehicleTile:0', 'lookupVin:0', 'openCargo', 'addCommodity', 'doneCargo', 'recalculate', 'billPlan', 'print', 'printSend']);
+  assert.ok(actions.find((a) => a.action === 'lookupVin:0').immediate);
   assert.equal(actions.find((a) => a.action === 'openCargo').near, 'motor truck cargo');
   const printRe = new RegExp(actions.find((a) => a.action === 'print').text, 'i');
   for (const t of ['Print, Email, Fax', 'Print/Email/Fax', 'Print, Email or Fax', 'Print']) assert.ok(printRe.test(t), t);
   assert.ok(!printRe.test('Print/Send'));
   assert.ok(new RegExp(actions.find((a) => a.action === 'billPlan').text, 'i').test('View Bill plan options'));
-  assert.equal(actions.find((a) => a.action === 'vehicleTile').text, '^Cargo Van$');
-  assert.deepEqual(actions.find((a) => a.action === 'lookupVin').after, ['vehicles[0].vin']);
-  const noCargo = structuredClone(record);
+  assert.equal(actions.find((a) => a.action === 'vehicleTile:0').text, '^Cargo Van$');
+  assert.deepEqual(actions.find((a) => a.action === 'lookupVin:0').after, ['vehicles[0].vin']);
+  const noCargo = structuredClone(single);
   noCargo.coverage.cargo = false;
   const noCargoActions = buildPlan(noCargo, carrier).filter((s) => s.kind === 'action').map((a) => a.action);
   assert.ok(!noCargoActions.includes('openCargo'));
-  assert.deepEqual(buildPlan(noCargo, carrier).find((s) => s.action === 'billPlan').after, ['coverage.autoLiabLimit']);
+  assert.deepEqual(buildPlan(noCargo, carrier).find((s) => s.action === 'billPlan').afterAll, ['coverage.autoLiabLimit']);
+  assert.deepEqual(buildPlan(noCargo, carrier).find((s) => s.action === 'recalculate').afterActions, []);
+  assert.deepEqual(plan.find((s) => s.action === 'recalculate').afterActions, ['doneCargo']);
+  assert.deepEqual(plan.find((s) => s.action === 'billPlan').afterActions, ['recalculate']);
+  assert.equal(plan.find((s) => s.action === 'billPlan').readiness, 'premium');
+  assert.equal(plan.find((s) => s.action === 'printSend').afterAll.length, 4);
+  assert.ok(buildPlan(record, carrier, { vehicles: 1 }).some((s) => s.action === 'lookupVin:1'));
+  assert.equal(plan.filter((s) => s.action === 'print').length, 1);
   assert.ok(carrier.autoFillUrl.test('https://clpolicy.foragentsonly.com/Express/Default.aspx?pageName=AddVehicle'));
   assert.ok(!carrier.autoFillUrl.test('https://www.foragentsonly.com/newbusiness/quotesearch/'));
 });
@@ -265,4 +319,26 @@ test('practice pages get the Progressive rules, marked as practice', () => {
   assert.equal(c.world, 'MAIN');
   assert.equal(carrierForUrl('http://localhost:8792/test/mock-rater/index.html').id, 'test');
   assert.equal(carrierForUrl('https://clpolicy.foragentsonly.com/Express/Default.aspx').practice, undefined);
+});
+
+test('review gates do not guess driver history or requested GL underwriting', () => {
+  const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
+  const r = structuredClone(record);
+  r.claims.hasClaims = false;
+  r.coverage.gl = true;
+  const plan = buildPlan(r, carrier);
+  assert.equal(plan.find((s) => s.q === '28F5').value, null);
+  assert.match(plan.find((s) => s.q === '28F5').note, /each driver/);
+  assert.equal(plan.find((s) => s.q === 'A2').value, 'None', 'requested GL is not evidence of existing other business insurance');
+  assert.ok(plan.some((s) => s.kind === 'review' && s.pages.includes('CoveragesRates')));
+  assert.equal(plan.find((s) => s.q === '1E7C').ignore, true);
+});
+
+test('expiration review uses the corrected date, not stale normalization status', () => {
+  const carrier = carrierForUrl('https://clpolicy.foragentsonly.com/');
+  const r = normalizeIntake({ ...raw, ins_exp_1: '08/14/2025' }, { today: new Date('2026-09-30') }).record;
+  r.priorInsurance[0].expiration = '08/14/2099';
+  assert.equal(buildPlan(r, carrier).find((s) => s.q === '9D').note, null);
+  r.priorInsurance[0].expiration = '02/30/2099';
+  assert.match(buildPlan(r, carrier).find((s) => s.q === '9D').note, /valid/);
 });
