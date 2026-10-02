@@ -355,7 +355,7 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
     assert.match(byQ(plan, q).emptyNote, /VIN lookup/);
   }
   assert.equal(byQ(plan, '1DB8').value, 'Not Selected');
-  assert.equal(byQ(plan, '1E8D').value, 'Not selected');
+  assert.equal(byQ(plan, '1E8D').value, '$10k w/ $0 Deductible');
   record.applicant.dot = null;
   assert.equal(byQ(buildPlan(record, progressive, {}), '21E').ignore, true);
 });

@@ -227,7 +227,8 @@ export const progressive = {
     { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, afterPages: ['ChangePaymentPlan'] },
     // This page may have been opened by the agent or restored after a panel reload. Its own
     // document and delivery controls establish readiness; no in-memory navigation history is needed.
-    { id: 'printSend', page: 'PrintEmailFax', text: '^print ?/ ?send$', after: ['progressive.q32B0', 'progressive.q32CC'], verify: 'download' },
+    // Again on every return to the page (the agent went back, changed something, and reprints).
+    { id: 'printSend', page: 'PrintEmailFax', text: '^print ?/ ?send$', after: ['progressive.q32B0', 'progressive.q32CC'], verify: 'download', repeatOnReturn: true },
   ],
   // The page listing the quote's vehicles: the side panel works on the next intake vehicle not
   // added yet there, so Add Vehicle repeats until all are in, then Continue.
@@ -380,9 +381,10 @@ export const progressive = {
 
     // --- Coverages and rates (CoveragesRates) ----------------------------------------------------
     { q: '1D97', path: 'coverage.autoLiabLimit', label: 'bodily injury and property damage liability' },
-    // FL: the CSL already covers property damage; PIP isn't taken (TNI).
+    // FL: the CSL already covers property damage; PIP is required, $10k with no deductible (TNI).
+    // Changing PIP makes Progressive invalidate the liability limit, which is picked again.
     { q: '1DB8', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', label: '^property damage liability only$', value: () => 'Not Selected' },
-    { q: '1E8D', name: 'Personal injury protection (FL standard: Not selected)', kind: 'choice', label: '^personal injury protection$', value: () => 'Not selected' },
+    { q: '1E8D', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible)', kind: 'choice', label: '^personal injury protection$', value: () => '$10k w/ $0 Deductible' },
     { q: '1DEE', name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
     // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
     ...['1DCA', '1DDE', '1DD8', '1DBF'].map((q) => ({ q, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),

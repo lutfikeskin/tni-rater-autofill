@@ -58,7 +58,7 @@ export const TNI_RULES = `
 - UM/UIM: $100k CSL (also when asked separately as Uninsured and Underinsured Motorist). UMPD limit: Not selected. Comprehensive and collision deductibles: $1,000. Rental: "$40 per day, $1,200 max". Fire/theft additional coverage: Not selected. Roadside: keep what the page has selected.
 - Motor Truck Cargo only when the intake asks for it: special cargo questions (mobile/modular homes; business documents) No; "General freight" is category "Consumer Goods", commodity "Other Consumer Goods"; limit and deductible from the intake ("$100K/$1K Ded" is "$100k with a $1,000 Deductible").
 - General liability: not set up yet; the agent answers it.
-- Florida: Property Damage Liability Only "Not Selected"; Personal Injury Protection "Not selected".
+- Florida: Property Damage Liability Only "Not Selected"; Personal Injury Protection "$10k w/ $0 Deductible" (Florida requires it).
 - Pennsylvania first-party benefits: Medical Expense Benefits $5,000 (required, lowest); Extraordinary Medical, Income Loss, Funeral Expense and Accidental Death: Not Selected unless the intake asks for them.
 - Cargo without a deductible on the intake: $1,000 deductible.
 

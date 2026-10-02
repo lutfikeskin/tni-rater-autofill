@@ -911,6 +911,15 @@
       }
       for (const c of controls) {
         if (!mapped.has(c) || skipKeys.has(fieldKey(c)) || !hasValue(c) || !invalidControl(c)) continue;
+        // An answer the page invalidated after another one changed (Progressive's liability limit
+        // after a PIP change) is picked again, at most twice; then it's the agent's.
+        const own = allPairs.find((p) => p.control === c)?.step;
+        if (own && own.value != null && !own.ignore && !own.note && !own.verifyOnly && retryOnce(own.id)) {
+          report.failed = report.failed.filter((x) => x.key !== fieldKey(c));
+          handled.delete(own.id);
+          refill.add(own.id);
+          continue;
+        }
         flag(report.failed, { label: c.label, key: fieldKey(c), q: c.q, controlKind: c.kind, reason: 'The page marks this answer invalid.', ...describe(c) });
         mark(c, 'failed', 'the page marks this answer invalid');
       }
@@ -1182,7 +1191,10 @@
     report.stepKey = stepKey();
     if (advance && window === window.top && !report.blockers.length && currentPage() === startPage && !pageBusy()
       && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)) {
-      const button = findAdvanceButton(advance.text);
+      // The last answer may still be redrawing part of the page (a new payment method reloads the
+      // plan list): a Continue clicked meanwhile is lost. Let it finish first.
+      if (serverBacked) await settle({ quietMs: 500, maxMs: 6000 });
+      const button = !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
       if (button) {
         report.advanced = oneLine(button.value || button.textContent).slice(0, 40);
         // On one-address applications (AmWINS) the side panel waits for the questions to change.

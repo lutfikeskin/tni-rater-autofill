@@ -38,6 +38,7 @@ const state = {
   autoPages: new Set(),
   // "page|step" of one-address applications already continued from (AmWINS steps).
   doneSteps: new Set(),
+  advanceRetried: new Set(), // steps whose lost Continue was clicked a second time (once each)
   tabSessions: new Map(),
   agentKeys: new Map(),
   filling: false,
@@ -104,6 +105,7 @@ async function loadFile(file) {
   state.labels = new Map();
   state.visitedPages = new Set();
   state.doneSteps = new Set();
+  state.advanceRetried = new Set();
   state.intake = { ...result, fileName: file.name, done: [] };
   // Start on Check intake when something on the intake needs a look, else straight on Fill.
   state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
@@ -385,6 +387,13 @@ function onRecorderMessage(msg, sender) {
   if (msg.event === 'page_view') {
     if (msg.from) state.visitedPages.add(samePage(msg.from));
     log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
+    // Buttons that run again on every new arrival at their page (Print / Send: after the agent goes
+    // back and changes something, coming back to print means printing the new quote).
+    if (msg.from && samePage(msg.from) !== samePage(msg.page)) {
+      for (const a of state.tab.carrier?.actions ?? []) {
+        if (a.repeatOnReturn && [].concat(a.page ?? []).includes(samePage(msg.page))) state.doneActions.delete(a.id);
+      }
+    }
     // Setting "Fill each new page as soon as it opens": fill right away (the fill itself waits
     // for the page to settle first).
     // Coming back to a page filled earlier in this quote (Rates after the bill plan) refills it
@@ -658,7 +667,7 @@ function afterFill(frames, { carrier, page }) {
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
   if (advanced) {
     if (advanced.stepKey) state.doneSteps.add(`${page}|${advanced.stepKey}`);
-    watchNextStep(carrier, page, advanced.signatureBefore);
+    watchNextStep(carrier, page, advanced.signatureBefore, advanced.stepKey);
   }
 }
 
@@ -666,10 +675,13 @@ function afterFill(frames, { carrier, page }) {
 // Continue), no page_view comes: wait until the questions on screen have changed (and stopped
 // changing), then fill the new step. If the address changes instead, page_view handles it. Never
 // fills the old step again, so Continue can't be clicked twice.
-async function watchNextStep(carrier, page, before) {
+// A Continue that didn't take (the page neither moved nor changed for about 6 s, and isn't
+// loading) is tried once more: Progressive's Change Payment Plan lost one while it redrew.
+async function watchNextStep(carrier, page, before, stepKey = null) {
   const tabId = state.tab?.id;
   if (!$('auto-followups').checked && !$('auto-pages').checked) return;
   let last = null;
+  let unchanged = 0;
   for (let i = 0; i < 100; i++) {
     await new Promise((r) => setTimeout(r, 300));
     if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || !state.intake) return;
@@ -682,6 +694,14 @@ async function watchNextStep(carrier, page, before) {
     if (now != null && now !== before && now === last) {
       if (state.filling) state.pagePending = page;
       else fillPage({ auto: 'page' });
+      return;
+    }
+    unchanged = now != null && now === before ? unchanged + 1 : 0;
+    const retryKey = `${page}|${stepKey}`;
+    if (unchanged >= 20 && stepKey && !state.filling && !state.advanceRetried.has(retryKey)) {
+      state.advanceRetried.add(retryKey);
+      state.doneSteps.delete(retryKey);
+      fillPage({ auto: 'page' });
       return;
     }
     last = now;
