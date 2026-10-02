@@ -95,6 +95,14 @@ function fieldSteps(rules, record, carrier, active) {
       note,
       ignore,
       verifyOnly: !!rule.verifyOnly,
+      // Our answer replaces what the page put there (e.g. a lookup's body type).
+      replace: !!rule.replace,
+      // What a lookup put there wins over the intake's wording (no "page differs" flag).
+      trustPage: !!rule.trustPage,
+      // An ignored field the page fills itself (a lookup): flagged only if it stays empty.
+      emptyNote: rule.emptyNote ?? null,
+      // A default the agent should confirm: filled, but marked yellow with this note.
+      warn: typeof rule.warn === 'function' ? rule.warn(record, active) : rule.warn ?? null,
       summaryAfter: typeof rule.summaryAfter === 'function' ? rule.summaryAfter(record, active) : rule.summaryAfter ?? null,
       choiceAliases: typeof rule.choiceAliases === 'function' ? rule.choiceAliases(record, active) : rule.choiceAliases ?? [],
       scope,
@@ -102,6 +110,9 @@ function fieldSteps(rules, record, carrier, active) {
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
       // What an address box gets when the page offers no suggestion (e.g. just the street).
       fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,
+      // Type-ahead lists: what to type (the value is what the chosen result must contain).
+      search: typeof rule.search === 'function' ? rule.search(record, active) : rule.search ?? null,
+      withOption: rule.withOption ?? null,
       value: value === undefined || value === '' ? null : value,
     };
   });

@@ -36,6 +36,8 @@ const state = {
   // Automatic follow-up fills: pages the agent has filled in this tab, and per page the fields
   // the agent changed themselves (never refilled automatically).
   autoPages: new Set(),
+  // "page|step" of one-address applications already continued from (AmWINS steps).
+  doneSteps: new Set(),
   tabSessions: new Map(),
   agentKeys: new Map(),
   filling: false,
@@ -101,6 +103,7 @@ async function loadFile(file) {
   state.agentKeys = new Map();
   state.labels = new Map();
   state.visitedPages = new Set();
+  state.doneSteps = new Set();
   state.intake = { ...result, fileName: file.name, done: [] };
   // Start on Check intake when something on the intake needs a look, else straight on Fill.
   state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
@@ -332,12 +335,12 @@ async function refreshTab() {
     }
   }
   if (tab?.id !== state.tab?.id) {
-    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages'];
+    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
     const previous = state.tabSessions.get(tab?.id);
     Object.assign(state, previous ?? {
       filled: new Map(), labels: new Map(), autoPages: new Set(), autoPaused: false,
-      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(),
+      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(),
     });
     clearTimeout(state.autoTimer);
     state.autoPending = false;
@@ -352,11 +355,19 @@ async function refreshTab() {
 
 // Progressive re-renders a page as "<Page>-Reload"; it's the same page.
 const samePage = (p) => (p ?? '').replace(/-Reload$/, '');
-const pageOf = (url) => { try { const u = new URL(url); return samePage(u.searchParams.get('pageName') || u.pathname); } catch { return null; } };
+// Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
+const pageOf = (url) => {
+  try {
+    const u = new URL(url);
+    const route = (u.pathname + (u.hash.startsWith('#/') ? u.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id');
+    return samePage(u.searchParams.get('pageName') || route);
+  } catch { return null; }
+};
 
-// Watch the rater tab while an intake is loaded. Only carrier pages; never other sites.
+// Watch the rater tab while an intake is loaded. Only carrier pages; never other sites. Practice
+// pages get it too (follow-up fills need it) but nothing from them goes in the usage log.
 async function ensureRecorder() {
-  if (!inExtension || !state.intake || !state.tab?.carrier || state.tab.carrier.practice) return;
+  if (!inExtension || !state.intake || !state.tab?.carrier) return;
   try {
     await chrome.scripting.executeScript({ target: { tabId: state.tab.id, allFrames: true }, files: ['src/content/recorder.js'] });
   } catch { /* page not ready or not allowed; tried again on the next tab update */ }
@@ -370,9 +381,10 @@ function tellRecorder(cmd) {
 function onRecorderMessage(msg, sender) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier?.id ?? null;
+  const log = (...events) => { if (!state.tab.carrier?.practice) usage.log(...events); };
   if (msg.event === 'page_view') {
     if (msg.from) state.visitedPages.add(samePage(msg.from));
-    usage.log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
+    log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
     // Setting "Fill each new page as soon as it opens": wait for the page to settle, then fill.
     // Coming back to a page filled earlier in this quote (Rates after the bill plan) refills it
     // with the follow-up setting, so its next buttons (Recalculate, Print) run. Pages with only
@@ -387,7 +399,7 @@ function onRecorderMessage(msg, sender) {
   }
   if (msg.event === 'field_changes') {
     const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, redact: redactor(redactionTerms(state.intake.record)) };
-    usage.log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
+    log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
@@ -411,6 +423,11 @@ const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUr
 const fillOptions = (carrier, extra = {}) => ({
   optional: carrier.optional ?? [],
   replaceChoices: !!carrier.replaceChoices,
+  // Carriers whose pages never wait on a server per answer are filled a round at a time.
+  batch: !!carrier.batch,
+  // Steps of a one-address application already continued from (a step the agent goes back to
+  // isn't continued again).
+  doneSteps: [...state.doneSteps].filter((s) => s.startsWith(`${pageOf(state.tab?.url)}|`)).map((s) => s.slice(s.indexOf('|') + 1)),
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
   advance: $('auto-advance').checked && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
@@ -429,7 +446,8 @@ function scheduleAutoFill(page) {
 }
 
 async function autoFill(page) {
-  if (state.autoPaused || state.filling || pageOf(state.tab?.url) !== page) return;
+  // The client may have been cleared while this fill was waiting to run.
+  if (state.autoPaused || state.filling || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   const { id: tabId, carrier } = state.tab;
   await pickListItem(carrier, page);
   state.filling = true;
@@ -528,6 +546,8 @@ function renderSite() {
   // No URL means the browser isn't letting the extension see this site (site access / permissions).
   const noAccess = inExtension && state.tab && !state.tab.url;
   site.textContent = !inExtension ? 'Preview only' : carrier ? `${carrier.name}${state.tab.background ? ' · in background' : ''}` : noAccess ? 'No access to this page' : 'Not a rater page';
+  // Practice pages aren't recorded: don't say they are.
+  $('recording').hidden = !state.intake || !!carrier?.practice;
   site.title = state.tab?.background ? 'You are on another tab. The panel keeps working on the quote tab; go back to it to see the marks.' : '';
   site.classList.toggle('on', !!carrier);
   const canFill = inExtension && !!carrier && !!state.intake;
@@ -540,7 +560,7 @@ function renderSite() {
     : carrier ? 'Nothing is submitted. Review the page, then click Next yourself.'
       : noAccess
         ? "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page."
-        : 'Open a Progressive or GEICO rater page to fill it.';
+        : 'Open a Progressive, GEICO or AmWINS quote page to fill it.';
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -634,6 +654,36 @@ function afterFill(frames, { carrier, page }) {
   const clicked = frames.some((f) => (f.actions ?? []).length);
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
   if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 900);
+  const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
+  if (advanced) {
+    if (advanced.stepKey) state.doneSteps.add(`${page}|${advanced.stepKey}`);
+    watchNextStep(carrier, page, advanced.signatureBefore);
+  }
+}
+
+// After Continue on an application that keeps one address for every step (AmWINS' Save &
+// Continue), no page_view comes: wait until the questions on screen have changed (and stopped
+// changing), then fill the new step. If the address changes instead, page_view handles it. Never
+// fills the old step again, so Continue can't be clicked twice.
+async function watchNextStep(carrier, page, before) {
+  const tabId = state.tab?.id;
+  if (!$('auto-followups').checked && !$('auto-pages').checked) return;
+  let last = null;
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 300));
+    if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || !state.intake) return;
+    let now = null;
+    try {
+      const results = await runKit(tabId, carrier, () => globalThis.__raterKit.signature());
+      now = results.find((r) => r.frameId === 0)?.result ?? null;
+    } catch { return; }
+    if (now != null && now !== before && now === last) {
+      if (state.filling) state.pagePending = page;
+      else fillPage({ auto: 'page' });
+      return;
+    }
+    last = now;
+  }
 }
 
 async function ignoreReview(key, tabId, page) {
@@ -668,6 +718,8 @@ function renderReport(frames) {
     ...all('noData').map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
     ...all('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
     ...kept.filter((x) => x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
+    // Defaults filled for the agent to confirm (e.g. marital status missing on the intake).
+    ...all('checks').map((x) => ({ ...x, mark: 'needs', why: x.note })),
   ];
   const waiting = all('blocked');
   const advanced = frames.find((f) => f.advanced)?.advanced;
@@ -767,19 +819,29 @@ async function runAssist(frames, ctx) {
   }
   const run = ++state.aiRun;
   const stale = () => run !== state.aiRun || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page || !holder.isConnected;
-  const sig = [ctx.tabId, ctx.page, cfg.model, ...items.map((x) => `${x.key}|${x.label}|${x.current}|${x.options.length}`)].join('\n');
-  let suggestions = state.aiCache.get(sig);
-  if (!suggestions) {
-    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking the AI about ${items.length} question${items.length === 1 ? '' : 's'} left for you…`));
+  // One cache entry per question (tab, page, model, question, options): a question the AI has
+  // answered is never asked again, so the many follow-up fills of a page cost nothing.
+  const sigOf = (x) => [ctx.tabId, ctx.page, cfg.model, `${x.key}|${x.label}|${x.options.join('¦')}`].join('\n');
+  const missing = items.filter((x) => !state.aiCache.has(sigOf(x)));
+  if (missing.length) {
+    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking the AI about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
     const started = Date.now();
     const onPage = frames.flatMap((f) => f.filled ?? []).map((x) => ({ question: x.label, answer: x.shown }));
-    const body = buildRequest(items, { record: state.intake.record, carrier: ctx.carrier.id, page: ctx.page, active: state.active, onPage }, cfg);
-    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: items.length, blocked: blocked.length };
+    const context = { record: state.intake.record, carrier: ctx.carrier.id, page: ctx.page, active: state.active, onPage };
+    const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
     try {
-      const json = await callModel({ apiKey: cfg.apiKey, body });
-      suggestions = parseResponse(json, items, state.intake.record);
-      state.aiCache.set(sig, suggestions);
-      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: suggestions.filter((x) => !x.leave).length, leave: suggestions.filter((x) => x.leave).length, autoOk: suggestions.filter((x) => x.autoOk).length, ...usageOf(json) });
+      let json;
+      try {
+        json = await callModel({ apiKey: cfg.apiKey, body: buildRequest(missing, context, cfg) });
+      } catch (e) {
+        // A page's option texts can break the provider's schema rules: ask again with plain
+        // strings (the answers are still checked against the options here).
+        if (!(e instanceof AssistError) || !/schema/i.test(e.message)) throw e;
+        json = await callModel({ apiKey: cfg.apiKey, body: buildRequest(missing, context, { ...cfg, enums: false }) });
+      }
+      const fresh = parseResponse(json, missing, state.intake.record);
+      fresh.forEach((x) => state.aiCache.set(sigOf(x), x));
+      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter((x) => !x.leave).length, leave: fresh.filter((x) => x.leave).length, autoOk: fresh.filter((x) => x.autoOk).length, ...usageOf(json) });
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : `Something went wrong (${String(e?.message ?? e).slice(0, 120)}).`;
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
@@ -787,6 +849,7 @@ async function runAssist(frames, ctx) {
       return;
     }
   }
+  const suggestions = items.map((x) => state.aiCache.get(sigOf(x))).filter(Boolean);
   if (stale()) return;
   if (cfg.auto) {
     const picks = suggestions.filter((x) => x.autoOk && !x.done && !x.dismissed);
@@ -800,9 +863,9 @@ async function runAssist(frames, ctx) {
 // are any, the page's Continue is never clicked automatically.
 function pendingAi(tabId, page) {
   const out = [];
-  for (const [sig, list] of state.aiCache) {
+  for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
-    if (t === String(tabId) && p === page) out.push(...list.filter((x) => x.done === 'auto' && !x.approved && !x.rejected));
+    if (t === String(tabId) && p === page && x.done === 'auto' && !x.approved && !x.rejected) out.push(x);
   }
   return out;
 }
@@ -810,9 +873,9 @@ function pendingAi(tabId, page) {
 // A new fill clears the page's marks: put the purple back on the AI's answers on this page.
 async function remarkAi(ctx) {
   const answered = [];
-  for (const [sig, list] of state.aiCache) {
+  for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
-    if (t === String(ctx.tabId) && p === ctx.page) answered.push(...list.filter((x) => x.done && !x.rejected));
+    if (t === String(ctx.tabId) && p === ctx.page && x.done && !x.rejected) answered.push(x);
   }
   if (!answered.length) return;
   try {

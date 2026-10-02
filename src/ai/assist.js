@@ -30,7 +30,7 @@ const TIMEOUT_MS = 60_000;
 const NEVER = [
   /\b(mvr|clue)\b|motor vehicle (record|report)|loss history report/i,
   /\bexclu(de|ded|sion)\b/i,
-  /\b(signature|sign here|e-?sign|attest|acknowledg|i agree|i certify|consent|authori[sz])/i,
+  /\b(signature|sign here|e-?sign|attest|acknowledg|i agree|i certify|i declare|declare that|true,? (and )?complete|consent|authori[sz])/i,
   /\b(bank|routing|account (number|no)|card (number|no)|credit card|cvv|ssn|social security|password)\b/i,
 ];
 // Typed identifiers come from the intake through exact rules, never from the model.
@@ -54,7 +54,9 @@ export function collectItems(frames) {
     const sig = `${x.key}|${x.label}`;
     if (!x.key || seen.has(sig)) return;
     seen.add(sig);
-    const options = x.controlKind === 'checkbox' ? ['checked', 'unchecked'] : (x.options ?? []).slice(0, MAX_OPTIONS);
+    // Clean, distinct options: strict schemas refuse duplicate or empty enum values.
+    const options = x.controlKind === 'checkbox' ? ['checked', 'unchecked']
+      : [...new Set((x.options ?? []).map((o) => String(o).replace(/\s+/g, ' ').trim()).filter(Boolean))].slice(0, MAX_OPTIONS);
     const item = {
       key: x.key, q: x.q ?? null, label: x.label ?? '', section: x.section || null, controlKind: x.controlKind ?? null,
       required: !!x.required, status, reason, current: x.current ?? null, options,
@@ -101,9 +103,10 @@ const answerSchema = (item, useEnum) => ({
 });
 
 // The Responses API request body. `context`: { record, carrier, page, active, onPage }.
-export function buildRequest(items, { record, carrier = null, page = null, active = {}, onPage = [] } = {}, { model = DEFAULT_MODEL, effort = DEFAULT_EFFORT } = {}) {
+export function buildRequest(items, { record, carrier = null, page = null, active = {}, onPage = [] } = {}, { model = DEFAULT_MODEL, effort = DEFAULT_EFFORT, enums = true } = {}) {
   // Small option lists get an enum first, so the budget covers as many fields as possible.
-  let budget = ENUM_BUDGET;
+  // enums: false (after the provider refused a schema) sends plain strings, checked here.
+  let budget = enums ? ENUM_BUDGET : 0;
   const useEnum = new Map();
   for (const item of [...items].sort((a, b) => a.options.length - b.options.length)) {
     const ok = CHOICE_KINDS.has(item.controlKind) && item.options.length > 0 && item.options.length + 1 <= budget;

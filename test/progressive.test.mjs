@@ -227,3 +227,115 @@ test('a vehicle value that is not a dollar amount goes to the agent instead of b
   record.vehicles[0].value = 40000;
   assert.equal(byQ(buildPlan(record, progressive, {}), '2CE8').value, 40000);
 });
+
+test('AmWINS rules: fields by id, standard answers, declaration left to the agent', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.applicant.name = 'Sample Expedite LLC';
+  record.applicant.yearsInBusiness = 3;
+  record.operations.radius = 'Unlimited';
+  record.operations.radiusMiles = null;
+  const plan = buildPlan(record, amwins, {});
+  const bySel = (sel) => plan.find((s) => s.selector === sel);
+  const byName = (re) => plan.find((s) => re.test(s.name ?? ''));
+  assert.equal(bySel('#entityType').value, 'LLC');
+  assert.equal(bySel('#yrsInBusiness').value, '3');
+  assert.equal(bySel('#natureOfBusiness').value, 'TRANSPORTATION');
+  assert.equal(bySel('#phone').ignore, true, "Agency Information: the agency's phone, not the client's");
+  assert.equal(bySel('#contactName').ignore, true);
+  assert.equal(bySel('#email').ignore, true);
+  assert.equal(byName(/^Radius$/).value, 501, 'Unlimited picks the top band (201 + MILES)');
+  assert.equal(byName(/^Usage type/).value, 'FOR HIRE');
+  assert.equal(byName(/^Rental/).value, '$40 day / $1,200 total');
+  assert.ok(byName(/^Declaration$/).note, 'never filled');
+  record.vehicles.push({ vin: '1FTBR3X87MKA12345' });
+  assert.match(buildPlan(record, amwins, {}).find((s) => s.selector === '#vehLookupVin').value, /1FTBR3X87MKA12345$/);
+});
+
+test('AmWINS second-quote rules: owner from a first-name-only box, years under authority, disclosure text', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.applicant.name = null;
+  record.applicant.owner1 = 'IBRAHIM';
+  record.applicant.yearsInBusiness = null;
+  record.applicant.yearsExperience = 7;
+  record.applicant.yearEstablished = null;
+  record.drivers = [{ first: 'IBRAHIM A', last: 'ALHARAZ', dob: '01/01/1968' }];
+  record.operations.businessClass = 'Expediter';
+  record.operations.whatHaul = 'General freight hauler';
+  record.operations.radius = 'Unlimited';
+  record.operations.radiusMiles = null;
+  record.coverage = { ...record.coverage, cargo: true, cargoLimit: 100000, cargoDeductible: 1000 };
+  record.priorInsurance = [{ type: 'Commercial Auto', carrier: 'PROGRESSIVE', limit: '$1M CSL', expiration: '12/01/2026' }];
+  const plan = buildPlan(record, amwins, {});
+  const sel = (s) => plan.find((x) => x.selector === s);
+  const named = (re) => plan.find((x) => re.test(x.name ?? ''));
+  assert.equal(sel('#name').value, 'IBRAHIM ALHARAZ', 'no company: the owner, full name from the driver row');
+  assert.equal(sel('#ownerName').value, 'IBRAHIM ALHARAZ');
+  assert.equal(sel('#ownerDob').value, '01/01/1968');
+  assert.equal(sel('#yrsInBusiness').value, '5+', 'years under own authority 7');
+  assert.equal(sel('#yearBusinessEstablished').value, new Date().getFullYear());
+  assert.equal(sel('#classCodeAndDescription').kind, 'search-select');
+  assert.equal(sel('#classCodeAndDescription').search, '484122');
+  assert.deepEqual(plan.filter((x) => /^Prior carrier/.test(x.name)).map((x) => [x.selector, x.value]), [0, 1, 2].map((n) => [`#priorCarrierCoveragePanel${n} [data-id="carrierName"]`, 'NO PRIOR']));
+  assert.equal(named(/^Year licensed/).value, '1985');
+  assert.equal(named(/^Disclosure/).value, 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026');
+  assert.equal(sel('#autoSymbol6').value, true);
+  assert.equal(sel('#autoSymbol1').value, false);
+  assert.equal(plan.find((x) => x.action === 'importVins').immediate, true);
+});
+
+test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, underwriting defaults, Save & Continue, start page', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.applicant.phone = '(402) 555-0100';
+  record.vehicles = [{ type: 'Box Truck', vin: '1FTBR3X87MKA12345' }];
+  const plan = buildPlan(record, amwins, {});
+  const sel = (s) => plan.find((x) => x.selector === s);
+  const named = (re) => plan.filter((x) => re.test(x.name ?? ''));
+  assert.equal(sel('#inspectionContactOfficePhone').value, '4025550100', 'Contact Information is the client');
+  assert.ok(sel('#inspectionContactName').value);
+  assert.equal(named(/^Garage (street|city|state|ZIP)$/).length, 4);
+  assert.equal(named(/^Garage city$/)[0].value, record.garaging.city);
+  const exclusions = named(/^Exclude /);
+  assert.equal(exclusions.length, 6, 'one rule per box: a rule fills one field');
+  for (const label of ['Exclude Medical Payments', 'Exclude Uninsured Motorists', 'Exclude Comprehensive Coverage', 'Exclude Collision Coverage',
+    'Exlucde Transportation Expense/ Rental Reimbursement', 'Exlude Towing & Labor']) {
+    assert.equal(exclusions.filter((s) => new RegExp(s.re, 'i').test(label)).length, 1, label);
+  }
+  assert.ok(plan.some((s) => s.re && new RegExp(s.re, 'i').test('code voilation')), 'the page spells it "voilation"');
+  assert.equal(named(/^Vehicles leased/)[0].value, false, 'second section: always No');
+  assert.equal(named(/^Body type/)[0].replace, true);
+  assert.equal(named(/^Other topics/)[0].replace, true, 'Yes again after Default all answers to No');
+  const actions = plan.filter((s) => s.kind === 'action');
+  assert.ok(new RegExp(actions.find((a) => a.action === 'defaultNo').text, 'i').test('Default all answers to "No"'));
+  assert.deepEqual(actions.find((a) => a.action === 'openApplication').after, ['amwins.riskState']);
+  assert.ok(new RegExp(amwins.advance.text, 'i').test('Save & Continue'));
+  assert.ok(!new RegExp(amwins.advance.text, 'i').test('Save & Exit'));
+});
+
+test('AmWINS standard answers from the agent: current carrier 1-2 years with a DOT only, no claim-free loss runs, PIP left alone, Married to confirm', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.applicant.dot = '1234567';
+  let plan = buildPlan(record, amwins, {});
+  const sel = (s) => plan.find((x) => x.selector === s);
+  const named = (re) => plan.find((x) => re.test(x.name ?? ''));
+  assert.equal(sel('#howLongWithCurrentCarrier').value, '1 TO 2 YEARS');
+  assert.equal(sel('#howLongWithCurrentCarrier').ignore, false);
+  assert.equal(named(/^Claim-free loss runs/).value, false);
+  assert.equal(named(/^Personal Injury Protection \(/).ignore, true);
+  assert.equal(sel('#personalInjuryProtectionLimit').ignore, true);
+  const marital = () => sel('#driversPanel [data-id="martialStatus"]');
+  assert.equal(marital().value, record.drivers[0].maritalStatus ?? 'MARRIED');
+  record.drivers[0].maritalStatus = null;
+  record.applicant.dot = null;
+  plan = buildPlan(record, amwins, {});
+  assert.equal(marital().value, 'MARRIED');
+  assert.match(marital().warn, /no marital status/);
+  assert.equal(sel('#howLongWithCurrentCarrier').ignore, true, 'only asked of clients with a DOT number');
+  record.drivers[0].maritalStatus = 'Single';
+  plan = buildPlan(record, amwins, {});
+  assert.equal(marital().value, 'Single');
+  assert.equal(marital().warn, null);
+});

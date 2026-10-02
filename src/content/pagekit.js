@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 24) return;
+  if (globalThis.__raterKit?.version === 27) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -79,18 +79,28 @@
     if (labelledBy) for (const id of labelledBy.split(/\s+/)) { const n = byId(el, id); if (n) parts.push(n.textContent); }
     for (const l of el.labels ?? []) parts.push(textOutsideControls(l));
     if (el.getAttribute('aria-label')) parts.push(el.getAttribute('aria-label'));
-    // No explicit label: use the text of the smallest wrapper that holds only this field.
+    // No explicit label: the smallest wrapper that holds only this field, preferring its label
+    // element; a date picker's calendar (Su Mo Tu …, month names) is not part of the question.
     if (!oneLine(parts.join(''))) {
       let p = el.parentElement;
       for (let i = 0; i < 5 && p && p !== document.body; i++, p = p.parentElement) {
         if (countControls(p) > 1) break;
-        const t = textOutsideControls(p);
+        const own = p.querySelector?.('label, .control-label, .form-label');
+        const t = withoutCalendar(own ? textOutsideControls(own) : textOutsideControls(p));
         if (t) { parts.push(t); break; }
       }
     }
     if (!oneLine(parts.join('')) && el.placeholder) parts.push(el.placeholder);
-    if (!oneLine(parts.join('')) && el.title) parts.push(el.title);
+    // The tooltip our own marks put on a field is never its question.
+    const title = el.dataset?.raPrevTitle ?? (/^Rater Autofill:/.test(el.title ?? '') ? '' : el.title);
+    if (!oneLine(parts.join('')) && title) parts.push(title);
     return oneLine(parts.join(' ')).slice(0, 160) || oneLine(humanize(el.name || el.id));
+  }
+
+  function withoutCalendar(text) {
+    const t = oneLine(text);
+    const cut = t.search(/\b(su mo tu we th fr sa|mo tu we th fr sa su)\b|[«»]/i);
+    return (cut >= 0 ? t.slice(0, cut) : t).trim();
   }
 
   function radioGroupLabel(radios, optionTexts) {
@@ -116,7 +126,8 @@
   }
 
   function isRequired(el, label) {
-    return el.required || el.getAttribute('aria-required') === 'true' || /\*/.test(label);
+    // app-valid-rq: AmWINS marks its required fields this way.
+    return el.required || el.getAttribute('aria-required') === 'true' || el.getAttribute('app-valid-rq') === '1' || !!el.closest?.('table[app-valid-rq="1"]') || /\*/.test(label);
   }
 
   function sectionOf(el) {
@@ -330,6 +341,8 @@
         else c = same[0] ?? null;
       }
       if (!c && s.selector) c = controls.find((x) => !used.has(x) && (safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector))));
+      // A dropdown with no usable label, known by one of its options ("NO PRIOR").
+      if (!c && s.withOption) c = controls.find((x) => !used.has(x) && optionsOf(x).some((o) => squash(o.text) === squash(s.withOption)));
       if (c) take(s, c);
     }
     for (const field of ['text', 'hint']) {
@@ -442,6 +455,10 @@
     Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    // Date boxes with a vanillajs-datepicker (AmWINS): the page reads the picker's date, not the
+    // box, and the picker only takes typed text on Tab / Enter / leaving the box. Tab is handled
+    // the same whether its calendar is open or not.
+    if (el.classList?.contains('datepicker-input')) el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', code: 'Tab', bubbles: true, cancelable: true }));
     el.blur();
   }
 
@@ -535,9 +552,52 @@
     return e;
   }
 
+  // Type-ahead dropdowns (select2: a hidden <select> with a search box the page fills from its
+  // server). Open it, type `step.search`, and pick the one result containing `step.value`; no
+  // such result (or several) means no confident match, and the agent picks.
+  async function applySearchSelect(step, c) {
+    const select = c.el;
+    const container = [select.nextElementSibling, ...(select.parentElement?.children ?? [])]
+      .find((n) => n && n !== select && /\bselect2\b/.test(String(n.className))) ?? null;
+    const opener = container?.querySelectorAll?.('.select2-selection')?.[0] ?? container;
+    if (!opener) return { ok: false, reason: 'the search box for this list was not found; pick it yourself' };
+    // select2 opens on a left-button mousedown (it checks the event's button), so a plain Event
+    // isn't enough.
+    const Mouse = typeof MouseEvent === 'function' ? MouseEvent : Event;
+    const press = (el) => { for (const type of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new Mouse(type, { bubbles: true, cancelable: true, button: 0 })); };
+    press(opener);
+    let box = null;
+    for (const start = Date.now(); !box && Date.now() - start < 3000;) {
+      await sleep(100);
+      box = deepQueryAll(document, '.select2-search__field').find((n) => n.getClientRects().length) ?? null;
+    }
+    if (!box) return { ok: false, reason: "the list's search box didn't open; pick it yourself" };
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, String(step.search ?? step.value));
+    for (const type of ['input', 'keyup']) box.dispatchEvent(new Event(type, { bubbles: true }));
+    const want = squash(step.value);
+    let hits = [];
+    for (const start = Date.now(); Date.now() - start < 6000;) {
+      await sleep(200);
+      const results = deepQueryAll(document, '.select2-results__option').filter((n) => n.getClientRects().length && !/loading|message/.test(String(n.className)));
+      // The result that is exactly the wanted text wins over others that only contain it.
+      const exact = results.filter((n) => squash(n.textContent) === want);
+      hits = exact.length ? exact : results.filter((n) => squash(n.textContent).includes(want));
+      if (results.length) break;
+    }
+    if (hits.length !== 1) {
+      box.dispatchEvent(new Event('keydown', { bubbles: true }));
+      document.body.dispatchEvent(new Mouse('mousedown', { bubbles: true, button: 0 }));
+      return { ok: false, reason: hits.length ? `${hits.length} results match "${step.value}"; pick the right one` : `no confident match for "${step.value}"; pick it yourself` };
+    }
+    press(hits[0]);
+    await settle({ quietMs: 250, maxMs: 4000 });
+    return squash(selectedText(c) ?? '').includes(want) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
+  }
+
   // Returns { ok: true, shown } or { ok: false, reason, options? }.
   async function apply(step, c) {
     if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
+    if (step.kind === 'search-select') return applySearchSelect(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
     if (c.kind === 'text') {
@@ -668,6 +728,7 @@
   function agreesWith(step, c) {
     // The chosen suggestion rewrites the typed address in the page's own format.
     if (step.kind === 'address-suggest') return c.kind === 'text' && hasValue(c);
+    if (step.kind === 'search-select') return squash(selectedText(c) ?? '').includes(squash(step.value));
     if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) === step.value;
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
@@ -692,7 +753,8 @@
   // Never clicked, whatever a rule says: moving on or committing is always the agent's call.
   const NEVER_CLICK = /\b(continue|next|start quote|finish|buy|bind|purchase|submit|save|delete|remove|cancel|logout|log out|sign out)\b/i;
 
-  const currentPage = () => (new URLSearchParams(location.search).get('pageName') || location.pathname).replace(/-Reload$/, '');
+  // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
+  const currentPage = () => (new URLSearchParams(location.search).get('pageName') || (location.pathname + ((location.hash ?? '').startsWith('#/') ? location.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
 
   function ratesStale() {
     const text = document.body.innerText ?? '';
@@ -714,7 +776,9 @@
     for (const el of deepQueryAll(document, 'a, button, [role=button], input[type=button], input[type=submit], .x-btn')) {
       if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]')) continue;
       const text = oneLine(el.value || el.textContent);
-      if (text.length > 40 || NEVER_ADVANCE.test(text) || !re.test(text)) continue;
+      // "Save & Continue" (AmWINS) only saves the draft and opens the next step.
+      const committing = NEVER_ADVANCE.test(text.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue'));
+      if (text.length > 40 || committing || !re.test(text)) continue;
       if (!best || best.contains(el)) best = el;
     }
     return best;
@@ -763,13 +827,27 @@
   // `visitedPages`: pages already seen in this quote (for actions that wait on a page).
   // `advance`: { text, exceptPages } — when the page ends with nothing for the agent to look at
   // (no unfamiliar required fields, nothing missing, nothing failed), click its Continue button.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null } = {}) {
+  // `batch`: for pages whose answers never wait on a server (AmWINS): every answer the round can
+  // see is given in one pass and checked on the spot, with one wait for the page per round
+  // instead of one per answer. What an answer reveals or redraws is picked up next round, and
+  // anything the page changes later is given again (see `refill`).
+  // `doneSteps`: steps of a one-address application (stepKey) already continued from: a step the
+  // agent goes back to is theirs, never continued again.
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [] } = {}) {
     const skipKeys = new Set(skip);
     const quiet = new Set(optional);
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
     const openersTried = new Set();
+    // Answers the page changed or cleared after we gave them (a lookup redrawing its boxes, a
+    // panel re-rendering), or didn't keep the first time: given again, at most twice each.
+    const retries = new Map();
+    const refill = new Set();
+    // A lookup box its helper has already used (the VIN list Import Data empties) isn't given again.
+    const immediateAfter = new Set(actions.filter((a) => a.immediate).flatMap((a) => a.after));
+    const consumedPaths = () => new Set(actions.filter((a) => clicked.has(a.action)).flatMap((a) => a.after));
+    const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
     // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
     let ajaxCount = 0;
     const countAjax = () => { ajaxCount++; };
@@ -778,7 +856,7 @@
     const startPage = currentPage();
     if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
-    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], halted: false, rounds: 0 };
+    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], halted: false, rounds: 0 };
     const serverBacked = !!ext();
     let pendingAction = null;
     let progressed = false; // did the last round fill or click anything?
@@ -828,16 +906,24 @@
         if (step.verifyOnly && !agreesWith(step, control)) {
           flag(report.failed, { label: control.label, key: fieldKey(control), q: control.q, reason: 'The looked-up value differs from the intake. Check the VIN.' });
           mark(control, 'failed', 'lookup result differs from the intake');
-        } else if (!step.verifyOnly && !step.ignore && !step.note && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id)) {
+        } else if (!step.verifyOnly && !step.ignore && !step.note && !step.replace && !step.trustPage && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id)) {
           // The page already had a different value (e.g. from the USDOT lookup): keep it, show it.
           flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, differs: true });
           mark(control, 'needs', `page says something different from the intake (${step.name})`);
           handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
         }
       }
-      for (const previous of report.filled) {
+      const consumed = consumedPaths();
+      for (const previous of [...report.filled]) {
         const pair = allPairs.find(({ step }) => step.id === previous.stepId);
-        if (pair && !skipKeys.has(fieldKey(pair.control)) && hasValue(pair.control) && !agreesWith(pair.step, pair.control)) {
+        if (!pair || skipKeys.has(fieldKey(pair.control)) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path)) continue;
+        if (retryOnce(pair.step.id)) {
+          report.filled = report.filled.filter((x) => x !== previous);
+          handled.delete(pair.step.id);
+          refill.add(pair.step.id);
+          continue;
+        }
+        if (hasValue(pair.control)) {
           report.failed.push({ ...previous, reason: 'A later server response changed this answer; check it.' });
           report.filled = report.filled.filter((x) => x !== previous);
           handled.set(pair.step.id, { status: 'failed', note: 'a later server response changed this answer' });
@@ -846,7 +932,8 @@
       if (report.halted) break;
       // Buttons that must come right after their field (Verify DOT, Lookup VIN) go first.
       if (window === window.top && clickNextAction(controls, true)) {
-        if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
+        // A lookup (Import Data) may wait on its server without changing the page for a while.
+        if (!await settle(serverBacked ? {} : { quietMs: 800, maxMs: 8000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
         if (!verifyAction()) break;
         if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
         continue;
@@ -858,7 +945,7 @@
       for (const { step, control: c } of pairs) {
         const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind };
         if (step.verifyOnly) { report.kept.push(item); handled.set(step.id, { status: null }); continue; }
-        if (step.ignore) { handled.set(step.id, { status: null }); continue; }
+        if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { handled.set(step.id, { status: null }); continue; }
         if (step.note || step.value == null) {
           if (quiet.has(c.q)) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note, ...describe(c) });
@@ -869,22 +956,33 @@
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '') && !agreesWith(step, c);
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
         const differs = isChoice && replaceChoices && !agreesWith(step, c);
-        if (!overwrite && hasValue(c) && !presetToReplace && !differs) {
+        if (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c))) {
           report.kept.push(item);
-          handled.set(step.id, { status: null });
+          // Still our default from an earlier fill: still the agent's to confirm.
+          if (step.warn && agreesWith(step, c)) {
+            report.checks.push({ ...item, note: step.warn, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note: step.warn });
+          } else handled.set(step.id, { status: null });
           continue;
         }
         // Timing and side effects of this answer, for working out which questions could be
         // answered together: did it reach the server, did questions appear or disappear, did
         // other answers change.
+        // Batch: a field an earlier answer this round redrew is answered next round.
+        if (batch && c.el.isConnected === false) { retry = true; continue; }
         const snap = (list) => new Map(list.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
-        const before = snap(controls);
+        const before = batch ? null : snap(controls);
         const t0 = Date.now();
         const requests0 = ajaxCount;
         let result;
         try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
         const tApplied = Date.now();
-        if (result.ok) {
+        if (result.ok && batch) {
+          item.timing = { ms: Date.now() - t0, settleMs: 0, ajax: ajaxCount - requests0, revealed: 0, removed: 0, changed: 0, batch: true };
+          if (report.halted) result = { ok: false, reason: 'the agent interrupted filling' };
+          else if (c.el.isConnected === false) result = { ok: false, reason: 'the page did not keep the answer; check it' };
+          else if (invalidControl(c) || !agreesWith(step, c)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
+        } else if (result.ok) {
           const settled = await settle(serverBacked ? {} : { quietMs: 150, maxMs: 3000 });
           const currentControls = collectControls();
           const after = snap(currentControls);
@@ -913,8 +1011,19 @@
           }
           report.filled.push({ ...item, shown: result.shown });
           handled.set(step.id, { status: 'filled', note: `filled from intake: ${step.name}` });
+          if (step.warn) {
+            report.checks.push({ ...item, note: step.warn, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note: step.warn });
+          }
           changed = true;
-          break;
+          // Batch: carry on with the next answer, except before a helper button that waits on
+          // this one (Import Data after the VIN list): it's clicked first thing next round.
+          if (!batch || immediateAfter.has(step.path)) break;
+        } else if (/did not keep/.test(result.reason ?? '') && !report.halted && retryOnce(step.id)) {
+          // Often a later redraw resets it (a coverage list reloading): try again next round.
+          refill.add(step.id);
+          retry = true;
+          if (serverBacked) break;
         } else {
           report.failed.push({ ...item, reason: result.reason, ...describe(c) });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
@@ -931,7 +1040,7 @@
       progressed = changed;
       if (!changed && !retry) break;
       if (!changed) continue;
-      if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after the helper.'); break; }
+      if (!await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: 3000 })) { halt('The page did not settle after the helper.'); break; }
       if (!verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
     }
@@ -1007,6 +1116,18 @@
       return false;
     }
 
+    // Answers still waiting for another try when the fill ended are left for the agent, and so is
+    // a field the page should have filled itself (emptyNote) but didn't.
+    for (const { step, control } of assign(collectControls(), plan)) {
+      if (step.emptyNote && !hasValue(control) && !skipKeys.has(fieldKey(control))) {
+        report.noData.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, note: step.emptyNote, ...describe(control) });
+        handled.set(step.id, { status: 'needs', note: step.emptyNote });
+        continue;
+      }
+      if (!refill.has(step.id) || handled.has(step.id) || skipKeys.has(fieldKey(control)) || agreesWith(step, control)) continue;
+      report.failed.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, reason: 'the page did not keep the answer; check it', ...describe(control) });
+      handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: the page did not keep the answer` });
+    }
     if (progressed && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
     // The page may have redrawn while filling, so mark the final fields.
     const controls = collectControls();
@@ -1037,14 +1158,18 @@
       ...report.failed.map((x) => `failed: ${x.label}`),
       ...report.leftRequired.map((x) => `required: ${x.label}`),
       ...report.kept.filter((x) => x.differs).map((x) => `differs: ${x.label}`),
+      ...report.checks.map((x) => `check: ${x.label}`),
       ...report.blocked.map((x) => `button: ${x.id}`),
       ...(report.halted ? [report.reason] : []),
     ];
+    report.stepKey = stepKey();
     if (advance && window === window.top && !report.blockers.length && currentPage() === startPage && !pageBusy()
-      && !(advance.exceptPages ?? []).includes(currentPage())) {
+      && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)) {
       const button = findAdvanceButton(advance.text);
       if (button) {
         report.advanced = oneLine(button.value || button.textContent).slice(0, 40);
+        // On one-address applications (AmWINS) the side panel waits for the questions to change.
+        report.signatureBefore = signature();
         button.click();
       }
     }
@@ -1136,7 +1261,7 @@
     const controls = collectControls();
     const matched = new Map(plan ? assign(controls, plan).map((p) => [p.control, p.step.path]) : []);
     const path = location.pathname.replace(/\d{5,}/g, ':id');
-    const pageName = new URLSearchParams(location.search).get('pageName');
+    const pageName = currentPage();
     return {
       frame: location.origin + path,
       page: pageName,
@@ -1184,5 +1309,15 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 24, fill, answer, markKey, aiBanner, capture, clear };
+  // Which step of a one-address application is on screen: its visible headings.
+  function stepKey() {
+    return deepQueryAll(document, 'h1, h2, h3').filter(isVisible).map((h) => oneLine(h.textContent)).filter(Boolean).slice(0, 4).join(' / ');
+  }
+
+  // The questions on screen, to tell when a step that keeps the same address has changed.
+  function signature() {
+    return collectControls().map((c) => `${fieldKey(c)}|${c.label}`).join('\n');
+  }
+
+  globalThis.__raterKit = { version: 30, fill, answer, markKey, aiBanner, capture, clear, signature };
 })();

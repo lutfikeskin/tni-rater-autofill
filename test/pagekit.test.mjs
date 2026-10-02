@@ -1209,3 +1209,122 @@ test('Google address autocomplete (hidden .pac-item list): first suggestion pick
   assert.equal(report.failed.length, 0);
   assert.ok(!report.kept.some((x) => x.differs));
 });
+
+test('labels: our own mark tooltip and a date picker calendar are never taken as the question', async () => {
+  const h = harness();
+  const wrapper = new FakeNode('div');
+  const field = makeInput({ id: 'agnecyName' });
+  wrapper.append(field);
+  h.document.body.append(wrapper);
+  // A first fill marks the unfamiliar field with our tooltip.
+  await h.kit.fill([], { maxRounds: 1 });
+  assert.match(field.getAttribute('title') ?? '', /^Rater Autofill:/);
+  const again = await h.kit.fill([], { maxRounds: 1, keepMarks: true });
+  assert.equal(again.unknown[0].label, 'agnecy name', 'falls back to the field id, not our tooltip');
+});
+
+test('type-ahead list (select2): types the search, picks the single result that matches; several or none go to the agent', async () => {
+  for (const [results, expectOk] of [[['484122 - General freight trucking, long-distance, less-than-truckload (LTL)', '484121 - General freight trucking, long-distance, truckload'], true], [['484110 - Local'], false]]) {
+    const h = harness();
+    const select = new SelectNode([{ text: '', value: '' }], { id: 'classCodeAndDescription', ariaLabel: 'Classification' });
+    const container = new FakeNode('span', { className: 'select2 select2-container' });
+    const opener = new FakeNode('span', { className: 'select2-selection' });
+    container.append(opener);
+    h.document.body.append(select, container);
+    opener.addEventListener('mousedown', () => {
+      const search = makeInput({ className: 'select2-search__field' });
+      search.className = 'select2-search__field';
+      search.addEventListener('keyup', () => {
+        for (const text of results) {
+          const li = new FakeNode('li', { className: 'select2-results__option', textContent: text });
+          li.addEventListener('mouseup', () => { select.append(new FakeNode('option', { textContent: text })); select.options = [...select.options, { text, value: text.slice(0, 6) }]; select.value = text.slice(0, 6); });
+          h.document.body.append(li);
+        }
+      });
+      h.document.body.append(search);
+    });
+    const report = await h.kit.fill([{ id: 'cls', selector: '#classCodeAndDescription', path: 'x.cls', kind: 'search-select', value: '484122', search: '484122' }], { maxRounds: 3 });
+    if (expectOk) assert.equal(report.filled.length, 1, JSON.stringify(report.failed));
+    else assert.match(report.failed[0].reason, /no confident match/);
+  }
+});
+
+test('a dropdown with no usable label is found by one of its options', async () => {
+  const h = harness();
+  const carrier = new SelectNode([{ text: '', value: '' }, { text: 'ALLIANZ', value: 'a' }, { text: 'NO PRIOR', value: 'np' }], { id: 'x1', ariaLabel: 'Delete Coverage' });
+  h.document.body.append(carrier);
+  await h.kit.fill([{ id: 'np', withOption: 'NO PRIOR', path: 'x.np', kind: 'choice', value: 'NO PRIOR' }], { maxRounds: 2 });
+  assert.equal(carrier.value, 'np');
+});
+
+test('an answer the page clears or overwrites after it was kept is given again; a step marked replace overwrites a lookup value', async () => {
+  const h = harness();
+  const year = makeInput({ id: 'licenseYear', ariaLabel: 'License Year (First issued)' });
+  const body = makeInput({ id: 'bodyType', ariaLabel: 'Body Type', value: 'STRAIGHT TRUCK' });
+  h.document.body.append(year, body);
+  let cleared = 0;
+  year.addEventListener('change', () => { if (!cleared++) setTimeout(() => { year.value = ''; }, 300); });
+  const report = await h.kit.fill([
+    { id: 'year', selector: '#licenseYear', path: 'x.year', kind: 'text', value: '1985' },
+    { id: 'body', selector: '#bodyType', path: 'x.body', kind: 'text', value: 'Box Truck', replace: true },
+  ], { maxRounds: 8 });
+  assert.equal(year.value, '1985', 'filled again after the page cleared it');
+  assert.equal(body.value, 'Box Truck', "the intake's body type replaces the lookup's");
+  assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
+  assert.ok(!report.kept.some((x) => x.differs));
+});
+
+test('Save & Continue counts as Continue; Save & Exit and Submit never do', async () => {
+  for (const [text, expected] of [['Save & Continue', true], ['Save & Exit', false], ['Submit', false]]) {
+    const h = harness({ pathname: '/application/businessauto' });
+    const button = addButton(h, text);
+    button.onclick = () => { button._clicked = true; };
+    await h.kit.fill([], { maxRounds: 1, advance: { text: '^(save\\s*(&|and)\\s*continue|save & exit|submit)$' } });
+    assert.equal(!!button._clicked, expected, text);
+  }
+});
+
+test('a field the page fills itself (emptyNote) is flagged only when it stays empty', async () => {
+  for (const value of ['', '14500']) {
+    const h = harness();
+    const gvw = makeInput({ id: 'gvw', ariaLabel: 'Gross Vehicle Weight (GVW)', value });
+    h.document.body.append(gvw);
+    const report = await h.kit.fill([{ id: 'gvw', selector: '#gvw', path: 'x.gvw', kind: 'text', ignore: true, emptyNote: 'enter it yourself' }], { maxRounds: 2 });
+    assert.equal(report.noData.length, value ? 0 : 1, value || 'empty');
+    assert.equal(report.unknown.length, 0);
+  }
+});
+
+test('a default to confirm (warn) is filled, flagged yellow and holds Continue until the agent changes or dismisses it', async () => {
+  const h = harness();
+  const marital = new SelectNode([{ text: '', value: '' }, { text: 'SINGLE', value: 'S' }, { text: 'MARRIED', value: 'M' }], { id: 'marital', ariaLabel: 'Marital Status' });
+  const next = addButton(h, 'Save & Continue');
+  next.onclick = () => { next._clicked = true; };
+  h.document.body.append(marital);
+  const step = { id: 'm', selector: '#marital', path: 'x.marital', kind: 'choice', value: 'MARRIED', warn: 'Married was picked. Check it.' };
+  const first = await h.kit.fill([step], { maxRounds: 3, advance: { text: '^save & continue$' } });
+  assert.equal(marital.value, 'M');
+  assert.equal(first.checks.length, 1);
+  assert.ok(first.blockers.some((b) => /^check: /.test(b)));
+  assert.ok(!next._clicked, 'Continue waits for the agent');
+  const again = await h.kit.fill([step], { maxRounds: 3, advance: { text: '^save & continue$' } });
+  assert.equal(again.checks.length, 1, 'still flagged on a later fill while it is our default');
+  assert.ok(!next._clicked);
+  await h.kit.fill([step], { maxRounds: 3, skip: [again.checks[0].key], advance: { text: '^save & continue$' } });
+  assert.ok(next._clicked, 'dismissed (or changed) by the agent: Continue');
+});
+
+test('batch mode answers every visible question in one round and still checks each answer', async () => {
+  const h = harness();
+  const a = makeInput({ id: 'a', ariaLabel: 'First' });
+  const b = makeInput({ id: 'b', ariaLabel: 'Second' });
+  const c = makeInput({ id: 'c', ariaLabel: 'Third' });
+  h.document.body.append(a, b, c);
+  c.addEventListener('change', () => { c.value = 'something else'; });
+  const steps = [['a', 'one'], ['b', 'two'], ['c', 'three']].map(([id, value]) => ({ id, selector: `#${id}`, path: `x.${id}`, kind: 'text', value }));
+  const report = await h.kit.fill(steps, { maxRounds: 6, batch: true });
+  assert.deepEqual([a.value, b.value], ['one', 'two']);
+  assert.equal(report.filled.length, 2);
+  assert.equal(report.failed.length, 1, 'a page that rejects an answer is still reported');
+  assert.ok(report.rounds <= 4, `rounds: ${report.rounds}`);
+});

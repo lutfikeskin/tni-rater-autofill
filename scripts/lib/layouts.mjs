@@ -24,9 +24,9 @@ export function buildLayouts(events) {
   const layouts = new Map();
   for (const e of events) {
     if (e.type !== 'page_layout' || !e.carrier || !e.page) continue;
-    // Portal pages outside the quote flow (home, quote search) are recorded by path, not by
-    // page name; they're never filled, so they're no use as replay pages.
-    if (e.page.startsWith('/')) continue;
+    // Progressive's portal pages outside the quote flow (home, quote search) are recorded by
+    // path, not by page name; they're never filled. Other carriers' pages are all paths.
+    if (e.carrier === 'progressive' && e.page.startsWith('/')) continue;
     const key = layoutKey(e.carrier, e.context);
     const layout = layouts.get(key) ?? {
       carrier: e.carrier, context: { ...e.context }, sessions: new Set(), from: e.t, to: e.t, pages: new Map(),

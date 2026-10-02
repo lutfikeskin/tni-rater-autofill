@@ -2,7 +2,8 @@
 // Builds the zip uploaded to the Chrome Web Store: only what the extension runs (no tests,
 // captures, layouts, server or review scripts).
 //
-//   npm run package        -> dist/tni-rater-autofill-<version>.zip
+//   npm run package        -> dist/tni-rater-autofill-<version>.zip, and the same files unpacked
+//                             in dist/tni-rater-autofill/ (for Load unpacked)
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,5 +25,9 @@ const out = path.join(root, 'dist', `tni-rater-autofill-${manifest.version}.zip`
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.rmSync(out, { force: true });
 execFileSync('zip', ['-rq', '-X', out, ...INCLUDE, '-x', '*.DS_Store'], { cwd: root, stdio: 'inherit' });
+// The unpacked copy (Load unpacked in chrome://extensions) is rebuilt from the same files.
+const unpacked = path.join(root, 'dist', 'tni-rater-autofill');
+fs.rmSync(unpacked, { recursive: true, force: true });
+for (const p of INCLUDE) fs.cpSync(path.join(root, p), path.join(unpacked, p), { recursive: true, filter: (src) => !src.endsWith('.DS_Store') });
 const kb = Math.round(fs.statSync(out).size / 1024);
 console.log(`${path.relative(root, out)}  (${kb} KB, version ${manifest.version})`);

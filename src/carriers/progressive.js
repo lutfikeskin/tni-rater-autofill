@@ -24,7 +24,7 @@ const explicitBoolean = (record, path) => {
 };
 
 // The business owner, matched to their driver row (for date of birth and a clean name split).
-function owner(r) {
+export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const last = full.split(/\s+/).at(-1)?.toLowerCase();
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
@@ -36,7 +36,12 @@ function owner(r) {
   const repeatedFirst = sole && r.applicant.ownerDrives === true && nameKey(sole.first)
     && nameKey(sole.first) === nameKey(sole.last)
     && nameKey(sole.first) === nameKey(full.split(/\s+/).slice(0, -1).join(' '));
-  const driver = fullMatches.length === 1 ? fullMatches[0] : fullMatches.length ? null : lastMatches.length === 1 ? lastMatches[0] : repeatedFirst ? sole : null;
+  // The owner box sometimes holds only the first name ("IBRAHIM"): the one driver whose first
+  // name starts with it is the owner.
+  const firstOnly = !/\s/.test(full.trim()) && full.trim()
+    ? r.drivers.filter((d) => (d.first ?? '').trim().split(/\s+/)[0].toLowerCase() === full.trim().toLowerCase()) : [];
+  const driver = fullMatches.length === 1 ? fullMatches[0] : fullMatches.length ? null : lastMatches.length === 1 ? lastMatches[0]
+    : repeatedFirst ? sole : firstOnly.length === 1 ? firstOnly[0] : null;
   const first = driver?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
   return { driver, first: first || null, middle: driver?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : driver?.last ?? full.split(/\s+/).at(-1) ?? null };
 }

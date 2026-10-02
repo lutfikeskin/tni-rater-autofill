@@ -8,3 +8,5 @@ dist/
 reviews/
 # Design handoff bundles (claude.ai/design exports), kept locally for reference.
 design/
+# Pages saved from the raters (Save page as, PDFs, captures): client data, kept locally.
+layouts/

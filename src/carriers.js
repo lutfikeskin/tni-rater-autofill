@@ -12,6 +12,7 @@
 // Host patterns also need a matching entry in manifest.json "host_permissions".
 
 import { progressive } from './carriers/progressive.js';
+import { amwins } from './carriers/amwins.js';
 
 export const CARRIERS = [
   progressive,
@@ -22,6 +23,7 @@ export const CARRIERS = [
     // Empty until we capture GEICO's quote pages; the generic label rules do the work meanwhile.
     rules: [],
   },
+  amwins,
   {
     id: 'test',
     name: 'Local test page',
@@ -32,7 +34,10 @@ export const CARRIERS = [
 
 // Practice copies of carrier pages served from this repo (test/replay, test/mock-progressive).
 // They get the real carrier's rules, but aren't real quotes, so usage isn't recorded for them.
-const PRACTICE = [{ path: /^\/test\/(replay|mock-progressive)\//, carrier: 'progressive' }];
+const PRACTICE = [
+  { path: /^\/test\/(replay|mock-progressive)\//, carrier: 'progressive' },
+  { path: /^\/test\/fixtures\/amwins\//, carrier: 'amwins' },
+];
 
 export function carrierForUrl(url) {
   let u;
