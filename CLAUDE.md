@@ -1,62 +1,58 @@
-# TNI Rater Autofill
+# CLAUDE.md
 
-Chrome MV3 extension for TNI (Truckers National Insurance) agents: reads the client's TNI quote
-application PDF and fills commercial auto quotes on carrier portals (Progressive / ForAgentsOnly,
-AmWINS Admitted Placement, GEICO), with an optional AI assistant (OpenAI `gpt-6-luna`, the agent's
-own key) for questions the rules leave open. Five pilot agents in the US; the maintainer reports
-in Turkish or English.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Layout
-
-- `sidepanel/` the UI (side panel), `usage-log.js` (queue + upload to the usage server)
-- `src/content/pagekit.js` the fill engine injected into the rater page (bump `__raterKit.version` on change)
-- `src/content/recorder.js` watches the page: agent edits, new fields, page views
-- `src/carriers/*.js` per-carrier rules and actions; `src/carriers.js` host → carrier, practice pages
-- `src/plan.js` rules → steps; `src/rules.js` generic label rules; `src/normalize.js` intake → record
-- `src/ai/` AI assistant (`assist.js`) and TNI's rules text (`tni-rules.js`: keep in sync with carrier rules)
-- `server/index.mjs` usage server (Railway), `scripts/` review, pull/push, package, e2e, mock
-- `test/fixtures/amwins/` AmWINS mock (saved site + `mock.js` playing the site's own script)
+TNI Rater Autofill: a Chrome MV3 extension (side panel) that reads a client's TNI Commercial Insurance Quote Application PDF and fills commercial-auto quotes on carrier agent portals (Progressive ForAgentsOnly, AmWINS Admitted Placement; GEICO is generic-only). An optional AI assistant (OpenAI Responses API, the agent's own key, default model `gpt-6-luna`) suggests answers for questions the rules leave open. No build step: plain ES modules loaded straight from the repo.
 
 ## Commands
 
 ```bash
-npm test                 # unit tests (node:test)
-npm run e2e              # Progressive replay of every recorded layout vs test/e2e-baseline.json
-npm run mock:amwins      # AmWINS mock: all five steps, every answer checked
-npm run package          # dist/tni-rater-autofill-<version>.zip + dist/tni-rater-autofill/ (unpacked)
-npm run e2e:extension    # packaged extension + side panel on the AmWINS mock (needs port 8792 serving the repo)
-npm run pull             # agents' usage log from Railway -> server-data/events/
-npm run review           # reviews/review-<date>.md: problem reports, AI, speed, rule suggestions, layouts
+npm install
+npm test                                   # node:test, all test/*.test.mjs
+node --test test/pagekit.test.mjs          # one file
+node --test --test-name-pattern="batch mode" test/pagekit.test.mjs   # one test
+npm run mock:amwins                        # AmWINS end to end on the saved-site mock (Playwright)
+npm run package                            # dist/tni-rater-autofill-<version>.zip AND dist/tni-rater-autofill/ (Load unpacked)
+npm run e2e:extension                      # packaged extension + side panel on the AmWINS mock; needs `npm run package` and a server on :8792
+npm run replay                             # python http.server on :8792 (replay page, AmWINS mock)
+npm run e2e                                # Progressive replay regression vs test/e2e-baseline.json (--update to accept)
+npm run server                             # local usage server (testing), 127.0.0.1:8787 -> server-data/events/*.jsonl
+npm run pull                               # agents' usage log from the central server (Railway) -> server-data/events/
+npm run push-logs -- <folder|file>         # upload a local/exported log to the central server (dedup by id)
+npm run review                             # reviews/review-<date>.md from server-data (problems, AI, Speed, rule suggestions, layouts)
+npm run layouts                            # per-state Progressive layouts -> captures/progressive/generated/ (git-ignored; e2e uses them)
+npx playwright install chromium            # once, for mock/e2e scripts
 ```
 
-Run `npm test`, `npm run e2e` and `npm run mock:amwins` before every commit that touches rules
-or the engine; `npm run e2e:extension` when the side panel flow changes (serve the repo with
-`python3 -m http.server 8792 --bind 127.0.0.1` if nothing is on 8792).
+CI (`.github/workflows/checks.yml`) runs `npm test`, `mock:amwins`, `package`, and `e2e:extension`. `npm run e2e` is local-only (it needs layouts built from local usage logs).
 
-## Working on a run ("review the run")
+Release habit: bump `version` in both `manifest.json` and `package.json` for every shipped change (the Web Store refuses a repeated version), run the suites, `npm run package`.
 
-The maintainer runs live quotes and leaves **Report a problem** notes. To review: `npm run pull`
-(or read `server-data/events/*.jsonl`), look at the run's `problem_report`, `fill_run`
-(blockerList, advanced), `fill_field` (result, reason, timing), `field_change` by the agent and
-`ai_suggest`/`ai_decision`. Turn the notes into rules, ask for TNI's standard answer when it isn't
-derivable (never guess insurance answers), add tests, bump the version, package, commit, PR.
+## Architecture
 
-## Engine facts worth knowing
+**Data flow:** PDF → `src/intake.js` (pdf.js form fields; `lib/` is vendored pdf.js because MV3 can't load remote code) → `src/normalize.js` (client record + warnings; "clean formatting, never guess meaning") → `src/plan.js` `buildPlan(record, carrier, active)` turns carrier rules + `src/rules.js` generic label rules into steps → side panel injects `src/content/pagekit.js` into the rater tab (all frames) and calls `__raterKit.fill(plan, options)` → report back to the panel.
 
-- **Progressive** (ExtJS + Duck Creek): every answer waits on the server (`serverBacked`), one answer
-  per round; questions keyed by Duck Creek ids (`q`). Rules in `progressive.js` cover every question
-  seen in the saved FAO quote (IA) and live runs in MD/NC/OH/IN/PA/IA/FL.
-- **AmWINS**: one address for all steps; no answer hits the server, so `batch: true` (a round of
-  answers at a time); repeating sections targeted by `[data-id=…]`; Save & Continue advances and the
-  side panel waits for the questions to change (`watchNextStep`); Submit and the declaration are
-  never touched. Import Data → Import Valid Records adds vehicles.
-- Rule options beyond the basics: `replace` (our answer beats a lookup's), `trustPage` (lookup wins,
-  no "differs" flag), `emptyNote` (page fills it; flag only if empty), `warn` (fill a default, mark
-  yellow, hold Continue), `repeatOnReturn` on actions (run again on each arrival at the page).
-- Answers the page clears, changes or marks invalid afterwards are given again (at most twice).
-- A Continue that doesn't take (page unchanged ~6 s) is clicked once more.
-- Never click: bind, buy, submit, save & exit, delete; MVR/CLUE orders, exclusions, signatures,
-  payment details stay the agent's (also enforced in the AI never-list).
+**Rules** (`src/carriers/*.js`, registered in `src/carriers.js`): each rule targets a field by `q` (Duck Creek question id, Progressive), `selector` (AmWINS uses ids and `[data-id=…]` for repeating sections), `withOption`, or `label` regex (+`not`); value from `path` or `value(record, active)`. Carrier rules come before generic rules; within a fill, plan order is fill order. Rule options interpreted by `plan.js`/`pagekit.js`: `kind` (bool, choice, int, state, date, money, first-option, pick-not, address-suggest, search-select…), `ignore`, `note` (agent's, never filled), `verifyOnly`, `replace` (overwrite a lookup's value), `trustPage` (lookup wording wins, no "differs" flag), `emptyNote` (page fills it; flag only if empty), `warn` (fill a default but mark yellow and hold Continue), `scope`/`vehicleHint`, `choiceAliases`, `search`, `fallback`. Carrier-level: `actions` (buttons to click: `after`, `afterActions`, `afterPages`, `immediate`, `opener`, `near`, `repeatOnReturn`…), `advance` (the Continue/Save & Continue pattern; Finish/Bind/Submit/Save & Exit are hard-blocked in `pagekit.js` NEVER_CLICK/NEVER_ADVANCE), `world: 'MAIN'` (Progressive: ExtJS components only reachable in the page's JS world), `batch: true` (AmWINS: answers don't hit the server, so a whole round is filled then settled once).
+
+**Fill engine** (`src/content/pagekit.js`, classic script, no imports): rounds of collect controls → `assign()` pairs steps with controls → apply. Server-backed pages (ExtJS detected) do one answer per round and wait for Ajax + DOM quiet; batch pages fill everything visible per round. Answers the page later clears, changes, invalidates or doesn't keep are retried (max twice, `refill`/`retryOnce`), then reported failed. Blockers (unfamiliar, needs you, failed, required, differs, checks, waiting buttons) prevent `advance`. On one-address apps (AmWINS) the panel waits for the on-screen question `signature()` to change after Continue (`watchNextStep` in `sidepanel/sidepanel.js`) and retries a Continue that didn't take once. When changing pagekit's API, bump the `version` in `globalThis.__raterKit`.
+
+**Side panel** (`sidepanel/sidepanel.js`): state (intake in `chrome.storage.session`), Check intake / Fill pages screens, auto follow-up fills driven by the recorder, background-tab pinning (keeps working on the quote tab when another tab is active), AI assist with per-question cache, report rendering. `test/sidepanel-safety.test.mjs` extracts named functions from this file by regex, so keep them as top-level `function` declarations (and avoid unbalanced quotes in comments inside them).
+
+**AI** (`src/ai/assist.js`, `src/ai/tni-rules.js`): strict JSON-schema output with per-field option enums + `__leave__`; code checks that a pick is one of the options and any cited intake path exists; never-list (MVR/CLUE, exclusions, signatures/attestations, payment/SSN, typed IDs). `tni-rules.js` is the human-readable TNI rulebook sent to the model; update it whenever a carrier rule's standard answer changes.
+
+**Usage log**: `src/content/recorder.js` (isolated world, 1.5 s snapshots, agent vs page changes) → panel → `src/usage.js` events (never client data or typed text) → `sidepanel/usage-log.js` queue in `chrome.storage.local`, uploaded every minute → `server/index.mjs` on Railway (allowlisted event types/fields, dedup by id, upload token `RATER_TOKEN`, admin-token export). The extension uploads to the central server by default (`DEFAULT_SERVER`/`DEFAULT_TOKEN` in `sidepanel/usage-log.js`); an agent's own Server setting overrides it. Practice pages (`PRACTICE` in `src/carriers.js`: `test/replay`, `test/mock-progressive`, `test/fixtures/amwins`) get the real carrier's rules but nothing is logged. A new event type or field must be added to the server's `EVENT_FIELDS` or it is rejected.
+
+**Test harnesses**: `test/pagekit.test.mjs` runs the real pagekit in a vm with a small fake DOM/ExtJS (no `isConnected`, minimal selectors: write engine code that tolerates that). `test/replay/` rebuilds Progressive pages as working ExtJS from layout JSON. `test/fixtures/amwins/application.html` is the saved AmWINS application (client data scrubbed) and `mock.js` reimplements the site's own behaviour (app-rel show/hide, Save & Continue, Import Data → Import Valid Records, VIN decoder, Default all No, select2); `scripts/amwins-mock.mjs` holds the expected answers (`EXPECT`).
+
+## Working from live runs
+
+The usual loop: the agent runs a live quote, leaves "Report a problem" notes, says "review the run". Run `npm run pull`, then read `server-data/events/<date>.jsonl` (types: `problem_report`, `fill_run` with `blockerList`/`advanced`, `fill_field` with `result`/`reason`/`timing`, `field_change` by `agent`, `page_layout`, `ai_suggest`/`ai_decision`), encode the notes as carrier rules (and `tni-rules.js`), add tests, run the suites, bump the version, package. Ask for TNI's standard answer when it can't be derived from the intake; never guess insurance answers. Saved carrier pages (HTML/PDF) and captures go under `layouts/`, which is git-ignored because they contain client data; never commit them, and scrub anything derived from them (names, addresses, license numbers, VINs) before it goes into `test/fixtures`.
+
+## Never automated
+
+Bind, buy, finish, submit, Save & Exit, delete; MVR/CLUE orders, driver exclusions, signatures and
+declarations, payment and SSN details stay the agent's (pagekit NEVER_CLICK/NEVER_ADVANCE and the
+AI never-list).
 
 ## Hosting (docs/hosting.md)
 
