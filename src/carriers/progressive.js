@@ -55,6 +55,13 @@ const insuredWithProgressive = (r) => {
 // in the reviewed address rules).
 const registered = (prefer) => ({ kind: 'pick-not', value: () => ({ not: '^enter a different', prefer }), ignore: (r) => !r.applicant.dot });
 
+// The intake's vehicle value, only when it's a dollar amount. Anything else ("N/A", "about
+// 40k") goes to the agent with the intake's text, rather than being typed and cleared.
+const vehicleValueNote = (r, a) => {
+  const v = r.vehicles?.[a.vehicles ?? 0]?.value;
+  return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
+};
+
 const loanLease = (r) => {
   const own = r.operations?.vehicleOwnership ?? '';
   return /financ|loan/i.test(own) ? 'Yes - Loan' : /leas/i.test(own) ? 'Yes - Lease' : 'No';
@@ -335,10 +342,10 @@ export const progressive = {
     { q: '2CE0', name: 'Attached equipment amount (only with more than $2,000)', ignore: true },
     { q: '2CCE', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment },
     { q: '2CE3', name: 'Vehicle has no equipment (standard)', kind: 'bool', label: 'vehicle has no equipment', value: () => true },
-    { q: '2CE8', path: 'vehicles[].value', name: 'Vehicle value if sold today', label: 'sold today' },
+    { q: '2CE8', path: 'vehicles[].value', name: 'Vehicle value if sold today', label: 'sold today', note: vehicleValueNote },
     // Same two questions under the ids other states/products use (NC, OH).
     { q: '208A', name: 'Vehicle has no equipment (standard)', kind: 'bool', value: () => true },
-    { q: '2091', path: 'vehicles[].value', name: 'Vehicle value if sold today' },
+    { q: '2091', path: 'vehicles[].value', name: 'Vehicle value if sold today', note: vehicleValueNote },
 
     // --- Add driver (AddDriver) ------------------------------------------------------------------
     { q: '2898', path: 'drivers[].first' },

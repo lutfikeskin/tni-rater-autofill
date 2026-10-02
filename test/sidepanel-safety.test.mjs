@@ -63,6 +63,7 @@ function harness() {
   const rendered = [];
   let timerId = 0;
   let activeTab = null;
+  const openTabs = new Map();
 
   const context = {
     URL,
@@ -78,10 +79,10 @@ function harness() {
     clearTimeout: (handle) => cleared.push(handle),
     renderSite: () => rendered.push(state.tab?.id ?? null),
     ensureRecorder: async () => {},
-    carrierForUrl: () => ({ id: 'progressive', practice: false }),
+    carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
       scripting: {},
-      tabs: { query: async () => [activeTab] },
+      tabs: { query: async () => [activeTab], get: async (id) => (openTabs.get(id) ?? Promise.reject(new Error('No tab'))) },
     },
   };
   vm.runInNewContext(`${PAGE_HELPERS}\n${FUNCTIONS}`, context, { filename: 'sidepanel/sidepanel.js' });
@@ -96,6 +97,7 @@ function harness() {
     rememberFill: context.rememberFill,
     scheduleAutoFill: context.scheduleAutoFill,
     setActiveTab(tab) { activeTab = tab; },
+    openTab(tab) { openTabs.set(tab.id, tab); },
   };
 }
 
@@ -256,4 +258,28 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   assert.deepEqual(assisted[0].result, frames);
   assert.equal(assisted[0].ctx.page, 'Rates');
   assert.equal(assisted[0].filling, false);
+});
+
+test('during a quote, switching to a non-rater tab keeps the panel on the quote tab (background)', async () => {
+  const h = harness();
+  h.state.intake = { record: {} };
+  h.state.tab = { ...quoteTab(1, 'AddVehicle'), carrier: { id: 'progressive' } };
+  h.state.autoPages = new Set(['AddVehicle']);
+  h.openTab(quoteTab(1, 'AddDriver'));
+  h.setActiveTab({ id: 9, url: 'https://mail.example.test/inbox' });
+  await h.refreshTab();
+  assert.equal(h.state.tab.id, 1, 'still the quote tab');
+  assert.equal(h.state.tab.background, true);
+  assert.match(h.state.tab.url, /AddDriver/, 'follows the quote tab as it moves on');
+  assert.ok(h.state.autoPages.has('AddVehicle'), 'quote progress kept');
+  // Another rater tab is followed as before.
+  h.setActiveTab(quoteTab(2));
+  await h.refreshTab();
+  assert.equal(h.state.tab.id, 2);
+  assert.equal(h.state.tab.background, false);
+  // The quote tab closed: the panel follows the active tab.
+  h.state.tab = { ...quoteTab(3), carrier: { id: 'progressive' } };
+  h.setActiveTab({ id: 9, url: 'https://mail.example.test/inbox' });
+  await h.refreshTab();
+  assert.equal(h.state.tab.id, 9);
 });

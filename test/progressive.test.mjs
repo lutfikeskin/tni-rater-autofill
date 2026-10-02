@@ -215,3 +215,15 @@ test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () 
   assert.equal(byQ(plan, '1B8D').value, null);
   assert.ok(progressive.optional.includes('1B80'));
 });
+
+test('a vehicle value that is not a dollar amount goes to the agent instead of being typed', () => {
+  const record = baseRecord();
+  record.vehicles[0].value = 'about 40k';
+  const plan = buildPlan(record, progressive, {});
+  for (const q of ['2CE8', '2091']) {
+    assert.equal(byQ(plan, q).value, null);
+    assert.match(byQ(plan, q).note, /about 40k/);
+  }
+  record.vehicles[0].value = 40000;
+  assert.equal(byQ(buildPlan(record, progressive, {}), '2CE8').value, 40000);
+});
