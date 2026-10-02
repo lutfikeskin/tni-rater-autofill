@@ -18,6 +18,12 @@ export const DEFAULT_EFFORT = 'low';
 export const API_URL = 'https://api.openai.com/v1/responses';
 export const LEAVE = '__leave__';
 
+// Keep this in memory only: identical questions on different drivers or vehicles need
+// different answers, and a response started before an intake edit must not be applied.
+export function assistContextKey(record, active) {
+  return JSON.stringify([record, active]);
+}
+
 const MAX_ITEMS = 40;
 const MAX_OPTIONS = 80;
 // Structured outputs cap the enum values in one schema; past this budget a field's choice is a
@@ -63,7 +69,7 @@ export function collectItems(frames) {
       // A dropdown/radio whose options we couldn't see (type-ahead lists) can only get a tip.
       applyable: x.controlKind === 'text' || (CHOICE_KINDS.has(x.controlKind) && options.length > 0),
     };
-    const why = neverReason(item);
+    const why = x.reviewOnly ? 'lookup identity mismatch requires agent review' : neverReason(item);
     if (why) blocked.push({ ...item, why });
     else items.push(item);
   };

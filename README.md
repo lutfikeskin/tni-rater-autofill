@@ -127,6 +127,22 @@ npm run e2e:extension    # needs npm run package and npm run replay (port 8792)
 
 The packaged extension itself in Chromium, its side panel opened as a page, on the same mock: loads the sample intake, clicks **Fill this page** once and checks that the panel goes through every step on its own (Save & Continue), stops at the declaration and never submits.
 
+### Synthetic intake variations and AI controls
+
+```bash
+npm run test:intakes -- --workers 6
+npm run test:intakes -- --carrier amwins --cases 03,09,69,71,97
+npm run test:intakes -- --carrier progressive --lookup-check --cases 51,73,74,75,76,77,78,79,80,81,82
+npm run package
+npm run mock:ai
+```
+
+The intake runner reads the actual PDFs in `dist/synthetic-intakes` (or `--pool <folder>`), checks retained answers against the pool manifest, and writes JSON reports and screenshots under a temporary output folder (`--out <folder>` overrides it). The pool stays outside source control. VIN/DOT responses come from its lookup fixtures; no real carrier lookups are made. The mock's exact GVW of 9,000 is a synthetic decoder response, not a weight inferred from a real VIN.
+
+AmWINS exercises the five application steps, including repeated drivers/vehicles and save/reload. A review stop is recorded before the runner continues to inspect later pages; it is not counted as automatic progress. FAO rebuilds captured pages individually. It does **not** establish full quote navigation, backend acceptance, or real lookup reliability. Missing questions and truncated business-type search results are reported as unsupported, alongside existing replay failures such as address autocomplete. Passing the selected assertions is not complete carrier coverage.
+
+The AI runner uses the packaged extension with controlled provider responses. It checks suggestion acceptance, approval before Continue, preservation of manual edits, and response reuse. It blocks live AI requests and central uploads; it does not measure a live model's accuracy or latency. Suggestions are cached per intake and active driver/vehicle, and late responses after a context change are discarded.
+
 ## Hosting
 
 Updates reach agents through the Chrome Web Store; their usage logs go to TNI's server on Railway and a daily GitHub Action builds the review. See [docs/hosting.md](docs/hosting.md).

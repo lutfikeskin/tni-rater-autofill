@@ -79,6 +79,11 @@
     const optionsOf = (f) => (f.opts ?? []).filter((o) => o && !/^…/.test(o));
 
     function fieldConfig(f, i) {
+      // Redacted captures are layouts, not lookup responses. The default replay scenario is
+      // a successful lookup for the supplied synthetic record; failure tests inject independent
+      // response options instead. Never ask the engine to accept "[client]" as a real identity.
+      const record = window.replay.record;
+      if (record && f.q === '22F') f = { ...f, opts: (f.opts ?? []).map(o => o.includes('[client]') ? record.applicant.name || record.applicant.owner1 : o) };
       const { id, q } = idFor(f, i);
       const { answers, texts } = store(window.replay.page);
       const common = { id, dctCaption: f.caption || '(no caption)', dctRequired: !!f.req };
@@ -280,6 +285,7 @@
       try {
         $('status').textContent = 'Reading intake…';
         const record = await intakeRecord();
+        window.replay.record = record;
         const pages = all ? Object.keys(layout.pages) : [window.replay.page];
         if (all) { window.replay.started = new Date(); done.actions.clear(); done.pages.clear(); }
         const rows = [];

@@ -41,6 +41,7 @@
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { owner } from './progressive.js';
+import { priorPolicyExpired } from '../util.js';
 
 const street = (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null;
 const digits = (v) => (v ? String(v).replace(/\D/g, '') || null : null);
@@ -100,7 +101,9 @@ const disclosure = (r) => {
   if (p?.carrier) {
     const kind = /commercial/i.test(p.type ?? '') ? 'Commercial' : /personal/i.test(p.type ?? '') ? 'Personal' : p.type;
     const carrier = p.carrier.toLowerCase().replace(/\b\w/g, (x) => x.toUpperCase());
-    lines.push(['POP', kind].filter(Boolean).join(' ') + ` - ${carrier}${p.limit ? ` - ${p.limit}` : ''}${p.expiration ? ` - Exp Date ${p.expiration}` : ''}`);
+    const unavailable = /\b(?:pop|proof of prior)(?:\s+(?:insurance|document))?\s+(?:unavailable|missing|not available)\b/i.test(r.claims?.notes ?? '');
+    const prefix = unavailable ? 'Prior insurance; POP document unavailable' : 'POP';
+    lines.push([prefix, kind].filter(Boolean).join(' ') + ` - ${carrier}${p.limit ? ` - ${p.limit}` : ''}${p.expiration ? ` - Exp Date ${p.expiration}` : ''}${priorPolicyExpired(r, p) ? ' - EXPIRED; confirm renewal or lapse' : ''}`);
   }
   return lines.join('\n') || null;
 };
@@ -169,6 +172,9 @@ export const amwins = {
   batch: true,
   // Import Data right after the VIN list is filled, before the vehicle boxes, which it fills.
   actions: [
+    ...[1, 2, 3].map((index) => ({ id: `addDriver${index}`, text: '^add driver$',
+      when: (r) => r.drivers.length > index, after: [`drivers[${index - 1}].licenseNumber`],
+      unlessSelector: `#driversPanel > .app-rp-section[data-id="${index}"]` })),
     // Start: the Auto tile opens the risk state box; Open New Application once the state is in.
     { id: 'autoApplication', page: START_PAGES, text: '^auto$', unlessActions: ['openApplication'] },
     { id: 'openApplication', page: START_PAGES, text: '^open new application$', after: ['amwins.riskState'] },
@@ -310,5 +316,16 @@ export const amwins = {
     { name: 'Disclosure details (from the intake)', label: '^disclosure details$', value: disclosure },
     // The declaration is the agent's to make.
     { selector: '#accept', name: 'Declaration', kind: 'bool', note: 'The declaration is yours to confirm; never ticked. Then Submit (yours too).' },
-  ],
+  ].map((rule) => {
+    // AmWINS shows several repeater rows on one page. Give every row its own values;
+    // the active-driver picker is for carriers that show one driver page at a time.
+    let panel = rule.selector?.startsWith(DRIVER) ? DRIVER : rule.selector?.startsWith(VEHICLE) || rule.selector === '#marketValue' ? VEHICLE : null;
+    if (rule.label === '^permanently attached equipment') panel = VEHICLE;
+    if (!panel) return rule;
+    const list = panel === DRIVER ? 'drivers' : 'vehicles';
+    const selector = rule.selector === '#marketValue' ? `${VEHICLE} [data-id="costNew"]`
+      : rule.label === '^permanently attached equipment' ? `${VEHICLE} [data-id="permanentlyAttachedEquipment"] input[type="radio"]` : rule.selector;
+    return { ...rule, repeat: list, repeatSelector: (r, a) => r[list].length > 1
+      ? selector.replace(panel, `${panel} > .app-rp-section[data-id="${a[list]}"]`) : rule.selector || selector };
+  }),
 };
