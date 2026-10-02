@@ -7,93 +7,138 @@
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
+  <!-- Layout from the "Rater Autofill Drawer" design (claude.ai/design): a start screen, a loaded
+       quote in two steps (Check intake, Fill pages), and a separate Settings screen. -->
   <header class="top">
     <img class="top-logo" src="logo.png" alt="">
-    <h1 class="brand-text"><strong>Truckers National</strong><span>Rater Autofill <b id="version"></b></span></h1>
+    <h1 class="brand-text"><strong>Truckers National</strong><span>Rater Autofill</span></h1>
     <span class="top-right">
-      <span id="recording" class="recording" title="How this extension is used on rater pages is recorded (no client details). See Usage log below." hidden>● Recording usage</span>
       <span id="site" class="site">…</span>
+      <button type="button" id="settings-btn" class="ghost small-btn settings-btn" aria-expanded="false">Settings<span id="settings-dot" class="dot" hidden></span></button>
     </span>
   </header>
-  <!-- Setup problems that silently cost data or features: no usage server, no initials, no AI key. -->
-  <div id="health" class="health" role="status" hidden></div>
 
-  <main>
+  <!-- 1. No intake loaded: setup notices, drop zone, what happens next -->
+  <main id="home" class="screen">
+    <div id="home-notices" class="notices"></div>
+    <div id="intro" class="intro">
+      <h2>Start a quote</h2>
+      <p class="muted">Add the client's TNI quote application and this panel fills the Progressive or GEICO pages for you.</p>
+    </div>
     <section id="load" class="drop" tabindex="0">
       <input id="file" type="file" accept="application/pdf,.pdf" hidden>
-      <p class="drop-title">Drop the client's intake PDF here</p>
-      <p class="muted">or <button type="button" id="choose" class="link">choose a file</button></p>
-      <p class="muted small">Read on this computer only. Cleared when Chrome closes.</p>
-      <p id="load-error" class="error" hidden></p>
+      <p class="drop-title">Drop the intake PDF here</p>
+      <button type="button" id="choose" class="primary big">Choose a PDF</button>
+      <p class="small muted">Stays on this computer. Cleared when Chrome closes.</p>
     </section>
-
-    <section id="client" hidden>
-      <div class="client-head">
-        <div>
-          <h2 id="client-name"></h2>
-          <p id="client-meta" class="muted small"></p>
-        </div>
-        <div class="client-actions">
-          <button type="button" id="replace" class="ghost">Replace</button>
-          <button type="button" id="clear-client" class="ghost">Clear</button>
-        </div>
-      </div>
-      <div id="warnings"></div>
-      <div id="sections"></div>
-    </section>
-
-    <details id="ai" class="usage">
-      <summary>AI assistant</summary>
-      <div class="usage-body">
-        <p class="small">After each fill, the AI looks at the questions left for you (yellow, red and amber) and suggests an answer with a short tip. It only picks from the page's own options, and nothing goes in until you click Accept.</p>
-        <p class="small muted">The questions on the page, the intake and TNI's quoting rules are sent to OpenAI with your API key. MVR/CLUE orders, driver exclusions, signatures and payment details are never sent.</p>
-        <label class="check"><input type="checkbox" id="ai-on"> Suggest answers for questions left for me</label>
-        <label class="check"><input type="checkbox" id="ai-auto"> Let the AI make selections on the page (purple; Continue waits for your approval)</label>
-        <label class="usage-agent small">API key <input id="ai-key" type="password" placeholder="sk-…" autocomplete="off"></label>
-        <label class="usage-agent small">Model <input id="ai-model" type="text" placeholder="gpt-6-luna" autocomplete="off" spellcheck="false"></label>
-        <p id="ai-note" class="small muted" aria-live="polite"></p>
-      </div>
-    </details>
-
-    <details id="usage" class="usage">
-      <summary>Usage log</summary>
-      <div class="usage-body">
-        <p class="small">While an intake is loaded, this extension records how it's used on Progressive and GEICO pages, to improve it: which intake (by fingerprint, not name), which fields it filled, what you changed afterwards, and problems you report.</p>
-        <p class="small muted">Not recorded: client names, numbers or anything you type into text boxes (typing is only compared with the intake on this computer), screenshots, keystrokes, or other websites.</p>
-        <p id="usage-count" class="small"></p>
-        <p id="upload-status" class="small muted"></p>
-        <label class="usage-agent small">Your initials <input id="agent" type="text" maxlength="6" autocomplete="off"></label>
-        <label class="usage-agent small">Server <input id="server-url" type="url" placeholder="http://localhost:8787" autocomplete="off"></label>
-        <label class="usage-agent small">Token <input id="server-token" type="password" placeholder="if the server needs one" autocomplete="off"></label>
-        <div class="actions">
-          <button type="button" id="upload-usage" class="ghost">Upload now</button>
-          <button type="button" id="export-usage" class="ghost">Export log</button>
-          <button type="button" id="clear-usage" class="ghost">Clear log</button>
-        </div>
-        <p id="usage-note" class="small muted" aria-live="polite"></p>
-      </div>
-    </details>
+    <div id="load-error" class="card bad" role="alert" hidden></div>
+    <div id="next-steps" class="steps">
+      <div class="eyebrow">What happens next</div>
+      <div class="step"><span class="num">1</span><span>Check anything the intake got wrong.</span></div>
+      <div class="step"><span class="num">2</span><span>Open the rater page and click Fill this page.</span></div>
+      <div class="step"><span class="num">3</span><span>Answer what's left, then click Next yourself. Nothing is submitted for you.</span></div>
+    </div>
   </main>
 
-  <footer id="fillbar" class="fillbar" hidden>
-    <div id="pickers" class="pickers"></div>
-    <label class="check"><input type="checkbox" id="auto-followups" checked> Fill follow-up questions automatically</label>
-    <label class="check"><input type="checkbox" id="auto-pages"> Fill each new page as soon as it opens</label>
-    <label class="check"><input type="checkbox" id="auto-advance" checked> Click Continue when the page has nothing left for me</label>
-    <label class="check"><input type="checkbox" id="overwrite"> Replace values already on the page</label>
-    <div class="actions">
-      <button type="button" id="fill" class="primary">Fill this page</button>
-      <button type="button" id="unmark" class="ghost">Clear marks</button>
+  <!-- 2. Intake loaded: client, two steps -->
+  <section id="quote" class="quote" hidden>
+    <div class="quote-head">
+      <div class="client-head">
+        <div class="client-title">
+          <h2 id="client-name"></h2>
+          <p id="client-meta" class="small muted"></p>
+        </div>
+        <span class="client-actions">
+          <button type="button" id="replace" class="link small">Change file</button>
+          <button type="button" id="clear-client" class="link small subtle">Clear</button>
+        </span>
+      </div>
+      <div class="tabs" role="tablist">
+        <button type="button" id="tab-check" class="tab" role="tab"><span id="check-num" class="num warn">!</span>Check intake</button>
+        <button type="button" id="tab-fill" class="tab" role="tab"><span class="num brand">2</span>Fill pages</button>
+      </div>
     </div>
-    <p id="fill-hint" class="muted small"></p>
-    <div id="report"></div>
-    <div class="links">
-      <button type="button" id="report-problem" class="link small">Report a problem on this page</button>
-      <button type="button" id="capture" class="link small">Capture page layout (for setup)</button>
+
+    <main id="check-pane" class="screen" hidden>
+      <div id="check-notices" class="notices"></div>
+      <p id="check-intro" class="muted"></p>
+      <div id="check-done" class="card good" hidden>
+        <div class="card-title">All items checked.</div>
+        <div class="small">Open the quote page on the rater, then fill it.</div>
+        <button type="button" id="go-fill" class="primary">Go to Fill pages</button>
+      </div>
+      <div id="warnings" class="warn-cards"></div>
+      <details id="details" class="card details">
+        <summary><span class="arrow">›</span><span class="grow">All client details</span><span id="details-count" class="small muted"></span></summary>
+        <div id="sections"></div>
+      </details>
+    </main>
+
+    <main id="fill-pane" class="screen" hidden>
+      <div id="fill-notices" class="notices"></div>
+      <div id="pickers" class="pickers"></div>
+      <button type="button" id="fill" class="primary big">Fill this page</button>
+      <p id="fill-hint" class="small muted center"></p>
+      <div id="report"></div>
+      <button type="button" id="unmark" class="link small subtle">Clear the marks on the page</button>
+    </main>
+  </section>
+
+  <!-- 3. Settings -->
+  <main id="settings" class="screen" hidden>
+    <div class="settings-head">
+      <h2>Settings</h2>
+      <button type="button" id="settings-done" class="link small">Done</button>
+    </div>
+    <div class="card form">
+      <div class="eyebrow">Filling</div>
+      <label class="opt"><input type="checkbox" id="auto-followups" checked><span><b>Fill new questions as they appear</b><span>Some answers open more questions on the page.</span></span></label>
+      <label class="opt"><input type="checkbox" id="auto-advance" checked><span><b>Click Continue when the page is done</b><span>Only when nothing is left for you. Never Bind or Submit.</span></span></label>
+      <label class="opt"><input type="checkbox" id="auto-pages"><span><b>Fill each page as soon as it opens</b><span>Skips pressing Fill this page.</span></span></label>
+      <label class="opt"><input type="checkbox" id="overwrite"><span><b>Replace answers already on the page</b><span>Off keeps what the rater filled, e.g. from a DOT lookup.</span></span></label>
+    </div>
+    <div id="ai" class="card form">
+      <div class="eyebrow">AI assistant</div>
+      <label class="opt"><input type="checkbox" id="ai-on"><span><b>Suggest answers for questions left for me</b><span>Nothing goes in until you click Use this answer.</span></span></label>
+      <label class="opt"><input type="checkbox" id="ai-auto"><span><b>Let the AI pick answers itself</b><span>Marked purple. Continue waits for your approval.</span></span></label>
+      <label class="field-stack">API key<input id="ai-key" type="password" placeholder="sk-…" autocomplete="off"></label>
+      <p id="ai-note" class="small muted" aria-live="polite"></p>
+      <p class="small muted">Page questions, the intake and TNI's rules are sent to OpenAI with your key. MVR/CLUE orders, exclusions, signatures and payment details are never sent.</p>
+    </div>
+    <div id="usage" class="card form">
+      <div class="eyebrow">Usage log</div>
+      <p class="small muted">While an intake is loaded, how the extension is used on rater pages is recorded to improve it: which fields it filled, what you changed afterwards, and problems you report. Client names, numbers and anything you type are never recorded.</p>
+      <label class="field-row">Your initials<input id="agent" type="text" maxlength="6" autocomplete="off"></label>
+      <p id="upload-status" class="small"></p>
+      <p id="usage-count" class="small muted"></p>
+      <p id="usage-note" class="small muted" aria-live="polite"></p>
+    </div>
+    <details id="advanced" class="advanced">
+      <summary class="eyebrow">Advanced (for setup)</summary>
+      <div class="advanced-body">
+        <label class="field-row">Model<input id="ai-model" type="text" placeholder="gpt-6-luna" autocomplete="off" spellcheck="false"></label>
+        <label class="field-row">Server<input id="server-url" type="url" placeholder="http://localhost:8787" autocomplete="off"></label>
+        <label class="field-row">Token<input id="server-token" type="password" placeholder="if the server needs one" autocomplete="off"></label>
+        <div class="actions wrap">
+          <button type="button" id="capture" class="ghost small-btn">Capture page layout</button>
+          <button type="button" id="upload-usage" class="ghost small-btn">Upload now</button>
+          <button type="button" id="export-usage" class="ghost small-btn">Export log</button>
+          <button type="button" id="clear-usage" class="ghost small-btn">Clear log</button>
+        </div>
+      </div>
+    </details>
+    <p id="version" class="eyebrow"></p>
+  </main>
+
+  <footer class="foot">
+    <div class="foot-row">
+      <button type="button" id="report-problem" class="link small">Report a problem</button>
+      <span id="recording" class="recording" title="How this extension is used on rater pages is recorded (no client details). See Settings, Usage log." hidden><span class="rec-dot">●</span> Recording usage</span>
+      <span id="foot-version" class="eyebrow"></span>
     </div>
     <div id="problem-form" class="problem" hidden>
-      <textarea id="problem-text" rows="3" placeholder="What went wrong? (Don't include client names or numbers.)"></textarea>
-      <button type="button" id="send-problem" class="ghost">Save report</button>
+      <textarea id="problem-text" rows="3" placeholder="What went wrong on this page? (Don't include client names or numbers.)"></textarea>
+      <button type="button" id="send-problem" class="ghost small-btn">Save report</button>
     </div>
   </footer>
 

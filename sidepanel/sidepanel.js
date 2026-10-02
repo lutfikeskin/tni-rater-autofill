@@ -4,7 +4,7 @@ import { normalizeIntake, parseEdit } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
-import { get, set } from '../src/util.js';
+import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import * as usage from './usage-log.js';
 import { collectItems, buildRequest, callModel, parseResponse, usageOf, AssistError, DEFAULT_MODEL } from '../src/ai/assist.js';
@@ -50,6 +50,10 @@ const state = {
   // per page and set of questions, so a refill doesn't ask again.
   aiRun: 0,
   aiCache: new Map(),
+  // Which screen shows: Settings over everything; otherwise the start screen or the quote, on
+  // its Check intake or Fill pages step.
+  settingsOpen: false,
+  step: 'check',
 };
 
 function h(tag, props = {}, ...children) {
@@ -98,6 +102,9 @@ async function loadFile(file) {
   state.labels = new Map();
   state.visitedPages = new Set();
   state.intake = { ...result, fileName: file.name, done: [] };
+  // Start on Check intake when something on the intake needs a look, else straight on Fill.
+  state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
+  state.settingsOpen = false;
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
   state.filled = new Map();
   state.doneActions = new Set();
@@ -111,7 +118,7 @@ async function loadFile(file) {
 }
 
 function showLoadError(msg) {
-  $('load-error').textContent = msg;
+  $('load-error').replaceChildren(h('b', {}, 'Couldn\'t read that file'), h('span', { class: 'small' }, msg));
   $('load-error').hidden = false;
 }
 
@@ -125,43 +132,77 @@ async function save() {
 
 function render() {
   const has = !!state.intake;
-  $('load').hidden = has;
-  $('client').hidden = !has;
-  $('fillbar').hidden = !has;
+  showScreen();
+  $('recording').hidden = !has;
+  $('foot-version').hidden = has;
   if (!has) return;
   const { record, stats, fileName } = state.intake;
-  $('client-name').textContent = record.applicant.name ?? 'Unnamed business';
-  $('client-meta').textContent = `${fileName} · ${stats.filled} answers · ${record.drivers.length} driver${record.drivers.length === 1 ? '' : 's'}, ${record.vehicles.length} vehicle${record.vehicles.length === 1 ? '' : 's'}`;
+  const n = (k, one) => `${record[k].length} ${one}${record[k].length === 1 ? '' : 's'}`;
+  const st = record.garaging?.state;
+  $('client-name').textContent = record.applicant.name || record.applicant.owner1 || 'Unnamed business';
+  $('client-meta').textContent = [STATES[st] ?? st, n('drivers', 'driver'), n('vehicles', 'vehicle')].filter(Boolean).join(' · ');
+  $('client-meta').title = `${fileName} · ${stats.filled} answers`;
+  $('details-count').textContent = `${stats.filled} answers`;
   renderWarnings();
   renderSections();
   renderPickers();
   renderSite();
 }
 
+// Settings over everything; otherwise the start screen, or the quote on one of its two steps.
+function showScreen() {
+  const has = !!state.intake;
+  $('settings').hidden = !state.settingsOpen;
+  $('home').hidden = state.settingsOpen || has;
+  $('quote').hidden = state.settingsOpen || !has;
+  $('settings-btn').setAttribute('aria-expanded', String(state.settingsOpen));
+  $('check-pane').hidden = state.step !== 'check';
+  $('fill-pane').hidden = state.step !== 'fill';
+  $('tab-check').setAttribute('aria-selected', String(state.step === 'check'));
+  $('tab-fill').setAttribute('aria-selected', String(state.step === 'fill'));
+}
+
+function setStep(step) {
+  state.step = step;
+  showScreen();
+}
+
+function openSettings(focusId = null) {
+  state.settingsOpen = true;
+  showScreen();
+  if (!focusId) return;
+  if ($('advanced').contains($(focusId))) $('advanced').open = true;
+  $(focusId).focus();
+  $(focusId).scrollIntoView({ block: 'center', behavior: 'smooth' });
+}
+
+// Check intake: one card per thing to check, with its field to fix and Mark as checked.
 function renderWarnings() {
   const { warnings, done } = state.intake;
-  const box = $('warnings');
-  box.replaceChildren();
-  const item = (w, i) => h('li', { class: `warn-item ${w.level}${done.includes(i) ? ' done' : ''}` },
-    w.level === 'check' ? h('input', {
-      type: 'checkbox', checked: done.includes(i), title: 'Mark as checked',
-      onchange: (e) => { toggleDone(i, e.target.checked); },
-    }) : null,
-    h('span', { class: 'warn-text' }, w.msg),
-    w.path ? h('button', { type: 'button', class: 'link small warn-go', onclick: () => jumpTo(w.path) }, 'Show') : null);
   const checks = warnings.map((w, i) => [w, i]).filter(([w]) => w.level === 'check');
-  const infos = warnings.map((w, i) => [w, i]).filter(([w]) => w.level === 'info');
-  if (checks.length) {
-    const open = checks.filter(([, i]) => !done.includes(i)).length;
-    box.append(h('div', { class: 'warnings' },
-      h('h3', {}, open ? `Check before quoting (${open} of ${checks.length})` : `All ${checks.length} items checked`),
-      h('ul', { class: 'warn-list' }, checks.map(([w, i]) => item(w, i)))));
-  }
-  if (infos.length) {
-    box.append(h('details', { class: 'warnings' },
-      h('summary', { class: 'small muted' }, `Cleanup notes (${infos.length})`),
-      h('ul', { class: 'warn-list' }, infos.map(([w, i]) => item(w, i)))));
-  }
+  const infos = warnings.filter((w) => w.level === 'info');
+  const open = checks.filter(([, i]) => !done.includes(i)).length;
+  $('check-num').textContent = open ? String(open) : '✓';
+  $('check-num').className = `num ${open ? 'warn' : 'good'}`;
+  $('check-intro').hidden = !open;
+  $('check-intro').replaceChildren(h('b', {}, `${open} thing${open === 1 ? '' : 's'}`), ' on the intake looked wrong or missing. Fix the value if needed, then mark it checked.');
+  $('check-done').hidden = !!open;
+  $('check-done').querySelector('.card-title').textContent = checks.length ? `All ${checks.length} item${checks.length === 1 ? '' : 's'} checked.` : 'Nothing on the intake looked wrong.';
+  const editable = (path) => path && /\.|\]$/.test(path) && fieldInfo(path).label !== path;
+  const cards = checks.map(([w, i]) => {
+    const label = editable(w.path) ? fieldInfo(w.path).label : 'Item';
+    if (done.includes(i)) {
+      return h('div', { class: 'checked-row' }, h('b', {}, '✓'), h('span', { class: 'grow' }, `${label} checked`),
+        h('button', { type: 'button', class: 'link small', onclick: () => toggleDone(i, false) }, 'Undo'));
+    }
+    const info = editable(w.path) ? fieldInfo(w.path) : null;
+    return h('div', { class: 'warn-card' },
+      h('div', { class: 'warn-msg' }, w.msg),
+      info ? fieldRow(w.path, info.label, info.kind, true, 'stack') : w.path ? h('button', { type: 'button', class: 'link small', onclick: () => jumpTo(w.path) }, 'Show in client details') : null,
+      h('button', { type: 'button', class: 'ghost', onclick: () => toggleDone(i, true) }, 'Mark as checked'));
+  });
+  $('warnings').replaceChildren(...cards,
+    ...(infos.length ? [h('details', { class: 'cleanup' }, h('summary', { class: 'small muted' }, `Cleanup notes (${infos.length})`), h('ul', {}, infos.map((w) => h('li', {}, w.msg))))] : []));
 }
 
 async function toggleDone(i, isDone) {
@@ -203,7 +244,7 @@ function renderSections() {
   }
 }
 
-function fieldRow(path, label, kind, flagged) {
+function fieldRow(path, label, kind, flagged, layout = 'row') {
   const value = get(state.intake.record, path);
   const id = `f-${path.replace(/[^\w]/g, '_')}`;
   let input;
@@ -228,11 +269,18 @@ function fieldRow(path, label, kind, flagged) {
     usage.log({ type: 'intake_edit', path, kind, change: before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
     await save();
   });
+  if (layout === 'stack') {
+    // On a check card the same field may also be open in the client details: keep one id.
+    input.removeAttribute('id');
+    input.addEventListener('change', () => renderSections());
+    return h('label', { class: 'field-stack' }, label, input);
+  }
   return h('div', { class: `field${flagged ? ' flagged' : ''}${value == null ? ' empty' : ''}`, dataset: { path } },
     h('label', { for: id }, label), input);
 }
 
 function jumpTo(path) {
+  $('details').open = true;
   const info = fieldInfo(path);
   const sectionId = info.section?.id ?? SECTIONS.find((s) => s.id === path || s.list === path)?.id;
   const details = document.querySelector(`details.section[data-id="${sectionId}"]`);
@@ -247,23 +295,21 @@ function jumpTo(path) {
   }
 }
 
+// Which driver / vehicle / trailer the page is about, as pills (only when the intake has several).
 function renderPickers() {
   const { record } = state.intake;
-  const box = $('pickers');
-  box.replaceChildren();
   const pickers = [
-    ['drivers', 'Driver', (d) => [d.first, d.last].filter(Boolean).join(' ')],
-    ['vehicles', 'Vehicle', (v) => [v.year, v.make, v.model].filter(Boolean).join(' ')],
-    ['trailers', 'Trailer', (t) => [t.year, t.make, t.type].filter(Boolean).join(' ')],
+    ['drivers', 'driver', (d) => [d.first, d.last].filter(Boolean).join(' ')],
+    ['vehicles', 'vehicle', (v) => [v.year, v.make, v.model].filter(Boolean).join(' ')],
+    ['trailers', 'trailer', (t) => [t.year, t.make, t.type].filter(Boolean).join(' ')],
   ];
-  for (const [list, label, describe] of pickers) {
-    const items = record[list] ?? [];
-    if (items.length < 2) continue;
-    const sel = h('select', {
-      onchange: async (e) => { state.active[list] = Number(e.target.value); await save(); },
-    }, items.map((it, i) => h('option', { value: String(i), selected: state.active[list] === i }, `${i + 1}. ${describe(it) || label}`)));
-    box.append(h('label', {}, label, sel));
-  }
+  $('pickers').replaceChildren(...pickers.filter(([list]) => (record[list] ?? []).length > 1).map(([list, what, describe]) =>
+    h('div', { class: 'picker' },
+      h('div', { class: 'picker-q' }, `Which ${what} is this page about?`),
+      h('div', { class: 'pills' }, record[list].map((it, i) => h('button', {
+        type: 'button', class: 'pill', 'aria-pressed': String(state.active[list] === i),
+        onclick: async () => { state.active[list] = i; await save(); renderPickers(); },
+      }, `${i + 1}. ${describe(it) || what}`))))));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -471,11 +517,12 @@ function renderSite() {
   site.textContent = !inExtension ? 'Preview only' : carrier ? carrier.name : noAccess ? 'No access to this page' : 'Not a rater page';
   site.classList.toggle('on', !!carrier);
   const canFill = inExtension && !!carrier && !!state.intake;
-  $('fill').disabled = !canFill;
+  $('fill').disabled = !canFill || state.filling;
+  if (!state.filling) $('fill').textContent = state.autoPages.has(pageOf(state.tab?.url)) ? 'Fill this page again' : 'Fill this page';
   $('capture').disabled = !(inExtension && carrier);
   $('fill-hint').textContent = !inExtension
     ? 'Filling works when this runs as the Chrome extension.'
-    : carrier ? 'Fills what it can on the page you are looking at. Nothing is submitted — review, then click Next yourself.'
+    : carrier ? 'Nothing is submitted. Review the page, then click Next yourself.'
       : noAccess
         ? "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page."
         : 'Open a Progressive or GEICO rater page to fill it.';
@@ -512,7 +559,7 @@ async function fillPage({ auto = false } = {}) {
   const overwrite = auto ? false : $('overwrite').checked;
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
-  $('report').replaceChildren(h('p', { class: 'muted small' }, 'Filling one answer at a time where the page checks each answer with its server. Keep this tab open.'));
+  $('report').replaceChildren(h('p', { class: 'muted small center' }, 'Filling one answer at a time: the page checks each answer with its server. Keep this tab open.'));
   const started = Date.now();
   let assistFrames = null;
   // Our own fills aren't the agent's changes: pause the recorder while filling.
@@ -537,8 +584,7 @@ async function fillPage({ auto = false } = {}) {
   } finally {
     await tellRecorder('resume');
     state.filling = false;
-    $('fill').disabled = false;
-    $('fill').textContent = 'Fill this page';
+    renderSite();
   }
   runPendingPage();
   await remarkAi({ tabId, page, carrier });
@@ -583,48 +629,67 @@ async function ignoreReview(key, tabId, page) {
   await fillPage();
 }
 
+// After a fill: a summary card, then one list of everything left for the agent on this page
+// (each item with its × and, once the AI has looked, its suggestion), then what was filled.
 function renderReport(frames) {
   const all = (k) => frames.flatMap((f) => f[k] ?? []);
   const filled = all('filled');
-  const noData = all('noData');
-  const leftRequired = all('leftRequired');
   const failed = all('failed');
   const kept = all('kept');
-  const fields = frames.reduce((n, f) => n + f.fields, 0);
+  const fields = frames.reduce((n, f) => n + (f.fields ?? 0), 0);
   const box = $('report');
   const tabId = state.tab?.id;
   const page = pageOf(state.tab?.url);
-  const reviewLine = (x, children) => [
-    h('span', {}, children),
-    x.key ? h('button', { class: 'ignore-review', type: 'button', title: 'Ignore this field and continue', 'aria-label': `Ignore ${x.label} and continue`, onclick: () => ignoreReview(x.key, tabId, page) }, '×') : null,
-  ];
   box.className = 'report';
   if (!fields && !all('actions').length) {
     const halted = frames.find((f) => f.halted);
-    box.replaceChildren(h('p', { class: halted ? 'error' : 'muted' }, halted ? `Automatic filling and helpers paused. ${halted.reason ?? 'Review this page before retrying.'}` : 'No form fields found on this page.'));
+    box.replaceChildren(h('p', { class: halted ? 'error' : 'muted center' }, halted ? `Automatic filling and helpers paused. ${halted.reason ?? 'Review this page before retrying.'}` : 'No form fields found on this page.'));
     return;
   }
-  const group = (cls, title, items, line, open = false) => items.length
-    ? h('details', { class: cls, open }, h('summary', {}, `${title} (${items.length})`), h('ul', {}, items.map((x) => h('li', {}, line(x)))))
-    : null;
   const unknownKeys = new Set(all('unknown').map((x) => x.key));
-  const needs = [...noData.map((x) => ({ ...x, why: x.note ?? 'not on intake' })), ...leftRequired.filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, why: 'required' }))];
+  const needs = [
+    ...all('unknown').map((x) => ({ ...x, mark: 'needs', why: `Unfamiliar question${x.required ? ' (required)' : ''}: no TNI rule for it yet.` })),
+    ...failed.map((x) => ({ ...x, mark: 'failed', why: `Couldn't fill: ${x.reason}` })),
+    ...all('noData').map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
+    ...all('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
+    ...kept.filter((x) => x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
+  ];
+  const waiting = all('blocked');
   const advanced = frames.find((f) => f.advanced)?.advanced;
-  const blockers = all('blockers');
   const agentPage = state.tab?.carrier?.agentPages?.[page];
+  const pct = fields ? Math.round(((fields - needs.length) / fields) * 100) : 100;
+  const need = (x) => h('div', { class: 'need', dataset: { need: `${x.key}|${x.label}` } },
+    h('div', { class: 'need-head' },
+      h('span', { class: `mark ${x.mark}` }),
+      h('div', { class: 'row-text' }, h('b', {}, x.label), h('span', {}, x.why)),
+      x.key ? h('button', { class: 'ignore-review', type: 'button', title: 'Ignore this question and continue', 'aria-label': `Ignore ${x.label} and continue`, onclick: () => ignoreReview(x.key, tabId, page) }, '×') : null),
+    x.options?.length && x.mark === 'failed' ? h('div', { class: 'options' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null,
+    h('div', { class: 'ai-slot' }),
+    h('div', { class: 'need-note' }, 'Answer it on the page.'));
+  const doneRows = [
+    ...filled.map((x) => [x.label, x.shown ?? '']),
+    ...all('actions').map((x) => ['Clicked', x.text || x.id]),
+    ...kept.filter((x) => !x.differs).map((x) => [x.label, 'left as the page had it']),
+    ...all('skipped').map((x) => [x.label, 'ignored']),
+  ];
   box.replaceChildren(...[
     agentPage ? h('p', { class: 'agent-page' }, agentPage) : null,
-    frames.some((f) => f.halted) ? h('p', { class: 'error' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then click Fill this page to retry.`) : null,
-    h('p', { class: 'report-summary' }, `Filled ${filled.length} of ${fields} fields on this page${advanced ? ` · clicked "${advanced}"` : blockers.length ? ` · ${blockers.length} thing${blockers.length === 1 ? '' : 's'} to look at before Continue` : ''}`),
-    group('r-needs', 'Unfamiliar questions — left for you', all('unknown'), (x) => reviewLine(x, [h('b', {}, x.label), x.required ? ' (required)' : '']), true),
-    group('r-failed', "Couldn't fill", failed, (x) => reviewLine(x, [h('b', {}, x.label), ` — ${x.reason}`, x.options?.length ? h('div', { class: 'muted' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null]), true),
-    group('r-needs', 'Needs you', needs, (x) => reviewLine(x, [h('b', {}, x.label), ` — ${x.why}`]), true),
-    group('r-needs', 'Page already had a different value (kept)', kept.filter((x) => x.differs), (x) => reviewLine(x, [h('b', {}, x.label)]), true),
-    group('r-needs', 'Buttons waiting', all('blocked'), (x) => [h('b', {}, x.id), ` — ${x.why}`]),
-    group('r-kept', 'Ignored (left unchanged)', all('skipped'), (x) => h('b', {}, x.label)),
-    group('r-filled', 'Filled', filled, (x) => [h('b', {}, x.label), ` ← ${x.shown}`]),
-    group('r-kept', 'Clicked', all('actions'), (x) => h('b', {}, x.text || x.id)),
-    group('r-kept', 'Already had a value (left alone)', kept.filter((x) => !x.differs), (x) => h('b', {}, x.label)),
+    frames.some((f) => f.halted) ? h('p', { class: 'card bad' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then click Fill this page to retry.`) : null,
+    h('div', { class: 'card summary' },
+      h('div', { class: 'summary-line' }, h('b', {}, `Filled ${filled.length} of ${fields} questions`),
+        h('span', { class: 'small muted' }, advanced ? `Clicked "${advanced}"` : needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you` : 'Nothing left for you')),
+      h('div', { class: 'bar' }, h('div', { style: `width: ${pct}%` })),
+      h('div', { class: 'legend' },
+        h('span', {}, h('span', { class: 'mark filled' }), 'Filled'),
+        h('span', {}, h('span', { class: 'mark needs' }), 'Needs you'),
+        h('span', {}, h('span', { class: 'mark failed' }), "Couldn't fill"),
+        h('span', {}, h('span', { class: 'mark ai' }), 'AI answer'))),
+    needs.length ? h('div', { class: 'eyebrow needs-head' }, 'Needs you on this page') : null,
+    ...needs.map(need),
+    waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Buttons waiting'), h('span', { class: 'muted' }, waiting.map((x) => x.id.replace(/:\d+$/, '')).join(', '))) : null,
+    doneRows.length ? h('details', { class: 'more' },
+      h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'See what was filled'), h('span', { class: 'small muted' }, String(filled.length))),
+      h('div', { class: 'more-body' }, doneRows.map(([k, v]) => h('div', { class: 'kv' }, h('span', {}, k), h('span', {}, v))))) : null,
   ].filter((node) => node != null && node !== false));
 }
 
@@ -677,8 +742,10 @@ async function runAssist(frames, ctx) {
   if (!cfg.on || !state.intake) return;
   const { items, blocked } = collectItems(frames);
   if (!items.length) return;
-  const holder = h('div', { class: 'ai-box' });
-  $('report').append(holder);
+  // Messages, the approval card and suggestions without a list item go above "Needs you".
+  const holder = h('div', { class: 'ai-holder' });
+  const head = $('report').querySelector('.needs-head');
+  if (head) head.before(holder); else $('report').append(holder);
   if (!cfg.apiKey) {
     holder.append(h('p', { class: 'muted small' }, 'The AI assistant is on but has no API key. Add one under AI assistant.'));
     return;
@@ -688,7 +755,7 @@ async function runAssist(frames, ctx) {
   const sig = [ctx.tabId, ctx.page, cfg.model, ...items.map((x) => `${x.key}|${x.label}|${x.current}|${x.options.length}`)].join('\n');
   let suggestions = state.aiCache.get(sig);
   if (!suggestions) {
-    holder.replaceChildren(h('p', { class: 'muted small ai-wait' }, `Asking the AI about ${items.length} question${items.length === 1 ? '' : 's'} left for you…`));
+    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking the AI about ${items.length} question${items.length === 1 ? '' : 's'} left for you…`));
     const started = Date.now();
     const onPage = frames.flatMap((f) => f.filled ?? []).map((x) => ({ question: x.label, answer: x.shown }));
     const body = buildRequest(items, { record: state.intake.record, carrier: ctx.carrier.id, page: ctx.page, active: state.active, onPage }, cfg);
@@ -701,7 +768,7 @@ async function runAssist(frames, ctx) {
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : `Something went wrong (${String(e?.message ?? e).slice(0, 120)}).`;
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
-      if (!stale()) holder.replaceChildren(h('p', { class: 'error small' }, `AI assistant: ${msg}`));
+      if (!stale()) holder.replaceChildren(h('p', { class: 'card bad small' }, `AI assistant: ${msg}`));
       return;
     }
   }
@@ -795,6 +862,9 @@ function aiDecisionEvent(x, ctx, decision) {
   };
 }
 
+// Each suggestion goes on its item in "Needs you on this page" (AI suggests …, Use this answer /
+// No thanks). Above the list: the approval card for answers the AI picked itself, Accept all,
+// and any suggestion whose item isn't on the list.
 function renderAi(holder, suggestions, ctx) {
   const rerender = () => { if (holder.isConnected) renderAi(holder, suggestions, ctx); };
   const act = async (list, decision, button) => {
@@ -824,47 +894,51 @@ function renderAi(holder, suggestions, ctx) {
   };
   const why = (x) => [
     x.basis === 'intake' ? `from the intake: ${x.intakePath}` : x.basis === 'tni_rule' ? 'TNI rule' : x.basis === 'page' ? 'from other answers on the page' : x.basis === 'judgement' ? 'AI judgement' : null,
-    x.status === 'failed' ? 'autofill couldn\'t fill it' : x.status === 'unfamiliar' ? 'no TNI rule yet' : x.status === 'not_on_intake' ? 'not on the intake' : 'required',
+    `${x.confidence} confidence`,
   ].filter(Boolean).join(' · ');
-  const line = (x) => {
-    const chip = x.rejected ? h('span', { class: 'ai-chip bad' }, 'rejected')
-      : x.done === 'auto' && !x.approved ? h('span', { class: 'ai-chip high' }, 'selected by AI · needs your OK')
-        : x.done ? h('span', { class: 'ai-chip done' }, x.done === 'auto' ? 'selected by AI · approved' : 'accepted')
-      : x.dismissed ? h('span', { class: 'ai-chip' }, 'dismissed')
-        : x.error ? h('span', { class: 'ai-chip bad' }, 'not taken')
-          : x.leave ? h('span', { class: 'ai-chip' }, 'yours to decide')
-            : h('span', { class: `ai-chip ${x.confidence === 'high' ? 'high' : ''}` }, `${x.confidence} confidence`);
-    const canAct = !x.leave && !x.done && !x.dismissed && x.applyable;
-    return [
-      h('b', {}, x.label),
-      h('div', { class: 'ai-line' },
-        x.leave ? h('span', { class: 'muted' }, 'Leave for you') : h('span', { class: 'ai-choice' }, x.controlKind === 'text' ? `Type “${x.choice}”` : x.choice),
-        chip),
+  const answer = (x) => (x.controlKind === 'text' ? `typing “${x.choice}”` : `“${x.choice}”`);
+  // What goes on an item: the suggestion and its buttons, or what happened to it.
+  const box = (x) => {
+    if (x.rejected) return h('div', { class: 'ai-done bad' }, 'AI answer rejected: answer it on the page.');
+    if (x.error) return h('div', { class: 'ai-done bad' }, `The page didn't take the AI answer (${x.error}). Answer it on the page.`);
+    if (x.done === 'auto' && !x.approved) return h('div', { class: 'ai-box' }, h('div', { class: 'ai-says' }, 'Picked by the AI: ', h('b', {}, x.choice)), h('div', { class: 'ai-tip' }, 'Approve or reject it above.'));
+    if (x.done) return h('div', { class: 'ai-done' }, h('b', {}, '✓'), h('span', { class: 'grow' }, `Put in ${answer(x)} (purple on the page). Change it on the page if needed.`));
+    if (x.dismissed) return null;
+    if (x.leave || !x.applyable) {
+      return h('div', { class: 'ai-box' }, h('div', { class: 'ai-says' }, x.leave ? 'AI: this one is yours to decide.' : 'AI tip'), x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null);
+    }
+    return h('div', { class: 'ai-box' },
+      h('div', { class: 'ai-says' }, 'AI suggests ', h('b', {}, x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice)),
       x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null,
       h('div', { class: 'ai-why' }, why(x)),
       ...x.checks.map((c) => h('div', { class: 'ai-check' }, `Checked by the extension: ${c}`)),
-      x.error ? h('div', { class: 'ai-check' }, `Not taken by the page: ${x.error}`) : null,
-      canAct ? h('div', { class: 'ai-actions' },
-        h('button', { type: 'button', class: 'ghost accept', onclick: (e) => act([x], 'accepted', e.target) }, 'Accept'),
-        h('button', { type: 'button', class: 'ghost', onclick: () => { x.dismissed = true; if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } }, 'Dismiss')) : null,
-    ];
+      h('div', { class: 'ai-actions' },
+        h('button', { type: 'button', class: 'primary accept', onclick: (e) => act([x], 'accepted', e.target) }, 'Use this answer'),
+        h('button', { type: 'button', class: 'ghost', onclick: () => { x.dismissed = true; if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } }, 'No thanks')));
   };
-  const open = suggestions.filter((x) => !x.done);
-  const done = suggestions.filter((x) => x.done);
+  const report = $('report');
+  const orphans = [];
+  for (const x of suggestions) {
+    const item = [...report.querySelectorAll('.need')].find((n) => n.dataset.need === `${x.key}|${x.label}`);
+    const slot = item?.querySelector('.ai-slot');
+    const content = box(x);
+    if (slot) {
+      slot.replaceChildren(...(content ? [content] : []));
+      // "Answer it on the page" only while nothing (AI or agent) has answered it.
+      item.querySelector('.need-note').hidden = !!x.done || (!!content && !x.leave && x.applyable && !x.dismissed && !x.rejected && !x.error);
+    } else if (content) orphans.push(h('div', { class: 'need' }, h('div', { class: 'row-text' }, h('b', {}, x.label)), content));
+  }
   holder.replaceChildren(...[
-    h('details', { class: 'r-ai', open: true },
-      h('summary', {}, `AI suggestions (${open.length} open${done.length ? `, ${done.length} put in` : ''})`),
-      sure.length > 1 ? h('button', { type: 'button', class: 'ghost ai-all', onclick: (e) => act(sure, 'accepted', e.target) }, `Accept all ${sure.length} suggested answers`) : null,
-      h('ul', {}, [...open, ...done].map((x) => h('li', {}, line(x))))),
-    // End of the page report: what the AI selected by itself, waiting for the agent's OK.
     pending.length ? h('div', { class: 'ai-approve' },
-      h('p', { class: 'ai-approve-title' }, `The AI selected ${pending.length} answer${pending.length === 1 ? '' : 's'} on this page`),
-      h('p', { class: 'muted small' }, canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.'),
+      h('p', { class: 'ai-approve-title' }, `The AI picked ${pending.length} answer${pending.length === 1 ? '' : 's'} on this page`),
+      h('p', { class: 'small muted' }, canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.'),
       h('ul', {}, pending.map((x) => h('li', {},
-        h('span', {}, h('b', {}, x.label), ' ← ', h('span', { class: 'ai-choice' }, x.choice)),
+        h('span', {}, h('b', {}, x.label), ' ← ', x.choice),
         h('button', { type: 'button', class: 'link small ai-reject', onclick: () => decide([x], 'rejected') }, 'Reject')))),
       h('div', { class: 'ai-actions' },
-        h('button', { type: 'button', class: 'ghost accept', onclick: () => decide(pending, 'approved') }, canContinue ? 'Approve and continue' : `Approve ${pending.length === 1 ? 'it' : `all ${pending.length}`}`))) : null,
+        h('button', { type: 'button', class: 'primary accept', onclick: () => decide(pending, 'approved') }, canContinue ? 'Approve and continue' : `Approve ${pending.length === 1 ? 'it' : `all ${pending.length}`}`))) : null,
+    sure.length > 1 ? h('div', { class: 'ai-actions' }, h('button', { type: 'button', class: 'ghost', onclick: (e) => act(sure, 'accepted', e.target) }, `Use all ${sure.length} AI answers`)) : null,
+    ...orphans,
   ].filter(Boolean));
 }
 
@@ -883,7 +957,8 @@ async function renderAiSettings() {
   $('ai-auto').disabled = !cfg.on;
   if (document.activeElement !== $('ai-key')) $('ai-key').value = cfg.apiKey;
   if (document.activeElement !== $('ai-model')) $('ai-model').value = cfg.model === DEFAULT_MODEL ? '' : cfg.model;
-  $('ai-note').textContent = !cfg.on ? 'Off.' : !cfg.apiKey ? 'On, but needs an API key.' : `On · ${cfg.model}${cfg.auto ? ' · makes selections, you approve them before Continue' : ' · suggestions only'}`;
+  $('ai-note').textContent = !cfg.on ? '' : !cfg.apiKey ? 'On, but needs an API key.' : `On · ${cfg.model}${cfg.auto ? ' · picks answers, you approve them before Continue' : ' · suggestions only'}`;
+  renderUsage();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -903,27 +978,46 @@ async function renderUsage() {
     off: 'No server set: use Export log to hand in the usage log.',
     idle: serverUrl ? `Uploads to ${serverUrl} every minute.` : '',
   }[up.state] ?? '';
+  $('upload-status').className = `small${up.state === 'ok' ? ' ok' : up.state === 'error' ? ' bad' : ''}`;
   for (const [id, v] of [['agent', agent], ['server-url', serverUrl], ['server-token', serverToken]]) {
     if (document.activeElement !== $(id)) $(id).value = v;
   }
   $('recording').hidden = !state.intake;
+  $('foot-version').hidden = !!state.intake;
   renderHealth({ n, agent, serverUrl, up });
 }
 
 // The version this browser is running, and setup problems that otherwise go unnoticed until a
 // review shows missing data: an old build, the usage server down, no initials, no AI key.
 async function renderHealth({ n, agent, serverUrl, up }) {
-  $('version').textContent = `v${inExtension ? chrome.runtime.getManifest().version : 'dev'}`;
+  const version = inExtension ? chrome.runtime.getManifest().version : 'dev';
+  $('version').textContent = `Version ${version}`;
+  $('foot-version').textContent = `v${version}`;
   const ai = await aiSettings();
-  const open = (id) => () => { $(id).open = true; $(id).scrollIntoView({ block: 'start', behavior: 'smooth' }); };
-  const problems = [
-    up.state === 'error' && { level: 'bad', text: `Usage server not reachable (${up.message}). ${n.toLocaleString()} event${n === 1 ? '' : 's'} waiting on this computer; they're sent once it's back (npm run server).`, go: open('usage') },
-    up.state === 'off' && { level: 'warn', text: 'No usage server set: nothing is recorded centrally (Export log only).', go: open('usage') },
-    !agent && { level: 'warn', text: 'Your initials are empty: your quotes are recorded without a name.', go: open('usage') },
-    ai.on && !ai.apiKey && { level: 'warn', text: 'The AI assistant is on but has no API key.', go: open('ai') },
+  // Things the agent fixes (one card, a button each) and things that need nothing from them.
+  const setup = [
+    !agent && { title: 'Add your initials', text: 'So your quotes are counted as yours.', button: 'Add', go: () => openSettings('agent') },
+    ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: "They're turned on, but no OpenAI key is set.", button: 'Add key', go: () => openSettings('ai-key') },
+    up.state === 'off' && { title: 'Usage log has no server', text: 'Nothing is recorded centrally (Export log only).', button: 'Set up', go: () => openSettings('server-url') },
   ].filter(Boolean);
-  $('health').hidden = !problems.length;
-  $('health').replaceChildren(...problems.map((p) => h('button', { type: 'button', class: `health-item ${p.level}`, onclick: p.go }, p.text)));
+  const info = up.state === 'error'
+    ? { title: "Usage log can't upload right now", text: `Nothing for you to do. ${n ? `${n.toLocaleString()} event${n === 1 ? ' is' : 's are'} saved on this computer and` : 'What happens is saved on this computer and'} sent when the server is back.` }
+    : null;
+  const cards = () => [
+    setup.length ? h('div', { class: 'setup' },
+      h('div', { class: 'setup-head' }, `Finish setting up (${setup.length})`),
+      setup.map((x) => h('div', { class: 'setup-row' },
+        h('div', { class: 'row-text' }, h('b', {}, x.title), h('span', {}, x.text)),
+        h('button', { type: 'button', class: 'ghost', onclick: x.go }, x.button)))) : null,
+    info ? h('div', { class: 'notice' }, h('div', { class: 'row-text' }, h('b', {}, info.title), h('span', {}, info.text))) : null,
+  ].filter(Boolean);
+  $('home-notices').replaceChildren(...cards());
+  $('check-notices').replaceChildren(...cards());
+  $('fill-notices').replaceChildren(...cards());
+  $('settings-dot').hidden = !setup.length;
+  // The welcome text is for a panel that's ready to use.
+  $('intro').hidden = !!setup.length;
+  $('next-steps').hidden = !!setup.length;
 }
 
 async function uploadNow() {
@@ -986,7 +1080,13 @@ function wireUsage() {
 
 function wire() {
   const drop = $('load');
-  $('choose').addEventListener('click', () => $('file').click());
+  $('choose').addEventListener('click', (e) => { e.stopPropagation(); $('file').click(); });
+  drop.addEventListener('click', () => $('file').click());
+  $('settings-btn').addEventListener('click', () => { state.settingsOpen = !state.settingsOpen; showScreen(); });
+  $('settings-done').addEventListener('click', () => { state.settingsOpen = false; showScreen(); });
+  $('tab-check').addEventListener('click', () => setStep('check'));
+  $('tab-fill').addEventListener('click', () => setStep('fill'));
+  $('go-fill').addEventListener('click', () => setStep('fill'));
   $('replace').addEventListener('click', () => $('file').click());
   $('file').addEventListener('change', (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; });
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
@@ -994,6 +1094,7 @@ function wire() {
     t.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
     t.addEventListener('dragleave', (e) => { if (!e.relatedTarget) drop.classList.remove('over'); });
     t.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
+    t.addEventListener('dragover', () => { if (!state.intake) $('load-error').hidden = true; });
   }
   $('clear-client').addEventListener('click', async () => {
     usage.log({ type: 'intake_closed', reason: 'cleared' });

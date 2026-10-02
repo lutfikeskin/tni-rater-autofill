@@ -6,3 +6,5 @@ captures/*/generated/
 dist/
 # Weekly review reports (npm run review): built from usage logs, review before sharing.
 reviews/
+# Design handoff bundles (claude.ai/design exports), kept locally for reference.
+design/
