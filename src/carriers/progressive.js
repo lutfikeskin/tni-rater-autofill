@@ -20,6 +20,8 @@
 // Follow-up questions the intake doesn't cover use TNI's standard answers (the agent's own
 // choices on live quotes). The agent changes them for the exceptions.
 
+import { priorPolicyExpired } from '../util.js';
+
 // Values that Progressive asks the agent to attest to must come from an explicit intake field.
 // Keep these helpers conservative: an absent value is a review item, not a reason to guess.
 const explicitBoolean = (record, path) => {
@@ -57,7 +59,7 @@ export function owner(r) {
 // the coverage (limit) and the expiration date. A Progressive personal auto policy doesn't count.
 const insuredWithProgressive = (r) => {
   const p = r.priorInsurance[0];
-  return !!(p && /commercial\s+auto/i.test(p.type ?? '') && /progressive/i.test(p.carrier ?? '') && p.limit && p.expiration);
+  return !!(p && /commercial\s+auto/i.test(p.type ?? '') && /progressive/i.test(p.carrier ?? '') && p.limit && p.expiration && !priorPolicyExpired(r, p));
 };
 
 // After a USDOT lookup Progressive offers the registered business name / address as a choice,
@@ -65,6 +67,7 @@ const insuredWithProgressive = (r) => {
 // no such choice: the manual boxes are the only option and get the intake's values (below and
 // in the reviewed address rules).
 const registered = (prefer) => ({ kind: 'pick-not', value: () => ({ not: '^enter a different', prefer }), ignore: (r) => !r.applicant.dot });
+const businessNames = (r) => [r.applicant.name || r.applicant.owner1].filter(Boolean);
 
 // The intake's vehicle value, only when it's a dollar amount. Anything else ("N/A", "about
 // 40k") goes to the agent with the intake's text, rather than being typed and cleared.
@@ -123,7 +126,7 @@ const isFreightHauler = (r) => /^(?:general\s+)?freight\s+haul(?:er|ing)$/i.test
 const isGeneralFreight = (r) => isFreightHauler(r) && /general\s+freight/i.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
 const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHauler(r) ? 'General Freight Hauler' : (r.operations.businessClass ?? null);
 const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
-const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration);
+const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration && !priorPolicyExpired(r, p));
 // Once For Hire Trucking reveals this question, the agency workflow uses this subtype.
 const truckerType = (r) => (isExpediter(r) ? 'Other For-Hire Trucking' : null);
 // LLC / Inc / Corp in the name means a corporation; the owner-operators quoted so far without
@@ -260,9 +263,9 @@ export const progressive = {
     { q: '1F3', path: 'applicant.dot', label: 'usdot number', ignore: (r) => !r.applicant.dot },
     // Shown when Verify USDOT finds no record for the number (a brand-new USDOT): TNI's answer is Yes.
     { q: '21E', name: 'USDOT obtained within the last 60 days (standard: Yes)', kind: 'bool', label: 'obtain(ed)? their usdot number within the last 60 days', value: () => true, ignore: (r) => !r.applicant.dot },
-    { q: '20F', name: 'USDOT number belongs to the business (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, value: (r) => (r.applicant.dot ? true : null) },
-    { q: '22F', name: 'Business name (USDOT record)', ...registered() },
-    { q: '277', name: 'Primary business address (USDOT record)', ...registered() },
+    { q: '20F', name: 'USDOT number belongs to the business (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, value: (r) => (r.applicant.dot ? true : null), businessNames },
+    { q: '22F', name: 'Business name (USDOT record)', ...registered(), businessNames },
+    { q: '277', name: 'Primary business address (USDOT record)', ...registered(), businessNames },
     // Always the first choice offered. When that's "Enter a different address", the address box
     // below gets the whole address and Progressive's first suggestion.
     { q: '2A5', name: 'Owner home address (first option)', kind: 'first-option', value: () => 'first option' },

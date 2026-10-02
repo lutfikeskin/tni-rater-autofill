@@ -368,6 +368,36 @@ function addButton(h, text, { className = '', disabled = false } = {}) {
   return button;
 }
 
+test('reinjection reuses the installed pagekit and preserves its state', () => {
+  const h = harness();
+  vm.runInNewContext(PAGEKIT, h.context);
+  assert.equal(h.context.__raterKit, h.kit);
+});
+
+test('an existing blank driver row prevents a duplicate Add Driver action', async () => {
+  const h = harness();
+  h.document.body.append(makeInput({ id: 'secondDriver', ariaLabel: 'Second driver' }));
+  const button = addButton(h, 'Add Driver');
+  let clicks = 0;
+  button.addEventListener('click', () => clicks++);
+  const report = await h.kit.fill([{ id: 'add2', kind: 'action', action: 'addDriver1', text: '^add driver$',
+    after: [], unlessSelector: '#secondDriver', pages: [] }], {});
+  assert.equal(clicks, 0);
+  assert.equal(report.halted, false);
+});
+
+test('DOT lookup chooses the matching business, not the first returned name', async () => {
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const field = addExtText(h, 'c', '22F', { caption: 'Business Name', required: true });
+  const records = ['Other Example LLC', 'Sample Test LLC', 'Enter a different Business Name'].map(label => ({ get: () => label }));
+  Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+  const record = { applicant: { name: 'Sample Test LLC', dot: '12345678' }, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter(s => s.q === '22F');
+  const report = await h.kit.fill(plan, {});
+  assert.equal(field.cmp.getValue(), 'Sample Test LLC');
+  assert.equal(report.failed.length, 0);
+});
+
 test('vehicle-named additional coverage q200F is mapped and does not block Rates filling', async () => {
   for (const current of ['', 'Not selected']) {
     const h = harness({ ext: true, search: '?pageName=CoveragesRates' });

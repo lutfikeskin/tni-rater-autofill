@@ -7,7 +7,7 @@ import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import * as usage from './usage-log.js';
-import { collectItems, buildRequest, callModel, parseResponse, usageOf, AssistError, DEFAULT_MODEL } from '../src/ai/assist.js';
+import { collectItems, buildRequest, callModel, parseResponse, usageOf, AssistError, DEFAULT_MODEL, assistContextKey } from '../src/ai/assist.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -835,8 +835,11 @@ async function aiSettings() {
 
 // ctx: { tabId, page, carrier } of the fill these frames came from.
 async function runAssist(frames, ctx) {
+  const record = state.intake?.record;
+  const active = { ...state.active };
+  ctx = { ...ctx, contextKey: assistContextKey(record, active) };
   const cfg = await aiSettings();
-  if (!cfg.on || !state.intake) return;
+  if (!cfg.on || !record || ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
   const { items, blocked } = collectItems(frames);
   if (!items.length) return;
   // Messages, the approval card and suggestions without a list item go above "Needs you".
@@ -848,16 +851,16 @@ async function runAssist(frames, ctx) {
     return;
   }
   const run = ++state.aiRun;
-  const stale = () => run !== state.aiRun || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page || !holder.isConnected;
-  // One cache entry per question (tab, page, model, question, options): a question the AI has
-  // answered is never asked again, so the many follow-up fills of a page cost nothing.
-  const sigOf = (x) => [ctx.tabId, ctx.page, cfg.model, `${x.key}|${x.label}|${x.options.join('¦')}`].join('\n');
+  const stale = () => run !== state.aiRun || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page
+    || ctx.contextKey !== assistContextKey(state.intake?.record, state.active) || !holder.isConnected;
+  // Reuse answers only for the same intake and active driver/vehicle.
+  const sigOf = (x) => [ctx.tabId, ctx.page, cfg.model, ctx.contextKey, `${x.key}|${x.label}|${x.options.join('¦')}`].join('\n');
   const missing = items.filter((x) => !state.aiCache.has(sigOf(x)));
   if (missing.length) {
     holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking the AI about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
     const started = Date.now();
     const onPage = frames.flatMap((f) => f.filled ?? []).map((x) => ({ question: x.label, answer: x.shown }));
-    const context = { record: state.intake.record, carrier: ctx.carrier.id, page: ctx.page, active: state.active, onPage };
+    const context = { record, carrier: ctx.carrier.id, page: ctx.page, active, onPage };
     const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
     try {
       let json;
@@ -869,8 +872,9 @@ async function runAssist(frames, ctx) {
         if (!(e instanceof AssistError) || !/schema/i.test(e.message)) throw e;
         json = await callModel({ apiKey: cfg.apiKey, body: buildRequest(missing, context, { ...cfg, enums: false }) });
       }
-      const fresh = parseResponse(json, missing, state.intake.record);
-      fresh.forEach((x) => state.aiCache.set(sigOf(x), x));
+      if (stale()) return;
+      const fresh = parseResponse(json, missing, record);
+      fresh.forEach((x) => state.aiCache.set(sigOf(x), { ...x, contextKey: ctx.contextKey }));
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter((x) => !x.leave).length, leave: fresh.filter((x) => x.leave).length, autoOk: fresh.filter((x) => x.autoOk).length, ...usageOf(json) });
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : `Something went wrong (${String(e?.message ?? e).slice(0, 120)}).`;
@@ -905,7 +909,8 @@ async function remarkAi(ctx) {
   const answered = [];
   for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
-    if (t === String(ctx.tabId) && p === ctx.page && x.done && !x.rejected) answered.push(x);
+    if (t === String(ctx.tabId) && p === ctx.page && x.done && !x.rejected
+      && x.contextKey === assistContextKey(state.intake?.record, state.active)) answered.push(x);
   }
   if (!answered.length) return;
   try {
@@ -927,6 +932,7 @@ async function syncAiBanner(ctx) {
 async function applyAi(list, ctx, decision) {
   if (state.filling) return false;
   if (state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return false;
+  if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return false;
   state.filling = true;
   await tellRecorder('pause');
   try {
@@ -985,6 +991,7 @@ function renderAi(holder, suggestions, ctx) {
   const pending = suggestions.filter((x) => x.done === 'auto' && !x.approved && !x.rejected);
   const canContinue = $('auto-advance').checked && !!ctx.carrier.advance;
   const decide = async (list, decision) => {
+    if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
     for (const x of list) {
       if (decision === 'approved') x.approved = true; else x.rejected = true;
       if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, decision));

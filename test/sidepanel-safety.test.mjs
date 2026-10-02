@@ -2,8 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { assistContextKey } from '../src/ai/assist.js';
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
+
+test('AI accept refuses a suggestion for a previous driver, vehicle or intake', async () => {
+  const record = { vehicles: [{ value: 34000 }, { value: 36000 }] };
+  const active = { drivers: 0, vehicles: 0 };
+  const ctx = { tabId: 1, page: '/quote', contextKey: assistContextKey(record, active) };
+  let writes = 0;
+  const state = { filling: false, tab: { id: 1, url: 'https://example.test/quote' }, intake: { record }, active };
+  const sandbox = { state, assistContextKey, pageOf: url => new URL(url).pathname, tellRecorder: () => { writes++; } };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('applyAi'), sandbox);
+  state.active = { ...active, vehicles: 1 };
+  assert.equal(await sandbox.applyAi([], ctx, 'accepted'), false);
+  state.active = { ...active, drivers: 1 };
+  assert.equal(await sandbox.applyAi([], ctx, 'accepted'), false);
+  state.active = active;
+  record.vehicles[0].value = 50000;
+  assert.equal(await sandbox.applyAi([], ctx, 'accepted'), false);
+  assert.equal(writes, 0, 'stale choices never reach the page');
+});
 
 // Keep these tests coupled to the production functions.  The side panel is an ES module with
 // browser-only imports, so extract only the functions under test and evaluate those functions in

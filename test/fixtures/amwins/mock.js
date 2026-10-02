@@ -25,6 +25,7 @@
   const $ = (s, root = document) => root.querySelector(s);
   const $$ = (s, root = document) => [...root.querySelectorAll(s)];
   const state = (window.__amwinsMock = { saves: 0, submitted: false, lookups: 0, imports: 0, decodes: 0, defaults: 0, steps: [] });
+  const scenario = window.__intakeScenario;
   const fire = (el, type = 'change') => el.dispatchEvent(new Event(type, { bubbles: true }));
   const later = (ms, fn) => setTimeout(fn, ms);
 
@@ -150,23 +151,68 @@
 
   // --- Vehicles -----------------------------------------------------------------------------------
   const DECODED = { year: '2019', make: 'ISUZU', model: 'NPR', bodyType: 'INCOMPLETE - STRAIGHT TRUCK', grossVehicleWeight: '14500' };
-  const row = () => $('#vehiclesPanelAccordion0');
-  const setRow = (id, value) => { const f = $(`[data-id="${id}"]`, row()); if (f) { f.value = value; fire(f); } };
-  const decode = () => { for (const [id, value] of Object.entries(DECODED)) setRow(id, value); };
+  // Saved repeaters use a zero-based data-id. Clone the original blank controls, not answers.
+  const templates = Object.fromEntries(['drivers', 'vehicles'].map((kind) => [kind, $(`#${kind}Panel > .app-rp-section`).cloneNode(true)]));
+  const addRow = (kind) => {
+    const panel = $(`#${kind}Panel`);
+    const index = panel.querySelectorAll(':scope > .app-rp-section').length;
+    const copy = templates[kind].cloneNode(true);
+    copy.setAttribute('data-id', String(index));
+    for (const el of [copy, ...copy.querySelectorAll('*')]) {
+      for (const attr of ['id', 'name', 'for', 'data-bs-target']) {
+        if (el.hasAttribute(attr)) el.setAttribute(attr, el.getAttribute(attr).replace(/Accordion0/g, `Accordion${index}`).replace(/_0_/g, `_${index}_`));
+      }
+      if (el.id === 'marketValue') el.id = `marketValue${index}`;
+    }
+    panel.append(copy);
+    return copy;
+  };
+  for (const kind of ['drivers', 'vehicles']) {
+    $(`#${kind}Panel`)?.parentElement.querySelector('.app-rp-add')?.addEventListener('click', () => addRow(kind));
+  }
+  const row = (index = 0) => $(`#vehiclesPanel > .app-rp-section[data-id="${index}"]`);
+  const setRow = (id, value, index = 0) => { const f = $(`[data-id="${id}"]`, row(index)); if (f) { f.value = value; fire(f); } };
+  const attempts = new Map();
+  const resultFor = (vin) => {
+    if (!scenario) return { status: 'found', ...DECODED };
+    const i = scenario.lookups.vinLookups.findIndex((v) => v.vin === vin);
+    const sequence = scenario.lookups.attempts?.vinLookups?.[i];
+    const attempt = attempts.get(vin) ?? 0;
+    attempts.set(vin, attempt + 1);
+    return sequence?.[Math.min(attempt, sequence.length - 1)] ?? scenario.lookups.vinLookups[i] ?? { status: 'not_found' };
+  };
+  const decode = (index = 0, result = DECODED) => {
+    if (result.status && result.status !== 'found') return;
+    const values = scenario ? { year: String(result.modelYear), make: result.make, model: result.model,
+      bodyType: 'CARGO VAN', grossVehicleWeight: result.grossVehicleWeight ?? '' } : DECODED;
+    for (const [id, value] of Object.entries(values)) setRow(id, value, index);
+  };
+  const lookupError = document.createElement('div');
+  lookupError.id = 'mockVinError';
+  lookupError.setAttribute('role', 'alert');
+  $('#vehLookupButton').parentElement.append(lookupError);
+  let pending = [];
   const lookup = $('#vehLookupSuccess');
   $('#vehLookupButton')?.addEventListener('click', () => {
     if (!$('#vehLookupVin').value.trim()) return;
     state.lookups++;
-    later(400, () => lookup.classList.add('show'));
+    pending = $('#vehLookupVin').value.trim().split(/\s+/).map((vin) => ({ vin, result: resultFor(vin) }));
+    later(400, () => {
+      lookupError.textContent = pending.some((p) => p.result.status !== 'found') ? 'VIN lookup unavailable. Review or retry Import Data.' : '';
+      if (pending.some((p) => p.result.status === 'found')) lookup.classList.add('show');
+    });
   });
   lookup?.querySelector('.import')?.addEventListener('click', () => {
     state.imports++;
     // The rows are redrawn from the imported data: answers typed on the row before are gone.
     later(200, () => {
-      for (const id of ['usageType', 'radius', 'bodyType']) setRow(id, '');
-      const value = $('#marketValue'); if (value) value.value = '';
-      setRow('vin', $('#vehLookupVin').value.trim().split('\n')[0]);
-      decode();
+      pending.forEach(({ vin, result }, index) => {
+        if (result.status !== 'found') return;
+        while (!row(index)) addRow('vehicles');
+        for (const id of ['usageType', 'radius', 'bodyType', 'costNew']) setRow(id, '', index);
+        setRow('vin', vin, index);
+        decode(index, result);
+      });
       $('#vehLookupVin').value = '';
       lookup.classList.remove('show');
     });
@@ -175,7 +221,9 @@
   document.addEventListener('change', (e) => {
     if (e.target.getAttribute?.('data-id') === 'vin' && e.target.closest('#vehiclesPanel') && e.target.value.length === 17 && !lookup.classList.contains('show')) {
       state.decodes++;
-      later(500, decode);
+      const index = Number(e.target.closest('.app-rp-section').getAttribute('data-id'));
+      const result = scenario ? scenario.lookups.vinLookups.find((r) => r.vin === e.target.value) : DECODED;
+      if (result) later(500, () => decode(index, result));
     }
   });
 
