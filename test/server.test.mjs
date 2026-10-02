@@ -79,3 +79,23 @@ test('answers the browser preflight for extensions only', async () => {
     assert.equal(web.headers.get('access-control-allow-origin'), null);
   });
 });
+
+test('export: only with the admin token, the upload token is not enough; days and date range', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir, token: 'up', adminToken: 'admin' }, async ({ post, base }) => {
+    await post({ events: [ev(), ev()] }, { authorization: 'Bearer up' });
+    const get = (p, tokenValue) => fetch(`${base}${p}`, { headers: tokenValue ? { authorization: `Bearer ${tokenValue}` } : {} });
+    assert.equal((await get('/v1/export')).status, 401);
+    assert.equal((await get('/v1/export', 'up')).status, 401, 'the token every extension carries cannot read logs');
+    const days = await (await get('/v1/days', 'admin')).json();
+    assert.equal(days.days.length, 1);
+    const today = days.days[0].day;
+    const all = (await (await get(`/v1/export?since=${today}`, 'admin')).text()).trim().split('\n');
+    assert.equal(all.length, 2);
+    assert.equal((await (await get('/v1/export?since=2999-01-01', 'admin')).text()), '');
+    assert.equal((await get('/v1/export?since=yesterday', 'admin')).status, 400);
+  });
+  await withServer({ dataDir }, async ({ base }) => {
+    assert.equal((await fetch(`${base}/v1/export`, { headers: { authorization: 'Bearer ' } })).status, 401, 'no admin token configured: export off');
+  });
+});

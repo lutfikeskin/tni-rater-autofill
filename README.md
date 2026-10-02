@@ -127,6 +127,10 @@ npm run e2e:extension    # needs npm run package and npm run replay (port 8792)
 
 The packaged extension itself in Chromium, its side panel opened as a page, on the same mock: loads the sample intake, clicks **Fill this page** once and checks that the panel goes through every step on its own (Save & Continue), stops at the declaration and never submits.
 
+## Hosting
+
+Updates reach agents through the Chrome Web Store; their usage logs go to TNI's server on Railway and a daily GitHub Action builds the review. See [docs/hosting.md](docs/hosting.md).
+
 ## Files
 
 | Path | What it does |

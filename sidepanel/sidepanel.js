@@ -1066,7 +1066,8 @@ async function renderAiSettings() {
 
 async function renderUsage() {
   const n = await usage.count();
-  const { agent = '', serverUrl = usage.DEFAULT_SERVER, serverToken = '' } = await usage.settings();
+  const { agent = '', serverToken = '' } = await usage.settings();
+  const { serverUrl } = await usage.serverConfig();
   $('usage-count').textContent = n
     ? `${n.toLocaleString()} event${n === 1 ? '' : 's'} waiting on this computer`
     : 'Nothing waiting on this computer.';

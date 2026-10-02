@@ -26,3 +26,21 @@ test('events an older server refused as unknown types are sent again to a newer 
   await usage.upload();
   assert.equal(bodies.length, 2, 'accepted on the retry: not sent a third time');
 });
+
+test('uploads go to the central server with the built-in token unless the agent set their own', async () => {
+  const seen = [];
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), auth: init?.headers?.authorization ?? null });
+    return { ok: true, json: async () => ({ accepted: 1, duplicates: 0, rejected: [] }) };
+  };
+  await usage.saveSettings({ serverUrl: undefined, serverToken: '' });
+  assert.deepEqual(await usage.serverConfig(), { serverUrl: usage.DEFAULT_SERVER, serverToken: usage.DEFAULT_TOKEN });
+  await usage.log({ type: 'page_view', page: 'A' });
+  await usage.upload();
+  assert.ok(seen.at(-1).url.startsWith(`${usage.DEFAULT_SERVER}/v1/events`));
+  assert.equal(seen.at(-1).auth, `Bearer ${usage.DEFAULT_TOKEN}`);
+  await usage.saveSettings({ serverUrl: 'http://localhost:8787', serverToken: '' });
+  assert.deepEqual(await usage.serverConfig(), { serverUrl: 'http://localhost:8787', serverToken: '' }, 'a local test server never gets the central token');
+  await usage.saveSettings({ serverUrl: '' });
+  assert.equal((await usage.serverConfig()).serverUrl, '', 'blank: export only');
+});
