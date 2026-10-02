@@ -385,7 +385,8 @@ function onRecorderMessage(msg, sender) {
   if (msg.event === 'page_view') {
     if (msg.from) state.visitedPages.add(samePage(msg.from));
     log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
-    // Setting "Fill each new page as soon as it opens": wait for the page to settle, then fill.
+    // Setting "Fill each new page as soon as it opens": fill right away (the fill itself waits
+    // for the page to settle first).
     // Coming back to a page filled earlier in this quote (Rates after the bill plan) refills it
     // with the follow-up setting, so its next buttons (Recalculate, Print) run. Pages with only
     // buttons for us (Add Vehicle) count too.
@@ -393,7 +394,7 @@ function onRecorderMessage(msg, sender) {
     const hasButtons = (state.tab.carrier?.actions ?? []).some((a) => [].concat(a.page ?? []).includes(page));
     const wanted = $('auto-pages').checked || ($('auto-followups').checked && (state.autoPages.has(page) || (hasButtons && !msg.fields)));
     if (wanted && (msg.fields > 0 || hasButtons) && onQuotePage()) {
-      setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 400);
+      setTimeout(() => { if (pageOf(state.tab?.url) === samePage(msg.page)) fillPage({ auto: 'page' }); }, 100);
     }
     return;
   }
