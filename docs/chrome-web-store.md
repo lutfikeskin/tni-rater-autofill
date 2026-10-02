@@ -66,3 +66,31 @@ Create the agents' keys in TNI's own OpenAI organisation (one project for the pi
 agent, a monthly budget on the project), so each key can be revoked on its own and usage shows
 per agent. When the pilot grows, the roadmap's server-held key (see `docs/ai-assistant.md`)
 removes keys from the agents' browsers.
+
+## Store listing text (paste as is)
+
+- **Category:** Productivity → Workflow & Planning
+- **Language:** English (United States)
+- **Description:**
+
+```text
+TNI Rater Autofill is the internal quoting assistant for Truckers National Insurance (TNI) agents.
+
+Load the client's TNI Commercial Insurance Quote Application (PDF) in the side panel, open the carrier's quote page, and click Fill this page. The extension fills the quote from the application and TNI's standard answers:
+
+• Progressive Commercial Auto (ForAgentsOnly)
+• AmWINS Admitted Placement – Business Auto
+• GEICO commercial pages (common fields)
+
+What it does
+• Reads the quote application on your computer and lets you check and correct it before filling.
+• Fills one page at a time, checks that each answer was kept by the carrier's page, and marks every field: filled, needs you, or couldn't fill.
+• Moves to the next step only when nothing is left for you, and never binds, buys, submits or signs anything.
+• Leaves MVR/CLUE orders, driver exclusions, declarations and payment details to you.
+• Optional AI tips (with your own OpenAI key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
+
+Privacy
+The application stays on your computer for the session. To improve the extension, a usage log (which fields were filled, what you changed afterwards, problems you report) is sent to TNI's server; client names, numbers and anything you type are never included.
+
+For TNI agents only.
+```
