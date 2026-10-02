@@ -22,6 +22,7 @@ export const TNI_RULES = `
 - Business type: "For Hire Trucking" for expediters, then Type of Trucker "Other For-Hire Trucking". General freight haulers are "General Freight Hauler" (portal wording may be "General Freight Trucking"). Otherwise use the closest match to what the intake says the business does.
 - Owner name and date of birth from the intake; the owner is usually the driver with the same last name.
 - Hazardous material placard: from the intake.
+- Verify USDOT finds no record (a brand-new USDOT): "obtained within the last 60 days" is Yes, and the business name box gets the company name (no company: the owner's full name).
 - Leave empty: middle initial, suffix, DBA name (always), quote vendor code. Don't change agent code or policy start date.
 
 ## Vehicles (MostCommonVehicles, AddVehicle)
@@ -34,7 +35,7 @@ export const TNI_RULES = `
 - Comprehensive / collision: Yes, $1,000 deductibles unless the intake asks for others.
 - Permanently attached equipment: "$0 to $2,000", and tick "Vehicle has no equipment" (standard). The vehicle value question that follows ("If this vehicle was sold today…") is the intake's vehicle value.
 - On the vehicle list page, vehicles found by the USDOT lookup are listed; add the intake's vehicle with Add → Add Vehicle.
-- Vehicle value: the intake's vehicle value. GVW and annual mileage come from the VIN lookup.
+- Vehicle value: the intake's vehicle value. GVW, annual mileage, anti-lock brakes, driver-side airbag and anti-theft device come from the VIN lookup: keep Progressive's answers.
 
 ## Drivers (AddDriver)
 - License state: the full state name. License number: letters and digits only, keeping a state prefix the intake writes ("IL - S123" is "ILS123").
@@ -57,6 +58,7 @@ export const TNI_RULES = `
 - UM/UIM: $100k CSL (also when asked separately as Uninsured and Underinsured Motorist). UMPD limit: Not selected. Comprehensive and collision deductibles: $1,000. Rental: "$40 per day, $1,200 max". Fire/theft additional coverage: Not selected. Roadside: keep what the page has selected.
 - Motor Truck Cargo only when the intake asks for it: special cargo questions (mobile/modular homes; business documents) No; "General freight" is category "Consumer Goods", commodity "Other Consumer Goods"; limit and deductible from the intake ("$100K/$1K Ded" is "$100k with a $1,000 Deductible").
 - General liability: not set up yet; the agent answers it.
+- Florida: Property Damage Liability Only "Not Selected"; Personal Injury Protection "Not selected".
 - Pennsylvania first-party benefits: Medical Expense Benefits $5,000 (required, lowest); Extraordinary Medical, Income Loss, Funeral Expense and Accidental Death: Not Selected unless the intake asks for them.
 - Cargo without a deductible on the intake: $1,000 deductible.
 

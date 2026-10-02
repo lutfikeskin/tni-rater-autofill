@@ -255,13 +255,17 @@ export const progressive = {
       return 'No - and the customer will not have a USDOT number';
     } },
     { q: '1F3', path: 'applicant.dot', label: 'usdot number', ignore: (r) => !r.applicant.dot },
+    // Shown when Verify USDOT finds no record for the number (a brand-new USDOT): TNI's answer is Yes.
+    { q: '21E', name: 'USDOT obtained within the last 60 days (standard: Yes)', kind: 'bool', label: 'obtain(ed)? their usdot number within the last 60 days', value: () => true, ignore: (r) => !r.applicant.dot },
     { q: '20F', name: 'USDOT number belongs to the business (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, value: (r) => (r.applicant.dot ? true : null) },
     { q: '22F', name: 'Business name (USDOT record)', ...registered() },
     { q: '277', name: 'Primary business address (USDOT record)', ...registered() },
     // Always the first choice offered. When that's "Enter a different address", the address box
     // below gets the whole address and Progressive's first suggestion.
     { q: '2A5', name: 'Owner home address (first option)', kind: 'first-option', value: () => 'first option' },
-    { q: '230', path: 'applicant.name', name: 'Business / sole proprietor name', value: (r) => r.applicant.name || r.applicant.owner1, ignore: (r) => !!r.applicant.dot },
+    // Typed in whenever Progressive shows the box: without a USDOT number, and also with a brand-new
+    // one the lookup can't find yet (then there's no registered name to pick).
+    { q: '230', path: 'applicant.name', name: 'Business / sole proprietor name', value: (r) => r.applicant.name || [owner(r).first, owner(r).last].filter(Boolean).join(' ') || r.applicant.owner1 },
     { q: '233', name: 'DBA name (always left empty)', ignore: true },
     // Owner home address box, shown when there's no registered address to pick ("2AA" after
     // "Enter a different address", "2A9" when there's no choice at all): the whole address,
@@ -340,6 +344,11 @@ export const progressive = {
     // Filled by the VIN lookup.
     { q: '2BB4', name: 'Gross vehicle weight (from VIN lookup)', ignore: true },
     { q: '2BCB', name: 'Annual mileage (from VIN lookup)', ignore: true },
+    // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
+    // a box the lookup leaves empty goes to the agent.
+    ...[['2BA1', 'Anti-lock brakes'], ['2BAC', 'Anti-theft device'], ['2BAE', 'Driver-side airbag']].map(([q, name]) => ({
+      q, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
+    })),
     { q: '2B20', path: 'vehicles[].vin' },
     { q: '2B92', path: 'garaging.zip', label: 'zip code where the vehicle' },
     // "Unlimited" / long haul becomes 501 miles, which picks "More than 500 miles".
@@ -371,6 +380,9 @@ export const progressive = {
 
     // --- Coverages and rates (CoveragesRates) ----------------------------------------------------
     { q: '1D97', path: 'coverage.autoLiabLimit', label: 'bodily injury and property damage liability' },
+    // FL: the CSL already covers property damage; PIP isn't taken (TNI).
+    { q: '1DB8', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', label: '^property damage liability only$', value: () => 'Not Selected' },
+    { q: '1E8D', name: 'Personal injury protection (FL standard: Not selected)', kind: 'choice', label: '^personal injury protection$', value: () => 'Not selected' },
     { q: '1DEE', name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
     // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
     ...['1DCA', '1DDE', '1DD8', '1DBF'].map((q) => ({ q, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
