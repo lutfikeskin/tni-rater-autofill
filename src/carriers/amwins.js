@@ -161,6 +161,9 @@ export const amwins = {
   id: 'amwins',
   name: 'AmWINS',
   hosts: [/(^|\.)amwinsadmittedplacement\.com$/],
+  // No answer waits on the server (timing of the first three quotes: 0 of 294 answers sent a
+  // request): fill a round of answers at a time.
+  batch: true,
   // Import Data right after the VIN list is filled, before the vehicle boxes, which it fills.
   actions: [
     // Start: the Auto tile opens the risk state box; Open New Application once the state is in.
@@ -234,7 +237,8 @@ export const amwins = {
     { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier (TNI: 1 to 2 years with a DOT)', kind: 'choice', value: () => '1 TO 2 YEARS', ignore: (r) => !r.applicant.dot },
     { name: 'Claim-free loss runs (TNI: No)', label: '^can provide claim free loss run$', kind: 'bool', value: () => false },
     { name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', value: () => false },
-    { name: 'Any prior loss', label: '^any prior loss$', kind: 'bool', path: 'claims.hasClaims' },
+    // No by default; Yes only when the intake reports claims (Yes opens the required Loss History).
+    { name: 'Any prior loss (default: No)', label: '^any prior loss$', kind: 'bool', value: (r) => r.claims?.hasClaims === true },
 
     // --- Drivers ---------------------------------------------------------------------------------
     // Names and license number first: they retitle the driver panel; gender, marital status and
@@ -255,11 +259,12 @@ export const amwins = {
     { name: 'File upload (not used)', label: '^select files?', ignore: true },
     { selector: '#vehLookupVin', path: 'amwins.vinList', name: 'VINs to look up (one per line)', value: (r) => r.vehicles.map((v) => v.vin).filter(Boolean).join('\n') || null },
     { selector: dataId('locationNumber', VEHICLE), name: 'Vehicle location (the first, the insured)', kind: 'first-option', value: () => 'first option' },
-    // VIN, year, make, model come from Import Data; typed only when it found nothing.
-    { selector: dataId('vin', VEHICLE), path: 'vehicles[].vin' },
-    { selector: dataId('year', VEHICLE), path: 'vehicles[].year' },
-    { selector: dataId('make', VEHICLE), path: 'vehicles[].make' },
-    { selector: dataId('model', VEHICLE), path: 'vehicles[].model' },
+    // VIN, year, make, model come from Import Data (its wording wins); typed only when it found
+    // nothing.
+    { selector: dataId('vin', VEHICLE), path: 'vehicles[].vin', trustPage: true },
+    { selector: dataId('year', VEHICLE), path: 'vehicles[].year', trustPage: true },
+    { selector: dataId('make', VEHICLE), path: 'vehicles[].make', trustPage: true },
+    { selector: dataId('model', VEHICLE), path: 'vehicles[].model', trustPage: true },
     // The VIN decoder writes its own body type; the intake's wins (Box Truck, Cargo Van).
     { selector: dataId('bodyType', VEHICLE), name: 'Body type (as on the intake)', value: bodyType, replace: true },
     // From the VIN decoder; required, so flagged only when it stays empty.

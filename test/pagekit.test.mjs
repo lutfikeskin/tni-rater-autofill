@@ -1313,3 +1313,18 @@ test('a default to confirm (warn) is filled, flagged yellow and holds Continue u
   await h.kit.fill([step], { maxRounds: 3, skip: [again.checks[0].key], advance: { text: '^save & continue$' } });
   assert.ok(next._clicked, 'dismissed (or changed) by the agent: Continue');
 });
+
+test('batch mode answers every visible question in one round and still checks each answer', async () => {
+  const h = harness();
+  const a = makeInput({ id: 'a', ariaLabel: 'First' });
+  const b = makeInput({ id: 'b', ariaLabel: 'Second' });
+  const c = makeInput({ id: 'c', ariaLabel: 'Third' });
+  h.document.body.append(a, b, c);
+  c.addEventListener('change', () => { c.value = 'something else'; });
+  const steps = [['a', 'one'], ['b', 'two'], ['c', 'three']].map(([id, value]) => ({ id, selector: `#${id}`, path: `x.${id}`, kind: 'text', value }));
+  const report = await h.kit.fill(steps, { maxRounds: 6, batch: true });
+  assert.deepEqual([a.value, b.value], ['one', 'two']);
+  assert.equal(report.filled.length, 2);
+  assert.equal(report.failed.length, 1, 'a page that rejects an answer is still reported');
+  assert.ok(report.rounds <= 4, `rounds: ${report.rounds}`);
+});

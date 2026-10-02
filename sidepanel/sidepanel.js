@@ -361,9 +361,10 @@ const pageOf = (url) => {
   } catch { return null; }
 };
 
-// Watch the rater tab while an intake is loaded. Only carrier pages; never other sites.
+// Watch the rater tab while an intake is loaded. Only carrier pages; never other sites. Practice
+// pages get it too (follow-up fills need it) but nothing from them goes in the usage log.
 async function ensureRecorder() {
-  if (!inExtension || !state.intake || !state.tab?.carrier || state.tab.carrier.practice) return;
+  if (!inExtension || !state.intake || !state.tab?.carrier) return;
   try {
     await chrome.scripting.executeScript({ target: { tabId: state.tab.id, allFrames: true }, files: ['src/content/recorder.js'] });
   } catch { /* page not ready or not allowed; tried again on the next tab update */ }
@@ -377,9 +378,10 @@ function tellRecorder(cmd) {
 function onRecorderMessage(msg, sender) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier?.id ?? null;
+  const log = (...events) => { if (!state.tab.carrier?.practice) usage.log(...events); };
   if (msg.event === 'page_view') {
     if (msg.from) state.visitedPages.add(samePage(msg.from));
-    usage.log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
+    log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
     // Setting "Fill each new page as soon as it opens": wait for the page to settle, then fill.
     // Coming back to a page filled earlier in this quote (Rates after the bill plan) refills it
     // with the follow-up setting, so its next buttons (Recalculate, Print) run. Pages with only
@@ -394,7 +396,7 @@ function onRecorderMessage(msg, sender) {
   }
   if (msg.event === 'field_changes') {
     const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, redact: redactor(redactionTerms(state.intake.record)) };
-    usage.log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
+    log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
@@ -418,6 +420,8 @@ const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUr
 const fillOptions = (carrier, extra = {}) => ({
   optional: carrier.optional ?? [],
   replaceChoices: !!carrier.replaceChoices,
+  // Carriers whose pages never wait on a server per answer are filled a round at a time.
+  batch: !!carrier.batch,
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
   advance: $('auto-advance').checked && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
@@ -536,6 +540,8 @@ function renderSite() {
   // No URL means the browser isn't letting the extension see this site (site access / permissions).
   const noAccess = inExtension && state.tab && !state.tab.url;
   site.textContent = !inExtension ? 'Preview only' : carrier ? `${carrier.name}${state.tab.background ? ' · in background' : ''}` : noAccess ? 'No access to this page' : 'Not a rater page';
+  // Practice pages aren't recorded: don't say they are.
+  $('recording').hidden = !state.intake || !!carrier?.practice;
   site.title = state.tab?.background ? 'You are on another tab. The panel keeps working on the quote tab; go back to it to see the marks.' : '';
   site.classList.toggle('on', !!carrier);
   const canFill = inExtension && !!carrier && !!state.intake;
@@ -642,6 +648,33 @@ function afterFill(frames, { carrier, page }) {
   const clicked = frames.some((f) => (f.actions ?? []).length);
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
   if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 900);
+  const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
+  if (advanced) watchNextStep(carrier, page, advanced.signatureBefore);
+}
+
+// After Continue on an application that keeps one address for every step (AmWINS' Save &
+// Continue), no page_view comes: wait until the questions on screen have changed (and stopped
+// changing), then fill the new step. If the address changes instead, page_view handles it. Never
+// fills the old step again, so Continue can't be clicked twice.
+async function watchNextStep(carrier, page, before) {
+  const tabId = state.tab?.id;
+  if (!$('auto-followups').checked && !$('auto-pages').checked) return;
+  let last = null;
+  for (let i = 0; i < 50; i++) {
+    await new Promise((r) => setTimeout(r, 300));
+    if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || !state.intake) return;
+    let now = null;
+    try {
+      const results = await runKit(tabId, carrier, () => globalThis.__raterKit.signature());
+      now = results.find((r) => r.frameId === 0)?.result ?? null;
+    } catch { return; }
+    if (now != null && now !== before && now === last) {
+      if (state.filling) state.pagePending = page;
+      else fillPage({ auto: 'page' });
+      return;
+    }
+    last = now;
+  }
 }
 
 async function ignoreReview(key, tabId, page) {

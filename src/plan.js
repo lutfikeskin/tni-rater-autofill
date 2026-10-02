@@ -97,6 +97,8 @@ function fieldSteps(rules, record, carrier, active) {
       verifyOnly: !!rule.verifyOnly,
       // Our answer replaces what the page put there (e.g. a lookup's body type).
       replace: !!rule.replace,
+      // What a lookup put there wins over the intake's wording (no "page differs" flag).
+      trustPage: !!rule.trustPage,
       // An ignored field the page fills itself (a lookup): flagged only if it stays empty.
       emptyNote: rule.emptyNote ?? null,
       // A default the agent should confirm: filled, but marked yellow with this note.

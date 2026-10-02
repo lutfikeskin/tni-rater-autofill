@@ -121,6 +121,12 @@ npm run mock:amwins -- --headed  # watch it
 
 `test/fixtures/amwins/application.html` is the Business Auto application saved from the live site (client details and the site's scripts removed); `test/fixtures/amwins/mock.js` plays what the site's own script does (show/hide rules, Save & Continue between steps, Import Data's preview and Import Valid Records, the VIN decoder, Default all answers to No, the classification search). The run fills every step the way the side panel does, answers the two questions the intake can't, and checks all answers against TNI's rules. It fails on a wrong answer, a step that stops early, or Submit being clicked.
 
+```bash
+npm run e2e:extension    # needs npm run package and npm run replay (port 8792)
+```
+
+The packaged extension itself in Chromium, its side panel opened as a page, on the same mock: loads the sample intake, clicks **Fill this page** once and checks that the panel goes through every step on its own (Save & Continue), stops at the declaration and never submits.
+
 ## Files
 
 | Path | What it does |

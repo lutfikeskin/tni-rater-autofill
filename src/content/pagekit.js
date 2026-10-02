@@ -821,7 +821,11 @@
   // `visitedPages`: pages already seen in this quote (for actions that wait on a page).
   // `advance`: { text, exceptPages } — when the page ends with nothing for the agent to look at
   // (no unfamiliar required fields, nothing missing, nothing failed), click its Continue button.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null } = {}) {
+  // `batch`: for pages whose answers never wait on a server (AmWINS): every answer the round can
+  // see is given in one pass and checked on the spot, with one wait for the page per round
+  // instead of one per answer. What an answer reveals or redraws is picked up next round, and
+  // anything the page changes later is given again (see `refill`).
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false } = {}) {
     const skipKeys = new Set(skip);
     const quiet = new Set(optional);
     const actions = plan.filter((s) => s.kind === 'action');
@@ -833,6 +837,7 @@
     const retries = new Map();
     const refill = new Set();
     // A lookup box its helper has already used (the VIN list Import Data empties) isn't given again.
+    const immediateAfter = new Set(actions.filter((a) => a.immediate).flatMap((a) => a.after));
     const consumedPaths = () => new Set(actions.filter((a) => clicked.has(a.action)).flatMap((a) => a.after));
     const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
     // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
@@ -893,7 +898,7 @@
         if (step.verifyOnly && !agreesWith(step, control)) {
           flag(report.failed, { label: control.label, key: fieldKey(control), q: control.q, reason: 'The looked-up value differs from the intake. Check the VIN.' });
           mark(control, 'failed', 'lookup result differs from the intake');
-        } else if (!step.verifyOnly && !step.ignore && !step.note && !step.replace && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id)) {
+        } else if (!step.verifyOnly && !step.ignore && !step.note && !step.replace && !step.trustPage && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id)) {
           // The page already had a different value (e.g. from the USDOT lookup): keep it, show it.
           flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, differs: true });
           mark(control, 'needs', `page says something different from the intake (${step.name})`);
@@ -955,14 +960,21 @@
         // Timing and side effects of this answer, for working out which questions could be
         // answered together: did it reach the server, did questions appear or disappear, did
         // other answers change.
+        // Batch: a field an earlier answer this round redrew is answered next round.
+        if (batch && c.el.isConnected === false) { retry = true; continue; }
         const snap = (list) => new Map(list.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
-        const before = snap(controls);
+        const before = batch ? null : snap(controls);
         const t0 = Date.now();
         const requests0 = ajaxCount;
         let result;
         try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
         const tApplied = Date.now();
-        if (result.ok) {
+        if (result.ok && batch) {
+          item.timing = { ms: Date.now() - t0, settleMs: 0, ajax: ajaxCount - requests0, revealed: 0, removed: 0, changed: 0, batch: true };
+          if (report.halted) result = { ok: false, reason: 'the agent interrupted filling' };
+          else if (c.el.isConnected === false) result = { ok: false, reason: 'the page did not keep the answer; check it' };
+          else if (invalidControl(c) || !agreesWith(step, c)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
+        } else if (result.ok) {
           const settled = await settle(serverBacked ? {} : { quietMs: 150, maxMs: 3000 });
           const currentControls = collectControls();
           const after = snap(currentControls);
@@ -996,7 +1008,9 @@
             handled.set(step.id, { status: 'needs', note: step.warn });
           }
           changed = true;
-          break;
+          // Batch: carry on with the next answer, except before a helper button that waits on
+          // this one (Import Data after the VIN list): it's clicked first thing next round.
+          if (!batch || immediateAfter.has(step.path)) break;
         } else if (/did not keep/.test(result.reason ?? '') && !report.halted && retryOnce(step.id)) {
           // Often a later redraw resets it (a coverage list reloading): try again next round.
           refill.add(step.id);
@@ -1018,7 +1032,7 @@
       progressed = changed;
       if (!changed && !retry) break;
       if (!changed) continue;
-      if (!await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 })) { halt('The page did not settle after the helper.'); break; }
+      if (!await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: 3000 })) { halt('The page did not settle after the helper.'); break; }
       if (!verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
     }
@@ -1145,6 +1159,8 @@
       const button = findAdvanceButton(advance.text);
       if (button) {
         report.advanced = oneLine(button.value || button.textContent).slice(0, 40);
+        // On one-address applications (AmWINS) the side panel waits for the questions to change.
+        report.signatureBefore = signature();
         button.click();
       }
     }
@@ -1284,5 +1300,10 @@
     return parts.join(' > ');
   }
 
-  globalThis.__raterKit = { version: 28, fill, answer, markKey, aiBanner, capture, clear };
+  // The questions on screen, to tell when a step that keeps the same address has changed.
+  function signature() {
+    return collectControls().map((c) => `${fieldKey(c)}|${c.label}`).join('\n');
+  }
+
+  globalThis.__raterKit = { version: 29, fill, answer, markKey, aiBanner, capture, clear, signature };
 })();

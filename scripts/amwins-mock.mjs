@@ -85,12 +85,16 @@ const skip = new Set();
 const lines = [];
 let stoppedAt = null;
 let reachedDeclaration = false;
+let totalMs = 0;
 for (let i = 0; i < 12; i++) {
   const step = await page.evaluate(() => document.querySelector('.form-tab:not([style*="none"])')?.getAttribute('data-title'));
-  const report = await page.evaluate(([p, o]) => globalThis.__raterKit.fill(p, o), [plan, { advance: amwins.advance, doneActions: [...done], skip: [...skip], optional: amwins.optional ?? [], maxRounds: 120 }]);
+  const t0 = Date.now();
+  const report = await page.evaluate(([p, o]) => globalThis.__raterKit.fill(p, o), [plan, { advance: amwins.advance, batch: !process.argv.includes('--no-batch') && !!amwins.batch, doneActions: [...done], skip: [...skip], optional: amwins.optional ?? [], maxRounds: 120 }]);
   for (const a of report.actions ?? []) done.add(a.id);
   const list = (k) => (report[k] ?? []).map((x) => x.label + (x.reason ? ` (${x.reason})` : ''));
-  lines.push(`## ${step}`, `filled ${report.filled.length}: ${list('filled').join(' · ')}`);
+  const ms = Date.now() - t0;
+  totalMs += ms;
+  lines.push(`## ${step} (${(ms / 1000).toFixed(1)} s, ${report.rounds} rounds)`, `filled ${report.filled.length}: ${list('filled').join(' · ')}`);
   for (const k of ['failed', 'noData', 'unknown', 'leftRequired']) if (report[k]?.length) lines.push(`${k}: ${list(k).join(' · ')}`);
   if (report.actions?.length) lines.push(`clicked: ${report.actions.map((a) => a.text).join(' · ')}`);
   lines.push(report.advanced ? `→ ${report.advanced}` : `stopped: ${report.blockers.join(' · ') || 'nothing left'}`, '');
@@ -129,6 +133,7 @@ const wrong = EXPECT.map(([sel, want], i) => ({ sel, want, got: actual[i] }))
 const mock = await page.evaluate(() => window.__amwinsMock);
 await browser.close();
 
+lines.push(`Filling time: ${(totalMs / 1000).toFixed(1)} s`);
 lines.push(`Steps seen: ${mock.steps.join(' → ')} · Save & Continue ×${mock.saves} · Import Data ×${mock.lookups}, Import Valid Records ×${mock.imports} · Default all No ×${mock.defaults} · Submit ${mock.submitted ? 'CLICKED' : 'never clicked'}`);
 if (errors.length) lines.push(`Page errors: ${errors.join(' | ')}`);
 lines.push('', wrong.length ? `${wrong.length} wrong answer(s):` : `All ${EXPECT.length} answers as expected.`);
