@@ -53,6 +53,7 @@ export const TNI_RULES = `
 
 ## Coverages and rates (CoveragesRates)
 - Bodily injury and property damage liability: the intake's requested limit ("$1M CSL" is "$1 million CSL").
+- Medical payments per person (per vehicle): $5,000 per person.
 - UM/UIM: $100k CSL (also when asked separately as Uninsured and Underinsured Motorist). UMPD limit: Not selected. Comprehensive and collision deductibles: $1,000. Rental: "$40 per day, $1,200 max". Fire/theft additional coverage: Not selected. Roadside: keep what the page has selected.
 - Motor Truck Cargo only when the intake asks for it: special cargo questions (mobile/modular homes; business documents) No; "General freight" is category "Consumer Goods", commodity "Other Consumer Goods"; limit and deductible from the intake ("$100K/$1K Ded" is "$100k with a $1,000 Deductible").
 - General liability: not set up yet; the agent answers it.

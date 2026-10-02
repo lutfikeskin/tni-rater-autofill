@@ -209,6 +209,7 @@ test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () 
   assert.equal(byQ(plan, '216F').note, null);
   for (const q of ['1DCA', '1DDE', '1DD8']) assert.equal(byQ(plan, q).value, '$100k CSL');
   assert.equal(byQ(plan, '1E66').value, '$5,000');
+  assert.equal(byQ(plan, '1FE4').value, '$5,000 per person');
   for (const q of ['1E69', '1E6E', '1E71', '1E74']) assert.equal(byQ(plan, q).value, 'Not Selected');
   assert.ok(byQ(plan, '1B8D').note, 'SSN is never filled');
   assert.equal(byQ(plan, '1B8D').value, null);

@@ -368,6 +368,8 @@ export const progressive = {
     { q: '2000', name: 'Roadside / towing (first selected option)', kind: 'selected-option', value: () => 'Selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '200F', name: 'Additional fire / theft coverage (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '1FDD', name: 'UMPD limit (standard: Not selected)', kind: 'choice', label: 'umpd', value: () => 'Not selected' },
+    // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle).
+    { q: '1FE4', name: 'Medical payments per person (standard: $5,000)', kind: 'choice', value: () => '$5,000 per person', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '207F', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '2158', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', label: 'mobile modular homes', value: () => false },
     { q: '215A', name: 'Cargo for business documents (standard: No)', kind: 'bool', label: 'business documents or non negotiable', value: () => false },
