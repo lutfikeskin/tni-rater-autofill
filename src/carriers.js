@@ -34,7 +34,10 @@ export const CARRIERS = [
 
 // Practice copies of carrier pages served from this repo (test/replay, test/mock-progressive).
 // They get the real carrier's rules, but aren't real quotes, so usage isn't recorded for them.
-const PRACTICE = [{ path: /^\/test\/(replay|mock-progressive)\//, carrier: 'progressive' }];
+const PRACTICE = [
+  { path: /^\/test\/(replay|mock-progressive)\//, carrier: 'progressive' },
+  { path: /^\/test\/fixtures\/amwins\//, carrier: 'amwins' },
+];
 
 export function carrierForUrl(url) {
   let u;
