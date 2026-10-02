@@ -38,6 +38,24 @@ for (let i = 0; i < 60; i++) {
   if (i % 3 === 0) console.log(i, step);
   if (step && JSON.parse(step).steps.includes('Underwriting')) { await panel.waitForTimeout(4000); break; }
 }
+// Every step's answers must survive the site's background save and reload (it redraws all
+// steps from what was saved): read them once the last reload has landed.
+await mock.waitForTimeout(2500);
+const kept = await mock.evaluate(() => {
+  const v = (sel) => { const el = document.querySelector(sel); if (!el) return '(missing)'; if (el.type === 'checkbox') return el.checked; if (el.classList.contains('datepicker-input')) return el._pickerDate ?? ''; return el.tagName === 'SELECT' ? el.selectedOptions[0]?.text.trim() ?? '' : el.value; };
+  return {
+    entityType: v('#entityType'), yrsInBusiness: v('#yrsInBusiness'), mailingState: v('#mailingState'), natureOfBusiness: v('#natureOfBusiness'), ownerDob: v('#ownerDob'),
+    driverFirst: v('#driversPanel [data-id="firstName"]'), driverDob: v('#driversPanel [data-id="dateOfBirth"]'), gender: v('#driversPanel [data-id="gender"]'),
+    usage: v('#vehiclesPanel [data-id="usageType"]'), bodyType: v('#vehiclesPanel [data-id="bodyType"]'),
+    medicalPayment: v('#medicalPayment'), symbol6: v('#autoSymbol6'), towing: v('#towingAndLaborReimbursement'),
+  };
+});
+// The sample intake: Illinois, vehicle 1 a Van (Cargo Van on AmWINS).
+const EXACT = { mailingState: 'Illinois', bodyType: 'Cargo Van', medicalPayment: '$5,000', towing: '$75', usage: 'FOR HIRE', natureOfBusiness: 'TRANSPORTATION' };
+const lost = Object.entries(kept).filter(([k, x]) => x === '' || x === false || x === '(missing)' || x === 'State' || (k in EXACT && x !== EXACT[k])).map(([k]) => k);
+console.log('Kept after the reloads:', JSON.stringify(kept));
+if (lost.length) console.log('LOST:', lost.join(', '));
+
 // The agent goes back a step: the panel must leave them there (no second Save & Continue).
 const savesBefore = await mock.evaluate(() => window.__amwinsMock.saves);
 await mock.evaluate(() => document.querySelector('.form-tab:not([style*="none"]) [data-id="prevButton"], [data-id="prevButton"]:not([style*="none"])')?.click());
@@ -50,6 +68,6 @@ console.log('REPORT', (await panel.textContent('#report')).replace(/\s+/g, ' ').
 if (process.argv[2]) await panel.screenshot({ path: path.join(process.argv[2], 'panel.png'), fullPage: true });
 await ctx.close();
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? 'OK: one click filled every step up to the declaration, and going back a step stays there.' : 'FAILED: the panel did not go through every step by itself, or pushed the agent forward after Prev.');
+const ok = !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? 'OK: one click filled every step up to the declaration, and going back a step stays there.' : 'FAILED: answers lost in the site\'s reload, the panel did not go through every step by itself, or it pushed the agent forward after Prev.');
 process.exit(ok ? 0 : 1);

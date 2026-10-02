@@ -35,7 +35,7 @@ const record = {
 // What each answer must be when the run ends. [selector, expected] — a radio group by its name.
 const EXPECT = [
   ['#name', 'SAMPLE DRIVER'], ['#ownerName', 'SAMPLE DRIVER'], ['#ownerDob', '01/02/1968'],
-  ['#mailingAddress', '1 Test Way'], ['#mailingCity', 'Omaha'], ['#mailingZip', '68102'], ['#businessPhone', '4025550100'],
+  ['#mailingAddress', '1 Test Way'], ['#mailingCity', 'Omaha'], ['#mailingState', 'Nebraska'], ['#mailingZip', '68102'], ['#businessPhone', '4025550100'],
   ['#entityType', 'SOLE PROPRIETOR'], ['#yrsInBusiness', '5+'], ['#yearBusinessEstablished', String(new Date().getFullYear())],
   ['radio:isNonProfit', 'No'], ['#inspectionContactName', 'SAMPLE DRIVER'], ['#inspectionContactOfficePhone', '4025550100'],
   ['#inspectionContactEmail', ''], ['radio:isSingleContact', 'Yes'], ['#sameAsMailingAddress0_0_', true],
@@ -114,7 +114,9 @@ for (let i = 0; i < 12; i++) {
     }
     continue;
   }
-  await page.waitForTimeout(400);
+  // Like the side panel: wait for the background save and reload, and for the next step.
+  await page.waitForFunction((before) => !globalThis.__raterKit.busy() && document.querySelector('.form-tab:not([style*="none"])')?.getAttribute('data-title') !== before, step, { timeout: 15000 });
+  await page.waitForTimeout(300);
 }
 
 const actual = await page.evaluate((expect) => expect.map(([sel]) => {

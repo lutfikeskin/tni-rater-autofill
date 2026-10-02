@@ -201,7 +201,8 @@ export const amwins = {
     { selector: '#ownerDob', name: 'Owner date of birth', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
     { selector: '#mailingAddress', name: 'Mailing street', value: street },
     { selector: '#mailingCity', path: 'garaging.city' },
-    { selector: '#mailingState', path: 'garaging.state' },
+    // The list has no blank entry: it starts on Alabama, which isn't an answer.
+    { selector: '#mailingState', path: 'garaging.state', replace: true },
     { selector: '#mailingZip', path: 'garaging.zip' },
     { selector: '#businessPhone', name: 'Business phone', value: (r) => digits(r.applicant.phone) },
     { selector: '#entityType', name: 'Entity type', kind: 'choice', value: entityType },

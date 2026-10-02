@@ -167,7 +167,9 @@
   function pageBusy() {
     const X = ext();
     if (X?.Ajax?.isLoading?.()) return true;
-    return [...document.querySelectorAll('.x-mask-msg, .x-mask-loading, [class*="loading-mask"], [class*="LoadingMessage"]')]
+    // #loadingDefault: AmWINS' overlay while it saves or reloads the application (it redraws every
+    // step when the reload lands, so nothing may be filled before that).
+    return [...document.querySelectorAll('.x-mask-msg, .x-mask-loading, [class*="loading-mask"], [class*="LoadingMessage"], #loadingDefault')]
       .some((m) => m.getClientRects().length && getComputedStyle(m).visibility !== 'hidden');
   }
 
@@ -612,8 +614,14 @@
       if (c.el.checked !== step.value) c.el.click();
       return { ok: true, shown: step.value ? 'checked' : 'unchecked' };
     }
-    const options = optionsOf(c);
-    const opt = matchOption(options, step);
+    let options = optionsOf(c);
+    let opt = matchOption(options, step);
+    // A list still waiting for its options (loaded after the page shows): give it a few seconds.
+    for (const start = Date.now(); !opt && c.kind === 'select' && options.filter((o) => oneLine(o.text)).length <= 1 && Date.now() - start < 6000;) {
+      await sleep(250);
+      options = optionsOf(c);
+      opt = matchOption(options, step);
+    }
     if (!opt) return noMatch(step, options);
     if (c.kind === 'select') setNativeValue(c.el, opt.value);
     else if (!opt.el.checked) opt.el.click();
@@ -860,7 +868,7 @@
     const serverBacked = !!ext();
     let pendingAction = null;
     let progressed = false; // did the last round fill or click anything?
-    if (!await settle({ quietMs: 400, maxMs: 5000 })) {
+    if (!await settle({ quietMs: 400, maxMs: 15000 })) {
       report.halted = true;
       report.reason = 'The page is still waiting on its server. Review and retry.';
       return report;
@@ -1323,5 +1331,5 @@
     return collectControls().map((c) => `${fieldKey(c)}|${c.label}`).join('\n');
   }
 
-  globalThis.__raterKit = { version: 30, fill, answer, markKey, aiBanner, capture, clear, signature };
+  globalThis.__raterKit = { version: 31, fill, answer, markKey, aiBanner, capture, clear, signature, busy: pageBusy };
 })();
