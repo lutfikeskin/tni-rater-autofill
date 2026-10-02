@@ -36,7 +36,8 @@ the store refuses a version it already has.
    - `storage`: "Keeps the loaded intake for the session and the agent's settings."
    - Host permissions: "foragentsonly.com / progressive.com / geico.com: the carrier quote pages it
      fills. api.openai.com: AI suggestions for unanswered questions, with the agent's own API key.
-     localhost: the optional usage-log server."
+     usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, no client
+     details). localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
      page, sent to OpenAI when the AI assistant is on). TNI's compliance owner should confirm
      these answers.
@@ -49,7 +50,7 @@ the store refuses a version it already has.
 Send them the listing link (dashboard → *Store listing* → view). In Chrome: **Add to Chrome** →
 pin the extension → click it to open the side panel. Then, once each:
 
-- **Usage log → Your initials** (and the server address, if the usage server runs centrally).
+- **Usage log → Your initials**. The usage log goes to TNI's server by itself (see hosting.md).
 - **AI assistant** → tick *Suggest answers*, paste their API key, leave the model blank for
   `gpt-6-luna`. Leave *Let the AI select answers it's sure of* off for the first weeks of the
   pilot.

@@ -1,0 +1,55 @@
+# Every morning: download the agents' usage log from the central server (Railway), build the
+# review (problem reports, AI decisions, speed, rule suggestions, page layouts) for the last day,
+# keep it as an artifact, and open an issue when agents reported problems.
+# Needs the repository secret RATER_ADMIN_TOKEN (the server's admin token).
+name: Daily review
+
+on:
+  schedule:
+    - cron: '0 6 * * *'   # 06:00 UTC = 09:00 Istanbul, after US agents' day
+  workflow_dispatch:
+    inputs:
+      since:
+        description: 'Review events since (YYYY-MM-DD); blank = yesterday'
+        required: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Download the usage log
+        env:
+          RATER_ADMIN_TOKEN: ${{ secrets.RATER_ADMIN_TOKEN }}
+        run: npm run pull
+      - name: Build the review
+        id: review
+        run: |
+          SINCE="${{ github.event.inputs.since }}"
+          [ -n "$SINCE" ] || SINCE=$(date -u -d yesterday +%F)
+          node scripts/review.mjs server-data --since "$SINCE" --out "reviews/review-$(date -u +%F).md" | tee review.log
+          echo "file=reviews/review-$(date -u +%F).md" >> "$GITHUB_OUTPUT"
+          echo "since=$SINCE" >> "$GITHUB_OUTPUT"
+          echo "problems=$(grep -o '[0-9]* problem reports' review.log | grep -o '^[0-9]*' || echo 0)" >> "$GITHUB_OUTPUT"
+          head -c 60000 "reviews/review-$(date -u +%F).md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: review-${{ steps.review.outputs.since }}
+          path: ${{ steps.review.outputs.file }}
+          retention-days: 90
+      - name: Open an issue for the agents' problem reports
+        if: steps.review.outputs.problems != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head -c 60000 "${{ steps.review.outputs.file }}" > body.md
+          gh issue create --title "Daily review since ${{ steps.review.outputs.since }}: ${{ steps.review.outputs.problems }} problem report(s)" --body-file body.md --label daily-review || \
+          gh issue create --title "Daily review since ${{ steps.review.outputs.since }}: ${{ steps.review.outputs.problems }} problem report(s)" --body-file body.md

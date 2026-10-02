@@ -6,6 +6,8 @@
 //
 // POST /v1/events   { agent, version, events: [...] }  -> { accepted, duplicates }
 // GET  /v1/health                                       -> { ok, events }
+// GET  /v1/days      (admin token)                      -> { days: [{ day, bytes }] }
+// GET  /v1/export?since=YYYY-MM-DD[&until=YYYY-MM-DD] (admin token) -> the days' JSONL, in order
 //
 // Events are appended to DATA_DIR/events/YYYY-MM-DD.jsonl (by day received), one JSON object
 // per line; the review scripts (scripts/*.mjs) read that folder directly. Each event carries an
@@ -15,7 +17,9 @@
 // server only accepts known event types and drops fields it doesn't expect.
 //
 // Listens on 127.0.0.1 unless HOST says otherwise. When exposed beyond this computer, set
-// RATER_TOKEN and put it behind HTTPS.
+// RATER_TOKEN and put it behind HTTPS (Railway does: see docs/hosting.md). RATER_TOKEN is the
+// upload token the extension ships with; reading the logs back needs RATER_ADMIN_TOKEN, which
+// only TNI (and the daily review job) has. Without RATER_ADMIN_TOKEN the export is switched off.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -47,7 +51,7 @@ const EVENT_FIELDS = {
   ai_decision: ['q', 'label', 'controlKind', 'decision', 'choice', 'confidence', 'basis', 'intakePath', 'reason'],
 };
 
-export function createServer({ dataDir, token = '' } = {}) {
+export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
   const eventsDir = path.join(dataDir, 'events');
   fs.mkdirSync(eventsDir, { recursive: true });
 
@@ -60,12 +64,14 @@ export function createServer({ dataDir, token = '' } = {}) {
     }
   }
 
-  const authorized = (req) => {
-    if (!token) return true;
+  const matches = (req, secret) => {
     const given = Buffer.from(String(req.headers.authorization ?? '').replace(/^Bearer\s+/i, ''));
-    const want = Buffer.from(token);
+    const want = Buffer.from(secret);
     return given.length === want.length && crypto.timingSafeEqual(given, want);
   };
+  const authorized = (req) => !token || matches(req, token);
+  const isAdmin = (req) => !!adminToken && matches(req, adminToken);
+  const dayFiles = () => fs.readdirSync(eventsDir).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort();
 
   function clean(e, agent) {
     if (!e || typeof e !== 'object' || Array.isArray(e)) return { error: 'event is not an object' };
@@ -127,6 +133,21 @@ export function createServer({ dataDir, token = '' } = {}) {
       return;
     }
     if (req.method === 'GET' && url.pathname === '/v1/health') return done(200, { ok: true, events: seen.size });
+    if (req.method === 'GET' && (url.pathname === '/v1/days' || url.pathname === '/v1/export')) {
+      if (!isAdmin(req)) return done(401, { error: 'admin token required' });
+      if (url.pathname === '/v1/days') {
+        return done(200, { days: dayFiles().map((f) => ({ day: f.slice(0, 10), bytes: fs.statSync(path.join(eventsDir, f)).size })) });
+      }
+      const since = url.searchParams.get('since') ?? '0000-00-00';
+      const until = url.searchParams.get('until') ?? '9999-99-99';
+      if (![since, until].every((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))) return done(400, { error: 'since/until must be YYYY-MM-DD' });
+      const files = dayFiles().filter((f) => f.slice(0, 10) >= since && f.slice(0, 10) <= until);
+      res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
+      for (const f of files) res.write(fs.readFileSync(path.join(eventsDir, f)));
+      res.end();
+      console.log(`${new Date().toISOString()} GET export ${since}..${until} ${files.length} days ${Date.now() - started}ms`);
+      return;
+    }
     if (url.pathname !== '/v1/events') return done(404, { error: 'not found' });
     if (req.method !== 'POST') return done(405, { error: 'use POST' });
     if (!authorized(req)) return done(401, { error: 'missing or wrong token' });
@@ -171,9 +192,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT) || 8787;
   const host = process.env.HOST || '127.0.0.1';
   const dataDir = path.resolve(process.env.DATA_DIR || 'server-data');
-  const server = createServer({ dataDir, token: process.env.RATER_TOKEN || '' });
+  const server = createServer({ dataDir, token: process.env.RATER_TOKEN || '', adminToken: process.env.RATER_ADMIN_TOKEN || '' });
   server.listen(port, host, () => {
-    console.log(`rater usage server on http://${host}:${port}  data: ${dataDir}${process.env.RATER_TOKEN ? '  (token required)' : ''}`);
+    console.log(`rater usage server on http://${host}:${port}  data: ${dataDir}${process.env.RATER_TOKEN ? '  (token required)' : ''}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}`);
   });
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => server.close(() => process.exit(0)));
 }

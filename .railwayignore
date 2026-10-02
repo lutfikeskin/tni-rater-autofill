@@ -1,0 +1,9 @@
+# Only server/ is needed to build the usage server (server/Dockerfile).
+node_modules
+layouts
+server-data
+dist
+captures
+reviews
+test
+design

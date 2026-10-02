@@ -68,7 +68,19 @@ export async function exportLog() {
 // ---------------------------------------------------------------------------------------------
 // Upload to the collection server
 
-export const DEFAULT_SERVER = 'http://localhost:8787';
+// TNI's central usage server (Railway, see docs/hosting.md). The upload token ships with every copy
+// of the extension: it only lets an extension add events (which the server cleans); reading them
+// back needs the admin token, which never leaves TNI.
+export const DEFAULT_SERVER = 'https://usage-server-production.up.railway.app';
+export const DEFAULT_TOKEN = 'f1bc92546c9f329c321dbc6a33611c07';
+
+// The server and token in use: the agent's own settings when set (a local server for testing),
+// otherwise the central one. A blank server setting means "no server" (export only).
+export async function serverConfig() {
+  const { serverUrl, serverToken = '' } = await settings();
+  const url = serverUrl === undefined ? DEFAULT_SERVER : serverUrl;
+  return { serverUrl: url, serverToken: serverToken || (url === DEFAULT_SERVER ? DEFAULT_TOKEN : '') };
+}
 const REJECTED_KEY = 'usageRejected';
 const BATCH = 500;
 let uploadStatus = { state: 'idle' }; // idle | ok | error | off
@@ -79,7 +91,8 @@ export const lastUpload = () => uploadStatus;
 // stored them (or already had them), so a server outage loses nothing.
 export function upload() {
   queue = queue.then(async () => {
-    const { serverUrl = DEFAULT_SERVER, serverToken = '', agent = null } = await settings();
+    const { agent = null } = await settings();
+    const { serverUrl, serverToken } = await serverConfig();
     if (!serverUrl) { uploadStatus = { state: 'off' }; return; }
     let sent = 0;
     // Events an older server refused because it didn't know their type yet (e.g. the AI events)
