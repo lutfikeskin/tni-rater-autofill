@@ -413,6 +413,27 @@ test('vehicle-named additional coverage q200F is mapped and does not block Rates
   }
 });
 
+test('TX refrigeration options fill from the intake without an AI review stop', async () => {
+  for (const selected of [null, false, true]) {
+    const h = harness({ search: '?pageName=CoveragesRates' });
+    const radios = ['Yes, match Motor Truck Cargo limits', 'No'].map((value, i) => makeInput({
+      id: i ? 'reefer-no' : `f_U${'A'.repeat(32)}215C_1_1`, name: 'string_215C', type: 'radio', value,
+    }));
+    h.document.body.append(...radios);
+    const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: { reeferBreakdown: selected }, claims: {} };
+    const plan = buildPlan(record, progressive).filter(s => s.q === '215C');
+    const report = await h.kit.fill(plan, { replaceChoices: true });
+    assert.equal(radios.find(r => r.checked)?.value, selected === true ? 'Yes, match Motor Truck Cargo limits' : 'No');
+    assert.equal(report.blockers.length, 0);
+    assert.equal(report.unknown.length, 0);
+    if (selected === true) {
+      record.coverage.reeferBreakdown = false;
+      await h.kit.fill(buildPlan(record, progressive).filter(s => s.q === '215C'), { replaceChoices: true, skip: ['215C'] });
+      assert.equal(radios[0].checked, true, 'an agent override remains protected');
+    }
+  }
+});
+
 test('Freight Hauler searches the remote business dropdown and verifies a collapsed General Freight summary', async () => {
   for (const offered of ['General Freight Hauler', 'General Freight Trucking']) {
     const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });

@@ -420,6 +420,8 @@ export const progressive = {
     { q: '207F', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '2158', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', label: 'mobile modular homes', value: () => false },
     { q: '215A', name: 'Cargo for business documents (standard: No)', kind: 'bool', label: 'business documents or non negotiable', value: () => false },
+    // TNI: an unselected Reefer option on the intake means this coverage is not requested.
+    { q: '215C', path: 'coverage.reeferBreakdown', kind: 'bool', label: 'refrigeration breakdown', value: (r) => r.coverage.reeferBreakdown === true },
     { q: '216A', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null },
     { q: '216B', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
     { q: '216F', name: 'Motor truck cargo', kind: 'choice', value: cargo, note: cargoNote },
