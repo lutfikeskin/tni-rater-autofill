@@ -303,3 +303,19 @@ test('during a quote, switching to a non-rater tab keeps the panel on the quote 
   await h.refreshTab();
   assert.equal(h.state.tab.id, 9);
 });
+
+test('an AI pick made before an intake or driver/vehicle change still holds Continue until the agent decides', () => {
+  const before = assistContextKey({ drivers: [{ first: 'Alex' }] }, { drivers: 0 });
+  const after = assistContextKey({ drivers: [{ first: 'Alex' }] }, { drivers: 1 });
+  const stale = { done: 'auto', approved: false, rejected: false, contextKey: before };
+  const fresh = { done: 'auto', approved: false, rejected: false, contextKey: after };
+  const state = { aiCache: new Map([[`1\n/quote\nm\n${before}\nk1`, stale], [`1\n/quote\nm\n${after}\nk2`, fresh], [`1\n/other\nm\n${after}\nk3`, { ...fresh }]]) };
+  const context = { state };
+  vm.createContext(context);
+  vm.runInContext(extractFunction('pendingAi'), context);
+  assert.equal(context.pendingAi(1, '/quote').length, 2, 'the earlier pick is still pending on this page');
+  stale.rejected = true;
+  const left = context.pendingAi(1, '/quote');
+  assert.equal(left.length, 1, 'once rejected it stops holding Continue');
+  assert.equal(left[0], fresh);
+});

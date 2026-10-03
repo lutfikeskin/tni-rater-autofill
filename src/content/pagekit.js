@@ -385,6 +385,18 @@
 
   const businessNameKey = (text) => squash(String(text).replace(/\((?:US)?DOT[^)]*\)/ig, ''));
 
+  // Registered business names that read the same once normalised count once (the lookup can
+  // list one name twice).
+  function uniqueBusinessNames(options) {
+    const seen = new Set();
+    return options.filter((o) => {
+      const k = businessNameKey(o.text);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
+
   function matchOption(options, step) {
     // Options that read the same are the same choice (pages sometimes list one twice).
     const seenText = new Set();
@@ -399,7 +411,8 @@
     if (step.kind === 'pick-not') {
       const allowed = usable.filter((o) => !new RegExp(step.value.not, 'i').test(o.text));
       if (step.q === '22F' && step.businessNames?.length) {
-        const matches = allowed.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name)));
+        // One registered name listed twice ("ACME LLC", "Acme, LLC") is still one match.
+        const matches = uniqueBusinessNames(allowed.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name))));
         return matches.length === 1 ? matches[0] : null;
       }
       return (step.value.prefer && allowed.find((o) => new RegExp(step.value.prefer, 'i').test(o.text))) || allowed[0]
@@ -976,7 +989,7 @@
         if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { handled.set(step.id, { status: null }); continue; }
         if (step.businessNames?.length) {
           const registered = controls.find((x) => x.q === '22F');
-          const names = registered ? optionsOf(registered).filter((o) => o.text.trim() && !/^enter a different/i.test(o.text)) : [];
+          const names = uniqueBusinessNames(registered ? optionsOf(registered).filter((o) => o.text.trim() && !/^enter a different/i.test(o.text)) : []);
           const matches = names.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name)));
           if (names.length && matches.length !== 1) {
             const note = 'The DOT lookup business name differs from the intake. Verify the identity before accepting it.';
@@ -1119,7 +1132,10 @@
 
     function clickNextAction(controls, immediateOnly = false) {
       const pairs = assign(controls, plan);
-      const has = (path) => pairs.some(({ step, control }) => step.path === path && !step.ignore && step.value != null && agreesWith(step, control) && !invalidControl(control));
+      // A prerequisite holds when its field shows the intake's answer, or an answer the agent chose
+      // themselves (their correction counts as resolved). Missing, rejected or different: not yet.
+      const has = (path) => pairs.some(({ step, control }) => step.path === path && !step.ignore && !invalidControl(control)
+        && ((step.value != null && agreesWith(step, control)) || (skipKeys.has(fieldKey(control)) && hasValue(control))));
       const blocked = [];
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         if (clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;

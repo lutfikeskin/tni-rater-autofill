@@ -1400,6 +1400,35 @@ test('an answer the page marks invalid after another change is picked again, the
   }
 });
 
+test('rates helpers wait while the liability limit differs from the intake; a limit the agent set counts as resolved', async () => {
+  for (const agentSet of [false, true]) {
+    const h = harness({ search: '?pageName=CoveragesRates' });
+    const limit = makeInput({ id: 'liab-limit', ariaLabel: 'Liability limit', value: '500k CSL' });
+    h.document.body.append(limit);
+    h.document.body.innerText = 'Rates changed **** — please recalculate';
+    const recalc = addButton(h, 'Recalculate');
+    recalc.onclick = () => { recalc._clicked = true; h.document.body.innerText = 'Total premium: $12,345.67'; };
+    const report = await h.kit.fill([
+      { id: 'limit', selector: '#liab-limit', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },
+      { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium' },
+    ], { maxRounds: 4, skip: agentSet ? ['liab-limit'] : [] });
+    assert.equal(!!recalc._clicked, agentSet, agentSet ? 'the agent chose the limit: Recalculate' : 'limit differs from the intake: Recalculate waits');
+    if (!agentSet) assert.ok(report.blocked.some((b) => b.id === 'recalculate'));
+  }
+});
+
+test('a DOT lookup listing the matching business name twice still counts as one match', async () => {
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const field = addExtText(h, 'c', '22F', { caption: 'Business Name', required: true });
+  const records = ['Sample Test LLC', 'Sample Test, LLC', 'Enter a different Business Name'].map((label) => ({ get: () => label }));
+  Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+  const record = { applicant: { name: 'Sample Test LLC', dot: '12345678' }, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => s.q === '22F'), {});
+  assert.equal(field.cmp.getValue(), 'Sample Test LLC');
+  assert.ok(!report.noData.some((x) => x.reviewOnly), 'not reported as a different identity');
+  assert.equal(report.failed.length, 0);
+});
+
 test('Jev answers refuse changed values, options, sections and page snapshots', async () => {
   const h = harness();
   const field = new SelectNode([

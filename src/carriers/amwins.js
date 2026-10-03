@@ -173,7 +173,9 @@ export const amwins = {
   // Import Data right after the VIN list is filled, before the vehicle boxes, which it fills.
   actions: [
     ...[1, 2, 3].map((index) => ({ id: `addDriver${index}`, text: '^add driver$',
-      when: (r) => r.drivers.length > index, after: [`drivers[${index - 1}].licenseNumber`],
+      // The previous driver's row is in and filled (any of its intake answers on the page); not
+      // just its license number, which a driver can be missing and would then block every later row.
+      when: (r) => r.drivers.length > index, afterAny: ['first', 'last', 'dob', 'licenseNumber'].map((f) => `drivers[${index - 1}].${f}`),
       unlessSelector: `#driversPanel > .app-rp-section[data-id="${index}"]` })),
     // Start: the Auto tile opens the risk state box; Open New Application once the state is in.
     { id: 'autoApplication', page: START_PAGES, text: '^auto$', unlessActions: ['openApplication'] },

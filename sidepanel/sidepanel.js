@@ -839,13 +839,21 @@ async function runAssist(frames, ctx) {
   ctx = { ...ctx, contextKey: assistContextKey(record, active) };
   const cfg = await aiSettings();
   if (!cfg.on || !record || ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
+  // Questions the agent (or an applied AI answer) already settled on this page aren't asked again.
   const collected = collectItems(frames);
   const items = collected.items.filter(x => !state.agentKeys.get(ctx.page)?.has(x.key));
   const blocked = collected.blocked;
-  if (!items.length) return;
   // Messages, the approval card and suggestions without a list item go above "Needs you".
   const holder = h('div', { class: 'ai-holder' });
   const head = $('report').querySelector('.needs-head');
+  if (!items.length) {
+    // Nothing new to ask, but AI picks still waiting for approval keep their card.
+    if (pendingAi(ctx.tabId, ctx.page).length) {
+      if (head) head.before(holder); else $('report').append(holder);
+      renderAi(holder, [], ctx);
+    }
+    return;
+  }
   if (head) head.before(holder); else $('report').append(holder);
   if (!cfg.apiKey) {
     holder.append(h('p', { class: 'muted small' }, 'Jev needs a TypeSafe API key. Add it under Jev assistant; your previous OpenAI key is not used.'));
@@ -893,7 +901,9 @@ async function runAssist(frames, ctx) {
 }
 
 // AI selections on this tab's page that the agent hasn't approved or rejected yet. While there
-// are any, the page's Continue is never clicked automatically.
+// are any, the page's Continue is never clicked automatically. Picks made before the agent
+// changed the intake or the driver/vehicle are included: they're still on the page, unapproved,
+// so they keep blocking until the agent approves or rejects them (the card always offers both).
 function pendingAi(tabId, page) {
   const out = [];
   for (const [sig, x] of state.aiCache) {
@@ -965,6 +975,9 @@ async function applyAi(list, ctx, decision) {
     }
     state.agentKeys.set(ctx.page, keys);
     ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+    // Each applied pick remembers the page as it left it, for approving it later (also after a
+    // context change, when this run's snapshot is gone).
+    for (const x of list) if (x.done) x.snapshots = ctx.snapshots;
     return true;
   } catch (e) {
     for (const x of list) x.error = `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
@@ -998,29 +1011,39 @@ function renderAi(holder, suggestions, ctx) {
     rerender();
   };
   const sure = suggestions.filter((x) => x.autoOk && !x.done && !x.dismissed);
-  const pending = suggestions.filter((x) => x.done === 'auto' && !x.approved && !x.rejected);
+  // Every pick on this page still waiting for approval, also from before an intake or
+  // driver/vehicle change (those are labelled), so each one can always be approved or rejected.
+  const pending = pendingAi(ctx.tabId, ctx.page);
+  const current = assistContextKey(state.intake?.record, state.active);
   const canContinue = $('auto-advance').checked && !!ctx.carrier.advance;
+  // Approving or rejecting a pick acts on what is already on the page, so it doesn't depend on
+  // the current intake or driver/vehicle.
   const decide = async (list, decision) => {
     if (state.filling || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return;
-    if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
     if (decision === 'approved') {
-      let current;
-      try { current = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot()); }
+      // Approve only what the page still shows as the AI left it; a pick whose page changed since
+      // is rejected (and unlocked) so the agent reviews it after a fresh fill.
+      let now;
+      try { now = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot()); }
       catch {
         for (const x of list) x.error = 'the page is unavailable; return to it and run Fill again';
         rerender();
         return;
       }
-      if (JSON.stringify(current) !== JSON.stringify(ctx.snapshots)) {
+      const moved = list.filter((x) => JSON.stringify(now) !== JSON.stringify(x.snapshots ?? ctx.snapshots));
+      if (moved.length) {
         const keys = state.agentKeys.get(ctx.page);
-        for (const x of list) {
+        for (const x of moved) {
           x.rejected = true;
           x.error = 'the page changed after this choice; run Fill again and review it';
           keys?.delete(x.key);
         }
-        await syncAiBanner(ctx);
-        rerender();
-        return;
+        list = list.filter((x) => !moved.includes(x));
+        if (!list.length) {
+          await syncAiBanner(ctx);
+          rerender();
+          return;
+        }
       }
     }
     for (const x of list) {
@@ -1079,7 +1102,8 @@ function renderAi(holder, suggestions, ctx) {
       h('p', { class: 'ai-approve-title' }, `The AI picked ${pending.length} answer${pending.length === 1 ? '' : 's'} on this page`),
       h('p', { class: 'small muted' }, canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.'),
       h('ul', {}, pending.map((x) => h('li', {},
-        h('span', {}, h('b', {}, x.label), ' ← ', x.choice),
+        h('span', {}, h('b', {}, x.label), ' ← ', x.choice,
+          x.contextKey && x.contextKey !== current ? h('span', { class: 'small muted' }, ' (picked before you changed the intake or the driver/vehicle)') : null),
         h('button', { type: 'button', class: 'link small ai-reject', onclick: () => decide([x], 'rejected') }, 'Reject')))),
       h('div', { class: 'ai-actions' },
         h('button', { type: 'button', class: 'primary accept', onclick: () => decide(pending, 'approved') }, canContinue ? 'Approve and continue' : `Approve ${pending.length === 1 ? 'it' : `all ${pending.length}`}`))) : null,
