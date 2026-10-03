@@ -1416,3 +1416,15 @@ test('rates helpers wait while the liability limit differs from the intake; a li
     if (!agentSet) assert.ok(report.blocked.some((b) => b.id === 'recalculate'));
   }
 });
+
+test('a DOT lookup listing the matching business name twice still counts as one match', async () => {
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const field = addExtText(h, 'c', '22F', { caption: 'Business Name', required: true });
+  const records = ['Sample Test LLC', 'Sample Test, LLC', 'Enter a different Business Name'].map((label) => ({ get: () => label }));
+  Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+  const record = { applicant: { name: 'Sample Test LLC', dot: '12345678' }, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => s.q === '22F'), {});
+  assert.equal(field.cmp.getValue(), 'Sample Test LLC');
+  assert.ok(!report.noData.some((x) => x.reviewOnly), 'not reported as a different identity');
+  assert.equal(report.failed.length, 0);
+});
