@@ -1348,3 +1348,20 @@ test('an answer the page marks invalid after another change is picked again, the
     } else assert.ok(report.failed.some((x) => x.key === 'limit'), 'still invalid: the agent\'s');
   }
 });
+
+test('rates helpers wait while the liability limit differs from the intake; a limit the agent set counts as resolved', async () => {
+  for (const agentSet of [false, true]) {
+    const h = harness({ search: '?pageName=CoveragesRates' });
+    const limit = makeInput({ id: 'liab-limit', ariaLabel: 'Liability limit', value: '500k CSL' });
+    h.document.body.append(limit);
+    h.document.body.innerText = 'Rates changed **** — please recalculate';
+    const recalc = addButton(h, 'Recalculate');
+    recalc.onclick = () => { recalc._clicked = true; h.document.body.innerText = 'Total premium: $12,345.67'; };
+    const report = await h.kit.fill([
+      { id: 'limit', selector: '#liab-limit', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },
+      { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium' },
+    ], { maxRounds: 4, skip: agentSet ? ['liab-limit'] : [] });
+    assert.equal(!!recalc._clicked, agentSet, agentSet ? 'the agent chose the limit: Recalculate' : 'limit differs from the intake: Recalculate waits');
+    if (!agentSet) assert.ok(report.blocked.some((b) => b.id === 'recalculate'));
+  }
+});
