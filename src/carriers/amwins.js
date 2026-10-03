@@ -37,7 +37,7 @@
 //   show their number fields. TNI: 1 to 2 years with the current carrier (only with a DOT
 //   number), claim-free loss runs No.
 // - Personal Injury Protection shows for FL HI KS KY MA MI MN NJ NY ND PA UT AR DE MD OR TX NH SD
-//   VA WA WI DC. TNI leaves it alone: medical payments $5K, and AmWINS applies the better one.
+//   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred.
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { owner } from './progressive.js';
@@ -298,9 +298,11 @@ export const amwins = {
     { selector: '#collisionDeductible', name: 'Collision deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000' },
     { name: 'Waiver of collision (standard: No)', label: '^has waiver of collision$', kind: 'bool', value: () => false },
     { selector: '#towingAndLaborReimbursement', name: 'Towing and labor (standard: $75)', kind: 'choice', value: () => '$75' },
-    // TNI leaves PIP alone: medical payments $5K is chosen and AmWINS applies the better of the two.
-    { name: 'Personal Injury Protection (left alone)', label: '^personal injury protection$', ignore: true },
-    { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit (left alone)', ignore: true },
+    // PIP: No whenever Medical Payments is offered, which on AmWINS is always (the Coverages step
+    // has #medicalPayment, $5,000 above). The page pre-selects Yes, so ours replaces it. The limit
+    // box only shows with Yes.
+    { name: 'Personal Injury Protection (No: Medical Payments is offered)', label: '^personal injury protection$', kind: 'bool', value: () => false, replace: true },
+    { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit (only with PIP Yes)', ignore: true },
     // Liability auto symbol: 6 only.
     ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ selector: `#autoSymbol${n}`, name: `Auto symbol ${n}${n === 6 ? ' (TNI: 6)' : ''}`, kind: 'bool', value: () => n === 6 })),
     // Nothing is excluded: one rule per box (a rule fills one field).

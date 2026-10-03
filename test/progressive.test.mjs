@@ -335,7 +335,10 @@ test('AmWINS standard answers from the agent: current carrier 1-2 years with a D
   assert.equal(sel('#howLongWithCurrentCarrier').value, '1 TO 2 YEARS');
   assert.equal(sel('#howLongWithCurrentCarrier').ignore, false);
   assert.equal(named(/^Claim-free loss runs/).value, false);
-  assert.equal(named(/^Personal Injury Protection \(/).ignore, true);
+  const pip = named(/^Personal Injury Protection \(/);
+  assert.equal(pip.ignore, false);
+  assert.equal(pip.value, false, 'No: Medical Payments is offered');
+  assert.equal(pip.replace, true, 'replaces the page pre-selected Yes');
   assert.equal(sel('#personalInjuryProtectionLimit').ignore, true);
   const marital = () => sel('#driversPanel [data-id="martialStatus"]');
   assert.equal(marital().value, record.drivers[0].maritalStatus ?? 'MARRIED');

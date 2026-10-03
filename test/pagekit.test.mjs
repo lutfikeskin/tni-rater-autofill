@@ -327,6 +327,7 @@ function harness({ ext = false, pathname = '/rater', search = '' } = {}) {
 function recorderHarness() {
   const document = new FakeDocument();
   const sent = [];
+  const listeners = [];
   let tick;
   const context = {
     document,
@@ -335,7 +336,7 @@ function recorderHarness() {
     NodeFilter: { SHOW_TEXT: 4 },
     Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
     URLSearchParams,
-    addEventListener() {},
+    addEventListener(type, fn) { listeners.push(fn); },
     setInterval: (fn) => { tick = fn; return 1; },
     clearInterval() {},
     chrome: {
@@ -349,7 +350,8 @@ function recorderHarness() {
   context.window = context;
   context.top = context;
   vm.runInNewContext(RECORDER, context, { filename: 'src/content/recorder.js' });
-  return { context, document, sent, tick: () => tick?.() };
+  // A real (trusted) click or key press by the agent.
+  return { context, document, sent, tick: () => tick?.(), trusted: () => listeners.forEach((fn) => fn({ isTrusted: true })) };
 }
 
 function addExtText(h, prefix, question, options = {}) {
@@ -1454,4 +1456,19 @@ test('Jev answers refuse changed values, options, sections and page snapshots', 
   const [fresh] = await h.kit.answer([answer], [h.kit.decisionSnapshot()]);
   assert.equal(fresh.ok, true);
   assert.equal(field.value, 'cg');
+});
+
+test('fields that reappear already answered (a step shown again) are never counted as the agent\'s edits', () => {
+  const h = recorderHarness();
+  const existing = makeInput({ id: 'existing', ariaLabel: 'Existing question', value: 'before' });
+  h.document.body.append(existing);
+  h.context.__raterRecorder.rebaseline();
+  h.trusted();
+  // The agent clicks Prev: the earlier step comes back with its saved answers, and they edit one field.
+  h.document.body.append(makeInput({ id: 'restored', ariaLabel: 'Restored question', value: 'saved answer' }));
+  existing.value = 'after';
+  h.tick();
+  const changes = h.sent.filter((m) => m.event === 'field_changes').flatMap((m) => m.changes);
+  assert.equal(changes.find((c) => c.key === 'existing')?.agent, true, 'a real edit is still the agent\'s');
+  assert.equal(changes.find((c) => c.key === 'restored')?.agent, false, 'reappearing with a value is the page');
 });
