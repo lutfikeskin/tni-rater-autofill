@@ -24,7 +24,7 @@ flowchart TD
 
 The side panel injects the fill engine into the open carrier tab. It uses the live DOM and supported widget APIs, not downloaded HTML as a runtime template. Progressive uses exact question IDs and reviewed fallbacks; AmWINS uses selectors and labels; GEICO currently has generic label rules only.
 
-The client record lives in Chrome session storage. AI-enabled requests send the record and eligible questions to OpenAI. Usage events are separately queued locally and uploaded to the configured collection server. These are different data paths.
+The client record lives in Chrome session storage. AI-enabled requests send the unresolved choice questions, their options, the active intake context and the relevant TNI rules to TypeSafe AI (Jev) with the agent's key. Usage events are separately queued locally and uploaded to the configured collection server. These are different data paths.
 
 ## Boundaries and known gaps
 

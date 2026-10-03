@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 35) return;
+  if (globalThis.__raterKit?.version === 36) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -257,7 +257,7 @@
   // agency staff lists), the heading it sits under, and what the page shows now.
   function describe(c) {
     const options = /agent|producer/i.test(c.label ?? '') ? []
-      : [...new Set(optionsOf(c).map((o) => o.text).filter((t) => t && !isPlaceholderOption(t)))].slice(0, 80);
+      : [...new Set(optionsOf(c).map((o) => o.text).filter((t) => t && !isPlaceholderOption(t)))];
     return { options, section: sectionOf(c.el), current: c.kind === 'text' ? (c.el.value ? 'has a value' : null) : selectedText(c) };
   }
 
@@ -385,6 +385,18 @@
 
   const businessNameKey = (text) => squash(String(text).replace(/\((?:US)?DOT[^)]*\)/ig, ''));
 
+  // Registered business names that read the same once normalised count once (the lookup can
+  // list one name twice).
+  function uniqueBusinessNames(options) {
+    const seen = new Set();
+    return options.filter((o) => {
+      const k = businessNameKey(o.text);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
+
   function matchOption(options, step) {
     // Options that read the same are the same choice (pages sometimes list one twice).
     const seenText = new Set();
@@ -399,7 +411,8 @@
     if (step.kind === 'pick-not') {
       const allowed = usable.filter((o) => !new RegExp(step.value.not, 'i').test(o.text));
       if (step.q === '22F' && step.businessNames?.length) {
-        const matches = allowed.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name)));
+        // One registered name listed twice ("ACME LLC", "Acme, LLC") is still one match.
+        const matches = uniqueBusinessNames(allowed.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name))));
         return matches.length === 1 ? matches[0] : null;
       }
       return (step.value.prefer && allowed.find((o) => new RegExp(step.value.prefer, 'i').test(o.text))) || allowed[0]
@@ -976,7 +989,7 @@
         if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { handled.set(step.id, { status: null }); continue; }
         if (step.businessNames?.length) {
           const registered = controls.find((x) => x.q === '22F');
-          const names = registered ? optionsOf(registered).filter((o) => o.text.trim() && !/^enter a different/i.test(o.text)) : [];
+          const names = uniqueBusinessNames(registered ? optionsOf(registered).filter((o) => o.text.trim() && !/^enter a different/i.test(o.text)) : []);
           const matches = names.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name)));
           if (names.length && matches.length !== 1) {
             const note = 'The DOT lookup business name differs from the intake. Verify the identity before accepting it.';
@@ -1119,7 +1132,10 @@
 
     function clickNextAction(controls, immediateOnly = false) {
       const pairs = assign(controls, plan);
-      const has = (path) => pairs.some(({ step, control }) => step.path === path && !step.ignore && step.value != null && agreesWith(step, control) && !invalidControl(control));
+      // A prerequisite holds when its field shows the intake's answer, or an answer the agent chose
+      // themselves (their correction counts as resolved). Missing, rejected or different: not yet.
+      const has = (path) => pairs.some(({ step, control }) => step.path === path && !step.ignore && !invalidControl(control)
+        && ((step.value != null && agreesWith(step, control)) || (skipKeys.has(fieldKey(control)) && hasValue(control))));
       const blocked = [];
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         if (clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;
@@ -1236,7 +1252,10 @@
   // into their fields: [{ key, label, value, note }], `value` being one of the field's option
   // texts, 'checked'/'unchecked' for a checkbox, or text. Same apply-and-verify path as fill():
   // an answer counts only once the page has settled and still shows it.
-  async function answer(answers) {
+  async function answer(answers, expectedSnapshots) {
+    if (expectedSnapshots && !expectedSnapshots.includes(decisionSnapshot())) {
+      return answers.map(a => ({ key: a.key, label: a.label, ok: false, reason: 'the page changed since Jev evaluated it; request fresh suggestions' }));
+    }
     const serverBacked = !!ext();
     const find = (key, label) => {
       const same = collectControls().filter((c) => fieldKey(c) === key);
@@ -1246,6 +1265,18 @@
     for (const a of answers) {
       const c = find(a.key, a.label);
       if (!c) { results.push({ key: a.key, label: a.label, ok: false, reason: 'the question is no longer on this page' }); continue; }
+      if (a.expected) {
+        const d = describe(c);
+        const options = c.kind === 'checkbox' ? ['checked', 'unchecked'] : d.options;
+        const changed = [c.label !== a.label && 'label', c.kind !== a.expected.kind && 'type',
+          (d.section || null) !== (a.expected.section || null) && 'section',
+          JSON.stringify(options) !== JSON.stringify(a.expected.options) && 'options',
+          (d.current ?? null) !== (a.expected.current ?? null) && 'selection'].filter(Boolean);
+        if (changed.length) {
+          results.push({ key: a.key, label: a.label, ok: false, reason: `the field changed (${changed.join(', ')}) since Jev evaluated it; request a fresh suggestion` });
+          continue;
+        }
+      }
       const step = c.kind === 'checkbox'
         ? { id: `ai:${a.key}`, name: 'AI suggestion', kind: 'bool', value: /^(checked|yes|true)$/i.test(String(a.value)) }
         : { id: `ai:${a.key}`, name: 'AI suggestion', value: String(a.value) };
@@ -1371,5 +1402,11 @@
     return collectControls().map((c) => `${fieldKey(c)}|${c.label}`).join('\n');
   }
 
-  globalThis.__raterKit = { version: 35, fill, answer, markKey, aiBanner, capture, clear, signature, busy: pageBusy };
+  // Used only locally to reject stale AI answers, never sent to a provider or usage logs.
+  function decisionSnapshot() {
+    return JSON.stringify([location.href, collectControls().map(c => ({ key: fieldKey(c), label: c.label, kind: c.kind,
+      ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
+  }
+
+  globalThis.__raterKit = { version: 36, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

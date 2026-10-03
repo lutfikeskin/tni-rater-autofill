@@ -40,6 +40,8 @@ test('AmWINS maps each repeated row independently and adds only missing driver r
   assert.deepEqual(values.map(s => s.value), [34000, 36000]);
   const actions = plan.filter(s => s.baseAction?.startsWith('addDriver'));
   assert.equal(actions.length, 1);
-  assert.deepEqual(actions[0].after, ['drivers[0].licenseNumber']);
+  assert.deepEqual(actions[0].after, []);
+  // The previous row being filled is enough: a driver without a license number can't block later rows.
+  assert.deepEqual(actions[0].afterAny, ['drivers[0].first', 'drivers[0].last', 'drivers[0].dob', 'drivers[0].licenseNumber']);
   assert.match(actions[0].unlessSelector, /data-id="1"/);
 });
