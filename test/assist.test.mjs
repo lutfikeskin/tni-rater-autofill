@@ -228,7 +228,16 @@ test('verification uses Noul support and auto-selection remains fail-closed', ()
   assert.match(unsupported[0].tip, /could not verify/i);
 
   const wrongModel = verifyResponse({ model: 'other-jev', answers: { f1: { type: 'noul', noul: 0.995 } } }, [suggestion]);
-  assert.equal(wrongModel[0].leave, true);
+  assert.equal(wrongModel[0].leave, true, 'the two calls were served by different models');
+
+  // A configured alias may come back as its resolved revision: accepted when both calls agree,
+  // but only the pinned default model may select answers by itself.
+  const resolved = { ...suggestion, model: 'jev-1.14.2' };
+  const aliased = verifyResponse({ model: 'jev-1.14.2', answers: { f1: { type: 'noul', noul: 0.995 } } }, [resolved], { model: 'jev-latest' });
+  assert.equal(aliased[0].leave, false, 'alias resolved to the same revision for both calls');
+  assert.equal(aliased[0].autoOk, false, 'no automatic selection off the pinned model');
+  const split = verifyResponse({ model: 'jev-1.14.3', answers: { f1: { type: 'noul', noul: 0.995 } } }, [resolved], { model: 'jev-latest' });
+  assert.equal(split[0].leave, true, 'answer and verification from different revisions');
 });
 
 test('callModel uses the TypeSafe endpoint, retries transient responses, and sanitizes failures', async () => {

@@ -117,6 +117,9 @@ try {
   await accept.click();
   await mock.waitForFunction(() => document.querySelector('#mockReviewChoice').value === 'No', null, { timeout: 6000 }).catch(async error => { console.error(await panel.locator('#report').innerText()); throw error; });
   verify('accepted suggestion is applied', await mock.locator('#mockReviewChoice').inputValue(), 'No');
+  // The panel records an accepted answer once the page has kept it; edit only after that, as an
+  // agent would after seeing the confirmation (editing earlier raced the bookkeeping).
+  await panel.getByText(/Put in .*purple on the page/).first().waitFor({ timeout: 15000 });
   await mock.locator('#mockReviewChoice').selectOption('Yes');
   await panel.waitForTimeout(1800); // recorder debounce
   await panel.locator('#fill').click();

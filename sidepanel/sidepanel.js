@@ -839,7 +839,7 @@ async function runAssist(frames, ctx) {
   ctx = { ...ctx, contextKey: assistContextKey(record, active) };
   const cfg = await aiSettings();
   if (!cfg.on || !record || ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
-  // Questions the agent (or an applied AI answer) already settled on this page aren't asked again.
+  // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
   const items = collected.items.filter(x => !state.agentKeys.get(ctx.page)?.has(x.key));
   const blocked = collected.blocked;
@@ -866,9 +866,12 @@ async function runAssist(frames, ctx) {
   } catch { return; }
   const stale = () => run !== state.aiRun || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page
     || ctx.contextKey !== assistContextKey(state.intake?.record, state.active) || !holder.isConnected;
-  // Reuse answers only for the same intake and active driver/vehicle.
+  // Reuse an answer for the same question (as the page shows it now) in the same intake and
+  // driver/vehicle, model and policy. Not keyed on the rest of the page: every automatic
+  // follow-up fill changes that, which asked Jev again each time. Putting an answer in still
+  // checks the page snapshot (applyAi), and approving checks it again.
   const onPage = frames.flatMap(f => f.filled ?? []).map(x => ({ question: x.label, answer: x.shown, controlKind: x.controlKind }));
-  const sigOf = x => [ctx.tabId, ctx.page, cfg.model, POLICY_VERSION, ctx.contextKey, JSON.stringify([x.key, x.label, x.section, x.current, x.options, x.status, x.reason, onPage, ctx.snapshots])].join('\n');
+  const sigOf = x => [ctx.tabId, ctx.page, cfg.model, POLICY_VERSION, ctx.contextKey, JSON.stringify([x.key, x.label, x.section, x.current, x.options, x.status, x.reason])].join('\n');
   const missing = items.filter((x) => !state.aiCache.has(sigOf(x)));
   if (missing.length) {
     holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking Jev about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
@@ -976,7 +979,7 @@ async function applyAi(list, ctx, decision) {
     state.agentKeys.set(ctx.page, keys);
     ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     // Each applied pick remembers the page as it left it, for approving it later (also after a
-    // context change, when this run's snapshot is gone).
+    // context change, when the snapshot of this run is gone).
     for (const x of list) if (x.done) x.snapshots = ctx.snapshots;
     return true;
   } catch (e) {
@@ -1016,7 +1019,7 @@ function renderAi(holder, suggestions, ctx) {
   const pending = pendingAi(ctx.tabId, ctx.page);
   const current = assistContextKey(state.intake?.record, state.active);
   const canContinue = $('auto-advance').checked && !!ctx.carrier.advance;
-  // Approving or rejecting a pick acts on what is already on the page, so it doesn't depend on
+  // Approving or rejecting a pick acts on what is already on the page, so it does not depend on
   // the current intake or driver/vehicle.
   const decide = async (list, decision) => {
     if (state.filling || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return;

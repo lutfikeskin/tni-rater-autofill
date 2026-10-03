@@ -227,12 +227,14 @@ export function verifyResponse(json, suggestions, { model = DEFAULT_MODEL } = {}
     if (x.leave) return x;
     const v = json.answers?.[x.id];
     const support = v?.type === 'noul' && Number.isFinite(v.noul) && v.noul >= 0 && v.noul <= 1 ? v.noul : null;
-    if (support == null || support < 0.8 || json.model !== model || x.model !== model) {
+    // Both calls must have been served by the same model. A configured alias (jev-latest) may
+    // come back as its resolved revision, so the served name need not equal the requested one.
+    if (support == null || support < 0.8 || !json.model || json.model !== x.model) {
       return { ...x, choice: null, leave: true, autoOk: false, support, tip: 'Jev could not verify this answer against the intake or rules. Answer it on the page.' };
     }
     const autoOk = x.probability >= AUTO_POLICY.probability && x.confidence >= AUTO_POLICY.confidence
       && x.margin >= AUTO_POLICY.margin && x.evidenceProbability >= AUTO_POLICY.evidence && support >= AUTO_POLICY.support
-      && !REVIEW.test(`${x.section || ''} ${x.label}`) && model === DEFAULT_MODEL
+      && !REVIEW.test(`${x.section || ''} ${x.label}`) && model === DEFAULT_MODEL && json.model === DEFAULT_MODEL
       && String(x.current ?? '').trim() !== x.choice;
     const source = x.basis === 'intake' ? `Intake: ${x.intakePath}.` : `TNI rule: ${x.evidence.rule}`;
     return { ...x, support, autoOk, tip: `${source} ${autoOk ? 'Passed the automatic-selection checks.' : 'Review this suggestion before using it.'}` };
