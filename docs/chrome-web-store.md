@@ -1,5 +1,7 @@
 # Publishing to the Chrome Web Store (private, for the pilot agents)
 
+Read this only for an authorized distribution task. Use [testing](testing.md) for release checks; editing documentation or fixing a local rule does not itself require an upload.
+
 A private or unlisted listing lets agents install with one click and get updates automatically,
 without Developer mode.
 
@@ -34,8 +36,9 @@ the store refuses a version it already has.
    - `sidePanel`: "The extension's interface is a side panel next to the carrier's quote page."
    - `scripting`: "Fills and highlights form fields on the carrier quote page the agent is viewing."
    - `storage`: "Keeps the loaded intake for the session and the agent's settings."
-   - Host permissions: "foragentsonly.com / progressive.com / geico.com: the carrier quote pages it
-     fills. api.openai.com: AI suggestions for unanswered questions, with the agent's own API key.
+   - Host permissions: "foragentsonly.com / progressive.com / amwinsadmittedplacement.com /
+     geico.com: the carrier quote pages it fills. api.typesafe.ai: AI suggestions for unresolved
+     choice questions, with the agent's own TypeSafe key.
      usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, no client
      details). localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
@@ -85,7 +88,7 @@ What it does
 • Reads the quote application on your computer and lets you check and correct it before filling.
 • Fills one page at a time, checks that each answer was kept by the carrier's page, and marks every field: filled, needs you, or couldn't fill.
 • Moves to the next step only when nothing is left for you, and never binds, buys, submits or signs anything.
-• Leaves MVR/CLUE orders, driver exclusions, declarations and payment details to you.
+• Leaves MVR/CLUE orders, declarations and bank/card details to you. Some coverage and exclusion answers use programmed defaults; review them for this client's circumstances.
 • Optional AI tips (with your own TypeSafe AI key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
 
 Privacy

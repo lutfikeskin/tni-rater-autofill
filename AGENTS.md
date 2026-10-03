@@ -1,10 +1,33 @@
-# Project instructions
+# Project guidance
 
-Read `CLAUDE.md` for the repository architecture, safety boundaries, and validation commands.
+TNI Rater Autofill is a Chrome MV3 extension that turns an intake PDF into commercial-auto quote answers. The goal is a correct quote reflecting the client's requests, with unresolved decisions visible to the agent. A filled field or accepted carrier value does not prove the answer is correct.
 
-For TypeSafe/Jev integration, prompts, decision policies, or evaluation work, load the installed
-`typesafe-ai` skill and follow its relevant live documentation. The skill source is
-https://github.com/typesafe-ai/skills/blob/main/skills/typesafe-ai/SKILL.md.
-Keep exact mappings, calculations, and execution in code; use Jev for unresolved semantic
-choices. Validate behavior with this project's tests and carrier mocks. Mocked responses prove
-integration behavior, not live model accuracy or calibrated confidence thresholds.
+## Working rules
+
+- Keep changes within the requested outcome. Preserve unrelated work; do not turn a correction into a release or another milestone.
+- Do not invent client facts or insurance answers. Distinguish missing information, explicit No, and not applicable. Existing defaults are implementation behavior, not proof they fit every client.
+- Preserve agent corrections, answer-retention checks, review blockers, and restrictions on binding, purchasing, submitting, ordering reports, and signing.
+- Keep raw carrier HTML/PDFs and client captures in ignored `layouts/`. Scrub committed fixtures; keep typed client values and credentials out of logs and commits.
+- Use a task branch (`codex/<topic>` for Codex). Commit, PR, publish, or deploy only within the requested scope; the maintainer merges unless authorized otherwise.
+- For code changes, run `npm test` and the affected system's checks below. For documentation-only work, check links, commands, and factual consistency; no release or version bump is needed.
+- For TypeSafe/Jev integration, prompts, decision policies, or evaluation work, load the installed `typesafe-ai` skill and follow its live documentation (source: https://github.com/typesafe-ai/skills/blob/main/skills/typesafe-ai/SKILL.md). Keep exact mappings, calculations, and execution in code; Jev only resolves remaining semantic choices. Mocked responses prove integration behavior, not live model accuracy or calibrated thresholds.
+- Keep `AGENTS.md` and `CLAUDE.md` identical when editing shared guidance.
+
+## Read only for the affected work
+
+Start with the relevant source. Read the matching document when the task affects that system; do not load every document or follow every link by default. Documents identify their related code and tests.
+
+| If the action affects… | Read… |
+| --- | --- |
+| Project goals, shared boundaries, or general architecture | [Architecture](docs/architecture.md) |
+| Intake parsing, mappings, defaults, applicability, or state/vehicle/coverage exceptions | [Intake and rules](docs/intake-and-rules.md) |
+| Live controls, page changes, helper actions, navigation, or fill verification | [Browser filling](docs/browser-filling.md) |
+| Learning from new fields, corrections, exceptions, layouts, or usage events | [Learning](docs/learning.md) |
+| A reported wrong answer, failed fill, or live-run problem | [Corrections](docs/corrections.md) |
+| Adding a carrier or expanding supported carrier scenarios | [New carriers](docs/new-carrier.md) |
+| AI suggestions, prompts, validation, caching, or approval | [AI assistance](docs/ai-assistant.md) |
+| Harnesses, regression coverage, CI, packaging, or release verification | [Testing](docs/testing.md) |
+| Collection-server operation or deployment | [Hosting](docs/hosting.md) |
+| Chrome Web Store distribution | [Store release](docs/chrome-web-store.md) |
+
+Dated walkthroughs, reports, generated reviews, and captures are evidence for the scenario they describe, not current global instructions. Proposed capabilities in the focused documents remain proposals until implemented and verified.

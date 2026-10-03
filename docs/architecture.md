@@ -1,0 +1,50 @@
+# Architecture and project goal
+
+Read this when changing shared system boundaries or deciding what successful automation means.
+
+The goal is to transfer the client's requested insurance into the correct carrier fields and entity rows, preserve agent decisions, and expose missing or unsupported information. Filling every visible question is insufficient if a requested coverage was never represented.
+
+## Implemented flow
+
+```mermaid
+flowchart TD
+    A[Fillable intake PDF] --> B[Structured client record and warnings]
+    B --> C[Agent corrections]
+    C --> D[Carrier rules and active driver or vehicle]
+    D --> E[Fill plan]
+    E --> F[Inspect and fill live carrier controls]
+    F --> G[Wait, reread and rescan follow-up questions]
+    G --> F
+    G --> H[Result report and unresolved questions]
+    H --> I[Optional AI suggestions and agent decisions]
+    H --> J[Usage events and layout captures]
+    I --> J
+    J --> K[Reviewed improvements and tested releases]
+```
+
+The side panel injects the fill engine into the open carrier tab. It uses the live DOM and supported widget APIs, not downloaded HTML as a runtime template. Progressive uses exact question IDs and reviewed fallbacks; AmWINS uses selectors and labels; GEICO currently has generic label rules only.
+
+The client record lives in Chrome session storage. AI-enabled requests send the unresolved choice questions, their options, the active intake context and the relevant TNI rules to TypeSafe AI (Jev) with the agent's key. Usage events are separately queued locally and uploaded to the configured collection server. These are different data paths.
+
+## Boundaries and known gaps
+
+- The reader extracts named fillable PDF fields, not general document understanding or handwriting.
+- Rules compute answers; the browser engine finds controls and checks whether values stick. Carrier acceptance is not semantic correctness.
+- AI assists unresolved questions; it does not reliably audit all answers already filled by rules.
+- Feedback produces review material and candidate rules. There is no automatic model training or rule deployment.
+- Separate driver/vehicle records exist, but driver exclusion, per-vehicle coverage intent, and driver-to-vehicle relationships are not fully modeled.
+- Arbitrary notes such as a non-trucking-liability request do not have a complete extraction, confirmation, and mapping path. Requested-versus-entered coverage reconciliation is not implemented.
+
+## Design direction, not implemented guarantees
+
+Represent confirmed facts with their source and entity identity. Separate shared concepts from carrier wording, then apply explicit state/product/entity conditions and narrow combination exceptions. Conflicts or missing evidence should lead to review. An unseen combination must not become trusted merely because familiar questions matched.
+
+Measure automatic-answer accuracy, the share automated, and whole-quote correctness separately. Use expert-reviewed expected outcomes and held-out scenarios; unchanged answers, AI acceptance, and high field coverage are not accuracy labels. Do not claim a universal 99% success rate from mock results.
+
+## Related code
+
+- [intake.js](../src/intake.js), [normalize.js](../src/normalize.js), [schema.js](../src/schema.js): extraction and record.
+- [plan.js](../src/plan.js), [carriers.js](../src/carriers.js): plans and carrier registration.
+- [sidepanel.js](../sidepanel/sidepanel.js), [pagekit.js](../src/content/pagekit.js): orchestration and browser execution.
+
+For changes to answer semantics, continue to [intake and rules](intake-and-rules.md). For feedback behavior, use [learning](learning.md).

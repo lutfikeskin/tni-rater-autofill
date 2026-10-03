@@ -1,5 +1,7 @@
 # Hosting: updates to the agents, logs back to TNI
 
+Read this for collection-server configuration, deployment, or log transport operations. For how feedback becomes candidate rules, use [learning](learning.md). For pre-release checks, use [testing](testing.md).
+
 ```mermaid
 flowchart LR
   subgraph Agents["Agents' Chrome"]
@@ -9,7 +11,7 @@ flowchart LR
   CWS -- "auto-update within hours" --> EXT
   EXT -- "usage events every minute<br/>(HTTPS, upload token)" --> RW["Railway: usage-server<br/>volume /data/events/*.jsonl"]
   RW -- "export (admin token)" --> GH["GitHub Action, 09:00 Istanbul<br/>npm run pull + review"]
-  GH --> OUT["Artifact + issue when<br/>agents reported problems"]
+  GH --> OUT["Artifact + issue for<br/>reported problems or uncovered questions"]
 ```
 
 ## Extension updates: Chrome Web Store
@@ -52,4 +54,4 @@ npm run push-logs -- some/export.json   # an agent's exported log, or an old loc
 `.github/workflows/daily-review.yml` runs every day at 06:00 UTC (and on demand: Actions → Daily
 review → Run workflow, optionally with a start date). It downloads the log, builds the review for
 the last day, keeps it as an artifact for 90 days, shows it as the run summary, and opens an issue
-labelled `daily-review` when agents reported problems.
+labelled `daily-review` when agents reported problems or rule-coverage checks find uncovered questions. The workflow does not implement or deploy corrections.

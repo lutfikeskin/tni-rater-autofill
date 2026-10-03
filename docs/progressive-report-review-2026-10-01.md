@@ -1,5 +1,7 @@
 # Intake and extension report review
 
+Historical review from 2026-10-01. Statements about missing features describe that revision, not current support. Read only when tracing these reports; use [corrections](corrections.md) for the current investigation workflow.
+
 Reviewed the supplied intake with the production PDF reader and normalizer,
 the `layouts/` captures, and the six `problem_report` events in the October 1 log.
 No customer identifiers or typed values are included here.

@@ -1,5 +1,7 @@
 # Progressive Commercial Auto: live walkthrough
 
+Historical evidence from the dated walkthrough, including decisions that were later superseded. Read only when investigating that scenario; do not use its conflicting navigation/default instructions as current global policy. Current behavior and change guidance are in [browser filling](browser-filling.md) and [intake and rules](intake-and-rules.md).
+
 Observed on 2026-10-01 in the authenticated Progressive agent portal. This
 document records page structure and workflow behavior only; it excludes client
 details, quote numbers, credentials, session URLs, real PDFs, and screenshots.
