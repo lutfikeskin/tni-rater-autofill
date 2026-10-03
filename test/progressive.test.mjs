@@ -27,6 +27,17 @@ const baseRecord = () => ({
 
 const byQ = (plan, q) => plan.find((step) => step.q === q);
 
+test('refrigeration breakdown is requested only when the intake selects Reefer', () => {
+  const record = baseRecord();
+  for (const selected of [true, false, null, undefined]) {
+    record.coverage.reeferBreakdown = selected;
+    const step = byQ(buildPlan(record, progressive), '215C');
+    assert.equal(step.value, selected === true);
+    assert.equal(step.path, 'coverage.reeferBreakdown');
+    assert.equal(step.note, null);
+  }
+});
+
 test('freight intake maps business type and blank business name to sole proprietor', () => {
   const record = baseRecord();
   record.applicant.name = null;

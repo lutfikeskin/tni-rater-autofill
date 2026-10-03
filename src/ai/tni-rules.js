@@ -15,10 +15,11 @@ export const TNI_RULES = `
 ## Named insured and business (BusinessOwnerInfo)
 - Currently insured with Progressive Commercial Auto: Yes only if the intake's current insurance is a Progressive commercial auto policy with a limit and an expiration date. A personal auto policy doesn't count.
 - Has a USDOT number: "Yes" if the intake has one. If not: "Not Yet…" if they'll have one within 60 days, otherwise "No…".
-- USDOT number belongs to the customer's business: Yes.
+- A prior policy that expired before the application date does not establish current insurance. Preserve its dates and flag it for renewal/lapse review. Missing POP paperwork does not mean no prior policy: retain the policy details and explicitly disclose that the proof is unavailable.
+- USDOT number belongs to the customer's business: Yes only when the displayed lookup identity matches the applicant. A different registered business name requires agent review; do not select it or override the mismatch with AI.
 - Business name / business address: the USDOT-registered option, not "Enter a different…". Home address: always the first option offered. If that is "Enter a different address", type the whole address in the address box and pick Progressive's first suggestion.
 - Business structure: "Corporation or LLC / Non-Profit" when the company name ends in LLC, Inc, Corp or Co; otherwise "Individual / Sole Proprietor". Partnerships are never guessed.
-- Business type search list (some states, e.g. IN): "For Hire Trucking" if it is in the list, otherwise "General Freight Trucking". Don't type in the search box.
+- Business type search list: preserve the intake's distinction between expediter and general freight hauler, using the mappings below. If the needed option is absent from the visible search results, leave it for review rather than choosing a different business type.
 - Business type: "For Hire Trucking" for expediters, then Type of Trucker "Other For-Hire Trucking". General freight haulers are "General Freight Hauler" (portal wording may be "General Freight Trucking"). Otherwise use the closest match to what the intake says the business does.
 - Owner name and date of birth from the intake; the owner is usually the driver with the same last name.
 - Hazardous material placard: from the intake.
@@ -44,7 +45,7 @@ export const TNI_RULES = `
 - Accidents, claims or violations in the past 3 years: from the intake's claims answer (its first line; later lines in the claims box sometimes answer other questions).
 
 ## More about the business (MoreAboutBusiness)
-- Currently insured: Yes when the intake lists current insurance with a limit and expiration.
+- Currently insured: Yes when the intake lists current insurance with a limit and an expiration that is not before the application date. An expired policy alone is not current coverage.
 - Continuous coverage: Yes. Current bodily injury limit and expiration: as written in the intake ("State Minimum" is "State Minimum or less").
 - Other coverages for the business: None. A coverage the intake doesn't mention means No: tick "None of the above" and leave the coverages unticked. Additional insured, waiver and blanket endorsement questions: leave as the page has them (0 / No).
 - State or federal filings required: Yes when the intake says filings are required.
@@ -58,6 +59,7 @@ export const TNI_RULES = `
 - Medical payments per person (per vehicle): $5,000 per person.
 - UM/UIM: $100k CSL (also when asked separately as Uninsured and Underinsured Motorist). UMPD limit: Not selected. Comprehensive and collision deductibles: $1,000. Rental: "$40 per day, $1,200 max". Fire/theft additional coverage: Not selected. Roadside: keep what the page has selected.
 - Motor Truck Cargo only when the intake asks for it: special cargo questions (mobile/modular homes; business documents) No; "General freight" is category "Consumer Goods", commodity "Other Consumer Goods"; limit and deductible from the intake ("$100K/$1K Ded" is "$100k with a $1,000 Deductible").
+- Refrigeration Breakdown: use the intake's Reefer breakdown option (coverage.reeferBreakdown). If selected, choose "Yes, match Motor Truck Cargo limits". If unselected, No, or blank/null, answer "No"; an unselected Reefer option does not need agent review.
 - General liability: not set up yet; the agent answers it.
 - Florida: Property Damage Liability Only "Not Selected"; Personal Injury Protection "$10k w/ $0 Deductible" (Florida requires it).
 - Pennsylvania first-party benefits: Medical Expense Benefits $5,000 (required, lowest); Extraordinary Medical, Income Loss, Funeral Expense and Accidental Death: Not Selected unless the intake asks for them.

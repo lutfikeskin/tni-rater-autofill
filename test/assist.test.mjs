@@ -1,6 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectItems, buildRequest, parseResponse, callModel, outputText, neverReason, AssistError, LEAVE, DEFAULT_MODEL } from '../src/ai/assist.js';
+import { collectItems, buildRequest, parseResponse, callModel, outputText, neverReason, AssistError, LEAVE, DEFAULT_MODEL, assistContextKey } from '../src/ai/assist.js';
+
+test('AI cache separates active drivers, vehicles and edited intake answers', () => {
+  const intake = { vehicles: [{ value: 20000 }, { value: 40000 }] };
+  const key = assistContextKey(intake, { drivers: 0, vehicles: 0 });
+  assert.equal(key, assistContextKey(structuredClone(intake), { drivers: 0, vehicles: 0 }));
+  assert.notEqual(key, assistContextKey(intake, { drivers: 0, vehicles: 1 }));
+  assert.notEqual(key, assistContextKey(intake, { drivers: 1, vehicles: 0 }));
+  intake.vehicles[0].value = 30000;
+  assert.notEqual(key, assistContextKey(intake, { drivers: 0, vehicles: 0 }));
+});
+
+test('lookup identity mismatch requires agent review, never an AI answer', () => {
+  const { items, blocked } = collectItems([{ noData: [{ key: '20F', label: 'Does this DOT belong to you?',
+    controlKind: 'radio', options: ['Yes', 'No'], reviewOnly: true }] }]);
+  assert.equal(items.length, 0);
+  assert.equal(blocked.length, 1);
+  assert.match(blocked[0].why, /review/i);
+});
 
 // Synthetic fill report and intake: no real client data.
 const record = {

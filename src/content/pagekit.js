@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 27) return;
+  if (globalThis.__raterKit?.version === 35) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -383,6 +383,20 @@
     return [v, ...(step.choiceAliases ?? [])].map(squash);
   }
 
+  const businessNameKey = (text) => squash(String(text).replace(/\((?:US)?DOT[^)]*\)/ig, ''));
+
+  // Registered business names that read the same once normalised count once (the lookup can
+  // list one name twice).
+  function uniqueBusinessNames(options) {
+    const seen = new Set();
+    return options.filter((o) => {
+      const k = businessNameKey(o.text);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
+
   function matchOption(options, step) {
     // Options that read the same are the same choice (pages sometimes list one twice).
     const seenText = new Set();
@@ -396,6 +410,11 @@
     // address"), preferring one that matches `prefer` when there are several.
     if (step.kind === 'pick-not') {
       const allowed = usable.filter((o) => !new RegExp(step.value.not, 'i').test(o.text));
+      if (step.q === '22F' && step.businessNames?.length) {
+        // One registered name listed twice ("ACME LLC", "Acme, LLC") is still one match.
+        const matches = uniqueBusinessNames(allowed.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name))));
+        return matches.length === 1 ? matches[0] : null;
+      }
       return (step.value.prefer && allowed.find((o) => new RegExp(step.value.prefer, 'i').test(o.text))) || allowed[0]
         || (step.value.fallback && usable.find((o) => new RegExp(step.value.fallback, 'i').test(o.text))) || null;
     }
@@ -968,6 +987,17 @@
         const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind };
         if (step.verifyOnly) { report.kept.push(item); handled.set(step.id, { status: null }); continue; }
         if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { handled.set(step.id, { status: null }); continue; }
+        if (step.businessNames?.length) {
+          const registered = controls.find((x) => x.q === '22F');
+          const names = uniqueBusinessNames(registered ? optionsOf(registered).filter((o) => o.text.trim() && !/^enter a different/i.test(o.text)) : []);
+          const matches = names.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name)));
+          if (names.length && matches.length !== 1) {
+            const note = 'The DOT lookup business name differs from the intake. Verify the identity before accepting it.';
+            report.noData.push({ ...item, note, reviewOnly: true, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note });
+            continue;
+          }
+        }
         if (step.note || step.value == null) {
           if (quiet.has(c.q)) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note, ...describe(c) });
@@ -1109,6 +1139,9 @@
       const blocked = [];
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         if (clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;
+        // A blank repeater row is already sufficient: do not add a duplicate merely because
+        // its fields have not been filled yet (or the agent went back to this step).
+        if (a.unlessSelector && deepQueryAll(document, a.unlessSelector).length) { clicked.add(a.action); continue; }
         if (report.halted || pageBusy()) return false;
         if (a.action === 'printSend' && controls.some((c) => (['32D0', '32DD'].includes(c.q) || /^(email|e mail|fax)$/.test(c.text)) && hasValue(c))) {
           report.blocked.push({ id: a.action, why: 'Email or Fax is ticked; untick it to print' });
@@ -1354,5 +1387,5 @@
     return collectControls().map((c) => `${fieldKey(c)}|${c.label}`).join('\n');
   }
 
-  globalThis.__raterKit = { version: 31, fill, answer, markKey, aiBanner, capture, clear, signature, busy: pageBusy };
+  globalThis.__raterKit = { version: 35, fill, answer, markKey, aiBanner, capture, clear, signature, busy: pageBusy };
 })();

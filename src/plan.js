@@ -44,6 +44,7 @@ function actionSteps(carrier, record, active) {
       after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
       afterAny: (resolve(a.afterAny) ?? []).map((p) => withIndex(p, active)),
       unless: (resolve(a.unless) ?? []).map((p) => withIndex(p, active)),
+      unlessSelector: resolve(a.unlessSelector) ?? null,
       unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (/:driver$/.test(id) || (a.scope === 'driver' && !/:/.test(id))
         ? `${id.replace(/:driver$/, '')}:${active.drivers ?? 0}`
         : a.scope === 'vehicle' || /:vehicle$/.test(id) ? `${id.replace(/:vehicle$/, '')}:${active.vehicles ?? 0}` : id)),
@@ -61,7 +62,10 @@ function actionSteps(carrier, record, active) {
 }
 
 function fieldSteps(rules, record, carrier, active) {
-  return rules.map((rule, id) => {
+  const expanded = rules.flatMap((rule) => rule.repeat
+    ? (record[rule.repeat] ?? []).map((_, index) => ({ rule, active: { ...active, [rule.repeat]: index } }))
+    : [{ rule, active }]);
+  return expanded.map(({ rule, active }, id) => {
     const list = rule.path ? listOf(rule.path) : null;
     const path = rule.path
       ? (list ? rule.path.replace('[]', `[${active[list] ?? 0}]`) : rule.path)
@@ -89,7 +93,7 @@ function fieldSteps(rules, record, carrier, active) {
       name: rule.name ?? info.label,
       kind: rule.kind ?? info.kind,
       q: rule.q ?? null,
-      selector: rule.selector ?? null,
+      selector: rule.repeatSelector ? rule.repeatSelector(record, active) : rule.selector ?? null,
       re: rule.label ?? null,
       ex: rule.not ?? null,
       note,
@@ -110,6 +114,7 @@ function fieldSteps(rules, record, carrier, active) {
       scope,
       scopeIndex,
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
+      businessNames: rule.businessNames ? rule.businessNames(record, active) : null,
       // What an address box gets when the page offers no suggestion (e.g. just the street).
       fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,
       // Type-ahead lists: what to type (the value is what the chosen result must contain).

@@ -2,8 +2,28 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { assistContextKey } from '../src/ai/assist.js';
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
+
+test('AI accept refuses a suggestion for a previous driver, vehicle or intake', async () => {
+  const record = { vehicles: [{ value: 34000 }, { value: 36000 }] };
+  const active = { drivers: 0, vehicles: 0 };
+  const ctx = { tabId: 1, page: '/quote', contextKey: assistContextKey(record, active) };
+  let writes = 0;
+  const state = { filling: false, tab: { id: 1, url: 'https://example.test/quote' }, intake: { record }, active };
+  const sandbox = { state, assistContextKey, pageOf: url => new URL(url).pathname, tellRecorder: () => { writes++; } };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('applyAi'), sandbox);
+  state.active = { ...active, vehicles: 1 };
+  assert.equal(await sandbox.applyAi([], ctx, 'accepted'), false);
+  state.active = { ...active, drivers: 1 };
+  assert.equal(await sandbox.applyAi([], ctx, 'accepted'), false);
+  state.active = active;
+  record.vehicles[0].value = 50000;
+  assert.equal(await sandbox.applyAi([], ctx, 'accepted'), false);
+  assert.equal(writes, 0, 'stale choices never reach the page');
+});
 
 // Keep these tests coupled to the production functions.  The side panel is an ES module with
 // browser-only imports, so extract only the functions under test and evaluate those functions in
@@ -282,4 +302,20 @@ test('during a quote, switching to a non-rater tab keeps the panel on the quote 
   h.setActiveTab({ id: 9, url: 'https://mail.example.test/inbox' });
   await h.refreshTab();
   assert.equal(h.state.tab.id, 9);
+});
+
+test('an AI pick made before an intake or driver/vehicle change still holds Continue until the agent decides', () => {
+  const before = assistContextKey({ drivers: [{ first: 'Alex' }] }, { drivers: 0 });
+  const after = assistContextKey({ drivers: [{ first: 'Alex' }] }, { drivers: 1 });
+  const stale = { done: 'auto', approved: false, rejected: false, contextKey: before };
+  const fresh = { done: 'auto', approved: false, rejected: false, contextKey: after };
+  const state = { aiCache: new Map([[`1\n/quote\nm\n${before}\nk1`, stale], [`1\n/quote\nm\n${after}\nk2`, fresh], [`1\n/other\nm\n${after}\nk3`, { ...fresh }]]) };
+  const context = { state };
+  vm.createContext(context);
+  vm.runInContext(extractFunction('pendingAi'), context);
+  assert.equal(context.pendingAi(1, '/quote').length, 2, 'the earlier pick is still pending on this page');
+  stale.rejected = true;
+  const left = context.pendingAi(1, '/quote');
+  assert.equal(left.length, 1, 'once rejected it stops holding Continue');
+  assert.equal(left[0], fresh);
 });

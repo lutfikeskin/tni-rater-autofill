@@ -43,3 +43,18 @@ export function listOf(path) {
   const m = path.match(/^(\w+)\[\]/);
   return m ? m[1] : null;
 }
+
+// Compare calendar dates using the application date, so an archived intake stays reproducible.
+// An absent/invalid date does not establish that a policy expired.
+export function priorPolicyExpired(record, policy = record.priorInsurance?.[0]) {
+  const parse = (value) => {
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value ?? '');
+    if (!m) return null;
+    const d = new Date(Date.UTC(+m[3], +m[1] - 1, +m[2]));
+    return d.getUTCFullYear() === +m[3] && d.getUTCMonth() === +m[1] - 1 && d.getUTCDate() === +m[2] ? +d : null;
+  };
+  const expiry = parse(policy?.expiration);
+  const now = new Date();
+  const reference = parse(record.applicant?.applicationDate) ?? Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  return expiry != null && expiry < reference;
+}

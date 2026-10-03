@@ -368,6 +368,36 @@ function addButton(h, text, { className = '', disabled = false } = {}) {
   return button;
 }
 
+test('reinjection reuses the installed pagekit and preserves its state', () => {
+  const h = harness();
+  vm.runInNewContext(PAGEKIT, h.context);
+  assert.equal(h.context.__raterKit, h.kit);
+});
+
+test('an existing blank driver row prevents a duplicate Add Driver action', async () => {
+  const h = harness();
+  h.document.body.append(makeInput({ id: 'secondDriver', ariaLabel: 'Second driver' }));
+  const button = addButton(h, 'Add Driver');
+  let clicks = 0;
+  button.addEventListener('click', () => clicks++);
+  const report = await h.kit.fill([{ id: 'add2', kind: 'action', action: 'addDriver1', text: '^add driver$',
+    after: [], unlessSelector: '#secondDriver', pages: [] }], {});
+  assert.equal(clicks, 0);
+  assert.equal(report.halted, false);
+});
+
+test('DOT lookup chooses the matching business, not the first returned name', async () => {
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const field = addExtText(h, 'c', '22F', { caption: 'Business Name', required: true });
+  const records = ['Other Example LLC', 'Sample Test LLC', 'Enter a different Business Name'].map(label => ({ get: () => label }));
+  Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+  const record = { applicant: { name: 'Sample Test LLC', dot: '12345678' }, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter(s => s.q === '22F');
+  const report = await h.kit.fill(plan, {});
+  assert.equal(field.cmp.getValue(), 'Sample Test LLC');
+  assert.equal(report.failed.length, 0);
+});
+
 test('vehicle-named additional coverage q200F is mapped and does not block Rates filling', async () => {
   for (const current of ['', 'Not selected']) {
     const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
@@ -380,6 +410,27 @@ test('vehicle-named additional coverage q200F is mapped and does not block Rates
     assert.equal(report.unknown.length, 0);
     assert.equal(field.cmp.getValue(), 'Not selected');
     assert.equal(report.filled.length, current ? 0 : 1);
+  }
+});
+
+test('TX refrigeration options fill from the intake without an AI review stop', async () => {
+  for (const selected of [null, false, true]) {
+    const h = harness({ search: '?pageName=CoveragesRates' });
+    const radios = ['Yes, match Motor Truck Cargo limits', 'No'].map((value, i) => makeInput({
+      id: i ? 'reefer-no' : `f_U${'A'.repeat(32)}215C_1_1`, name: 'string_215C', type: 'radio', value,
+    }));
+    h.document.body.append(...radios);
+    const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: { reeferBreakdown: selected }, claims: {} };
+    const plan = buildPlan(record, progressive).filter(s => s.q === '215C');
+    const report = await h.kit.fill(plan, { replaceChoices: true });
+    assert.equal(radios.find(r => r.checked)?.value, selected === true ? 'Yes, match Motor Truck Cargo limits' : 'No');
+    assert.equal(report.blockers.length, 0);
+    assert.equal(report.unknown.length, 0);
+    if (selected === true) {
+      record.coverage.reeferBreakdown = false;
+      await h.kit.fill(buildPlan(record, progressive).filter(s => s.q === '215C'), { replaceChoices: true, skip: ['215C'] });
+      assert.equal(radios[0].checked, true, 'an agent override remains protected');
+    }
   }
 });
 
@@ -1364,4 +1415,16 @@ test('rates helpers wait while the liability limit differs from the intake; a li
     assert.equal(!!recalc._clicked, agentSet, agentSet ? 'the agent chose the limit: Recalculate' : 'limit differs from the intake: Recalculate waits');
     if (!agentSet) assert.ok(report.blocked.some((b) => b.id === 'recalculate'));
   }
+});
+
+test('a DOT lookup listing the matching business name twice still counts as one match', async () => {
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const field = addExtText(h, 'c', '22F', { caption: 'Business Name', required: true });
+  const records = ['Sample Test LLC', 'Sample Test, LLC', 'Enter a different Business Name'].map((label) => ({ get: () => label }));
+  Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+  const record = { applicant: { name: 'Sample Test LLC', dot: '12345678' }, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => s.q === '22F'), {});
+  assert.equal(field.cmp.getValue(), 'Sample Test LLC');
+  assert.ok(!report.noData.some((x) => x.reviewOnly), 'not reported as a different identity');
+  assert.equal(report.failed.length, 0);
 });
