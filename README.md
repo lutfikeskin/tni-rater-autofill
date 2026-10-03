@@ -1,6 +1,6 @@
 # TNI Rater Autofill
 
-A Chrome extension that reads a client's **TNI Commercial Insurance Quote Application** (the fillable PDF) and fills in Progressive and GEICO rater pages from it. An optional AI assistant (OpenAI GPT-6 Luna) suggests answers, with a short tip, for the questions the rules leave for the agent.
+A Chrome extension that reads a client's **TNI Commercial Insurance Quote Application** (the fillable PDF) and fills in Progressive and GEICO rater pages from it. An optional AI assistant (TypeSafe AI Jev) helps choose among the carrier's existing radio, select and checkbox options when the rules leave a choice unresolved.
 
 The agent stays in control. The extension fills what it can on the page in front of them and marks everything else. It never clicks Next or Submit, never touches password fields, and by default leaves anything the rater already filled in (for example from a DOT lookup) alone.
 
@@ -26,11 +26,13 @@ Agents install it from its private Chrome Web Store listing (see [docs/chrome-we
 
 ### AI assistant
 
-Turn it on under **AI assistant** in the side panel and paste your OpenAI API key (model: `gpt-6-luna` unless you set another). After each fill it looks at the yellow, red and amber questions and suggests an answer with a one-line reason; **Accept** puts it in (marked **purple** on the page), **Dismiss** drops it. It only picks from the page's own options, a cited intake value must exist, and the page must keep the answer, or it's marked red. MVR/CLUE orders, driver exclusions, signatures/authorisations, payment details and typed identifiers are never sent to it. **Let the AI make selections on the page** lets it pick dropdown/radio/checkbox answers itself (not when it's unsure, never typed text). Its picks are listed at the end of the panel's report and in a note at the bottom of the rater page, and Continue is not clicked until the agent approves them (**Approve and continue**, or **Reject** one to answer it yourself). Architecture, safety rules and roadmap: [docs/ai-assistant.md](docs/ai-assistant.md).
+Turn it on under **Jev assistant** in the side panel and enter a TypeSafe AI key (the default model is the pinned `jev-1.13.0`; the model setting is separate). The rules run first. Jev only receives unresolved radio, select and checkbox questions, the options actually offered by the carrier, the active driver or vehicle context, the relevant intake facts and carrier-scoped TNI rules. It returns an exact option or **Leave for agent** with a short reason. It does not generate or type names, identifiers, dates, amounts or other free text.
 
-With the AI assistant on, the questions on the page, the intake and TNI's rules are sent to OpenAI with the agent's key.
+**Accept** puts a suggestion in (marked **purple** on the page), and **Dismiss** drops it. A cited intake or rule fact must exist, and a second verification step must confirm that the selected option follows from the cited evidence before a choice can be considered for automatic selection. Numeric confidence or probability is only a model signal; it is not a measured accuracy rate. Ambiguous or unsupported questions are left for the agent. MVR/CLUE orders, driver exclusions, signatures/authorisations, payment details and typed identifiers are never sent to Jev. **Let the AI make selections on the page** is opt-in and can select only choice controls when the conservative checks pass. Its picks are listed at the end of the panel's report and in a note at the bottom of the rater page, and Continue is not clicked until the agent approves them (**Approve and continue**, or **Reject** one to answer it yourself). Architecture, safety rules and evaluation plan: [docs/ai-assistant.md](docs/ai-assistant.md).
 
-The client data lives only in Chrome's session storage (in memory) and is cleared when Chrome closes or you click **Clear**. It leaves the computer only when the AI assistant is on (sent to OpenAI with the agent's key).
+With the AI assistant on, the unresolved carrier questions, their available options, the active intake context and the relevant TNI rules are sent directly to TypeSafe AI using the agent's Jev key. The key is stored per device and never included in usage logs. Client data leaves the computer only when the AI assistant is enabled.
+
+The client data lives only in Chrome's session storage (in memory) and is cleared when Chrome closes or you click **Clear**. It leaves the computer only when the AI assistant is on (sent directly to TypeSafe AI with the agent's Jev key).
 
 ## Setting up a carrier: page captures
 

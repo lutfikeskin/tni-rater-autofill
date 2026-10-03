@@ -413,6 +413,27 @@ test('vehicle-named additional coverage q200F is mapped and does not block Rates
   }
 });
 
+test('TX refrigeration options fill from the intake without an AI review stop', async () => {
+  for (const selected of [null, false, true]) {
+    const h = harness({ search: '?pageName=CoveragesRates' });
+    const radios = ['Yes, match Motor Truck Cargo limits', 'No'].map((value, i) => makeInput({
+      id: i ? 'reefer-no' : `f_U${'A'.repeat(32)}215C_1_1`, name: 'string_215C', type: 'radio', value,
+    }));
+    h.document.body.append(...radios);
+    const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: { reeferBreakdown: selected }, claims: {} };
+    const plan = buildPlan(record, progressive).filter(s => s.q === '215C');
+    const report = await h.kit.fill(plan, { replaceChoices: true });
+    assert.equal(radios.find(r => r.checked)?.value, selected === true ? 'Yes, match Motor Truck Cargo limits' : 'No');
+    assert.equal(report.blockers.length, 0);
+    assert.equal(report.unknown.length, 0);
+    if (selected === true) {
+      record.coverage.reeferBreakdown = false;
+      await h.kit.fill(buildPlan(record, progressive).filter(s => s.q === '215C'), { replaceChoices: true, skip: ['215C'] });
+      assert.equal(radios[0].checked, true, 'an agent override remains protected');
+    }
+  }
+});
+
 test('Freight Hauler searches the remote business dropdown and verifies a collapsed General Freight summary', async () => {
   for (const offered of ['General Freight Hauler', 'General Freight Trucking']) {
     const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
@@ -1377,4 +1398,31 @@ test('an answer the page marks invalid after another change is picked again, the
       assert.equal(report.failed.length, 0, JSON.stringify(report.failed));
     } else assert.ok(report.failed.some((x) => x.key === 'limit'), 'still invalid: the agent\'s');
   }
+});
+
+test('Jev answers refuse changed values, options, sections and page snapshots', async () => {
+  const h = harness();
+  const field = new SelectNode([
+    { text: 'Select one', value: '' }, { text: 'Consumer Goods', value: 'cg' }, { text: 'Building Materials', value: 'bm' },
+  ], { id: 'commodity', ariaLabel: 'Commodity category' });
+  h.document.body.append(field);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const item = report.unknown.find(x => x.label === 'Commodity category');
+  const expected = { kind: item.controlKind, section: item.section || null, options: [...item.options], current: item.current };
+  const answer = { key: item.key, label: item.label, value: 'Consumer Goods', expected };
+  const snapshot = h.kit.decisionSnapshot();
+  field.value = 'bm';
+  const [changed] = await h.kit.answer([answer], [snapshot]);
+  assert.equal(changed.ok, false);
+  assert.equal(field.value, 'bm', 'manual choice is preserved');
+  const [valueChanged] = await h.kit.answer([answer]);
+  assert.equal(valueChanged.ok, false);
+  field.value = '';
+  const [optionsChanged] = await h.kit.answer([{ ...answer, expected: { ...expected, options: ['Other'] } }]);
+  assert.equal(optionsChanged.ok, false);
+  const [sectionChanged] = await h.kit.answer([{ ...answer, expected: { ...expected, section: 'Other vehicle' } }]);
+  assert.equal(sectionChanged.ok, false);
+  const [fresh] = await h.kit.answer([answer], [h.kit.decisionSnapshot()]);
+  assert.equal(fresh.ok, true);
+  assert.equal(field.value, 'cg');
 });

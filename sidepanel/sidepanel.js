@@ -7,7 +7,7 @@ import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import * as usage from './usage-log.js';
-import { collectItems, buildRequest, callModel, parseResponse, usageOf, AssistError, DEFAULT_MODEL, assistContextKey } from '../src/ai/assist.js';
+import { collectItems, suggest, settingsFrom, AssistError, DEFAULT_MODEL, POLICY_VERSION, assistContextKey } from '../src/ai/assist.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -829,8 +829,7 @@ async function capturePage() {
 // it's sure of", when the answer comes straight from the intake or a written TNI rule.
 
 async function aiSettings() {
-  const { aiOn = false, aiAuto = false, aiKey = '', aiModel = '' } = await usage.settings();
-  return { on: aiOn, auto: aiAuto, apiKey: aiKey, model: aiModel || DEFAULT_MODEL };
+  return settingsFrom(await usage.settings());
 }
 
 // ctx: { tabId, page, carrier } of the fill these frames came from.
@@ -840,42 +839,42 @@ async function runAssist(frames, ctx) {
   ctx = { ...ctx, contextKey: assistContextKey(record, active) };
   const cfg = await aiSettings();
   if (!cfg.on || !record || ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
-  const { items, blocked } = collectItems(frames);
+  const collected = collectItems(frames);
+  const items = collected.items.filter(x => !state.agentKeys.get(ctx.page)?.has(x.key));
+  const blocked = collected.blocked;
   if (!items.length) return;
   // Messages, the approval card and suggestions without a list item go above "Needs you".
   const holder = h('div', { class: 'ai-holder' });
   const head = $('report').querySelector('.needs-head');
   if (head) head.before(holder); else $('report').append(holder);
   if (!cfg.apiKey) {
-    holder.append(h('p', { class: 'muted small' }, 'The AI assistant is on but has no API key. Add one under AI assistant.'));
+    holder.append(h('p', { class: 'muted small' }, 'Jev needs a TypeSafe API key. Add it under Jev assistant; your previous OpenAI key is not used.'));
     return;
   }
   const run = ++state.aiRun;
+  ctx.run = run;
+  try {
+    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+  } catch { return; }
   const stale = () => run !== state.aiRun || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page
     || ctx.contextKey !== assistContextKey(state.intake?.record, state.active) || !holder.isConnected;
   // Reuse answers only for the same intake and active driver/vehicle.
-  const sigOf = (x) => [ctx.tabId, ctx.page, cfg.model, ctx.contextKey, `${x.key}|${x.label}|${x.options.join('¦')}`].join('\n');
+  const onPage = frames.flatMap(f => f.filled ?? []).map(x => ({ question: x.label, answer: x.shown, controlKind: x.controlKind }));
+  const sigOf = x => [ctx.tabId, ctx.page, cfg.model, POLICY_VERSION, ctx.contextKey, JSON.stringify([x.key, x.label, x.section, x.current, x.options, x.status, x.reason, onPage, ctx.snapshots])].join('\n');
   const missing = items.filter((x) => !state.aiCache.has(sigOf(x)));
   if (missing.length) {
-    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking the AI about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
+    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking Jev about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
     const started = Date.now();
-    const onPage = frames.flatMap((f) => f.filled ?? []).map((x) => ({ question: x.label, answer: x.shown }));
     const context = { record, carrier: ctx.carrier.id, page: ctx.page, active, onPage };
     const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
     try {
-      let json;
-      try {
-        json = await callModel({ apiKey: cfg.apiKey, body: buildRequest(missing, context, cfg) });
-      } catch (e) {
-        // A page's option texts can break the provider's schema rules: ask again with plain
-        // strings (the answers are still checked against the options here).
-        if (!(e instanceof AssistError) || !/schema/i.test(e.message)) throw e;
-        json = await callModel({ apiKey: cfg.apiKey, body: buildRequest(missing, context, { ...cfg, enums: false }) });
-      }
+      const result = await suggest(missing, context, cfg, { isStale: stale });
       if (stale()) return;
-      const fresh = parseResponse(json, missing, record);
-      fresh.forEach((x) => state.aiCache.set(sigOf(x), { ...x, contextKey: ctx.contextKey }));
-      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter((x) => !x.leave).length, leave: fresh.filter((x) => x.leave).length, autoOk: fresh.filter((x) => x.autoOk).length, ...usageOf(json) });
+      const fresh = result.suggestions;
+      fresh.forEach(x => state.aiCache.set(sigOf(x), { ...x, contextKey: ctx.contextKey }));
+      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
+        leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length,
+        tokensIn: result.tokensIn, tokensOut: result.tokensOut });
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : `Something went wrong (${String(e?.message ?? e).slice(0, 120)}).`;
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
@@ -933,14 +932,23 @@ async function applyAi(list, ctx, decision) {
   if (state.filling) return false;
   if (state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return false;
   if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return false;
+  if (ctx.run !== undefined && ctx.run !== state.aiRun) return false;
+  list = list.filter(x => ['radio', 'select', 'checkbox'].includes(x.controlKind) && !x.leave && !state.agentKeys.get(ctx.page)?.has(x.key) && (decision !== 'auto' || x.autoOk));
+  if (!list.length) return false;
   state.filling = true;
   await tellRecorder('pause');
   try {
+    const current = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+    if (JSON.stringify(current) !== JSON.stringify(ctx.snapshots)) {
+      for (const x of list) x.error = 'the page changed; click Fill this page for fresh suggestions';
+      return false;
+    }
     const answers = list.map((x) => ({
       key: x.key, label: x.label, value: x.choice,
+      expected: { kind: x.controlKind, section: x.section, options: x.options, current: x.current },
       note: `${decision === 'auto' ? 'selected by the AI' : 'AI suggestion you accepted'}: ${x.tip}`.slice(0, 240),
     }));
-    const results = (await runKit(ctx.tabId, ctx.carrier, (a) => globalThis.__raterKit.answer(a), [answers])).flatMap((r) => r.result ?? []);
+    const results = (await runKit(ctx.tabId, ctx.carrier, (a, snapshots) => globalThis.__raterKit.answer(a, snapshots), [answers, ctx.snapshots.map(r => r.result)])).flatMap((r) => r.result ?? []);
     const keys = state.agentKeys.get(ctx.page) ?? new Set();
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
@@ -956,6 +964,7 @@ async function applyAi(list, ctx, decision) {
       if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
     }
     state.agentKeys.set(ctx.page, keys);
+    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     return true;
   } catch (e) {
     for (const x of list) x.error = `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
@@ -972,6 +981,7 @@ function aiDecisionEvent(x, ctx, decision) {
   return {
     type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
     decision, choice: x.controlKind !== 'text' && x.choice ? redact(x.choice) : undefined,
+    model: x.model, policy: x.policy, probability: x.probability, support: x.support, evidenceProbability: x.evidenceProbability,
     confidence: x.confidence, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
   };
 }
@@ -991,7 +1001,28 @@ function renderAi(holder, suggestions, ctx) {
   const pending = suggestions.filter((x) => x.done === 'auto' && !x.approved && !x.rejected);
   const canContinue = $('auto-advance').checked && !!ctx.carrier.advance;
   const decide = async (list, decision) => {
+    if (state.filling || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return;
     if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
+    if (decision === 'approved') {
+      let current;
+      try { current = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot()); }
+      catch {
+        for (const x of list) x.error = 'the page is unavailable; return to it and run Fill again';
+        rerender();
+        return;
+      }
+      if (JSON.stringify(current) !== JSON.stringify(ctx.snapshots)) {
+        const keys = state.agentKeys.get(ctx.page);
+        for (const x of list) {
+          x.rejected = true;
+          x.error = 'the page changed after this choice; run Fill again and review it';
+          keys?.delete(x.key);
+        }
+        await syncAiBanner(ctx);
+        rerender();
+        return;
+      }
+    }
     for (const x of list) {
       if (decision === 'approved') x.approved = true; else x.rejected = true;
       if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, decision));
@@ -1009,7 +1040,7 @@ function renderAi(holder, suggestions, ctx) {
   };
   const why = (x) => [
     x.basis === 'intake' ? `from the intake: ${x.intakePath}` : x.basis === 'tni_rule' ? 'TNI rule' : x.basis === 'page' ? 'from other answers on the page' : x.basis === 'judgement' ? 'AI judgement' : null,
-    `${x.confidence} confidence`,
+    `Jev confidence ${Math.round(x.confidence * 100)}% (not measured accuracy)`,
   ].filter(Boolean).join(' · ');
   const answer = (x) => (x.controlKind === 'text' ? `typing “${x.choice}”` : `“${x.choice}”`);
   // What goes on an item: the suggestion and its buttons, or what happened to it.
@@ -1058,11 +1089,19 @@ function renderAi(holder, suggestions, ctx) {
 }
 
 function wireAi() {
-  const save = (patch) => usage.saveSettings(patch).then(renderAiSettings);
+  const save = async patch => {
+    state.aiRun++;
+    if (Object.hasOwn(patch, 'jevKey')) {
+      for (const [key, value] of state.aiCache) if (!value.done) state.aiCache.delete(key);
+    }
+    // Keep pending approvals; their cache keys remain bound to the original model and context.
+    await usage.saveSettings(patch);
+    await renderAiSettings();
+  };
   $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
   $('ai-auto').addEventListener('change', (e) => save({ aiAuto: e.target.checked }));
-  $('ai-key').addEventListener('change', (e) => save({ aiKey: e.target.value.trim() }));
-  $('ai-model').addEventListener('change', (e) => save({ aiModel: e.target.value.trim() }));
+  $('ai-key').addEventListener('change', (e) => save({ jevKey: e.target.value.trim() }));
+  $('ai-model').addEventListener('change', (e) => save({ jevModel: e.target.value.trim() }));
 }
 
 async function renderAiSettings() {
@@ -1072,7 +1111,7 @@ async function renderAiSettings() {
   $('ai-auto').disabled = !cfg.on;
   if (document.activeElement !== $('ai-key')) $('ai-key').value = cfg.apiKey;
   if (document.activeElement !== $('ai-model')) $('ai-model').value = cfg.model === DEFAULT_MODEL ? '' : cfg.model;
-  $('ai-note').textContent = !cfg.on ? '' : !cfg.apiKey ? 'On, but needs an API key.' : `On · ${cfg.model}${cfg.auto ? ' · picks answers, you approve them before Continue' : ' · suggestions only'}`;
+  $('ai-note').textContent = !cfg.on ? '' : !cfg.apiKey ? 'On, but needs a TypeSafe API key.' : `On · ${cfg.model}${cfg.auto ? ' · picks answers, you approve them before Continue' : ' · suggestions only'}`;
   renderUsage();
 }
 
@@ -1113,7 +1152,7 @@ async function renderHealth({ n, agent, serverUrl, up }) {
   // Things the agent fixes (one card, a button each) and things that need nothing from them.
   const setup = [
     !agent && { title: 'Add your initials', text: 'So your quotes are counted as yours.', button: 'Add', go: () => openSettings('agent') },
-    ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: "They're turned on, but no OpenAI key is set.", button: 'Add key', go: () => openSettings('ai-key') },
+    ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: "They're turned on, but no TypeSafe key is set.", button: 'Add key', go: () => openSettings('ai-key') },
     up.state === 'off' && { title: 'Usage log has no server', text: 'Nothing is recorded centrally (Export log only).', button: 'Set up', go: () => openSettings('server-url') },
   ].filter(Boolean);
   const info = up.state === 'error'
