@@ -1415,7 +1415,10 @@ test('rates helpers wait while the liability limit differs from the intake; a li
       { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium' },
     ], { maxRounds: 4, skip: agentSet ? ['liab-limit'] : [] });
     assert.equal(!!recalc._clicked, agentSet, agentSet ? 'the agent chose the limit: Recalculate' : 'limit differs from the intake: Recalculate waits');
-    if (!agentSet) assert.ok(report.blocked.some((b) => b.id === 'recalculate'));
+    if (!agentSet) {
+      assert.ok(report.blocked.some((b) => b.id === 'recalculate' && /waiting for coverage\.autoLiabLimit/.test(b.why)), 'says what it waits for');
+      assert.ok(report.blockers.some((b) => /^button: recalculate \(waiting for coverage\.autoLiabLimit\)$/.test(b)));
+    }
   }
 });
 

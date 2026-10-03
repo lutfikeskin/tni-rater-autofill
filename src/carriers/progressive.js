@@ -227,10 +227,14 @@ export const progressive = {
     { id: 'billPlan', page: 'CoveragesRates', text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.gl !== true },
     // Back from the bill plan Progressive has usually recalculated already (Recalculate is gone,
     // Print, Email, Fax is there): Recalculate only when the rates say they're out of date.
-    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: ['coverage.autoLiabLimit'], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium' },
+    // Recalculate and Print follow the bill plan, which waited for a resolved liability limit.
+    // They don't re-check that field: back from the bill plan, the reloaded Rates page failed the
+    // same check on a limit that was fine (FL and NJ runs: Print, Email, Fax never ran).
+    // With GL there is no bill plan step of ours: they keep the liability check instead.
+    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium' },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal.
-    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, after: ['coverage.autoLiabLimit'], afterPages: ['ChangePaymentPlan'] },
+    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'] },
     // This page may have been opened by the agent or restored after a panel reload. Its own
     // document and delivery controls establish readiness; no in-memory navigation history is needed.
     // Again on every return to the page (the agent went back, changed something, and reprints).

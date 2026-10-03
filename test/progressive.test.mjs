@@ -134,7 +134,7 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const recalc = actions.find((step) => step.action === 'recalculate');
   const bill = actions.find((step) => step.action === 'billPlan');
   // Cargo, then bill plan options (automatic payments), back to Rates, then Recalculate.
-  assert.deepEqual(recalc.afterActions, []);
+  assert.deepEqual(recalc.afterActions, ['billPlan']);
   assert.deepEqual(recalc.afterPages, ['ChangePaymentPlan']);
   assert.equal(recalc.verify, 'premium');
   assert.equal(bill.needsPremium, false);
@@ -143,7 +143,7 @@ test('Progressive coverage and helper ordering are conservative', () => {
   // Back from the bill plan, Recalculate only when the rates are stale; Print doesn't wait for it.
   assert.equal(recalc.needsRecalculation, true);
   const print = actions.find((step) => step.action === 'print');
-  assert.deepEqual(print.afterActions, []);
+  assert.deepEqual(print.afterActions, ['billPlan'], 'Print follows our bill plan; it does not wait for Recalculate');
   assert.deepEqual(print.afterPages, ['ChangePaymentPlan']);
   const addDriver = actions.find((step) => step.action === 'addDriver:0');
   assert.deepEqual(addDriver.unlessActions, ['driverEntered:0']);
@@ -380,9 +380,17 @@ test('Progressive NJ run: vehicle registrant, VIN-lookup safety boxes kept, Rate
   for (const q of ['2C2C', '2C2D', '2C2E', '2C45', '2C46', '2C47', '2C48']) assert.equal(byQ(plan, q).ignore, true, q);
   assert.equal(byQ(plan, '2007').ignore, true);
   assert.match(byQ(plan, '2007').emptyNote, /carry over/, 'an empty carryover goes to the agent');
-  for (const id of ['billPlan', 'recalculate', 'print']) {
-    assert.deepEqual(plan.find((s) => s.action === id).after, ['coverage.autoLiabLimit'], `${id} waits for the liability limit`);
+  // The bill plan waits for the liability limit; Recalculate and Print follow the bill plan and
+  // don't re-check the limit on the reloaded Rates page (FL/NJ runs).
+  assert.deepEqual(plan.find((s) => s.action === 'billPlan').after, ['coverage.autoLiabLimit']);
+  for (const id of ['recalculate', 'print']) {
+    const step = plan.find((s) => s.action === id);
+    assert.deepEqual(step.after, [], id);
+    assert.deepEqual(step.afterActions, ['billPlan'], `${id} needs our bill plan click`);
   }
+  const gl = structuredClone(baseRecord());
+  gl.coverage.gl = true;
+  assert.deepEqual(buildPlan(gl, progressive, {}).find((s) => s.action === 'print').after, ['coverage.autoLiabLimit'], 'with GL (no bill plan of ours) the limit check stays');
   assert.deepEqual(plan.find((s) => s.action === 'recalculate').afterPages, ['ChangePaymentPlan']);
 });
 

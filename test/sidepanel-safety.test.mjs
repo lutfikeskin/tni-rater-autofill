@@ -319,3 +319,18 @@ test('an AI pick made before an intake or driver/vehicle change still holds Cont
   assert.equal(left.length, 1, 'once rejected it stops holding Continue');
   assert.equal(left[0], fresh);
 });
+
+test('a quote opened in a new tab is followed once it loads, even while the old portal tab is followed', () => {
+  let refreshed = 0;
+  const context = { state: { tab: { id: 1 } }, refreshTab: () => { refreshed++; } };
+  vm.createContext(context);
+  vm.runInContext(extractFunction('onTabUpdated'), context);
+  context.onTabUpdated(2, { status: 'complete' }, { id: 2, active: true });
+  assert.equal(refreshed, 1, 'the active new tab finished loading');
+  context.onTabUpdated(3, { status: 'complete' }, { id: 3, active: false });
+  assert.equal(refreshed, 1, 'a background tab loading elsewhere is ignored');
+  context.onTabUpdated(1, { url: 'https://example.test/next' }, { id: 1, active: false });
+  assert.equal(refreshed, 2, 'the followed tab still counts');
+  context.onTabUpdated(2, { title: 'x' }, { id: 2, active: true });
+  assert.equal(refreshed, 2, 'no reload or address change: nothing to do');
+});
