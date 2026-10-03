@@ -218,13 +218,15 @@ export const progressive = {
     // Rates, as TNI agents work it: once cargo is added (and no GL is requested), open the bill
     // plan options, pick automatic payments there, come back (Continue), then Recalculate, then
     // Print, Email, Fax. With GL requested the agent does the rates page by hand.
-    { id: 'billPlan', page: 'CoveragesRates', text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.gl !== true },
+    // None of the rates helpers run while the liability limit is unresolved (missing, rejected or
+    // different from the intake); a limit the agent set themselves counts as resolved.
+    { id: 'billPlan', page: 'CoveragesRates', text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.gl !== true },
     // Back from the bill plan Progressive has usually recalculated already (Recalculate is gone,
     // Print, Email, Fax is there): Recalculate only when the rates say they're out of date.
     { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: ['coverage.autoLiabLimit'], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium' },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal.
-    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, afterPages: ['ChangePaymentPlan'] },
+    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, after: ['coverage.autoLiabLimit'], afterPages: ['ChangePaymentPlan'] },
     // This page may have been opened by the agent or restored after a panel reload. Its own
     // document and delivery controls establish readiness; no in-memory navigation history is needed.
     // Again on every return to the page (the agent went back, changed something, and reprints).
@@ -361,6 +363,14 @@ export const progressive = {
     // Loan / lease: from the intake's vehicle ownership (also read from the claims-box notes);
     // owned or not stated is TNI's standard No.
     { q: '2CA7', name: 'Loan / lease (from ownership, standard: No)', kind: 'choice', label: 'loan lease', value: loanLease },
+    // The same answer shown again on Rates (NJ), with its own wording: Progressive carries it over.
+    // Left as Progressive set it, but a carryover that didn't happen (empty) goes to the agent.
+    { q: '2007', name: 'Loan / lease on Rates (carried over from Add Vehicle)', ignore: true, emptyNote: 'Loan / lease should carry over from Add Vehicle but is empty here: answer it yourself.' },
+    // NJ: who the vehicle is registered to.
+    { q: '2C97', name: 'Vehicle registrant (standard: Named insured)', kind: 'choice', label: 'vehicle registrant', value: () => 'Named insured' },
+    // NJ safety equipment boxes: the VIN lookup ticks what the vehicle has; left as Progressive set them.
+    ...[['2C2C', 'Anti-lock brakes'], ['2C2D', 'Traction control'], ['2C2E', 'Five MPH bumpers'], ['2C45', 'Anti-theft device 1'], ['2C46', 'Anti-theft device 2'], ['2C47', 'Anti-theft device 3'], ['2C48', 'Anti-theft device 4']]
+      .map(([q, name]) => ({ q, name: `${name} (from VIN lookup)`, ignore: true })),
     { q: '2CCC', name: 'Comprehensive / collision (standard: Yes)', kind: 'bool', label: 'comprehensive or collision', value: () => true },
     { q: '2CE0', name: 'Attached equipment amount (only with more than $2,000)', ignore: true },
     { q: '2CCE', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment },

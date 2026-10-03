@@ -596,6 +596,12 @@ async function fillPage({ auto = false } = {}) {
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
   if (state.filling || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
+  // The carrier's portal pages outside a quote (Progressive's home / quote search) are never
+  // filled, and the AI isn't asked about them.
+  if (!onQuotePage()) {
+    if (!auto) $('report').replaceChildren(h('p', { class: 'muted center' }, 'This is the portal, not a quote page. Open or start a quote, then fill.'));
+    return;
+  }
   if (!auto) state.autoPaused = false;
   state.filling = true;
   clearTimeout(state.autoTimer);

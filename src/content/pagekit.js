@@ -1102,7 +1102,10 @@
 
     function clickNextAction(controls, immediateOnly = false) {
       const pairs = assign(controls, plan);
-      const has = (path) => pairs.some(({ step, control }) => step.path === path && !step.ignore && step.value != null && agreesWith(step, control) && !invalidControl(control));
+      // A prerequisite holds when its field shows the intake's answer, or an answer the agent chose
+      // themselves (their correction counts as resolved). Missing, rejected or different: not yet.
+      const has = (path) => pairs.some(({ step, control }) => step.path === path && !step.ignore && !invalidControl(control)
+        && ((step.value != null && agreesWith(step, control)) || (skipKeys.has(fieldKey(control)) && hasValue(control))));
       const blocked = [];
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         if (clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;

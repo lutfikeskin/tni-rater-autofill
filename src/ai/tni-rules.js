@@ -35,6 +35,7 @@ export const TNI_RULES = `
 - Comprehensive / collision: Yes, $1,000 deductibles unless the intake asks for others.
 - Permanently attached equipment: "$0 to $2,000", and tick "Vehicle has no equipment" (standard). The vehicle value question that follows ("If this vehicle was sold today…") is the intake's vehicle value.
 - On the vehicle list page, vehicles found by the USDOT lookup are listed; add the intake's vehicle with Add → Add Vehicle.
+- Vehicle registrant (NJ): Named insured. NJ safety equipment boxes (anti-lock brakes, traction control, 5 MPH bumpers, anti-theft devices): keep what the VIN lookup set.
 - Vehicle value: the intake's vehicle value. GVW, annual mileage, anti-lock brakes, driver-side airbag and anti-theft device come from the VIN lookup: keep Progressive's answers.
 
 ## Drivers (AddDriver)
