@@ -1,5 +1,7 @@
 # Publishing to the Chrome Web Store (private, for the pilot agents)
 
+Read this only for an authorized distribution task. Use [testing](testing.md) for release checks; editing documentation or fixing a local rule does not itself require an upload.
+
 A private or unlisted listing lets agents install with one click and get updates automatically,
 without Developer mode.
 
@@ -65,7 +67,7 @@ Chrome updates installed copies by itself within a few hours of approval.
 Create the agents' keys in TNI's own OpenAI organisation (one project for the pilot, one key per
 agent, a monthly budget on the project), so each key can be revoked on its own and usage shows
 per agent. When the pilot grows, the roadmap's server-held key (see `docs/ai-assistant.md`)
-removes keys from the agents' browsers.
+could remove keys from the agents' browsers if that proposed capability is implemented.
 
 ## Store listing text (paste as is)
 
@@ -86,7 +88,7 @@ What it does
 • Reads the quote application on your computer and lets you check and correct it before filling.
 • Fills one page at a time, checks that each answer was kept by the carrier's page, and marks every field: filled, needs you, or couldn't fill.
 • Moves to the next step only when nothing is left for you, and never binds, buys, submits or signs anything.
-• Leaves MVR/CLUE orders, driver exclusions, declarations and payment details to you.
+• Leaves MVR/CLUE orders, declarations and bank/card details to you. Some coverage and exclusion answers use programmed defaults; review them for this client's circumstances.
 • Optional AI tips (with your own OpenAI key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
 
 Privacy

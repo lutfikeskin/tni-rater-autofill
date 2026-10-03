@@ -1,8 +1,10 @@
 # TNI Rater Autofill
 
-A Chrome extension that reads a client's **TNI Commercial Insurance Quote Application** (the fillable PDF) and fills in Progressive and GEICO rater pages from it. An optional AI assistant (OpenAI GPT-6 Luna) suggests answers, with a short tip, for the questions the rules leave for the agent.
+A Chrome extension that reads a client's **TNI Commercial Insurance Quote Application** (the fillable PDF) and fills Progressive, AmWINS, and generic GEICO rater fields from it. An optional AI assistant (OpenAI GPT-6 Luna) suggests answers, with a short tip, for the questions the rules leave for the agent.
 
-The agent stays in control. The extension fills what it can on the page in front of them and marks everything else. It never clicks Next or Submit, never touches password fields, and by default leaves anything the rater already filled in (for example from a DOT lookup) alone.
+The extension fills supported fields, reports unresolved questions, and preserves agent corrections. It can use carrier-specific Continue or Save & Continue actions when enabled and no review blockers remain; it never binds, buys, or submits the application. Some carrier defaults replace prefilled choices, so review the result.
+
+For development, [AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md) contain the same short guidance. Use their task-specific links only when changing the corresponding system. The [architecture guide](docs/architecture.md) distinguishes implemented behavior from the project's remaining goals.
 
 ## Install
 
@@ -11,7 +13,7 @@ Agents install it from its private Chrome Web Store listing (see [docs/chrome-we
 1. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and pick this folder.
 3. Pin the extension, then click its icon to open the side panel.
-4. Under **Usage log**, enter your initials. **Server** defaults to `http://localhost:8787` (start it with `npm run server`).
+4. Under **Usage log**, enter your initials. **Server** defaults to TNI's central collection server. For local development, set it to `http://localhost:8787` and start `npm run server`.
 
 ## Using it
 
@@ -19,10 +21,10 @@ Agents install it from its private Chrome Web Store listing (see [docs/chrome-we
 2. Work through **Check before quoting**. These are things the form got wrong or left ambiguous, such as an address with no commas, a VIN that fails its check digit, answers typed into the claims box, or a missing vehicle ownership answer. Edit any value in the sections below; your edits are what gets filled.
 3. Open the rater page and click **Fill this page**. If the client has several drivers or vehicles, pick which one the current page is about first.
 4. Look at the marks on the page:
-   - **green**: filled from the intake
+   - **green**: filled by a rule, using intake data or a programmed standard
    - **amber dashed**: needs you (not on the intake, or required by the rater)
    - **red dashed**: couldn't fill (for example, no dropdown option matched). The side panel lists the options it saw.
-5. Review, then click Next yourself and repeat on the next page.
+5. Review unresolved questions and AI selections. With automatic continuation enabled, supported pages advance once blockers are resolved; otherwise continue manually.
 
 ### AI assistant
 
@@ -30,7 +32,7 @@ Turn it on under **AI assistant** in the side panel and paste your OpenAI API ke
 
 With the AI assistant on, the questions on the page, the intake and TNI's rules are sent to OpenAI with the agent's key.
 
-The client data lives only in Chrome's session storage (in memory) and is cleared when Chrome closes or you click **Clear**. It leaves the computer only when the AI assistant is on (sent to OpenAI with the agent's key).
+The loaded intake record is kept in Chrome's session storage and cleared when Chrome closes or you click **Clear**. Filled answers go into the carrier's website. With AI enabled, the intake and eligible page context are also sent to OpenAI. Separately, redacted usage events are queued locally and uploaded to TNI's server.
 
 ## Setting up a carrier: page captures
 
@@ -71,7 +73,7 @@ What's recorded (`src/usage.js`, `src/content/recorder.js`):
 
 Never recorded: client names, numbers, addresses, or anything typed into text boxes; screenshots; keystrokes; other websites. Client names are also redacted from labels and options.
 
-Events wait in `chrome.storage.local` on the agent's computer and are uploaded every minute to the collection server set under **Usage log → Server** (default `http://localhost:8787`). They're removed from the computer only once the server has stored them, so nothing is lost while the server is down. **Export log** still works as a fallback.
+Events wait in `chrome.storage.local` on the agent's computer and are uploaded every minute to the collection server set under **Usage log → Server** (TNI's central server by default). Stored events are removed after acknowledgement and failed uploads retry. The local queue is capped, so a prolonged outage can discard the oldest events. **Export log** works as a fallback. See [learning](docs/learning.md) for the collection and review limits.
 
 ### Collection server
 
