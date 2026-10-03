@@ -4,7 +4,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES } from './util.js';
+import { STATES, ownerIsDriver } from './util.js';
 
 const ROWS = [1, 2, 3, 4];
 // The marital-status dropdowns have odd hierarchical names; positions on the page put them on
@@ -345,8 +345,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   });
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
   if (a.ownerDrives && a.owner1) {
-    const ownerLast = a.owner1.split(' ').at(-1).toLowerCase();
-    if (!record.drivers.some((d) => d.last?.toLowerCase() === ownerLast)) {
+    if (!record.drivers.some((d) => ownerIsDriver(a.owner1, d))) {
       check('drivers.owner-not-listed', 'drivers', `Owner drives, but "${a.owner1}" isn't in the driver list.`);
     }
   }

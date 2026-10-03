@@ -20,7 +20,7 @@
 // Follow-up questions the intake doesn't cover use TNI's standard answers (the agent's own
 // choices on live quotes). The agent changes them for the exceptions.
 
-import { priorPolicyExpired } from '../util.js';
+import { priorPolicyExpired, nameWords } from '../util.js';
 
 // Values that Progressive asks the agent to attest to must come from an explicit intake field.
 // Keep these helpers conservative: an absent value is a review item, not a reason to guess.
@@ -34,10 +34,11 @@ const explicitBoolean = (record, path) => {
 // The business owner, matched to their driver row (for date of birth and a clean name split).
 export function owner(r) {
   const full = r.applicant.owner1 ?? '';
-  const last = full.split(/\s+/).at(-1)?.toLowerCase();
+  const last = nameWords(full).at(-1);
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
   const fullMatches = r.drivers.filter((d) => nameKey(full) && nameKey(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''}`) === nameKey(full));
-  const lastMatches = r.drivers.filter((d) => last && d.last?.toLowerCase() === last);
+  // The owner's last word among the driver's last-name words (two-word surnames).
+  const lastMatches = r.drivers.filter((d) => last && nameWords(d.last).includes(last));
   // Some intakes repeat the first name in the sole driver's last-name box. Only connect
   // that DOB when the intake explicitly says the owner drives and the owner's first name agrees.
   const sole = r.drivers.length === 1 ? r.drivers[0] : null;

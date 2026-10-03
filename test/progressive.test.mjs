@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPlan } from '../src/plan.js';
-import { progressive } from '../src/carriers/progressive.js';
+import { progressive, owner } from '../src/carriers/progressive.js';
 
 const baseRecord = () => ({
   applicant: {
@@ -381,4 +381,13 @@ test('Progressive NJ run: vehicle registrant, VIN-lookup safety boxes kept, Rate
     assert.deepEqual(plan.find((s) => s.action === id).after, ['coverage.autoLiabLimit'], `${id} waits for the liability limit`);
   }
   assert.deepEqual(plan.find((s) => s.action === 'recalculate').afterPages, ['ChangePaymentPlan']);
+});
+
+test('the owner with a two-word surname is matched to their driver row (date of birth)', () => {
+  const record = baseRecord();
+  record.applicant.owner1 = 'Sample Vinicius Testa Examplo';
+  record.drivers = [{ first: 'Sample Vinicius', middle: null, last: 'Testa Examplo', dob: '01/02/1980' }];
+  assert.equal(owner(record).driver?.dob, '01/02/1980');
+  record.applicant.owner1 = 'Sample Examplo';
+  assert.equal(owner(record).driver?.dob, '01/02/1980', 'surname word matches the last-name box');
 });

@@ -325,3 +325,14 @@ test('AmWINS pages are recognised as a carrier, not as practice', () => {
   assert.equal(c.practice, undefined);
   assert.equal(carrierForUrl('https://amwinsadmittedplacement.com.evil.test/'), null);
 });
+
+test('an owner whose surname has two words is found in the driver list', () => {
+  const people = { ...raw, owner_drives: true, owner_name_1: 'SAMPLE VINICIUS TESTA EXAMPLO',
+    drv_first_1: 'SAMPLE VINICIUS', drv_last_1: 'TESTA EXAMPLO', drv_first_2: '', drv_last_2: '', drv_first_3: '', drv_last_3: '', drv_first_4: '', drv_last_4: '' };
+  const listed = normalizeIntake(people, { today: new Date('2026-09-30') });
+  assert.ok(!listed.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'same person across the name boxes');
+  const lastOnly = normalizeIntake({ ...people, owner_name_1: 'SAMPLE EXAMPLO' }, { today: new Date('2026-09-30') });
+  assert.ok(!lastOnly.warnings.some((w) => w.code === 'drivers.owner-not-listed'), "owner's surname is one of the driver's last-name words");
+  const other = normalizeIntake({ ...people, owner_name_1: 'SOMEONE ELSE' }, { today: new Date('2026-09-30') });
+  assert.ok(other.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a different person still warns');
+});

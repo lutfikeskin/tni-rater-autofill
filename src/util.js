@@ -58,3 +58,18 @@ export function priorPolicyExpired(record, policy = record.priorInsurance?.[0]) 
   const reference = parse(record.applicant?.applicationDate) ?? Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
   return expiry != null && expiry < reference;
 }
+
+// A person's name as lowercase words without accents ("Campelo Kraychete" -> ["campelo", "kraychete"]).
+export function nameWords(name) {
+  return String(name ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().match(/\p{L}+/gu) ?? [];
+}
+
+// The intake's owner name is this driver: the same words across the name boxes, or the owner's
+// last word is one of the driver's last-name words (two-word surnames: "CAMPELO KRAYCHETE").
+export function ownerIsDriver(ownerName, d) {
+  const owner = nameWords(ownerName);
+  if (!owner.length || !d) return false;
+  const driver = nameWords(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''}`);
+  if (owner.length === driver.length && [...owner].sort().join(' ') === [...driver].sort().join(' ')) return true;
+  return nameWords(d.last).includes(owner.at(-1));
+}
