@@ -73,7 +73,7 @@ try {
   await openMock();
   // Prefer one of the actual requested synthetic PDFs; fixture keeps the test portable.
   const pool = path.join(root, 'dist/synthetic-intakes');
-  const manifest = fs.existsSync(path.join(pool, 'manifest.json')) && JSON.parse(fs.readFileSync(path.join(pool, 'manifest.json')));
+  const manifest = fs.existsSync(path.join(pool, 'manifest.json')) ? JSON.parse(fs.readFileSync(path.join(pool, 'manifest.json'))) : null;
   const sample = manifest?.cases.find(c => c.id.startsWith('03-'));
   await panel.setInputFiles('#file', sample ? path.join(pool, sample.pdf) : path.join(root, 'test/fixtures/sample-intake.pdf'));
   await panel.locator('#tab-fill').click();
@@ -92,9 +92,10 @@ try {
   verify('same context reuses its AI response', requests, 1);
   await panel.screenshot({ path: path.join(out, 'suggestion-edited.png'), fullPage: true });
 
-  // New intake clears earlier decisions; auto-select still waits for agent approval.
+  // Start a fresh intake; auto-select still waits for agent approval.
   await panel.evaluate(() => chrome.storage.local.set({ settings: { aiOn: true, aiAuto: true,
     aiKey: 'synthetic-test-key', autoAdvance: true, serverUrl: '', serverToken: '' } }));
+  await panel.evaluate(() => chrome.storage.session.remove(['intake', 'session']));
   await panel.reload();
   await openMock();
   await panel.setInputFiles('#file', sample ? path.join(pool, sample.pdf) : path.join(root, 'test/fixtures/sample-intake.pdf'));
