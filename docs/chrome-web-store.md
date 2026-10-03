@@ -39,7 +39,7 @@ the store refuses a version it already has.
      usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, no client
      details). localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
-     page, sent to OpenAI when the AI assistant is on). TNI's compliance owner should confirm
+     page, sent to TypeSafe AI when the AI assistant is on). TNI's compliance owner should confirm
      these answers.
 4. **Distribution** → Visibility: *Private* (domain or trusted testers) or *Unlisted*.
 5. **Submit for review**. Reviews usually take from a few hours to a few days; the dashboard
@@ -51,8 +51,8 @@ Send them the listing link (dashboard → *Store listing* → view). In Chrome: 
 pin the extension → click it to open the side panel. Then, once each:
 
 - **Usage log → Your initials**. The usage log goes to TNI's server by itself (see hosting.md).
-- **AI assistant** → tick *Suggest answers*, paste their API key, leave the model blank for
-  `gpt-6-luna`. Leave *Let the AI select answers it's sure of* off for the first weeks of the
+- **Jev assistant** → tick *Suggest answers*, paste their API key, leave the model blank for
+  `jev-1.13.0`. Leave *Apply verified Jev choices automatically* off for the first weeks of the
   pilot.
 
 ## 5. Updates
@@ -62,10 +62,9 @@ Chrome updates installed copies by itself within a few hours of approval.
 
 ## API keys for the pilot
 
-Create the agents' keys in TNI's own OpenAI organisation (one project for the pilot, one key per
-agent, a monthly budget on the project), so each key can be revoked on its own and usage shows
-per agent. When the pilot grows, the roadmap's server-held key (see `docs/ai-assistant.md`)
-removes keys from the agents' browsers.
+Configure TypeSafe keys through TNI's account and enter them under **Jev assistant**.
+The old OpenAI key is not reused. Check available account controls for access and spending
+before a wider rollout. Live quality and latency testing requires a TypeSafe key.
 
 ## Store listing text (paste as is)
 
@@ -87,7 +86,7 @@ What it does
 • Fills one page at a time, checks that each answer was kept by the carrier's page, and marks every field: filled, needs you, or couldn't fill.
 • Moves to the next step only when nothing is left for you, and never binds, buys, submits or signs anything.
 • Leaves MVR/CLUE orders, driver exclusions, declarations and payment details to you.
-• Optional AI tips (with your own OpenAI key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
+• Optional AI tips (with your own TypeSafe AI key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
 
 Privacy
 The application stays on your computer for the session. To improve the extension, a usage log (which fields were filled, what you changed afterwards, problems you report) is sent to TNI's server; client names, numbers and anything you type are never included.

@@ -1,15 +1,17 @@
-# AI assistant: architecture and roadmap
+# AI assistant: rule-first Jev architecture
 
-The rules engine fills what TNI has written rules for. The AI assistant only looks at what's
-left: yellow (unfamiliar question), red (couldn't fill) and amber (needs you). It suggests an
-answer with a short tip, and the agent accepts or dismisses it. With **Let the AI make selections
-on the page** switched on, it selects dropdown/radio/checkbox answers itself (high or medium
-confidence; never typed text), marked purple. Its selections are listed at the end of the panel's
-report and in a note at the bottom of the rater page, and the page's Continue is not clicked
-until the agent approves them (or rejects one and answers it themselves).
+The rules engine remains the source of decisions that can be made exactly. It reads the intake,
+applies carrier mappings and TNI's written rules, and fills the page. The AI assistant handles the
+small remainder: an unresolved radio, select or checkbox where the carrier's available options do
+not have an exact deterministic mapping.
 
-Model: OpenAI **GPT-6 Luna** (`gpt-6-luna`) through the Responses API, with each agent's own API
-key (set under **AI assistant** in the side panel). Model name and key are per-agent settings.
+The provider is TypeSafe AI **Jev** (`jev-1.13.0` by default) through
+`https://api.typesafe.ai/v1/systemone`. The agent's Jev key and model are stored per device in the
+extension settings. The legacy OpenAI key and model settings are not sent to any provider.
+
+Jev is a choice and recommendation layer, not a replacement for the rule engine. It can return one
+of the options the page actually offers or `leave` for the agent. It does not create text for form
+fields, infer typed identifiers, click controls, navigate pages, perform lookups or submit a quote.
 
 ## Where it sits
 
@@ -19,11 +21,11 @@ flowchart LR
     PDF[Intake PDF] --> Panel
     subgraph Panel[Side panel]
       N[normalize.js<br/>client record + warnings]
-      P[plan.js + carriers/progressive.js<br/>TNI rules → fill steps]
-      A[ai/assist.js<br/>leftovers → request → checked suggestions]
+      P[plan.js + carrier rules<br/>TNI rules → fill steps]
+      A[ai/assist.js<br/>unresolved choices → Jev → evidence checks]
       UI[Suggestions<br/>Accept / Dismiss]
     end
-    subgraph Rater[Progressive page]
+    subgraph Rater[Carrier page]
       K[pagekit.js<br/>fill · answer · marks]
     end
     Panel -- fill(plan) --> K
@@ -31,9 +33,9 @@ flowchart LR
     A --> UI
     UI -- answer(choice) --> K
   end
-  A -- HTTPS, agent's API key --> O[(OpenAI Responses API<br/>gpt-6-luna)]
+  A -- HTTPS, Jev key --> O[(TypeSafe AI<br/>Jev jev-1.13.0)]
   Panel -- usage events<br/>ai_suggest / ai_decision --> S[(Usage server<br/>server/index.mjs)]
-  S --> L[npm run learn<br/>→ new TNI rules]
+  S --> L[npm run learn<br/>→ reviewed TNI rules]
   L -. reviewed rules .-> P
 ```
 
@@ -45,39 +47,46 @@ sequenceDiagram
   actor Agent
   participant Panel as Side panel
   participant Kit as pagekit (rater page)
-  participant AI as OpenAI gpt-6-luna
+  participant AI as TypeSafe AI Jev
 
   Agent->>Panel: Fill this page
   Panel->>Kit: fill(plan)
   Kit-->>Panel: report (filled, unknown, failed, noData, leftRequired)
-  Panel->>Panel: collectItems(): drop never-list questions (MVR/CLUE, exclusions, signatures, payment, typed IDs)
-  Panel->>AI: instructions + TNI rules (cached prefix) + intake + questions<br/>JSON schema: choice ∈ field's options ∪ {leave}
-  AI-->>Panel: per question: choice, tip, basis, intakePath, confidence
-  Panel->>Panel: parseResponse(): choice must be an option, cited intake path must exist, autoOk only if high + intake/rule
-  alt auto-select on and autoOk
+  Panel->>Panel: collectItems(): keep unresolved choice controls; drop never-list questions
+  Panel->>AI: current options + active intake facts + carrier-scoped TNI rules
+  AI-->>Panel: exact choice or leave + evidence + confidence
+  Panel->>Panel: check option, evidence, active context and stale request
+  Panel->>AI: proposed choice + selected evidence + active intake
+  AI-->>Panel: support probability (Noul)
+  Panel->>Panel: validate verification and automatic-selection thresholds
+  alt auto-select enabled and conservative checks pass
     Panel->>Kit: answer(choice)
     Kit-->>Panel: kept by the page? (settle + re-read) → purple mark
   end
-  Panel-->>Agent: suggestions with tips
+  Panel-->>Agent: suggestions with reasons and evidence
   Agent->>Panel: Accept
   Panel->>Kit: answer(choice)
   Kit-->>Panel: ok → purple mark / not kept → red mark + reason
 ```
 
-## What the AI may do
+## What Jev may do
 
 ```mermaid
 flowchart TD
   Q[Question left for the agent] --> NL{On the never-list?<br/>MVR/CLUE · exclude driver · sign/attest/authorise<br/>bank/card/SSN · typed VIN/licence/DOT/MC}
-  NL -- yes --> X[Not sent to the AI]
-  NL -- no --> M[AI answers]
-  M --> V{choice is one of<br/>the page's options?}
-  V -- no --> LV[Shown as 'leave for you'<br/>+ 'checked by the extension' note]
-  V -- yes --> B{dropdown/radio/checkbox,<br/>confidence high or medium,<br/>changes the answer?}
-  B -- no --> SG[Suggestion: Accept / Dismiss]
-  B -- yes --> AU{AI selections setting on?}
+  NL -- yes --> X[Not sent to Jev]
+  NL -- no --> C{Radio, select or checkbox<br/>with carrier options?}
+  C -- no --> T[Stay with deterministic rules<br/>or the agent; no generated text]
+  C -- yes --> M[Jev evaluates the available choices]
+  M --> V{choice is one of<br/>the page's options or leave?}
+  V -- no --> LV[Shown as 'leave for you'<br/>+ checked by the extension]
+  V -- yes --> E{Intake or carrier rule evidence<br/>supports the choice?}
+  E -- no --> LV
+  E -- yes --> R{Second verification passes<br/>and context is current?}
+  R -- no --> SG[Suggestion only or leave for agent]
+  R -- yes --> AU{AI selections setting on?}
   AU -- no --> SG
-  AU -- yes --> AP[Selected by the AI, purple<br/>Continue held until approved]
+  AU -- yes --> AP[Selected by Jev, purple<br/>Continue held until approved]
   SG -- Accept --> AP2[Put in, purple]
   AP --> CHK{Page kept it?}
   AP2 --> CHK
@@ -85,86 +94,109 @@ flowchart TD
   CHK -- no --> RED[Red mark + reason]
 ```
 
-Rules the code enforces, whatever the model says:
+Rules the code enforces, whatever Jev says:
 
-- It can only return text. It can't click, navigate or submit. Answers go through the same
-  `apply()` and "did the page keep it" check as rule-based answers (`pagekit.answer`).
-- Dropdown, radio and checkbox answers must be one of the field's options. Strict structured
-  outputs enforce this, and `parseResponse` checks it again.
-- A cited intake path must hold a value; otherwise the answer loses its "intake" basis and high
-  confidence.
-- Typed text is never auto-selected. Answers the page already shows are not re-selected.
-- The fixed instructions and TNI rules (`src/ai/tni-rules.js`) come first in every request, so
-  the provider can cache them.
+- Rules and exact carrier mappings run before Jev. Jev never overrides a deterministic answer.
+- The request contains only unresolved choice controls. Typed text, dates, amounts and identifiers
+  stay with deterministic rules or the agent.
+- A choice must be one of the page's current options. `leave` is always available, including when
+  the model is uncertain or the evidence is incomplete.
+- Evidence is selected from the active intake facts and the carrier-scoped TNI rules. The source must
+  be one of the supplied intake facts or carrier rules; Jev then checks its relevance in a second call. The
+  active driver, vehicle and trailer indexes are checked before the answer is used.
+- A second verification stage checks the proposed option against the selected evidence. Model
+  probabilities and confidence labels are signals for this process, not accuracy guarantees.
+- Only a high-confidence answer with valid evidence and a passing verification can become an
+  automatic candidate. The agent must opt into automatic selections, and the existing
+  approve-before-Continue boundary remains in force.
+- Answers the page already shows are not re-selected. After applying a choice, the page is read
+  again; if it did not keep the answer, the result is marked failed for the agent.
+- A manual edit wins over a pending or previously returned Jev answer. Context and edit checks
+  prevent a late response from overwriting what the agent changed.
+- Requests and responses are tied to the intake and active context. Late responses or responses
+  after an intake, driver or vehicle edit are discarded.
+
+## Data and settings
+
+The request is sent directly from the extension to TypeSafe AI only when **Jev assistant** is on.
+It contains the unresolved carrier questions and options, the active intake context needed to
+interpret them, and the applicable TNI rules. The Jev key is stored locally per device and is
+never written to usage events or logs. The extension does not send the key to the collection
+server. MVR/CLUE orders, exclusions, signatures and attestations, payment or bank details, and
+typed identifiers are excluded before a request is built.
+
+The settings are separate from the old OpenAI settings:
+
+| Setting | Purpose |
+| --- | --- |
+| `aiOn` | Enables Jev requests and suggestions. |
+| `aiAuto` | Opts into applying eligible choice suggestions before the agent approves Continue. |
+| `jevKey` | The agent's TypeSafe AI key, stored on that device and never logged. |
+| `jevModel` | Jev model name; the default is the pinned `jev-1.13.0`. |
+
+If no Jev key is configured, the rules engine still works and unresolved questions remain for the
+agent. A live key is not part of the repository or test fixtures.
+
+Automatic selection uses pinned `jev-1.13.0`, choice probability at least 0.98, derived
+confidence at least 0.97, a top-to-runner-up margin of at least 0.95, evidence probability
+at least 0.98, and verified support at least 0.99. Numerical/date/identity questions remain
+manual recommendations. These are conservative starting thresholds, not calibrated accuracy.
+A different configured model can suggest answers but cannot automatically select them until
+its policy is explicitly validated in code. Requests batch four fields at a time, with two
+stages per batch and bounded retries for 429/529 responses.
 
 ## Files
 
 | File | Role |
 | --- | --- |
-| `src/ai/assist.js` | Leftovers → request, OpenAI call, response checks, auto-select rule |
-| `src/ai/tni-rules.js` | TNI's quoting rules as the model reads them (keep in step with `carriers/progressive.js`) |
+| `src/ai/assist.js` | Unresolved choices → Jev request, response/evidence checks, auto-select eligibility |
+| `src/ai/tni-rules.js` | TNI's carrier-scoped quoting rules as Jev reads them; keep in step with carrier rules |
 | `src/content/pagekit.js` | `answer()` puts in a chosen option and verifies it; flagged fields carry options/section/current; purple `ai` mark |
-| `sidepanel/sidepanel.js` | `runAssist`, `applyAi`, `renderAi`, AI settings |
-| `server/index.mjs` | Accepts `ai_suggest` and `ai_decision` usage events |
-| `test/assist.test.mjs` | Schema, never-list, response checks, error messages |
+| `sidepanel/sidepanel.js` | `runAssist`, `applyAi`, `renderAi`, Jev settings and approval boundary |
+| `server/index.mjs` | Accepts `ai_suggest` and `ai_decision` usage events without receiving the Jev key |
+| `test/assist.test.mjs` | Choice schema, never-list, evidence/response checks, stale-result and error handling |
 
-## Usage events (for measuring the pilot)
+## Usage events and evaluation
 
 | Event | Contents |
 | --- | --- |
-| `ai_suggest` | model, time, questions sent, suggested / leave / auto-eligible counts, held-back count, tokens, error |
-| `ai_decision` | question id and text, `accepted` / `dismissed` / `auto` / `failed`, the chosen option (never typed text), confidence, basis, intake path |
+| `ai_suggest` | model, time, choice questions sent, suggested / leave / auto-eligible counts, held-back count, provider usage, error |
+| `ai_decision` | question id and redacted label, `accepted` / `dismissed` / `auto` / `failed`, chosen option (never typed text), confidence, evidence basis and intake path |
 
-Acceptance rate per question = `accepted` ÷ (`accepted` + `dismissed`), and agent changes after
-an AI answer show up as ordinary `field_change` events. Those two numbers decide which question
-types can be auto-selected for everyone, and which should become plain TNI rules.
+The key and client values are never logged. Agent changes after a Jev answer show up as ordinary
+`field_change` events. Acceptance rate per question is `accepted` ÷ (`accepted` + `dismissed`),
+but acceptance alone is not accuracy. The pilot also measures independently checked answer
+accuracy, confidently-wrong answers, appropriate abstentions, evidence-verification failures,
+latency and cost. A Jev confidence or probability value is not used as a measured accuracy rate.
 
-## Roadmap
+The automated tests use deterministic mocked provider responses. They verify request boundaries,
+choice validation, evidence checks, stale-response protection, manual edits and approval before
+Continue; they do not establish Jev's live-model accuracy or latency.
+
+## Rollout and learning loop
 
 ```mermaid
 flowchart LR
-  P0["<b>Now: Phase 1</b><br/>Suggestions + tips<br/>Accept / Dismiss<br/>opt-in auto-select<br/>5 agents, own keys"]
-  P1["<b>Phase 2</b><br/>Measure the pilot<br/>acceptance per question<br/>eval on the bake-off course"]
-  P2["<b>Phase 3</b><br/>Intake reading<br/>claims box, business class,<br/>free text → proposed edits"]
-  P3["<b>Phase 4</b><br/>AI-drafted rules<br/>weekly batch over usage log<br/>→ reviewed PRs to progressive.js"]
-  P4["<b>Phase 5</b><br/>GEICO + new states<br/>AI tips from day one,<br/>rules follow"]
-  P5["<b>Phase 6</b><br/>Server-held key<br/>per-agent tokens, spend caps,<br/>central prompt/model updates"]
+  P0["<b>Current</b><br/>Rules first<br/>Jev choice suggestions<br/>leave / evidence / verification"]
+  P1["<b>Measure</b><br/>Mocked provider tests<br/>live agent decisions<br/>accuracy and abstentions"]
+  P2["<b>Controlled automation</b><br/>Opt-in verified choices<br/>approve before Continue<br/>per-question review"]
+  P3["<b>Promote stable answers</b><br/>Repeated verified choices<br/>become deterministic TNI rules<br/>with tests"]
+  P4["<b>Expand coverage</b><br/>New states, products and carriers<br/>only after captures and evaluation"]
   P0 --> P1 --> P2 --> P3 --> P4
-  P1 --> P5
 ```
-
-```mermaid
-gantt
-  title Suggested timeline (adjust to the pilot's results)
-  dateFormat YYYY-MM-DD
-  axisFormat %b %d
-  section Pilot
-  Web Store private listing, 5 agents     :p1, 2026-10-05, 7d
-  Pilot with suggestions only             :p2, after p1, 14d
-  Turn on auto-select per question type   :p3, after p2, 7d
-  section Measure
-  Bake-off eval (AI on removed rules)     :m1, 2026-10-12, 7d
-  Weekly acceptance report                :m2, after p2, 21d
-  section Build
-  Intake reading (Phase 3)                :b1, after p2, 10d
-  AI-drafted rules (Phase 4)              :b2, after b1, 10d
-  GEICO capture + rules (Phase 5)         :b3, after b2, 21d
-  Server-held key (Phase 6, when > ~10 agents) :b4, after p3, 7d
-```
-
-### The feedback loop the roadmap builds
 
 ```mermaid
 flowchart LR
-  F[Fill: rules] --> L[Leftovers]
-  L --> AI[AI suggests]
-  AI --> D{Agent decides}
+  F[Fill: deterministic rules] --> L[Unresolved choice controls]
+  L --> AI[Jev suggests or abstains]
+  AI --> V[Evidence + second verification]
+  V --> D{Agent decides}
   D --> LOG[(ai_decision<br/>field_change)]
-  LOG --> LR[Weekly: learn + AI-drafted rules]
-  LR --> RV[Developer reviews PR]
+  LOG --> LR[Review: accuracy, errors, abstentions]
+  LR --> RV[Developer reviews a rule change]
   RV --> F
 ```
 
-Each question the AI keeps getting right becomes a plain rule, which is free, instant and
-tested. The AI then handles only the next set of new questions (new states, new products,
-GEICO).
+Each choice that repeatedly passes evidence verification and agent review can become a plain rule,
+which is fast, deterministic and tested. Jev then handles only the next set of unresolved
+questions while the system keeps a conservative abstention path.

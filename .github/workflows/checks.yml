@@ -30,6 +30,8 @@ jobs:
         run: npm run e2e -- --fixtures
       - name: Package
         run: npm run package
+      - name: Jev assistant workflow (mock API)
+        run: npm run mock:ai
       - name: Extension on the AmWINS mock
         run: |
           python3 -m http.server 8792 --bind 127.0.0.1 > /dev/null 2>&1 &

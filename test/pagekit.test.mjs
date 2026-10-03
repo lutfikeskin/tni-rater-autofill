@@ -1428,3 +1428,30 @@ test('a DOT lookup listing the matching business name twice still counts as one 
   assert.ok(!report.noData.some((x) => x.reviewOnly), 'not reported as a different identity');
   assert.equal(report.failed.length, 0);
 });
+
+test('Jev answers refuse changed values, options, sections and page snapshots', async () => {
+  const h = harness();
+  const field = new SelectNode([
+    { text: 'Select one', value: '' }, { text: 'Consumer Goods', value: 'cg' }, { text: 'Building Materials', value: 'bm' },
+  ], { id: 'commodity', ariaLabel: 'Commodity category' });
+  h.document.body.append(field);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const item = report.unknown.find(x => x.label === 'Commodity category');
+  const expected = { kind: item.controlKind, section: item.section || null, options: [...item.options], current: item.current };
+  const answer = { key: item.key, label: item.label, value: 'Consumer Goods', expected };
+  const snapshot = h.kit.decisionSnapshot();
+  field.value = 'bm';
+  const [changed] = await h.kit.answer([answer], [snapshot]);
+  assert.equal(changed.ok, false);
+  assert.equal(field.value, 'bm', 'manual choice is preserved');
+  const [valueChanged] = await h.kit.answer([answer]);
+  assert.equal(valueChanged.ok, false);
+  field.value = '';
+  const [optionsChanged] = await h.kit.answer([{ ...answer, expected: { ...expected, options: ['Other'] } }]);
+  assert.equal(optionsChanged.ok, false);
+  const [sectionChanged] = await h.kit.answer([{ ...answer, expected: { ...expected, section: 'Other vehicle' } }]);
+  assert.equal(sectionChanged.ok, false);
+  const [fresh] = await h.kit.answer([answer], [h.kit.decisionSnapshot()]);
+  assert.equal(fresh.ok, true);
+  assert.equal(field.value, 'cg');
+});
