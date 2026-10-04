@@ -46,7 +46,21 @@ test('synthetic cases are bounded, sanitized and explicitly unreviewed', () => {
   assert.doesNotMatch(serialized, /555-|SYNTHETIC-VIN|api[_-]?key|password/i);
 });
 
+test('evaluation cases require exactly one expected answer per item', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-eval-cases-'));
+  const tempFile = path.join(tempDir, 'cases.json');
+  try {
+    const entry = structuredClone(cases[0]);
+    entry.expected = [entry.expected[0], entry.expected[0], entry.expected[1]];
+    fs.writeFileSync(tempFile, JSON.stringify({ version: 1, cases: [entry] }));
+    assert.throws(() => readCases(tempFile), /one expected answer for every item/i);
+  } finally {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
 test('evaluation inputs retain current choices and use bounded controls', () => {
+
   for (const entry of cases) {
     const items = providerItems(entry);
     assert.deepEqual(providerContext(entry), entry.context);
@@ -89,6 +103,15 @@ test('saved safe results score choices, abstentions and evidence paths', () => {
   assert.equal(report.aggregate.expertReviewedCases, 0);
   assert.equal(report.aggregate.calibration, 'not measured');
   assert.ok(report.cases.every(entry => entry.status === 'pass'));
+});
+
+test('timing median averages the two middle values for even samples', () => {
+  const entries = cases.slice(0, 2);
+  const result = safeLiveResult(entries, entries.map((entry, index) => ({
+    suggestions: entry.expected.map(expected => ({ ...expected })),
+    timingMs: index ? 10000 : 100,
+  })));
+  assert.equal(scoreResult(result, entries).aggregate.timingMs.median, 5050);
 });
 
 test('all-leave results do not count abstentions as choices', () => {

@@ -65,7 +65,8 @@ export function readCases(file = DEFAULT_CASES_PATH) {
         fail(`AI evaluation case ${entry.id} has an invalid intake path.`);
       }
     }
-    if (new Set(entry.expected.map(expected => expected.key)).size !== itemKeys.size) {
+    const expectedKeys = entry.expected.map(expected => expected.key);
+    if (entry.expected.length !== itemKeys.size || new Set(expectedKeys).size !== itemKeys.size) {
       fail(`AI evaluation case ${entry.id} must provide one expected answer for every item.`);
     }
   }
@@ -246,7 +247,10 @@ export function scoreResult(result, entries) {
   }
 
   const sortedTiming = [...timing].sort((a, b) => a - b);
-  const median = sortedTiming.length ? sortedTiming[Math.floor((sortedTiming.length - 1) / 2)] : null;
+  const middle = Math.floor(sortedTiming.length / 2);
+  const median = !sortedTiming.length ? null
+    : sortedTiming.length % 2 ? sortedTiming[middle]
+      : (sortedTiming[middle - 1] + sortedTiming[middle]) / 2;
   return {
     version: 1,
     provider: result.provider ?? 'unknown',
