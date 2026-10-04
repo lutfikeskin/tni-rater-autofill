@@ -20,13 +20,14 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-luna-'));
 const checks = [], errors = [];
-let context, requests = 0, jevRequests = 0, mode = 'normal', started, release;
+let context, mock, panel, phase = 'startup', requests = 0, jevRequests = 0, mode = 'normal', started, release;
 const verify = (name, actual, expected) => {
   checks.push({ name, ok: actual === expected });
   assert.equal(actual, expected, name);
 };
 try {
   const ext = path.join(root, 'dist/tni-rater-autofill');
+  phase = 'launch';
   context = await chromium.launchPersistentContext(profile, { channel: 'chromium', headless: true,
     args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`] });
   await context.route('**/*', async route => {
@@ -68,14 +69,17 @@ try {
   let [worker] = context.serviceWorkers();
   if (!worker) worker = await context.waitForEvent('serviceworker');
   const id = new URL(worker.url()).host;
-  const mock = await context.newPage(), panel = await context.newPage();
+  mock = await context.newPage();
+  panel = await context.newPage();
   await panel.setViewportSize({ width: 420, height: 900 });
   for (const page of [mock, panel]) page.on('pageerror', error => errors.push(error.message));
+  phase = 'initial-panel';
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
   await panel.evaluate(() => chrome.storage.local.set({ settings: { aiProvider: 'luna', aiOn: true, aiAuto: true, lunaAuto: false,
     jevKey: 'synthetic-typesafe', aiKey: 'synthetic-legacy-openai', autoAdvance: true, serverUrl: '', serverToken: '' } }));
   await panel.reload();
   const openMock = async () => {
+    phase = 'open-mock';
     await mock.goto(`${base}/test/fixtures/amwins/application.html`);
     await mock.evaluate(() => {
       const field = document.createElement('div');
@@ -89,6 +93,7 @@ try {
     await panel.waitForFunction(() => document.querySelector('#site')?.textContent.includes('AmWINS'));
   };
   const loadPdf = async () => {
+    phase = 'load-pdf';
     if (await panel.locator('#clear-client').isVisible()) {
       await panel.locator('#clear-client').click();
       await panel.locator('#home').waitFor({ state: 'visible' });
@@ -109,6 +114,7 @@ try {
     await panel.waitForFunction((prefix) => chrome.tabs.query({ active: true, currentWindow: true })
       .then(([tab]) => tab?.url?.startsWith(prefix)), `${base}/test/fixtures/amwins/`);
     await panel.locator('#fill:not(:disabled)').waitFor({ state: 'visible' });
+    phase = 'fixture-ready';
   };
   const loadPdfMissingYears = async () => {
     await loadPdf();
@@ -189,6 +195,7 @@ try {
   };
   await openMock();
   await loadPdf();
+  phase = 'missing-key';
   await panel.locator('#fill').click();
   await panel.getByText(/GPT-6 Luna needs an OpenAI API key/).waitFor();
   verify('Luna never reuses legacy or TypeSafe keys', requests, 0);
@@ -237,6 +244,7 @@ try {
   verify('Luna restores its independent automatic setting', await panel.locator('#ai-auto').isChecked(), true);
   await panel.locator('#close-agent').click();
   await openMock(); await loadPdf();
+  phase = 'automatic-approval';
   await panel.locator('#fill').click();
   const approve = panel.getByRole('button', { name: 'Approve and continue', exact: true });
   await approve.waitFor({ timeout: 30000 });
@@ -379,8 +387,42 @@ try {
   verify('nothing was submitted', await mock.evaluate(() => window.__amwinsMock.submitted), false);
   verify('browser errors', errors.length, 0);
   console.log(`Luna mock: ${checks.length} checks passed.`);
+} catch (error) {
+  const safe = async (read, fallback = null) => {
+    try { return await read(); } catch { return fallback; }
+  };
+  const settings = await safe(() => panel?.evaluate(async () => {
+    const { settings = {} } = await chrome.storage.local.get('settings');
+    return {
+      provider: settings.aiProvider ?? null,
+      aiOn: settings.aiOn === true,
+      aiAuto: settings.aiAuto === true,
+      lunaAuto: settings.lunaAuto === true,
+      hasLunaKey: Boolean(settings.lunaKey),
+      hasJevKey: Boolean(settings.jevKey),
+      hasLegacyAiKey: Boolean(settings.aiKey),
+    };
+  }));
+  const diagnostics = {
+    phase,
+    error: String(error?.stack ?? error),
+    settings,
+    mockChoice: await safe(() => mock?.locator('#mockLunaChoice').inputValue()),
+    saves: await safe(() => mock?.evaluate(() => window.__amwinsMock?.saves ?? null)),
+    mockFrames: mock ? mock.frames().map(frame => new URL(frame.url()).pathname).slice(0, 8) : [],
+    pageSnapshot: await safe(() => mock?.evaluate(() => {
+      const value = globalThis.__raterKit?.decisionSnapshot?.();
+      return { available: typeof globalThis.__raterKit?.decisionSnapshot === 'function', length: value?.length ?? null };
+    })),
+    requestCounts: { luna: requests, legacyProvider: jevRequests },
+    panelReport: (await safe(() => panel?.locator('#report').innerText(), '')).slice(0, 4000),
+    pageErrors: errors.slice(-20),
+  };
+  try { await panel?.screenshot({ path: path.join(out, 'failure.png'), fullPage: true, animations: 'disabled' }); } catch { /* preserve original failure */ }
+  fs.writeFileSync(path.join(out, 'failure.json'), JSON.stringify(diagnostics, null, 2));
+  throw error;
 } finally {
-  fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify({ checks, errors, requests, jevRequests }, null, 2));
+  fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify({ checks, errors, requests, jevRequests, phase }, null, 2));
   await context?.close();
   await new Promise(resolve => server.close(resolve));
   fs.rmSync(profile, { recursive: true, force: true });
