@@ -64,12 +64,16 @@ export function nameWords(name) {
   return String(name ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().match(/\p{L}+/gu) ?? [];
 }
 
-// The intake's owner name is this driver: the same words across the name boxes, or the owner's
-// last word is one of the driver's last-name words (two-word surnames: "CAMPELO KRAYCHETE").
+// The intake's owner name is this driver: the same words across the name boxes, the same
+// one-word surname, or the owner's last word is one of the driver's last-name words (two-word
+// surnames: "CAMPELO KRAYCHETE") and the owner's first name is one of the driver's given names
+// (owner "Alice Smith" is not driver "Bob Jones Smith").
 export function ownerIsDriver(ownerName, d) {
   const owner = nameWords(ownerName);
   if (!owner.length || !d) return false;
   const driver = nameWords(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''}`);
   if (owner.length === driver.length && [...owner].sort().join(' ') === [...driver].sort().join(' ')) return true;
-  return nameWords(d.last).includes(owner.at(-1));
+  const last = nameWords(d.last);
+  if (last.length === 1 && last[0] === owner.at(-1)) return true;
+  return last.includes(owner.at(-1)) && nameWords(`${d.first ?? ''} ${d.middle ?? ''}`).includes(owner[0]);
 }

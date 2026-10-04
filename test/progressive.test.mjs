@@ -407,4 +407,9 @@ test('the owner with a two-word surname is matched to their driver row (date of 
   assert.equal(owner(record).driver?.dob, '01/02/1980');
   record.applicant.owner1 = 'Sample Examplo';
   assert.equal(owner(record).driver?.dob, '01/02/1980', 'surname word matches the last-name box');
+  record.applicant.owner1 = 'Alice Smith';
+  record.drivers = [{ first: 'Bob', middle: null, last: 'Jones Smith', dob: '01/02/1980' }];
+  assert.equal(owner(record).driver, null, 'a shared surname word with another first name is someone else');
+  record.drivers = [{ first: 'Bob', middle: null, last: 'Smith', dob: '01/02/1980' }];
+  assert.equal(owner(record).driver?.dob, '01/02/1980', 'the same one-word surname, as before');
 });

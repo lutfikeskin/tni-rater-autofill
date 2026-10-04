@@ -335,4 +335,6 @@ test('an owner whose surname has two words is found in the driver list', () => {
   assert.ok(!lastOnly.warnings.some((w) => w.code === 'drivers.owner-not-listed'), "owner's surname is one of the driver's last-name words");
   const other = normalizeIntake({ ...people, owner_name_1: 'SOMEONE ELSE' }, { today: new Date('2026-09-30') });
   assert.ok(other.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a different person still warns');
+  const sharedWord = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO' }, { today: new Date('2026-09-30') });
+  assert.ok(sharedWord.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a surname word with another first name still warns');
 });
