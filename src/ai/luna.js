@@ -1,5 +1,5 @@
 // Luna resolves bounded choices; code gates automatic picks and the agent approves them.
-import { AssistError, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake } from './assist.js';
+import { AssistError, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake } from './common.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
 export const API_URL = 'https://api.openai.com/v1/responses';
@@ -179,7 +179,7 @@ export function verifyResponse(json, suggestions) {
 }
 
 // The second model judgment checks support, not measured accuracy. Every automatic
-// pick still needs agent approval before Continue; safety semantics are shared with Jev.
+// pick still needs agent approval before Continue; safety semantics are shared with the fill engine.
 function automaticChoiceAllowed(x) {
   return x.model === DEFAULT_MODEL && x.applyable === true && KINDS.has(x.controlKind)
     && x.options.includes(x.choice) && !neverReason(x) && !manualOnlyReason(x)

@@ -3,25 +3,22 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { collectItems } from '../src/ai/assist.js';
+import { collectItems } from '../src/ai/common.js';
 import {
   DEFAULT_CASES_PATH,
   parseArgs,
   providerItems,
   providerContext,
-  providersFor,
   readCases,
   safeLiveResult,
-  safeProvidersResult,
   scoreResult,
-  scoreSavedResult,
 } from '../scripts/ai-eval.mjs';
 
 const cases = readCases(DEFAULT_CASES_PATH);
 
 test('multiple supplied citations can match an expected evidence path without logging values', () => {
   const entry = cases[0];
-  const result = safeLiveResult('luna', [entry], [{ suggestions: entry.expected.map(expected => ({ ...expected, intakePath: null,
+  const result = safeLiveResult([entry], [{ suggestions: entry.expected.map(expected => ({ ...expected, intakePath: null,
     evidenceSources: expected.intakePath ? [{ basis: 'intake', path: 'operations.notes', value: 'private-notes' },
       { basis: 'intake', path: expected.intakePath, value: false }] : [] })) }]);
   assert.equal(scoreResult(result, [entry]).aggregate.evidencePathMatches, 1);
@@ -49,18 +46,16 @@ test('synthetic cases are bounded, sanitized and explicitly unreviewed', () => {
   assert.doesNotMatch(serialized, /555-|SYNTHETIC-VIN|api[_-]?key|password/i);
 });
 
-test('both provider inputs are equivalent and retain current choices', () => {
+test('evaluation inputs retain current choices and use bounded controls', () => {
   for (const entry of cases) {
-    const jevItems = providerItems(entry);
-    const lunaItems = providerItems(entry);
-    assert.deepEqual(lunaItems, jevItems);
+    const items = providerItems(entry);
     assert.deepEqual(providerContext(entry), entry.context);
-    assert.ok(jevItems.every(item => ['radio', 'select', 'checkbox'].includes(item.controlKind)));
-    assert.ok(jevItems.every(item => item.current !== undefined));
+    assert.ok(items.every(item => ['radio', 'select', 'checkbox'].includes(item.controlKind)));
+    assert.ok(items.every(item => item.current !== undefined));
   }
 });
 
-test('safety-boundary fields are blocked before either provider sees them', () => {
+test('safety-boundary fields are blocked before Luna sees them', () => {
   const boundary = cases.find(entry => entry.id === 'safety-boundary');
   const collected = collectItems([{ unknown: providerItems(boundary) }]);
   assert.deepEqual(collected.items, []);
@@ -68,7 +63,7 @@ test('safety-boundary fields are blocked before either provider sees them', () =
 });
 
 test('saved safe results score choices, abstentions and evidence paths', () => {
-  const result = safeLiveResult('jev', cases, cases.map(entry => ({
+  const result = safeLiveResult(cases, cases.map(entry => ({
     suggestions: entry.expected.map(expected => ({ ...expected })),
     timingMs: 10,
     tokensIn: 20,
@@ -79,7 +74,7 @@ test('saved safe results score choices, abstentions and evidence paths', () => {
     cacheWriteTokens: 3,
   })));
   const report = scoreResult(result, cases);
-  assert.equal(report.provider, 'jev');
+  assert.equal(report.provider, 'luna');
   assert.equal(report.aggregate.choiceAccuracy, 1);
   assert.equal(report.aggregate.abstentionCorrectness, 1);
   assert.equal(report.aggregate.falsePositiveSuggestions, 0);
@@ -98,14 +93,14 @@ test('saved safe results score choices, abstentions and evidence paths', () => {
 
 test('usage metrics are sanitized, preserve zero and keep failed runs unavailable', () => {
   const [entry] = cases;
-  const zero = safeLiveResult('luna', [entry], [{
+  const zero = safeLiveResult([entry], [{
     suggestions: [], tokensIn: 0, tokensOut: 0, modelCalls: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0,
   }]);
   assert.deepEqual(zero.cases[0].usage, {
     tokensIn: 0, tokensOut: 0, modelCalls: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0,
   });
 
-  const malformed = safeLiveResult('luna', [entry], [{
+  const malformed = safeLiveResult([entry], [{
     suggestions: [], tokensIn: '10', tokensOut: Infinity, modelCalls: -1,
     reasoningTokens: NaN, cachedTokens: {}, cacheWriteTokens: undefined,
   }]);
@@ -113,7 +108,7 @@ test('usage metrics are sanitized, preserve zero and keep failed runs unavailabl
     tokensIn: null, tokensOut: null, modelCalls: null, reasoningTokens: null, cachedTokens: null, cacheWriteTokens: null,
   });
 
-  const failed = safeLiveResult('jev', [entry], [{
+  const failed = safeLiveResult([entry], [{
     failed: true, tokensIn: 10, tokensOut: 2, modelCalls: 1, reasoningTokens: 3, cachedTokens: 4, cacheWriteTokens: 5,
   }]);
   assert.equal(failed.cases[0].status, 'error');
@@ -123,7 +118,7 @@ test('usage metrics are sanitized, preserve zero and keep failed runs unavailabl
 });
 
 test('reasoning tokens are reported separately from output tokens', () => {
-  const result = safeLiveResult('luna', cases.slice(0, 1), [{
+  const result = safeLiveResult(cases.slice(0, 1), [{
     suggestions: cases[0].expected.map(expected => ({ ...expected })),
     tokensIn: 100, tokensOut: 12, modelCalls: 2, reasoningTokens: 8, cachedTokens: 30, cacheWriteTokens: 4,
   }]);
@@ -134,14 +129,14 @@ test('reasoning tokens are reported separately from output tokens', () => {
 });
 
 test('missing, errored and unanswered runs are never counted as model abstentions', () => {
-  const missing = scoreResult({ version: 1, provider: 'jev', cases: [] }, cases);
+  const missing = scoreResult({ version: 1, provider: 'luna', cases: [] }, cases);
   assert.equal(missing.aggregate.serviceErrors, cases.length);
   assert.equal(missing.aggregate.unanswered, 0);
   assert.equal(missing.aggregate.correctChoices, 0);
   assert.equal(missing.aggregate.choiceAccuracy, null);
   assert.ok(missing.cases.every(entry => entry.status === 'missing'));
 
-  const errored = safeLiveResult('jev', cases, cases.map(() => ({ failed: true })));
+  const errored = safeLiveResult(cases, cases.map(() => ({ failed: true })));
   const errorReport = scoreResult(errored, cases);
   assert.equal(errorReport.aggregate.serviceErrors, cases.length);
   assert.equal(errorReport.aggregate.correctAbstentions, 0);
@@ -150,7 +145,7 @@ test('missing, errored and unanswered runs are never counted as model abstention
   });
   assert.ok(errorReport.cases.every(entry => entry.status === 'service-error'));
 
-  const unanswered = safeLiveResult('jev', cases, cases.map(() => ({ suggestions: [] })));
+  const unanswered = safeLiveResult(cases, cases.map(() => ({ suggestions: [] })));
   const unansweredReport = scoreResult(unanswered, cases);
   assert.equal(unansweredReport.aggregate.serviceErrors, 0);
   assert.equal(unansweredReport.aggregate.unanswered, cases.reduce((sum, entry) => sum + entry.items.length, 0));
@@ -158,7 +153,7 @@ test('missing, errored and unanswered runs are never counted as model abstention
 });
 
 test('scoring flags false positives and evidence mismatches without exposing case data', () => {
-  const result = safeLiveResult('luna', cases, cases.map(entry => ({
+  const result = safeLiveResult(cases, cases.map(entry => ({
     suggestions: entry.expected.map(expected => ({ ...expected, choice: expected.choice === null ? 'Yes' : expected.choice, intakePath: 'invented.path' })),
   })));
   const report = scoreResult(result, cases);
@@ -170,42 +165,21 @@ test('scoring flags false positives and evidence mismatches without exposing cas
   assert.equal(Object.hasOwn(report, 'raw'), false);
 });
 
-test('live mode is explicit and provider selection is bounded', () => {
-  assert.deepEqual(providersFor('jev'), ['jev']);
-  assert.deepEqual(providersFor('luna'), ['luna']);
-  assert.deepEqual(providersFor('both'), ['jev', 'luna']);
+test('live mode is explicit and Luna is the only evaluator', () => {
   assert.deepEqual(parseArgs(['--score', 'saved.json']), {
     live: false,
     scorePath: 'saved.json',
     casesPath: DEFAULT_CASES_PATH,
-    provider: null,
     outPath: null,
   });
-  assert.deepEqual(parseArgs(['--live', '--provider', 'both', '--out', 'safe.json']), {
+  assert.deepEqual(parseArgs(['--live', '--out', 'safe.json']), {
     live: true,
     scorePath: null,
     casesPath: DEFAULT_CASES_PATH,
-    provider: 'both',
     outPath: 'safe.json',
   });
-  assert.throws(() => parseArgs(['--provider', 'jev']), /exactly one mode/i);
-  assert.throws(() => parseArgs(['--live']), /requires --provider/i);
-  assert.throws(() => parseArgs(['--live', '--provider', 'openai']), /requires --provider/i);
-});
-
-test('both-provider safe results round-trip through offline scoring', () => {
-  const make = provider => safeLiveResult(provider, cases, cases.map(entry => ({
-    suggestions: entry.expected.map(expected => ({ ...expected })),
-    timingMs: 8,
-    tokensIn: 3,
-    tokensOut: 2,
-  })));
-  const wrapped = safeProvidersResult([make('jev'), make('luna')]);
-  const reports = scoreSavedResult(wrapped, cases);
-  assert.deepEqual(reports.map(report => report.provider), ['jev', 'luna']);
-  assert.ok(reports.every(report => report.aggregate.choiceAccuracy === 1));
-  assert.deepEqual(Object.keys(wrapped.providers).sort(), ['jev', 'luna']);
-  assert.equal(wrapped.providers.jev.cases[0].status, 'ok');
+  assert.throws(() => parseArgs(['--provider', 'legacy']), /no longer supported/i);
+  assert.throws(() => parseArgs(['--live', '--provider', 'legacy']), /no longer supported/i);
 });
 
 test('future expert-reviewed custom case sets are accepted', () => {
@@ -221,14 +195,14 @@ test('future expert-reviewed custom case sets are accepted', () => {
 });
 
 test('safe result output omits provider explanations, prompts and credentials', () => {
-  const safe = safeLiveResult('jev', cases.slice(0, 1), [{
+  const safe = safeLiveResult(cases.slice(0, 1), [{
     suggestions: [{ key: cases[0].items[0].key, choice: null, basis: 'none', explanation: 'raw intake prompt' }],
     timingMs: 4.4,
     tokensIn: 2,
     tokensOut: 1,
   }]);
   const serialized = JSON.stringify(safe);
-  assert.doesNotMatch(serialized, /raw intake prompt|JEV_API_KEY|OPENAI_API_KEY|secret/i);
+  assert.doesNotMatch(serialized, /raw intake prompt|OPENAI_API_KEY|secret/i);
   assert.deepEqual(Object.keys(safe.cases[0]).sort(), ['id', 'status', 'suggestions', 'timingMs', 'usage']);
   assert.deepEqual(Object.keys(safe.cases[0].suggestions[0]).sort(), ['basis', 'choice', 'key']);
 });

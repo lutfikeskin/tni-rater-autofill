@@ -11,14 +11,14 @@
 <ul>
 <li><b>The client's quote application (PDF).</b> Read on the agent's computer and kept only for the browser session. Its details (such as name, address, date of birth, license and vehicle information) are typed into the carrier's quote page the agent has open.</li>
 <li><b>Carrier page content.</b> The questions and options on the carrier's quote page, read to fill them.</li>
-<li><b>The agent's TypeSafe API key</b> (optional). Stored in the extension on the agent's computer and sent only to TypeSafe AI to authorise AI requests.</li>
+<li><b>The agent's OpenAI API key</b> (optional). Stored in the extension on the agent's computer and sent only to OpenAI to authorise Luna requests.</li>
 <li><b>Usage information.</b> Which fields were filled, what the agent changed afterwards, buttons clicked, timing, page layouts (question text and options, no answers) and problems the agent reports.</li>
 </ul>
 
 <h2>Where data goes</h2>
 <ul>
 <li><b>The carrier's website</b>: the quote answers, as the agent's own entry.</li>
-<li><b>TypeSafe AI</b> (only when the agent turns the AI assistant on): the questions the extension couldn't answer, their options, and the intake details needed to answer them, sent with the agent's own key. Driving record orders, exclusions, signatures, payment details and identification numbers are never sent.</li>
+<li><b>OpenAI</b> (only when the agent turns the AI assistant on): the questions the extension couldn't answer, their options, and the intake details needed for Luna to review them, sent with the agent's own key. Driving record orders, exclusions, signatures, payment details and identification numbers are never sent.</li>
 <li><b>TNI's usage server</b>: the usage information above, to improve the extension. Client names, numbers, addresses and anything the agent types are never included.</li>
 </ul>
 

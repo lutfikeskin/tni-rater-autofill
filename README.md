@@ -1,6 +1,6 @@
 # TNI Rater Autofill
 
-A Chrome extension that reads a client's **TNI Commercial Insurance Quote Application** (the fillable PDF) and fills Progressive, AmWINS, and generic GEICO rater fields from it. Optional AI assistance from OpenAI GPT-6 Luna or TypeSafe AI Jev helps choose among the carrier's existing radio, select and checkbox options when the rules leave a choice unresolved.
+A Chrome extension that reads a client's **TNI Commercial Insurance Quote Application** (the fillable PDF) and fills Progressive, AmWINS, and generic GEICO rater fields from it. Optional AI assistance from OpenAI GPT-6 Luna helps choose among the carrier's existing radio, select and checkbox options when the rules leave a choice unresolved.
 
 The extension fills supported fields, reports unresolved questions, and preserves agent corrections. It can use carrier-specific Continue or Save & Continue actions when enabled and no review blockers remain; it never binds, buys, or submits the application. Some carrier defaults replace prefilled choices, so review the result.
 
@@ -28,15 +28,15 @@ Agents install it from its private Chrome Web Store listing (see [docs/chrome-we
 
 ### AI assistant
 
-Click the **brain** in the side panel, select **GPT-6 Luna** or **Jev**, expand **Connection & model**, and enter the matching **OpenAI API key** or **TypeSafe API key**. Click outside the field to save, then turn on **Assistant enabled**. Keys stay separate in this device's extension settings; neither is included in usage logs. Existing configured Jev installations keep Jev. Luna uses `gpt-6-luna`; Jev defaults to pinned `jev-1.13.0`.
+Click the **brain** in the side panel, expand **Connection**, and enter your **OpenAI API key**. Click outside the field to save, then turn on **Assistant enabled**. The key stays in this device's extension settings and is never included in usage logs. Luna uses the fixed `gpt-6-luna` model.
 
-The rules run first. Both providers receive unresolved choice questions, the carrier's actual options, active driver/vehicle context, intake facts and carrier-scoped TNI rules. They propose a visible option or leave it for the agent. Luna can explain a suggestion, but neither provider types names, identifiers, dates, amounts or other free-text answers.
+The rules run first. Luna receives unresolved choice questions, the carrier's actual options, active driver/vehicle context, intake facts and carrier-scoped TNI rules. It proposes a visible option or leaves it for the agent. Luna can explain a suggestion, but it never types names, identifiers, dates, amounts or other free-text answers.
 
-**Use this answer** applies a suggestion (marked **purple**); **No thanks** dismisses it. Cited sources must exist and a second model call checks evidence support. This does not prove correctness. Ambiguous or unsupported choices stay unresolved. Report orders, exclusions, signatures, payment/billing fields and typed identifiers are agent-owned. **Apply verified choices automatically** is separately opt-in for Luna and Jev and requires each provider's checks. Automatic picks block Continue until approval; rejecting one keeps the hold until you change the field or explicitly confirm its current answer. Pending holds survive panel reloads. Architecture, limits and evaluation scaffold: [docs/ai-assistant.md](docs/ai-assistant.md).
+**Use this answer** applies a suggestion (marked **purple**); **No thanks** dismisses it. Cited sources must exist and a second Luna call checks evidence support. This does not prove correctness. Ambiguous or unsupported choices stay unresolved. Report orders, exclusions, signatures, payment/billing fields and typed identifiers are agent-owned. **Apply verified choices automatically** is separately opt-in and requires Luna's evidence check. Automatic picks block Continue until approval; rejecting one keeps the hold until you change the field or explicitly confirm its current answer. Pending holds survive panel reloads. Saved choices from a retired assistant remain holds for manual review. Architecture, limits and evaluation scaffold: [docs/ai-assistant.md](docs/ai-assistant.md).
 
 Luna's policy v3 request budget is optimized for bounded review: `gpt-6-luna` uses low reasoning, low text verbosity, up to 12 eligible fields per adaptive request, a 4,096-token choice response cap, and a 2,048-token verification cap. The combined request state and schema stays under 48,000 characters while preserving the complete evidence set needed for the decision. The first call carries the complete fact/rule sources once; the verification call carries the scoped intake and cited evidence. The same local answer cache is used, with no extended paid API cache configuration. These are request-budget limits, not a claim about actual billed tokens, live latency, or live accuracy.
 
-The loaded intake record is kept in Chrome's session storage and cleared when Chrome closes or you click **Clear**. Filled answers go into the carrier's website. With assistance on, unresolved questions, options, active intake facts and relevant TNI rules are sent to the selected provider. Exact identifier keys are filtered, but names, addresses, dates of birth and free-text notes may remain. Separately, redacted usage events are queued locally and uploaded to TNI's server.
+The loaded intake record is kept in Chrome's session storage and cleared when Chrome closes or you click **Clear**. Filled answers go into the carrier's website. With assistance on, unresolved questions, options, active intake facts and relevant TNI rules are sent to OpenAI with your key. Exact identifier keys are filtered, but names, addresses, dates of birth and free-text notes may remain. Separately, redacted usage events are queued locally and uploaded to TNI's server.
 
 ## Setting up a carrier: page captures
 
@@ -140,14 +140,14 @@ npm run test:intakes -- --workers 6
 npm run test:intakes -- --carrier amwins --cases 03,09,69,71,97
 npm run test:intakes -- --carrier progressive --lookup-check --cases 51,73,74,75,76,77,78,79,80,81,82
 npm run package
-npm run mock:ai
+npm run mock:luna
 ```
 
 The intake runner reads the actual PDFs in `dist/synthetic-intakes` (or `--pool <folder>`), checks retained answers against the pool manifest, and writes JSON reports and screenshots under a temporary output folder (`--out <folder>` overrides it). The pool stays outside source control. VIN/DOT responses come from its lookup fixtures; no real carrier lookups are made. The mock's exact GVW of 9,000 is a synthetic decoder response, not a weight inferred from a real VIN.
 
 AmWINS exercises the five application steps, including repeated drivers/vehicles and save/reload. A review stop is recorded before the runner continues to inspect later pages; it is not counted as automatic progress. FAO rebuilds captured pages individually. It does **not** establish full quote navigation, backend acceptance, or real lookup reliability. Missing questions and truncated business-type search results are reported as unsupported, alongside existing replay failures such as address autocomplete. Passing the selected assertions is not complete carrier coverage.
 
-The AI runner uses the packaged extension with controlled provider responses. It checks suggestion acceptance, approval before Continue, preservation of manual edits, and response reuse. It blocks live AI requests and central uploads; it does not measure a live model's accuracy or latency. Suggestions are cached per intake and active driver/vehicle, and late responses after a context change are discarded.
+The AI runner uses the packaged extension with controlled Luna responses. It checks suggestion acceptance, approval before Continue, preservation of manual edits, and response reuse. It blocks live AI requests and central uploads; it does not measure Luna's live accuracy or latency. Suggestions are cached per intake and active driver/vehicle, and late responses after a context change are discarded.
 
 ## Hosting
 
@@ -165,7 +165,7 @@ Updates reach agents through the Chrome Web Store; their usage logs go to TNI's 
 | `src/carriers.js`, `src/carriers/` | Per-carrier domains and exact mappings (Progressive in `carriers/progressive.js`) |
 | `src/plan.js` | Resolves values into fill steps; builds the capture redaction list |
 | `src/content/pagekit.js` | Runs inside the rater page: find fields, fill, put in AI answers, highlight, capture |
-| `src/ai/` | AI assistant: request/response checks (`assist.js`) and TNI's rules as the model reads them (`tni-rules.js`) |
+| `src/ai/` | AI assistant: Luna request/response checks and TNI's rules as the model reads them (`tni-rules.js`) |
 | `captures/` | Page layouts captured from real quotes (no client data) |
 | `src/usage.js`, `sidepanel/usage-log.js`, `src/content/recorder.js` | Usage log: event building, local storage/export, page recorder |
 | `server/` | Usage collection server |

@@ -1506,7 +1506,7 @@ test('a DOT lookup listing the matching business name twice still counts as one 
   assert.equal(report.failed.length, 0);
 });
 
-test('Jev answers refuse changed values, options, sections and page snapshots', async () => {
+test('AI answers refuse changed values, options, sections and page snapshots', async () => {
   const h = harness();
   const field = new SelectNode([
     { text: 'Select one', value: '' }, { text: 'Consumer Goods', value: 'cg' }, { text: 'Building Materials', value: 'bm' },

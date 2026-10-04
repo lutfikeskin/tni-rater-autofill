@@ -1,26 +1,21 @@
 #!/usr/bin/env node
-// Offline comparison and opt-in live evaluation for Jev and Luna.
+// Offline scoring and opt-in live evaluation for Luna.
 //
 // Offline scoring:
 //   node scripts/ai-eval.mjs --score result.json
 // Live evaluation (never run implicitly):
-//   JEV_API_KEY=... node scripts/ai-eval.mjs --live --provider jev
-//   OPENAI_API_KEY=... node scripts/ai-eval.mjs --live --provider luna
-//   JEV_API_KEY=... OPENAI_API_KEY=... node scripts/ai-eval.mjs --live --provider both --out result.json
+//   OPENAI_API_KEY=... node scripts/ai-eval.mjs --live
+//   OPENAI_API_KEY=... node scripts/ai-eval.mjs --live --out result.json
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
-import { collectItems, DEFAULT_MODEL, suggest as suggestJev } from '../src/ai/assist.js';
+import { collectItems } from '../src/ai/common.js';
+import { DEFAULT_MODEL, suggest as suggestLuna } from '../src/ai/luna.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DEFAULT_CASES_PATH = path.join(ROOT, 'test/ai-eval/cases.json');
-
-const PROVIDER_CONFIG = Object.freeze({
-  jev: { keyEnv: 'JEV_API_KEY', modelEnv: 'JEV_MODEL' },
-  luna: { keyEnv: 'OPENAI_API_KEY', model: 'gpt-6-luna' },
-});
 
 const clone = value => structuredClone(value);
 const tidy = value => String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -97,28 +92,10 @@ export function providerContext(entry) {
   return clone(entry.context);
 }
 
-function providerConfig(provider, env = process.env) {
-  const definition = PROVIDER_CONFIG[provider];
-  if (!definition) fail(`Unsupported provider: ${provider}.`);
-  const apiKey = env[definition.keyEnv];
-  if (!apiKey) fail(`Missing ${definition.keyEnv}; live evaluation is opt-in and requires that environment variable.`);
-  return { apiKey, ...(definition.model ? { model: definition.model } : env[definition.modelEnv] ? { model: env[definition.modelEnv] } : {}) };
-}
-
-async function loadSuggest(provider) {
-  if (provider === 'jev') return suggestJev;
-  if (provider === 'luna') {
-    let module;
-    try {
-      module = await import('../src/ai/luna.js');
-    } catch {
-      fail('Luna provider is unavailable: src/ai/luna.js could not be loaded.');
-    }
-    const suggest = module.suggest ?? module.default?.suggest ?? module.default;
-    if (typeof suggest !== 'function') fail('Luna provider is unavailable: no suggest function was exported.');
-    return suggest;
-  }
-  fail(`Unsupported provider: ${provider}.`);
+function lunaConfig(env = process.env) {
+  const apiKey = env.OPENAI_API_KEY;
+  if (!apiKey) fail('Missing OPENAI_API_KEY; live evaluation is opt-in and requires that environment variable.');
+  return { apiKey, model: DEFAULT_MODEL };
 }
 
 function safeSuggestion(item, suggestion) {
@@ -134,10 +111,10 @@ function safeSuggestion(item, suggestion) {
   };
 }
 
-export function safeLiveResult(provider, entries, providerCases) {
+export function safeLiveResult(entries, providerCases) {
   return {
     version: 1,
-    provider,
+    provider: 'luna',
     cases: entries.map((entry, index) => {
       const run = providerCases[index] ?? {};
       const suggestions = Array.isArray(run.suggestions) ? run.suggestions : [];
@@ -153,9 +130,8 @@ export function safeLiveResult(provider, entries, providerCases) {
   };
 }
 
-export async function runProvider(entries, provider, { env = process.env, clock = performance } = {}) {
-  const suggest = await loadSuggest(provider);
-  const config = providerConfig(provider, env);
+export async function runProvider(entries, { env = process.env, clock = performance } = {}) {
+  const config = lunaConfig(env);
   const runs = [];
   for (const entry of entries) {
     const started = clock.now();
@@ -163,7 +139,7 @@ export async function runProvider(entries, provider, { env = process.env, clock 
       const collected = collectItems([{ unknown: providerItems(entry) }]);
       const blocked = collected.blocked.map(item => ({ ...item, choice: null, leave: true, basis: 'none', intakePath: null }));
       const result = collected.items.length
-        ? await suggest(collected.items, providerContext(entry), config)
+        ? await suggestLuna(collected.items, providerContext(entry), config)
         : { suggestions: [], tokensIn: 0, tokensOut: 0 };
       const suggestions = [...blocked, ...(Array.isArray(result?.suggestions) ? result.suggestions : [])];
       runs.push({
@@ -176,7 +152,7 @@ export async function runProvider(entries, provider, { env = process.env, clock 
       runs.push({ failed: true, suggestions: [], timingMs: clock.now() - started, tokensIn: null, tokensOut: null });
     }
   }
-  return safeLiveResult(provider, entries, runs);
+  return safeLiveResult(entries, runs);
 }
 
 function expectedMap(entry) {
@@ -299,24 +275,6 @@ export function scoreResult(result, entries) {
   };
 }
 
-export function safeProvidersResult(results) {
-  if (!Array.isArray(results) || results.length === 0 || results.some(result => !result || result.version !== 1 || !result.provider)) {
-    fail('Provider results must be version 1 safe results.');
-  }
-  return {
-    version: 1,
-    providers: Object.fromEntries(results.map(result => [result.provider, result])),
-  };
-}
-
-export function scoreSavedResult(saved, entries) {
-  if (saved?.version !== 1) fail('Saved AI evaluation results must be version 1.');
-  if (saved.providers && typeof saved.providers === 'object' && !Array.isArray(saved.providers)) {
-    return Object.entries(saved.providers).map(([provider, result]) => scoreResult({ ...result, provider: result?.provider ?? provider }, entries));
-  }
-  return [scoreResult(saved, entries)];
-}
-
 function valueAfter(args, flag) {
   const index = args.indexOf(flag);
   return index >= 0 ? args[index + 1] : null;
@@ -326,16 +284,11 @@ export function parseArgs(args) {
   const live = args.includes('--live');
   const scorePath = valueAfter(args, '--score');
   const casesPath = valueAfter(args, '--cases') ?? DEFAULT_CASES_PATH;
-  const provider = valueAfter(args, '--provider');
   const outPath = valueAfter(args, '--out');
+  if (args.includes('--provider')) fail('--provider is no longer supported; Luna is the only live evaluator.');
   if (live === Boolean(scorePath)) fail('Choose exactly one mode: --live or --score <saved-result.json>.');
-  if (live && !['jev', 'luna', 'both'].includes(provider)) fail('Live evaluation requires --provider jev, luna or both.');
-  if (!live && (provider || outPath)) fail('--provider and --out are only valid with --live.');
-  return { live, scorePath, casesPath, provider, outPath };
-}
-
-export function providersFor(value) {
-  return value === 'both' ? ['jev', 'luna'] : [value];
+  if (!live && outPath) fail('--out is only valid with --live.');
+  return { live, scorePath, casesPath, outPath };
 }
 
 export async function main(args = process.argv.slice(2)) {
@@ -343,25 +296,15 @@ export async function main(args = process.argv.slice(2)) {
   const entries = readCases(options.casesPath);
   if (!options.live) {
     const saved = JSON.parse(fs.readFileSync(options.scorePath, 'utf8'));
-    const reports = scoreSavedResult(saved, entries);
-    const output = reports.length === 1 ? reports[0] : reports;
+    const output = scoreResult(saved, entries);
     console.log(JSON.stringify(output, null, 2));
     return output;
   }
 
-  const reports = [];
-  const safeResults = [];
-  for (const provider of providersFor(options.provider)) {
-    // Each provider receives a fresh clone of the same case data and no provider-specific facts.
-    const result = await runProvider(clone(entries), provider);
-    safeResults.push(result);
-    if (options.outPath && options.provider !== 'both') fs.writeFileSync(options.outPath, JSON.stringify(result, null, 2));
-    reports.push(scoreResult(result, entries));
-  }
-  if (options.outPath && options.provider === 'both') {
-    fs.writeFileSync(options.outPath, JSON.stringify(safeProvidersResult(safeResults), null, 2));
-  }
-  const output = reports.length === 1 ? reports[0] : reports;
+  // Each run receives a fresh clone of the same synthetic case data.
+  const result = await runProvider(clone(entries));
+  if (options.outPath) fs.writeFileSync(options.outPath, JSON.stringify(result, null, 2));
+  const output = scoreResult(result, entries);
   console.log(JSON.stringify(output, null, 2));
   return output;
 }

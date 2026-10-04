@@ -12,7 +12,7 @@ The extension uses plain ES modules with no source build step. `npm install` ins
 | Progressive rules or page execution | `test/progressive.test.mjs`, `test/pagekit.test.mjs`, `npm run e2e -- --fixtures` |
 | AmWINS rules or application flow | `npm run mock:amwins` before completing an AmWINS rule change |
 | Panel orchestration or packaged behavior | `test/sidepanel-safety.test.mjs`, `npm run e2e:extension` |
-| AI validation, approvals, caching | `test/assist.test.mjs`, `test/luna.test.mjs`, `test/ai-eval.test.mjs`, `npm run mock:ai`, `npm run mock:luna` |
+| AI validation, approvals, caching | `test/luna.test.mjs`, `test/ai-eval.test.mjs`, `npm run mock:luna` |
 | Events, learning, layout coverage, transport | Corresponding `usage`, `usage-log`, `learn`, `coverage`, `server`, and `consistency` test files |
 | Documentation only | Link/command checks, current-code audit, and `git diff --check`; no browser run or version bump |
 
@@ -23,12 +23,11 @@ Run `npm test` for code changes, plus affected integration checks. Repeat or bro
 - `npm run e2e` runs Progressive layout replays; `--fixtures` uses committed per-state fixtures, including in CI. Local runs can also include captures and generated layouts. A replay does not establish complete live navigation, server acceptance, or real lookup reliability.
 - `npm run mock:amwins` checks the saved-site behavior mock and its expected answers, including continuation and no submission.
 - `npm run e2e:extension` needs `npm run package` and `npm run replay` serving on port 8792. It runs the packaged panel/extension on the AmWINS mock.
-- `npm run mock:ai` needs the package and uses controlled model responses. It checks interaction and approval behavior, not a live model's accuracy or latency.
 - `npm run mock:luna` also needs the package. It intercepts OpenAI requests and checks the dedicated key field, Luna's independent automatic-selection setting, the approval hold and reload retention, rejection/manual correction, conflicting evidence and stale provider responses. Neither mock makes live AI requests.
 - The Luna mock should also preserve the request-budget contract: low reasoning and low verbosity, no `temperature` or `top_p`, up to 12 eligible fields per adaptive request, a combined state/schema bound of 48,000 characters, 4,096-token choice output, 2,048-token verification output, and the complete evidence/scoped-intake split between the two calls. Before verification, the planner must bound the whole scoped intake, keep at most four cited sources per field, include the longest visible answer in its size estimate, split oversized groups, and reject a single oversized field for manual review. These caps bound request work; they do not measure billed tokens, live latency, or live accuracy.
 - Usage assertions should cover `tokensIn`, `tokensOut`, `modelCalls`, `reasoningTokens`, `cachedTokens`, and `cacheWriteTokens`. Reasoning is included in output tokens, while `modelCalls` counts logical provider calls and excludes HTTP retries. Controlled mocks can verify the counters and boundaries; they cannot establish live performance.
 - Schema checks should cover the shared citation definition and adaptive splitting at 1,000 total enum values, preserving all options and sources.
-- `npm run ai:eval -- --score <saved-result.json>` scores saved comparison output. Live comparison requires explicit `--live --provider jev|luna|both` and the relevant process environment keys. Committed cases are synthetic and not expert-reviewed; they are a starting scaffold, not a production accuracy claim.
+- `npm run ai:eval -- --score <saved-result.json>` scores saved Luna output. Live evaluation is explicit with `--live` and `OPENAI_API_KEY`; the evaluation agent chooses when to run it. Committed cases are synthetic and not expert-reviewed; they are a starting scaffold, not a production accuracy claim.
 - `npm run test:intakes -- --carrier amwins --cases 03,09` selects synthetic cases. The pool under `dist/synthetic-intakes` is local and untracked; read [intake-mocks.mjs](../scripts/intake-mocks.mjs) for available options. Missing pool data is a stated limitation, not evidence of a pass.
 
 ## Baselines and fixtures

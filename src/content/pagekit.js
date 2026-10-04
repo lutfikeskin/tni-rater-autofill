@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 37) return;
+  if (globalThis.__raterKit?.version === 38) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1268,7 +1268,7 @@
   // an answer counts only once the page has settled and still shows it.
   async function answer(answers, expectedSnapshots) {
     if (expectedSnapshots && !expectedSnapshots.includes(decisionSnapshot())) {
-      return answers.map(a => ({ key: a.key, label: a.label, ok: false, reason: 'the page changed since Jev evaluated it; request fresh suggestions' }));
+      return answers.map(a => ({ key: a.key, label: a.label, ok: false, reason: 'the page changed since the assistant evaluated it; request fresh suggestions' }));
     }
     const serverBacked = !!ext();
     const find = (key, label) => {
@@ -1287,7 +1287,7 @@
           JSON.stringify(options) !== JSON.stringify(a.expected.options) && 'options',
           (d.current ?? null) !== (a.expected.current ?? null) && 'selection'].filter(Boolean);
         if (changed.length) {
-          results.push({ key: a.key, label: a.label, ok: false, reason: `the field changed (${changed.join(', ')}) since Jev evaluated it; request a fresh suggestion` });
+          results.push({ key: a.key, label: a.label, ok: false, reason: `the field changed (${changed.join(', ')}) since the assistant evaluated it; request a fresh suggestion` });
           continue;
         }
       }
@@ -1422,5 +1422,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 37, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 38, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

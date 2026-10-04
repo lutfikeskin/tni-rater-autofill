@@ -20,7 +20,8 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const base = `http://127.0.0.1:${server.address().port}`;
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-luna-'));
 const checks = [], errors = [];
-let context, requests = 0, jevRequests = 0, mode = 'normal', started, release;
+let context, requests = 0, mode = 'normal', started, release;
+const unexpectedProviderHosts = new Set();
 const verify = (name, actual, expected) => {
   checks.push({ name, ok: actual === expected });
   assert.equal(actual, expected, name);
@@ -60,9 +61,9 @@ try {
         output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify({ decisions }) }] }],
         usage: { input_tokens: 100, output_tokens: 30 } } });
     }
-    if (url.hostname === 'api.typesafe.ai') { jevRequests++; return route.abort(); }
     if (['127.0.0.1', 'localhost', 'cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'code.jquery.com'].includes(url.hostname)
       || url.protocol === 'chrome-extension:') return route.continue();
+    if (url.hostname) unexpectedProviderHosts.add(url.hostname);
     return route.abort();
   });
   let [worker] = context.serviceWorkers();
@@ -72,8 +73,9 @@ try {
   await panel.setViewportSize({ width: 420, height: 900 });
   for (const page of [mock, panel]) page.on('pageerror', error => errors.push(error.message));
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
-  await panel.evaluate(() => chrome.storage.local.set({ settings: { aiProvider: 'luna', aiOn: true, aiAuto: true, lunaAuto: false,
-    jevKey: 'synthetic-typesafe', aiKey: 'synthetic-legacy-openai', autoAdvance: true, serverUrl: '', serverToken: '' } }));
+  await panel.evaluate(() => chrome.storage.local.set({ settings: { aiOn: true, aiAuto: true, lunaAuto: false,
+    jevKey: 'synthetic-typesafe', aiKey: 'synthetic-legacy-openai', jevModel: 'jev-1.13.0',
+    autoAdvance: true, serverUrl: '', serverToken: '' } }));
   await panel.reload();
   const openMock = async () => {
     await mock.goto(`${base}/test/fixtures/amwins/application.html`);
@@ -175,10 +177,48 @@ try {
     await panel.locator('#fill:not(:disabled)').waitFor({ state: 'visible' });
   };
   const waitSetting = (key, value) => panel.waitForFunction(([k, v]) => chrome.storage.local.get('settings').then(({ settings }) => settings?.[k] === v), [key, value]);
-  const selectProvider = async provider => {
-    await panel.locator('#ai-provider').selectOption(provider);
-    await waitSetting('aiProvider', provider);
-  };
+  await openMock();
+  await loadPdf();
+
+  // A pre-upgrade profile may contain only legacy Jev/OpenAI fields. A pending automatic
+  // decision from that profile must remain a review hold after the panel reloads, while Luna
+  // receives no key derived from those legacy fields and no legacy provider request is made.
+  await mock.bringToFront();
+  const legacyTabId = await panel.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id);
+  const legacyScope = await panel.evaluate(async () => (await chrome.storage.session.get('session')).session.intakeId);
+  await panel.evaluate(({ scope, tabId }) => chrome.storage.local.set({
+    settings: { aiOn: true, aiAuto: true, jevKey: 'legacy-typesafe-key', aiKey: 'legacy-openai-key', jevModel: 'jev-1.13.0',
+      autoAdvance: true, serverUrl: '', serverToken: '' },
+    aiPendingDecisions: [{ version: 1, scope, tabId, page: '/test/fixtures/amwins/application.html',
+      model: 'jev-1.13.0', policy: 'jev-evidence-v2', contextHash: 'legacy-context', itemHash: 'legacy-item',
+      key: 'mockLunaChoice', label: 'Mock Luna choice', choice: 'No', controlKind: 'select', done: 'auto',
+      approved: false, rejected: false, manual: false, confirmed: false, snapshotHash: null, confidence: null }],
+  }), { scope: legacyScope, tabId: legacyTabId });
+  await panel.reload();
+  await panel.locator('#tab-fill').click();
+  await panel.locator('#fill').click();
+  await panel.locator('.ai-approve').waitFor({ timeout: 30000 });
+  verify('retired automatic decision requires explicit review', await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true }).count(), 1);
+  verify('legacy automatic decision remains a review hold after reload', await mock.evaluate(() => window.__amwinsMock.saves), 0);
+  verify('legacy profile makes no Luna or Jev request', requests, 0);
+  verify('legacy profile does not contact the Jev host', unexpectedProviderHosts.size, 0);
+  const migratedSettings = await panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings ?? {});
+  verify('legacy OpenAI/TypeSafe fields do not become a Luna key', migratedSettings.lunaKey ?? '', '');
+  verify('legacy settings are purged after migration', ['aiKey', 'jevKey', 'jevModel'].every(key => !Object.hasOwn(migratedSettings, key)), true);
+  await keyboardSelect(mock.locator('#mockLunaChoice'), 'Yes');
+  await panel.waitForFunction(async () => (await chrome.storage.local.get('aiPendingDecisions')).aiPendingDecisions?.some(x => x.key === 'mockLunaChoice' && x.manual) === true);
+  await panel.reload();
+  await panel.locator('#tab-fill').click();
+  await panel.locator('#fill').click();
+  await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
+  verify('manual upgrade correction releases the retired hold', await panel.locator('.ai-approve').count(), 0);
+
+  // Continue the normal Luna workflow with its dedicated key after the upgrade check.
+  await panel.evaluate(() => chrome.storage.local.set({ settings: { aiProvider: 'luna', aiOn: true, aiAuto: true, lunaAuto: false,
+    lunaKey: '', autoAdvance: true, serverUrl: '', serverToken: '' } }));
+  await panel.reload();
+  // The migration hold fill may have settled every other question on this page. Start a fresh
+  // intake so the missing-key path still has an unresolved Luna question to render.
   await openMock();
   await loadPdf();
   await panel.locator('#fill').click();
@@ -194,8 +234,8 @@ try {
   await panel.locator('#ai-openai-key').fill('synthetic-openai');
   await panel.locator('#ai-openai-key').press('Tab');
   await panel.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.lunaKey === 'synthetic-openai');
-  verify('OpenAI key save preserves the TypeSafe key', await panel.evaluate(async () =>
-    (await chrome.storage.local.get('settings')).settings.jevKey === 'synthetic-typesafe'), true);
+  verify('OpenAI key save stays in the dedicated Luna field', await panel.evaluate(async () =>
+    (await chrome.storage.local.get('settings')).settings.lunaKey === 'synthetic-openai'), true);
   await panel.locator('#agent-btn').click();
   await panel.locator('#agent-popover').waitFor({ state: 'visible' });
   await panel.screenshot({ path: path.join(out, 'luna-settings.png'), fullPage: true, animations: 'disabled' });
@@ -219,14 +259,6 @@ try {
   await panel.locator('#ai-auto').check();
   await waitSetting('lunaAuto', true);
   verify('Luna auto setting is stored independently', (await savedSettings()).lunaAuto, true);
-  verify('legacy Jev auto setting remains independent', (await savedSettings()).aiAuto, true);
-  await selectProvider('jev');
-  verify('Jev keeps its own automatic setting', await panel.locator('#ai-auto').isChecked(), true);
-  await panel.locator('#ai-auto').uncheck();
-  await waitSetting('aiAuto', false);
-  verify('changing Jev auto does not disable Luna auto', (await savedSettings()).lunaAuto, true);
-  await selectProvider('luna');
-  verify('Luna restores its independent automatic setting', await panel.locator('#ai-auto').isChecked(), true);
   await panel.locator('#close-agent').click();
   await openMock(); await loadPdf();
   await panel.locator('#fill').click();
@@ -361,18 +393,18 @@ try {
   await panel.locator('#fill').click();
   await requestStarted;
   await openAgent();
-  await panel.locator('#ai-provider').selectOption('jev');
-  await panel.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.aiProvider === 'jev');
+  await panel.locator('#ai-on').uncheck();
+  await waitSetting('aiOn', false);
   release();
   await panel.waitForTimeout(1000);
-  verify('switching providers discards an in-flight Luna response', await approve.count(), 0);
+  verify('turning assistance off discards an in-flight Luna response', await approve.count(), 0);
   verify('stale provider response never fills the page', await mock.locator('#mockLunaChoice').inputValue(), '');
-  verify('Luna key was never sent to Jev', jevRequests, 0);
+  verify('no unrecognized provider host was contacted', unexpectedProviderHosts.size, 0);
   verify('nothing was submitted', await mock.evaluate(() => window.__amwinsMock.submitted), false);
   verify('browser errors', errors.length, 0);
   console.log(`Luna mock: ${checks.length} checks passed.`);
 } finally {
-  fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify({ checks, errors, requests, jevRequests }, null, 2));
+  fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify({ checks, errors, requests, unexpectedProviderHosts: [...unexpectedProviderHosts] }, null, 2));
   await context?.close();
   await new Promise(resolve => server.close(resolve));
   fs.rmSync(profile, { recursive: true, force: true });

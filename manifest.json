@@ -20,7 +20,6 @@
     "https://*.progressive.com/*",
     "https://*.geico.com/*",
     "https://*.amwinsadmittedplacement.com/*",
-    "https://api.typesafe.ai/*",
     "https://api.openai.com/*",
     "https://usage-server-production.up.railway.app/*",
     "http://localhost/*",

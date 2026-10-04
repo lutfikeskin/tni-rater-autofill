@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { assistContextKey } from '../src/ai/assist.js';
+import { assistContextKey } from '../src/ai/common.js';
+import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
 
@@ -32,7 +33,13 @@ function extractFunction(name) {
   const match = SIDEPANEL.match(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
   assert.ok(match, `could not find ${name} in sidepanel/sidepanel.js`);
   const start = match.index;
-  const open = SIDEPANEL.indexOf('{', start);
+  const params = SIDEPANEL.indexOf('(', start);
+  let parameterDepth = 1, parameterEnd = params + 1;
+  for (; parameterDepth && parameterEnd < SIDEPANEL.length; parameterEnd++) {
+    if (SIDEPANEL[parameterEnd] === '(') parameterDepth++;
+    if (SIDEPANEL[parameterEnd] === ')') parameterDepth--;
+  }
+  const open = SIDEPANEL.indexOf('{', parameterEnd);
   let depth = 0;
   let quote = null;
   let escaped = false;
@@ -357,6 +364,47 @@ test('correcting a rejected field releases only the current tab’s hold', () =>
   assert.equal(first.manual, true);
   assert.equal(second.manual, undefined, 'another quote tab still needs review');
   assert.equal(writes, 1);
+});
+
+test('retired assistant decisions retain their hold and require current-answer review', async () => {
+  const record = { scope: 'intake', tabId: 1, page: 'Quote', model: 'retired-model', policy: 'retired-policy',
+    contextHash: 'context', itemHash: 'item', key: 'choice', label: 'Choice', choice: 'No', done: 'auto' };
+  const state = { tab: { id: 1 }, aiCache: new Map() };
+  const context = { state, DEFAULT_MODEL, POLICY_VERSION, usage: { currentSession: () => ({ intakeId: 'intake' }) },
+    aiPendingStore: { get: async () => [record], set: async () => {} }, persistAiPending: () => {} };
+  vm.createContext(context);
+  vm.runInContext(['aiCacheSignature', 'restoreAiPending', 'aiDecisionBlocks', 'pendingAi', 'settleRejectedAi']
+    .map(extractFunction).join('\n'), context);
+  await context.restoreAiPending();
+  const restored = [...state.aiCache.values()][0];
+  assert.equal(restored.retired, true);
+  assert.equal(restored.autoOk, false, 'old model verification cannot qualify as Luna verification');
+  assert.equal(restored.rejected, true, 'explicit confirmation or a manual correction is required');
+  assert.equal(context.pendingAi(1, 'Quote').length, 1);
+  assert.equal(context.settleRejectedAi('Quote', new Set(['unrelated'])), false);
+  assert.equal(context.pendingAi(1, 'Quote').length, 1);
+  assert.equal(context.settleRejectedAi('Quote', new Set(['choice'])), true);
+  assert.equal(context.pendingAi(1, 'Quote').length, 0);
+});
+
+test('current Luna decisions and completed retired corrections retain their review state', async () => {
+  const base = { scope: 'intake', tabId: 1, page: 'Quote', contextHash: 'context', key: 'choice', done: 'auto' };
+  const records = [{ ...base, model: DEFAULT_MODEL, policy: POLICY_VERSION, itemHash: 'current' },
+    { ...base, model: 'retired-model', policy: 'retired-policy', itemHash: 'manual', manual: true },
+    { ...base, model: 'retired-model', policy: 'retired-policy', itemHash: 'confirmed', confirmed: true }];
+  const state = { aiCache: new Map() };
+  const context = { state, DEFAULT_MODEL, POLICY_VERSION, usage: { currentSession: () => ({ intakeId: 'intake' }) },
+    aiPendingStore: { get: async () => records, set: async () => {} } };
+  vm.createContext(context);
+  vm.runInContext(['aiCacheSignature', 'restoreAiPending', 'aiDecisionBlocks', 'pendingAi'].map(extractFunction).join('\n'), context);
+  await context.restoreAiPending();
+  const [current, manual, confirmed] = [...state.aiCache.values()];
+  assert.equal(current.retired, false);
+  assert.equal(current.rejected, false);
+  assert.equal(current.autoOk, true);
+  assert.equal(manual.manual, true);
+  assert.equal(confirmed.confirmed, true);
+  assert.equal(context.pendingAi(1, 'Quote').length, 1, 'only the unresolved Luna answer blocks');
 });
 
 test('safety metadata changes invalidate cached choice fingerprints', () => {

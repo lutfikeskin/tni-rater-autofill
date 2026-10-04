@@ -1,0 +1,111 @@
+// Shared intake scoping and field restrictions for Luna assistance.
+// Exact answers, calculations and page execution remain in code.
+import { TNI_RULES } from './tni-rules.js';
+import { priorPolicyExpired } from '../util.js';
+
+export const LEAVE = '__leave__';
+const CHOICE_KINDS = new Set(['radio', 'select', 'checkbox']);
+const MAX_OPTIONS = 254; // Keep per-field choices and evidence context bounded.
+
+export function assistContextKey(record, active) {
+  return JSON.stringify([record, active]);
+}
+
+const NEVER = [
+  /\b(mvr|clue)\b|motor vehicle (record|report)|loss history report/i,
+  /\bexclu(?:de|ded|des|ding|sions?)\b/i,
+  /\b(signature|sign here|e-?sign|attest|acknowledg|i agree|i certify|i declare|declare that|true,? (and )?complete|consent|authori[sz])/i,
+  /\b(bank|routing|account (number|no)|card (number|no)|credit card|cvv|ssn|social security|password)\b/i,
+  /\b(payments?|billing|bill\s*plan|ach|eft|autopay|checking\s*account|direct\s*debit|pay\s*in\s*full)\b/i,
+];
+const TYPED_ID = /\b(vin|license|licence|usdot|dot (number|no|#)|mc (number|no|#)|fein|ein|tax id|policy (number|no|#))\b/i;
+// These require exact calculations or independent lookup identity checks, not semantic guesses.
+// `manualOnly`/`fieldType` are explicit metadata for callers that know the field semantics;
+// labels remain a compatibility fallback for reports produced by older page kits.
+const MANUAL_FIELD_TYPES = new Set(['number', 'numeric', 'date', 'limit', 'identity', 'identifier']);
+const REVIEW = /\b(age|date|dob|birth|years?|months?|days?|miles?|mileage|radius|limit|deductible|value|amount|premium|gvw|weight|count|distance|csl)\b|\b(?:dot|vin)\b.*\b(belong|match|registered|correct|valid|verified|identity|same)\b/i;
+export function manualOnlyReason(item) {
+  if (item.manualOnly === true) return 'this field requires agent review';
+  if (item.reviewOnly === true) return 'this field requires agent review';
+  const fieldType = String(item.fieldType ?? item.valueType ?? item.semanticType ?? '').trim().toLowerCase();
+  if (MANUAL_FIELD_TYPES.has(fieldType)) return `${fieldType} fields require agent review`;
+  return REVIEW.test(`${item.section || ''} ${item.label || ''} ${item.q || ''}`)
+    ? 'numeric, date, limit and identity fields require agent review' : null;
+}
+export function neverReason(item) {
+  // Medical Payments is insurance coverage, not authorization to pay or debit an account.
+  const text = `${item.section || ''} ${item.label || ''}`.replace(/\bmedical payments?\b/gi, 'medical coverage');
+  if (NEVER.some(re => re.test(text))) return 'TNI leaves this question to the agent';
+  if (item.controlKind === 'text' && TYPED_ID.test(text)) return 'identifiers come only from the intake';
+  return null;
+}
+
+export function collectItems(frames) {
+  const seen = new Set(), items = [], blocked = [];
+  for (const [group, status] of [['failed', 'failed'], ['unknown', 'unfamiliar'], ['noData', 'not_on_intake'], ['leftRequired', 'required']]) {
+    for (const x of frames.flatMap(f => f?.[group] ?? [])) {
+      const sig = `${x.key}|${x.label}`;
+      if (!x.key || seen.has(sig)) continue;
+      seen.add(sig);
+      const options = x.controlKind === 'checkbox' ? ['checked', 'unchecked']
+        : [...new Set((x.options ?? []).map(o => String(o).replace(/\s+/g, ' ').trim()).filter(Boolean))];
+      const item = { key: x.key, q: x.q ?? null, label: x.label ?? '', section: x.section || null,
+        controlKind: x.controlKind ?? null, required: !!x.required, status, reason: x.reason ?? x.note ?? null,
+        current: x.current ?? null, options, applyable: CHOICE_KINDS.has(x.controlKind) && options.length > 0,
+        reviewOnly: x.reviewOnly === true, manualOnly: x.manualOnly === true,
+        fieldType: x.fieldType ?? x.valueType ?? x.semanticType ?? null };
+      const why = x.reviewOnly ? 'lookup identity mismatch requires agent review' : neverReason(item)
+        || (!item.applyable ? 'The assistant needs visible choices; enter this answer on the page' : null)
+        || (options.length > MAX_OPTIONS ? 'too many choices; narrow the list on the page first' : null);
+      if (why) blocked.push({ ...item, why });
+      else items.push({ ...item, id: `f${items.length + 1}` });
+    }
+  }
+  return { items, blocked };
+}
+
+// Keep only the active row of repeating entities. Identifiers are represented by presence,
+// never guessed or copied by the assistant. Other sensitive fields are not needed for option matching.
+export function scopedIntake(record, active) {
+  const privateKey = /^(vin|licenseNumber|licensePlate|fein|ssn|socialSecurity|phone|email|policyNumber|accountNumber|routingNumber|password)$/i;
+  const clean = (obj) => {
+    if (Array.isArray(obj)) return obj.map(clean);
+    if (!obj || typeof obj !== 'object') return obj;
+    return Object.fromEntries(Object.entries(obj).filter(([k]) => !privateKey.test(k)).map(([k, v]) =>
+      ['dot', 'mc'].includes(k) ? [`has${k.toUpperCase()}`, !!v] : [k, clean(v)]));
+  };
+  const out = {};
+  for (const key of ['applicant', 'operations', 'garaging', 'coverage', 'claims', 'trailerInfo', 'priorInsurance']) {
+    if (record[key]) out[key] = clean(record[key]);
+  }
+  for (const key of ['drivers', 'vehicles', 'trailers']) {
+    const index = active[key] ?? 0;
+    if (Number.isInteger(index) && index >= 0 && record[key]?.[index]) out[`${key}[${index}]`] = clean(record[key][index]);
+  }
+  if (record.priorInsurance?.length) out.computed = { priorPolicyExpired: priorPolicyExpired(record) };
+  return out;
+}
+
+export function evidenceFor(context) {
+  const facts = scopedIntake(context.record, context.active ?? {});
+  const sources = {};
+  const flatten = (obj, path = '') => {
+    for (const [key, value] of Object.entries(obj ?? {})) {
+      const p = Array.isArray(obj) ? `${path}[${key}]` : path ? `${path}.${key}` : key;
+      if (value && typeof value === 'object') flatten(value, p);
+      else if (value !== null && value !== undefined && value !== '') {
+        sources[`s${Object.keys(sources).length + 1}`] = { basis: 'intake', path: p, value };
+      }
+    }
+  };
+  flatten(facts);
+  const [progressive, amwins] = TNI_RULES.split('# AmWINS Admitted Placement (Business Auto)');
+  const text = context.carrier === 'progressive' ? progressive : context.carrier === 'amwins' ? amwins : '';
+  for (const line of (text || '').split('\n').filter(l => l.startsWith('- '))) {
+    sources[`s${Object.keys(sources).length + 1}`] = { basis: 'tni_rule', rule: line.slice(2) };
+  }
+  if (Object.keys(sources).length > MAX_OPTIONS) throw new AssistError('Too much intake context for one decision. Answer this page manually.');
+  return { facts, sources };
+}
+
+export class AssistError extends Error {}

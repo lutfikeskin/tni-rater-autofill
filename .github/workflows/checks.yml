@@ -30,8 +30,6 @@ jobs:
         run: npm run e2e -- --fixtures
       - name: Package
         run: npm run package
-      - name: Jev assistant workflow (mock API)
-        run: npm run mock:ai
       - name: Luna assistant workflow (mock API)
         run: npm run mock:luna
       - name: Extension on the AmWINS mock
