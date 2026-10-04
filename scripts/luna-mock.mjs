@@ -86,6 +86,8 @@ try {
       document.querySelector('.form-tab').append(field);
     });
     await mock.bringToFront();
+    await panel.waitForFunction((prefix) => chrome.tabs.query({ active: true, currentWindow: true })
+      .then(([tab]) => tab?.url?.startsWith(prefix)), `${base}/test/fixtures/amwins/`);
     await panel.waitForFunction(() => document.querySelector('#site')?.textContent.includes('AmWINS'));
   };
   const loadPdf = async () => {
@@ -103,6 +105,12 @@ try {
     });
     await panel.reload();
     await panel.locator('#tab-fill').click();
+    // The panel reload completes before its async tab refresh on some Chromium/Linux runs.
+    // Wait for the active fixture and an enabled Fill control, which are the production
+    // conditions needed by the following AI request.
+    await panel.waitForFunction((prefix) => chrome.tabs.query({ active: true, currentWindow: true })
+      .then(([tab]) => tab?.url?.startsWith(prefix)), `${base}/test/fixtures/amwins/`);
+    await panel.locator('#fill:not(:disabled)').waitFor({ state: 'visible' });
   };
   const loadPdfMissingYears = async () => {
     await loadPdf();

@@ -202,14 +202,21 @@ export function scoreResult(result, entries) {
         caseUnanswered = !serviceError;
         casePass = false;
       } else {
-        scoredChoices++;
-        if (expectedChoice === actualChoice) correct++;
-        else casePass = false;
+        if (prediction.basis !== answer.basis) casePass = false;
+        if (expectedChoice === null) {
+          if (actualChoice === null && prediction.basis === answer.basis) correctAbstentions++;
+          else if (actualChoice !== null) {
+            falsePositives++;
+            casePass = false;
+          }
+        } else {
+          scoredChoices++;
+          if (expectedChoice === actualChoice && prediction.basis === answer.basis) correct++;
+          else casePass = false;
+        }
       }
       if (expectedChoice === null) {
         expectedAbstentions++;
-        if (present && actualChoice === null) correctAbstentions++;
-        else if (present) falsePositives++;
       }
       if (answer.intakePath) {
         evidencePaths++;

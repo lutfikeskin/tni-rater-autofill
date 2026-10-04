@@ -10,16 +10,16 @@
 // control remains a compatibility fallback for widgets which do not emit those events.
 
 (() => {
-  const VERSION = 2;
+  const VERSION = 3;
   const previous = globalThis.__raterRecorder;
   if (previous) {
+    // Flush any trusted edit before rebaseline or replacing an older recorder. This keeps a
+    // native change that landed immediately before reinjection from disappearing.
+    previous.rebaseline?.();
     // Reusing the current recorder avoids resetting its listeners on every fill. Older versions
     // have no dispose hook, so rebaseline and leave the sole installed recorder in place rather
     // than starting a second timer that would duplicate usage events.
-    if (previous.version === VERSION || typeof previous.dispose !== 'function') {
-      previous.rebaseline?.();
-      return;
-    }
+    if (previous.version === VERSION || typeof previous.dispose !== 'function') return;
     previous.dispose();
   }
 
@@ -38,6 +38,7 @@
   let lastTrusted = 0;
   let lastTrustedControl = null;
   const trustedPending = new Map();
+  const trustedImmediate = new Set();
   const eventListeners = [];
   const listen = (type, listener) => {
     addEventListener(type, listener, true);
@@ -98,16 +99,29 @@
     return `text:${String(el.value ?? '')}`;
   };
 
+  const isDiscreteControl = (el) => {
+    if (!isControl(el)) return false;
+    const type = (el.type || el.tagName).toLowerCase();
+    if (type === 'radio' || type === 'checkbox' || el.tagName?.toUpperCase() === 'SELECT') return true;
+    // ExtJS combos are text inputs with a discrete option selection.
+    const trigger = el.closest?.('.x-form-trigger-wrap')?.querySelector?.('.x-form-trigger');
+    return !!trigger && /arrow|combo/.test(trigger.className) && !/date|time|picker-date/.test(trigger.className);
+  };
+
   // input/change fires after the native control has its new value. Store that value so a page
   // script which immediately changes the same control is not mistaken for the agent's answer.
+  // Ordinary text waits for the existing poll, coalescing a typing sequence into one event;
+  // discrete controls still flush immediately so follow-up questions can be detected promptly.
   const trustedValue = (e) => {
     if (!isCurrent() || !e.isTrusted || !isControl(e.target)) return;
     trustedPending.set(e.target, oneControlState(e.target));
+    const discrete = isDiscreteControl(e.target);
+    if (discrete) trustedImmediate.add(e.target);
     // Once an explicit value event exists, the broad gesture fallback must not classify another
     // control changed in the same polling window as manual.
     lastTrusted = 0;
     lastTrustedControl = null;
-    Promise.resolve().then(flushTrusted);
+    if (discrete) Promise.resolve().then(() => flushTrusted({ immediateOnly: true }));
   };
   listen('input', trustedValue);
   listen('change', trustedValue);
@@ -204,10 +218,11 @@
     chrome.runtime.sendMessage({ ra: 'usage', ...msg }).catch(() => {});
   }
 
-  function changedFields(cur, explicit) {
+  function changedFields(cur, explicitControls = null, skipControls = null) {
     const agent = Date.now() - lastTrusted < 3000 + TICK_MS;
     const changes = [];
     for (const [key, c] of cur) {
+      if (skipControls && c.controls.some((el) => skipControls.has(el))) continue;
       const before = prev.get(key);
       // A field that just appeared (a follow-up question) isn't a change until it's answered.
       if (!before && !c.v) continue;
@@ -216,14 +231,16 @@
       if ((before?.v ?? '') !== c.v) {
         const manual = before && c.controls.some((el) => trustedPending.get(el) === oneControlState(el));
         changes.push({ key, q: c.q, label: c.label, kind: c.kind, before: before?.v ?? '', after: c.v,
-          agent: before ? (explicit ? manual : agent && c.controls.includes(lastTrustedControl)) : false });
+          agent: before ? (explicitControls ? manual : agent && c.controls.includes(lastTrustedControl)) : false });
       }
     }
     return changes;
   }
 
-  function flushTrusted() {
+  function flushTrusted({ immediateOnly = false } = {}) {
     if (!isCurrent() || paused || !trustedPending.size) return;
+    const pending = new Set([...trustedPending.keys()].filter((el) => !immediateOnly || trustedImmediate.has(el)));
+    if (!pending.size) return;
     const nowPage = pageKey();
     const cur = snapshot();
     if (nowPage !== page) {
@@ -231,12 +248,21 @@
       prev = cur;
       return;
     }
-    const changes = changedFields(cur, true);
-    const appeared = [...cur.keys()].filter((key) => !prev.has(key));
-    prev = cur;
+    // Keep the old baseline for deferred text controls when a discrete choice flushes first.
+    // Otherwise the later poll would see no difference and lose the coalesced text event.
+    const deferred = immediateOnly
+      ? new Set([...trustedPending.keys()].filter((el) => !pending.has(el))) : new Set();
+    const changes = changedFields(cur, pending, deferred);
+    const appeared = [...cur.entries()]
+      .filter(([key, c]) => !prev.has(key) && (!immediateOnly || !c.controls.some((el) => deferred.has(el))))
+      .map(([key]) => key);
+    for (const [key, c] of cur) if (!c.controls.some((el) => deferred.has(el))) prev.set(key, c);
     if (changes.length) send({ event: 'field_changes', page, changes });
     if (appeared.length) send({ event: 'new_fields', page, keys: appeared });
-    trustedPending.clear();
+    for (const el of pending) {
+      trustedPending.delete(el);
+      trustedImmediate.delete(el);
+    }
   }
 
   function tick() {
@@ -248,13 +274,15 @@
       prev = cur;
       return;
     }
-    const changes = changedFields(cur, trustedPending.size > 0);
+    const pending = trustedPending.size ? new Set(trustedPending.keys()) : null;
+    const changes = changedFields(cur, pending);
     const appeared = [...cur.keys()].filter((k) => !prev.has(k));
     prev = cur;
     if (changes.length) send({ event: 'field_changes', page, changes });
     // A trusted value event is valid for one snapshot only. This also drops controls that were
     // replaced by a redraw before the poll, keeping an old element from authorizing later edits.
     trustedPending.clear();
+    trustedImmediate.clear();
     // New questions (follow-ups revealed by an answer, or a panel that opened): the side panel
     // may fill them automatically.
     if (appeared.length) send({ event: 'new_fields', page, keys: appeared });
@@ -263,6 +291,7 @@
   // Only the top frame reports page switches; embedded frames (ads, trackers) would be noise.
   function pageChanged(nowPage, cur) {
     trustedPending.clear();
+    trustedImmediate.clear();
     if (isTop) send({ event: 'page_view', page: nowPage, from: page, fields: cur.size, title: document.title });
     page = nowPage;
   }
@@ -277,6 +306,7 @@
     if (pageKey() !== page) pageChanged(pageKey(), cur);
     prev = cur;
     trustedPending.clear();
+    trustedImmediate.clear();
   }
 
   const timer = setInterval(tick, TICK_MS);
@@ -293,6 +323,7 @@
     disposed = true;
     clearInterval(timer);
     trustedPending.clear();
+    trustedImmediate.clear();
     eventListeners.forEach(([type, listener]) => removeEventListener?.(type, listener, true));
     chrome.runtime.onMessage.removeListener?.(onMessage);
   }
