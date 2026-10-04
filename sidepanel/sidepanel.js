@@ -54,6 +54,54 @@ const aiFingerprint = (value) => {
   }
   return hash.toString(16);
 };
+
+// Chrome's scripting InjectionResult metadata is semantically stable but its property order and
+// frame order can differ between Chromium platforms. Keep identity metadata in the snapshot while
+// canonicalizing only the outer execution-result envelope; pagekit's inner result string stays raw
+// because answer() compares it exactly before applying an AI choice.
+function canonicalSnapshotMetadata(value) {
+  if (Array.isArray(value)) return value.map(canonicalSnapshotMetadata);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalSnapshotMetadata(value[key])]));
+}
+
+function canonicalSnapshotFrame(frame) {
+  const input = frame && typeof frame === 'object' && !Array.isArray(frame) ? frame : {};
+  const output = {};
+  for (const key of Object.keys(input).filter((key) => key !== 'result').sort()) {
+    output[key] = canonicalSnapshotMetadata(input[key]);
+  }
+  if (Object.hasOwn(input, 'result')) output.result = input.result;
+  return output;
+}
+
+function canonicalSnapshots(results) {
+  if (!Array.isArray(results)) return results;
+  return results.map(canonicalSnapshotFrame).sort((a, b) => {
+    const af = Number.isFinite(Number(a.frameId)) ? Number(a.frameId) : Number.POSITIVE_INFINITY;
+    const bf = Number.isFinite(Number(b.frameId)) ? Number(b.frameId) : Number.POSITIVE_INFINITY;
+    if (af !== bf) return af - bf;
+    const ad = String(a.documentId ?? ''), bd = String(b.documentId ?? '');
+    if (ad !== bd) return ad < bd ? -1 : 1;
+    const ac = JSON.stringify(a), bc = JSON.stringify(b);
+    return ac === bc ? 0 : ac < bc ? -1 : 1;
+  });
+}
+
+function snapshotFingerprint(results) {
+  return aiFingerprint(canonicalSnapshots(results));
+}
+
+function snapshotsEqual(left, right) {
+  if (!Array.isArray(left) || !Array.isArray(right)) return false;
+  return JSON.stringify(canonicalSnapshots(left)) === JSON.stringify(canonicalSnapshots(right));
+}
+
+// Pending records written before canonicalization used the raw JSON hash. Accept that legacy hash
+// only as an exact fallback; new records use snapshotFingerprint above.
+function snapshotHashMatches(results, expected) {
+  return expected != null && (snapshotFingerprint(results) === expected || aiFingerprint(results) === expected);
+}
 function aiItemFingerprint(x) {
   return aiFingerprint([x.key, x.label, x.section, x.current, x.options, x.status, x.reason,
     x.reviewOnly, x.manualOnly, x.fieldType]);
@@ -150,7 +198,7 @@ function aiPendingRecord(sig, x, scope) {
     key: x.key, label: aiSafeText(x.label), choice: aiSafeText(x.choice), controlKind: x.controlKind,
     done: x.done, approved: !!x.approved, rejected: !!x.rejected, manual: !!x.manual, confirmed: !!x.confirmed,
     fieldHash: x.fieldHash ?? (x.restored ? null : aiFingerprint([x.key, x.label, x.choice])),
-    snapshotHash: x.snapshotHash ?? (x.snapshots ? aiFingerprint(x.snapshots) : null),
+    snapshotHash: x.snapshotHash ?? (x.snapshots ? snapshotFingerprint(x.snapshots) : null),
     confidence: Number.isFinite(x.confidence) ? x.confidence : null,
   };
 }
@@ -234,7 +282,7 @@ function aiCurrentAnswerPresent(frames, x) {
   if (x.fieldHash) return aiFingerprint([field.key, field.label, field.current]) === x.fieldHash;
   // Upgrade compatibility: old records have only a whole-page fingerprint. An unchanged page
   // or an exact unredacted match still proves the selected value; display redaction never does.
-  return (x.snapshotHash && aiFingerprint(frames) === x.snapshotHash)
+  return (x.snapshotHash && snapshotHashMatches(frames, x.snapshotHash))
     || (field.label === x.label && field.current === x.choice);
 }
 
@@ -1225,7 +1273,7 @@ async function applyAi(list, ctx, decision) {
   await tellRecorder('pause');
   try {
     const current = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
-    if (JSON.stringify(current) !== JSON.stringify(ctx.snapshots)) {
+    if (!snapshotsEqual(current, ctx.snapshots)) {
       for (const x of list) x.error = 'the page changed; click Fill this page for fresh suggestions';
       return false;
     }
@@ -1255,7 +1303,7 @@ async function applyAi(list, ctx, decision) {
     // context change, when the snapshot of this run is gone).
     for (const x of list) if (x.done) {
       x.snapshots = ctx.snapshots;
-      x.snapshotHash = aiFingerprint(ctx.snapshots);
+      x.snapshotHash = snapshotFingerprint(ctx.snapshots);
     }
     return true;
   } catch (e) {
@@ -1313,7 +1361,9 @@ function renderAi(holder, suggestions, ctx) {
         rerender();
         return;
       }
-      const moved = list.filter((x) => aiFingerprint(now) !== (x.snapshotHash ?? aiFingerprint(x.snapshots ?? ctx.snapshots)));
+      const moved = list.filter((x) => x.snapshotHash
+        ? !snapshotHashMatches(now, x.snapshotHash)
+        : !snapshotsEqual(now, x.snapshots ?? ctx.snapshots));
       if (moved.length) {
         const keys = state.agentKeys.get(ctx.page);
         for (const x of moved) {
