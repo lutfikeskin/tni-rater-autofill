@@ -92,6 +92,7 @@ export const SECTIONS = [
     ['coverage.gl', 'General liability', 'bool'],
     ['coverage.glLimit', 'GL limit', 'choice'],
     ['coverage.reeferBreakdown', 'Reefer breakdown', 'bool'],
+    ['coverage.ntl', 'Non-trucking liability (NTL)', 'bool'],
   ] },
   { id: 'claims', title: 'Claims (last 36 months)', fields: [
     ['claims.hasClaims', 'Any claims / violations', 'bool'],

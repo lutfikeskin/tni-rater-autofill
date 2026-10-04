@@ -16,6 +16,11 @@ import {
   settingsFrom,
   suggest,
   verifyResponse,
+  buildNotesReview,
+  parseNotesReview,
+  notesWarnings,
+  noteLines,
+  reviewNotes,
 } from '../src/ai/assist.js';
 
 // All records in this file are synthetic. They deliberately contain two rows so that a
@@ -327,4 +332,35 @@ test('filled-page context cannot bypass identifier filtering, and text is reject
   assert.equal(body.state.onPage.length, 1);
   assert.doesNotMatch(JSON.stringify(body), /DO-NOT-SEND/);
   assert.throws(() => buildRequest([{ ...items[0], controlKind: 'text' }], context), /visible choices/);
+});
+
+test('claims-box review: one NTL and one coverage-change yes/no per line, flags only', async () => {
+  const notes = { coverage: { autoLiability: 'Yes', autoLiabLimit: '$750k CSL', cargo: true, ntl: null },
+    claims: { text: 'No\nWants $1M liability instead. Needs bobtail too\nFinanced\nFinanced' } };
+  assert.deepEqual(noteLines(notes.claims.text), ['Wants $1M liability instead.', 'Needs bobtail too', 'Financed'], 'sentences, no repeats, no bare yes/no');
+  const request = buildNotesReview(notes);
+  assert.equal(request.body.model, DEFAULT_MODEL);
+  assert.deepEqual(request.body.state.formCoverage, { autoLiability: 'Yes', autoLiabLimit: '$750k CSL', cargo: true }, 'the form coverage, not our NTL flag');
+  assert.deepEqual(request.body.state.claimsBox.lines, request.lines);
+  assert.deepEqual(Object.keys(request.body.questions), ['l0_ntl', 'l0_coverage', 'l1_ntl', 'l1_coverage', 'l2_ntl', 'l2_coverage']);
+  assert.ok(Object.values(request.body.questions).every((q) => q.type === 'noul' && /claimsBox\.lines\[\d\]/.test(q.instructions)));
+  assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'nothing to read');
+
+  const answers = (values) => ({ model: DEFAULT_MODEL, answers: Object.fromEntries(Object.entries(values).map(([k, noul]) => [k, { type: 'noul', noul }])) });
+  const json = answers({ l0_ntl: 0.02, l0_coverage: 0.93, l1_ntl: 0.97, l1_coverage: 0.9, l2_ntl: 0.01, l2_coverage: 0.04 });
+  const results = parseNotesReview(json, request);
+  const flags = notesWarnings(results, notes);
+  assert.deepEqual(flags.map((w) => [w.code, w.path, w.level]), [['ai.coverage-change', 'claims.text', 'check'], ['ai.ntl', 'coverage.ntl', 'check']]);
+  assert.ok(flags[0].msg.includes('Wants $1M liability instead.') && flags[1].msg.includes('Needs bobtail too'), 'the line is quoted');
+  assert.deepEqual(notesWarnings(results, { coverage: { ntl: true } }).map((w) => w.code), ['ai.coverage-change'], 'NTL already found on the intake is not repeated, nor listed as a coverage change');
+
+  assert.throws(() => parseNotesReview(answers({ l0_ntl: 0.1 }), request), AssistError, 'a missing answer fails the whole review');
+  assert.throws(() => parseNotesReview(answers({ l0_ntl: 0.1, l0_coverage: 1.4, l1_ntl: 0, l1_coverage: 0, l2_ntl: 0, l2_coverage: 0 }), request), AssistError);
+
+  let sent;
+  const done = await reviewNotes(notes, { apiKey: 'test-key', model: DEFAULT_MODEL }, { call: async ({ apiKey, body }) => { sent = { apiKey, body }; return { ...json, usage: { input_tokens: 900, output_tokens: 30 } }; } });
+  assert.equal(sent.apiKey, 'test-key');
+  assert.deepEqual(done.warnings.map((w) => w.code), ['ai.coverage-change', 'ai.ntl']);
+  assert.equal(done.lines, 3);
+  assert.equal(done.tokensIn, 900);
 });

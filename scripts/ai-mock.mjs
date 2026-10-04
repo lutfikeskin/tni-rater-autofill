@@ -24,6 +24,7 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-ai-'));
 let context;
 const checks = [], errors = [];
 let requests = 0;
+let claimsRequests = 0; // the claims-box review (one per intake), counted apart from page questions
 let mode = 'normal';
 let releaseRequest, requestStarted;
 const verify = (name, actual, expected) => {
@@ -37,12 +38,18 @@ try {
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
     if (url.hostname === 'api.typesafe.ai') {
+      const body = route.request().postDataJSON();
+      if (Object.keys(body.questions).every(k => /^l\d+_(ntl|coverage)$/.test(k))) {
+        claimsRequests++;
+        // Flag only the first line, as a coverage change.
+        const answers = Object.fromEntries(Object.keys(body.questions).map(k => [k, { type: 'noul', noul: k === 'l0_coverage' ? 0.999 : 0.01 }]));
+        return route.fulfill({ json: { model: body.model, answers, usage: { input_tokens: 100, output_tokens: 0 } } });
+      }
       requests++;
       if (mode === 'slow') {
         requestStarted?.();
         await new Promise(resolve => { releaseRequest = resolve; });
       }
-      const body = route.request().postDataJSON();
       const distribution = (criteria, choice, probability = 0.999) => {
         const keys = Object.keys(criteria);
         return { type: 'choice', choice,
@@ -126,6 +133,11 @@ try {
   await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
   verify('manual edit survives another fill', await mock.locator('#mockReviewChoice').inputValue(), 'Yes');
   verify('same context reuses its AI response', requests, 2);
+  // The key was added with this intake open: Jev read its claims box once, and the flagged line
+  // is a Check intake item (the panel stayed on Fill).
+  await panel.waitForFunction(() => document.querySelector('#warnings')?.textContent.includes('Jev: the claims box may ask for a coverage change'), null, { timeout: 15000 });
+  verify('claims box is read once per intake', claimsRequests, 1);
+  verify('the panel stays on Fill', await panel.locator('#fill-pane').isVisible(), true);
   await panel.screenshot({ path: path.join(out, 'suggestion-edited.png'), fullPage: true });
 
   // New intake clears earlier decisions; verified auto-select still waits for agent approval.
@@ -145,6 +157,8 @@ try {
   await mock.waitForFunction(() => window.__amwinsMock.saves > 0, null, { timeout: 30000 });
   verify('approval permits continue', await mock.evaluate(() => window.__amwinsMock.saves > 0), true);
   verify('no submission', await mock.evaluate(() => window.__amwinsMock.submitted), false);
+  for (let waited = 0; claimsRequests < 2 && waited < 15000; waited += 250) await panel.waitForTimeout(250);
+  verify('a new intake gets its own claims-box review', claimsRequests, 2);
   for (const scenario of ['uncertain', 'unsupported']) {
     mode = scenario;
     await panel.reload();
@@ -195,7 +209,7 @@ try {
   server.close();
   fs.rmSync(profile, { recursive: true, force: true });
 }
-const result = { scope: 'Mock AI responses; real packaged extension controls. No live model-quality measurement.', requests, checks, errors };
+const result = { scope: 'Mock AI responses; real packaged extension controls. No live model-quality measurement.', requests, claimsRequests, checks, errors };
 fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify(result, null, 2));
 console.log(`${checks.filter(c => c.ok).length}/${checks.length} AI workflow checks passed. ${out}`);
 process.exitCode = checks.every(c => c.ok) ? 0 : 1;

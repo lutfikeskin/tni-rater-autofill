@@ -8,6 +8,8 @@ The rules engine fills first. AI only handles the small remainder: unresolved ra
 
 The provider is TypeSafe AI **Jev** at `https://api.typesafe.ai/v1/systemone`, default model `jev-1.13.0`. The agent's Jev key and model are per-device settings (`jevKey`, `jevModel`); the legacy OpenAI key is never reused. With assistance on, the unresolved questions and their options, the active intake context, and the carrier-scoped TNI rules leave the computer. Without a key, the rules engine works as before and unresolved questions stay with the agent.
 
+Jev also reads the intake's claims box once per intake (when assistance is on and a key is set): code splits it into lines and asks two yes/no (Noul) questions per line, whether it names non-trucking liability (NTL / bobtail) and whether it asks for coverage different from the form's ticked coverages. Lines at or above `NOTES_FLAG` (0.5, chosen for recall: these are review items, not answers) become Check intake items (`ai.ntl`, `ai.coverage-change`) quoting the line. Nothing is filled or ticked from them; the agent changes Requested coverage. A malformed answer fails the whole review, and the usage log records counts only (`ai_suggest`, page `ClaimsBox`).
+
 ```mermaid
 flowchart LR
     A[Unresolved choice questions] --> B[Drop never-list and agent-settled questions]

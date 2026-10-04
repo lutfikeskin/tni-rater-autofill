@@ -7,7 +7,7 @@ import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import * as usage from './usage-log.js';
-import { collectItems, suggest, settingsFrom, AssistError, DEFAULT_MODEL, POLICY_VERSION, assistContextKey } from '../src/ai/assist.js';
+import { collectItems, suggest, settingsFrom, AssistError, DEFAULT_MODEL, POLICY_VERSION, assistContextKey, reviewNotes } from '../src/ai/assist.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -53,6 +53,7 @@ const state = {
   // per page and set of questions, so a refill doesn't ask again.
   aiRun: 0,
   aiCache: new Map(),
+  notesAsking: null, // the intake whose claims box Jev is reading now
   // Which screen shows: Settings over everything; otherwise the start screen or the quote, on
   // its Check intake or Fill pages step.
   settingsOpen: false,
@@ -120,6 +121,7 @@ async function loadFile(file) {
   await save();
   render();
   refreshTab();
+  reviewClaimsBox();
 }
 
 function showLoadError(msg) {
@@ -839,6 +841,36 @@ async function aiSettings() {
   return settingsFrom(await usage.settings());
 }
 
+// Jev reads the claims box once per intake (reviewNotes in src/ai/assist.js): lines that may
+// name non-trucking liability or ask for a coverage change become items on Check intake
+// (its tab count goes up; the panel does not switch steps under the agent).
+// Flags only; the agent decides. Logged as counts, never the text.
+async function reviewClaimsBox() {
+  const intake = state.intake;
+  if (!intake || intake.notesReview || state.notesAsking === intake || !intake.record.claims?.text) return;
+  const cfg = await aiSettings();
+  if (!cfg.on || !cfg.apiKey || state.intake !== intake) return;
+  state.notesAsking = intake;
+  const started = Date.now();
+  const logged = { type: 'ai_suggest', page: 'ClaimsBox', model: cfg.model };
+  try {
+    const result = await reviewNotes(intake.record, cfg);
+    if (state.intake !== intake) return;
+    intake.warnings.push(...result.warnings);
+    intake.notesReview = { model: result.model ?? cfg.model, flagged: result.warnings.length };
+    usage.log({ ...logged, ms: Date.now() - started, items: result.lines, suggested: result.warnings.length,
+      leave: result.lines - result.warnings.length, tokensIn: result.tokensIn, tokensOut: result.tokensOut });
+    await save();
+    // The Check intake count shows the new items; the agent stays on the step they are on.
+    render();
+  } catch (e) {
+    const msg = e instanceof AssistError ? e.message : `Something went wrong (${String(e?.message ?? e).slice(0, 120)}).`;
+    usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+  } finally {
+    if (state.notesAsking === intake) state.notesAsking = null;
+  }
+}
+
 // ctx: { tabId, page, carrier } of the fill these frames came from.
 async function runAssist(frames, ctx) {
   const record = state.intake?.record;
@@ -1131,6 +1163,8 @@ function wireAi() {
     // Keep pending approvals; their cache keys remain bound to the original model and context.
     await usage.saveSettings(patch);
     await renderAiSettings();
+    // Jev just turned on or got a key: read the claims box of the open intake if not done yet.
+    reviewClaimsBox();
   };
   $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
   $('ai-auto').addEventListener('change', (e) => save({ aiAuto: e.target.checked }));
@@ -1320,6 +1354,7 @@ async function init() {
   render();
   renderUsage();
   renderAiSettings();
+  reviewClaimsBox();
   await refreshTab();
 }
 

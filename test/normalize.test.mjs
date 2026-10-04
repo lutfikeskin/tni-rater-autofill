@@ -338,3 +338,20 @@ test('an owner whose surname has two words is found in the driver list', () => {
   const sharedWord = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO' }, { today: new Date('2026-09-30') });
   assert.ok(sharedWord.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a surname word with another first name still warns');
 });
+
+test('NTL / non-trucking / bobtail in the claims box marks a non-trucking liability customer', () => {
+  const today = { today: new Date('2026-09-30') };
+  for (const text of ['No\nNTL', 'No\nNeeds non-trucking liability', 'no claims\nnon tracking', 'No\nBob-tail coverage', 'No\nnontrucking only', 'No\nbobtail']) {
+    const r = normalizeIntake({ ...raw, claims_details: text }, today);
+    assert.equal(r.record.coverage.ntl, true, text);
+    const w = r.warnings.find((x) => x.code === 'coverage.ntl');
+    assert.equal(w?.level, 'check', text);
+    assert.equal(w.path, 'coverage.ntl');
+    assert.ok(w.msg.includes(text.split('\n').at(-1)), 'the line is quoted for the agent');
+  }
+  for (const text of ['No\nFinanced', 'No\nUntle Bobcat control', 'Yes\nTruck stopped at the toll']) {
+    const r = normalizeIntake({ ...raw, claims_details: text }, today);
+    assert.equal(r.record.coverage.ntl, null, text);
+    assert.ok(!r.warnings.some((x) => x.code === 'coverage.ntl'), text);
+  }
+});

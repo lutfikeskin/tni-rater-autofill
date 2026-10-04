@@ -214,6 +214,12 @@ export const progressive = {
     { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
     { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, scope: 'vehicle' },
     { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle' },
+    // NTL customers (claims box: NTL / non-trucking / bobtail): the link under the liability
+    // coverage that opens the Non-Trucking Liability section. First in this list, so it is clicked
+    // before cargo and the bill plan whenever it is still on the page (one click per pass); not a
+    // hard prerequisite, since the link is gone once the agent clicked it. What the section asks
+    // hasn't been seen on a live quote yet: its questions are the agent's.
+    { id: 'addNtl', page: 'CoveragesRates', text: '^add non-?trucking liability( instead)?\\??$', when: (r) => r.coverage.ntl === true },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
     { id: 'openCargo', page: 'CoveragesRates', text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true },
     { id: 'addCargoCommodity', page: 'CoveragesRates', text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true },

@@ -413,3 +413,19 @@ test('the owner with a two-word surname is matched to their driver row (date of 
   record.drivers = [{ first: 'Bob', middle: null, last: 'Smith', dob: '01/02/1980' }];
   assert.equal(owner(record).driver?.dob, '01/02/1980', 'the same one-word surname, as before');
 });
+
+test('an NTL customer gets Add Non-Trucking Liability on Rates, before cargo and the bill plan', () => {
+  const record = baseRecord();
+  record.coverage.cargo = true;
+  const ids = (r) => buildPlan(r, progressive, {}).filter((s) => s.kind === 'action').map((s) => s.action);
+  assert.ok(!ids(record).includes('addNtl'), 'not without NTL on the intake');
+  record.coverage.ntl = true;
+  const plan = buildPlan(record, progressive, {});
+  const order = ids(record);
+  const ntl = plan.find((s) => s.action === 'addNtl');
+  assert.deepEqual(ntl.pages, ['CoveragesRates']);
+  assert.ok(new RegExp(ntl.text, 'i').test('Add Non-Trucking Liability instead?'));
+  assert.ok(!new RegExp(ntl.text, 'i').test('Help Text For Non-Trucking Liability'));
+  assert.ok(order.indexOf('addNtl') < order.indexOf('openCargo') && order.indexOf('addNtl') < order.indexOf('billPlan'), 'clicked first on Rates');
+  assert.deepEqual(plan.find((s) => s.action === 'billPlan').afterActions, ['doneCargo'], 'no hard wait: the link is gone once the agent clicked it');
+});

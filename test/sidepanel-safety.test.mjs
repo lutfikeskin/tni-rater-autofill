@@ -334,3 +334,40 @@ test('a quote opened in a new tab is followed once it loads, even while the old 
   context.onTabUpdated(2, { title: 'x' }, { id: 2, active: true });
   assert.equal(refreshed, 2, 'no reload or address change: nothing to do');
 });
+
+test('Jev reads the claims box once per intake and drops a result for a replaced intake', async () => {
+  const logs = [];
+  let release;
+  const intake = { record: { claims: { text: 'Needs bobtail' }, coverage: {} }, warnings: [], done: [] };
+  const state = { intake, filled: new Map(), settingsOpen: false, step: 'fill', notesAsking: null };
+  let calls = 0;
+  const sandbox = {
+    state, AssistError: class extends Error {},
+    aiSettings: async () => ({ on: true, apiKey: 'k', model: 'jev-1.13.0' }),
+    reviewNotes: async () => { calls++; await new Promise((r) => { release = r; }); return { warnings: [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }], lines: 1, model: 'jev-1.13.0', tokensIn: 1, tokensOut: 1 }; },
+    usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {}, Date,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('reviewClaimsBox'), sandbox);
+  const first = sandbox.reviewClaimsBox();
+  await new Promise((r) => setImmediate(r));
+  await sandbox.reviewClaimsBox();
+  assert.equal(calls, 1, 'not asked twice while waiting');
+  release();
+  await first;
+  assert.deepEqual(intake.warnings.map((w) => w.code), ['ai.ntl']);
+  assert.equal(intake.notesReview.flagged, 1);
+  assert.equal(state.step, 'fill', 'the agent stays on their step; the Check intake count shows the items');
+  assert.deepEqual(Object.keys(logs[0]).sort(), ['items', 'leave', 'model', 'ms', 'page', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
+  await sandbox.reviewClaimsBox();
+  assert.equal(calls, 1, 'once per intake');
+
+  const other = { record: { claims: { text: 'NTL' }, coverage: {} }, warnings: [], done: [] };
+  state.intake = other;
+  const pending = sandbox.reviewClaimsBox();
+  await new Promise((r) => setImmediate(r));
+  state.intake = { record: { claims: { text: '' }, coverage: {} }, warnings: [], done: [] };
+  release();
+  await pending;
+  assert.deepEqual(other.warnings, [], 'a replaced intake never gets the result');
+});
