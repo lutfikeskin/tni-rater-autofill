@@ -1160,7 +1160,21 @@
           && a.afterActions.every((id) => clicked.has(id))
           && (!a.afterPages.length || a.afterPages.some((p) => visited.has(p)))
           && (!a.afterValue || pairs.some(({ step, control }) => step.path === a.afterValue[0] && new RegExp(a.afterValue[1], 'i').test(selectedText(control) ?? '')));
-        if (!ready) { blocked.push(a.action); report.blocked.push({ id: a.action, why: 'waiting for its prerequisites' }); continue; }
+        if (!ready) {
+          // Name what it waits for (field paths, buttons, pages: no client values), so the panel
+          // and the usage log say why a helper didn't run.
+          const waitingFor = [
+            ...a.after.filter((p) => !has(p)),
+            ...(a.afterAny?.length && !a.afterAny.some(has) ? [`one of ${a.afterAny.join(' / ')}`] : []),
+            ...a.afterActions.filter((id) => !clicked.has(id)).map((id) => `${id} clicked`),
+            ...(a.afterPages.length && !a.afterPages.some((p) => visited.has(p)) ? [`${a.afterPages.join(' / ')} visited`] : []),
+            ...(a.needsPremium && !premiumReady() ? ['a current premium'] : []),
+            ...(a.afterValue ? [`${a.afterValue[0]} set`] : []),
+          ];
+          blocked.push(a.action);
+          report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites' });
+          continue;
+        }
         if (!button) {
           const opener = !openersTried.has(a.action) && findButton({ text: a.opener });
           if (!opener) continue;
@@ -1221,7 +1235,7 @@
       ...report.leftRequired.map((x) => `required: ${x.label}`),
       ...report.kept.filter((x) => x.differs).map((x) => `differs: ${x.label}`),
       ...report.checks.map((x) => `check: ${x.label}`),
-      ...report.blocked.map((x) => `button: ${x.id}`),
+      ...report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
       ...(report.halted ? [report.reason] : []),
     ];
     report.stepKey = stepKey();

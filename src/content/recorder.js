@@ -120,7 +120,9 @@
       const before = prev.get(key);
       // A field that just appeared (a follow-up question) isn't a change until it's answered.
       if (!before && !c.v) continue;
-      if ((before?.v ?? '') !== c.v) changes.push({ key, q: c.q, label: c.label, kind: c.kind, before: before?.v ?? '', after: c.v, agent });
+      // One that appears already answered (a step shown again, a lookup adding a row) was filled
+      // by the page, never by the agent, even right after the agent clicked.
+      if ((before?.v ?? '') !== c.v) changes.push({ key, q: c.q, label: c.label, kind: c.kind, before: before?.v ?? '', after: c.v, agent: before ? agent : false });
     }
     const appeared = [...cur.keys()].filter((k) => !prev.has(k));
     prev = cur;

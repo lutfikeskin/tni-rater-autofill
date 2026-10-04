@@ -320,6 +320,13 @@ function renderPickers() {
 // ---------------------------------------------------------------------------------------------
 // The current tab
 
+// A tab finished loading or changed address. The followed tab, but also the active one: Progressive
+// opens the quote in a new tab, which is still loading (no rater address yet) when it becomes
+// active, so the panel kept following the old portal tab in the background.
+function onTabUpdated(id, change, tab) {
+  if ((id === state.tab?.id || tab?.active) && (change.url || change.status === 'complete')) refreshTab();
+}
+
 async function refreshTab() {
   if (!inExtension) { state.tab = null; return renderSite(); }
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -783,7 +790,7 @@ function renderReport(frames) {
         h('span', {}, h('span', { class: 'mark ai' }), 'AI answer'))),
     needs.length ? h('div', { class: 'eyebrow needs-head' }, 'Needs you on this page') : null,
     ...needs.map(need),
-    waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Buttons waiting'), h('span', { class: 'muted' }, waiting.map((x) => x.id.replace(/:\d+$/, '')).join(', '))) : null,
+    waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Buttons waiting'), h('span', { class: 'muted' }, waiting.map((x) => `${x.id.replace(/:\d+$/, '')}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`).join('; '))) : null,
     doneRows.length ? h('details', { class: 'more' },
       h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'See what was filled'), h('span', { class: 'small muted' }, String(filled.length))),
       h('div', { class: 'more-body' }, doneRows.map(([k, v]) => h('div', { class: 'kv' }, h('span', {}, k), h('span', {}, v))))) : null,
@@ -1295,7 +1302,7 @@ function wire() {
   if (inExtension) {
     chrome.runtime.onMessage.addListener(onRecorderMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
-    chrome.tabs.onUpdated.addListener((id, change) => { if (id === state.tab?.id && (change.url || change.status === 'complete')) refreshTab(); });
+    chrome.tabs.onUpdated.addListener(onTabUpdated);
     chrome.windows.onFocusChanged.addListener(refreshTab);
   }
 }

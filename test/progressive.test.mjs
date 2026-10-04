@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPlan } from '../src/plan.js';
-import { progressive } from '../src/carriers/progressive.js';
+import { progressive, owner } from '../src/carriers/progressive.js';
 
 const baseRecord = () => ({
   applicant: {
@@ -134,7 +134,7 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const recalc = actions.find((step) => step.action === 'recalculate');
   const bill = actions.find((step) => step.action === 'billPlan');
   // Cargo, then bill plan options (automatic payments), back to Rates, then Recalculate.
-  assert.deepEqual(recalc.afterActions, []);
+  assert.deepEqual(recalc.afterActions, ['billPlan']);
   assert.deepEqual(recalc.afterPages, ['ChangePaymentPlan']);
   assert.equal(recalc.verify, 'premium');
   assert.equal(bill.needsPremium, false);
@@ -143,7 +143,7 @@ test('Progressive coverage and helper ordering are conservative', () => {
   // Back from the bill plan, Recalculate only when the rates are stale; Print doesn't wait for it.
   assert.equal(recalc.needsRecalculation, true);
   const print = actions.find((step) => step.action === 'print');
-  assert.deepEqual(print.afterActions, []);
+  assert.deepEqual(print.afterActions, ['billPlan'], 'Print follows our bill plan; it does not wait for Recalculate');
   assert.deepEqual(print.afterPages, ['ChangePaymentPlan']);
   const addDriver = actions.find((step) => step.action === 'addDriver:0');
   assert.deepEqual(addDriver.unlessActions, ['driverEntered:0']);
@@ -288,7 +288,13 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
   assert.equal(sel('#yearBusinessEstablished').value, new Date().getFullYear());
   assert.equal(sel('#classCodeAndDescription').kind, 'search-select');
   assert.equal(sel('#classCodeAndDescription').search, '484122');
-  assert.deepEqual(plan.filter((x) => /^Prior carrier/.test(x.name)).map((x) => [x.selector, x.value]), [0, 1, 2].map((n) => [`#priorCarrierCoveragePanel${n} [data-id="carrierName"]`, 'NO PRIOR']));
+  const prior = plan.filter((x) => /^Prior carrier/.test(x.name));
+  assert.equal(prior.length, 6, 'every year panel and extra coverage rows');
+  for (const step of prior) {
+    assert.equal(step.selector, '#priorCarrierPanel .coveragePanel [data-id="carrierName"]', 'any numbering, not the hidden template');
+    assert.equal(step.value, 'NO PRIOR');
+    assert.equal(step.hidden, true, 'collapsed year panels are filled too');
+  }
   assert.equal(named(/^Year licensed/).value, '1985');
   assert.equal(named(/^Disclosure/).value, 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026');
   assert.equal(sel('#autoSymbol6').value, true);
@@ -335,7 +341,10 @@ test('AmWINS standard answers from the agent: current carrier 1-2 years with a D
   assert.equal(sel('#howLongWithCurrentCarrier').value, '1 TO 2 YEARS');
   assert.equal(sel('#howLongWithCurrentCarrier').ignore, false);
   assert.equal(named(/^Claim-free loss runs/).value, false);
-  assert.equal(named(/^Personal Injury Protection \(/).ignore, true);
+  const pip = named(/^Personal Injury Protection \(/);
+  assert.equal(pip.ignore, false);
+  assert.equal(pip.value, false, 'No: Medical Payments is offered');
+  assert.equal(pip.replace, true, 'replaces the page pre-selected Yes');
   assert.equal(sel('#personalInjuryProtectionLimit').ignore, true);
   const marital = () => sel('#driversPanel [data-id="martialStatus"]');
   assert.equal(marital().value, record.drivers[0].maritalStatus ?? 'MARRIED');
@@ -377,8 +386,30 @@ test('Progressive NJ run: vehicle registrant, VIN-lookup safety boxes kept, Rate
   for (const q of ['2C2C', '2C2D', '2C2E', '2C45', '2C46', '2C47', '2C48']) assert.equal(byQ(plan, q).ignore, true, q);
   assert.equal(byQ(plan, '2007').ignore, true);
   assert.match(byQ(plan, '2007').emptyNote, /carry over/, 'an empty carryover goes to the agent');
-  for (const id of ['billPlan', 'recalculate', 'print']) {
-    assert.deepEqual(plan.find((s) => s.action === id).after, ['coverage.autoLiabLimit'], `${id} waits for the liability limit`);
+  // The bill plan waits for the liability limit; Recalculate and Print follow the bill plan and
+  // don't re-check the limit on the reloaded Rates page (FL/NJ runs).
+  assert.deepEqual(plan.find((s) => s.action === 'billPlan').after, ['coverage.autoLiabLimit']);
+  for (const id of ['recalculate', 'print']) {
+    const step = plan.find((s) => s.action === id);
+    assert.deepEqual(step.after, [], id);
+    assert.deepEqual(step.afterActions, ['billPlan'], `${id} needs our bill plan click`);
   }
+  const gl = structuredClone(baseRecord());
+  gl.coverage.gl = true;
+  assert.deepEqual(buildPlan(gl, progressive, {}).find((s) => s.action === 'print').after, ['coverage.autoLiabLimit'], 'with GL (no bill plan of ours) the limit check stays');
   assert.deepEqual(plan.find((s) => s.action === 'recalculate').afterPages, ['ChangePaymentPlan']);
+});
+
+test('the owner with a two-word surname is matched to their driver row (date of birth)', () => {
+  const record = baseRecord();
+  record.applicant.owner1 = 'Sample Vinicius Testa Examplo';
+  record.drivers = [{ first: 'Sample Vinicius', middle: null, last: 'Testa Examplo', dob: '01/02/1980' }];
+  assert.equal(owner(record).driver?.dob, '01/02/1980');
+  record.applicant.owner1 = 'Sample Examplo';
+  assert.equal(owner(record).driver?.dob, '01/02/1980', 'surname word matches the last-name box');
+  record.applicant.owner1 = 'Alice Smith';
+  record.drivers = [{ first: 'Bob', middle: null, last: 'Jones Smith', dob: '01/02/1980' }];
+  assert.equal(owner(record).driver, null, 'a shared surname word with another first name is someone else');
+  record.drivers = [{ first: 'Bob', middle: null, last: 'Smith', dob: '01/02/1980' }];
+  assert.equal(owner(record).driver?.dob, '01/02/1980', 'the same one-word surname, as before');
 });
