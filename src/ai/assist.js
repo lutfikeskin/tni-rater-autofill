@@ -6,7 +6,7 @@ import { priorPolicyExpired } from '../util.js';
 export const DEFAULT_MODEL = 'jev-1.13.0';
 export const API_URL = 'https://api.typesafe.ai/v1/systemone';
 export const LEAVE = '__leave__';
-export const POLICY_VERSION = 'jev-evidence-v1';
+export const POLICY_VERSION = 'jev-evidence-v2';
 export const AUTO_POLICY = Object.freeze({ probability: 0.98, confidence: 0.97, margin: 0.95, evidence: 0.98, support: 0.99 });
 const CHOICE_KINDS = new Set(['radio', 'select', 'checkbox']);
 const MAX_OPTIONS = 254; // TypeSafe permits 255, including our abstention option.
@@ -25,15 +25,28 @@ export function settingsFrom(saved = {}) {
 
 const NEVER = [
   /\b(mvr|clue)\b|motor vehicle (record|report)|loss history report/i,
-  /\bexclu(de|ded|sion)\b/i,
+  /\bexclu(?:de|ded|des|ding|sions?)\b/i,
   /\b(signature|sign here|e-?sign|attest|acknowledg|i agree|i certify|i declare|declare that|true,? (and )?complete|consent|authori[sz])/i,
   /\b(bank|routing|account (number|no)|card (number|no)|credit card|cvv|ssn|social security|password)\b/i,
+  /\b(payments?|billing|bill\s*plan|ach|eft|autopay|checking\s*account|direct\s*debit|pay\s*in\s*full)\b/i,
 ];
 const TYPED_ID = /\b(vin|license|licence|usdot|dot (number|no|#)|mc (number|no|#)|fein|ein|tax id|policy (number|no|#))\b/i;
 // These require exact calculations or independent lookup identity checks, not semantic guesses.
-const REVIEW = /\b(age|date|dob|birth|years?|months?|days?|miles?|mileage|radius|limit|deductible|value|amount|premium|gvw|weight|count)\b|\b(?:dot|vin)\b.*\b(belong|match|registered)\b/i;
+// `manualOnly`/`fieldType` are explicit metadata for callers that know the field semantics;
+// labels remain a compatibility fallback for reports produced by older page kits.
+const MANUAL_FIELD_TYPES = new Set(['number', 'numeric', 'date', 'limit', 'identity', 'identifier']);
+const REVIEW = /\b(age|date|dob|birth|years?|months?|days?|miles?|mileage|radius|limit|deductible|value|amount|premium|gvw|weight|count|distance|csl)\b|\b(?:dot|vin)\b.*\b(belong|match|registered|correct|valid|verified|identity|same)\b/i;
+export function manualOnlyReason(item) {
+  if (item.manualOnly === true) return 'this field requires agent review';
+  if (item.reviewOnly === true) return 'this field requires agent review';
+  const fieldType = String(item.fieldType ?? item.valueType ?? item.semanticType ?? '').trim().toLowerCase();
+  if (MANUAL_FIELD_TYPES.has(fieldType)) return `${fieldType} fields require agent review`;
+  return REVIEW.test(`${item.section || ''} ${item.label || ''} ${item.q || ''}`)
+    ? 'numeric, date, limit and identity fields require agent review' : null;
+}
 export function neverReason(item) {
-  const text = `${item.section || ''} ${item.label || ''}`;
+  // Medical Payments is insurance coverage, not authorization to pay or debit an account.
+  const text = `${item.section || ''} ${item.label || ''}`.replace(/\bmedical payments?\b/gi, 'medical coverage');
   if (NEVER.some(re => re.test(text))) return 'TNI leaves this question to the agent';
   if (item.controlKind === 'text' && TYPED_ID.test(text)) return 'identifiers come only from the intake';
   return null;
@@ -50,7 +63,9 @@ export function collectItems(frames) {
         : [...new Set((x.options ?? []).map(o => String(o).replace(/\s+/g, ' ').trim()).filter(Boolean))];
       const item = { key: x.key, q: x.q ?? null, label: x.label ?? '', section: x.section || null,
         controlKind: x.controlKind ?? null, required: !!x.required, status, reason: x.reason ?? x.note ?? null,
-        current: x.current ?? null, options, applyable: CHOICE_KINDS.has(x.controlKind) && options.length > 0 };
+        current: x.current ?? null, options, applyable: CHOICE_KINDS.has(x.controlKind) && options.length > 0,
+        reviewOnly: x.reviewOnly === true, manualOnly: x.manualOnly === true,
+        fieldType: x.fieldType ?? x.valueType ?? x.semanticType ?? null };
       const why = x.reviewOnly ? 'lookup identity mismatch requires agent review' : neverReason(item)
         || (!item.applyable ? 'Jev needs visible choices; enter this answer on the page' : null)
         || (options.length > MAX_OPTIONS ? 'too many choices; narrow the list on the page first' : null);
@@ -63,7 +78,7 @@ export function collectItems(frames) {
 
 // Keep only the active row of repeating entities. Identifiers are represented by presence,
 // never guessed or copied by Jev. Other sensitive fields are not needed for option matching.
-function scopedIntake(record, active) {
+export function scopedIntake(record, active) {
   const privateKey = /^(vin|licenseNumber|licensePlate|fein|ssn|socialSecurity|phone|email|policyNumber|accountNumber|routingNumber|password)$/i;
   const clean = (obj) => {
     if (Array.isArray(obj)) return obj.map(clean);
@@ -83,7 +98,7 @@ function scopedIntake(record, active) {
   return out;
 }
 
-function evidenceFor(context) {
+export function evidenceFor(context) {
   const facts = scopedIntake(context.record, context.active ?? {});
   const sources = {};
   const flatten = (obj, path = '') => {
@@ -234,7 +249,7 @@ export function verifyResponse(json, suggestions, { model = DEFAULT_MODEL } = {}
     }
     const autoOk = x.probability >= AUTO_POLICY.probability && x.confidence >= AUTO_POLICY.confidence
       && x.margin >= AUTO_POLICY.margin && x.evidenceProbability >= AUTO_POLICY.evidence && support >= AUTO_POLICY.support
-      && !REVIEW.test(`${x.section || ''} ${x.label}`) && model === DEFAULT_MODEL && json.model === DEFAULT_MODEL
+      && !manualOnlyReason(x) && model === DEFAULT_MODEL && json.model === DEFAULT_MODEL
       && String(x.current ?? '').trim() !== x.choice;
     const source = x.basis === 'intake' ? `Intake: ${x.intakePath}.` : `TNI rule: ${x.evidence.rule}`;
     return { ...x, support, autoOk, tip: `${source} ${autoOk ? 'Passed the automatic-selection checks.' : 'Review this suggestion before using it.'}` };

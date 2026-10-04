@@ -7,7 +7,8 @@ import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import * as usage from './usage-log.js';
-import { collectItems, suggest, settingsFrom, AssistError, DEFAULT_MODEL, POLICY_VERSION, assistContextKey } from '../src/ai/assist.js';
+import { collectItems, AssistError, POLICY_VERSION, assistContextKey } from '../src/ai/assist.js';
+import { PROVIDERS, settingsFrom, suggest } from '../src/ai/providers.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -22,6 +23,34 @@ const store = inExtension
       remove: (k) => chrome.storage.session.remove(k),
     }
   : { get: async (k) => memory[k], set: async (k, v) => { memory[k] = v; }, remove: async (k) => { delete memory[k]; } };
+
+// Automatic AI decisions must still be awaiting approval after the panel document reloads. Keep
+// only opaque fingerprints plus the small page-level decision needed to show and approve them;
+// provider keys, intake context, and raw page snapshots never enter this ledger.
+const AI_PENDING_KEY = 'aiPendingDecisions';
+const aiPendingStore = inExtension && globalThis.chrome?.storage?.local
+  ? {
+      get: async () => (await chrome.storage.local.get(AI_PENDING_KEY))[AI_PENDING_KEY] ?? [],
+      set: (v) => chrome.storage.local.set({ [AI_PENDING_KEY]: v }),
+    }
+  : { get: async () => memory[AI_PENDING_KEY] ?? [], set: async (v) => { memory[AI_PENDING_KEY] = v; } };
+const FNV_OFFSET = 1469598103934665603n;
+const FNV_PRIME = 1099511628211n;
+const FNV_MASK = (1n << 64n) - 1n;
+const aiFingerprint = (value) => {
+  const text = typeof value === 'string' ? value : JSON.stringify(value) ?? '';
+  let hash = FNV_OFFSET;
+  for (let i = 0; i < text.length; i += 1) {
+    hash ^= BigInt(text.charCodeAt(i));
+    hash = (hash * FNV_PRIME) & FNV_MASK;
+  }
+  return hash.toString(16);
+};
+function aiItemFingerprint(x) {
+  return aiFingerprint([x.key, x.label, x.section, x.current, x.options, x.status, x.reason,
+    x.reviewOnly, x.manualOnly, x.fieldType]);
+}
+let aiPersistQueue = Promise.resolve();
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -56,6 +85,11 @@ const state = {
   // Which screen shows: Settings over everything; otherwise the start screen or the quote, on
   // its Check intake or Fill pages step.
   settingsOpen: false,
+  // The Jev controls are available from the brain button even while the Settings screen is
+  // hidden. Keep the opening trigger so Escape and the close button return focus
+  // to the control the agent used.
+  agentPopoverOpen: false,
+  agentPopoverTrigger: null,
   step: 'check',
 };
 
@@ -71,6 +105,94 @@ function h(tag, props = {}, ...children) {
   }
   for (const c of children.flat()) if (c != null && c !== false) el.append(c instanceof Node ? c : String(c));
   return el;
+}
+
+function aiSafeText(value) {
+  if (value == null) return value;
+  const redact = state.intake ? redactor(redactionTerms(state.intake.record)) : (x) => x;
+  return redact(String(value)).slice(0, 240);
+}
+
+function aiCacheSignature({ tabId, page, model, policy = POLICY_VERSION, contextHash, itemHash }) {
+  return [tabId, page, model, policy, contextHash, itemHash].join('\n');
+}
+
+function aiDecisionBlocks(x) {
+  return x.done === 'auto' && !x.approved && !x.manual && !x.confirmed;
+}
+
+// A manual answer observed before a panel reload must remain protected even though the in-memory
+// agent-key map is rebuilt. A rejected choice whose current carrier value is still present also
+// stays on the existing pending record instead of starting a second AI decision for the same key.
+function aiSettledOnPage(tabId, page, item) {
+  for (const [sig, x] of state.aiCache) {
+    const [t, p] = sig.split('\n');
+    if (t !== String(tabId) || p !== page || x.key !== item.key) continue;
+    if (aiDecisionBlocks(x)) return true;
+    if (x.manual || x.confirmed || x.approved) return true;
+    if (x.rejected && (item.current === x.choice || (item.current != null && item.current !== ''))) return true;
+  }
+  return false;
+}
+
+function aiPendingRecord(sig, x, scope) {
+  const [tabId, page, model, policy, contextHash, itemHash] = sig.split('\n');
+  return {
+    version: 1, scope, tabId: Number(tabId), page, model, policy, contextHash, itemHash,
+    key: x.key, label: aiSafeText(x.label), choice: aiSafeText(x.choice), controlKind: x.controlKind,
+    done: x.done, approved: !!x.approved, rejected: !!x.rejected, manual: !!x.manual, confirmed: !!x.confirmed,
+    snapshotHash: x.snapshotHash ?? (x.snapshots ? aiFingerprint(x.snapshots) : null),
+    confidence: Number.isFinite(x.confidence) ? x.confidence : null,
+  };
+}
+
+function persistAiPending() {
+  const task = aiPersistQueue.then(async () => {
+    const scope = usage.currentSession()?.intakeId;
+    if (!scope) return;
+    const records = [...state.aiCache.entries()]
+      .filter(([, x]) => x.done === 'auto' && !x.approved)
+      .map(([sig, x]) => aiPendingRecord(sig, x, scope));
+    const existing = await aiPendingStore.get();
+    const otherScopes = existing.filter((x) => x?.scope && x.scope !== scope);
+    await aiPendingStore.set([...otherScopes, ...records].slice(-200));
+  });
+  aiPersistQueue = task.catch(() => {});
+  return task;
+}
+
+async function restoreAiPending() {
+  const scope = usage.currentSession()?.intakeId;
+  if (!scope) return;
+  const all = await aiPendingStore.get();
+  const records = all.filter((x) => x?.scope === scope && Number.isInteger(x.tabId) && x.page && x.itemHash && x.contextHash);
+  for (const x of records) {
+    state.aiCache.set(aiCacheSignature(x), {
+      ...x, restored: true, done: 'auto', approved: !!x.approved, rejected: !!x.rejected,
+      manual: !!x.manual, confirmed: !!x.confirmed, tip: '', checks: [], leave: false,
+      applyable: true, autoOk: true, contextKey: null, snapshots: null,
+    });
+  }
+  if (records.length !== all.length) await aiPendingStore.set(records);
+}
+
+function clearAiPending() {
+  const task = aiPersistQueue.then(() => aiPendingStore.set([]));
+  aiPersistQueue = task.catch(() => {});
+  return task;
+}
+
+function settleRejectedAi(page, keys, tabId = state.tab?.id) {
+  let changed = false;
+  for (const [sig, x] of state.aiCache) {
+    const [cachedTab, cachedPage] = sig.split('\n');
+    if (cachedTab === String(tabId) && x.done === 'auto' && x.rejected && !x.confirmed && keys.has(x.key) && cachedPage === page) {
+      x.manual = true;
+      changed = true;
+    }
+  }
+  if (changed) persistAiPending();
+  return changed;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -115,6 +237,7 @@ async function loadFile(file) {
   state.doneActions = new Set();
   state.aiCache.clear();
   await store.set('session', usage.startSession(summary.intakeId));
+  await clearAiPending();
   usage.log({ type: 'intake_loaded', ...summary });
   uploadNow();
   await save();
@@ -154,6 +277,29 @@ function render() {
   renderSite();
 }
 
+// Agent options can open without leaving the current quote.
+function closeAgentPopover({ restore = true } = {}) {
+  $('agent-popover').hidden = true;
+  $('agent-btn').setAttribute('aria-expanded', 'false');
+  $('settings-agent').setAttribute('aria-expanded', 'false');
+  state.agentPopoverOpen = false;
+  const trigger = state.agentPopoverTrigger || $('agent-btn');
+  state.agentPopoverTrigger = null;
+  if (restore) trigger.focus();
+}
+
+function openAgentPopover({ trigger = $('agent-btn'), focusId = null } = {}) {
+  state.agentPopoverTrigger = trigger;
+  state.agentPopoverOpen = true;
+  $('agent-popover').hidden = false;
+  $('agent-btn').setAttribute('aria-expanded', 'true');
+  $('settings-agent').setAttribute('aria-expanded', 'true');
+  if (focusId) $('ai-connection').open = true;
+  const target = focusId ? $(focusId) : $('ai-on');
+  target.focus();
+  target.scrollIntoView({ block: 'nearest' });
+}
+
 // Settings over everything; otherwise the start screen, or the quote on one of its two steps.
 function showScreen() {
   const has = !!state.intake;
@@ -173,6 +319,16 @@ function setStep(step) {
 }
 
 function openSettings(focusId = null) {
+  // The assistant connection fields live in the agent popover now. Setup notices still call
+  // openSettings('ai-key'/'ai-model'), so route those requests to the visible controls instead of
+  // opening a Settings screen whose fields may be hidden behind the popover.
+  if (focusId === 'ai-key' || focusId === 'ai-openai-key' || focusId === 'ai-model') {
+    state.settingsOpen = false;
+    showScreen();
+    openAgentPopover({ trigger: state.agentPopoverTrigger || $('agent-btn'), focusId });
+    return;
+  }
+  closeAgentPopover({ restore: false });
   state.settingsOpen = true;
   showScreen();
   if (!focusId) return;
@@ -378,7 +534,7 @@ const pageOf = (url) => {
 async function ensureRecorder() {
   if (!inExtension || !state.intake || !state.tab?.carrier) return;
   try {
-    await chrome.scripting.executeScript({ target: { tabId: state.tab.id, allFrames: true }, files: ['src/content/recorder.js'] });
+    await chrome.scripting.executeScript({ target: { tabId: state.tab.id, allFrames: true }, files: ['src/content/field-key.js', 'src/content/recorder.js'] });
   } catch { /* page not ready or not allowed; tried again on the next tab update */ }
 }
 
@@ -423,6 +579,8 @@ function onRecorderMessage(msg, sender) {
       const keys = state.agentKeys.get(page) ?? new Set();
       byAgent.forEach((c) => keys.add(c.key));
       state.agentKeys.set(page, keys);
+      const released = settleRejectedAi(page, new Set(byAgent.map((c) => c.key)));
+      if (released) syncAiBanner({ tabId: state.tab.id, page, carrier: state.tab.carrier });
       scheduleAutoFill(page);
     }
   }
@@ -561,13 +719,54 @@ function rememberFill(frames) {
 
 function renderSite() {
   const site = $('site');
+  const logo = $('site-logo');
+  const caption = $('site-caption');
   const carrier = state.tab?.carrier;
   // No URL means the browser isn't letting the extension see this site (site access / permissions).
   const noAccess = inExtension && state.tab && !state.tab.url;
-  site.textContent = !inExtension ? 'Preview only' : carrier ? `${carrier.name}${state.tab.background ? ' · in background' : ''}` : noAccess ? 'No access to this page' : 'Not a rater page';
+  // Retain the carrier text as an image-error fallback and for the panel harness.
+  site.textContent = !inExtension ? 'Preview only' : carrier ? carrier.name : noAccess ? 'No access to this page' : 'Not a rater page';
+  caption.textContent = [
+    carrier ? (carrier.practice ? 'Practice page' : 'Commercial auto') : null,
+    state.tab?.background ? 'In background' : null,
+  ].filter(Boolean).join(' · ');
+  caption.hidden = !caption.textContent;
+  const paths = {
+    progressive: 'assets/raters/progressive.svg',
+    geico: 'assets/raters/geico.gif',
+    amwins: 'assets/raters/amwins.svg',
+  };
+  const src = paths[carrier?.id] || null;
+  const title = state.tab?.background ? 'You are on another tab. The panel keeps working on the quote tab; go back to it to see the marks.' : '';
+  caption.title = title;
+  logo.alt = carrier?.name || '';
+  logo.title = title;
+  if (logo.getAttribute('src') !== src) {
+    // Use a fresh image when the carrier changes so an old load event cannot hide the fallback.
+    const nextLogo = logo.cloneNode(false);
+    nextLogo.removeAttribute('src');
+    nextLogo.alt = carrier?.name || '';
+    nextLogo.hidden = true;
+    site.hidden = false;
+    nextLogo.onload = () => {
+      if (!nextLogo.isConnected) return;
+      nextLogo.hidden = false;
+      site.hidden = true;
+    };
+    nextLogo.onerror = () => {
+      if (!nextLogo.isConnected) return;
+      nextLogo.hidden = true;
+      site.hidden = false;
+    };
+    logo.replaceWith(nextLogo);
+    if (src) nextLogo.src = src;
+  } else if (!src) {
+    logo.hidden = true;
+    site.hidden = false;
+  }
   // Practice pages aren't recorded: don't say they are.
   $('recording').hidden = !state.intake || !!carrier?.practice;
-  site.title = state.tab?.background ? 'You are on another tab. The panel keeps working on the quote tab; go back to it to see the marks.' : '';
+  site.title = title;
   site.classList.toggle('on', !!carrier);
   const canFill = inExtension && !!carrier && !!state.intake;
   $('fill').disabled = !canFill || state.filling;
@@ -589,7 +788,7 @@ function renderSite() {
 const worldFor = (carrier) => (carrier?.world === 'MAIN' ? 'MAIN' : 'ISOLATED');
 
 async function injectKit(tabId, carrier) {
-  await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), files: ['src/content/pagekit.js'] });
+  await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), files: ['src/content/field-key.js', 'src/content/pagekit.js'] });
 }
 
 async function runKit(tabId, carrier, func, args = []) {
@@ -846,9 +1045,10 @@ async function runAssist(frames, ctx) {
   ctx = { ...ctx, contextKey: assistContextKey(record, active) };
   const cfg = await aiSettings();
   if (!cfg.on || !record || ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
+  const provider = PROVIDERS[cfg.provider];
   // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
-  const items = collected.items.filter(x => !state.agentKeys.get(ctx.page)?.has(x.key));
+  const items = collected.items.filter(x => !state.agentKeys.get(ctx.page)?.has(x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
   const blocked = collected.blocked;
   // Messages, the approval card and suggestions without a list item go above "Needs you".
   const holder = h('div', { class: 'ai-holder' });
@@ -863,7 +1063,7 @@ async function runAssist(frames, ctx) {
   }
   if (head) head.before(holder); else $('report').append(holder);
   if (!cfg.apiKey) {
-    holder.append(h('p', { class: 'muted small' }, 'Jev needs a TypeSafe API key. Add it under Jev assistant; your previous OpenAI key is not used.'));
+    holder.append(h('p', { class: 'muted small' }, `${provider.name} needs ${cfg.provider === 'luna' ? 'an OpenAI' : 'a TypeSafe'} API key. Add it in Agent options.`));
     return;
   }
   const run = ++state.aiRun;
@@ -878,10 +1078,11 @@ async function runAssist(frames, ctx) {
   // follow-up fill changes that, which asked Jev again each time. Putting an answer in still
   // checks the page snapshot (applyAi), and approving checks it again.
   const onPage = frames.flatMap(f => f.filled ?? []).map(x => ({ question: x.label, answer: x.shown, controlKind: x.controlKind }));
-  const sigOf = x => [ctx.tabId, ctx.page, cfg.model, POLICY_VERSION, ctx.contextKey, JSON.stringify([x.key, x.label, x.section, x.current, x.options, x.status, x.reason])].join('\n');
+  const contextHash = aiFingerprint(ctx.contextKey);
+  const sigOf = x => aiCacheSignature({ tabId: ctx.tabId, page: ctx.page, model: cfg.model, policy: provider.policy, contextHash, itemHash: aiItemFingerprint(x) });
   const missing = items.filter((x) => !state.aiCache.has(sigOf(x)));
   if (missing.length) {
-    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking Jev about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
+    holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking ${provider.name} about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
     const started = Date.now();
     const context = { record, carrier: ctx.carrier.id, page: ctx.page, active, onPage };
     const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
@@ -889,12 +1090,15 @@ async function runAssist(frames, ctx) {
       const result = await suggest(missing, context, cfg, { isStale: stale });
       if (stale()) return;
       const fresh = result.suggestions;
-      fresh.forEach(x => state.aiCache.set(sigOf(x), { ...x, contextKey: ctx.contextKey }));
+      fresh.forEach(x => state.aiCache.set(sigOf(x), {
+        ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x),
+      }));
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length,
-        tokensIn: result.tokensIn, tokensOut: result.tokensOut });
+        tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
+        reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens });
     } catch (e) {
-      const msg = e instanceof AssistError ? e.message : `Something went wrong (${String(e?.message ?? e).slice(0, 120)}).`;
+      const msg = e instanceof AssistError ? e.message : 'The assistant could not review this page. Nothing was applied.';
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
       if (!stale()) holder.replaceChildren(h('p', { class: 'card bad small' }, `AI assistant: ${msg}`));
       return;
@@ -918,7 +1122,7 @@ function pendingAi(tabId, page) {
   const out = [];
   for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
-    if (t === String(tabId) && p === page && x.done === 'auto' && !x.approved && !x.rejected) out.push(x);
+    if (t === String(tabId) && p === page && aiDecisionBlocks(x)) out.push(x);
   }
   return out;
 }
@@ -926,10 +1130,11 @@ function pendingAi(tabId, page) {
 // A new fill clears the page's marks: put the purple back on the AI's answers on this page.
 async function remarkAi(ctx) {
   const answered = [];
+  const contextHash = aiFingerprint(assistContextKey(state.intake?.record, state.active));
   for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
     if (t === String(ctx.tabId) && p === ctx.page && x.done && !x.rejected
-      && x.contextKey === assistContextKey(state.intake?.record, state.active)) answered.push(x);
+      && (x.contextKey === assistContextKey(state.intake?.record, state.active) || x.contextHash === contextHash)) answered.push(x);
   }
   if (!answered.length) return;
   try {
@@ -987,7 +1192,10 @@ async function applyAi(list, ctx, decision) {
     ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     // Each applied pick remembers the page as it left it, for approving it later (also after a
     // context change, when the snapshot of this run is gone).
-    for (const x of list) if (x.done) x.snapshots = ctx.snapshots;
+    for (const x of list) if (x.done) {
+      x.snapshots = ctx.snapshots;
+      x.snapshotHash = aiFingerprint(ctx.snapshots);
+    }
     return true;
   } catch (e) {
     for (const x of list) x.error = `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
@@ -995,6 +1203,7 @@ async function applyAi(list, ctx, decision) {
   } finally {
     await tellRecorder('resume');
     state.filling = false;
+    await persistAiPending();
     if (state.autoPending) scheduleAutoFill(ctx.page);
   }
 }
@@ -1024,7 +1233,10 @@ function renderAi(holder, suggestions, ctx) {
   // Every pick on this page still waiting for approval, also from before an intake or
   // driver/vehicle change (those are labelled), so each one can always be approved or rejected.
   const pending = pendingAi(ctx.tabId, ctx.page);
+  const awaiting = pending.filter((x) => !x.rejected);
+  const rejectedPending = pending.filter((x) => x.rejected);
   const current = assistContextKey(state.intake?.record, state.active);
+  const currentHash = aiFingerprint(current);
   const canContinue = $('auto-advance').checked && !!ctx.carrier.advance;
   // Approving or rejecting a pick acts on what is already on the page, so it does not depend on
   // the current intake or driver/vehicle.
@@ -1032,7 +1244,7 @@ function renderAi(holder, suggestions, ctx) {
     if (state.filling || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return;
     if (decision === 'approved') {
       // Approve only what the page still shows as the AI left it; a pick whose page changed since
-      // is rejected (and unlocked) so the agent reviews it after a fresh fill.
+      // is rejected so the agent reviews it after a fresh fill.
       let now;
       try { now = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot()); }
       catch {
@@ -1040,7 +1252,7 @@ function renderAi(holder, suggestions, ctx) {
         rerender();
         return;
       }
-      const moved = list.filter((x) => JSON.stringify(now) !== JSON.stringify(x.snapshots ?? ctx.snapshots));
+      const moved = list.filter((x) => aiFingerprint(now) !== (x.snapshotHash ?? aiFingerprint(x.snapshots ?? ctx.snapshots)));
       if (moved.length) {
         const keys = state.agentKeys.get(ctx.page);
         for (const x of moved) {
@@ -1050,6 +1262,7 @@ function renderAi(holder, suggestions, ctx) {
         }
         list = list.filter((x) => !moved.includes(x));
         if (!list.length) {
+          await persistAiPending();
           await syncAiBanner(ctx);
           rerender();
           return;
@@ -1065,20 +1278,50 @@ function renderAi(holder, suggestions, ctx) {
         try { await runKit(ctx.tabId, ctx.carrier, (k, l, n) => globalThis.__raterKit.markKey(k, l, 'needs', n), [x.key, x.label, 'AI choice rejected: set this answer yourself']); } catch { /* page navigating */ }
       }
     }
+    await persistAiPending();
     await syncAiBanner(ctx);
     rerender();
     // Approved and nothing else left: the normal fill clicks Continue (when that setting is on).
     if (decision === 'approved' && canContinue && !pendingAi(ctx.tabId, ctx.page).length
       && state.tab?.id === ctx.tabId && pageOf(state.tab?.url) === ctx.page) fillPage();
   };
+  // Rejecting leaves Continue blocked until the agent either changes that field on the page
+  // (the recorder marks it manual) or explicitly confirms the current carrier value here. This
+  // confirmation is intentional and does not infer consent from unrelated page changes.
+  const confirmRejected = async (list) => {
+    if (state.filling || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return;
+    for (const x of list) {
+      let present = false;
+      try {
+        const result = await runKit(ctx.tabId, ctx.carrier, (key, label, choice) => {
+          const snap = JSON.parse(globalThis.__raterKit.decisionSnapshot());
+          return snap[1].some((field) => field.key === key && field.label === label && field.current === choice);
+        }, [x.key, x.label, x.choice]);
+        present = result.some((frame) => frame.result === true);
+      } catch { /* page navigating */ }
+      if (present) {
+        x.confirmed = true;
+        if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'rejected_confirmed'));
+      } else {
+        x.confirmError = 'The current page answer changed; review it before continuing.';
+      }
+    }
+    await persistAiPending();
+    await syncAiBanner(ctx);
+    rerender();
+    if (canContinue && !pendingAi(ctx.tabId, ctx.page).length
+      && state.tab?.id === ctx.tabId && pageOf(state.tab?.url) === ctx.page) fillPage();
+  };
   const why = (x) => [
-    x.basis === 'intake' ? `from the intake: ${x.intakePath}` : x.basis === 'tni_rule' ? 'TNI rule' : x.basis === 'page' ? 'from other answers on the page' : x.basis === 'judgement' ? 'AI judgement' : null,
-    `Jev confidence ${Math.round(x.confidence * 100)}% (not measured accuracy)`,
+    x.provider === 'luna' ? `cited evidence: ${x.evidenceSources.map(source => source.basis === 'intake' ? source.path : 'TNI rule').join(', ')}`
+      : x.basis === 'intake' ? `from the intake: ${x.intakePath}` : x.basis === 'tni_rule' ? 'TNI rule' : x.basis === 'page' ? 'from other answers on the page' : x.basis === 'judgement' ? 'AI judgement' : null,
+    x.provider === 'luna' ? 'Luna evidence check passed · agent review required' : `Jev confidence ${Math.round(x.confidence * 100)}% (not measured accuracy)`,
   ].filter(Boolean).join(' · ');
   const answer = (x) => (x.controlKind === 'text' ? `typing “${x.choice}”` : `“${x.choice}”`);
   // What goes on an item: the suggestion and its buttons, or what happened to it.
   const box = (x) => {
-    if (x.rejected) return h('div', { class: 'ai-done bad' }, 'AI answer rejected: answer it on the page.');
+    if (x.manual) return h('div', { class: 'ai-done' }, 'You changed this answer on the page.');
+    if (x.rejected) return h('div', { class: 'ai-done bad' }, x.confirmError ?? 'AI answer rejected: answer it on the page.');
     if (x.error) return h('div', { class: 'ai-done bad' }, `The page didn't take the AI answer (${x.error}). Answer it on the page.`);
     if (x.done === 'auto' && !x.approved) return h('div', { class: 'ai-box' }, h('div', { class: 'ai-says' }, 'Picked by the AI: ', h('b', {}, x.choice)), h('div', { class: 'ai-tip' }, 'Approve or reject it above.'));
     if (x.done) return h('div', { class: 'ai-done' }, h('b', {}, '✓'), h('span', { class: 'grow' }, `Put in ${answer(x)} (purple on the page). Change it on the page if needed.`));
@@ -1110,22 +1353,50 @@ function renderAi(holder, suggestions, ctx) {
   holder.replaceChildren(...[
     pending.length ? h('div', { class: 'ai-approve' },
       h('p', { class: 'ai-approve-title' }, `The AI picked ${pending.length} answer${pending.length === 1 ? '' : 's'} on this page`),
-      h('p', { class: 'small muted' }, canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.'),
+      h('p', { class: 'small muted' }, rejectedPending.length
+        ? 'Continue waits until you confirm the current page answer to accept the carrier value, or change it on the page.'
+        : canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.'),
       h('ul', {}, pending.map((x) => h('li', {},
         h('span', {}, h('b', {}, x.label), ' ← ', x.choice,
-          x.contextKey && x.contextKey !== current ? h('span', { class: 'small muted' }, ' (picked before you changed the intake or the driver/vehicle)') : null),
-        h('button', { type: 'button', class: 'link small ai-reject', onclick: () => decide([x], 'rejected') }, 'Reject')))),
+          (x.contextKey ? x.contextKey !== current : x.contextHash !== currentHash) ? h('span', { class: 'small muted' }, ' (picked before you changed the intake or the driver/vehicle)') : null),
+        x.rejected
+          ? h('button', { type: 'button', class: 'link small ai-reject', onclick: () => confirmRejected([x]) }, 'Confirm the current page answer')
+          : h('button', { type: 'button', class: 'link small ai-reject', onclick: () => decide([x], 'rejected') }, 'Reject')))),
       h('div', { class: 'ai-actions' },
-        h('button', { type: 'button', class: 'primary accept', onclick: () => decide(pending, 'approved') }, canContinue ? 'Approve and continue' : `Approve ${pending.length === 1 ? 'it' : `all ${pending.length}`}`))) : null,
+        awaiting.length ? h('button', { type: 'button', class: 'primary accept', onclick: () => decide(awaiting, 'approved') }, canContinue ? 'Approve and continue' : `Approve ${awaiting.length === 1 ? 'it' : `all ${awaiting.length}`}`) : null,
+        rejectedPending.length ? h('button', { type: 'button', class: 'ghost', onclick: () => confirmRejected(rejectedPending) }, canContinue ? 'Confirm and continue' : 'Confirm the current page answer') : null)) : null,
     sure.length > 1 ? h('div', { class: 'ai-actions' }, h('button', { type: 'button', class: 'ghost', onclick: (e) => act(sure, 'accepted', e.target) }, `Use all ${sure.length} AI answers`)) : null,
     ...orphans,
   ].filter(Boolean));
 }
 
+function wireAgentPopover() {
+  const button = $('agent-btn');
+  const popover = $('agent-popover');
+  const settingsTrigger = $('settings-agent');
+  button.addEventListener('click', (e) => {
+    if (state.agentPopoverOpen) closeAgentPopover();
+    else openAgentPopover({ trigger: e.currentTarget });
+  });
+  $('close-agent').addEventListener('click', () => closeAgentPopover());
+  settingsTrigger.addEventListener('click', (e) => openAgentPopover({ trigger: e.currentTarget }));
+  const outside = target => !popover.contains(target) && !button.contains(target) && !settingsTrigger.contains(target);
+  for (const event of ['pointerdown', 'focusin']) {
+    document.addEventListener(event, (e) => {
+      if (state.agentPopoverOpen && outside(e.target)) closeAgentPopover({ restore: false });
+    });
+  }
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !state.agentPopoverOpen) return;
+    e.preventDefault();
+    closeAgentPopover();
+  });
+}
+
 function wireAi() {
   const save = async patch => {
     state.aiRun++;
-    if (Object.hasOwn(patch, 'jevKey')) {
+    if (Object.hasOwn(patch, 'jevKey') || Object.hasOwn(patch, 'lunaKey')) {
       for (const [key, value] of state.aiCache) if (!value.done) state.aiCache.delete(key);
     }
     // Keep pending approvals; their cache keys remain bound to the original model and context.
@@ -1133,19 +1404,42 @@ function wireAi() {
     await renderAiSettings();
   };
   $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
-  $('ai-auto').addEventListener('change', (e) => save({ aiAuto: e.target.checked }));
+  $('ai-auto').addEventListener('change', (e) => {
+    const provider = PROVIDERS[$('ai-provider').value];
+    save({ [provider.autoSetting]: e.target.checked });
+  });
   $('ai-key').addEventListener('change', (e) => save({ jevKey: e.target.value.trim() }));
+  $('ai-openai-key').addEventListener('change', (e) => save({ lunaKey: e.target.value.trim() }));
+  $('ai-provider').addEventListener('change', (e) => save({ aiProvider: e.target.value }));
   $('ai-model').addEventListener('change', (e) => save({ jevModel: e.target.value.trim() }));
 }
 
 async function renderAiSettings() {
   const cfg = await aiSettings();
+  const provider = PROVIDERS[cfg.provider];
+  const saved = await usage.settings();
   $('ai-on').checked = cfg.on;
+  $('ai-provider').value = cfg.provider;
   $('ai-auto').checked = cfg.auto;
-  $('ai-auto').disabled = !cfg.on;
-  if (document.activeElement !== $('ai-key')) $('ai-key').value = cfg.apiKey;
-  if (document.activeElement !== $('ai-model')) $('ai-model').value = cfg.model === DEFAULT_MODEL ? '' : cfg.model;
-  $('ai-note').textContent = !cfg.on ? '' : !cfg.apiKey ? 'On, but needs a TypeSafe API key.' : `On · ${cfg.model}${cfg.auto ? ' · picks answers, you approve them before Continue' : ' · suggestions only'}`;
+  $('ai-auto').disabled = !cfg.on || !provider.automatic;
+  $('ai-auto-option').hidden = !provider.automatic;
+  $('jev-key-row').hidden = cfg.provider !== 'jev';
+  $('luna-key-row').hidden = cfg.provider !== 'luna';
+  if (document.activeElement !== $('ai-key')) $('ai-key').value = saved.jevKey || '';
+  if (document.activeElement !== $('ai-openai-key')) $('ai-openai-key').value = saved.lunaKey || '';
+  $('ai-model').disabled = cfg.provider === 'luna';
+  $('ai-model').placeholder = provider.defaultModel;
+  if (document.activeElement !== $('ai-model')) $('ai-model').value = cfg.model === provider.defaultModel ? '' : cfg.model;
+  $('agent-btn').dataset.on = String(cfg.on);
+  $('agent-btn').title = cfg.on
+    ? (cfg.apiKey ? `${provider.name} assistant on · ${cfg.model}` : `${provider.name} assistant on · ${provider.keyLabel} needed`)
+    : `${provider.name} assistant off`;
+  $('agent-name').textContent = provider.name;
+  $('agent-provider').textContent = provider.company;
+  $('agent-model').textContent = cfg.model;
+  $('agent-status').dataset.on = String(cfg.on);
+  $('ai-note').textContent = !cfg.on ? 'Off · Turn on when you need help.' : !cfg.apiKey ? `On, but needs ${provider.keyLabel}.` : `On · ${cfg.model}${cfg.auto ? ' · picks answers, you approve them before Continue' : ' · suggestions only'}`;
+  $('ai-privacy').textContent = `Relevant intake facts, page context and TNI rules are sent to ${provider.company} with your key. Keys are saved on this device. Missing facts stay unanswered. Report orders, exclusions, signatures and payment fields stay with you.`;
   renderUsage();
 }
 
@@ -1186,7 +1480,7 @@ async function renderHealth({ n, agent, serverUrl, up }) {
   // Things the agent fixes (one card, a button each) and things that need nothing from them.
   const setup = [
     !agent && { title: 'Add your initials', text: 'So your quotes are counted as yours.', button: 'Add', go: () => openSettings('agent') },
-    ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: "They're turned on, but no TypeSafe key is set.", button: 'Add key', go: () => openSettings('ai-key') },
+    ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: `They're turned on, but no ${PROVIDERS[ai.provider].keyLabel} is set.`, button: 'Add key', go: () => openSettings(ai.provider === 'luna' ? 'ai-openai-key' : 'ai-key') },
     up.state === 'off' && { title: 'Usage log has no server', text: 'Nothing is recorded centrally (Export log only).', button: 'Set up', go: () => openSettings('server-url') },
   ].filter(Boolean);
   const info = up.state === 'error'
@@ -1271,8 +1565,8 @@ function wire() {
   const drop = $('load');
   $('choose').addEventListener('click', (e) => { e.stopPropagation(); $('file').click(); });
   drop.addEventListener('click', () => $('file').click());
-  $('settings-btn').addEventListener('click', () => { state.settingsOpen = !state.settingsOpen; showScreen(); });
-  $('settings-done').addEventListener('click', () => { state.settingsOpen = false; showScreen(); });
+  $('settings-btn').addEventListener('click', () => { closeAgentPopover({ restore: false }); state.settingsOpen = !state.settingsOpen; showScreen(); });
+  $('settings-done').addEventListener('click', () => { closeAgentPopover({ restore: false }); state.settingsOpen = false; showScreen(); });
   $('tab-check').addEventListener('click', () => setStep('check'));
   $('tab-fill').addEventListener('click', () => setStep('fill'));
   $('go-fill').addEventListener('click', () => setStep('fill'));
@@ -1291,12 +1585,14 @@ function wire() {
     usage.restoreSession(null);
     await store.remove('intake');
     await store.remove('session');
+    await clearAiPending();
     $('report').replaceChildren();
     render();
   });
   $('fill').addEventListener('click', () => fillPage());
   $('unmark').addEventListener('click', clearMarks);
   $('capture').addEventListener('click', capturePage);
+  wireAgentPopover();
   wireUsage();
   wireAi();
   if (inExtension) {
@@ -1312,6 +1608,7 @@ async function init() {
   state.intake = (await store.get('intake')) ?? null;
   state.active = (await store.get('active')) ?? state.active;
   usage.restoreSession((await store.get('session')) ?? null);
+  await restoreAiPending();
   const saved = await usage.settings();
   $('auto-followups').checked = saved.autoFollowUps ?? true;
   $('auto-pages').checked = saved.autoPages ?? false;

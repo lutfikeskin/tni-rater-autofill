@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 36) return;
+  if (globalThis.__raterKit?.version === 37) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -208,7 +208,7 @@
       const cmp = extCmp(el);
       if (type === 'radio') {
         const extGroup = cmp?.up?.('radiogroup') ?? null;
-        const key = extGroup ? `x:${extGroup.id}` : `${el.form ? 'f' : ''}:${el.name || el.id}`;
+        const key = extGroup ? `x:${extGroup.id}` : `${el.form ? 'f' : ''}:${globalThis.__raterFieldKey(el)}`;
         let g = groups.get(key);
         if (!g) {
           g = { kind: 'radio', el, type, radios: [], cmp: extGroup };
@@ -317,7 +317,7 @@
 
   // Same key the usage recorder (recorder.js) uses, so its changes can be tied to our fills.
   function fieldKey(c) {
-    return c.q ?? ((c.kind === 'radio' ? c.el.name : c.el.name || c.el.id) || c.label);
+    return globalThis.__raterFieldKey(c.el, { q: c.q });
   }
 
   function safeMatches(el, selector) {
@@ -1422,5 +1422,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 36, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 37, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

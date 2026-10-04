@@ -151,6 +151,30 @@ test('a halted fill persists the pause, clears pending work, and protects keys',
   assert.equal(h.scheduled.length, 0, 'a paused session must not schedule another follow-up');
 });
 
+test('a rejected automatic choice keeps blocking until manual change or explicit confirmation', () => {
+  const sig = '1\nQuote\ngpt-6-luna\nluna-v1\ncontext\nitem';
+  const state = { aiCache: new Map([[sig, { done: 'auto', rejected: true, key: 'optional-choice' }]]) };
+  const context = { state, aiDecisionBlocks: undefined };
+  vm.runInNewContext(`${extractFunction('aiDecisionBlocks')}\n${extractFunction('pendingAi')}`, context);
+  assert.equal(context.pendingAi(1, 'Quote').length, 1, 'rejection remains a continuation blocker');
+  state.aiCache.get(sig).manual = true;
+  assert.equal(context.pendingAi(1, 'Quote').length, 0, 'a manual field change releases the blocker');
+  state.aiCache.get(sig).manual = false;
+  state.aiCache.get(sig).confirmed = true;
+  assert.equal(context.pendingAi(1, 'Quote').length, 0, 'explicit confirmation releases the blocker');
+});
+
+test('a persisted manual correction is protected after the panel reloads', () => {
+  const sig = '1\nQuote\ngpt-6-luna\nluna-v1\ncontext\nitem';
+  const state = { aiCache: new Map([[sig, { key: 'optional-choice', manual: true }]]) };
+  const context = { state };
+  vm.runInNewContext(`${extractFunction('aiDecisionBlocks')}\n${extractFunction('aiSettledOnPage')}`, context);
+  assert.equal(context.aiSettledOnPage(1, 'Quote', { key: 'optional-choice', current: 'Yes' }), true);
+  assert.equal(context.aiSettledOnPage(1, 'Quote', { key: 'other-choice', current: 'Yes' }), false);
+  state.aiCache.set(`${sig}-pending`, { key: 'pending-choice', done: 'auto', approved: false, manual: false, confirmed: false });
+  assert.equal(context.aiSettledOnPage(1, 'Quote', { key: 'pending-choice', current: '' }), true, 'a pending answer is not re-asked after reload');
+});
+
 test('invalidated actions are removed before newly successful actions are recorded', () => {
   const h = harness();
   h.state.tab = { ...quoteTab(1), carrier: { id: 'progressive' } };
@@ -312,12 +336,37 @@ test('an AI pick made before an intake or driver/vehicle change still holds Cont
   const state = { aiCache: new Map([[`1\n/quote\nm\n${before}\nk1`, stale], [`1\n/quote\nm\n${after}\nk2`, fresh], [`1\n/other\nm\n${after}\nk3`, { ...fresh }]]) };
   const context = { state };
   vm.createContext(context);
-  vm.runInContext(extractFunction('pendingAi'), context);
+  vm.runInContext(`${extractFunction('aiDecisionBlocks')}\n${extractFunction('pendingAi')}`, context);
   assert.equal(context.pendingAi(1, '/quote').length, 2, 'the earlier pick is still pending on this page');
   stale.rejected = true;
   const left = context.pendingAi(1, '/quote');
-  assert.equal(left.length, 1, 'once rejected it stops holding Continue');
-  assert.equal(left[0], fresh);
+  assert.equal(left.length, 2, 'rejection still holds Continue until resolved');
+  stale.confirmed = true;
+  assert.equal(context.pendingAi(1, '/quote').length, 1, 'explicit confirmation releases the rejected pick');
+  assert.equal(context.pendingAi(1, '/quote')[0], fresh);
+});
+
+test('correcting a rejected field releases only the current tab’s hold', () => {
+  const first = { key: 'choice', done: 'auto', rejected: true };
+  const second = { key: 'choice', done: 'auto', rejected: true };
+  const state = { tab: { id: 1 }, aiCache: new Map([['1\nQuote', first], ['2\nQuote', second]]) };
+  let writes = 0;
+  const context = { state, persistAiPending: () => { writes++; } };
+  vm.runInNewContext(extractFunction('settleRejectedAi'), context);
+  assert.equal(context.settleRejectedAi('Quote', new Set(['choice'])), true);
+  assert.equal(first.manual, true);
+  assert.equal(second.manual, undefined, 'another quote tab still needs review');
+  assert.equal(writes, 1);
+});
+
+test('safety metadata changes invalidate cached choice fingerprints', () => {
+  const context = { aiFingerprint: JSON.stringify };
+  vm.runInNewContext(extractFunction('aiItemFingerprint'), context);
+  const field = { key: 'choice', label: 'Choice', options: ['Yes', 'No'], current: '', manualOnly: false, reviewOnly: false, fieldType: null };
+  const before = context.aiItemFingerprint(field);
+  for (const metadata of [{ manualOnly: true }, { reviewOnly: true }, { fieldType: 'identity' }]) {
+    assert.notEqual(context.aiItemFingerprint({ ...field, ...metadata }), before);
+  }
 });
 
 test('a quote opened in a new tab is followed once it loads, even while the old portal tab is followed', () => {

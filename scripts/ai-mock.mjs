@@ -71,7 +71,7 @@ try {
   await panel.setViewportSize({ width: 420, height: 900 });
   for (const page of [mock, panel]) page.on('pageerror', error => errors.push(error.message));
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
-  await panel.evaluate(() => chrome.storage.local.set({ settings: { aiOn: true, aiAuto: false,
+  await panel.evaluate(() => chrome.storage.local.set({ settings: { aiProvider: 'jev', aiOn: true, aiAuto: false,
     aiKey: 'legacy-openai-key', autoAdvance: false, serverUrl: '', serverToken: '' } }));
   await panel.reload();
   const openMock = async () => {
@@ -79,7 +79,7 @@ try {
     await mock.evaluate(() => {
       const field = document.createElement('div');
       field.className = 'form-group';
-      field.innerHTML = '<label for="mockReviewChoice">Mock review choice</label><select id="mockReviewChoice" class="form-control" required><option value="">Choose</option><option>Yes</option><option>No</option></select>';
+      field.innerHTML = '<label for="mockReviewChoice">Mock review choice</label><select id="mockReviewChoice" class="form-control"><option value="">Choose</option><option>Yes</option><option>No</option></select>';
       document.querySelector('.form-tab').append(field);
     });
     await mock.bringToFront();
@@ -98,18 +98,63 @@ try {
     await panel.setInputFiles('#file', sample ? path.join(pool, sample.pdf) : path.join(root, 'test/fixtures/sample-intake.pdf'));
     await panel.locator('#quote').waitFor({ state: 'visible' });
   };
+  const openAgent = async ({ connection = false } = {}) => {
+    await panel.locator('#agent-btn').click();
+    await panel.locator('#agent-popover').waitFor({ state: 'visible' });
+    if (!connection) return;
+    const details = panel.locator('#ai-connection');
+    await details.waitFor({ state: 'attached' });
+    if (!(await details.evaluate(node => node.open))) await details.locator('summary').click();
+    await panel.locator('#ai-key').waitFor({ state: 'visible' });
+  };
   await loadPdf();
   await panel.locator('#tab-fill').click();
   await panel.locator('#fill').click();
   await panel.getByText(/Jev needs a TypeSafe API key/).waitFor();
   verify('legacy OpenAI key is never used for Jev', requests, 0);
-  await panel.locator('#settings-btn').click();
+  const keySetup = panel.locator('#fill-notices').getByRole('button', { name: 'Add key', exact: true });
+  await keySetup.click();
+  const agentPopover = panel.locator('#agent-popover');
+  const agentConnection = panel.locator('#ai-connection');
+  await agentPopover.waitFor({ state: 'visible' });
+  await panel.locator('#ai-key').waitFor({ state: 'visible' });
+  verify('missing-key setup link opens the agent popover', await agentPopover.isVisible(), true);
+  verify('missing-key setup link expands connection', await agentConnection.evaluate(node => node.open), true);
+  verify('missing-key setup link focuses the API key', await panel.evaluate(() => document.activeElement?.id), 'ai-key');
+  await panel.locator('#ai-key').press('Escape');
+  await agentPopover.waitFor({ state: 'hidden' });
+  verify('Escape closes the agent popover', await agentPopover.isVisible(), false);
+  verify('Escape restores focus to the brain button', await panel.evaluate(() => document.activeElement?.id), 'agent-btn');
+  await openAgent({ connection: true });
+  verify('agent popover opens from the brain button', await agentPopover.isVisible(), true);
   await panel.locator('#ai-key').fill('synthetic-test-key');
   await panel.locator('#ai-key').press('Tab');
   await panel.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.jevKey === 'synthetic-test-key');
-  verify('Jev settings are visible', await panel.getByText('Jev assistant', { exact: true }).isVisible(), true);
+  verify('assistant settings are visible', await agentPopover.getByText('Assistant enabled', { exact: true }).isVisible(), true);
+  await panel.locator('#ai-on').uncheck();
+  await panel.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.aiOn === false);
+  verify('disabling Jev persists from the agent popover', (await panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings.aiOn)), false);
+  await panel.locator('#ai-on').check();
+  await panel.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.aiOn === true);
+  verify('enabling Jev persists from the agent popover', (await panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings.aiOn)), true);
   await panel.screenshot({ path: path.join(out, 'jev-settings.png'), fullPage: true });
+  await panel.locator('#ai-model').focus();
+  await panel.locator('#ai-model').press('Tab');
+  await agentPopover.waitFor({ state: 'hidden' });
+  verify('outside focus dismissal keeps focus on the next control', await panel.evaluate(() => document.activeElement?.id), 'report-problem');
+  await openAgent();
+  await panel.locator('#settings-btn').click();
+  await agentPopover.waitFor({ state: 'hidden' });
+  await panel.locator('#settings').waitFor({ state: 'visible' });
+  verify('outside pointer dismissal closes the agent popover', await agentPopover.isVisible(), false);
+  verify('outside pointer dismissal opens Settings', await panel.locator('#settings').isVisible(), true);
   await panel.locator('#settings-done').click();
+  await panel.locator('#quote').waitFor({ state: 'visible' });
+  verify('Settings Done returns to the quote', await panel.locator('#quote').isVisible(), true);
+  await openAgent();
+  await agentPopover.getByRole('button', { name: 'Close agent options', exact: true }).click();
+  await agentPopover.waitFor({ state: 'hidden' });
+  verify('close button restores focus to the brain button', await panel.evaluate(() => document.activeElement?.id), 'agent-btn');
   await panel.locator('#fill').click();
   const accept = panel.getByRole('button', { name: 'Use this answer', exact: true });
   await accept.waitFor({ timeout: 30000 });
@@ -129,7 +174,7 @@ try {
   await panel.screenshot({ path: path.join(out, 'suggestion-edited.png'), fullPage: true });
 
   // New intake clears earlier decisions; verified auto-select still waits for agent approval.
-  await panel.evaluate(() => chrome.storage.local.set({ settings: { aiOn: true, aiAuto: true,
+  await panel.evaluate(() => chrome.storage.local.set({ settings: { aiProvider: 'jev', aiOn: true, aiAuto: true,
     jevKey: 'synthetic-test-key', autoAdvance: true, serverUrl: '', serverToken: '' } }));
   await panel.reload();
   await openMock();
@@ -141,10 +186,39 @@ try {
   verify('auto-select applies the choice', await mock.locator('#mockReviewChoice').inputValue(), 'No');
   verify('auto-select does not advance without approval', await mock.evaluate(() => window.__amwinsMock.saves), 0);
   await panel.screenshot({ path: path.join(out, 'approval-required.png'), fullPage: true });
+  await panel.reload();
+  await panel.locator('#tab-fill').click();
+  await panel.locator('#fill').click();
+  await approve.waitFor();
+  verify('unapproved optional choice remains held after panel reload', await mock.evaluate(() => window.__amwinsMock.saves), 0);
   await approve.click();
   await mock.waitForFunction(() => window.__amwinsMock.saves > 0, null, { timeout: 30000 });
   verify('approval permits continue', await mock.evaluate(() => window.__amwinsMock.saves > 0), true);
   verify('no submission', await mock.evaluate(() => window.__amwinsMock.submitted), false);
+
+  // A rejected automatic answer is still a pending decision. It must block Fill and remain a
+  // blocker after the panel reloads until the agent confirms the rejection explicitly.
+  await panel.reload();
+  await openMock();
+  await loadPdf();
+  await panel.locator('#tab-fill').click();
+  await panel.locator('#fill').click();
+  await panel.getByRole('button', { name: 'Approve and continue', exact: true }).waitFor();
+  await panel.getByRole('button', { name: 'Reject', exact: true }).click();
+  await panel.getByText('AI answer rejected: answer it on the page.', { exact: true }).waitFor();
+  verify('rejected optional answer remains held', await mock.evaluate(() => window.__amwinsMock.saves), 0);
+  await panel.locator('#fill').click();
+  await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true }).waitFor();
+  verify('unchanged rejection stays held on Fill', await mock.evaluate(() => window.__amwinsMock.saves), 0);
+  await panel.reload();
+  await panel.locator('#tab-fill').click();
+  await panel.locator('#fill').click();
+  await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true }).waitFor();
+  verify('unchanged rejection stays held after panel reload', await mock.evaluate(() => window.__amwinsMock.saves), 0);
+  await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true }).click();
+  await mock.waitForFunction(() => window.__amwinsMock.saves > 0, null, { timeout: 30000 });
+  verify('explicit rejection confirmation permits continue', await mock.evaluate(() => window.__amwinsMock.saves > 0), true);
+
   for (const scenario of ['uncertain', 'unsupported']) {
     mode = scenario;
     await panel.reload();

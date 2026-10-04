@@ -47,7 +47,7 @@ export const EVENT_FIELDS = {
   problem_report: ['text'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
   // setting) acted on. Choices are option texts; typed text suggestions are never logged.
-  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'cached'],
+  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'cached', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'],
   ai_decision: ['model', 'policy', 'probability', 'support', 'evidenceProbability', 'q', 'label', 'controlKind', 'decision', 'choice', 'confidence', 'basis', 'intakePath', 'reason'],
 };
 

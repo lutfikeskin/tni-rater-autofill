@@ -57,6 +57,21 @@ test('keeps only known event types and fields', async () => {
   assert.deepEqual(layout.fields[1].options, ['50 miles']);
 });
 
+test('keeps bounded Luna usage counters and drops unrelated fields', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [ev({ type: 'ai_suggest', model: 'gpt-6-luna', items: 2,
+      modelCalls: 2, reasoningTokens: 31, cachedTokens: 9, cacheWriteTokens: 4,
+      clientName: 'should not be stored' })] })).json();
+    assert.equal(r.accepted, 1);
+  });
+  const [suggest] = stored(dataDir);
+  assert.deepEqual({ modelCalls: suggest.modelCalls, reasoningTokens: suggest.reasoningTokens,
+    cachedTokens: suggest.cachedTokens, cacheWriteTokens: suggest.cacheWriteTokens }, { modelCalls: 2,
+    reasoningTokens: 31, cachedTokens: 9, cacheWriteTokens: 4 });
+  assert.equal(suggest.clientName, undefined);
+});
+
 test('token, content type and size checks', async () => {
   await withServer({ dataDir: tmp(), token: 'secret' }, async ({ post, base }) => {
     assert.equal((await post({ events: [ev()] })).status, 401);

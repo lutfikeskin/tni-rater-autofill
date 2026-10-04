@@ -26,7 +26,7 @@ const carriers = arg('carrier', 'both') === 'both' ? ['amwins', 'progressive'] :
 if (!selected.length || carriers.some(c => !['amwins', 'progressive'].includes(c))) throw new Error('Select at least one case and a supported carrier: amwins, progressive, or both.');
 const workers = Math.max(1, Math.min(8, Number(arg('workers', '4'))));
 fs.mkdirSync(out, { recursive: true });
-const kit = fs.readFileSync(path.join(root, 'src/content/pagekit.js'), 'utf8');
+const kit = ['field-key.js', 'pagekit.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')).join('\n');
 const mime = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.css': 'text/css' };
 const server = http.createServer((req, res) => {
   const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);

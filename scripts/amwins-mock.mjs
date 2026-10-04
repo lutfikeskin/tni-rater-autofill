@@ -17,7 +17,7 @@ import { amwins } from '../src/carriers/amwins.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
-const PAGEKIT = fs.readFileSync(path.join(root, 'src/content/pagekit.js'), 'utf8');
+const PAGEKIT = ['field-key.js', 'pagekit.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')).join('\n');
 
 // A synthetic client like the recorded quotes: an expediter with a box truck, no company name.
 const record = {
