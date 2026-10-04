@@ -20,7 +20,7 @@ Run `npm test` for code changes, plus affected integration checks. Repeat or bro
 
 ## Browser harnesses and limits
 
-- `npm run e2e` runs Progressive layout replays; `--fixtures` uses committed per-state fixtures, including in CI. Local runs can also include captures and generated layouts. A replay does not establish complete live navigation, server acceptance, or real lookup reliability.
+- `npm run e2e` runs Progressive layout replays; `--fixtures` uses committed per-state fixtures for local verification. Local runs can also include captures and generated layouts. A replay does not establish complete live navigation, server acceptance, or real lookup reliability.
 - `npm run mock:amwins` checks the saved-site behavior mock and its expected answers, including continuation and no submission.
 - `npm run e2e:extension` needs `npm run package` and `npm run replay` serving on port 8792. It runs the packaged panel/extension on the AmWINS mock.
 - `npm run mock:ai` needs the package and uses controlled model responses. It checks interaction and approval behavior, not a live model's accuracy or latency.
@@ -39,7 +39,7 @@ For AmWINS page changes, update the scrubbed [fixtures](../test/fixtures/amwins/
 
 ## CI and authorized releases
 
-[checks.yml](../.github/workflows/checks.yml) runs unit tests, AmWINS mock, Progressive committed-fixture replay, packaging, and packaged-extension E2E. Run the release checks before shipping. Do not claim CI passed based only on local tests.
+[checks.yml](../.github/workflows/checks.yml) runs unit tests and packaging on pull requests, with a five-minute limit and cancellation of superseded runs. Browser installation, carrier mocks and replays, assistant browser workflows, and packaged-extension E2E run locally. Merging a tested PR avoids a duplicate main-branch run. Do not claim CI passed based only on local tests.
 
 For a shipped extension version, keep [manifest.json](../manifest.json) and [package.json](../package.json) in sync and update the lockfile's package metadata. `npm run package` produces the zip and unpacked directory under ignored `dist/`. A local correction or documentation change does not itself authorize a version bump or upload.
 
