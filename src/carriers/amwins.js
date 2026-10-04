@@ -232,10 +232,13 @@ export const amwins = {
     { selector: '#waiverType', name: 'Waiver type (standard: NONE)', kind: 'choice', value: () => 'NONE' },
     // Filing counts: skipped (TNI).
     ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map((selector) => ({ selector, name: 'Filing count (skipped)', ignore: true })),
-    // Every prior year's carrier: NO PRIOR (the proof of prior insurance goes in the disclosure).
-    // The 1 and 2 year prior panels only appear when the site reloads after Save & Continue, by
-    // then on a hidden step: they're filled from the next step (hidden) and saved with it.
-    ...[0, 1, 2].map((n) => ({ selector: dataId('carrierName', `#priorCarrierCoveragePanel${n}`), name: `Prior carrier, year ${n} (standard: NO PRIOR)`, kind: 'choice', value: () => 'NO PRIOR', hidden: n > 0 })),
+    // Prior insurance section only: every carrier dropdown is NO PRIOR (the proof of prior insurance goes in the disclosure).
+    // AmWINS rebuilds the year panels when Years in Business changes and on the reload after
+    // Save & Continue, collapses them all when there is more than one, and a year can have more
+    // than one coverage row. So: every carrier dropdown in a prior-carrier coverage panel (not the hidden
+    // template), in page order, visible or collapsed, up to six (live IL run: years 1 and 2 were
+    // never filled and the agent set one by hand).
+    ...Array.from({ length: 6 }, (_, n) => ({ selector: '#priorCarrierPanel .coveragePanel [data-id="carrierName"]', name: `Prior carrier ${n + 1} (standard: NO PRIOR)`, kind: 'choice', value: () => 'NO PRIOR', hidden: true })),
     { name: 'Filings required', label: '^filling required$', kind: 'bool', value: filings },
     { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', value: (r) => !!r.applicant.dot },
     { selector: '#hasMcNumber', name: 'Has an MC number', kind: 'bool', value: (r) => !!r.applicant.mc },

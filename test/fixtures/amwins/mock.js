@@ -57,6 +57,8 @@
     const v = $('#yrsInBusiness')?.value ?? '';
     const n = /^[123]$/.test(v) ? Number(v) : v && v !== 'New Venture' ? 3 : 0;
     priorYears.forEach((sec, i) => { if (i + 1 < n && !sec.isConnected) { sec.style.display = ''; priorParent.append(sec); } });
+    // The site rebuilds the years as accordion panels and, with more than one, collapses them all.
+    if (n > 1) $$('#priorCarrierPanel > .app-rp-section .card-body').forEach((body) => { body.style.display = 'none'; });
   };
 
   // --- Steps --------------------------------------------------------------------------------------

@@ -288,7 +288,13 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
   assert.equal(sel('#yearBusinessEstablished').value, new Date().getFullYear());
   assert.equal(sel('#classCodeAndDescription').kind, 'search-select');
   assert.equal(sel('#classCodeAndDescription').search, '484122');
-  assert.deepEqual(plan.filter((x) => /^Prior carrier/.test(x.name)).map((x) => [x.selector, x.value]), [0, 1, 2].map((n) => [`#priorCarrierCoveragePanel${n} [data-id="carrierName"]`, 'NO PRIOR']));
+  const prior = plan.filter((x) => /^Prior carrier/.test(x.name));
+  assert.equal(prior.length, 6, 'every year panel and extra coverage rows');
+  for (const step of prior) {
+    assert.equal(step.selector, '#priorCarrierPanel .coveragePanel [data-id="carrierName"]', 'any numbering, not the hidden template');
+    assert.equal(step.value, 'NO PRIOR');
+    assert.equal(step.hidden, true, 'collapsed year panels are filled too');
+  }
   assert.equal(named(/^Year licensed/).value, '1985');
   assert.equal(named(/^Disclosure/).value, 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026');
   assert.equal(sel('#autoSymbol6').value, true);
