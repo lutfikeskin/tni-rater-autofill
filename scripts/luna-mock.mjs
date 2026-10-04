@@ -76,7 +76,8 @@ try {
   phase = 'initial-panel';
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
   await panel.evaluate(() => chrome.storage.local.set({ settings: { aiProvider: 'luna', aiOn: true, aiAuto: true, lunaAuto: false,
-    jevKey: 'synthetic-typesafe', aiKey: 'synthetic-legacy-openai', autoAdvance: true, serverUrl: '', serverToken: '' } }));
+    jevKey: 'synthetic-typesafe', aiKey: 'synthetic-legacy-openai', autoFollowUps: false, autoPages: false,
+    autoAdvance: true, serverUrl: '', serverToken: '' } }));
   await panel.reload();
   const openMock = async () => {
     phase = 'open-mock';
@@ -268,6 +269,8 @@ try {
   await panel.locator('#close-agent').click();
   await openMock(); await loadPdf();
   phase = 'automatic-approval';
+  verify('follow-up automation stays off for the explicit approval flow', await panel.locator('#auto-followups').isChecked(), false);
+  verify('fixture has no follow-up save before explicit Fill', await mock.evaluate(() => window.__amwinsMock.saves), 0);
   await installSnapshotVariation();
   await panel.locator('#fill').click();
   const approve = panel.getByRole('button', { name: 'Approve and continue', exact: true });
