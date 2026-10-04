@@ -113,6 +113,47 @@ function changes(h) {
   return h.sent.filter((message) => message.event === 'field_changes').flatMap((message) => message.changes);
 }
 
+test('coalesces multi-keystroke text input into one final manual event', async () => {
+  const h = harness();
+  const field = new Control('input', { id: 'notes', value: 'before' });
+  h.append(field);
+  h.context.__raterRecorder.rebaseline();
+
+  field.value = 'b';
+  h.emit('input', field, true);
+  field.value = 'be';
+  h.emit('input', field, true);
+  field.value = 'beta';
+  h.emit('input', field, true);
+  await Promise.resolve();
+
+  assert.equal(changes(h).length, 0, 'typing does not enqueue one event per keystroke');
+  h.tick();
+  const event = changes(h).find((change) => change.key === 'field:notes');
+  assert.equal(changes(h).filter((change) => change.key === 'field:notes').length, 1);
+  assert.deepEqual({ key: event.key, before: event.before, after: event.after, agent: event.agent },
+    { key: 'field:notes', before: 'before', after: 'beta', agent: true });
+});
+
+test('discrete choice flushes immediately without flushing deferred text', async () => {
+  const h = harness();
+  const text = new Control('input', { id: 'notes', value: 'before' });
+  const choice = select({ id: 'choice' });
+  h.append(text, choice);
+  h.context.__raterRecorder.rebaseline();
+
+  text.value = 'typed';
+  h.emit('input', text, true);
+  choice.value = '3';
+  h.emit('change', choice, true);
+  await Promise.resolve();
+
+  assert.equal(changes(h).find((change) => change.key === 'field:choice')?.agent, true);
+  assert.equal(changes(h).some((change) => change.key === 'field:notes'), false);
+  h.tick();
+  assert.equal(changes(h).filter((change) => change.key === 'field:notes').length, 1);
+});
+
 test('a delayed trusted native select change marks only that control as manual', () => {
   const h = harness();
   const years = select({ id: 'yrsInBusiness' });
@@ -263,7 +304,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 2);
+  assert.equal(h.context.__raterRecorder.version, 3);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {

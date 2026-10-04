@@ -34,6 +34,14 @@ const aiPendingStore = inExtension && globalThis.chrome?.storage?.local
       set: (v) => chrome.storage.local.set({ [AI_PENDING_KEY]: v }),
     }
   : { get: async () => memory[AI_PENDING_KEY] ?? [], set: async (v) => { memory[AI_PENDING_KEY] = v; } };
+// Keys only, scoped to the intake and tab: no typed answer or client text is retained here.
+const AGENT_KEYS_KEY = 'agentEditedKeys';
+const agentKeysStore = inExtension && globalThis.chrome?.storage?.local
+  ? { get: async () => (await chrome.storage.local.get(AGENT_KEYS_KEY))[AGENT_KEYS_KEY] ?? [],
+      set: (records) => chrome.storage.local.set({ [AGENT_KEYS_KEY]: records }) }
+  : { get: async () => memory[AGENT_KEYS_KEY] ?? [], set: async (records) => { memory[AGENT_KEYS_KEY] = records; } };
+let agentKeysQueue = Promise.resolve();
+
 const FNV_OFFSET = 1469598103934665603n;
 const FNV_PRIME = 1099511628211n;
 const FNV_MASK = (1n << 64n) - 1n;
@@ -141,6 +149,7 @@ function aiPendingRecord(sig, x, scope) {
     version: 1, scope, tabId: Number(tabId), page, model, policy, contextHash, itemHash,
     key: x.key, label: aiSafeText(x.label), choice: aiSafeText(x.choice), controlKind: x.controlKind,
     done: x.done, approved: !!x.approved, rejected: !!x.rejected, manual: !!x.manual, confirmed: !!x.confirmed,
+    fieldHash: x.fieldHash ?? (x.restored ? null : aiFingerprint([x.key, x.label, x.choice])),
     snapshotHash: x.snapshotHash ?? (x.snapshots ? aiFingerprint(x.snapshots) : null),
     confidence: Number.isFinite(x.confidence) ? x.confidence : null,
   };
@@ -180,6 +189,53 @@ function clearAiPending() {
   const task = aiPersistQueue.then(() => aiPendingStore.set([]));
   aiPersistQueue = task.catch(() => {});
   return task;
+}
+
+function persistAgentKeys() {
+  const scope = usage.currentSession()?.intakeId;
+  const tabId = state.tab?.id;
+  if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
+  const records = [...state.agentKeys].filter(([, keys]) => keys.size)
+    .map(([page, keys]) => ({ scope, tabId, page, keys: [...keys] }));
+  const task = agentKeysQueue.then(async () => {
+    const existing = await agentKeysStore.get();
+    await agentKeysStore.set([...existing.filter(x => x.scope !== scope || x.tabId !== tabId), ...records]);
+  });
+  agentKeysQueue = task.catch(() => {});
+  return agentKeysQueue;
+}
+
+async function restoreAgentKeys(tabId) {
+  const scope = usage.currentSession()?.intakeId;
+  if (!scope || !Number.isInteger(tabId)) return;
+  const records = await agentKeysStore.get();
+  if (state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) return;
+  for (const x of records) {
+    if (x.scope !== scope || x.tabId !== tabId || typeof x.page !== 'string' || !Array.isArray(x.keys)) continue;
+    const keys = state.agentKeys.get(x.page) ?? new Set();
+    for (const key of x.keys) if (typeof key === 'string' && key) keys.add(key);
+    state.agentKeys.set(x.page, keys);
+  }
+}
+
+function clearAgentKeys() {
+  const task = agentKeysQueue.then(() => agentKeysStore.set([]));
+  agentKeysQueue = task.catch(() => {});
+  return task;
+}
+
+// Durable decisions store display text separately from the exact live-value fingerprint.
+function aiCurrentAnswerPresent(frames, x) {
+  const fields = frames.flatMap(frame => {
+    try { return JSON.parse(frame.result)[1] ?? []; } catch { return []; }
+  });
+  const field = fields.find(field => field.key === x.key);
+  if (!field) return false;
+  if (x.fieldHash) return aiFingerprint([field.key, field.label, field.current]) === x.fieldHash;
+  // Upgrade compatibility: old records have only a whole-page fingerprint. An unchanged page
+  // or an exact unredacted match still proves the selected value; display redaction never does.
+  return (x.snapshotHash && aiFingerprint(frames) === x.snapshotHash)
+    || (field.label === x.label && field.current === x.choice);
 }
 
 function settleRejectedAi(page, keys, tabId = state.tab?.id) {
@@ -238,6 +294,7 @@ async function loadFile(file) {
   state.aiCache.clear();
   await store.set('session', usage.startSession(summary.intakeId));
   await clearAiPending();
+  await clearAgentKeys();
   usage.log({ type: 'intake_loaded', ...summary });
   uploadNow();
   await save();
@@ -511,6 +568,7 @@ async function refreshTab() {
     state.autoPending = false;
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false } : null;
+  await restoreAgentKeys(state.tab?.id);
   renderSite();
   ensureRecorder();
 }
@@ -579,6 +637,7 @@ function onRecorderMessage(msg, sender) {
       const keys = state.agentKeys.get(page) ?? new Set();
       byAgent.forEach((c) => keys.add(c.key));
       state.agentKeys.set(page, keys);
+      persistAgentKeys();
       const released = settleRejectedAi(page, new Set(byAgent.map((c) => c.key)));
       if (released) syncAiBanner({ tabId: state.tab.id, page, carrier: state.tab.carrier });
       scheduleAutoFill(page);
@@ -706,6 +765,7 @@ function rememberFill(frames) {
   const keys = state.agentKeys.get(page) ?? new Set();
   for (const key of frames.flatMap((f) => f.protectedKeys ?? [])) keys.add(key);
   state.agentKeys.set(page, keys);
+  persistAgentKeys();
   if (frames.some((f) => f.halted)) {
     state.autoPaused = true;
     state.autoPending = false;
@@ -927,6 +987,7 @@ async function ignoreReview(key, tabId, page) {
   const keys = state.agentKeys.get(page) ?? new Set();
   keys.add(key);
   state.agentKeys.set(page, keys);
+  await persistAgentKeys();
   await fillPage();
 }
 
@@ -1293,11 +1354,8 @@ function renderAi(holder, suggestions, ctx) {
     for (const x of list) {
       let present = false;
       try {
-        const result = await runKit(ctx.tabId, ctx.carrier, (key, label, choice) => {
-          const snap = JSON.parse(globalThis.__raterKit.decisionSnapshot());
-          return snap[1].some((field) => field.key === key && field.label === label && field.current === choice);
-        }, [x.key, x.label, x.choice]);
-        present = result.some((frame) => frame.result === true);
+        const result = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+        present = aiCurrentAnswerPresent(result, x);
       } catch { /* page navigating */ }
       if (present) {
         x.confirmed = true;
@@ -1586,6 +1644,7 @@ function wire() {
     await store.remove('intake');
     await store.remove('session');
     await clearAiPending();
+    await clearAgentKeys();
     $('report').replaceChildren();
     render();
   });

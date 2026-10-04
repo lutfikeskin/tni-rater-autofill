@@ -96,6 +96,43 @@ test('saved safe results score choices, abstentions and evidence paths', () => {
   assert.ok(report.cases.every(entry => entry.status === 'pass'));
 });
 
+test('all-leave results do not count abstentions as choices', () => {
+  const entry = structuredClone(cases[0]);
+  entry.id = 'all-leave';
+  entry.expected = entry.expected.map(({ key }) => ({ key, choice: null, basis: 'none' }));
+  const result = safeLiveResult('luna', [entry], [{ suggestions: entry.expected.map(expected => ({ ...expected })) }]);
+  const report = scoreResult(result, [entry]);
+  assert.equal(report.aggregate.scoredChoices, 0);
+  assert.equal(report.aggregate.correctChoices, 0);
+  assert.equal(report.aggregate.choiceAccuracy, null);
+  assert.equal(report.aggregate.expectedAbstentions, entry.expected.length);
+  assert.equal(report.aggregate.correctAbstentions, entry.expected.length);
+  assert.equal(report.cases[0].status, 'pass');
+});
+
+test('evidence basis must match the expected source, including written rules', () => {
+  const expected = cases[0].expected.find(answer => answer.choice !== null);
+  const item = cases[0].items.find(candidate => candidate.key === expected.key);
+  const entry = { ...structuredClone(cases[0]), id: 'tni-rule-basis', items: [item], expected: [{
+    key: expected.key, choice: expected.choice, basis: 'tni_rule',
+  }] };
+  const wrong = safeLiveResult('luna', [entry], [{ suggestions: [{
+    key: expected.key, choice: expected.choice, basis: 'intake',
+  }] }]);
+  const wrongReport = scoreResult(wrong, [entry]);
+  assert.equal(wrongReport.aggregate.correctChoices, 0);
+  assert.equal(wrongReport.aggregate.choiceAccuracy, 0);
+  assert.equal(wrongReport.cases[0].status, 'fail');
+
+  const matching = safeLiveResult('luna', [entry], [{ suggestions: [{
+    key: expected.key, choice: expected.choice, basis: 'tni_rule',
+  }] }]);
+  const matchingReport = scoreResult(matching, [entry]);
+  assert.equal(matchingReport.aggregate.correctChoices, 1);
+  assert.equal(matchingReport.aggregate.choiceAccuracy, 1);
+  assert.equal(matchingReport.cases[0].status, 'pass');
+});
+
 test('usage metrics are sanitized, preserve zero and keep failed runs unavailable', () => {
   const [entry] = cases;
   const zero = safeLiveResult('luna', [entry], [{

@@ -32,7 +32,13 @@ function extractFunction(name) {
   const match = SIDEPANEL.match(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
   assert.ok(match, `could not find ${name} in sidepanel/sidepanel.js`);
   const start = match.index;
-  const open = SIDEPANEL.indexOf('{', start);
+  const params = SIDEPANEL.indexOf('(', start);
+  let parameterDepth = 1, parameterEnd = params + 1;
+  for (; parameterDepth && parameterEnd < SIDEPANEL.length; parameterEnd++) {
+    if (SIDEPANEL[parameterEnd] === '(') parameterDepth++;
+    if (SIDEPANEL[parameterEnd] === ')') parameterDepth--;
+  }
+  const open = SIDEPANEL.indexOf('{', parameterEnd);
   let depth = 0;
   let quote = null;
   let escaped = false;
@@ -98,7 +104,7 @@ function harness() {
     },
     clearTimeout: (handle) => cleared.push(handle),
     renderSite: () => rendered.push(state.tab?.id ?? null),
-    ensureRecorder: async () => {},
+    ensureRecorder: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
       scripting: {},
@@ -238,7 +244,7 @@ test('fill report omits absent sections without rendering null text', () => {
 test('ignore button skips only the chosen field on the current page and resumes filling', async () => {
   const state = { tab: { id: 1, url: 'Rates' }, agentKeys: new Map(), filling: false, autoPaused: true };
   const calls = [];
-  const context = { state, pageOf: (url) => url, fillPage: async () => calls.push([...state.agentKeys.get('Rates')]) };
+  const context = { state, persistAgentKeys: async () => {}, pageOf: (url) => url, fillPage: async () => calls.push([...state.agentKeys.get('Rates')]) };
   vm.runInNewContext(extractFunction('ignoreReview'), context);
   await context.ignoreReview('200F', 1, 'Rates');
   assert.deepEqual(calls, [['200F']]);
@@ -382,4 +388,41 @@ test('a quote opened in a new tab is followed once it loads, even while the old 
   assert.equal(refreshed, 2, 'the followed tab still counts');
   context.onTabUpdated(2, { title: 'x' }, { id: 2, active: true });
   assert.equal(refreshed, 2, 'no reload or address change: nothing to do');
+});
+
+
+test('ordinary manual keys survive reload and remain scoped to the intake, tab and page', async () => {
+  let records = [];
+  const state = { tab: { id: 1 }, agentKeys: new Map([['Quote', new Set(['manual-choice'])]]) };
+  let scope = 'first-intake';
+  const context = { state, agentKeysQueue: Promise.resolve(), usage: { currentSession: () => ({ intakeId: scope }) },
+    agentKeysStore: { get: async () => records, set: async value => { records = value; } } };
+  vm.createContext(context);
+  vm.runInContext(['persistAgentKeys', 'restoreAgentKeys'].map(extractFunction).join('\n'), context);
+  await context.persistAgentKeys();
+  state.agentKeys = new Map();
+  await context.restoreAgentKeys(1);
+  assert.equal(state.agentKeys.get('Quote').has('manual-choice'), true);
+  assert.equal(state.agentKeys.has('OtherPage'), false);
+  state.agentKeys = new Map(); state.tab.id = 2;
+  await context.restoreAgentKeys(2);
+  assert.equal(state.agentKeys.size, 0, 'another quote tab is untouched');
+  state.tab.id = 1; scope = 'second-intake';
+  await context.restoreAgentKeys(1);
+  assert.equal(state.agentKeys.size, 0, 'a different intake is untouched');
+  assert.deepEqual(Object.keys(records[0]).sort(), ['keys', 'page', 'scope', 'tabId']);
+});
+
+test('restored confirmation uses a field fingerprint instead of redacted display strings', () => {
+  const context = { aiFingerprint: JSON.stringify };
+  vm.runInNewContext(extractFunction('aiCurrentAnswerPresent'), context);
+  const field = { key: 'choice', label: 'Driver Alex Example', current: 'Client 12345' };
+  const frames = [{ result: JSON.stringify(['Quote', [field]]) }];
+  const x = { key: 'choice', label: 'Driver [redacted]', choice: 'Client [redacted]',
+    fieldHash: JSON.stringify([field.key, field.label, field.current]) };
+  assert.equal(context.aiCurrentAnswerPresent(frames, x), true);
+  assert.equal(context.aiCurrentAnswerPresent([{ result: JSON.stringify(['Quote', [{ ...field, current: 'Other value' }]]) }], x), false);
+  assert.equal(context.aiCurrentAnswerPresent([{ result: JSON.stringify(['Quote', [{ ...field, key: 'other' }]]) }], x), false);
+  assert.equal(context.aiCurrentAnswerPresent(frames, { ...x, fieldHash: null, snapshotHash: JSON.stringify(frames) }), true,
+    'old redacted records can be confirmed only if their whole page is unchanged');
 });
