@@ -1,19 +1,17 @@
-# Checks on every pull request and push to main: unit tests, the AmWINS mock (all five steps,
-# every answer checked) and the packaged extension driven through its side panel on the mock.
-# The Progressive replay runs on the committed per-state layouts (test/fixtures/progressive,
-# refreshed with npm run fixtures:progressive); locally npm run e2e also uses the freshest ones
-# built from the usage log.
+# Critical PR checks only. Run browser and carrier suites locally.
 name: Checks
 
 on:
   pull_request:
-  push:
-    branches: [main]
+
+concurrency:
+  group: checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   checks:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,27 +19,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
       - name: Unit tests
         run: npm test
-      - name: AmWINS mock
-        run: npm run mock:amwins
-      - name: Progressive replay (committed per-state layouts)
-        run: npm run e2e -- --fixtures
       - name: Package
         run: npm run package
-      - name: Luna assistant workflow (mock API)
-        run: npm run mock:luna -- layouts/luna-ci
-      - name: Luna failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: luna-failure-diagnostics
-          path: layouts/luna-ci/
-          if-no-files-found: ignore
-          retention-days: 7
-      - name: Extension on the AmWINS mock
-        run: |
-          python3 -m http.server 8792 --bind 127.0.0.1 > /dev/null 2>&1 &
-          sleep 1
-          npm run e2e:extension

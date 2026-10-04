@@ -75,10 +75,11 @@ try {
   await panel.setViewportSize({ width: 420, height: 900 });
   for (const page of [mock, panel]) page.on('pageerror', error => errors.push(error.message));
   phase = 'initial-panel';
-  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
-  await panel.evaluate(() => chrome.storage.local.set({ settings: { aiOn: true, aiAuto: true, lunaAuto: false,
+  // Configure the synthetic profile before panel init can upload to the default usage server.
+  await worker.evaluate(() => chrome.storage.local.set({ settings: { aiOn: true, aiAuto: true, lunaAuto: false,
     jevKey: 'synthetic-typesafe', aiKey: 'synthetic-legacy-openai', jevModel: 'jev-1.13.0',
     autoFollowUps: false, autoPages: false, autoAdvance: true, serverUrl: '', serverToken: '' } }));
+  await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
   await panel.reload();
   const openMock = async () => {
     phase = 'open-mock';
