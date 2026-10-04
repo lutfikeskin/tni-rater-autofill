@@ -78,7 +78,7 @@ try {
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
   await panel.evaluate(() => chrome.storage.local.set({ settings: { aiOn: true, aiAuto: true, lunaAuto: false,
     jevKey: 'synthetic-typesafe', aiKey: 'synthetic-legacy-openai', jevModel: 'jev-1.13.0',
-    autoAdvance: true, serverUrl: '', serverToken: '' } }));
+    autoFollowUps: false, autoPages: false, autoAdvance: true, serverUrl: '', serverToken: '' } }));
   await panel.reload();
   const openMock = async () => {
     phase = 'open-mock';
@@ -225,7 +225,7 @@ try {
   const legacyScope = await panel.evaluate(async () => (await chrome.storage.session.get('session')).session.intakeId);
   await panel.evaluate(({ scope, tabId }) => chrome.storage.local.set({
     settings: { aiOn: true, aiAuto: true, jevKey: 'legacy-typesafe-key', aiKey: 'legacy-openai-key', jevModel: 'jev-1.13.0',
-      autoAdvance: true, serverUrl: '', serverToken: '' },
+      autoFollowUps: false, autoPages: false, autoAdvance: true, serverUrl: '', serverToken: '' },
     aiPendingDecisions: [{ version: 1, scope, tabId, page: '/test/fixtures/amwins/application.html',
       model: 'jev-1.13.0', policy: 'jev-evidence-v2', contextHash: 'legacy-context', itemHash: 'legacy-item',
       key: 'mockLunaChoice', label: 'Mock Luna choice', choice: 'No', controlKind: 'select', done: 'auto',
@@ -252,7 +252,7 @@ try {
 
   // Continue the normal Luna workflow with its dedicated key after the upgrade check.
   await panel.evaluate(() => chrome.storage.local.set({ settings: { aiProvider: 'luna', aiOn: true, aiAuto: true, lunaAuto: false,
-    lunaKey: '', autoAdvance: true, serverUrl: '', serverToken: '' } }));
+    lunaKey: '', autoFollowUps: false, autoPages: false, autoAdvance: true, serverUrl: '', serverToken: '' } }));
   await panel.reload();
   // The migration hold fill may have settled every other question on this page. Start a fresh
   // intake so the missing-key path still has an unresolved Luna question to render.
@@ -301,6 +301,8 @@ try {
   await panel.locator('#close-agent').click();
   await openMock(); await loadPdf();
   phase = 'automatic-approval';
+  verify('follow-up automation stays off for the explicit approval flow', await panel.locator('#auto-followups').isChecked(), false);
+  verify('fixture has no follow-up save before explicit Fill', await mock.evaluate(() => window.__amwinsMock.saves), 0);
   await installSnapshotVariation();
   await panel.locator('#fill').click();
   const approve = panel.getByRole('button', { name: 'Approve and continue', exact: true });
