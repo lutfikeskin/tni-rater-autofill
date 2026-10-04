@@ -455,9 +455,46 @@ test('ordinary manual keys survive reload and remain scoped to the intake, tab a
   assert.deepEqual(Object.keys(records[0]).sort(), ['keys', 'page', 'scope', 'tabId']);
 });
 
+test('canonical AI snapshots ignore Chromium metadata and frame ordering but retain identity', () => {
+  const context = { aiFingerprint: JSON.stringify };
+  vm.runInNewContext([
+    extractFunction('canonicalSnapshotMetadata'), extractFunction('canonicalSnapshotFrame'),
+    extractFunction('canonicalSnapshots'), extractFunction('snapshotFingerprint'),
+    extractFunction('snapshotsEqual'), extractFunction('snapshotHashMatches'),
+  ].join('\n'), context);
+  const first = [
+    { result: 'frame 2', frameId: 2, documentId: 'doc-2' },
+    { documentId: 'doc-0', result: 'frame 0', frameId: 0 },
+  ];
+  const reordered = [
+    { frameId: 0, result: 'frame 0', documentId: 'doc-0' },
+    { result: 'frame 2', documentId: 'doc-2', frameId: 2 },
+  ];
+  assert.deepEqual(context.canonicalSnapshots(first), context.canonicalSnapshots(reordered));
+  assert.equal(context.snapshotsEqual(first, reordered), true);
+  assert.equal(context.snapshotHashMatches(first, context.snapshotFingerprint(reordered)), true);
+  assert.equal(context.snapshotHashMatches(first, JSON.stringify(first)), true, 'old raw hashes remain readable');
+  assert.equal(context.snapshotsEqual(first, [{ ...reordered[0], documentId: 'different-document' }, reordered[1]]), false,
+    'document identity remains part of the guard');
+  assert.equal(context.snapshotsEqual(first, [{ ...reordered[0], frameId: 9 }, reordered[1]]), false,
+    'frame identity remains part of the guard');
+  assert.equal(context.snapshotsEqual(first, [{ result: 'frame 0', documentId: 'doc-0' }, reordered[1]]), false,
+    'an omitted frame identity remains part of the guard');
+  assert.equal(context.snapshotsEqual(first, [{ ...reordered[0], current: 'changed', options: { beta: true } }, reordered[1]]), false,
+    'current and options metadata remain part of the guard');
+  assert.equal(context.canonicalSnapshots(first)[0].result, 'frame 0', 'the raw pagekit result string is preserved');
+  assert.equal(context.snapshotsEqual(first, [{ ...reordered[0], result: 'changed page' }, reordered[1]]), false,
+    'the pagekit result remains part of the guard');
+  assert.equal(context.snapshotsEqual([], null), false, 'invalid snapshots do not equal an empty snapshot');
+});
+
 test('restored confirmation uses a field fingerprint instead of redacted display strings', () => {
   const context = { aiFingerprint: JSON.stringify };
-  vm.runInNewContext(extractFunction('aiCurrentAnswerPresent'), context);
+  vm.runInNewContext([
+    extractFunction('canonicalSnapshotMetadata'), extractFunction('canonicalSnapshotFrame'),
+    extractFunction('canonicalSnapshots'), extractFunction('snapshotFingerprint'),
+    extractFunction('snapshotHashMatches'), extractFunction('aiCurrentAnswerPresent'),
+  ].join('\n'), context);
   const field = { key: 'choice', label: 'Driver Alex Example', current: 'Client 12345' };
   const frames = [{ result: JSON.stringify(['Quote', [field]]) }];
   const x = { key: 'choice', label: 'Driver [redacted]', choice: 'Client [redacted]',

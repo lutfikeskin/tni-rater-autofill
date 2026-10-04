@@ -191,6 +191,29 @@ try {
     await panel.locator('#fill:not(:disabled)').waitFor({ state: 'visible' });
   };
   const waitSetting = (key, value) => panel.waitForFunction(([k, v]) => chrome.storage.local.get('settings').then(({ settings }) => settings?.[k] === v), [key, value]);
+  const installSnapshotVariation = async ({ firstReversed = false } = {}) => {
+    await panel.evaluate(({ firstReversed: reverseFirst }) => {
+      const scripting = chrome.scripting;
+      const original = scripting.executeScript;
+      let interceptions = 0;
+      scripting.executeScript = async function (...args) {
+        const fn = String(args[0]?.func ?? '');
+        const result = await original.apply(this, args);
+        if (!fn.includes('globalThis.__raterKit.decisionSnapshot')) return result;
+        interceptions++;
+        const reverse = reverseFirst ? interceptions % 2 === 1 : interceptions % 2 === 0;
+        if (!reverse || !Array.isArray(result)) return result;
+        // Preserve every InjectionResult value while changing only metadata insertion order.
+        return result.map((frame) => Object.fromEntries(Object.entries(frame).reverse()));
+      };
+      globalThis.__lunaMockSnapshotInterceptions = () => interceptions;
+      globalThis.__lunaMockRestoreSnapshot = () => {
+        scripting.executeScript = original;
+        delete globalThis.__lunaMockSnapshotInterceptions;
+        delete globalThis.__lunaMockRestoreSnapshot;
+      };
+    }, { firstReversed });
+  };
   await openMock();
   await loadPdf();
 
@@ -233,6 +256,7 @@ try {
   await panel.reload();
   // The migration hold fill may have settled every other question on this page. Start a fresh
   // intake so the missing-key path still has an unresolved Luna question to render.
+
   await openMock();
   await loadPdf();
   phase = 'missing-key';
@@ -277,16 +301,20 @@ try {
   await panel.locator('#close-agent').click();
   await openMock(); await loadPdf();
   phase = 'automatic-approval';
+  await installSnapshotVariation();
   await panel.locator('#fill').click();
   const approve = panel.getByRole('button', { name: 'Approve and continue', exact: true });
   await approve.waitFor({ timeout: 30000 });
   verify('Luna automatic selection applies only after the evidence check', await mock.locator('#mockLunaChoice').inputValue(), 'No');
+  verify('auto path exercised alternating snapshot metadata order', await panel.evaluate(() =>
+    (globalThis.__lunaMockSnapshotInterceptions?.() ?? 0) >= 2), true);
   verify('automatic selection holds Continue for approval', await mock.evaluate(() => window.__amwinsMock.saves), 0);
   const aiText = await panel.locator('.ai-holder').first().innerText();
   verify('Luna automatic review has no confidence percentage', !aiText.includes('%') && !aiText.includes('confidence'), true);
   await panel.waitForFunction(async () => (await chrome.storage.local.get('aiPendingDecisions')).aiPendingDecisions?.length > 0);
   await panel.reload();
   await panel.locator('#tab-fill').click();
+  await installSnapshotVariation({ firstReversed: true });
   // Re-scan the unchanged page so the restored pending record gets its approval card rendered;
   // aiSettledOnPage prevents a second provider request for the restored choice.
   await panel.locator('#fill').click();
@@ -294,6 +322,9 @@ try {
   verify('automatic approval survives a panel reload', await mock.locator('#mockLunaChoice').inputValue(), 'No');
   await approve.click();
   await mock.waitForFunction(() => window.__amwinsMock.saves > 0, null, { timeout: 30000 });
+  verify('reloaded approval exercised reordered snapshot metadata', await panel.evaluate(() =>
+    (globalThis.__lunaMockSnapshotInterceptions?.() ?? 0) >= 1), true);
+  await panel.evaluate(() => globalThis.__lunaMockRestoreSnapshot?.());
   await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
   verify('approval releases Continue', await mock.evaluate(() => window.__amwinsMock.saves > 0), true);
   verify('approval does not submit the application', await mock.evaluate(() => window.__amwinsMock.submitted), false);
