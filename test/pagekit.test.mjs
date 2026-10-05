@@ -679,6 +679,20 @@ test('per-vehicle Rates rows each get their own vehicle, including rows without 
   assert.equal(report.unknown.length, 0);
 });
 
+// Codex on PR #21: an agent edit on one vehicle's row must not protect the other vehicles' rows.
+test('each vehicle row of a repeated question has its own field key', async () => {
+  const h = harness({ ext: true });
+  const ram = addExtText(h, 'c', '1FF2', { caption: '2025 RAM PROMASTER 2500', row: '8_1' });
+  const sprinter = addExtText(h, 'c', '1FF2', { caption: '2019 MERCEDES-BENZ SPRINTER', row: '8_2' });
+  const report = await h.kit.fill([
+    { id: 'ram', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'ram rental', vehicleHint: ['2025', 'ram', 'promaster 2500'], activeVehicle: false },
+    { id: 'sprinter', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'sprinter rental', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
+  ], { maxRounds: 4, skip: ['1FF2@2'] });
+  assert.equal(sprinter.input.value, '', 'the edited row is left alone');
+  assert.equal(ram.input.value, 'ram rental', 'the other vehicle still fills');
+  assert.deepEqual(Array.from(report.filled, (x) => x.key), ['1FF2'], 'the first row keeps the plain id');
+});
+
 test('two vehicles that read the same leave their rows to the agent', async () => {
   const h = harness({ ext: true });
   const first = addExtText(h, 'c', '1FF2', { caption: '2025 RAM PROMASTER 2500', row: '8_1' });

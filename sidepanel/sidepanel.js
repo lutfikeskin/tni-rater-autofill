@@ -765,13 +765,16 @@ async function refreshTab() {
     }
   }
   if (tab?.id !== state.tab?.id) {
-    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps', 'assistPage'];
+    // `active`: each quote tab is on its own vehicle and driver (Continue is remembered per vehicle).
+    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps', 'assistPage', 'active'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
     const previous = state.tabSessions.get(tab?.id);
     Object.assign(state, previous ?? {
       filled: new Map(), labels: new Map(), autoPages: new Set(), autoPaused: false,
       agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(), assistPage: null,
+      active: { ...state.active },
     });
+    if (state.intake) renderPickers();
     clearTimeout(state.autoTimer);
     state.autoPending = false;
   }
@@ -1181,7 +1184,14 @@ function afterFill(frames, { carrier, page }) {
 // (2026-10-05: asked while the cargo follow-up still ran, its answer came back stale).
 function assistAfterFill(frames, ctx, followUp) {
   const moved = frames.some((f) => f.navigatedTo || f.advanced);
-  state.assistPage = followUp && !moved ? ctx.page : null;
+  const wait = followUp && !moved ? ctx.page : null;
+  // The agent switched rater tabs while this fill ran: its marker goes to its own tab's session.
+  if (state.tab?.id !== ctx.tabId) {
+    const saved = state.tabSessions.get(ctx.tabId);
+    if (saved) saved.assistPage = wait;
+    return;
+  }
+  state.assistPage = wait;
   if (!followUp && !moved) runAssist(frames, ctx);
 }
 

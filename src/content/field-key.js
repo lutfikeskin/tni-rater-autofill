@@ -1,9 +1,15 @@
 // Shared by the fill engine and recorder in their respective script worlds.
 (() => {
-  if (globalThis.__raterFieldKey?.version === 1) return;
+  if (globalThis.__raterFieldKey?.version === 2) return;
 
   function fieldKey(el, { q = null } = {}) {
-    if (q != null) return q;
+    // A known question keeps its id. Repeated per vehicle on one page (Progressive's Rates rows
+    // _<page>_2, _<page>_3, …), each row past the first gets its own key, so an agent edit on one
+    // vehicle's row doesn't protect the others. First rows keep the plain id, as before.
+    if (q != null) {
+      const row = String(el.id ?? '').match(/^f_[a-z][0-9a-f]{32}[0-9a-f]+_\d+_(\d+)/i)?.[1];
+      return row && row !== '1' ? `${q}@${row}` : q;
+    }
     const known = el.name || el.id;
     if (known) return known;
 
@@ -30,5 +36,5 @@
     return `dom-v1:${radio ? 'radio/' : ''}${parts.join('/')}`;
   }
 
-  globalThis.__raterFieldKey = Object.assign(fieldKey, { version: 1 });
+  globalThis.__raterFieldKey = Object.assign(fieldKey, { version: 2 });
 })();
