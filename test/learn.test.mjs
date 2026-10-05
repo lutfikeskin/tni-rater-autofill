@@ -95,3 +95,11 @@ test('events load from server folders and exports, without duplicates', () => {
   assert.equal(loaded.length, events.length);
   assert.ok(loaded.every((e) => !String(e.page ?? '').endsWith('-Reload')));
 });
+
+test('the steps of a one-address application are pages of their own in built layouts', () => {
+  const event = (step, label) => ({ type: 'page_layout', carrier: 'amwins', page: '/application/businessauto', step, session: 's', t: '2026-10-06T10:00:00Z',
+    context: { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'] }, fields: [{ kind: 'text', label }] });
+  const pages = buildLayouts([event('Vehicles', 'VIN'), event('Coverages', 'Medical payment'), event('Vehicles', 'VIN')])[0].layout.pages;
+  assert.deepEqual(Object.keys(pages), ['/application/businessauto › Vehicles', '/application/businessauto › Coverages']);
+  assert.equal(pages['/application/businessauto › Vehicles'].fields[0].cond, undefined, 'not a follow-up: on every layout of its step');
+});
