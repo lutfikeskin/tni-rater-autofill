@@ -375,3 +375,19 @@ test('an older recorder is replaced, so changes carry the combo flag and removed
   assert.deepEqual(disposed, [4]);
   assert.equal(h.context.__raterRecorder.version, 5);
 });
+
+test('a recorder orphaned by an extension reload is replaced, not reused', () => {
+  const h = harness();
+  const old = h.context.__raterRecorder;
+  vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+  assert.equal(h.context.__raterRecorder, old, 'a live recorder of this version is reused');
+  // The extension is reloaded: the old recorder's runtime is gone.
+  const runtime = h.context.chrome.runtime;
+  h.context.chrome.runtime = {};
+  assert.equal(old.alive(), false);
+  h.context.chrome.runtime = runtime;
+  old.alive = () => false;
+  vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+  assert.notEqual(h.context.__raterRecorder, old);
+  assert.equal(h.context.__raterRecorder.alive(), true);
+});
