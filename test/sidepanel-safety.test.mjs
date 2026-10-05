@@ -1415,17 +1415,31 @@ test('a retired AI pick is unprotected in its own vehicle scope, not the active 
   assert.deepEqual([...state.agentKeys.get('AddVehicle|v1')], ['2CA7'], 'the active vehicle\'s own protection is untouched');
 });
 
-test('a page layout is logged again when only its choices or required questions change', async () => {
+// The layout recorder with stubs around it: `controls()` is what the page shows when captured.
+function layoutHarness(controls, { session = 'quote-1' } = {}) {
   const logged = [];
-  let controls;
   const record = { garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], trailers: [], drivers: [{}], coverage: {} };
   const context = {
-    state: { tab: { id: 1, carrier: { id: 'progressive' } }, intake: { record }, active: {}, layoutsSent: new Set() },
-    sha256Hex, buildPlan: () => [], redactionTerms: () => [],
-    runKit: async () => [{ result: { controls, buttons: ['Continue'] } }],
-    usage: { currentSession: () => ({ id: 'quote-1' }), log: (e) => logged.push(e) },
+    state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive' } }, intake: { record }, active: {}, filling: false,
+      lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutReasons: new Set(), layoutErrors: 0, layoutErrorsLogged: new Set() },
+    sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
+    busy: false, runs: [],
+    runKit: async (tabId, carrier, func) => {
+      const source = String(func);
+      context.runs.push(source.includes('busy') ? 'busy' : 'capture');
+      if (source.includes('busy')) return [{ result: context.busy }];
+      return [{ result: { controls: controls(), buttons: ['Continue'] } }];
+    },
+    usage: { currentSession: () => ({ id: session }), log: (e) => logged.push(e) },
+    LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; },
   };
-  vm.runInNewContext(extractFunction('recordLayout'), context);
+  vm.runInNewContext(['recordLayout', 'captureLayout', 'scheduleLayout', 'layoutWhenQuiet'].map(extractFunction).join('\n'), context);
+  return { context, logged };
+}
+
+test('a page layout is logged again when only its choices or required questions change', async () => {
+  let controls;
+  const { context, logged } = layoutHarness(() => controls);
   const distance = (options, extra = {}) => ({ q: '2B9D', kind: 'select', label: 'Farthest distance', required: false, options, ...extra });
   controls = [distance(['50 miles', '200 miles'])];
   await context.recordLayout('Vehicles');
@@ -1440,4 +1454,94 @@ test('a page layout is logged again when only its choices or required questions 
   assert.equal(logged.length, 4, 'an unchanged layout once; a change of choices, cut or required again');
   assert.deepEqual(logged.map((e) => [e.fields[0].options.length, !!e.fields[0].required, !!e.fields[0].optionsTruncated]),
     [[2, false, false], [2, false, true], [3, false, true], [3, true, true]]);
+});
+
+test('Yes, No, Yes on a question with a follow-up logs three layouts, with the picks and no staff names', async () => {
+  let controls;
+  const { context, logged } = layoutHarness(() => controls);
+  const hazmat = (selected) => ({ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected });
+  const placards = { q: '2A2', kind: 'text', label: 'Placards carried', pageHasValue: false };
+  const producer = { q: '396', kind: 'select', label: 'Producer', options: [], selected: 'JANE DOE-1' };
+  for (const [answer, followUp] of [['Yes', true], ['No', false], ['Yes', true]]) {
+    controls = [hazmat(answer), ...(followUp ? [placards] : []), producer];
+    await context.recordLayout('Operations', 'changed');
+  }
+  assert.equal(logged.length, 3);
+  assert.deepEqual(logged.map((e) => e.fields.map((f) => f.q)), [['2A1', '2A2', '396'], ['2A1', '396'], ['2A1', '2A2', '396']]);
+  assert.deepEqual(logged.map((e) => e.fields[0].selected), ['Yes', 'No', 'Yes']);
+  assert.ok(logged.every((e) => e.reason === 'changed' && e.fields.at(-1).selected === undefined));
+  assert.equal(logged[0].fields[1].pageHasValue, false);
+  // Picking another answer that changes nothing else logs nothing: the pick is in the change event.
+  controls = [hazmat('No'), placards, producer];
+  await context.recordLayout('Operations', 'changed');
+  assert.equal(logged.length, 3);
+});
+
+test('layouts are taken as the page changes, without any fill, once the page is quiet', async () => {
+  let controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  const fire = async () => { const fn = context.pending; context.pending = null; await fn?.(); await context.state.layoutChain; };
+  // Changes close together make one capture with all their reasons.
+  context.scheduleLayout('Vehicles', 'changed');
+  context.scheduleLayout('Vehicles', 'appeared');
+  await fire();
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0].reason, 'appeared+changed');
+
+  // Still loading: asked again, then captured once quiet.
+  controls = [...controls, { q: '2A2', kind: 'text', label: 'Placards carried' }];
+  context.busy = true;
+  context.scheduleLayout('Vehicles', 'removed');
+  await fire();
+  assert.equal(logged.length, 1);
+  context.busy = false;
+  await fire();
+  assert.equal(logged.length, 2);
+  assert.equal(logged[1].reason, 'removed');
+
+  // A fill under way records its own layout; another tab's page or a practice page none.
+  context.state.filling = true;
+  context.scheduleLayout('Vehicles', 'changed');
+  context.runs.length = 0;
+  await fire();
+  assert.deepEqual(context.runs, []);
+  context.state.filling = false;
+  context.state.tab.carrier.practice = true;
+  context.scheduleLayout('Vehicles', 'changed');
+  assert.equal(context.pending, null);
+});
+
+test('a layout that cannot be read is counted and logged once per page and error', async () => {
+  const { context, logged } = layoutHarness(() => { throw new Error('Frame with ID 0 was removed.'); });
+  await context.recordLayout('Rates', 'arrived');
+  await context.recordLayout('Rates', 'changed');
+  assert.equal(context.state.layoutErrors, 2);
+  assert.deepEqual(logged.map((e) => [e.type, e.page, e.reason, e.error]), [['layout_error', 'Rates', 'arrived', 'Frame with ID 0 was removed.']]);
+});
+
+test('with no fill at all, Yes, No, Yes on the page logs each change and the three layouts in order', async () => {
+  let controls;
+  const { context, logged } = layoutHarness(() => controls);
+  Object.assign(context, {
+    samePage: (p) => p, redactor: () => (s) => s, scheduleAutoFill: () => {},
+    fieldChangeEvent: (c) => ({ type: 'field_change', q: c.q, from: c.before, to: c.after, by: 'page' }),
+  });
+  Object.assign(context.state, { filled: new Map(), labels: new Map() });
+  context.state.tab.url = 'Operations';
+  vm.runInContext(extractFunction('onRecorderMessage'), context);
+  const sender = { tab: { id: 1 } };
+  const fire = async () => { const fn = context.pending; context.pending = null; await fn?.(); await context.state.layoutChain; };
+  const hazmat = (selected) => ({ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected });
+  const placards = { q: '2A2', kind: 'text', label: 'Placards carried', pageHasValue: false };
+  for (const [from, to, event] of [['', 'Yes', 'new_fields'], ['Yes', 'No', 'removed_fields'], ['No', 'Yes', 'new_fields']]) {
+    controls = [hazmat(to), ...(event === 'new_fields' ? [placards] : [])];
+    context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: 'Operations', changes: [{ key: '2A1', q: '2A1', before: from, after: to, agent: false }] }, sender);
+    context.onRecorderMessage({ ra: 'usage', event, page: 'Operations', keys: ['2A2'] }, sender);
+    await fire();
+  }
+  assert.deepEqual(logged.map((e) => e.type === 'page_layout' ? `layout:${e.fields.map((f) => f.q).join('+')}:${e.reason}` : `change:${e.to}`), [
+    'change:Yes', 'layout:2A1+2A2:appeared+changed',
+    'change:No', 'layout:2A1:changed+removed',
+    'change:Yes', 'layout:2A1+2A2:appeared+changed',
+  ]);
 });

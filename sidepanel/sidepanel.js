@@ -187,7 +187,14 @@ const state = {
   autoTimer: null,
   autoPending: false,
   autoPaused: false,
-  layoutsSent: new Set(),
+  // Page layouts: the last one logged per quote and page (or vehicle/driver on its page), the
+  // chain that logs them one at a time, a pending capture as the page changes, and failures.
+  lastLayouts: new Map(),
+  layoutChain: Promise.resolve(),
+  layoutTimer: null,
+  layoutReasons: new Set(),
+  layoutErrors: 0,
+  layoutErrorsLogged: new Set(),
   // Carrier buttons already clicked in this quote (Verify DOT, Bill plan options, …).
   doneActions: new Set(),
   visitedPages: new Set(),
@@ -493,6 +500,7 @@ async function loadFile(file) {
   state.doneSteps = new Set();
   state.advanceRetried = new Set();
   state.assistPage = null;
+  state.layoutErrors = 0;
   state.intake = { ...result, fileName: file.name, done: [] };
   // Start on Check intake when something on the intake needs a look, else straight on Fill.
   state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
@@ -826,6 +834,7 @@ function onRecorderMessage(msg, sender) {
   if (msg.event === 'page_view') {
     if (msg.from) state.visitedPages.add(samePage(msg.from));
     log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
+    if (msg.fields) scheduleLayout(samePage(msg.page), 'arrived');
     // Buttons that run again on every new arrival at their page (Print / Send: after the agent goes
     // back and changes something, coming back to print means printing the new quote).
     if (msg.from && samePage(msg.from) !== samePage(msg.page)) {
@@ -849,6 +858,7 @@ function onRecorderMessage(msg, sender) {
   if (msg.event === 'field_changes') {
     const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt };
     log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
+    scheduleLayout(samePage(msg.page), 'changed');
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
@@ -865,7 +875,11 @@ function onRecorderMessage(msg, sender) {
       scheduleAutoFill(page);
     }
   }
-  if (msg.event === 'new_fields') scheduleAutoFill(samePage(msg.page));
+  if (msg.event === 'new_fields') {
+    scheduleAutoFill(samePage(msg.page));
+    scheduleLayout(samePage(msg.page), 'appeared');
+  }
+  if (msg.event === 'removed_fields') scheduleLayout(samePage(msg.page), 'removed');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -970,30 +984,49 @@ function runPendingPage() {
   if (pending && pending === pageOf(state.tab?.url)) setTimeout(() => fillPage({ auto: 'page' }), 300);
 }
 
-// Each page's question layout (ids, question text, options; no answers) goes into the usage
-// log once per session for each version of the page, so layouts for every state and product collect themselves as agents
-// quote. scripts/build-layouts.mjs turns them into test pages.
-async function recordLayout(page) {
+// Each page's question layout (ids, question text, options, which choice is picked; no typed
+// text) goes into the usage log whenever it differs from the last one logged for that page, so
+// layouts for every state and product collect themselves as agents quote, and a follow-up
+// question's appearing and going away are both seen. scripts/build-layouts.mjs turns them into
+// test pages. `reason`: fill, or what changed on the page (see scheduleLayout). One at a time, in
+// order, so a page's layouts are logged in the order they were seen.
+function recordLayout(page, reason = 'fill') {
+  const run = state.layoutChain.then(() => captureLayout(page, reason));
+  state.layoutChain = run.catch(() => {});
+  return run;
+}
+
+async function captureLayout(page, reason) {
   const { id: tabId, carrier } = state.tab;
   if (carrier.practice) return;
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
       [buildPlan(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
-    const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => ({
-      q: c.q ?? null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
-      // Element ids (stable ones only) and data-ids: how id-based rules (AmWINS) find the field.
-      id: c.id && !/\d{5,}|ext-|-inputEl$/.test(c.id) ? c.id : null, dataId: c.dataId ?? null, name: c.name ?? null,
+    const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
-      options: c.options?.length && !/agent|producer/i.test(c.label ?? '') ? c.options : undefined,
-      optionsTruncated: c.optionsTruncated, mapped: c.wouldFill ?? null,
-    }));
-    // Once per quote, page and layout. Not only the questions count: an answer can change another
-    // question's choices or make it required, which is a different layout of the same page.
+      const staff = /agent|producer/i.test(c.label ?? '');
+      return {
+        q: c.q ?? null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
+        // Element ids (stable ones only) and data-ids: how id-based rules (AmWINS) find the field.
+        id: c.id && !/\d{5,}|ext-|-inputEl$/.test(c.id) ? c.id : null, dataId: c.dataId ?? null, name: c.name ?? null,
+        options: c.options?.length && !staff ? c.options : undefined,
+        optionsTruncated: c.optionsTruncated, mapped: c.wouldFill ?? null,
+        // The choice picked now (redacted; never text typed into a box) and whether a box has
+        // something in it: which answers were on the page when follow-up questions appeared.
+        selected: !staff && c.selected ? c.selected : undefined,
+        pageHasValue: c.pageHasValue,
+      };
+    });
+    // Compared with the last layout logged for this page in this quote. Only the structure
+    // counts: the questions, their choices and which are required. Answers are in the change
+    // events; counting them would log a layout per answer. Yes, No, then Yes again on a
+    // question that shows a follow-up logs three layouts.
     const shape = fields.map((f) => [f.q ?? f.label, f.label, !!f.required, f.options ?? [], !!f.optionsTruncated]);
-    const signature = `${usage.currentSession()?.id}|${page}|${await sha256Hex(JSON.stringify(shape))}`;
-    if (!fields.length || state.layoutsSent.has(signature)) return;
-    state.layoutsSent.add(signature);
+    const signature = await sha256Hex(JSON.stringify(shape));
+    const scope = `${usage.currentSession()?.id}|${editScope(page)}`;
+    if (!fields.length || state.lastLayouts.get(scope) === signature) return;
+    state.lastLayouts.set(scope, signature);
     const r = state.intake.record;
     const context = {
       state: r.garaging?.state ?? null,
@@ -1004,8 +1037,52 @@ async function recordLayout(page) {
       vehicles: r.vehicles.length,
       coverages: Object.entries(r.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     };
-    usage.log({ type: 'page_layout', carrier: carrier.id, page, context, fields, buttons });
-  } catch { /* layout capture is best-effort */ }
+    usage.log({ type: 'page_layout', carrier: carrier.id, page, reason, context, fields, buttons });
+  } catch (e) {
+    // Counted for the panel, and logged once per quote, page and error, so a page whose layout
+    // can't be read shows up in the review instead of just missing.
+    state.layoutErrors++;
+    const error = String(e?.message ?? e).slice(0, 120);
+    const once = `${usage.currentSession()?.id}|${page}|${error}`;
+    if (!state.layoutErrorsLogged.has(once)) {
+      state.layoutErrorsLogged.add(once);
+      usage.log({ type: 'layout_error', carrier: carrier.id, page, reason, error });
+    }
+  }
+}
+
+// Layouts as the page changes, whether or not anything is filled: on arrival, when questions
+// appear or go away, and after an answer changes (which can change another question's choices or
+// make it required without adding a question). Waits for the page to be quiet; changes close
+// together make one capture. A fill logs its own layout when it ends.
+const LAYOUT_DELAY_MS = 1200;
+function scheduleLayout(page, reason) {
+  if (!state.intake || !state.tab?.carrier || state.tab.carrier.practice || !onQuotePage()) return;
+  state.layoutReasons.add(reason);
+  const tabId = state.tab.id;
+  clearTimeout(state.layoutTimer);
+  state.layoutTimer = setTimeout(() => layoutWhenQuiet(tabId, page), LAYOUT_DELAY_MS);
+}
+
+async function layoutWhenQuiet(tabId, page, tries = 0) {
+  const tab = state.tab;
+  if (!state.intake || tab?.id !== tabId || pageOf(tab.url) !== page) { state.layoutReasons.clear(); return; }
+  // A fill under way records the layout it leaves.
+  if (state.filling) { state.layoutReasons.clear(); return; }
+  try {
+    const busy = (await runKit(tabId, tab.carrier, () => globalThis.__raterKit.busy())).some((r) => r.result);
+    if (busy) {
+      // Still loading (an answer's server round trip): look again shortly, a few times at most.
+      if (tries < 3) state.layoutTimer = setTimeout(() => layoutWhenQuiet(tabId, page, tries + 1), LAYOUT_DELAY_MS);
+      else state.layoutReasons.clear();
+      return;
+    }
+  } catch { state.layoutReasons.clear(); return; }
+  // A fill may have started while the page was asked.
+  if (state.filling || pageOf(state.tab?.url) !== page) { state.layoutReasons.clear(); return; }
+  const reason = [...state.layoutReasons].sort().join('+');
+  state.layoutReasons.clear();
+  await recordLayout(page, reason);
 }
 
 function rememberFill(frames) {
@@ -1965,9 +2042,10 @@ async function renderUsage() {
   const n = await usage.count();
   const { agent = '', serverToken = '' } = await usage.settings();
   const { serverUrl } = await usage.serverConfig();
-  $('usage-count').textContent = n
+  $('usage-count').textContent = (n
     ? `${n.toLocaleString()} event${n === 1 ? '' : 's'} waiting on this computer`
-    : 'Nothing waiting on this computer.';
+    : 'Nothing waiting on this computer.')
+    + (state.layoutErrors ? ` ${state.layoutErrors} page layout${state.layoutErrors === 1 ? '' : 's'} couldn't be read (logged for review).` : '');
   const up = usage.lastUpload();
   const when = up.at ? new Date(up.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
   $('upload-status').textContent = {

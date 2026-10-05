@@ -10,7 +10,7 @@
 // control remains a compatibility fallback for widgets which do not emit those events.
 
 (() => {
-  const VERSION = 3;
+  const VERSION = 4;
   const previous = globalThis.__raterRecorder;
   if (previous) {
     // Flush any trusted edit before rebaseline or replacing an older recorder. This keeps a
@@ -277,6 +277,7 @@
     const pending = trustedPending.size ? new Set(trustedPending.keys()) : null;
     const changes = changedFields(cur, pending);
     const appeared = [...cur.keys()].filter((k) => !prev.has(k));
+    const removed = [...prev.keys()].filter((k) => !cur.has(k));
     prev = cur;
     if (changes.length) send({ event: 'field_changes', page, changes });
     // A trusted value event is valid for one snapshot only. This also drops controls that were
@@ -286,6 +287,9 @@
     // New questions (follow-ups revealed by an answer, or a panel that opened): the side panel
     // may fill them automatically.
     if (appeared.length) send({ event: 'new_fields', page, keys: appeared });
+    // Questions that went away (hidden, disabled or removed by an answer): the panel records the
+    // page's layout again, so both sides of a follow-up question are seen.
+    if (removed.length) send({ event: 'removed_fields', page, keys: removed });
   }
 
   // Only the top frame reports page switches; embedded frames (ads, trackers) would be noise.

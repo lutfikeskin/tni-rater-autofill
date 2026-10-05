@@ -304,7 +304,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 3);
+  assert.equal(h.context.__raterRecorder.version, 4);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -321,4 +321,18 @@ test('pause and resume rebaseline the page before recording a later change', () 
 
   assert.equal(changes(h)[0]?.before, 'while paused');
   assert.equal(changes(h)[0]?.after, 'after resume');
+});
+
+test('questions that go away are reported, so the panel can record the page again', () => {
+  const h = harness();
+  const answer = new Control('input', { id: 'answer' });
+  const followUp = new Control('input', { id: 'follow-up' });
+  h.append(answer, followUp);
+  h.context.__raterRecorder.rebaseline();
+  // The answer hides its follow-up question (disabled or hidden: the recorder no longer sees it).
+  followUp.disabled = true;
+  h.tick();
+  assert.deepEqual(h.sent.filter((m) => m.event === 'removed_fields').map((m) => [...m.keys]), [['field:follow-up']]);
+  h.tick();
+  assert.equal(h.sent.filter((m) => m.event === 'removed_fields').length, 1, 'reported once');
 });
