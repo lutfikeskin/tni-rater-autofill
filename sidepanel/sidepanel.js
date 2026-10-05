@@ -102,6 +102,58 @@ function snapshotsEqual(left, right) {
 function snapshotHashMatches(results, expected) {
   return expected != null && (snapshotFingerprint(results) === expected || aiFingerprint(results) === expected);
 }
+
+function aiSnapshotFields(frame) {
+  try {
+    const parsed = JSON.parse(frame?.result);
+    return Array.isArray(parsed?.[1]) ? parsed[1].filter(field => field && typeof field === 'object') : [];
+  } catch { return []; }
+}
+
+function aiLiveFieldHash(field) {
+  return aiFingerprint([field.key, field.label, field.current]);
+}
+
+function aiQuestionHash(field) {
+  return aiFingerprint([field.key, field.label]);
+}
+
+function aiOriginRecord(origin) {
+  if (!origin || !Number.isInteger(origin.frameId) || typeof origin.documentId !== 'string'
+    || typeof origin.questionHash !== 'string' || typeof origin.fieldHash !== 'string') return null;
+  return {
+    frameId: origin.frameId,
+    documentId: origin.documentId,
+    questionHash: origin.questionHash,
+    fieldHash: origin.fieldHash,
+  };
+}
+
+function aiSnapshotFieldMatches(frames, x) {
+  return (Array.isArray(frames) ? frames : []).flatMap(frame => aiSnapshotFields(frame)
+    .filter(field => field.key === x.key && field.label === x.label)
+    .map(field => ({ frame, field })));
+}
+
+function aiAnswerOrigin(frames, x, answerFrame) {
+  const matches = aiSnapshotFieldMatches(frames, x);
+  if (matches.length !== 1 || !answerFrame) return null;
+  const [{ frame, field }] = matches;
+  if (frame.frameId !== answerFrame.frameId || frame.documentId !== answerFrame.documentId) return null;
+  return aiOriginRecord({
+    frameId: answerFrame.frameId,
+    documentId: answerFrame.documentId,
+    questionHash: aiQuestionHash(field),
+    fieldHash: aiLiveFieldHash({ ...field, current: answerFrame.shown }),
+  });
+}
+
+function aiActionCurrent(ctx, list) {
+  return !!ctx.intake && state.intake === ctx.intake && state.tab?.id === ctx.tabId
+    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page
+    && list.every(x => [...state.aiCache.values()].includes(x));
+}
+
 function aiItemFingerprint(x) {
   return aiFingerprint([x.key, x.label, x.section, x.current, x.options, x.status, x.reason,
     x.reviewOnly, x.manualOnly, x.fieldType]);
@@ -199,6 +251,8 @@ function aiPendingRecord(sig, x, scope) {
     done: x.done, approved: !!x.approved, rejected: !!x.rejected, manual: !!x.manual, confirmed: !!x.confirmed,
     fieldHash: x.fieldHash ?? (x.restored ? null : aiFingerprint([x.key, x.label, x.choice])),
     snapshotHash: x.snapshotHash ?? (x.snapshots ? snapshotFingerprint(x.snapshots) : null),
+    origin: aiOriginRecord(x.origin),
+    originAmbiguous: !!x.originAmbiguous,
     confidence: Number.isFinite(x.confidence) ? x.confidence : null,
   };
 }
@@ -227,6 +281,7 @@ async function restoreAiPending() {
     state.aiCache.set(aiCacheSignature(x), {
       ...x, restored: true, done: 'auto', approved: !!x.approved, rejected: !!x.rejected,
       manual: !!x.manual, confirmed: !!x.confirmed, tip: '', checks: [], leave: false,
+      origin: aiOriginRecord(x.origin), originAmbiguous: !!x.originAmbiguous,
       applyable: true, autoOk: true, contextKey: null, snapshots: null,
     });
   }
@@ -274,26 +329,56 @@ function clearAgentKeys() {
 
 // Durable decisions store display text separately from the exact live-value fingerprint.
 function aiCurrentAnswerPresent(frames, x) {
-  const fields = frames.flatMap(frame => {
-    try { return JSON.parse(frame.result)[1] ?? []; } catch { return []; }
-  });
-  const field = fields.find(field => field.key === x.key);
-  if (!field) return false;
-  if (x.fieldHash) return aiFingerprint([field.key, field.label, field.current]) === x.fieldHash;
-  // Upgrade compatibility: old records have only a whole-page fingerprint. An unchanged page
-  // or an exact unredacted match still proves the selected value; display redaction never does.
-  return (x.snapshotHash && snapshotHashMatches(frames, x.snapshotHash))
-    || (field.label === x.label && field.current === x.choice);
+  const entries = (Array.isArray(frames) ? frames : []).flatMap(frame => aiSnapshotFields(frame)
+    .map(field => ({ frame, field })));
+  const origin = aiOriginRecord(x.origin);
+  if (x.originAmbiguous) return false;
+  if (origin) {
+    const matches = entries.filter(({ field }) => field.key === x.key
+      && aiQuestionHash(field) === origin.questionHash);
+    if (matches.length !== 1) return false;
+    const [{ frame, field }] = matches;
+    return frame.frameId === origin.frameId && frame.documentId === origin.documentId
+      && aiLiveFieldHash(field) === origin.fieldHash;
+  }
+  // Older records have no frame identity. They can be confirmed only when their whole-page
+  // snapshot is unchanged; a matching key or display string cannot prove the originating frame.
+  const matches = entries.filter(({ field }) => field.key === x.key);
+  return !!(x.snapshotHash && snapshotHashMatches(frames, x.snapshotHash))
+    && matches.length === 1 && (!x.fieldHash || aiLiveFieldHash(matches[0].field) === x.fieldHash);
 }
 
-function settleRejectedAi(page, keys, tabId = state.tab?.id) {
-  let changed = false;
-  for (const [sig, x] of state.aiCache) {
+async function settleRejectedAi(page, changes, sender, tabId = state.tab?.id) {
+  if (!Number.isInteger(sender?.frameId) || typeof sender.documentId !== 'string') return false;
+  const tab = state.tab, intake = state.intake;
+  const eligible = [...state.aiCache].filter(([sig, x]) => {
     const [cachedTab, cachedPage] = sig.split('\n');
-    if (cachedTab === String(tabId) && x.done === 'auto' && x.rejected && !x.confirmed && keys.has(x.key) && cachedPage === page) {
-      x.manual = true;
-      changed = true;
+    return cachedTab === String(tabId) && cachedPage === page && x.done === 'auto' && x.rejected && !x.confirmed;
+  });
+  let fresh = null;
+  if (eligible.some(([, x]) => !x.origin && !x.originAmbiguous)) {
+    try { fresh = await runKit(tabId, tab.carrier, () => globalThis.__raterKit.decisionSnapshot()); } catch { /* page navigating */ }
+  }
+  if (state.tab?.id !== tabId || state.tab?.url !== tab?.url || state.intake !== intake) return false;
+  let changed = false;
+  for (const [sig, x] of eligible) {
+    if (state.aiCache.get(sig) !== x || x.originAmbiguous) continue;
+    let questionHash = x.origin?.questionHash;
+    if (x.origin) {
+      if (sender.frameId !== x.origin.frameId || sender.documentId !== x.origin.documentId) continue;
+    } else {
+      // An old record has no origin. A trusted edit must target the single live question with
+      // this key, in the sender's current document; another frame's copy cannot settle it.
+      const matches = (Array.isArray(fresh) ? fresh : []).flatMap(frame => aiSnapshotFields(frame)
+        .filter(field => field.key === x.key).map(field => ({ frame, field })));
+      if (matches.length !== 1 || matches[0].frame.frameId !== sender.frameId
+        || matches[0].frame.documentId !== sender.documentId) continue;
+      questionHash = aiQuestionHash(matches[0].field);
     }
+    if (!changes.some(c => c?.key === x.key
+      && aiQuestionHash({ key: c.key, label: c.label }) === questionHash)) continue;
+    x.manual = true;
+    changed = true;
   }
   if (changed) persistAiPending();
   return changed;
@@ -644,9 +729,9 @@ async function ensureRecorder() {
   } catch { /* page not ready or not allowed; tried again on the next tab update */ }
 }
 
-function tellRecorder(cmd) {
-  if (!state.tab) return Promise.resolve();
-  return chrome.tabs.sendMessage(state.tab.id, { ra: 'recorder', cmd }).catch(() => {});
+function tellRecorder(cmd, tabId = state.tab?.id) {
+  if (!Number.isInteger(tabId)) return Promise.resolve();
+  return chrome.tabs.sendMessage(tabId, { ra: 'recorder', cmd }).catch(() => {});
 }
 
 function onRecorderMessage(msg, sender) {
@@ -686,8 +771,12 @@ function onRecorderMessage(msg, sender) {
       byAgent.forEach((c) => keys.add(c.key));
       state.agentKeys.set(page, keys);
       persistAgentKeys();
-      const released = settleRejectedAi(page, new Set(byAgent.map((c) => c.key)));
-      if (released) syncAiBanner({ tabId: state.tab.id, page, carrier: state.tab.carrier });
+      settleRejectedAi(page, byAgent, sender).then((released) => {
+        if (released && state.tab?.id === sender.tab?.id && pageOf(state.tab?.url) === page) {
+          syncAiBanner({ tabId: state.tab.id, page, carrier: state.tab.carrier });
+          scheduleAutoFill(page);
+        }
+      }).catch(() => {});
       scheduleAutoFill(page);
     }
   }
@@ -1151,9 +1240,9 @@ async function aiSettings() {
 async function runAssist(frames, ctx) {
   const record = state.intake?.record;
   const active = { ...state.active };
-  ctx = { ...ctx, contextKey: assistContextKey(record, active) };
+  ctx = { ...ctx, intake: state.intake, tabUrl: state.tab?.url, contextKey: assistContextKey(record, active) };
   const cfg = await aiSettings();
-  if (!cfg.on || !record || ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
+  if (!cfg.on || !record || !aiActionCurrent(ctx, []) || ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return;
   const provider = PROVIDERS[cfg.provider];
   // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
@@ -1180,7 +1269,7 @@ async function runAssist(frames, ctx) {
   try {
     ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
   } catch { return; }
-  const stale = () => run !== state.aiRun || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page
+  const stale = () => run !== state.aiRun || !aiActionCurrent(ctx, [])
     || ctx.contextKey !== assistContextKey(state.intake?.record, state.active) || !holder.isConnected;
   // Reuse an answer for the same question (as the page shows it now) in the same intake and
   // driver/vehicle, model and policy. Not keyed on the rest of the page: every automatic
@@ -1268,25 +1357,48 @@ async function applyAi(list, ctx, decision) {
   if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return false;
   if (ctx.run !== undefined && ctx.run !== state.aiRun) return false;
   list = list.filter(x => ['radio', 'select', 'checkbox'].includes(x.controlKind) && !x.leave && !state.agentKeys.get(ctx.page)?.has(x.key) && (decision !== 'auto' || x.autoOk));
-  if (!list.length) return false;
+  if (!list.length || !aiActionCurrent(ctx, list)) return false;
+  const isCurrent = () => aiActionCurrent(ctx, list)
+    && ctx.contextKey === assistContextKey(state.intake?.record, state.active)
+    && (ctx.run === undefined || ctx.run === state.aiRun);
   state.filling = true;
-  await tellRecorder('pause');
+  await tellRecorder('pause', ctx.tabId);
   try {
+    if (!isCurrent()) return false;
     const current = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+    if (!isCurrent()) return false;
     if (!snapshotsEqual(current, ctx.snapshots)) {
       for (const x of list) x.error = 'the page changed; click Fill this page for fresh suggestions';
       return false;
     }
+    list = list.filter(x => {
+      if (aiSnapshotFieldMatches(current, x).length === 1) return true;
+      x.error = 'the question is ambiguous across page frames; answer it on the page';
+      return false;
+    });
+    if (!list.length) return false;
     const answers = list.map((x) => ({
       key: x.key, label: x.label, value: x.choice,
       expected: { kind: x.controlKind, section: x.section, options: x.options, current: x.current },
       note: `${decision === 'auto' ? 'selected by the AI' : 'AI suggestion you accepted'}: ${x.tip}`.slice(0, 240),
     }));
-    const results = (await runKit(ctx.tabId, ctx.carrier, (a, snapshots) => globalThis.__raterKit.answer(a, snapshots), [answers, ctx.snapshots.map(r => r.result)])).flatMap((r) => r.result ?? []);
+    const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots) => globalThis.__raterKit.answer(a, snapshots), [answers, ctx.snapshots.map(r => r.result)]);
+    // A driver/vehicle switch after execution must not discard an answer already on the page.
+    if (!aiActionCurrent(ctx, list)) return false;
+    const results = answerFrames.flatMap((frame) => (Array.isArray(frame.result) ? frame.result : [])
+      .filter(result => result && typeof result === 'object')
+      .map(result => ({ ...result, frameId: frame.frameId, documentId: frame.documentId })));
     const keys = state.agentKeys.get(ctx.page) ?? new Set();
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
       const ok = mine.find((r) => r.ok);
+      if (ok) {
+        // Remember the expected value before any further page read can fail or change context.
+        const origin = aiAnswerOrigin(current, x, ok);
+        x.origin = origin;
+        x.originAmbiguous = !origin;
+        if (origin) x.fieldHash = origin.fieldHash;
+      }
       const problem = mine.find((r) => !r.ok && !/no longer on this page/.test(r.reason ?? '')) ?? mine[0];
       x.done = ok ? decision : null;
       x.error = ok ? null : problem?.reason ?? 'the question is no longer on this page';
@@ -1299,6 +1411,7 @@ async function applyAi(list, ctx, decision) {
     }
     state.agentKeys.set(ctx.page, keys);
     ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+    if (!aiActionCurrent(ctx, list)) return false;
     // Each applied pick remembers the page as it left it, for approving it later (also after a
     // context change, when the snapshot of this run is gone).
     for (const x of list) if (x.done) {
@@ -1307,13 +1420,16 @@ async function applyAi(list, ctx, decision) {
     }
     return true;
   } catch (e) {
+    if (!aiActionCurrent(ctx, list)) return false;
     for (const x of list) x.error = `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
     return false;
   } finally {
-    await tellRecorder('resume');
+    await tellRecorder('resume', ctx.tabId);
     state.filling = false;
-    await persistAiPending();
-    if (state.autoPending) scheduleAutoFill(ctx.page);
+    if (aiActionCurrent(ctx, list)) {
+      await persistAiPending();
+      if (isCurrent() && state.autoPending) scheduleAutoFill(ctx.page);
+    }
   }
 }
 
@@ -1347,23 +1463,25 @@ function renderAi(holder, suggestions, ctx) {
   const current = assistContextKey(state.intake?.record, state.active);
   const currentHash = aiFingerprint(current);
   const canContinue = $('auto-advance').checked && !!ctx.carrier.advance;
-  // Approving or rejecting a pick acts on what is already on the page, so it does not depend on
-  // the current intake or driver/vehicle.
+  // Approving or rejecting acts on a cached pick in this intake and page. A driver/vehicle
+  // switch can keep that pick pending; replacing the intake or page invalidates the callback.
   const decide = async (list, decision) => {
-    if (state.filling || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return;
+    if (state.filling || !aiActionCurrent(ctx, list)) return;
     if (decision === 'approved') {
       // Approve only what the page still shows as the AI left it; a pick whose page changed since
       // is rejected so the agent reviews it after a fresh fill.
       let now;
       try { now = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot()); }
       catch {
+        if (!aiActionCurrent(ctx, list)) return;
         for (const x of list) x.error = 'the page is unavailable; return to it and run Fill again';
         rerender();
         return;
       }
-      const moved = list.filter((x) => x.snapshotHash
+      if (!aiActionCurrent(ctx, list)) return;
+      const moved = list.filter((x) => !aiCurrentAnswerPresent(now, x) || (x.snapshotHash
         ? !snapshotHashMatches(now, x.snapshotHash)
-        : !snapshotsEqual(now, x.snapshots ?? ctx.snapshots));
+        : !snapshotsEqual(now, x.snapshots ?? ctx.snapshots)));
       if (moved.length) {
         const keys = state.agentKeys.get(ctx.page);
         for (const x of moved) {
@@ -1394,19 +1512,20 @@ function renderAi(holder, suggestions, ctx) {
     rerender();
     // Approved and nothing else left: the normal fill clicks Continue (when that setting is on).
     if (decision === 'approved' && canContinue && !pendingAi(ctx.tabId, ctx.page).length
-      && state.tab?.id === ctx.tabId && pageOf(state.tab?.url) === ctx.page) fillPage();
+      && aiActionCurrent(ctx, list)) fillPage();
   };
   // Rejecting leaves Continue blocked until the agent either changes that field on the page
   // (the recorder marks it manual) or explicitly confirms the current carrier value here. This
   // confirmation is intentional and does not infer consent from unrelated page changes.
   const confirmRejected = async (list) => {
-    if (state.filling || state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return;
+    if (state.filling || !aiActionCurrent(ctx, list)) return;
     for (const x of list) {
       let present = false;
       try {
         const result = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
         present = aiCurrentAnswerPresent(result, x);
       } catch { /* page navigating */ }
+      if (!aiActionCurrent(ctx, list)) return;
       if (present) {
         x.confirmed = true;
         if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'rejected_confirmed'));
@@ -1418,7 +1537,7 @@ function renderAi(holder, suggestions, ctx) {
     await syncAiBanner(ctx);
     rerender();
     if (canContinue && !pendingAi(ctx.tabId, ctx.page).length
-      && state.tab?.id === ctx.tabId && pageOf(state.tab?.url) === ctx.page) fillPage();
+      && aiActionCurrent(ctx, list)) fillPage();
   };
   const why = (x) => [
     x.provider === 'luna' ? `cited evidence: ${x.evidenceSources.map(source => source.basis === 'intake' ? source.path : 'TNI rule').join(', ')}`
@@ -1542,6 +1661,7 @@ async function renderAiSettings() {
   $('agent-btn').title = cfg.on
     ? (cfg.apiKey ? `${provider.name} assistant on · ${cfg.model}` : `${provider.name} assistant on · ${provider.keyLabel} needed`)
     : `${provider.name} assistant off`;
+  $('settings-agent-name').textContent = `${provider.name} assistant`;
   $('agent-name').textContent = provider.name;
   $('agent-provider').textContent = provider.company;
   $('agent-model').textContent = cfg.model;
