@@ -1276,6 +1276,29 @@ test('a settings change during a review runs it again, an edit during it discard
   }
 });
 
+// Codex on PR #22: an edit after a finished review is read again; Luna's old items are replaced in place.
+test('the claims box is reviewed again after the agent edits what Luna read', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('Needs physical damage');
+  t.state.intake = intake;
+  t.review();
+  await t.answer();
+  assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
+  intake.done = [1];
+  await t.review();
+  assert.equal(t.requests.length, 1, 'unchanged: not read again');
+  intake.record.coverage.ntl = true;
+  await t.review({ retry: true });
+  assert.equal(t.requests.length, 1, 'setting NTL is not a change to what Luna read');
+  intake.record.claims.text = 'Needs physical damage\nNeeds hired auto';
+  t.review({ retry: true });
+  await t.answer();
+  assert.equal(t.requests.length, 2, 'the edited box is read again');
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-superseded', 'info'], ['ai.ntl', 'check']],
+    'the old item is replaced in place (checked marks are by position), the new one added');
+  assert.deepEqual(intake.done, [1]);
+});
+
 // Codex on PR #21: on Add Vehicle (one vehicle at a time, the same field keys for each) an agent
 // correction on the first vehicle must not leave the next vehicle's box unfilled.
 test('agent edits are protected per vehicle on vehicle pages and per page elsewhere', async () => {

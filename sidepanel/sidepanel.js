@@ -697,6 +697,8 @@ function fieldRow(path, label, kind, flagged, layout = 'row') {
     const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
     usage.log({ type: 'intake_edit', path, kind, change: before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
     await save();
+    // Luna read the claims box against the form's coverages: an edit to either is read again.
+    if (path === 'claims.text' || (path.startsWith('coverage.') && path !== 'coverage.ntl')) reviewClaimsBox({ retry: true });
   });
   if (layout === 'stack') {
     // On a check card the same field may also be open in the client details: keep one id.
@@ -1376,7 +1378,9 @@ function claimsContext(record) {
 
 async function reviewClaimsBox({ retry = false } = {}) {
   const intake = state.intake;
-  if (!intake?.record.claims?.text || intake.notesReview?.done || (intake.notesReview?.failed && !retry)) return;
+  // A finished review stands while what it read is unchanged (older records didn't keep that).
+  const reviewed = intake?.notesReview?.done && (intake.notesReview.context == null || intake.notesReview.context === claimsContext(intake.record));
+  if (!intake?.record.claims?.text || reviewed || (intake.notesReview?.failed && !retry)) return;
   // One at a time: a settings change during a review runs once it ends (a corrected key).
   if (state.notesAsking === intake) { if (retry) state.notesRetry = intake; return; }
   // Taken before the first await: two triggers close together ask once.
@@ -1398,10 +1402,14 @@ async function reviewClaimsBox({ retry = false } = {}) {
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens,
         cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens, ...(changed ? { error: 'Answer discarded: the claims box or coverages changed.' } : {}) });
       if (changed) { again = true; return; }
-      // Warnings are marked checked by position: an earlier failure is replaced in place, never removed.
+      // Warnings are marked checked by position: an earlier failure, or Luna's items from a claims
+      // box the agent has since edited, are replaced in place, never removed.
       if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Luna reviewed the claims box after an earlier failure.' };
+      intake.warnings.forEach((w, i) => {
+        if (w.code === 'ai.ntl' || w.code === 'ai.coverage-change') intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box since edited: ${w.msg}` };
+      });
       intake.warnings.push(...result.warnings);
-      intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length };
+      intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length, context: read };
     } catch (e) {
       if (state.intake !== intake) return;
       const msg = e instanceof AssistError ? e.message : 'The claims-box review failed.';

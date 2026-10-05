@@ -1193,6 +1193,9 @@
         && ((step.value != null && agreesWith(step, control)) || (skipKeys.has(fieldKey(control)) && hasValue(control))));
       const blocked = [];
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
+        // A link verified by its going away that is back on its page (NTL removed by hand, then
+        // asked for again) is due again.
+        if (clicked.has(a.action) && a.verify === 'gone' && (!a.pages.length || a.pages.includes(currentPage())) && findButton(a)) clicked.delete(a.action);
         if (clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;
         // A blank repeater row is already sufficient: do not add a duplicate merely because
         // its fields have not been filled yet (or the agent went back to this step).

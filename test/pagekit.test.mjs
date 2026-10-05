@@ -956,6 +956,12 @@ test('a helper verified by its link going away counts only when the link is gone
   report = await h.kit.fill([withBase, billPlan], { maxRounds: 3, doneActions: ['addNtl'] });
   assert.equal(bill._clicked, true, 'NTL removed: the bill plan runs');
   assert.equal(report.noData.length, 0, 'and the item is settled');
+  // Codex on PR #22: Yes, No, removed by hand, Yes again: the link is back, so it's clicked again.
+  h = harness();
+  link = addButton(h, 'Add Non-Trucking Liability instead?');
+  link.onclick = () => link.remove();
+  report = await h.kit.fill([ntl], { maxRounds: 3, doneActions: ['addNtl'] });
+  assert.deepEqual(Array.from(report.actions, (x) => x.id), ['addNtl'], 're-armed while its link is on the page');
 });
 
 function coverageActionPlan() {

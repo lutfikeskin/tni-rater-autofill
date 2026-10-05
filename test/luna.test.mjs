@@ -371,24 +371,30 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'nothing to read');
 
   const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
-  const json = flags([[false, true], [true, true], [false, false], [false, false]]);
+  // coverageChange means a change other than NTL (NTL has its own flag).
+  const json = flags([[false, true], [true, false], [false, false], [false, false]]);
   const results = parseNotesReview(json, review);
   assert.equal(review.quoted, 'no bobtail', 'the line the intake\'s own NTL item quotes');
   assert.deepEqual(notesWarnings(results, review).map((w) => [w.code, w.path, w.level]), [['ai.coverage-change', 'claims.text', 'check'], ['ai.ntl', 'coverage.ntl', 'check']],
-    'the NTL line is not also a coverage change');
+    'NTL and other coverage changes are separate flags');
   assert.ok(notesWarnings(results, review)[1].msg.includes('needs coverage off dispatch'), 'the line is quoted');
-  assert.ok(notesWarnings(parseNotesReview(flags([[false, false], [false, false], [false, false], [true, true]]), review), review).length === 0,
+  assert.ok(notesWarnings(parseNotesReview(flags([[false, false], [false, false], [false, false], [true, false]]), review), review).length === 0,
     'the line the intake already quotes for NTL is not repeated');
   // Codex on PR #22: only that line, not every NTL line ("does not want bobtail" quoted first).
   const two = buildNotesReview({ coverage: {}, claims: { text: 'No\nDoes not want bobtail\nNeeds NTL off dispatch' } });
   assert.equal(two.quoted, 'Does not want bobtail');
-  assert.deepEqual(notesWarnings(parseNotesReview(flags([[false, false], [true, true]]), two), two).map((w) => [w.code, w.msg.includes('Needs NTL off dispatch')]),
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[false, false], [true, false]]), two), two).map((w) => [w.code, w.msg.includes('Needs NTL off dispatch')]),
     [['ai.ntl', true]], 'a second, positive NTL line is still flagged');
   // Codex on PR #22: another request in the quoted line itself is kept.
   const shared = buildNotesReview({ coverage: {}, claims: { text: 'No\nNeeds NTL. Also needs physical damage.' } });
   assert.deepEqual(shared.lines, ['Needs NTL.', 'Also needs physical damage.']);
-  assert.deepEqual(notesWarnings(parseNotesReview(flags([[true, true], [false, true]]), shared), shared).map((w) => [w.code, w.msg.includes('physical damage')]),
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[true, false], [false, true]]), shared), shared).map((w) => [w.code, w.msg.includes('physical damage')]),
     [['ai.coverage-change', true]], 'only the NTL sentence is the intake\'s');
+  // Codex on PR #22: one fragment with NTL and another request keeps the other request.
+  const mixed = buildNotesReview({ coverage: {}, claims: { text: 'No\nNeeds NTL and physical damage' } });
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[true, true]]), mixed), mixed).map((w) => w.code), ['ai.coverage-change'],
+    'the NTL is the intake\'s item; the physical damage request is still flagged');
+  assert.match(JSON.parse(JSON.stringify(mixed.body)).instructions, /other than non-trucking liability \(that is the ntl question\)/);
 
   assert.throws(() => parseNotesReview(flags([[false, true]]), review), AssistError, 'a missing line fails the whole review');
   assert.throws(() => parseNotesReview(envelope({ lines: { l0: { ntl: 'yes', coverageChange: false }, l1: { ntl: false, coverageChange: false }, l2: { ntl: false, coverageChange: false }, l3: { ntl: false, coverageChange: false } } }), review), AssistError);
