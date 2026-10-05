@@ -118,7 +118,7 @@ function harness() {
       return handle;
     },
     clearTimeout: (handle) => cleared.push(handle),
-    renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {},
+    renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {}, save: () => {},
     ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
@@ -1335,6 +1335,50 @@ test('the long-claims-box item stays while the box is still too long, and isn\'t
   t.state.offline = true;
   await t.review({ retry: true });
   assert.ok(!intake.warnings.some((w) => w.code === 'ai.claims-truncated' && w.level === 'check'), 'retired once the box is short enough');
+});
+
+// Codex on PR #22: the intake's own NTL item and the checked long-box / failed-review items follow
+// claims-box edits; Luna's NTL flag holds Rates; a done Add NTL survives a panel reload.
+test('claims-box edits keep the NTL, long-box and failed-review items current', () => {
+  const ntlCheckMessage = (line) => `NTL: ${line}`;
+  const ntlMention = (text) => String(text ?? '').split('\n').find((l) => /\bntl\b|bobtail/i.test(l))?.trim() || null;
+  const intake = { record: { claims: { text: 'No\nNeeds NTL' } }, done: [0, 1, 2],
+    warnings: [{ code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: 'NTL: Needs NTL' },
+      { code: 'ai.claims-truncated', level: 'check' }, { code: 'ai.claims-review-failed', level: 'check' }] };
+  const context = { ntlMention, ntlCheckMessage, save() {}, render() {} };
+  vm.runInNewContext(extractFunction('claimsTextEdited'), context);
+  intake.record.claims.text = 'No\nNeeds bobtail off dispatch';
+  context.claimsTextEdited(intake);
+  assert.equal(intake.warnings[0].msg, 'NTL: Needs bobtail off dispatch', 'the quoted line follows the edit');
+  assert.deepEqual(intake.done, [], 'all three are asked again for the new text');
+  intake.done = [0];
+  intake.record.claims.text = 'No\nFinanced';
+  context.claimsTextEdited(intake);
+  assert.deepEqual([intake.warnings[0].level, intake.warnings.length], ['info', 3], 'retired in place when NTL is no longer mentioned');
+  intake.record.claims.text = 'No\nNTL please';
+  context.claimsTextEdited(intake);
+  assert.equal(intake.warnings.length, 3, 'the retired item is not reused');
+  const fresh = { record: { claims: { text: 'No\nNTL please' } }, done: [], warnings: [] };
+  context.claimsTextEdited(fresh);
+  assert.deepEqual(fresh.warnings.map((w) => [w.code, w.level]), [['coverage.ntl', 'check']], 'an NTL mention added after load is asked');
+});
+
+test('Luna\'s NTL flag holds Rates until superseded, and a done Add NTL survives a panel reload', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('Needs bobtale coverage');
+  t.state.intake = intake;
+  t.review();
+  await t.answer();
+  assert.equal(intake.record.claims.aiNtl, true, 'the plan sees the unresolved NTL flag');
+  intake.record.claims.text = 'Financed';
+  t.state.offline = true;
+  await t.review({ retry: true });
+  assert.equal(intake.record.claims.aiNtl, false, 'cleared with its item');
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'CoveragesRates'), carrier: { id: 'progressive' } };
+  h.state.intake = { record: {} };
+  h.rememberFill([{ actions: [{ id: 'addNtl' }], protectedKeys: [], filled: [] }]);
+  assert.equal(h.state.intake.ntlAdded, true, 'kept with the intake (session storage), not only in memory');
 });
 
 // Codex on PR #21: on Add Vehicle (one vehicle at a time, the same field keys for each) an agent

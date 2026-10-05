@@ -141,7 +141,8 @@ const businessStructure = (r) => (/\b(llc|l\.l\.c|inc|corp|corporation|company|c
 // while its new questions are open).
 // An NTL mention in the claims box the agent hasn't answered yet (Yes or No) is not a No: Rates
 // waits for it like for NTL itself.
-const ntlUndecided = (r) => r.coverage.ntl == null && !!ntlMention(r.claims?.text);
+// Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl).
+const ntlUndecided = (r) => r.coverage.ntl == null && (!!ntlMention(r.claims?.text) || r.claims?.aiNtl === true);
 const notNtl = (r) => r.coverage.ntl !== true && !ntlUndecided(r);
 const ourBillPlan = (r) => r.coverage.gl !== true && notNtl(r);
 

@@ -525,4 +525,11 @@ test('Rates waits for an unanswered NTL mention, and an NTL quote keeps Continue
   assert.ok(!ids(record).includes('ntlDecide'));
   const plain = baseRecord();
   assert.ok(!ids(plain).includes('ntlDecide') && !ids(plain).includes('ntlRates'), 'no mention, no NTL: nothing');
+  // Codex on PR #22: Luna's NTL flag for a line the words miss ("bobtale") holds Rates the same way.
+  const flagged = baseRecord();
+  flagged.claims = { text: 'No\nNeeds bobtale coverage', aiNtl: true };
+  flagged.coverage.ntl = null;
+  assert.ok(ids(flagged).includes('ntlDecide') && !ids(flagged).includes('billPlan'));
+  flagged.coverage.ntl = false;
+  assert.ok(!ids(flagged).includes('ntlDecide') && ids(flagged).includes('billPlan'), 'answered No: a normal quote');
 });

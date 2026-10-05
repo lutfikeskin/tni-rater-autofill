@@ -1,6 +1,6 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseEdit } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, ntlMention, ntlCheckMessage } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
@@ -698,6 +698,7 @@ function fieldRow(path, label, kind, flagged, layout = 'row') {
     usage.log({ type: 'intake_edit', path, kind, change: before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
     await save();
     // Luna read the claims box against the form's coverages: an edit to either is read again.
+    if (path === 'claims.text') claimsTextEdited(state.intake);
     if (path === 'claims.text' || (path.startsWith('coverage.') && path !== 'coverage.ntl')) reviewClaimsBox({ retry: true });
   });
   if (layout === 'stack') {
@@ -904,7 +905,8 @@ const fillOptions = (carrier, extra = {}) => ({
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
   advance: $('auto-advance').checked && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
-  doneActions: [...state.doneActions],
+  // Add NTL done on this intake's quote survives a panel reload (its removal hold depends on it).
+  doneActions: [...state.doneActions, ...(state.intake?.ntlAdded ? ['addNtl'] : [])],
   visitedPages: [...state.visitedPages],
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
   skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
@@ -1004,6 +1006,10 @@ async function recordLayout(page) {
 
 function rememberFill(frames) {
   const page = pageOf(state.tab?.url);
+  if (state.intake && !state.intake.ntlAdded && frames.some((f) => (f.actions ?? []).some((a) => a.id === 'addNtl'))) {
+    state.intake.ntlAdded = true;
+    save();
+  }
   const keys = state.agentKeys.get(editScope(page)) ?? new Set();
   for (const key of frames.flatMap((f) => f.protectedKeys ?? [])) keys.add(key);
   state.agentKeys.set(editScope(page), keys);
@@ -1373,11 +1379,31 @@ async function aiSettings() {
 // otherwise the answer is dropped and the box read again.
 // Luna's claims-box items for a text the agent has since edited become info notes, in place
 // (warnings are marked checked by position).
+// The claims box text changed: the intake's own NTL item follows it (updated, re-asked, or retired
+// when NTL is no longer mentioned), and a checked long-box or failed-review item is asked again,
+// since its check was for the old text. Items are kept by position (checked marks are).
+function claimsTextEdited(intake) {
+  const uncheck = (i) => { intake.done = intake.done.filter((d) => d !== i); };
+  const mention = ntlMention(intake.record.claims?.text);
+  const i = intake.warnings.findIndex((w) => w.code === 'coverage.ntl');
+  if (mention && i < 0) intake.warnings.push({ code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: ntlCheckMessage(mention) });
+  else if (mention && intake.warnings[i].msg !== ntlCheckMessage(mention)) {
+    intake.warnings[i] = { code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: ntlCheckMessage(mention) };
+    uncheck(i);
+  } else if (!mention && i >= 0 && intake.warnings[i].level === 'check') {
+    intake.warnings[i] = { code: 'coverage.ntl', path: 'coverage.ntl', level: 'info', msg: 'The claims box no longer mentions non-trucking liability (NTL).' };
+  }
+  intake.warnings.forEach((w, j) => { if (['ai.claims-truncated', 'ai.claims-review-failed'].includes(w.code)) uncheck(j); });
+  save();
+  render();
+}
+
 // The long-claims-box item is the code's own: it stays while the box is still too long to read whole.
 function supersedeClaimsItems(intake) {
   const truncated = claimsTruncated(intake.record.claims?.text);
   intake.warnings.forEach((w, i) => {
     if (['ai.ntl', 'ai.coverage-change'].includes(w.code) || (w.code === 'ai.claims-truncated' && !truncated)) {
+      if (w.code === 'ai.ntl' && intake.record.claims) intake.record.claims.aiNtl = false;
       intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box since edited: ${w.msg}` };
     }
   });
@@ -1428,6 +1454,8 @@ async function reviewClaimsBox({ retry = false } = {}) {
       // One long-claims-box item, kept from an earlier review.
       const kept = intake.warnings.some((w) => w.code === 'ai.claims-truncated');
       intake.warnings.push(...result.warnings.filter((w) => !(kept && w.code === 'ai.claims-truncated')));
+      // Luna's NTL flag holds Progressive's Rates until the agent answers it, like an NTL mention.
+      if (result.warnings.some((w) => w.code === 'ai.ntl') && intake.record.claims) intake.record.claims.aiNtl = true;
       intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length, context: read };
     } catch (e) {
       if (state.intake !== intake) return;
