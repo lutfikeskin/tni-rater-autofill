@@ -1167,3 +1167,18 @@ test('agent edits are protected per vehicle on vehicle pages and per page elsewh
   state.tab.url = 'AddDriver';
   assert.equal(context.editScope('AddDriver'), 'AddDriver|d0');
 });
+
+// Codex on PR #21: a retired AI pick's protected key is removed from the vehicle it was made on.
+test('a retired AI pick is unprotected in its own vehicle scope, not the active one', async () => {
+  const carrier = { vehiclePages: ['MostCommonVehicles', 'AddVehicle'], driverPage: 'AddDriver' };
+  const sig = '1\nAddVehicle\ngpt-6-luna\npolicy\ncontext\nitem\nquote-a';
+  const pick = { key: '2CA7', done: 'auto', quoteHash: 'quote-a', editScope: 'AddVehicle|v0' };
+  const state = { tab: { id: 1, url: 'https://rater.test/a', carrier }, intake: {}, active: { vehicles: 1, drivers: 0 },
+    aiCache: new Map([[sig, pick]]), agentKeys: new Map([['AddVehicle|v0', new Set(['2CA7'])], ['AddVehicle|v1', new Set(['2CA7'])]]) };
+  const context = { state, aiFingerprint: () => 'quote-b', aiOriginRecord: () => null, aiRetiredSignatures: new Set(),
+    persistAiPending: async () => {}, persistAgentKeys: async () => {}, runKit: async () => [] };
+  vm.runInNewContext(extractFunction('retireAiOrigins'), context);
+  assert.equal(await context.retireAiOrigins({ tabId: 1, tabUrl: state.tab.url, intake: state.intake, carrier }), true);
+  assert.deepEqual([...state.agentKeys.get('AddVehicle|v0')], [], 'removed where the pick was made');
+  assert.deepEqual([...state.agentKeys.get('AddVehicle|v1')], ['2CA7'], 'the active vehicle\'s own protection is untouched');
+});

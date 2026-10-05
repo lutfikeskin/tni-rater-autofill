@@ -257,6 +257,8 @@ function aiPendingRecord(sig, x, scope) {
     snapshotHash: x.snapshotHash ?? (x.snapshots ? snapshotFingerprint(x.snapshots) : null),
     origin: aiOriginRecord(x.origin),
     originAmbiguous: !!x.originAmbiguous,
+    // Where its protected key lives (the page, with the vehicle/driver on vehicle and driver pages).
+    editScope: typeof x.editScope === 'string' ? x.editScope : null,
   };
 }
 
@@ -444,7 +446,8 @@ async function retireAiOrigins(ctx, frames = null) {
   for (const [sig, x] of retiring) if (state.aiCache.get(sig) === x) {
     state.aiCache.delete(sig);
     aiRetiredSignatures.add(sig);
-    state.agentKeys.get(editScope(sig.split('\n')[1]))?.delete(x.key);
+    // From the vehicle/driver the pick was made on, not whichever is active now.
+    state.agentKeys.get(x.editScope ?? editScope(sig.split('\n')[1]))?.delete(x.key);
     changed = true;
   }
   if (changed) {
@@ -1560,6 +1563,7 @@ async function applyAi(list, ctx, decision) {
         x.error = null;
         if (sameContext) {
           keys.add(x.key);
+          x.editScope = editScope(ctx.page);
           state.filled.set(x.key, { path: null, shown: ok.shown });
         }
       } else {
@@ -1653,11 +1657,10 @@ function renderAi(holder, suggestions, ctx) {
         ? !snapshotHashMatches(now, x.snapshotHash)
         : !snapshotsEqual(now, x.snapshots ?? ctx.snapshots)));
       if (moved.length) {
-        const keys = state.agentKeys.get(editScope(ctx.page));
         for (const x of moved) {
           x.rejected = true;
           x.error = 'the page changed after this choice; run Fill again and review it';
-          keys?.delete(x.key);
+          state.agentKeys.get(x.editScope ?? editScope(ctx.page))?.delete(x.key);
         }
         list = list.filter((x) => !moved.includes(x));
         if (!list.length) {
