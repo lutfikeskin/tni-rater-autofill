@@ -14,11 +14,12 @@
     }
     // A checkbox repeated per row keeps the template's name, and only its id carries the row
     // (AmWINS' vehicle coverage boxes: name "medicalPaymentExclude", ids
-    // medicalPaymentExclude<row>_<box>_). Rows past the first get their own key, numbered from 1
-    // like Progressive's rows above, so an edit or answer on one vehicle stays on that vehicle.
+    // medicalPaymentExclude<row>_<box>_). Every row gets its own key, name#<row> numbered from 1,
+    // so an edit or answer on one vehicle stays on that vehicle. The first row too: a plain name
+    // saved before (version 2) could be any row's edit, and protects them all (rowKeyBase).
     if (el.name && el.type?.toLowerCase() !== 'radio') {
       const row = String(el.id ?? '').startsWith(el.name) ? el.id.slice(el.name.length).match(/^(\d+)_\d+_/)?.[1] : null;
-      if (row && row !== '0') return `${el.name}@${Number(row) + 1}`;
+      if (row) return `${el.name}#${Number(row) + 1}`;
     }
     const known = el.name || el.id;
     if (known) return known;
@@ -46,5 +47,8 @@
     return `dom-v1:${radio ? 'radio/' : ''}${parts.join('/')}`;
   }
 
-  globalThis.__raterFieldKey = Object.assign(fieldKey, { version: 3, build: BUILD });
+  // The plain name an older key used for a row key (name#<row>), else null.
+  const rowKeyBase = (key) => String(key ?? '').match(/^(.+)#\d+$/)?.[1] ?? null;
+
+  globalThis.__raterFieldKey = Object.assign(fieldKey, { version: 3, build: BUILD, rowKeyBase });
 })();

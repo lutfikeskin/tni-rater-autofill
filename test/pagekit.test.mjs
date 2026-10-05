@@ -422,7 +422,7 @@ test('a checkbox repeated per row under one name gets a key per row: an answer o
     return box;
   });
   const keys = boxes.map((el) => h.context.__raterFieldKey(el));
-  assert.deepEqual(keys, ['medicalPaymentExclude', 'medicalPaymentExclude@2', 'medicalPaymentExclude@3'], 'the first row keeps its old key');
+  assert.deepEqual(keys, ['medicalPaymentExclude#1', 'medicalPaymentExclude#2', 'medicalPaymentExclude#3']);
   const [ok] = await h.kit.answer([{ key: keys[2], label: 'Exclude Medical Payments', value: 'checked' }]);
   assert.equal(ok.ok, true);
   assert.deepEqual(boxes.map((b) => b.checked), [false, false, true], 'the third vehicle\'s answer lands on its own row');
@@ -430,6 +430,11 @@ test('a checkbox repeated per row under one name gets a key per row: an answer o
   const plan = [0, 1, 2].map((n) => ({ id: `exclude${n}`, path: `exclude${n}`, re: '^ex\\w*de\\b.*medical', kind: 'bool', value: true, name: 'Exclude' }));
   await h.kit.fill(plan, { skip: [keys[1]], maxRounds: 3 });
   assert.deepEqual(boxes.map((b) => b.checked), [true, false, true], 'an edit on one row protects only that row');
+  // An edit saved by an older build under the shared name could be any row's: it protects them all.
+  boxes.forEach((b) => { b.checked = false; });
+  const legacy = await h.kit.fill(plan, { skip: ['medicalPaymentExclude'], maxRounds: 3 });
+  assert.deepEqual(boxes.map((b) => b.checked), [false, false, false]);
+  assert.deepEqual([...legacy.skipped].map((x) => x.key), keys);
   // Radios and boxes whose id doesn't extend their name keep the name.
   assert.equal(h.context.__raterFieldKey(makeInput({ type: 'radio', name: 'isNonProfit', id: 'isNonProfit1_0_' })), 'isNonProfit');
   assert.equal(h.context.__raterFieldKey(makeInput({ type: 'checkbox', name: 'accept', id: 'accept' })), 'accept');
