@@ -276,6 +276,8 @@ export const progressive = {
   // The page listing the quote's vehicles: the side panel works on the next intake vehicle not
   // added yet there, so Add Vehicle repeats until all are in, then Continue.
   vehicleList: 'VehicleSummary',
+  // The pages about one vehicle, repeated for each (their Continue is per vehicle).
+  vehiclePages: ['MostCommonVehicles', 'AddVehicle'],
   // Same for drivers: the AddDriver page marks its driver entered once filled.
   driverList: 'DriverSummary',
   driverPage: 'AddDriver',

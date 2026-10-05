@@ -646,7 +646,7 @@ test('repeated question ids without a vehicle hint stay yellow, and a hint picks
   assert.ok(report.unknown.length >= 2);
   // With the step's vehicle's year/make/model, the matching row is filled.
   const hinted = await h.kit.fill([
-    { id: 'hinted-step', q: '3C01', path: 'vehicles[1].value', kind: 'text', value: '45000', vehicleHint: ['2019', 'isuzu', 'npr hd'] },
+    { id: 'hinted-step', q: '3C01', path: 'vehicles[1].value', kind: 'text', value: '45000', vehicleHint: ['2019', 'isuzu', 'npr hd'], activeVehicle: false },
   ], { maxRounds: 2 });
   assert.equal(second.input.value, '45000');
   assert.equal(first.input.value, '');
@@ -707,6 +707,26 @@ test('a page showing one vehicle at a time is answered by the active vehicle onl
   ], { maxRounds: 3 });
   assert.equal(worth.input.value, '17000');
   assert.equal(report.filled.length, 1);
+});
+
+// Codex on PR #21: an earlier vehicle the intake doesn't describe (no year/make/model) has no
+// hint, and must not take the box of the vehicle being added.
+test('a per-vehicle step without year/make/model answers only as the active vehicle, and names no row', async () => {
+  let h = harness({ ext: true });
+  const worth = addExtText(h, 'r', '2091', { caption: 'If this vehicle was sold today, how much would it be worth?', row: '4_1' });
+  await h.kit.fill([
+    { id: 'undescribed', q: '2091', path: 'vehicles[0].value', kind: 'text', value: '31000', vehicleHint: null, activeVehicle: false },
+    { id: 'active', q: '2091', path: 'vehicles[1].value', kind: 'text', value: '17000', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
+  ], { maxRounds: 3 });
+  assert.equal(worth.input.value, '17000');
+  // On Rates (rows named by their vehicle) it can't pick a row, even its own.
+  h = harness({ ext: true });
+  const row = addExtText(h, 'c', '1FF2', { caption: '2025 RAM PROMASTER 2500', row: '8_1' });
+  const report = await h.kit.fill([
+    { id: 'undescribed-rates', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'rental', vehicleHint: null, activeVehicle: true },
+  ], { maxRounds: 2 });
+  assert.equal(row.input.value, '');
+  assert.equal(report.filled.length, 0);
 });
 
 test('rows of several vehicles without their names are not given to the active vehicle', async () => {

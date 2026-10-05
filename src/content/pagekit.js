@@ -353,7 +353,9 @@
     // A label fallback can't tell rows of one question apart, nor a vehicle's question from
     // another vehicle's: those are only answered by their question id and vehicle.
     const repeated = new Set(controls.map((x) => x.q).filter((q, i, all) => q && all.indexOf(q) !== i));
-    const perVehicle = new Set(steps.filter((s) => s.vehicleHint && s.q).map((s) => s.q));
+    // Steps of a per-vehicle question, one per vehicle (activeVehicle true or false), with or
+    // without a year/make/model to name its row.
+    const perVehicle = new Set(steps.filter((s) => s.activeVehicle != null && s.q).map((s) => s.q));
     // A page about one vehicle (Add Vehicle): no question names a vehicle and the per-vehicle
     // questions sit in one row. Rows of several vehicles without their names stay with the agent.
     const oneVehicle = !controls.some((x) => x.vehicle) && new Set(controls.filter((x) => perVehicle.has(x.q)).map((x) => x.row)).size <= 1;
@@ -362,11 +364,12 @@
     // Match every explicit target; path deduplication applies only to label fallbacks.
     for (const s of steps) {
       let c = null;
-      if (s.q && s.vehicleHint) {
-        // One step per vehicle (several in the quote): the row labelled with this vehicle's
-        // year/make/model, or on a page showing one vehicle at a time, the active vehicle's.
+      if (s.q && s.activeVehicle != null) {
+        // One step per vehicle (several in the quote): on a page showing one vehicle at a time, the
+        // active vehicle's; otherwise the row labelled with this vehicle's year/make/model. A
+        // vehicle the intake doesn't describe can't name a row: left to the agent.
         const same = controls.filter((x) => x.q === s.q);
-        c = oneVehicle ? (s.activeVehicle && same.length === 1 ? same[0] : null) : vehicleRow(same, s.vehicleHint);
+        c = oneVehicle ? (s.activeVehicle && same.length === 1 ? same[0] : null) : s.vehicleHint ? vehicleRow(same, s.vehicleHint) : null;
         if (c && used.has(c)) c = null;
       } else if (s.q) {
         // Without a vehicle, several rows for one question are ambiguous: they stay yellow.
