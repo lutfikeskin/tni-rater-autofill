@@ -172,6 +172,9 @@ const state = {
   filled: new Map(),
   // Question text per field key, from the fill engine (better than the recorder's guess).
   labels: new Map(),
+  // Each combo's choices seen by the fill engine (field key -> Set), so the usage log keeps a
+  // combo's value only when it's one of them, never text typed into the box.
+  choices: new Map(),
   // Automatic follow-up fills: pages the agent has filled in this tab, and per page the fields
   // the agent changed themselves (never refilled automatically).
   autoPages: new Set(),
@@ -496,6 +499,7 @@ async function loadFile(file) {
   state.autoPages = new Set();
   state.agentKeys = new Map();
   state.labels = new Map();
+  state.choices = new Map();
   state.visitedPages = new Set();
   state.doneSteps = new Set();
   state.advanceRetried = new Set();
@@ -781,11 +785,11 @@ async function refreshTab() {
   }
   if (tab?.id !== state.tab?.id) {
     // `active`: each quote tab is on its own vehicle and driver (Continue is remembered per vehicle).
-    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps', 'assistPage', 'active'];
+    const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps', 'assistPage', 'active'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
     const previous = state.tabSessions.get(tab?.id);
     Object.assign(state, previous ?? {
-      filled: new Map(), labels: new Map(), autoPages: new Set(), autoPaused: false,
+      filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false,
       agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(), assistPage: null,
       active: { ...state.active },
     });
@@ -859,7 +863,7 @@ function onRecorderMessage(msg, sender) {
     return;
   }
   if (msg.event === 'field_changes') {
-    const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt };
+    const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt };
     log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
     scheduleLayout(layoutPage, 'changed');
     const byAgent = msg.changes.filter((c) => c.agent);
@@ -1151,6 +1155,12 @@ function rememberFill(frames) {
   for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
   for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
   for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
+  // Kept from every fill: a searched combo's list differs from one fill to the next.
+  for (const [key, options] of frames.flatMap((f) => f.choices ?? [])) {
+    const seen = state.choices.get(key) ?? new Set();
+    for (const o of options) seen.add(o);
+    state.choices.set(key, seen);
+  }
 }
 
 function renderSite() {

@@ -89,6 +89,7 @@ function harness() {
     tab: null,
     filled: new Map(),
     labels: new Map(),
+    choices: new Map(),
     autoPages: new Set(),
     tabSessions: new Map(),
     agentKeys: new Map(),
@@ -210,6 +211,23 @@ test('invalidated actions are removed before newly successful actions are record
   }]);
 
   assert.deepEqual([...h.state.doneActions].sort(), ['fresh-lookup', 'keep-me']);
+});
+
+test('combo choices from every fill are kept per tab, for the usage log', async () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1), carrier: { id: 'progressive' } };
+  h.rememberFill([{ filled: [], choices: [['2C1A', ['Transit 150', 'Transit 250']]] }]);
+  // A searched combo lists other options on the next fill; the earlier ones are still options.
+  h.rememberFill([{ filled: [], choices: [['2C1A', ['Transit 350']], ['2C1B', ['Yes', 'No']]] }]);
+  assert.deepEqual([...h.state.choices.get('2C1A')], ['Transit 150', 'Transit 250', 'Transit 350']);
+  assert.deepEqual([...h.state.choices.get('2C1B')], ['Yes', 'No']);
+
+  h.setActiveTab(quoteTab(2));
+  await h.refreshTab();
+  assert.equal(h.state.choices.size, 0, 'another quote tab starts without them');
+  h.setActiveTab(quoteTab(1));
+  await h.refreshTab();
+  assert.deepEqual([...h.state.choices.get('2C1A')], ['Transit 150', 'Transit 250', 'Transit 350']);
 });
 
 test('switching tabs stores and restores agent keys and the persistent pause', async () => {
