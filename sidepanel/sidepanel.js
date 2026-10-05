@@ -188,11 +188,11 @@ const state = {
   autoPending: false,
   autoPaused: false,
   // Page layouts: the last one logged per quote and page (or vehicle/driver on its page), the
-  // chain that logs them one at a time, a pending capture as the page changes, and failures.
+  // chain that logs them one at a time, the capture waiting for the page to be quiet, failures.
   lastLayouts: new Map(),
   layoutChain: Promise.resolve(),
   layoutTimer: null,
-  layoutReasons: new Set(),
+  layoutPending: null,
   layoutErrors: 0,
   layoutErrorsLogged: new Set(),
   // Carrier buttons already clicked in this quote (Verify DOT, Bill plan options, …).
@@ -832,10 +832,12 @@ function onRecorderMessage(msg, sender) {
   if (msg?.ra !== 'usage' || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier?.id ?? null;
   const log = (...events) => { if (!state.tab.carrier?.practice) usage.log(...events); };
+  // Layouts are of the quote page, the tab's top frame; a child frame names its own address.
+  const layoutPage = sender.frameId ? pageOf(state.tab.url) : samePage(msg.page);
   if (msg.event === 'page_view') {
     if (msg.from) state.visitedPages.add(samePage(msg.from));
     log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
-    if (msg.fields) scheduleLayout(samePage(msg.page), 'arrived');
+    if (msg.fields) scheduleLayout(layoutPage, 'arrived');
     // Buttons that run again on every new arrival at their page (Print / Send: after the agent goes
     // back and changes something, coming back to print means printing the new quote).
     if (msg.from && samePage(msg.from) !== samePage(msg.page)) {
@@ -859,7 +861,7 @@ function onRecorderMessage(msg, sender) {
   if (msg.event === 'field_changes') {
     const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt };
     log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
-    scheduleLayout(samePage(msg.page), 'changed');
+    scheduleLayout(layoutPage, 'changed');
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
@@ -878,9 +880,9 @@ function onRecorderMessage(msg, sender) {
   }
   if (msg.event === 'new_fields') {
     scheduleAutoFill(samePage(msg.page));
-    scheduleLayout(samePage(msg.page), 'appeared');
+    scheduleLayout(layoutPage, 'appeared');
   }
-  if (msg.event === 'removed_fields') scheduleLayout(samePage(msg.page), 'removed');
+  if (msg.event === 'removed_fields') scheduleLayout(layoutPage, 'removed');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -990,27 +992,33 @@ function runPendingPage() {
 // layouts for every state and product collect themselves as agents quote, and a follow-up
 // question's appearing and going away are both seen. scripts/build-layouts.mjs turns them into
 // test pages. `reason`: fill, or what changed on the page (see scheduleLayout). One at a time, in
-// order, so a page's layouts are logged in the order they were seen. Each belongs to the quote it
-// was asked for: once another intake is loaded (or the client cleared), it's dropped, so one
-// client's page is never logged with another's context or redaction.
-function recordLayout(page, reason = 'fill', session = usage.currentSession()?.id) {
-  const run = state.layoutChain.then(() => captureLayout(page, reason, session));
+// order, so a page's layouts are logged in the order they were seen.
+function recordLayout(page, reason = 'fill', job = layoutJob(page)) {
+  const run = state.layoutChain.then(() => captureLayout(job, reason));
   state.layoutChain = run.catch(() => {});
   return run;
 }
 
-function sameQuote(session) {
-  return !!session && !!state.intake && usage.currentSession()?.id === session;
+// A capture is asked for one quote, tab, page and active vehicle/driver. It's dropped when any of
+// them has changed by the time the page is read or its answer comes back, so a page is never
+// logged under another page's name, another client's quote, context or redaction.
+function layoutJob(page, session = usage.currentSession()?.id) {
+  return { session, tabId: state.tab?.id, carrier: state.tab?.carrier, page, active: JSON.stringify(state.active) };
 }
 
-async function captureLayout(page, reason, session) {
-  if (!sameQuote(session)) return;
-  const { id: tabId, carrier } = state.tab;
-  if (carrier.practice) return;
+function jobCurrent(job) {
+  return !!job.session && !!state.intake && usage.currentSession()?.id === job.session
+    && state.tab?.id === job.tabId && state.tab?.carrier?.id === job.carrier?.id
+    && pageOf(state.tab.url) === job.page && JSON.stringify(state.active) === job.active;
+}
+
+async function captureLayout(job, reason) {
+  if (!jobCurrent(job) || job.carrier.practice) return;
+  const { tabId, carrier, page } = job;
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
       [buildPlan(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
-    if (!sameQuote(session)) return;
+    if (!jobCurrent(job)) return;
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
@@ -1034,7 +1042,7 @@ async function captureLayout(page, reason, session) {
     // question that shows a follow-up logs three layouts.
     const shape = fields.map((f) => [f.q ?? f.label, f.label, !!f.required, f.options ?? [], !!f.optionsTruncated]);
     const signature = await sha256Hex(JSON.stringify(shape));
-    const scope = `${usage.currentSession()?.id}|${editScope(page)}`;
+    const scope = `${job.session}|${editScope(page)}`;
     if (!fields.length || state.lastLayouts.get(scope) === signature) return;
     state.lastLayouts.set(scope, signature);
     const r = state.intake.record;
@@ -1049,66 +1057,79 @@ async function captureLayout(page, reason, session) {
     };
     usage.log({ type: 'page_layout', carrier: carrier.id, page, reason, context, fields, buttons });
   } catch (e) {
-    if (sameQuote(session)) layoutFailed(carrier, page, reason, e);
+    if (jobCurrent(job)) layoutFailed(carrier, page, reason, e);
   }
 }
 
-// A layout that couldn't be read: counted for the panel, and logged once per quote, page and
-// error, so it shows up in the review instead of just missing.
+// A layout that couldn't be read: counted for the panel, and logged once per quote, page and kind
+// of failure, so it shows up in the review instead of just missing.
 function layoutFailed(carrier, page, reason, e) {
   state.layoutErrors++;
-  const error = String(e?.message ?? e).slice(0, 120);
+  const error = layoutErrorKind(e);
   const once = `${usage.currentSession()?.id}|${page}|${error}`;
   if (state.layoutErrorsLogged.has(once)) return;
   state.layoutErrorsLogged.add(once);
   usage.log({ type: 'layout_error', carrier: carrier.id, page, reason, error });
 }
 
+// What kind of failure, never its message: Chrome's and the page's errors can quote the page's
+// address and values from it.
+function layoutErrorKind(e) {
+  const m = String(e?.message ?? e);
+  if (/frame/i.test(m) && /removed|not found|no frame/i.test(m)) return 'frame gone';
+  if (/no tab|tab\b.*\b(closed|not found)/i.test(m)) return 'tab gone';
+  if (/cannot access|cannot be scripted|permission|not allowed/i.test(m)) return 'page not accessible';
+  if (/__raterKit/.test(m)) return 'kit missing';
+  return /^[A-Za-z]*Error$/.test(e?.name ?? '') ? `other ${e.name}` : 'other';
+}
+
 // Layouts as the page changes, whether or not anything is filled: on arrival, when questions
 // appear or go away, and after an answer changes (which can change another question's choices or
 // make it required without adding a question). Waits for the page to be quiet; changes close
-// together make one capture. A fill logs its own layout when it ends.
+// together on the same page make one capture with all their reasons, and a change elsewhere
+// replaces a capture still waiting for the page it left. A fill logs its own layout when it ends.
 const LAYOUT_DELAY_MS = 1200;
 function scheduleLayout(page, reason) {
   if (!state.intake || !state.tab?.carrier || state.tab.carrier.practice || !onQuotePage()) return;
-  state.layoutReasons.add(reason);
-  const tabId = state.tab.id;
-  const session = usage.currentSession()?.id;
+  const job = layoutJob(page);
+  const pending = state.layoutPending;
+  if (pending && ['session', 'tabId', 'page', 'active'].every((k) => pending[k] === job[k])) pending.reasons.add(reason);
+  else state.layoutPending = { ...job, reasons: new Set([reason]) };
+  const mine = state.layoutPending;
   clearTimeout(state.layoutTimer);
-  state.layoutTimer = setTimeout(() => layoutWhenQuiet(tabId, page, session), LAYOUT_DELAY_MS);
+  state.layoutTimer = setTimeout(() => layoutWhenQuiet(mine), LAYOUT_DELAY_MS);
 }
 
 // Another intake loaded or the client cleared: a capture still waiting is for the old quote.
 function cancelLayouts() {
   clearTimeout(state.layoutTimer);
-  state.layoutReasons.clear();
+  state.layoutPending = null;
 }
 
-async function layoutWhenQuiet(tabId, page, session, tries = 0) {
-  // Still this quote, tab and page, and no fill under way (a fill records the layout it leaves).
-  const current = () => sameQuote(session) && state.tab?.id === tabId && pageOf(state.tab.url) === page && !state.filling;
-  if (!current()) { state.layoutReasons.clear(); return; }
-  const { carrier } = state.tab;
+async function layoutWhenQuiet(job, tries = 0) {
+  // Not replaced by a later change, still its quote, tab, page and vehicle/driver, and no fill
+  // under way (a fill records the layout it leaves). Work that isn't live only drops itself.
+  const live = () => state.layoutPending === job && jobCurrent(job) && !state.filling;
+  const drop = () => { if (state.layoutPending === job) state.layoutPending = null; };
+  const reason = () => [...job.reasons].sort().join('+');
+  if (!live()) return drop();
   let busy;
   try {
-    busy = (await runKit(tabId, carrier, () => globalThis.__raterKit.busy())).some((r) => r.result);
+    busy = (await runKit(job.tabId, job.carrier, () => globalThis.__raterKit.busy())).some((r) => r.result);
   } catch (e) {
     // Couldn't ask the page: the same as a layout that couldn't be read, unless it moved on.
-    const reason = [...state.layoutReasons].sort().join('+');
-    if (current()) layoutFailed(carrier, page, reason, e);
-    state.layoutReasons.clear();
-    return;
+    if (live()) layoutFailed(job.carrier, job.page, reason(), e);
+    return drop();
   }
-  if (!current()) { state.layoutReasons.clear(); return; }
+  if (!live()) return drop();
   if (busy) {
     // Still loading (an answer's server round trip): look again shortly, a few times at most.
-    if (tries < 3) state.layoutTimer = setTimeout(() => layoutWhenQuiet(tabId, page, session, tries + 1), LAYOUT_DELAY_MS);
-    else state.layoutReasons.clear();
+    if (tries < 3) state.layoutTimer = setTimeout(() => layoutWhenQuiet(job, tries + 1), LAYOUT_DELAY_MS);
+    else drop();
     return;
   }
-  const reason = [...state.layoutReasons].sort().join('+');
-  state.layoutReasons.clear();
-  await recordLayout(page, reason, session);
+  state.layoutPending = null;
+  await recordLayout(job.page, reason(), job);
 }
 
 function rememberFill(frames) {

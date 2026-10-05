@@ -966,7 +966,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
   const pendingSig = '1\n/quote\ngpt-6-luna\npolicy\ncontext\npending';
   const manual = { key: 'manual', label: 'Manual', choice: 'Yes', done: 'auto', manual: true };
   const pending = { key: 'pending', label: 'Pending', choice: 'No', done: 'auto' };
-  const state = { intake: { record }, tabSessions: new Map(), layoutReasons: new Set(), aiCache: new Map([[manualSig, manual], [pendingSig, pending]]) };
+  const state = { intake: { record }, tabSessions: new Map(), layoutPending: null, aiCache: new Map([[manualSig, manual], [pendingSig, pending]]) };
   let stored = [];
   const context = { state, DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
     aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
@@ -1421,7 +1421,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
   const record = { garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], trailers: [], drivers: [{}], coverage: {} };
   const context = {
     state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive' } }, intake: { record }, active: {}, filling: false,
-      lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutReasons: new Set(), layoutErrors: 0, layoutErrorsLogged: new Set() },
+      lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set() },
     sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
     busy: false, runs: [],
     runKit: async (tabId, carrier, func) => {
@@ -1437,7 +1437,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; },
   };
-  vm.runInNewContext(['recordLayout', 'sameQuote', 'captureLayout', 'layoutFailed', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
+  vm.runInNewContext(['recordLayout', 'layoutJob', 'jobCurrent', 'captureLayout', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);
   return { context, logged };
 }
@@ -1467,6 +1467,7 @@ test('Yes, No, Yes on a question with a follow-up logs three layouts, with the p
   const hazmat = (selected) => ({ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected });
   const placards = { q: '2A2', kind: 'text', label: 'Placards carried', pageHasValue: false };
   const producer = { q: '396', kind: 'select', label: 'Producer', options: [], selected: 'JANE DOE-1' };
+  context.state.tab.url = 'Operations';
   for (const [answer, followUp] of [['Yes', true], ['No', false], ['Yes', true]]) {
     controls = [hazmat(answer), ...(followUp ? [placards] : []), producer];
     await context.recordLayout('Operations', 'changed');
@@ -1518,10 +1519,11 @@ test('layouts are taken as the page changes, without any fill, once the page is 
 
 test('a layout that cannot be read is counted and logged once per page and error', async () => {
   const { context, logged } = layoutHarness(() => { throw new Error('Frame with ID 0 was removed.'); });
+  context.state.tab.url = 'Rates';
   await context.recordLayout('Rates', 'arrived');
   await context.recordLayout('Rates', 'changed');
   assert.equal(context.state.layoutErrors, 2);
-  assert.deepEqual(logged.map((e) => [e.type, e.page, e.reason, e.error]), [['layout_error', 'Rates', 'arrived', 'Frame with ID 0 was removed.']]);
+  assert.deepEqual(logged.map((e) => [e.type, e.page, e.reason, e.error]), [['layout_error', 'Rates', 'arrived', 'frame gone']]);
 });
 
 test('with no fill at all, Yes, No, Yes on the page logs each change and the three layouts in order', async () => {
@@ -1563,11 +1565,12 @@ test('layout work for one quote is dropped once another intake is loaded or the 
   await waiting();
   assert.equal(logged.length, 0);
   // Already capturing when the client is cleared: what comes back isn't logged.
+  const job = context.layoutJob('Vehicles');
   context.runKit = async () => { context.sessionId = null; return [{ result: { controls, buttons: [] } }]; };
-  await context.recordLayout('Vehicles', 'fill', 'quote-2');
+  await context.recordLayout('Vehicles', 'fill', job);
   // Queued under the old quote, run after the switch.
   context.sessionId = 'quote-3';
-  await context.recordLayout('Vehicles', 'fill', 'quote-2');
+  await context.recordLayout('Vehicles', 'fill', job);
   assert.equal(logged.length, 0);
   assert.equal(context.state.layoutErrors, 0);
   await fire();
@@ -1579,7 +1582,7 @@ test('a page that cannot be asked whether it is quiet is counted like an unreada
   context.scheduleLayout('Vehicles', 'arrived');
   await context.pending();
   assert.equal(context.state.layoutErrors, 1);
-  assert.deepEqual(logged.map((e) => [e.type, e.reason, e.error]), [['layout_error', 'arrived', 'Cannot access contents of the page.']]);
+  assert.deepEqual(logged.map((e) => [e.type, e.reason, e.error]), [['layout_error', 'arrived', 'page not accessible']]);
   // The tab moved on meanwhile: nothing to report.
   context.runKit = async () => { context.state.tab.url = 'Drivers'; throw new Error('Frame was removed.'); };
   context.scheduleLayout('Vehicles', 'changed');
@@ -1596,4 +1599,64 @@ test('a layout keeps a pick only when it is one of the captured choices', async 
   ]);
   await context.recordLayout('Vehicles', 'changed');
   assert.deepEqual(logged[0].fields.map((f) => f.selected), ['FORD', undefined, 'checked']);
+});
+
+test('a queued capture is dropped when the tab, page or active vehicle changed before or while it reads', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  const kit = context.runKit;
+  // Asked on Vehicles; the agent is on Drivers by the time the queue gets to it.
+  const queued = context.layoutJob('Vehicles');
+  context.state.tab.url = 'Drivers';
+  await context.recordLayout('Vehicles', 'changed', queued);
+  // Reading Vehicles when the panel switches to the second vehicle, or another tab.
+  context.state.tab.url = 'Vehicles';
+  context.runKit = async (...args) => { context.state.active = { vehicles: 1 }; return kit(...args); };
+  await context.recordLayout('Vehicles', 'changed');
+  context.state.active = {};
+  context.runKit = async (...args) => { context.state.tab = { ...context.state.tab, id: 2 }; return kit(...args); };
+  await context.recordLayout('Vehicles', 'changed');
+  assert.deepEqual(logged, [], 'never logged under the page, vehicle or tab it was asked for');
+});
+
+test('reasons belong to the capture they were given to', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  const kit = context.runKit;
+  // A capture for Vehicles is asking whether the page is quiet when the agent opens Drivers.
+  context.scheduleLayout('Vehicles', 'changed');
+  const vehicles = context.pending;
+  context.runKit = async (...args) => {
+    context.runKit = kit;
+    context.state.tab.url = 'Drivers';
+    context.scheduleLayout('Drivers', 'arrived');
+    return kit(...args);
+  };
+  await vehicles();
+  const drivers = context.pending;
+  await drivers();
+  await context.state.layoutChain;
+  assert.deepEqual(logged.map((e) => [e.page, e.reason]), [['Drivers', 'arrived']], 'the old capture neither logs nor takes the new one\'s reasons');
+  assert.equal(context.state.layoutPending, null);
+});
+
+test('a change in a child frame schedules the layout of the quote page around it', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  Object.assign(context, { samePage: (p) => p, redactor: () => (s) => s, scheduleAutoFill: () => {}, fieldChangeEvent: () => ({ type: 'field_change' }) });
+  Object.assign(context.state, { filled: new Map(), labels: new Map() });
+  vm.runInContext(extractFunction('onRecorderMessage'), context);
+  context.onRecorderMessage({ ra: 'usage', event: 'new_fields', page: '/widgets/address-frame', keys: ['x'] }, { tab: { id: 1 }, frameId: 3 });
+  await context.pending();
+  await context.state.layoutChain;
+  assert.deepEqual(logged.map((e) => [e.type, e.page, e.reason]), [['page_layout', 'Vehicles', 'appeared']]);
+});
+
+test('layout errors are logged by kind, never with their message', () => {
+  const { context } = layoutHarness(() => []);
+  const kinds = ['Frame with ID 0 was removed.', 'No tab with id: 12.', 'Cannot access contents of url "https://example.test/quote?id=55501".',
+    'globalThis.__raterKit is undefined', 'Unexpected value 1FTBR3X87MKA12345'].map((m) => context.layoutErrorKind(new Error(m)));
+  assert.deepEqual(kinds, ['frame gone', 'tab gone', 'page not accessible', 'kit missing', 'other Error']);
+  assert.equal(context.layoutErrorKind(new TypeError('x')), 'other TypeError');
+  assert.equal(context.layoutErrorKind('a string with a VIN 1FTBR3X87MKA12345'), 'other');
 });
