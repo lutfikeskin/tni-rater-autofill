@@ -21,6 +21,7 @@
 // choices on live quotes). The agent changes them for the exceptions.
 
 import { priorPolicyExpired, ownerIsDriver } from '../util.js';
+import { ntlMention } from '../normalize.js';
 
 // Values that Progressive asks the agent to attest to must come from an explicit intake field.
 // Keep these helpers conservative: an absent value is a review item, not a reason to guess.
@@ -138,8 +139,11 @@ const businessStructure = (r) => (/\b(llc|l\.l\.c|inc|corp|corporation|company|c
 // the bill plan is the agent's. With NTL the whole page is, Recalculate and Print too, until the
 // NTL section has been seen on a live quote (an earlier bill plan visit must not let them run
 // while its new questions are open).
-const ourBillPlan = (r) => r.coverage.gl !== true && r.coverage.ntl !== true;
-const notNtl = (r) => r.coverage.ntl !== true;
+// An NTL mention in the claims box the agent hasn't answered yet (Yes or No) is not a No: Rates
+// waits for it like for NTL itself.
+const ntlUndecided = (r) => r.coverage.ntl == null && !!ntlMention(r.claims?.text);
+const notNtl = (r) => r.coverage.ntl !== true && !ntlUndecided(r);
+const ourBillPlan = (r) => r.coverage.gl !== true && notNtl(r);
 
 // The whole address on one line, for address boxes that offer the carrier's own suggestions.
 const oneLineAddress = (r) => {
@@ -256,6 +260,12 @@ export const progressive = {
     // NTL added on this quote, then set back to No: the filler doesn't remove it. Never clicked; a
     // "needs you" item on Rates, holding the later Rates helpers, until the page offers Add NTL
     // again (the agent removed it).
+    // NTL quote, or an NTL mention not answered yet: never clicked, a "needs you" item that keeps
+    // Continue for the agent (the rest of Rates is theirs, or waits for their answer).
+    { id: 'ntlRates', page: 'CoveragesRates', label: 'Non-trucking liability', when: (r) => r.coverage.ntl === true,
+      missing: () => 'NTL quote: the rest of this page is yours (the NTL section, cargo, the bill plan, Recalculate, Print). Continue yourself when it is done.' },
+    { id: 'ntlDecide', page: 'CoveragesRates', label: 'Non-trucking liability', when: ntlUndecided,
+      missing: () => 'The claims box mentions NTL and Non-trucking liability isn\'t answered: set it to Yes or No on Check intake, then fill this page again.' },
     { id: 'ntlStillAdded', page: 'CoveragesRates', afterActions: ['addNtl'], resolvedBy: ADD_NTL, label: 'Non-trucking liability', when: (r) => r.coverage.ntl !== true,
       missing: () => 'NTL was added on this quote, but Non-trucking liability is no longer Yes on the intake: remove it on this page yourself, or set it back to Yes.' },
     // The "+" in the Motor Truck Cargo row (every coverage has one).

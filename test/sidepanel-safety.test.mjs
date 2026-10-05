@@ -1161,17 +1161,17 @@ function claimsHarness() {
   class AssistError extends Error {}
   const context = {
     state, AssistError, Date, redactor: () => (s) => s, redactionTerms: () => [],
-    aiSettings: async () => ({ on: true, apiKey: 'k', model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, apiKey: 'k', model: 'gpt-6-luna' }),
     reviewNotes: async (record, cfg, opts) => {
       requests.push({ record, opts, reply: t.reply });
       const reply = t.reply;
       await new Promise((resolve) => gates.push(resolve));
       if (reply === 'fail') throw new AssistError('Luna took too long. Nothing was applied.');
-      return { warnings: [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }], lines: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0, cachedTokens: 2, cacheWriteTokens: 1 };
+      return { warnings: [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }], lines: 1, flagged: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0, cachedTokens: 2, cacheWriteTokens: 1 };
     },
     usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
   };
-  vm.runInNewContext(extractFunction('claimsContext') + extractFunction('reviewClaimsBox'), context);
+  vm.runInNewContext(extractFunction('claimsContext') + extractFunction('supersedeClaimsItems') + extractFunction('reviewClaimsBox'), context);
   const settle = () => new Promise((resolve) => setImmediate(resolve));
   // Lets the oldest pending request answer, then lets the panel finish with it.
   t.answer = async () => { await settle(); gates.shift()(); for (let i = 0; i < 5; i++) await settle(); };
@@ -1297,6 +1297,22 @@ test('the claims box is reviewed again after the agent edits what Luna read', as
   assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-superseded', 'info'], ['ai.ntl', 'check']],
     'the old item is replaced in place (checked marks are by position), the new one added');
   assert.deepEqual(intake.done, [1]);
+});
+
+// Codex on PR #22: an edit retires Luna's old items even when no new review can run.
+test('editing what Luna read retires its items at once, also with the assistant off', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('Needs physical damage');
+  t.state.intake = intake;
+  t.review();
+  await t.answer();
+  assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
+  intake.record.claims.text = 'Financed';
+  t.state.offline = true;
+  await t.review({ retry: true });
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-superseded', 'info']]);
+  assert.equal(t.requests.length, 1, 'no request without the assistant');
+  assert.equal(intake.notesReview, null, 'read again once the assistant can');
 });
 
 // Codex on PR #21: on Add Vehicle (one vehicle at a time, the same field keys for each) an agent

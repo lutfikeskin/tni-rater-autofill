@@ -506,3 +506,23 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   assert.deepEqual(actions(gl).find((s) => s.action === 'print').after, ['coverage.autoLiabLimit']);
   assert.ok(ids(baseRecord()).includes('billPlan'), 'and a plain quote keeps our bill plan');
 });
+
+// Codex on PR #22: an NTL mention not answered yet is not a No, and an NTL quote's Rates page is
+// never continued for the agent.
+test('Rates waits for an unanswered NTL mention, and an NTL quote keeps Continue for the agent', () => {
+  const record = baseRecord();
+  const ids = (r) => buildPlan(r, progressive, {}).filter((s) => s.kind === 'action').map((s) => s.action);
+  const step = (r, id) => buildPlan(r, progressive, {}).find((s) => s.action === id);
+  record.claims = { text: 'No\nAsked about bobtail' };
+  record.coverage.ntl = null;
+  for (const id of ['openCargo', 'billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} waits for the agent's NTL answer`);
+  assert.match(step(record, 'ntlDecide').missing, /set it to Yes or No/);
+  assert.equal(step(record, 'ntlDecide').text, null, 'never clicked');
+  record.coverage.ntl = false;
+  assert.ok(ids(record).includes('billPlan') && !ids(record).includes('ntlDecide'), 'an explicit No is a normal quote');
+  record.coverage.ntl = true;
+  assert.match(step(record, 'ntlRates').missing, /Continue yourself/, 'a needs-you item: Rates is never continued for the agent');
+  assert.ok(!ids(record).includes('ntlDecide'));
+  const plain = baseRecord();
+  assert.ok(!ids(plain).includes('ntlDecide') && !ids(plain).includes('ntlRates'), 'no mention, no NTL: nothing');
+});

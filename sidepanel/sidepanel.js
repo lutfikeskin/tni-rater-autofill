@@ -1371,6 +1371,16 @@ async function aiSettings() {
 // again when the assistant settings change (`retry`), not on every panel reload. What it read
 // (the claims box and the form's coverages) must still be the intake's when Luna answers;
 // otherwise the answer is dropped and the box read again.
+// Luna's claims-box items for a text the agent has since edited become info notes, in place
+// (warnings are marked checked by position).
+function supersedeClaimsItems(intake) {
+  intake.warnings.forEach((w, i) => {
+    if (['ai.ntl', 'ai.coverage-change', 'ai.claims-truncated'].includes(w.code)) {
+      intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box since edited: ${w.msg}` };
+    }
+  });
+}
+
 function claimsContext(record) {
   const { ntl, ...coverage } = record.coverage ?? {};
   return JSON.stringify([record.claims?.text ?? null, coverage]);
@@ -1379,8 +1389,15 @@ function claimsContext(record) {
 async function reviewClaimsBox({ retry = false } = {}) {
   const intake = state.intake;
   // A finished review stands while what it read is unchanged (older records didn't keep that).
-  const reviewed = intake?.notesReview?.done && (intake.notesReview.context == null || intake.notesReview.context === claimsContext(intake.record));
-  if (!intake?.record.claims?.text || reviewed || (intake.notesReview?.failed && !retry)) return;
+  // Once the agent has edited it, Luna's items for the old text are retired right away, whether or
+  // not a new review can run now (assistant off, no key, a failure).
+  if (intake?.notesReview?.done && intake.notesReview.context != null && intake.notesReview.context !== claimsContext(intake.record)) {
+    supersedeClaimsItems(intake);
+    intake.notesReview = null;
+    await save();
+    render();
+  }
+  if (!intake?.record.claims?.text || intake.notesReview?.done || (intake.notesReview?.failed && !retry)) return;
   // One at a time: a settings change during a review runs once it ends (a corrected key).
   if (state.notesAsking === intake) { if (retry) state.notesRetry = intake; return; }
   // Taken before the first await: two triggers close together ask once.
@@ -1398,16 +1415,14 @@ async function reviewClaimsBox({ retry = false } = {}) {
       // Nothing about a replaced intake is logged under the new one.
       if (state.intake !== intake) return;
       const changed = claimsContext(intake.record) !== read;
-      usage.log({ ...logged, ms: Date.now() - started, items: result.lines, suggested: result.warnings.length, leave: result.lines - result.warnings.length,
+      usage.log({ ...logged, ms: Date.now() - started, items: result.lines, suggested: result.flagged, leave: result.lines - result.flagged,
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens,
         cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens, ...(changed ? { error: 'Answer discarded: the claims box or coverages changed.' } : {}) });
       if (changed) { again = true; return; }
       // Warnings are marked checked by position: an earlier failure, or Luna's items from a claims
       // box the agent has since edited, are replaced in place, never removed.
       if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Luna reviewed the claims box after an earlier failure.' };
-      intake.warnings.forEach((w, i) => {
-        if (w.code === 'ai.ntl' || w.code === 'ai.coverage-change') intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box since edited: ${w.msg}` };
-      });
+      supersedeClaimsItems(intake);
       intake.warnings.push(...result.warnings);
       intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length, context: read };
     } catch (e) {

@@ -424,3 +424,19 @@ test('non-trucking liability questions stay with the agent', () => {
   assert.deepEqual(items.map((x) => x.key), ['other']);
   assert.deepEqual(blocked.map((x) => x.key), ['ntl1', 'ntl2']);
 });
+
+// Codex on PR #22: counts are lines, not cards; a long claims box says what wasn't read.
+test('claims-box review counts flagged lines and says when the box was too long to read whole', async () => {
+  const mixed = { coverage: {}, claims: { text: 'No\nNeeds bobtail and physical damage\nFinanced' } };
+  const two = (body) => envelope({ lines: { l0: { ntl: true, coverageChange: true }, l1: { ntl: false, coverageChange: false } } });
+  const done = await reviewNotes(mixed, { apiKey: 'k' }, { call: async ({ body }) => two(body) });
+  assert.deepEqual(done.warnings.map((w) => w.code), ['ai.coverage-change'], 'the intake quotes the bobtail line');
+  assert.equal(done.flagged, 1);
+  assert.equal(done.lines, 2);
+  assert.ok(done.warnings.every((w) => !('line' in w)), 'no extra fields on the intake items');
+  const long = { coverage: {}, claims: { text: Array.from({ length: 25 }, (_, i) => `Line number ${i + 1} about the truck`).join('\n') } };
+  const all = await reviewNotes(long, { apiKey: 'k' }, { call: async ({ body }) => envelope({ lines: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).claimsBox).map((id) => [id, { ntl: false, coverageChange: false }])) }) });
+  assert.equal(all.lines, 20);
+  assert.deepEqual(all.warnings.map((w) => [w.code, w.level]), [['ai.claims-truncated', 'check']]);
+  assert.match(all.warnings[0].msg, /first 20 lines only/);
+});
