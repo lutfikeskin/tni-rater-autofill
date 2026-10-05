@@ -178,7 +178,7 @@ const state = {
   // Steps already continued from, keyed by stepScope (AmWINS steps, Progressive's per-vehicle pages).
   doneSteps: new Set(),
   advanceRetried: new Set(), // steps whose lost Continue was clicked a second time (once each)
-  assistPage: null, // a page whose Luna request waits for a helper's follow-up fill
+  assistPage: null, // a page whose Luna request waits for a helper's follow-up fill (per tab, like the above)
   tabSessions: new Map(),
   agentKeys: new Map(),
   filling: false,
@@ -762,12 +762,12 @@ async function refreshTab() {
     }
   }
   if (tab?.id !== state.tab?.id) {
-    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps'];
+    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps', 'assistPage'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
     const previous = state.tabSessions.get(tab?.id);
     Object.assign(state, previous ?? {
       filled: new Map(), labels: new Map(), autoPages: new Set(), autoPaused: false,
-      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(),
+      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(), assistPage: null,
     });
     clearTimeout(state.autoTimer);
     state.autoPending = false;
@@ -864,12 +864,14 @@ function onRecorderMessage(msg, sender) {
 // Automatic fills only run on the carrier's quote pages (never e.g. its quote-search page).
 const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUrl || state.tab.carrier.autoFillUrl.test(state.tab.url ?? ''));
 
-// A step counts as continued per page and, on carriers that add vehicles and drivers one at a
-// time, per active vehicle/driver: Progressive's Add Vehicle page looks the same for every
-// vehicle, and the next vehicle's page is a new step, not the agent going back.
+// A step counts as continued per page, and on a page about one vehicle or driver (Progressive's
+// Add Vehicle, Add Driver) per active vehicle/driver: Add Vehicle looks the same for every
+// vehicle, and the next vehicle's page is a new step, not the agent going back. Other pages stay
+// quote-wide, so changing a picker never makes a page the agent left new again.
 function stepScope(page, carrier = state.tab?.carrier) {
-  const entity = [carrier?.vehicleList ? `v${state.active.vehicles ?? 0}` : null, carrier?.driverList ? `d${state.active.drivers ?? 0}` : null];
-  return `${page}|${entity.filter(Boolean).join('')}|`;
+  const entity = carrier?.vehiclePages?.includes(page) ? `v${state.active.vehicles ?? 0}`
+    : carrier?.driverPage && carrier.driverPage === page ? `d${state.active.drivers ?? 0}` : '';
+  return `${page}|${entity}|`;
 }
 
 const fillOptions = (carrier, extra = {}) => ({
@@ -1238,7 +1240,8 @@ function renderReport(frames) {
   const tabId = state.tab?.id;
   const page = pageOf(state.tab?.url);
   box.className = 'report';
-  if (!fields && !all('actions').length) {
+  // A page of tiles only (Most Common Vehicles) has no fields but may still need the agent.
+  if (!fields && !all('actions').length && !all('noData').length) {
     const halted = frames.find((f) => f.halted);
     box.replaceChildren(h('p', { class: halted ? 'error' : 'muted center' }, halted ? `Automatic filling and helpers paused. ${halted.reason ?? 'Review this page before retrying.'}` : 'No form fields found on this page.'));
     return;

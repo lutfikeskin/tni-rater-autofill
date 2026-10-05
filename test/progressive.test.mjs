@@ -439,6 +439,9 @@ test('vehicle tiles follow the intake type; unmapped types and a Reefer outside 
     assert.match(tile(type).missing, /pick the vehicle yourself/);
   }
   assert.match(tile('Semi Truck').missing, /No tile on this page matches the intake's Semi Truck/);
+  // Continue is remembered per vehicle on these pages, per driver on the driver page.
+  assert.deepEqual(progressive.vehiclePages, ['MostCommonVehicles', 'AddVehicle']);
+  assert.equal(progressive.driverPage, 'AddDriver');
 });
 
 test('every vehicle on Rates gets the standard per-vehicle coverages; Rental with downtime is Not selected', () => {

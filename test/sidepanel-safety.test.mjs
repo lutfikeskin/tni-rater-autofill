@@ -984,21 +984,58 @@ test('reloading an intake drops settled ledger entries without losing unresolved
 
 // 2026-10-05 FL run: after the first vehicle's Add Vehicle was continued, the second and third
 // vehicles' (same headings) were taken for the agent going back, and Continue wasn't clicked.
-test('a continued step is remembered per vehicle and driver on carriers that add them one at a time', () => {
-  const progressive = { vehicleList: 'VehicleSummary', driverList: 'DriverSummary' };
+test('a continued step is remembered per vehicle on vehicle pages, per driver on the driver page, quote-wide elsewhere', () => {
+  const progressive = { vehicleList: 'VehicleSummary', driverList: 'DriverSummary', vehiclePages: ['MostCommonVehicles', 'AddVehicle'], driverPage: 'AddDriver' };
   const state = { active: { vehicles: 0, drivers: 0 }, doneSteps: new Set(), autoPaused: false, tab: { carrier: progressive } };
   const watched = [];
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: (...args) => watched.push(args) };
   vm.runInNewContext(extractFunction('stepScope') + extractFunction('afterFill'), context);
-  context.afterFill([{ advanced: 'Continue', signatureBefore: 'before', stepKey: 'Vehicle Information / Common Questions' }], { carrier: progressive, page: 'AddVehicle' });
-  assert.deepEqual([...state.doneSteps], ['AddVehicle|v0d0|Vehicle Information / Common Questions']);
-  assert.equal(watched[0][3], 'AddVehicle|v0d0|Vehicle Information / Common Questions', 'the lost-Continue retry uses the same entry');
-  const remembered = (carrier) => [...state.doneSteps].filter((s) => s.startsWith(context.stepScope('AddVehicle', carrier)));
-  assert.equal(remembered(progressive).length, 1, 'back on the first vehicle: not continued again');
+  const continued = (page, stepKey) => context.afterFill([{ advanced: 'Continue', signatureBefore: 'before', stepKey }], { carrier: progressive, page });
+  continued('AddVehicle', 'Vehicle Information / Common Questions');
+  continued('BusinessOwnerInfo', 'Named Insured');
+  continued('AddDriver', 'Driver');
+  assert.deepEqual([...state.doneSteps], ['AddVehicle|v0|Vehicle Information / Common Questions', 'BusinessOwnerInfo||Named Insured', 'AddDriver|d0|Driver']);
+  assert.equal(watched[0][3], 'AddVehicle|v0|Vehicle Information / Common Questions', 'the lost-Continue retry uses the same entry');
+  const remembered = (page) => [...state.doneSteps].filter((s) => s.startsWith(context.stepScope(page, progressive))).length;
+  assert.equal(remembered('AddVehicle'), 1, 'back on the first vehicle: not continued again');
   state.active.vehicles = 1;
-  assert.equal(remembered(progressive).length, 0, 'the next vehicle is a new step');
+  assert.equal(remembered('AddVehicle'), 0, 'the next vehicle is a new step');
+  state.active.drivers = 1;
+  assert.equal(remembered('BusinessOwnerInfo'), 1, 'a picker change never makes a page the agent left new again');
+  assert.equal(remembered('AddDriver'), 0, 'the next driver is a new step');
   // One-address applications (AmWINS) keep one entry per page and step, whatever the active row.
   assert.equal(context.stepScope('Step', {}), 'Step||');
+});
+
+test('a Luna request waiting for a follow-up fill belongs to its tab', async () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'CoveragesRates'), carrier: { id: 'progressive' } };
+  h.state.assistPage = 'CoveragesRates';
+  h.setActiveTab(quoteTab(2, 'CoveragesRates'));
+  await h.refreshTab();
+  assert.equal(h.state.assistPage, null, 'another quote on the same page starts without it');
+  h.state.assistPage = null;
+  h.setActiveTab(quoteTab(1, 'CoveragesRates'));
+  await h.refreshTab();
+  assert.equal(h.state.assistPage, 'CoveragesRates', 'back on the first quote it is still waiting');
+});
+
+// Codex on PR #21: on a page of tiles only, the vehicle-type note was hidden by "No form fields".
+test('a page without form fields still shows what needs the agent', () => {
+  const box = { replaceChildren(...children) { this.children = children; } };
+  const context = {
+    $: () => box, state: { tab: { id: 7, url: 'MostCommonVehicles' } }, pageOf: (url) => url,
+    h: (tag, props, ...children) => ({ tag, props, children }), ignoreReview: () => {},
+  };
+  vm.runInNewContext(extractFunction('renderReport'), context);
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [],
+    noData: [{ label: 'Vehicle type', key: null, note: 'Tanker isn\'t matched to a Progressive tile yet: pick the vehicle yourself.' }] }]);
+  const text = JSON.stringify(box.children);
+  assert.match(text, /Vehicle type/);
+  assert.match(text, /pick the vehicle yourself/);
+  assert.doesNotMatch(text, /No form fields found/);
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [] }]);
+  assert.match(JSON.stringify(box.children), /No form fields found/, 'an empty page is still said to be empty');
 });
 
 function assistHarness({ suggest, cfg = {} } = {}) {
