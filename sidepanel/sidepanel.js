@@ -493,8 +493,8 @@ async function loadFile(file) {
   state.doneActions = new Set();
   discardAiSuggestions();
   await store.set('session', usage.startSession(summary.intakeId));
-  await restoreAiPending();
   await persistAiPending();
+  await restoreAiPending();
   await clearAgentKeys();
   usage.log({ type: 'intake_loaded', ...summary });
   uploadNow();

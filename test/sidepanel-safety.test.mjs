@@ -910,3 +910,30 @@ test('stale retirement snapshots cannot remove a replacement intake or cached de
     assert.equal(h.saved(), 0);
   }
 });
+
+test('reloading an intake drops settled ledger entries without losing unresolved holds', async () => {
+  const record = {}, scope = 'same-intake';
+  const manualSig = '1\n/quote\ngpt-6-luna\npolicy\ncontext\nmanual';
+  const pendingSig = '1\n/quote\ngpt-6-luna\npolicy\ncontext\npending';
+  const manual = { key: 'manual', label: 'Manual', choice: 'Yes', done: 'auto', manual: true };
+  const pending = { key: 'pending', label: 'Pending', choice: 'No', done: 'auto' };
+  const state = { intake: { record }, tabSessions: new Map(), aiCache: new Map([[manualSig, manual], [pendingSig, pending]]) };
+  let stored = [];
+  const context = { state, DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
+    aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
+    aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
+    usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
+    $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }),
+    normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
+    store: { set: async () => {} }, clearAgentKeys: async () => {}, uploadNow() {},
+    save: async () => {}, render() {}, refreshTab() {} };
+  vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
+    'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'loadFile'].map(extractFunction).join('\n'), context);
+  await context.persistAiPending();
+  assert.equal(stored.length, 2, 'the previous ledger contains the settled and unresolved decisions');
+  await context.loadFile({ name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) });
+  assert.equal(state.aiCache.has(manualSig), false, 'the old manual decision cannot suppress a fresh unresolved question');
+  assert.equal(state.aiCache.get(pendingSig), pending, 'the existing unresolved hold keeps its identity');
+  assert.equal(stored.length, 1);
+  assert.equal(stored[0].key, 'pending');
+});
