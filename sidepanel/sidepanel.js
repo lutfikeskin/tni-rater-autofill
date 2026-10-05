@@ -974,7 +974,6 @@ async function autoFill(page) {
   const { id: tabId, carrier } = state.tab;
   await pickListItem(carrier, page);
   state.filling = true;
-  state.layoutReadyTabs.add(tabId);
   state.autoPending = false;
   const started = Date.now();
   let assistFrames = null;
@@ -985,6 +984,9 @@ async function autoFill(page) {
     const plan = buildPlan(state.intake.record, carrier, state.active);
     const skip = [...(state.agentKeys.get(editScope(page)) ?? [])];
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite: false, skip, keepMarks: true })]);
+    // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
+    // Only once the fill went through; a fill that failed proves nothing about the page.
+    state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
     followUp = afterFill(frames, { carrier, page });
@@ -1116,7 +1118,9 @@ async function captureLayout(job, reason) {
     if (!jobCurrent(job) || superseded(job)) return;
     // Per quote tab too: each tab keeps its own quote state (refreshTab).
     const scope = `${job.session}|${tabId}|${carrier.id}|${editScope(page)}`;
-    if (!fields.length || state.lastLayouts.get(scope) === signature) return;
+    // An empty page counts too (an answer can hide the last question): otherwise the question's
+    // going away, and its coming back, would never be logged.
+    if (state.lastLayouts.get(scope) === signature) return;
     state.lastLayouts.set(scope, signature);
     const r = state.intake.record;
     const context = {
@@ -1130,7 +1134,9 @@ async function captureLayout(job, reason) {
     };
     usage.log({ type: 'page_layout', carrier: carrier.id, page, reason: why(), context, fields, buttons });
   } catch (e) {
-    if (jobCurrent(job)) layoutFailed(job, why(), layoutErrorKind(e));
+    // A capture overtaken by a later change (a redraw can make its read fail) hands its reasons
+    // on instead of reporting a failure for a page that is being captured anyway.
+    if (jobCurrent(job) && !superseded(job)) layoutFailed(job, why(), layoutErrorKind(e));
   }
 }
 
@@ -1359,8 +1365,6 @@ async function fillPage({ auto = false } = {}) {
   state.filling = true;
   clearTimeout(state.autoTimer);
   const { id: tabId, carrier } = state.tab;
-  // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
-  state.layoutReadyTabs.add(tabId);
   const page = pageOf(state.tab.url);
   await pickListItem(carrier, page);
   const plan = buildPlan(state.intake.record, carrier, state.active);
@@ -1377,6 +1381,8 @@ async function fillPage({ auto = false } = {}) {
   try {
     await retireAiOrigins({ tabId, tabUrl: state.tab.url, intake: state.intake, carrier });
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite })]);
+    // Filled with this intake (and the fill went through): this tab's layouts may be taken.
+    state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
     state.autoPages.add(page);
@@ -1963,8 +1969,9 @@ async function applyAi(list, ctx, decision) {
     await tellRecorder('resume', ctx.tabId);
     state.filling = false;
     // The recorder was paused while Luna's picks went in, so it won't report the questions they
-    // revealed or hid: ask for the page's layout (on that tab and page, if still in front).
-    if (dispatched) scheduleLayout(ctx.page, 'changed');
+    // revealed or hid: ask for the page's layout, if that tab is still the one followed (a job
+    // is built from the followed tab, and checks the page).
+    if (dispatched && state.tab?.id === ctx.tabId) scheduleLayout(ctx.page, 'changed');
     if (prepared) await persistAiPending();
     if (isCurrent() && state.autoPending) scheduleAutoFill(ctx.page);
   }
@@ -2365,6 +2372,9 @@ function wire() {
 
 async function init() {
   wire();
+  // An intake saved by an earlier panel: while the panel was closed the tabs may have moved to
+  // another client's quote, so their layouts wait as after loading one (holdLayouts).
+  holdLayouts();
   state.intake = (await store.get('intake')) ?? null;
   state.active = (await store.get('active')) ?? state.active;
   usage.restoreSession((await store.get('session')) ?? null);

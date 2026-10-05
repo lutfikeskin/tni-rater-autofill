@@ -1803,8 +1803,8 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   await context.pending();
   await context.state.layoutChain;
   assert.deepEqual(logged.filter((e) => e.type === 'page_layout').map((e) => [e.page, e.reason]), [['Drivers', 'arrived']]);
-  assert.match(SIDEPANEL, /state\.filling = true;\s+state\.layoutReadyTabs\.add\(tabId\);/, 'an automatic fill readies its tab');
-  assert.match(SIDEPANEL, /Filled with this intake[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/, 'a fill readies its tab');
+  // Fills ready their tab once they went through (tested with autoFill below; fillPage the same).
+  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, fillOptions\(carrier, \{ overwrite \}\)\]\);\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
 });
 
 test('a queued capture is dropped for a later change on its page, which gets its reasons', async () => {
@@ -1916,7 +1916,7 @@ test('after an intake is loaded, only a tab opened since may give its first page
 
 test('after Luna\'s picks go in (with the recorder paused), the page\'s layout is asked for', () => {
   const body = extractFunction('applyAi');
-  assert.match(body, /await tellRecorder\('resume', ctx\.tabId\);\s+state\.filling = false;[\s\S]{0,300}if \(dispatched\) scheduleLayout\(ctx\.page, 'changed'\);/);
+  assert.match(body, /await tellRecorder\('resume', ctx\.tabId\);\s+state\.filling = false;[\s\S]{0,400}if \(dispatched && state\.tab\?\.id === ctx\.tabId\) scheduleLayout\(ctx\.page, 'changed'\);/);
 });
 
 test('a queued page-change capture waits again when a fill starts before it reads the page', async () => {
@@ -1938,4 +1938,63 @@ test('a queued page-change capture waits again when a fill starts before it read
   await context.pending();
   await context.state.layoutChain;
   assert.deepEqual(logged.map((e) => e.reason), ['changed']);
+});
+
+test('an automatic fill readies its tab for layouts only when it went through', async () => {
+  const run = async (runKit) => {
+    const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
+    const context = {
+      state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
+      runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
+      redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
+      runAssist: () => {}, pickListItem: async () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
+      $: () => ({ append() {} }), h: () => ({}),
+    };
+    vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
+    await context.autoFill('Rates');
+    return state.layoutReadyTabs.has(1);
+  };
+  assert.equal(await run(async () => { throw new Error('Frame with ID 0 was removed.'); }), false, 'a failed fill proves nothing about the page');
+  assert.equal(await run(async () => [{ result: { fields: 1, filled: [], actions: [], unknown: [] } }]), true);
+});
+
+test('Luna\'s picks ask for a layout only while their tab is still the one followed', () => {
+  assert.match(extractFunction('applyAi'), /if \(dispatched && state\.tab\?\.id === ctx\.tabId\) scheduleLayout\(ctx\.page, 'changed'\);/);
+});
+
+test('an intake restored when the panel opens holds layouts like a newly loaded one', () => {
+  assert.match(extractFunction('init'), /wire\(\);[\s\S]{0,300}holdLayouts\(\);[\s\S]{0,80}state\.intake = \(await store\.get\('intake'\)\)/);
+});
+
+test('a capture overtaken by a later change does not report its failure, and hands its reasons on', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  context.scheduleLayout('Vehicles', 'changed');
+  const first = context.pending;
+  const kit = context.runKit;
+  context.runKit = async (tabId, carrier, func) => {
+    if (String(func).includes('busy')) return kit(tabId, carrier, func);
+    // The page redraws for a second answer while the first capture reads it.
+    context.runKit = kit;
+    context.scheduleLayout('Vehicles', 'appeared');
+    throw new Error('Frame with ID 0 was removed.');
+  };
+  await first();
+  await context.state.layoutChain;
+  assert.equal(context.state.layoutErrors, 0);
+  await context.pending();
+  await context.state.layoutChain;
+  assert.deepEqual(logged.map((e) => [e.type, e.reason]), [['page_layout', 'appeared+changed']]);
+});
+
+test('a page whose last question goes away logs its empty layout, so the question coming back does too', async () => {
+  let controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  await context.recordLayout('Vehicles', 'arrived');
+  const shown = controls;
+  controls = [];
+  await context.recordLayout('Vehicles', 'removed');
+  controls = shown;
+  await context.recordLayout('Vehicles', 'appeared');
+  assert.deepEqual(logged.map((e) => [e.reason, e.fields.length]), [['arrived', 1], ['removed', 0], ['appeared', 1]]);
 });
