@@ -96,6 +96,7 @@ Every script reads the server folder, exported logs, or both. `npm run review` r
 npm run review    # everything below, plus AI accept/reject per question and problem reports
 npm run learn     # rule suggestions: standard answers, per-state answers, new intake mappings, rules agents keep correcting
 npm run layouts   # carrier page layouts per state/product -> captures/<carrier>/generated/
+npm run transitions  # when follow-up questions show, answers not seen yet, what changed after an answer -> reviews/
 npm run summary   # intake problems, corrections, failures, time per page
 node scripts/find-intake.mjs <folder of intake PDFs> server-data   # which intake a session used
 ```
@@ -108,7 +109,7 @@ node scripts/find-intake.mjs <folder of intake PDFs> server-data   # which intak
 npm run replay
 ```
 
-Open `http://localhost:8792/test/replay/`. It rebuilds a carrier's pages from any layout file (a fixture in `test/fixtures/progressive/`, a bake-off course, or one from `npm run layouts`) as working ExtJS pages with Progressive-style ids and server round-trips, then runs the real fill engine. **Fill every page** gives a coverage table: questions per page, how many were filled, what failed, and which have no rule yet. It's built from recorded structure only; no carrier HTML or code is copied.
+Open `http://localhost:8792/test/replay/`. It rebuilds a carrier's pages from any layout file (a fixture in `test/fixtures/progressive/`, a bake-off course, or one from `npm run layouts`) as working ExtJS pages with Progressive-style ids and server round-trips, then runs the real fill engine. **Fill every page** gives a coverage table: questions per page, how many were filled, what failed, and which have no rule yet. A follow-up question with a condition seen in the recordings (`showWhen`, from `npm run layouts`) shows only while its trigger has an answer it was seen showing with. It's built from recorded structure only; no carrier HTML or code is copied.
 
 ### Replay regression run (before every release)
 

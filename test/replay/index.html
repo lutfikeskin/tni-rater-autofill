@@ -18,6 +18,7 @@
        Built from recorded structure only; no carrier HTML or code is copied. -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/classic/theme-classic/resources/theme-classic-all.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/ext-all.js"></script>
+  <script src="show-when.js"></script>
   <style>
     body { font: 13px system-ui, sans-serif; margin: 0; background: #fff; color: #111; }
     header { position: sticky; top: 0; z-index: 10; background: #f3f4f6; border-bottom: 1px solid #ddd; padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -135,8 +136,10 @@
       r.form = Ext.create('Ext.form.Panel', {
         renderTo: 'form', border: false, width: 600, defaults: { width: 580 },
         // `showAfter`: the question only appears once that row's button was clicked (cargo after "+").
-        items: r.fields.flatMap((f, i) => (f.showAfter && !r.clicks.some((c) => c.page === r.page && c.row === f.showAfter) ? [] : [
-          { xtype: 'component', cls: 'caption', html: `${Ext.htmlEncode(f.caption || '(no caption)')}${f.cond ? '<span class="tag">follow-up</span>' : ''}` },
+        // `showWhen`: only while its trigger has an answer it was seen showing with (show-when.js).
+        items: r.fields.flatMap((f, i) => (f.showAfter && !r.clicks.some((c) => c.page === r.page && c.row === f.showAfter)
+          || !replayShows(f, r.fields, (t, j) => store(r.page).texts[idFor(t, j).q] ?? (t.kind === 'checkbox' ? 'unchecked' : undefined)) ? [] : [
+          { xtype: 'component', cls: 'caption', html: `${Ext.htmlEncode(f.caption || '(no caption)')}${f.showWhen ? `<span class="tag">follow-up: ${Ext.htmlEncode(f.showWhen.caption)} = ${Ext.htmlEncode(f.showWhen.is.join(' / '))}</span>` : f.cond ? '<span class="tag">follow-up</span>' : ''}` },
           fieldConfig(f, i),
         ])),
       });

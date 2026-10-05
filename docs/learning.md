@@ -35,11 +35,11 @@ These are review thresholds, not correctness probabilities. Page-provided values
 
 Question grouping uses carrier plus question ID, or page/label when there is no ID. It can collapse repeated driver/vehicle answers within a session; events now carry the per-row `key`, but the learner does not use it yet. The learner splits by state but does not discover arbitrary coverage/vehicle/driver interactions.
 
-Layout grouping uses carrier, state, business class, vehicle-type set, and trailer presence. Coverage context is recorded but is not part of that grouping key. A field seen in only some snapshots is marked conditional; this does not establish its trigger. Aggregated options are not proof that every option is available in every scenario.
+Layout grouping uses carrier, state, business class, vehicle-type set, and trailer presence; a one-address application's steps (AmWINS, with `step` since 0.9.6) are pages of their own. Coverage context is recorded but is not part of that grouping key. A field seen in only some snapshots is marked conditional. `showWhen` names its trigger only when every layout of the page with a pick for that trigger agrees, with at least two layouts on each side ([conditions.mjs](../scripts/lib/conditions.mjs)); otherwise its condition is `unknown`. AmWINS layouts without a step are left out of that inference. Layouts are read one at a time, so tabs and event order don't affect it, but it is still an observation from the recordings, not the carrier's rule: answers never seen are listed by `npm run transitions` as a checklist for the next recordings. That report also lists what changed on a page right after an answer, pairing only consecutive layouts of the page with answers on it between them ([transitions.mjs](../scripts/lib/transitions.mjs)). Aggregated options are not proof that every option is available in every scenario. Buttons seen on a page are kept as `seenButtons`, evidence for writing actions; the replay page doesn't draw them.
 
 ## Reviewing and improving the mechanism
 
-Use `npm run pull` when current central logs are needed, then `npm run review` for the combined report. `npm run learn`, `npm run layouts`, and `npm run coverage` inspect individual parts. The configured daily workflow pulls logs, produces reports, and can open issues; it does not implement or deploy fixes.
+Use `npm run pull` when current central logs are needed, then `npm run review` for the combined report. `npm run learn`, `npm run layouts`, `npm run transitions` and `npm run coverage` inspect individual parts. The configured daily workflow pulls logs, produces reports, and can open issues; it does not implement or deploy fixes.
 
 For each candidate, determine whether it needs an intake correction, mapping, scoped exception, browser fix, or confirmed agency decision. Follow [corrections](corrections.md) for that change. Do not promote a majority answer over a legitimate minority exception.
 
@@ -48,7 +48,7 @@ Future learning work should preserve per-entity identity and context, record why
 ## Related code and tests
 
 - [recorder.js](../src/content/recorder.js), [usage.js](../src/usage.js), [usage-log.js](../sidepanel/usage-log.js), [server/index.mjs](../server/index.mjs): collection and transport.
-- [learn.mjs](../scripts/lib/learn.mjs), [layouts.mjs](../scripts/lib/layouts.mjs), [coverage.mjs](../scripts/lib/coverage.mjs), [review.mjs](../scripts/review.mjs): analysis.
+- [learn.mjs](../scripts/lib/learn.mjs), [layouts.mjs](../scripts/lib/layouts.mjs), [conditions.mjs](../scripts/lib/conditions.mjs), [transitions.mjs](../scripts/lib/transitions.mjs), [coverage.mjs](../scripts/lib/coverage.mjs), [review.mjs](../scripts/review.mjs): analysis.
 - [learn tests](../test/learn.test.mjs), [coverage tests](../test/coverage.test.mjs), [usage tests](../test/usage.test.mjs), [queue tests](../test/usage-log.test.mjs), [consistency tests](../test/consistency.test.mjs), [server tests](../test/server.test.mjs).
 
 Read [hosting](hosting.md) only for transport configuration or server operations, and [testing](testing.md) when changing evaluation or replay coverage.
