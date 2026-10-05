@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { buildPlan } from '../src/plan.js';
 import { progressive } from '../src/carriers/progressive.js';
+import { fieldChangeEvent, redactor } from '../src/usage.js';
 
 // This is a deliberately small DOM/ExtJS replay.  It exercises the injected MAIN-world
 // script itself, without a browser session, real quote data, or customer identifiers.
@@ -127,6 +128,8 @@ class FakeNode {
     visit(this);
     return out;
   }
+
+  querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
 
   matches(selector) { return matchesSelector(this, selector); }
 
@@ -1757,4 +1760,53 @@ test('a capture keeps up to 250 choices per question and says when a list was cu
   assert.equal(byId.bizType.optionsTruncated, true);
   assert.deepEqual([...byId.hazmat.options], ['Yes', 'No']);
   assert.equal(byId.hazmat.optionsTruncated, undefined);
+});
+
+test('a fill reports each combo\'s choices under the key the recorder gives its changes', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  // ExtJS combos as Duck Creek draws them: the input in a trigger wrap with an arrow trigger.
+  const combo = (question, caption, labels) => {
+    const id = `f_c${'A'.repeat(32)}${question}_1_1`;
+    const input = makeInput({ id, ariaLabel: caption });
+    const cmp = extCmp(id, input, { caption });
+    const records = labels.map((label) => ({ get: () => label }));
+    Object.assign(cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+    h.context.Ext._components.set(id, cmp);
+    const wrap = new FakeNode('div', { className: 'x-form-trigger-wrap' });
+    wrap.append(input, new FakeNode('div', { className: 'x-form-trigger x-form-arrow-trigger' }));
+    h.document.body.append(wrap);
+    return input;
+  };
+  const model = combo('2C1A', 'Model', ['', 'Transit 150', 'Transit 350', 'Transit 350']);
+  combo('2C1B', 'Agent of record', ['Pat Agent']);
+  addExtText(h, 'c', '2C1C', { caption: 'Stated amount' });
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const key = h.context.__raterFieldKey(model, { q: '2C1A' });
+  assert.deepEqual(JSON.parse(JSON.stringify(report.choices)), [[key, ['Transit 150', 'Transit 350']]],
+    'combos only, without agency staff lists');
+
+  const recorder = recorderHarness(h.document);
+  const choices = new Map(report.choices.map(([k, options]) => [k, new Set(options)]));
+  const logged = () => {
+    const change = recorder.sent.filter((m) => m.event === 'field_changes').flatMap((m) => m.changes).at(-1);
+    assert.equal(change.key, key);
+    assert.equal(change.combo, true);
+    return fieldChangeEvent(change, { record: { vehicles: [{ model: 'Transit 350' }] }, filled: new Map(), redact: redactor([]), choices });
+  };
+  recorder.trusted(model);
+  model.value = 'Trans';
+  recorder.tick();
+  const typed = logged();
+  assert.deepEqual([typed.kind, typed.change, 'to' in typed], ['text', 'entered', false], 'a search is not logged');
+  recorder.trusted(model);
+  model.value = 'Transit 350';
+  recorder.tick();
+  const picked = logged();
+  assert.deepEqual([picked.kind, picked.from, picked.to], ['text', undefined, undefined], 'the typed search on the other side still is not');
+  assert.deepEqual(picked.matchesIntake, ['vehicles[0].model']);
+  recorder.trusted(model);
+  model.value = 'Transit 150';
+  recorder.tick();
+  const repicked = logged();
+  assert.deepEqual([repicked.kind, repicked.from, repicked.to], ['select', 'Transit 350', 'Transit 150']);
 });

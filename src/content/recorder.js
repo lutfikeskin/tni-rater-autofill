@@ -10,7 +10,7 @@
 // control remains a compatibility fallback for widgets which do not emit those events.
 
 (() => {
-  const VERSION = 3;
+  const VERSION = 4;
   const previous = globalThis.__raterRecorder;
   if (previous) {
     // Flush any trusted edit before rebaseline or replacing an older recorder. This keeps a
@@ -187,6 +187,7 @@
       }
       const key = fieldKey(el, q, false);
       let kind = 'text';
+      let combo;
       let v = el.value;
       if (el.tagName === 'SELECT') {
         kind = 'select';
@@ -196,9 +197,12 @@
         kind = 'checkbox';
         v = el.checked ? 'checked' : 'unchecked';
       } else if (isCombo(el)) {
+        // The box text, which can be a search typed into it, not a pick. Flagged so the side panel
+        // logs it as a choice only when it's one of the combo's options.
         kind = 'select';
+        combo = true;
       }
-      out.set(key, { key, q, kind, label: labelFor(key, el), v: String(v ?? ''), controls: [el] });
+      out.set(key, { key, q, kind, combo, label: labelFor(key, el), v: String(v ?? ''), controls: [el] });
     }
     return out;
   }
@@ -230,7 +234,7 @@
       // by the page, never by the agent, even right after the agent clicked.
       if ((before?.v ?? '') !== c.v) {
         const manual = before && c.controls.some((el) => trustedPending.get(el) === oneControlState(el));
-        changes.push({ key, q: c.q, label: c.label, kind: c.kind, before: before?.v ?? '', after: c.v,
+        changes.push({ key, q: c.q, label: c.label, kind: c.kind, combo: c.combo, before: before?.v ?? '', after: c.v,
           agent: before ? (explicitControls ? manual : agent && c.controls.includes(lastTrustedControl)) : false });
       }
     }

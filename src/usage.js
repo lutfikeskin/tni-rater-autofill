@@ -2,7 +2,8 @@
 // improved from real quotes. Recorded without client data:
 //  - the intake is identified by a SHA-256 fingerprint of the PDF, never by name or file name;
 //  - warnings are logged by code, not by their text (which quotes client details);
-//  - dropdown/radio choices are logged as option text (client names redacted);
+//  - dropdown/radio choices are logged as option text (client names redacted); a combo box's
+//    value only when it's one of the combo's known options, since the box also takes typed text;
 //  - text typed into boxes is never logged. It is compared with the intake on this computer and
 //    only the result is kept ("matches drivers[0].dob", "same as autofill except formatting").
 
@@ -112,16 +113,28 @@ function digest(s) {
 // box for a dropdown (date pickers look like dropdowns), these still never reach the log.
 const LOOKS_TYPED = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|@|\d{5,}/;
 
+// A combo box (ExtJS) holds whatever is in its box: a pick, or a search the agent typed. Its values
+// are choices only when each one is empty or one of the options the fill engine saw for it.
+const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+function isComboPick(change, choices) {
+  const options = choices?.get(change.key);
+  return [change.before, change.after].every((v) => !oneLine(v) || !!options?.has(oneLine(v)));
+}
+
 /**
  * Turns one field change seen on the rater page into a log event.
- * @param {{key, q, label, kind, before, after, agent}} change  from the page recorder (raw values)
- * @param {{record, filled: Map, redact: Function, labels?: Map, keySalt?: string}} ctx  filled: field
- *   key -> what autofill put there; labels: field key -> question text as the fill engine read it
- *   (more reliable than the recorder's guess); keySalt: the session's (see fieldKeyOf)
+ * @param {{key, q, label, kind, combo?, before, after, agent}} change  from the page recorder (raw
+ *   values); combo: a combo box, whose value may be typed text
+ * @param {{record, filled: Map, redact: Function, labels?: Map, choices?: Map, keySalt?: string}} ctx
+ *   filled: field key -> what autofill put there; labels: field key -> question text as the fill
+ *   engine read it (more reliable than the recorder's guess); choices: field key -> Set of a combo's
+ *   options as the fill engine saw them; keySalt: the session's (see fieldKeyOf)
  */
-export function fieldChangeEvent(change, { record, filled, redact, labels, keySalt }) {
+export function fieldChangeEvent(change, { record, filled, redact, labels, choices, keySalt }) {
   const ours = filled.get(change.key) ?? null;
-  const kind = change.kind !== 'text' && (LOOKS_TYPED.test(redact(change.before ?? '')) || LOOKS_TYPED.test(redact(change.after ?? ''))) ? 'text' : change.kind;
+  const typed = (change.combo && !isComboPick(change, choices))
+    || LOOKS_TYPED.test(redact(change.before ?? '')) || LOOKS_TYPED.test(redact(change.after ?? ''));
+  const kind = change.kind !== 'text' && typed ? 'text' : change.kind;
   const base = {
     type: 'field_change',
     q: change.q ?? null,
@@ -141,11 +154,13 @@ export function fieldChangeEvent(change, { record, filled, redact, labels, keySa
       matchesIntake: after ? matchIntake(record, after) : [],
     };
   }
+  // A confirmed combo value is logged as the option's text.
+  const [before, after] = change.combo ? [oneLine(change.before), oneLine(change.after)] : [change.before, change.after];
   return {
     ...base,
-    from: redact(change.before) || null,
-    to: redact(change.after) || null,
-    vsAutofill: ours ? (ours.shown === change.after ? 'same' : 'different') : undefined,
+    from: redact(before) || null,
+    to: redact(after) || null,
+    vsAutofill: ours ? (ours.shown === after ? 'same' : 'different') : undefined,
   };
 }
 

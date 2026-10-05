@@ -304,7 +304,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 3);
+  assert.equal(h.context.__raterRecorder.version, 4);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -321,4 +321,42 @@ test('pause and resume rebaseline the page before recording a later change', () 
 
   assert.equal(changes(h)[0]?.before, 'while paused');
   assert.equal(changes(h)[0]?.after, 'after resume');
+});
+
+// An ExtJS field: an input in a trigger wrap with an arrow (combo) or calendar (date) trigger.
+function extField(id, trigger, value = '') {
+  const input = new Control('input', { id, value });
+  const wrap = { querySelector: (selector) => (selector === '.x-form-trigger' ? { className: `x-form-trigger ${trigger}` } : null) };
+  input.closest = (selector) => (selector === '.x-form-trigger-wrap' ? wrap : null);
+  return input;
+}
+
+test('an ExtJS combo is reported as a combo, so its typed text is not logged as a choice', () => {
+  const h = harness();
+  const model = extField('model', 'x-form-arrow-trigger');
+  const effective = extField('effective', 'x-form-date-trigger');
+  const native = select({ id: 'native' });
+  h.append(model, effective, native);
+  h.context.__raterRecorder.rebaseline();
+
+  model.value = 'Trans';
+  effective.value = '10/05/2026';
+  native.value = '3';
+  h.tick();
+
+  const byKey = Object.fromEntries(changes(h).map((change) => [change.key, change]));
+  assert.deepEqual([byKey['field:model'].kind, byKey['field:model'].combo, byKey['field:model'].after], ['select', true, 'Trans']);
+  assert.deepEqual([byKey['field:effective'].kind, byKey['field:effective'].combo], ['text', undefined], 'a date picker stays text');
+  assert.deepEqual([byKey['field:native'].kind, byKey['field:native'].combo], ['select', undefined], 'a native select is a choice as before');
+});
+
+test('an older recorder is replaced, so combo changes always carry the combo flag', () => {
+  const h = harness();
+  const disposed = [];
+  // A version-3 recorder from before this change, still installed in the page.
+  h.context.__raterRecorder.dispose();
+  h.context.__raterRecorder = { version: 3, rebaseline() {}, dispose() { disposed.push(3); } };
+  vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+  assert.deepEqual(disposed, [3]);
+  assert.equal(h.context.__raterRecorder.version, 4);
 });
