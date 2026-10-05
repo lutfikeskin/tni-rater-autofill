@@ -696,6 +696,12 @@ test('two vehicles that read the same leave their rows to the agent', async () =
   const ford = addExtText(h2, 'c', '1FF2', { caption: '2025 FORD TRANSIT', row: '8_1' });
   await h2.kit.fill([{ id: 'c', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'C', vehicleHint: hint, activeVehicle: true }], { maxRounds: 2 });
   assert.equal(ford.input.value, '');
+  // Codex on PR #21: an intake vehicle with one identifier can't name a row, even a unique match.
+  const h3 = harness({ ext: true });
+  const sprinter = addExtText(h3, 'c', '1FF2', { caption: '2019 MERCEDES-BENZ SPRINTER', row: '8_1' });
+  addExtText(h3, 'c', '1FF2', { caption: '2016 FREIGHTLINER CASCADIA 125', row: '8_2' });
+  await h3.kit.fill([{ id: 'd', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'D', vehicleHint: ['sprinter'], activeVehicle: true }], { maxRounds: 2 });
+  assert.equal(sprinter.input.value, '');
 });
 
 test('a page showing one vehicle at a time is answered by the active vehicle only', async () => {
