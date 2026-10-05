@@ -134,11 +134,12 @@ const truckerType = (r) => (isExpediter(r) ? 'Other For-Hire Trucking' : null);
 const businessStructure = (r) => (/\b(llc|l\.l\.c|inc|corp|corporation|company|co)\.?$/i.test(r.applicant.name ?? '')
   ? 'Corporation or LLC / Non-Profit' : 'Individual / Sole Proprietor');
 
-// Rates as TNI agents work it (bill plan, back, Recalculate, Print) unless GL or NTL is requested:
-// then the agent does the page by hand. The liability limit check stays for GL only (NTL may
-// replace that liability).
+// Rates as TNI agents work it (bill plan, back, Recalculate, Print) unless GL is requested: then
+// the bill plan is the agent's. With NTL the whole page is, Recalculate and Print too, until the
+// NTL section has been seen on a live quote (an earlier bill plan visit must not let them run
+// while its new questions are open).
 const ourBillPlan = (r) => r.coverage.gl !== true && r.coverage.ntl !== true;
-const liabilityCheck = (r) => r.coverage.gl === true && r.coverage.ntl !== true;
+const notNtl = (r) => r.coverage.ntl !== true;
 
 // The whole address on one line, for address boxes that offer the carrier's own suggestions.
 const oneLineAddress = (r) => {
@@ -262,12 +263,11 @@ export const progressive = {
     // Recalculate and Print follow the bill plan, which waited for a resolved liability limit.
     // They don't re-check that field: back from the bill plan, the reloaded Rates page failed the
     // same check on a limit that was fine (FL and NJ runs: Print, Email, Fax never ran).
-    // With GL there is no bill plan step of ours: they keep the liability check instead. With NTL,
-    // which may replace that liability, the agent opening the bill plan is the signal.
-    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: (r) => liabilityCheck(r) ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => ourBillPlan(r) ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium' },
+    // With GL there is no bill plan step of ours: they keep the liability check instead.
+    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal.
-    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, after: (r) => liabilityCheck(r) ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => ourBillPlan(r) ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'] },
+    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], when: notNtl },
     // This page may have been opened by the agent or restored after a panel reload. Its own
     // document and delivery controls establish readiness; no in-memory navigation history is needed.
     // Again on every return to the page (the agent went back, changed something, and reprints).
@@ -285,7 +285,7 @@ export const progressive = {
   agentPages: {
     NoHit: "Progressive couldn't verify the business owner. Check the owner's name, date of birth and home address with the client (and enter the SSN if they gave it), then Continue.",
     CoveragesRates: (r) => (r.coverage?.ntl === true
-      ? 'Non-trucking liability (NTL) quote: the filler opens it with "Add Non-Trucking Liability instead?". Answer that section yourself, then open the bill plan; Recalculate and Print follow when you come back.'
+      ? 'Non-trucking liability (NTL) quote: the filler opens it with "Add Non-Trucking Liability instead?". The rest of this page is yours: answer that section, then the bill plan, Recalculate and Print.'
       : null),
   },
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is

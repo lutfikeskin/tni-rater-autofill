@@ -373,11 +373,17 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
   const json = flags([[false, true], [true, true], [false, false], [false, false]]);
   const results = parseNotesReview(json, review);
-  assert.deepEqual(notesWarnings(results).map((w) => [w.code, w.path, w.level]), [['ai.coverage-change', 'claims.text', 'check'], ['ai.ntl', 'coverage.ntl', 'check']],
-    'the NTL line is not also a coverage change; "no bobtail" is left to the intake\'s own NTL item');
-  assert.ok(notesWarnings(results)[1].msg.includes('needs coverage off dispatch'), 'the line is quoted');
-  assert.ok(notesWarnings(parseNotesReview(flags([[false, false], [false, false], [false, false], [true, true]]), review)).length === 0,
-    'a line the intake already quotes for NTL is not repeated');
+  assert.equal(review.quoted, 'no bobtail', 'the line the intake\'s own NTL item quotes');
+  assert.deepEqual(notesWarnings(results, review).map((w) => [w.code, w.path, w.level]), [['ai.coverage-change', 'claims.text', 'check'], ['ai.ntl', 'coverage.ntl', 'check']],
+    'the NTL line is not also a coverage change');
+  assert.ok(notesWarnings(results, review)[1].msg.includes('needs coverage off dispatch'), 'the line is quoted');
+  assert.ok(notesWarnings(parseNotesReview(flags([[false, false], [false, false], [false, false], [true, true]]), review), review).length === 0,
+    'the line the intake already quotes for NTL is not repeated');
+  // Codex on PR #22: only that line, not every NTL line ("does not want bobtail" quoted first).
+  const two = buildNotesReview({ coverage: {}, claims: { text: 'No\nDoes not want bobtail\nNeeds NTL off dispatch' } });
+  assert.equal(two.quoted, 'Does not want bobtail');
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[false, false], [true, true]]), two), two).map((w) => [w.code, w.msg.includes('Needs NTL off dispatch')]),
+    [['ai.ntl', true]], 'a second, positive NTL line is still flagged');
 
   assert.throws(() => parseNotesReview(flags([[false, true]]), review), AssistError, 'a missing line fails the whole review');
   assert.throws(() => parseNotesReview(envelope({ lines: { l0: { ntl: 'yes', coverageChange: false }, l1: { ntl: false, coverageChange: false }, l2: { ntl: false, coverageChange: false }, l3: { ntl: false, coverageChange: false } } }), review), AssistError);
@@ -390,6 +396,9 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.equal(done.lines, 4);
   assert.equal(done.modelCalls, 1);
   assert.equal(done.tokensIn, 100);
+  const cached = await reviewNotes(record, { apiKey: 'k' }, { call: async () => ({ ...json, usage: { input_tokens: 100, output_tokens: 5,
+    input_tokens_details: { cached_tokens: 60, cache_write_tokens: 40 }, output_tokens_details: { reasoning_tokens: 3 } } }) });
+  assert.deepEqual([cached.cachedTokens, cached.cacheWriteTokens, cached.reasoningTokens], [60, 40, 3], 'the same usage counters as page reviews');
   const none = await reviewNotes({ coverage: {}, claims: { text: '' } }, { apiKey: 'k' }, { call: async () => { throw new Error('no call expected'); } });
   assert.equal(none.modelCalls, 0);
 });

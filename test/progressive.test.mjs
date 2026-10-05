@@ -483,14 +483,11 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   assert.ok(new RegExp(ntl.text, 'i').test('Add Non-Trucking Liability instead?'));
   assert.ok(!new RegExp(ntl.text, 'i').test('Help Text For Non-Trucking Liability'));
   assert.ok(ids(record).indexOf('addNtl') < ids(record).indexOf('openCargo'), 'before cargo');
-  assert.ok(!ids(record).includes('billPlan'), 'the bill plan is the agent\'s');
-  for (const id of ['recalculate', 'print']) {
-    const step = plan.find((s) => s.action === id);
-    assert.deepEqual(step.afterActions, [], `${id}: no bill plan of ours to wait for`);
-    assert.deepEqual(step.after, [], `${id}: NTL may replace the liability limit`);
-    assert.deepEqual(step.afterPages, ['ChangePaymentPlan'], `${id}: only after the agent opened the bill plan`);
-  }
-  assert.match(progressive.agentPages.CoveragesRates(record), /Answer that section yourself, then open the bill plan/);
+  // Codex on PR #22: an earlier bill plan visit must not let Recalculate or Print run while the
+  // new NTL questions are open. Until the section has been seen live, the whole page is the agent's.
+  for (const id of ['billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} is the agent's`);
+  assert.ok(ids(record).includes('printSend'), 'the Print page the agent opens still works as before');
+  assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: answer that section, then the bill plan, Recalculate and Print/);
   // GL without NTL is unchanged: no bill plan of ours, the liability check stays.
   const gl = baseRecord();
   gl.coverage.gl = true;

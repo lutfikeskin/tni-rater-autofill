@@ -180,6 +180,7 @@ const state = {
   advanceRetried: new Set(), // steps whose lost Continue was clicked a second time (once each)
   assistPage: null, // a page whose Luna request waits for a helper's follow-up fill (per tab, like the above)
   notesAsking: null, // the intake whose claims box Luna is reading now
+  notesRetry: null, // that intake again, when the settings changed meanwhile
   tabSessions: new Map(),
   agentKeys: new Map(),
   filling: false,
@@ -1344,31 +1345,46 @@ async function aiSettings() {
 // non-trucking liability or ask for a coverage change become Check intake items, and the tab
 // count goes up (the panel doesn't switch steps under the agent). Flags only; the agent decides.
 // Logged as counts, never the text. A review that failed says so on Check intake and is tried
-// again when the assistant settings change (`retry`), not on every panel reload.
+// again when the assistant settings change (`retry`), not on every panel reload. What it read
+// (the claims box and the form's coverages) must still be the intake's when Luna answers;
+// otherwise the answer is dropped and the box read again.
+function claimsContext(record) {
+  const { ntl, ...coverage } = record.coverage ?? {};
+  return JSON.stringify([record.claims?.text ?? null, coverage]);
+}
+
 async function reviewClaimsBox({ retry = false } = {}) {
   const intake = state.intake;
-  if (!intake?.record.claims?.text || intake.notesReview?.done || (intake.notesReview?.failed && !retry) || state.notesAsking === intake) return;
+  if (!intake?.record.claims?.text || intake.notesReview?.done || (intake.notesReview?.failed && !retry)) return;
+  // One at a time: a settings change during a review runs once it ends (a corrected key).
+  if (state.notesAsking === intake) { if (retry) state.notesRetry = intake; return; }
   // Taken before the first await: two triggers close together ask once.
   state.notesAsking = intake;
+  let again = false;
   try {
     const cfg = await aiSettings();
     if (!cfg.on || !cfg.apiKey || state.intake !== intake) return;
     const started = Date.now();
+    const read = claimsContext(intake.record);
     const logged = { type: 'ai_suggest', page: 'ClaimsBox', model: cfg.model };
     const failed = intake.warnings.findIndex((w) => w.code === 'ai.claims-review-failed');
     try {
       const result = await reviewNotes(intake.record, cfg, { redact: redactor(redactionTerms(intake.record)) });
+      // Nothing about a replaced intake is logged under the new one.
       if (state.intake !== intake) return;
+      const changed = claimsContext(intake.record) !== read;
       usage.log({ ...logged, ms: Date.now() - started, items: result.lines, suggested: result.warnings.length, leave: result.lines - result.warnings.length,
-        tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens });
+        tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens,
+        cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens, ...(changed ? { error: 'Answer discarded: the claims box or coverages changed.' } : {}) });
+      if (changed) { again = true; return; }
       // Warnings are marked checked by position: an earlier failure is replaced in place, never removed.
       if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Luna reviewed the claims box after an earlier failure.' };
       intake.warnings.push(...result.warnings);
       intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length };
     } catch (e) {
+      if (state.intake !== intake) return;
       const msg = e instanceof AssistError ? e.message : 'The claims-box review failed.';
       usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
-      if (state.intake !== intake) return;
       if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Luna couldn't review the claims box. Read it yourself for coverage requests, such as non-trucking liability (NTL) or a different limit." });
       intake.notesReview = { failed: true, model: cfg.model };
     }
@@ -1376,6 +1392,9 @@ async function reviewClaimsBox({ retry = false } = {}) {
     render();
   } finally {
     if (state.notesAsking === intake) state.notesAsking = null;
+    const queued = state.notesRetry === intake;
+    if (queued) state.notesRetry = null;
+    if ((again || queued) && state.intake === intake) reviewClaimsBox({ retry: true });
   }
 }
 

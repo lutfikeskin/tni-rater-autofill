@@ -145,8 +145,10 @@ export function parseLimitDeductible(v) {
 // License numbers are entered plain: letters (rare) and digits only, never dashes or spaces.
 const plain = (s) => String(s).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 
-// Words that name a non-trucking liability (NTL) customer in the claims box.
+// Words that name a non-trucking liability (NTL) customer in the claims box, and the line the
+// intake's review item quotes (the first that has them).
 export const NTL_WORDS = /\b(ntl|non[\s-]*tr[ua]ck(ing)?|bob[\s-]*tail(ing)?)\b/i;
+export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
 
 // "MD - 10123456789" -> { state: 'MD', number: 'MD10123456789' }: a leading state code tells us
 // the license state, but it stays in the number (agents enter it that way).
@@ -451,8 +453,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     // Non-trucking liability (NTL) is named only here: "NTL", "non-trucking" (also written "non
     // tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the agent
     // decides, and nothing is added until they set it to Yes.
-    const ntlLine = lines.find((line) => NTL_WORDS.test(line));
-    if (ntlLine) check('coverage.ntl', 'coverage.ntl', `The claims box mentions non-trucking liability (NTL): "${ntlLine.trim()}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. AmWINS has no NTL option the filler knows: quote it by hand.`);
+    const ntlLine = ntlMention(claims);
+    if (ntlLine) check('coverage.ntl', 'coverage.ntl', `The claims box mentions non-trucking liability (NTL): "${ntlLine}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. AmWINS has no NTL option the filler knows: quote it by hand.`);
   } else check('claims.blank', 'claims.text', 'Claims question left blank.');
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
     check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.');

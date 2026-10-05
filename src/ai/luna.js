@@ -1,6 +1,6 @@
 // Luna resolves bounded choices; code gates automatic picks and the agent approves them.
 import { AssistError, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake } from './common.js';
-import { NTL_WORDS } from '../normalize.js';
+import { ntlMention } from '../normalize.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
 export const API_URL = 'https://api.openai.com/v1/responses';
@@ -270,7 +270,9 @@ export function buildNotesReview(record, { redact = (s) => s } = {}) {
   const flags = object({ ntl: { type: 'boolean' }, coverageChange: { type: 'boolean' } });
   const body = request(object({ lines: object(Object.fromEntries(ids.map(id => [id, flags]))) }),
     { claimsBox: Object.fromEntries(ids.map((id, i) => [id, lines[i]])), formCoverage }, NOTES_INSTRUCTIONS, 2048, 'claims_review');
-  return { body, lines, ids };
+  // The line the intake's own NTL item already quotes, as the lines above read it.
+  const mention = ntlMention(record.claims.text);
+  return { body, lines, ids, quoted: mention ? redact(mention).replace(/\s+/g, ' ').trim() : null };
 }
 
 // A missing or malformed flag fails the whole review: no partial flags.
@@ -283,12 +285,13 @@ export function parseNotesReview(json, { lines, ids }) {
   return lines.map((line, i) => ({ line, ...data.lines[ids[i]] }));
 }
 
-// Check intake items for the flagged lines. A line the intake's own NTL check already quotes
-// isn't repeated, nor listed as a coverage change.
-export function notesWarnings(results) {
+// Check intake items for the flagged lines. The line the intake's own NTL item already quotes
+// (`quoted`) isn't repeated, nor listed as a coverage change; another NTL line still is ("does not
+// want bobtail" quoted, then "needs NTL off dispatch").
+export function notesWarnings(results, { quoted = null } = {}) {
   const out = [];
   for (const x of results) {
-    if (NTL_WORDS.test(x.line)) continue;
+    if (quoted && quoted.includes(x.line)) continue;
     if (x.ntl) {
       out.push({ code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: the claims box may be about non-trucking liability (NTL): "${x.line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you.` });
     } else if (x.coverageChange) {
@@ -300,10 +303,12 @@ export function notesWarnings(results) {
 
 export async function reviewNotes(record, config, { call = callModel, redact } = {}) {
   const review = buildNotesReview(record, { redact });
-  if (!review) return { warnings: [], lines: 0, tokensIn: 0, tokensOut: 0, reasoningTokens: 0, modelCalls: 0 };
+  if (!review) return { warnings: [], lines: 0, tokensIn: 0, tokensOut: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, modelCalls: 0 };
   const json = await call({ apiKey: config.apiKey, body: review.body });
-  const warnings = notesWarnings(parseNotesReview(json, review));
+  const warnings = notesWarnings(parseNotesReview(json, review), review);
   const count = value => Number.isFinite(value) && value >= 0 ? value : 0;
+  // The same usage counters as page reviews (suggest), cache included.
   return { warnings, lines: review.lines.length, modelCalls: 1, tokensIn: count(json.usage?.input_tokens), tokensOut: count(json.usage?.output_tokens),
-    reasoningTokens: count(json.usage?.output_tokens_details?.reasoning_tokens) };
+    reasoningTokens: count(json.usage?.output_tokens_details?.reasoning_tokens), cachedTokens: count(json.usage?.input_tokens_details?.cached_tokens),
+    cacheWriteTokens: count(json.usage?.input_tokens_details?.cache_write_tokens) };
 }

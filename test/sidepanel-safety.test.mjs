@@ -1125,63 +1125,125 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
 // PR #17 review, on Luna: the in-flight marker is taken before the first await (two triggers
 // close together ask once), a replaced intake never gets the result, and a failed review is
 // visible on Check intake and tried again only when the assistant settings change.
-test('Luna reads the claims box once per intake, visibly fails, and retries on a settings change', async () => {
+function claimsHarness() {
   const logs = [], requests = [];
-  let settingsGate, reply = 'ok';
-  const flagged = [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }];
-  const intake = { record: { claims: { text: 'Leased on, needs coverage off dispatch' }, coverage: {} }, warnings: [{ code: 'other', level: 'check' }], done: [] };
-  const state = { intake, notesAsking: null };
+  const gates = [];
+  const t = { logs, requests, reply: 'ok', onRequest: null };
+  const state = { intake: null, notesAsking: null, notesRetry: null };
   class AssistError extends Error {}
   const context = {
     state, AssistError, Date, redactor: () => (s) => s, redactionTerms: () => [],
-    aiSettings: () => new Promise((resolve) => { settingsGate = () => resolve({ on: true, apiKey: 'k', model: 'gpt-6-luna' }); }),
+    aiSettings: async () => ({ on: true, apiKey: 'k', model: 'gpt-6-luna' }),
     reviewNotes: async (record, cfg, opts) => {
-      requests.push({ record, opts });
+      requests.push({ record, opts, reply: t.reply });
+      const reply = t.reply;
+      await new Promise((resolve) => gates.push(resolve));
       if (reply === 'fail') throw new AssistError('Luna took too long. Nothing was applied.');
-      return { warnings: flagged, lines: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0 };
+      return { warnings: [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }], lines: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0, cachedTokens: 2, cacheWriteTokens: 1 };
     },
     usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
   };
-  vm.runInNewContext(extractFunction('reviewClaimsBox'), context);
-  const first = context.reviewClaimsBox();
-  await context.reviewClaimsBox();
-  assert.equal(state.notesAsking, intake, 'taken before the settings were read');
-  settingsGate();
+  vm.runInNewContext(extractFunction('claimsContext') + extractFunction('reviewClaimsBox'), context);
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  // Lets the oldest pending request answer, then lets the panel finish with it.
+  t.answer = async () => { await settle(); gates.shift()(); for (let i = 0; i < 5; i++) await settle(); };
+  return Object.assign(t, { state, review: context.reviewClaimsBox, settle });
+}
+const claimsIntake = (text) => ({ record: { claims: { text }, coverage: { cargo: true, ntl: null } }, warnings: [{ code: 'other', level: 'check' }], done: [] });
+
+test('Luna reads the claims box once per intake, visibly fails, and retries on a settings change', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('Leased on, needs coverage off dispatch');
+  t.state.intake = intake;
+  const first = t.review();
+  t.review();
+  assert.equal(t.state.notesAsking, intake, 'taken before the settings were read');
+  await t.answer();
   await first;
-  assert.equal(requests.length, 1, 'two triggers close together ask once');
-  assert.equal(typeof requests[0].opts.redact, 'function', 'names are redacted before the request');
+  assert.equal(t.requests.length, 1, 'two triggers close together ask once');
+  assert.equal(typeof t.requests[0].opts.redact, 'function', 'names are redacted before the request');
   assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
-  assert.deepEqual(Object.keys(logs[0]).sort(), ['items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
-  await context.reviewClaimsBox({ retry: true });
-  assert.equal(requests.length, 1, 'once per intake');
+  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
+  await t.review({ retry: true });
+  assert.equal(t.requests.length, 1, 'once per intake');
 
   // A failure is a Check intake item, not silence; a plain reload doesn't ask again.
-  const failing = { record: { claims: { text: 'Needs physical damage' }, coverage: {} }, warnings: [{ code: 'a', level: 'check' }], done: [0] };
-  state.intake = failing;
-  reply = 'fail';
-  const pending = context.reviewClaimsBox();
-  settingsGate();
-  await pending;
-  assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['a', 'check'], ['ai.claims-review-failed', 'check']]);
+  const failing = claimsIntake('Needs physical damage');
+  failing.done = [0];
+  t.state.intake = failing;
+  t.reply = 'fail';
+  t.review();
+  await t.answer();
+  assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-review-failed', 'check']]);
   assert.match(failing.warnings[1].msg, /Read it yourself/);
-  assert.equal(logs.at(-1).error, 'Luna took too long. Nothing was applied.');
-  await context.reviewClaimsBox();
-  assert.equal(requests.length, 2, 'not retried on every panel reload');
+  assert.equal(t.logs.at(-1).error, 'Luna took too long. Nothing was applied.');
+  await t.review();
+  assert.equal(t.requests.length, 2, 'not retried on every panel reload');
   // A settings change tries again; the failure item is replaced in place (checked marks are by position).
-  reply = 'ok';
-  const retried = context.reviewClaimsBox({ retry: true });
-  settingsGate();
-  await retried;
-  assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['a', 'check'], ['ai.claims-reviewed', 'info'], ['ai.ntl', 'check']]);
+  t.reply = 'ok';
+  t.review({ retry: true });
+  await t.answer();
+  assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-reviewed', 'info'], ['ai.ntl', 'check']]);
   assert.deepEqual(failing.done, [0]);
+});
 
-  // A result for a replaced intake is dropped.
-  const old = { record: { claims: { text: 'NTL please' }, coverage: {} }, warnings: [], done: [] };
-  state.intake = old;
-  const late = context.reviewClaimsBox();
-  state.intake = { record: { claims: { text: '' }, coverage: {} }, warnings: [], done: [] };
-  settingsGate();
-  await late;
-  assert.deepEqual(old.warnings, []);
-  assert.equal(old.notesReview, undefined);
+// Codex on PR #22.
+test('a settings change during a review runs it again, an edit during it discards the answer, a replaced intake logs nothing', async () => {
+  // The key is corrected while the old-key request is still out: tried again once it fails.
+  let t = claimsHarness();
+  const intake = claimsIntake('Needs physical damage');
+  t.state.intake = intake;
+  t.reply = 'fail';
+  t.review();
+  await t.settle();
+  t.reply = 'ok';
+  await t.review({ retry: true });
+  assert.equal(t.requests.length, 1, 'one request at a time');
+  await t.answer();
+  assert.equal(t.requests.length, 2, 'the queued retry runs once the first ends');
+  await t.answer();
+  assert.equal(intake.notesReview.done, true);
+  assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.claims-reviewed', 'ai.ntl']);
+
+  // The agent edits the claims box while Luna reads the old text: that answer is dropped, the
+  // new text is read. Setting NTL itself (not sent to Luna) doesn't count as a change.
+  t = claimsHarness();
+  const edited = claimsIntake('Needs physical damage');
+  t.state.intake = edited;
+  t.review();
+  await t.settle();
+  edited.record.coverage.ntl = true;
+  edited.record.claims.text = 'Needs hired auto';
+  await t.answer();
+  assert.equal(t.logs[0].error, 'Answer discarded: the claims box or coverages changed.');
+  assert.equal(edited.notesReview, undefined, 'not marked reviewed');
+  assert.deepEqual(edited.warnings.map((w) => w.code), ['other'], 'no warning from the old text');
+  assert.equal(t.requests.length, 2, 'the new text is read');
+  assert.equal(t.requests[1].record.claims.text, 'Needs hired auto');
+  await t.answer();
+  assert.equal(edited.notesReview.done, true);
+  const untouched = claimsHarness();
+  const ntlOnly = claimsIntake('NTL please');
+  untouched.state.intake = ntlOnly;
+  untouched.review();
+  await untouched.settle();
+  ntlOnly.record.coverage.ntl = true;
+  await untouched.answer();
+  assert.equal(untouched.requests.length, 1, 'setting NTL is not a change to what Luna read');
+  assert.equal(ntlOnly.notesReview.done, true);
+
+  // A request for an intake that was replaced meanwhile: no result and nothing logged.
+  for (const reply of ['ok', 'fail']) {
+    t = claimsHarness();
+    const old = claimsIntake('NTL please');
+    t.state.intake = old;
+    t.reply = reply;
+    t.review();
+    await t.settle();
+    t.state.intake = claimsIntake('');
+    await t.answer();
+    assert.deepEqual(old.warnings.map((w) => w.code), ['other'], reply);
+    assert.equal(old.notesReview, undefined, reply);
+    assert.equal(t.logs.length, 0, `${reply}: not attributed to the new intake`);
+  }
 });
