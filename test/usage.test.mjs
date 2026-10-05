@@ -92,6 +92,47 @@ test('dropdown changes keep the option text, minus client names', () => {
   assertNoClientData(addr);
 });
 
+test('a combo box keeps its value only when each side is one of its known options', () => {
+  const choices = new Map([['2C1A', new Set(['Transit 150', 'Transit 250', 'Transit 350'])]]);
+  const combo = (before, after, ctx = {}) => fieldChangeEvent({ key: '2C1A', q: '2C1A', label: 'Model', kind: 'select', combo: true, before, after, agent: true },
+    { record, filled: new Map(), redact, choices, ...ctx });
+
+  const pick = combo('Transit 250', 'Transit 350');
+  assert.deepEqual([pick.kind, pick.from, pick.to], ['select', 'Transit 250', 'Transit 350']);
+  assert.equal(combo('', 'Transit 350').from, null, 'an empty box is not text');
+  assert.equal(combo(' Transit  350 ', '').from, 'Transit 350', 'spacing does not matter');
+
+  // A search typed into the box, or a value no fill saw among the options, is logged like text:
+  // whether it was entered, cleared or edited and which intake field it matches, never the value.
+  for (const [before, after, change] of [['', 'Trans', 'entered'], ['Transit 350', 'Transit 3', 'edited'], ['Trans', '', 'cleared']]) {
+    const e = combo(before, after);
+    assert.equal(e.kind, 'text');
+    assert.equal(e.change, change);
+    assert.equal('from' in e || 'to' in e, false, `${before} -> ${after} leaves no value`);
+  }
+  const intake = combo('', 'transit 350');
+  assert.equal(intake.kind, 'text', 'case differs from the option, so it may be typed');
+  assert.deepEqual(intake.matchesIntake, ['vehicles[0].model']);
+  const unknown = combo('', 'Transit 350', { choices: new Map() });
+  assert.equal(unknown.kind, 'text', 'no options known for this combo yet');
+  assert.equal(combo('', 'Transit 350', { choices: undefined }).kind, 'text');
+  const other = fieldChangeEvent({ key: '2C1A@2', q: '2C1A', label: 'Model', kind: 'select', combo: true, before: '', after: 'Transit 350', agent: true },
+    { record, filled: new Map(), redact, choices });
+  assert.equal(other.kind, 'text', 'options are per control: another row\'s combo is not confirmed');
+
+  // Autofill comparisons follow the kind.
+  const filled = new Map([['2C1A', { path: 'vehicles[0].model', shown: 'Transit 350' }]]);
+  assert.equal(combo('Transit 350', 'Transit 35', { filled }).vsAutofill, 'different');
+  assert.equal(combo('Transit 350', 'Transit 250', { filled }).vsAutofill, 'different');
+  assert.equal(combo('', 'Transit 350', { filled }).vsAutofill, 'same');
+
+  // Native selects and radios are unchanged: their values are always options.
+  const native = fieldChangeEvent({ key: '2B9D', q: '2B9D', label: 'Farthest distance', kind: 'select', before: '', after: '500 miles', agent: true }, { record, filled: new Map(), redact, choices });
+  assert.deepEqual([native.kind, native.to], ['select', '500 miles']);
+  const radio = fieldChangeEvent({ key: '2F6', q: '2F6', label: 'Hazmat', kind: 'radio', before: '', after: 'No', agent: true }, { record, filled: new Map(), redact, choices });
+  assert.deepEqual([radio.kind, radio.to], ['radio', 'No']);
+});
+
 test('fill results drop typed values but keep chosen options', () => {
   const frames = [{
     fields: 10, rounds: 3,
