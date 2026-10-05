@@ -440,3 +440,15 @@ test('claims-box review counts flagged lines and says when the box was too long 
   assert.deepEqual(all.warnings.map((w) => [w.code, w.level]), [['ai.claims-truncated', 'check']]);
   assert.match(all.warnings[0].msg, /first 20 lines only/);
 });
+
+// Codex on PR #22: a later "NTL" line isn't the quoted "Does not want NTL"; "GL" alone is read.
+test('claims-box review: only the quoted line\'s own sentences are the intake\'s, and short coverage words are read', () => {
+  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
+  const review = buildNotesReview({ coverage: {}, claims: { text: 'No\nDoes not want NTL\nNTL' } });
+  assert.deepEqual(review.lines, ['Does not want NTL', 'NTL']);
+  assert.deepEqual(review.quotedFragments, ['Does not want NTL']);
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[false, false], [true, false]]), review), review).map((w) => [w.code, w.line]),
+    [['ai.ntl', 'NTL']], 'the later positive line keeps its item');
+  assert.deepEqual(buildNotesReview({ coverage: { gl: false }, claims: { text: 'No\nGL' } }).lines, ['GL']);
+  assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'a bare No is still nothing to read');
+});

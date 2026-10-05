@@ -1160,7 +1160,7 @@ function claimsHarness() {
   const state = { intake: null, notesAsking: null, notesRetry: null };
   class AssistError extends Error {}
   const context = {
-    state, AssistError, Date, redactor: () => (s) => s, redactionTerms: () => [],
+    state, AssistError, Date, redactor: () => (s) => s, redactionTerms: () => [], claimsTruncated: (text) => /LONG/.test(text ?? ''),
     aiSettings: async () => ({ on: !state.offline, apiKey: 'k', model: 'gpt-6-luna' }),
     reviewNotes: async (record, cfg, opts) => {
       requests.push({ record, opts, reply: t.reply });
@@ -1313,6 +1313,28 @@ test('editing what Luna read retires its items at once, also with the assistant 
   assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-superseded', 'info']]);
   assert.equal(t.requests.length, 1, 'no request without the assistant');
   assert.equal(intake.notesReview, null, 'read again once the assistant can');
+});
+
+// Codex on PR #22: the long-claims-box item is the code's own; a coverage edit doesn't retire it.
+test('the long-claims-box item stays while the box is still too long, and isn\'t added twice', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('LONG claims box');
+  intake.warnings.push({ code: 'ai.claims-truncated', level: 'check', path: 'claims.text', msg: 'read the rest' });
+  intake.notesReview = { done: true, context: JSON.stringify(['LONG claims box', { cargo: true }]) };
+  t.state.intake = intake;
+  t.state.offline = true;
+  intake.record.coverage.cargo = false;
+  await t.review({ retry: true });
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-truncated', 'check']], 'kept with the assistant off');
+  t.state.offline = false;
+  const reviewing = t.review({ retry: true });
+  await t.answer();
+  await reviewing;
+  assert.equal(intake.warnings.filter((w) => w.code === 'ai.claims-truncated').length, 1);
+  intake.record.claims.text = 'short now';
+  t.state.offline = true;
+  await t.review({ retry: true });
+  assert.ok(!intake.warnings.some((w) => w.code === 'ai.claims-truncated' && w.level === 'check'), 'retired once the box is short enough');
 });
 
 // Codex on PR #21: on Add Vehicle (one vehicle at a time, the same field keys for each) an agent

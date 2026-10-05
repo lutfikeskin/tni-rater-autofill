@@ -8,7 +8,7 @@ import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
-import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
+import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated } from '../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes } from '../src/ai/providers.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
@@ -1373,9 +1373,11 @@ async function aiSettings() {
 // otherwise the answer is dropped and the box read again.
 // Luna's claims-box items for a text the agent has since edited become info notes, in place
 // (warnings are marked checked by position).
+// The long-claims-box item is the code's own: it stays while the box is still too long to read whole.
 function supersedeClaimsItems(intake) {
+  const truncated = claimsTruncated(intake.record.claims?.text);
   intake.warnings.forEach((w, i) => {
-    if (['ai.ntl', 'ai.coverage-change', 'ai.claims-truncated'].includes(w.code)) {
+    if (['ai.ntl', 'ai.coverage-change'].includes(w.code) || (w.code === 'ai.claims-truncated' && !truncated)) {
       intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box since edited: ${w.msg}` };
     }
   });
@@ -1423,7 +1425,9 @@ async function reviewClaimsBox({ retry = false } = {}) {
       // box the agent has since edited, are replaced in place, never removed.
       if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Luna reviewed the claims box after an earlier failure.' };
       supersedeClaimsItems(intake);
-      intake.warnings.push(...result.warnings);
+      // One long-claims-box item, kept from an earlier review.
+      const kept = intake.warnings.some((w) => w.code === 'ai.claims-truncated');
+      intake.warnings.push(...result.warnings.filter((w) => !(kept && w.code === 'ai.claims-truncated')));
       intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length, context: read };
     } catch (e) {
       if (state.intake !== intake) return;
