@@ -15,7 +15,15 @@ const reasons = (e) => String(e.reason ?? '').split('+');
 const label = (f) => f.label ?? f.caption ?? f.q ?? '';
 
 function diff(before, after) {
-  const byId = (e) => new Map((e.fields ?? []).map((f) => [fieldId(f), f]).filter(([id]) => id !== null));
+  // A question repeated on either layout (a row per vehicle) can't be matched row to row: left
+  // out of both, or a row going away would look like the question appearing.
+  const pairsOf = (e) => (e.fields ?? []).map((f) => [fieldId(f), f]).filter(([id]) => id !== null);
+  const repeated = new Set();
+  for (const e of [before, after]) {
+    const seen = new Set();
+    for (const [id] of pairsOf(e)) { if (seen.has(id)) repeated.add(id); seen.add(id); }
+  }
+  const byId = (e) => new Map(pairsOf(e).filter(([id]) => !repeated.has(id)));
   const a = byId(before);
   const b = byId(after);
   const appeared = [...b].filter(([id]) => !a.has(id)).map(([, f]) => label(f));
@@ -37,14 +45,18 @@ function diff(before, after) {
 
 export function layoutTransitions(events, { stepped = STEPPED } = {}) {
   const contexts = sessionContexts(events);
+  // One sequence per quote and view: the tab and vehicle/driver an event was on (`view`, 0.9.7+).
+  // Events without a view (older ones) share one sequence per quote, so two tabs on the same page
+  // can be mixed there.
   const bySession = new Map();
   for (const e of events) {
     if (!e.session) continue;
-    if (!bySession.has(e.session)) bySession.set(e.session, []);
-    bySession.get(e.session).push(e);
+    const key = `${e.session}|${e.view ?? ''}`;
+    if (!bySession.has(key)) bySession.set(key, { session: e.session, list: [] });
+    bySession.get(key).list.push(e);
   }
   const out = [];
-  for (const [session, list] of bySession) {
+  for (const { session, list } of bySession.values()) {
     const ordered = list.every((e) => Number.isInteger(e.seq)) ? [...list].sort((x, y) => x.seq - y.seq) : list;
     let last = null; // { page, layout, changes }
     for (const e of ordered) {
@@ -56,7 +68,8 @@ export function layoutTransitions(events, { stepped = STEPPED } = {}) {
         if (last && last.page === page && !fresh && last.changes.length) {
           const d = diff(last.layout, e);
           if (d.appeared.length || d.removed.length || d.options.length || d.required.length) {
-            out.push({ session, carrier: e.carrier, page, state: contexts.get(session)?.state ?? e.context?.state ?? null,
+            // The layout's own state: the agent may have corrected the intake's since it loaded.
+            out.push({ session, carrier: e.carrier, page, state: e.context?.state ?? contexts.get(session)?.state ?? null,
               after: last.changes, ...d });
           }
         }

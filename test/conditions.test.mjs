@@ -85,3 +85,47 @@ test('transitions pair two layouts of a page with only that page\'s answers betw
   const [summary] = summarizeTransitions([...list, { ...list[0], session: 's2' }]);
   assert.deepEqual([summary.cause, summary.effect, summary.quotes, summary.states], ['Hauls hazmat?: No → Yes', '+ Placards carried', 2, ['FL']]);
 });
+
+test('a follow-up seen while its trigger was unanswered rules that trigger out', () => {
+  const other = (selected) => ({ q: '2B9D', kind: 'select', label: 'Farthest distance', options: ['50 miles'], selected });
+  const when = inferShowWhen([
+    snap(other('50 miles'), hazmat('Yes'), placards), snap(other('50 miles'), hazmat('Yes'), placards),
+    snap(other('50 miles'), hazmat('No')), snap(other('50 miles'), hazmat('No')),
+    // Recorded with picks (0.9.5+), the hazmat question unanswered, and Placards showing.
+    snap(other('50 miles'), hazmat(undefined), placards),
+  ]);
+  assert.equal(when.get('2A2'), null);
+});
+
+test('pages about one vehicle or driver are left out of conditions', () => {
+  const events = ['a', 'a', 'b', 'b'].map((session, i) => ({ ...layoutEvent(session, i % 2 ? [hazmat('No')] : [hazmat('Yes'), placards]), page: 'AddVehicle' }));
+  const f = buildLayouts(events)[0].layout.pages.AddVehicle.fields.find((x) => x.q === '2A2');
+  assert.deepEqual([f.showWhen, f.condition], [undefined, 'unknown']);
+});
+
+test('a trigger without a question id is named by its element identity for the replay', () => {
+  const noEquipment = (selected) => ({ kind: 'checkbox', label: 'Vehicle has no equipment', dataId: 'noEquip', selected });
+  const value = { kind: 'text', label: 'Equipment value', dataId: 'equipValue' };
+  const events = [layoutEvent('a', [noEquipment('unchecked'), value]), layoutEvent('a', [noEquipment('checked')]),
+    layoutEvent('b', [noEquipment('unchecked'), value]), layoutEvent('b', [noEquipment('checked')])];
+  const f = buildLayouts(events)[0].layout.pages.Operations.fields.find((x) => x.dataId === 'equipValue');
+  assert.deepEqual([f.showWhen.q, f.showWhen.dataId, f.showWhen.caption, [...f.showWhen.is]], [null, 'noEquip', 'Vehicle has no equipment', ['unchecked']]);
+});
+
+test('transitions skip repeated rows, use the layout\'s own state, and keep views apart', () => {
+  let seq = 0;
+  const e = (x) => ({ session: 's', seq: ++seq, t: '2026-10-06T10:00:00Z', carrier: 'progressive', ...x });
+  const row = { q: '2C1A', kind: 'select', label: 'Rental per vehicle', options: ['None', '$40'] };
+  const corrected = { state: 'GA', businessClass: 'Expediter', vehicleTypes: ['Van'] };
+  const events = [
+    e({ type: 'intake_loaded', state: 'FL' }),
+    e(layoutEvent('s', [hazmat('No'), row, row], { reason: 'arrived', view: 't1' })),
+    // Another tab on the same page: its own sequence.
+    e(layoutEvent('s', [hazmat('No')], { reason: 'arrived', view: 't2' })),
+    e({ type: 'field_change', view: 't1', page: 'Operations', label: 'Hauls hazmat?', kind: 'radio', from: 'No', to: 'Yes', by: 'agent' }),
+    // One of the two rows goes away: rows can't be matched, so that is not reported.
+    e(layoutEvent('s', [hazmat('Yes'), placards, row], { reason: 'appeared+changed', view: 't1', context: corrected })),
+  ];
+  const list = layoutTransitions(events);
+  assert.deepEqual(list.map((t) => [t.appeared, t.removed, t.options, t.state]), [[['Placards carried'], [], [], 'GA']]);
+});

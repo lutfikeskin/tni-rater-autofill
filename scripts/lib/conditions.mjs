@@ -51,6 +51,8 @@ export function inferShowWhen(snapshots, { min = MIN_LAYOUTS } = {}) {
     }
     return m;
   });
+  // Layouts that recorded picks at all (0.9.5+): in those, a trigger without a pick was unanswered.
+  const withPicks = snapshots.map((s) => (s.fields ?? []).some((f) => f.selected !== undefined));
   const out = new Map();
   for (const target of order) {
     if (ambiguous.has(target)) continue;
@@ -67,7 +69,9 @@ export function inferShowWhen(snapshots, { min = MIN_LAYOUTS } = {}) {
         // The question was there without the trigger: not this trigger's follow-up.
         if (!t) { if (present[i]) ok = false; return; }
         const v = pickOf(t);
-        if (v === null) return;
+        // The question was there while the trigger was unanswered (or showed something that isn't
+        // one of its choices): the replay would hide it in that state, so this trigger can't be it.
+        if (v === null) { if (present[i] && withPicks[i]) ok = false; return; }
         const side = present[i] ? shown : hidden;
         side.set(v, (side.get(v) ?? 0) + 1);
       });

@@ -23,3 +23,16 @@ test('the replay draws a follow-up only while its trigger has an answer it was s
   assert.equal(shows(value, [unnamed, value], (f) => (f === unnamed ? 'unchecked' : undefined)), true);
   assert.equal(shows(value, [unnamed, value], (f) => (f === unnamed ? 'checked' : undefined)), false);
 });
+
+test('the replay finds a trigger by its identity and compares answers as layouts do', () => {
+  const first = { kind: 'checkbox', caption: 'Same as mailing', dataId: 'mailing1' };
+  const second = { kind: 'checkbox', caption: 'Same as mailing', dataId: 'mailing2' };
+  const follow = { kind: 'text', caption: 'Garaging street', showWhen: { q: null, dataId: 'mailing2', caption: 'Same as mailing', is: ['unchecked'] } };
+  const fields = [first, second, follow];
+  const texts = new Map([[first, 'checked'], [second, 'unchecked']]);
+  assert.equal(shows(follow, fields, (f) => texts.get(f)), true, 'its own trigger, not the first field with that caption');
+  texts.set(second, 'checked');
+  assert.equal(shows(follow, fields, (f) => texts.get(f)), false);
+  const yes = { q: '2A2', caption: 'Placards', showWhen: { q: '2A1', caption: 'Hauls hazmat?', is: ['YES'] } };
+  assert.equal(shows(yes, [{ q: '2A1', caption: 'Hauls hazmat?' }, yes], () => 'Yes '), true, 'case and spacing aside');
+});

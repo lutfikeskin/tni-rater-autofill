@@ -12,6 +12,11 @@ import { CARRIERS } from '../../src/carriers.js';
 // list of questions but not used to tell when a question shows.
 export const STEPPED = new Set(CARRIERS.filter((c) => c.layoutSteps).map((c) => c.id));
 
+// Pages about one vehicle or driver (Progressive's AddVehicle, AddDriver): their layouts come from
+// different vehicles and drivers, which can differ in ways no answer on the page explains, and the
+// layouts don't say which one they were about. Left out of conditions.
+export const ENTITY_PAGES = new Map(CARRIERS.map((c) => [c.id, new Set([...(c.vehiclePages ?? []), ...(c.driverPage ? [c.driverPage] : [])])]));
+
 const KIND = { select: 'combo', radio: 'radio', checkbox: 'checkbox' };
 
 // Same option seen with different spacing/markup in different quotes: keep one.
@@ -29,7 +34,15 @@ export const layoutKey = (carrier, c = {}) => [
   c.trailers ? 'trailers' : null,
 ].filter(Boolean).join('_');
 
-export function buildLayouts(events, { stepped = STEPPED } = {}) {
+function triggerIdentity(f) {
+  if (f.q) return { q: f.q };
+  if (f.id) return { q: null, id: f.id };
+  if (f.dataId) return { q: null, dataId: f.dataId };
+  if (f.name) return { q: null, name: f.name };
+  return { q: null };
+}
+
+export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_PAGES } = {}) {
   const layouts = new Map();
   for (const e of events) {
     if (e.type !== 'page_layout' || !e.carrier || !e.page) continue;
@@ -49,7 +62,7 @@ export function buildLayouts(events, { stepped = STEPPED } = {}) {
     const name = e.step ? `${e.page} › ${e.step}` : e.page;
     const page = layout.pages.get(name) ?? { snapshots: [], fields: new Map(), buttons: [] };
     const fields = (e.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.label ?? ''));
-    page.snapshots.push({ fields, mixedSteps: stepped.has(e.carrier) && !e.step });
+    page.snapshots.push({ fields, noInference: (stepped.has(e.carrier) && !e.step) || !!entityPages.get(e.carrier)?.has(e.page) });
     for (const b of e.buttons ?? []) if (!page.buttons.includes(b)) page.buttons.push(b);
     for (const f of fields) {
       // Our own mark tooltips got into early layouts as captions; they aren't questions.
@@ -82,7 +95,7 @@ export function buildLayouts(events, { stepped = STEPPED } = {}) {
       context: l.context,
       generated: { from: l.from, to: l.to, quotes: l.sessions.size, by: 'scripts/build-layouts.mjs' },
       pages: Object.fromEntries([...l.pages].map(([name, p]) => {
-        const conditions = inferShowWhen(p.snapshots.filter((s) => !s.mixedSteps));
+        const conditions = inferShowWhen(p.snapshots.filter((s) => !s.noInference));
         const captionOf = (cid) => [...p.fields.values()].find((f) => f.cid === cid);
         return [name, {
           fields: [...p.fields.values()].map((f) => {
@@ -98,7 +111,9 @@ export function buildLayouts(events, { stepped = STEPPED } = {}) {
               // Not on every snapshot of the page: shows only after certain answers.
               cond: cond || undefined,
               // The answer it showed with in every layout (conditions.mjs): an observation.
-              showWhen: cond && when ? { q: trigger?.q ?? when.triggerField.q ?? null, caption: trigger?.caption ?? when.triggerField.label,
+              // The trigger by the identity the inference used (question id, element id, data-id or
+              // name; the caption only for a field with none), so the replay finds that control.
+              showWhen: cond && when ? { ...triggerIdentity(when.triggerField), caption: trigger?.caption ?? when.triggerField.label,
                 is: when.is, seen: { shown: when.shown, hidden: when.hidden }, unseen: when.unseen.length ? when.unseen : undefined } : undefined,
               // Shows sometimes, and no single answer on the page explains when (or too few layouts).
               condition: cond && !when ? 'unknown' : undefined,
