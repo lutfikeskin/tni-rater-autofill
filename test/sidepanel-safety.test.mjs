@@ -68,7 +68,11 @@ function extractFunction(name) {
     if (ch === '{') depth += 1;
     if (ch === '}') {
       depth -= 1;
-      if (!depth) return SIDEPANEL.slice(start, i + 1);
+      if (!depth) {
+        const source = SIDEPANEL.slice(start, i + 1);
+        // Agent-edit scoping is shared by many functions: bring its helpers along.
+        return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
+      }
     }
   }
   throw new Error(`could not find the end of ${name}`);
@@ -1144,4 +1148,22 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
   };
   assert.deepEqual(await run(false), { rendered: 1, assisted: ['Rates'], assistPage: null });
   assert.deepEqual(await run(true), { rendered: 1, assisted: [], assistPage: 'Rates' }, 'another follow-up is coming: still held');
+});
+
+// Codex on PR #21: on Add Vehicle (one vehicle at a time, the same field keys for each) an agent
+// correction on the first vehicle must not leave the next vehicle's box unfilled.
+test('agent edits are protected per vehicle on vehicle pages and per page elsewhere', async () => {
+  const carrier = { vehiclePages: ['MostCommonVehicles', 'AddVehicle'], driverPage: 'AddDriver' };
+  const state = { tab: { id: 1, url: 'AddVehicle', carrier }, active: { vehicles: 0, drivers: 0 }, agentKeys: new Map(), filling: false };
+  const fills = [];
+  const context = { state, persistAgentKeys: async () => {}, pageOf: (url) => url, fillPage: async () => fills.push(1) };
+  vm.runInNewContext(extractFunction('ignoreReview'), context);
+  await context.ignoreReview('2091', 1, 'AddVehicle');
+  assert.deepEqual([...state.agentKeys.keys()], ['AddVehicle|v0']);
+  assert.equal(context.editScope('AddVehicle'), 'AddVehicle|v0');
+  state.active.vehicles = 1;
+  assert.equal(state.agentKeys.get(context.editScope('AddVehicle')), undefined, 'the next vehicle starts unprotected');
+  assert.equal(context.editScope('CoveragesRates'), 'CoveragesRates', 'other pages keep their page key');
+  state.tab.url = 'AddDriver';
+  assert.equal(context.editScope('AddDriver'), 'AddDriver|d0');
 });

@@ -444,7 +444,7 @@ async function retireAiOrigins(ctx, frames = null) {
   for (const [sig, x] of retiring) if (state.aiCache.get(sig) === x) {
     state.aiCache.delete(sig);
     aiRetiredSignatures.add(sig);
-    state.agentKeys.get(sig.split('\n')[1])?.delete(x.key);
+    state.agentKeys.get(editScope(sig.split('\n')[1]))?.delete(x.key);
     changed = true;
   }
   if (changed) {
@@ -843,9 +843,9 @@ function onRecorderMessage(msg, sender) {
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
-      const keys = state.agentKeys.get(page) ?? new Set();
+      const keys = state.agentKeys.get(editScope(page)) ?? new Set();
       byAgent.forEach((c) => keys.add(c.key));
-      state.agentKeys.set(page, keys);
+      state.agentKeys.set(editScope(page), keys);
       persistAgentKeys();
       settleRejectedAi(page, byAgent, sender).then((released) => {
         if (released && state.tab?.id === sender.tab?.id && pageOf(state.tab?.url) === page) {
@@ -877,6 +877,14 @@ function stepScope(page, carrier = state.tab?.carrier) {
   return `${page}|${entity}|`;
 }
 
+// Agent edits are protected per page, and on a page about one vehicle or driver per that vehicle
+// or driver (the scope of stepScope): correcting the first vehicle's value on Add Vehicle doesn't
+// leave the next vehicle's box alone.
+function editScope(page, carrier = state.tab?.carrier) {
+  const scope = stepScope(page, carrier);
+  return scope.endsWith('||') ? page : scope.slice(0, -1);
+}
+
 const fillOptions = (carrier, extra = {}) => ({
   optional: carrier.optional ?? [],
   replaceChoices: !!carrier.replaceChoices,
@@ -891,7 +899,7 @@ const fillOptions = (carrier, extra = {}) => ({
   doneActions: [...state.doneActions],
   visitedPages: [...state.visitedPages],
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
-  skip: [...(state.agentKeys.get(pageOf(state.tab?.url)) ?? [])],
+  skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
   ...extra,
 });
 
@@ -916,7 +924,7 @@ async function autoFill(page) {
   try {
     await retireAiOrigins({ tabId, tabUrl: state.tab.url, intake: state.intake, carrier });
     const plan = buildPlan(state.intake.record, carrier, state.active);
-    const skip = [...(state.agentKeys.get(page) ?? [])];
+    const skip = [...(state.agentKeys.get(editScope(page)) ?? [])];
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite: false, skip, keepMarks: true })]);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
@@ -988,9 +996,9 @@ async function recordLayout(page) {
 
 function rememberFill(frames) {
   const page = pageOf(state.tab?.url);
-  const keys = state.agentKeys.get(page) ?? new Set();
+  const keys = state.agentKeys.get(editScope(page)) ?? new Set();
   for (const key of frames.flatMap((f) => f.protectedKeys ?? [])) keys.add(key);
-  state.agentKeys.set(page, keys);
+  state.agentKeys.set(editScope(page), keys);
   persistAgentKeys();
   if (frames.some((f) => f.halted)) {
     state.autoPaused = true;
@@ -1231,9 +1239,9 @@ async function watchNextStep(carrier, page, before, doneKey = null) {
 
 async function ignoreReview(key, tabId, page) {
   if (!key || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
-  const keys = state.agentKeys.get(page) ?? new Set();
+  const keys = state.agentKeys.get(editScope(page)) ?? new Set();
   keys.add(key);
-  state.agentKeys.set(page, keys);
+  state.agentKeys.set(editScope(page), keys);
   await persistAgentKeys();
   await fillPage();
 }
@@ -1356,7 +1364,7 @@ async function runAssist(frames, ctx) {
   const provider = PROVIDERS[cfg.provider];
   // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
-  const items = collected.items.filter(x => !state.agentKeys.get(ctx.page)?.has(x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
+  const items = collected.items.filter(x => !state.agentKeys.get(editScope(ctx.page))?.has(x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
   const blocked = collected.blocked;
   // Messages, the approval card and suggestions without a list item go above "Needs you".
   const holder = h('div', { class: 'ai-holder' });
@@ -1486,7 +1494,7 @@ async function applyAi(list, ctx, decision) {
   if (state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return false;
   if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return false;
   if (ctx.run !== undefined && ctx.run !== state.aiRun) return false;
-  list = list.filter(x => ['radio', 'select', 'checkbox'].includes(x.controlKind) && !x.leave && !state.agentKeys.get(ctx.page)?.has(x.key) && (decision !== 'auto' || x.autoOk));
+  list = list.filter(x => ['radio', 'select', 'checkbox'].includes(x.controlKind) && !x.leave && !state.agentKeys.get(editScope(ctx.page))?.has(x.key) && (decision !== 'auto' || x.autoOk));
   if (!list.length || !aiActionCurrent(ctx, list)) return false;
   const isCurrent = () => aiActionCurrent(ctx, list)
     && ctx.contextKey === assistContextKey(state.intake?.record, state.active)
@@ -1538,7 +1546,7 @@ async function applyAi(list, ctx, decision) {
       .filter(result => result && typeof result === 'object')
       .map(result => ({ ...result, frameId: frame.frameId, documentId: frame.documentId })));
     const sameContext = isCurrent();
-    const keys = sameContext ? state.agentKeys.get(ctx.page) ?? new Set() : null;
+    const keys = sameContext ? state.agentKeys.get(editScope(ctx.page)) ?? new Set() : null;
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
       const ok = mine.find((r) => r.ok);
@@ -1560,7 +1568,7 @@ async function applyAi(list, ctx, decision) {
       }
       if (sameContext && !ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
     }
-    if (sameContext) state.agentKeys.set(ctx.page, keys);
+    if (sameContext) state.agentKeys.set(editScope(ctx.page), keys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
     const after = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     for (const x of list) if (x.done) {
@@ -1645,7 +1653,7 @@ function renderAi(holder, suggestions, ctx) {
         ? !snapshotHashMatches(now, x.snapshotHash)
         : !snapshotsEqual(now, x.snapshots ?? ctx.snapshots)));
       if (moved.length) {
-        const keys = state.agentKeys.get(ctx.page);
+        const keys = state.agentKeys.get(editScope(ctx.page));
         for (const x of moved) {
           x.rejected = true;
           x.error = 'the page changed after this choice; run Fill again and review it';
