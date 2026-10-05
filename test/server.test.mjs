@@ -145,3 +145,21 @@ test('a page layout with long choice lists fits, other events keep the smaller l
   });
   assert.equal(stored(dataDir)[0].fields[5].options.length, 250);
 });
+
+test('layouts keep why they were taken, never a pick from a staff list; layout errors are kept', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'page_layout', reason: 'appeared+changed', fields: [
+        { q: '396', label: 'Agent of Record', options: ['JANE DOE-1'], selected: 'JANE DOE-1' },
+        { q: '2B9D', label: 'Distance', options: ['50 miles'], selected: '50 miles', pageHasValue: true }] }),
+      ev({ type: 'layout_error', reason: 'arrived', error: 'Frame was removed' }),
+    ] })).json();
+    assert.equal(r.accepted, 2);
+  });
+  const [layout, error] = stored(dataDir);
+  assert.equal(layout.reason, 'appeared+changed');
+  assert.deepEqual([layout.fields[0].options, layout.fields[0].selected], [undefined, undefined]);
+  assert.equal(layout.fields[1].selected, '50 miles');
+  assert.deepEqual([error.reason, error.error], ['arrived', 'Frame was removed']);
+});

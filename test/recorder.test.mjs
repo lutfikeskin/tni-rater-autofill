@@ -304,7 +304,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 4);
+  assert.equal(h.context.__raterRecorder.version, 5);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -321,6 +321,20 @@ test('pause and resume rebaseline the page before recording a later change', () 
 
   assert.equal(changes(h)[0]?.before, 'while paused');
   assert.equal(changes(h)[0]?.after, 'after resume');
+});
+
+test('questions that go away are reported, so the panel can record the page again', () => {
+  const h = harness();
+  const answer = new Control('input', { id: 'answer' });
+  const followUp = new Control('input', { id: 'follow-up' });
+  h.append(answer, followUp);
+  h.context.__raterRecorder.rebaseline();
+  // The answer hides its follow-up question (disabled or hidden: the recorder no longer sees it).
+  followUp.disabled = true;
+  h.tick();
+  assert.deepEqual(h.sent.filter((m) => m.event === 'removed_fields').map((m) => [...m.keys]), [['field:follow-up']]);
+  h.tick();
+  assert.equal(h.sent.filter((m) => m.event === 'removed_fields').length, 1, 'reported once');
 });
 
 // An ExtJS field: an input in a trigger wrap with an arrow (combo) or calendar (date) trigger.
@@ -350,13 +364,14 @@ test('an ExtJS combo is reported as a combo, so its typed text is not logged as 
   assert.deepEqual([byKey['field:native'].kind, byKey['field:native'].combo], ['select', undefined], 'a native select is a choice as before');
 });
 
-test('an older recorder is replaced, so combo changes always carry the combo flag', () => {
+test('an older recorder is replaced, so changes carry the combo flag and removed questions are reported', () => {
   const h = harness();
   const disposed = [];
-  // A version-3 recorder from before this change, still installed in the page.
+  // A version-4 recorder still installed in the page: one had the combo flag without
+  // removed_fields, the other removed_fields without the combo flag.
   h.context.__raterRecorder.dispose();
-  h.context.__raterRecorder = { version: 3, rebaseline() {}, dispose() { disposed.push(3); } };
+  h.context.__raterRecorder = { version: 4, rebaseline() {}, dispose() { disposed.push(4); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
-  assert.deepEqual(disposed, [3]);
-  assert.equal(h.context.__raterRecorder.version, 4);
+  assert.deepEqual(disposed, [4]);
+  assert.equal(h.context.__raterRecorder.version, 5);
 });

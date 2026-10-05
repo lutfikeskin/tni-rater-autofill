@@ -167,6 +167,8 @@ export const amwins = {
   id: 'amwins',
   name: 'AmWINS',
   hosts: [/(^|\.)amwinsadmittedplacement\.com$/],
+  // Where page layouts are taken as the agent works without a fill: the application only.
+  layoutUrl: /\/application\/businessauto/i,
   // No answer waits on the server (timing of the first three quotes: 0 of 294 answers sent a
   // request): fill a round of answers at a time.
   batch: true,

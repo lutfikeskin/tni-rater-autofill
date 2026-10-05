@@ -41,7 +41,9 @@ export const EVENT_FIELDS = {
   intake_edit: ['path', 'kind', 'change', 'warnings'],
   warning_checked: ['code', 'path', 'checked'],
   page_view: ['from', 'fields'],
-  page_layout: ['context', 'fields', 'buttons'],
+  page_layout: ['context', 'fields', 'buttons', 'reason'],
+  // A page layout the panel couldn't record (why it was asked for, and the error's first words).
+  layout_error: ['reason', 'error'],
   fill_run: ['overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced'],
   fill_field: ['result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing'],
   fill_error: ['auto', 'error'],
@@ -87,9 +89,9 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     // An order number and a field key (an element id or name), nothing else in those places.
     if (out.seq !== undefined && !(Number.isSafeInteger(out.seq) && out.seq > 0)) delete out.seq;
     if (out.key != null && !(typeof out.key === 'string' && out.key.length <= 256)) delete out.key;
-    // Layouts: never keep option lists naming agency staff (agent of record, producer codes).
+    // Layouts: never keep option lists or picks naming agency staff (agent of record, producer codes).
     if (out.type === 'page_layout' && Array.isArray(out.fields)) {
-      out.fields = out.fields.map((f) => (/agent|producer/i.test(f?.label ?? '') ? { ...f, options: undefined } : f));
+      out.fields = out.fields.map((f) => (/agent|producer/i.test(f?.label ?? '') ? { ...f, options: undefined, selected: undefined } : f));
     }
     out.agent ??= agent ?? null;
     return { event: out };

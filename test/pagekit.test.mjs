@@ -1762,6 +1762,43 @@ test('a capture keeps up to 250 choices per question and says when a list was cu
   assert.equal(byId.hazmat.optionsTruncated, undefined);
 });
 
+test('a capture only reads the page: no DOM writes, events, focus, values or widget calls', () => {
+  const h = harness({ ext: true });
+  const { cmp } = addExtText(h, 'a', '2B9D', { caption: 'Farthest distance', value: '500 miles' });
+  const state = new SelectNode([{ text: '', value: '' }, { text: 'Florida', value: 'FL' }], { id: 'garageState', ariaLabel: 'Garaging state', value: 'FL' });
+  const name = makeInput({ id: 'dba', ariaLabel: 'Doing business as', value: 'typed text' });
+  const group = new FakeNode('fieldset', { id: 'hazmatGroup', role: 'radiogroup', ariaLabel: 'Hauls hazmat?' });
+  const yes = makeInput({ type: 'radio', name: 'hazmat', value: 'Yes', checked: true });
+  const no = makeInput({ type: 'radio', name: 'hazmat', value: 'No' });
+  group.append(yes, no);
+  h.document.body.append(state, name, group);
+  addButton(h, 'Continue');
+
+  // Everything a page (or a session-replay script watching it) could see change.
+  const look = () => JSON.stringify(h.document.querySelectorAll('*').map((n) => [n.tagName, n.id, n.className, n.value, n.checked,
+    n.disabled, n._textContent, [...n._attrs], Object.entries(n.style), n.children.length]));
+  const before = look();
+  const writes = [];
+  const spy = (target, names) => names.forEach((m) => {
+    const original = target[m];
+    target[m] = function (...args) { writes.push(m); return original.apply(this, args); };
+  });
+  const methods = ['append', 'remove', 'replaceChild', 'setAttribute', 'removeAttribute', 'dispatchEvent', 'click', 'focus', 'blur', 'addEventListener'];
+  const saved = methods.map((m) => [m, FakeNode.prototype[m]]);
+  spy(FakeNode.prototype, methods);
+  spy(cmp, ['setValue', 'fireEvent']);
+  Object.assign(cmp, { validate: () => writes.push('validate'), isValid: () => { writes.push('isValid'); return true; }, focus: () => writes.push('cmp.focus') });
+  try {
+    const page = h.kit.capture([{ id: 'state', path: 'garaging.state', kind: 'choice', value: 'Florida' }], ['typed text']);
+    assert.ok(page.controls.length >= 4, `captured ${page.controls.length} controls`);
+    assert.ok(!JSON.stringify(page).includes('typed text'), 'typed text is never captured');
+  } finally {
+    saved.forEach(([m, fn]) => { FakeNode.prototype[m] = fn; });
+  }
+  assert.deepEqual(writes, [], 'capture called something that changes the page');
+  assert.equal(look(), before, 'the page looks exactly as before');
+});
+
 test('a fill reports each combo\'s choices under the key the recorder gives its changes', async () => {
   const h = harness({ ext: true, search: '?pageName=AddVehicle' });
   // ExtJS combos as Duck Creek draws them: the input in a trigger wrap with an arrow trigger.
