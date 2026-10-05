@@ -323,7 +323,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   const logged = [], rendered = [], layouts = [], assisted = [];
   const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
   const context = {
-    state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
+    state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }],
@@ -1441,7 +1441,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
   const logged = [];
   const record = { garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], trailers: [], drivers: [{}], coverage: {} };
   const context = {
-    state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0, layoutGeneration: 0, layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), layoutLatest: null,
+    state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0, layoutGeneration: 0, layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), layoutLatest: null, viewTabs: new Map(),
       lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set() },
     sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
     busy: false, runs: [],
@@ -1459,7 +1459,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; },
   };
-  vm.runInNewContext(['recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
+  vm.runInNewContext(['viewOf', 'stepScope', 'recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);
   return { context, logged };
 }
@@ -2016,7 +2016,7 @@ function stopHarness(page = 'DeclinationNotice') {
     intake: { record }, tab: { id: 4, url: url(page), carrier },
     autoPages: new Set(['DeclinationNotice', 'BusinessOwnerInfo']), autoPaused: false, filling: false, autoTimer: null, autoPending: false,
     pagePending: null, agentKeys: new Map(), aiCache: new Map(), active: {}, visitedPages: new Set(),
-    layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(),
+    layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), viewTabs: new Map(),
   };
   const logged = [], kits = [], timers = [];
   const context = {
@@ -2027,7 +2027,7 @@ function stopHarness(page = 'DeclinationNotice') {
     pickListItem: async () => {}, retireAiOrigins: async () => {}, buildPlan: () => [], fillOptions: () => ({}),
     scheduleLayout: () => {},
   };
-  vm.runInNewContext(`${PAGE_HELPERS}\n${['showStopPage', 'stopPageIsOurs', 'fillPage', 'scheduleAutoFill', 'autoFill', 'aiActionCurrent', 'onRecorderMessage'].map(extractFunction).join('\n')}`, context);
+  vm.runInNewContext(`${PAGE_HELPERS}\n${['showStopPage', 'stopPageIsOurs', 'fillPage', 'scheduleAutoFill', 'autoFill', 'aiActionCurrent', 'onRecorderMessage', 'viewOf', 'stepScope'].map(extractFunction).join('\n')}`, context);
   // The recorder announcing a page (a new document has no `from`).
   const arrive = (to, from = null) => {
     state.tab = { ...state.tab, url: url(to) };
@@ -2166,4 +2166,29 @@ test('a row key is settled by its own edit, or by the plain name an older build 
   assert.equal(edited(['medicalPaymentExclude#2'], 'medicalPaymentExclude#3'), false, 'one vehicle\'s edit leaves the others');
   assert.equal(edited(['medicalPaymentExclude'], 'medicalPaymentExclude#3'), true, 'a legacy shared-name edit covers every row');
   assert.equal(edited(['2C1A'], '2C1A@2'), false, 'Progressive rows are unchanged');
+});
+
+test('events name their view: the tab\'s order in the quote and the vehicle or driver, never ids', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  const carrier = { id: 'progressive', layoutUrl: /./, vehiclePages: ['AddVehicle'], driverPage: 'AddDriver' };
+  context.state.tab = { id: 917, url: 'Vehicles', carrier };
+  assert.equal(context.viewOf(917, 'Vehicles', carrier), 't1');
+  assert.equal(context.viewOf(402, 'Vehicles', carrier), 't2', 'another tab of the quote');
+  context.state.active = { vehicles: 1, drivers: 0 };
+  assert.equal(context.viewOf(917, 'AddVehicle', carrier), 't1:v1');
+  assert.equal(context.viewOf(402, 'AddDriver', carrier), 't2:d0');
+  await context.recordLayout('Vehicles', 'arrived');
+  assert.equal(logged.at(-1).view, 't1');
+  // Field changes and arrivals from the recorder carry it too.
+  Object.assign(context, { samePage: (p) => p, $: () => ({ checked: false }), redactor: () => (s) => s, scheduleAutoFill: () => {},
+    fieldChangeEvent: () => ({ type: 'field_change' }) });
+  Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set(), filled: new Map(), labels: new Map() });
+  vm.runInContext(extractFunction('onRecorderMessage'), context);
+  context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: 'AddVehicle', changes: [{ key: 'x', before: '', after: 'Yes' }] }, { tab: { id: 917 } });
+  context.onRecorderMessage({ ra: 'usage', event: 'page_view', page: 'AddDriver', from: 'AddVehicle', fields: 3 }, { tab: { id: 917 } });
+  assert.deepEqual(logged.slice(-2).map((e) => [e.type, e.view]), [['field_change', 't1:v1'], ['page_view', 't1:d0']]);
+  // A new quote numbers its tabs again.
+  context.holdLayouts();
+  assert.equal(context.viewOf(402, 'Vehicles', carrier), 't1');
 });

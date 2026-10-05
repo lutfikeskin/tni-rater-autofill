@@ -165,11 +165,11 @@ export function fieldChangeEvent(change, { record, filled, redact, labels, choic
 }
 
 // Fill results, minus typed values (text boxes) and client names.
-export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms, redact, keySalt }) {
+export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt }) {
   const all = (k) => frames.flatMap((f) => f[k] ?? []);
   const isChoice = (x) => x.controlKind && x.controlKind !== 'text';
   const events = [{
-    type: 'fill_run', carrier, page, overwrite, auto, ms,
+    type: 'fill_run', carrier, page, view, overwrite, auto, ms,
     fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0),
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,
@@ -182,7 +182,7 @@ export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms,
     advanced: frames.find((f) => f.advanced)?.advanced ?? null,
   }];
   const item = (result) => (x) => ({
-    type: 'fill_field', carrier, page, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
+    type: 'fill_field', carrier, page, view, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
     reason: x.reason ? redact(x.reason) : undefined,
     options: x.options?.map(redact),

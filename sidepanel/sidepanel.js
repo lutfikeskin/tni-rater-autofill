@@ -203,6 +203,7 @@ const state = {
   layoutHold: false,
   layoutReadyTabs: new Set(),
   layoutNewTabs: new Set(), // tabs opened since then (a new quote, as Progressive opens one)
+  viewTabs: new Map(), // tab id -> its order in this quote, for events' `view` (viewOf)
   layoutLatest: null, // the capture asked for last (waiting or queued), which later changes feed
   layoutErrors: 0,
   layoutErrorsLogged: new Set(),
@@ -865,7 +866,7 @@ function onRecorderMessage(msg, sender) {
     // Progressive opens in a new tab): this tab's layouts may be taken again. A tab that was
     // already open and only now gets a recorder may still show the previous client's quote.
     if (msg.from ? samePage(msg.from) !== samePage(msg.page) : state.layoutNewTabs.has(sender.tab.id)) state.layoutReadyTabs.add(sender.tab.id);
-    log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
+    log({ type: 'page_view', carrier, page: msg.page, view: viewOf(sender.tab.id, samePage(msg.page)), from: msg.from, fields: msg.fields });
     // Arriving at a carrier stop page (a new document, a reload, or a move from another page; not
     // its "-Reload" re-render): logged as a fill run that stopped, with the page name only, and
     // only once the tab is shown to be this intake's quote.
@@ -901,7 +902,8 @@ function onRecorderMessage(msg, sender) {
   }
   if (msg.event === 'field_changes') {
     const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt };
-    log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
+    const view = viewOf(sender.tab.id, samePage(msg.page));
+    log(...msg.changes.map((c) => ({ carrier, page: msg.page, view, ...fieldChangeEvent(c, ctx) })));
     scheduleLayout(layoutPage, 'changed');
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
@@ -938,6 +940,16 @@ const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUr
 // Add Vehicle, Add Driver) per active vehicle/driver: Add Vehicle looks the same for every
 // vehicle, and the next vehicle's page is a new step, not the agent going back. Other pages stay
 // quote-wide, so changing a picker never makes a page the agent left new again.
+// Which tab and vehicle/driver an event was on, without naming either: the tab's order in this
+// quote and, on a page about one vehicle or driver, its number (t1, t2:v0, t1:d1). Reviews use
+// it to keep two quote tabs, or two vehicles, apart (scripts/lib/transitions.mjs).
+function viewOf(tabId, page, carrier = state.tab?.carrier) {
+  if (!Number.isInteger(tabId)) return undefined;
+  if (!state.viewTabs.has(tabId)) state.viewTabs.set(tabId, state.viewTabs.size + 1);
+  const entity = stepScope(page, carrier).split('|')[1];
+  return `t${state.viewTabs.get(tabId)}${entity ? `:${entity}` : ''}`;
+}
+
 function stepScope(page, carrier = state.tab?.carrier) {
   const entity = carrier?.vehiclePages?.includes(page) ? `v${state.active.vehicles ?? 0}`
     : carrier?.driverPage && carrier.driverPage === page ? `d${state.active.drivers ?? 0}` : '';
@@ -1015,7 +1027,7 @@ async function autoFill(page) {
     if (state.autoPaused || hasWarnings || state.assistPage === page) { renderReport(frames); assistFrames = frames; }
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings) {
-      if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }));
+      if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, view: viewOf(tabId, page, carrier), overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }));
       if (n) {
         const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
         $('report').append(note);
@@ -1159,7 +1171,7 @@ async function captureLayout(job, reason) {
       vehicles: r.vehicles.length,
       coverages: Object.entries(r.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     };
-    usage.log({ type: 'page_layout', carrier: carrier.id, page, step, reason: why(), context, fields, buttons });
+    usage.log({ type: 'page_layout', carrier: carrier.id, page, view: viewOf(tabId, page, carrier), step, reason: why(), context, fields, buttons });
   } catch (e) {
     // A capture overtaken by a later change (a redraw can make its read fail) hands its reasons
     // on instead of reporting a failure for a page that is being captured anyway.
@@ -1182,7 +1194,7 @@ function layoutFailed({ tabId, carrier, page }, reason, error) {
   const once = `${usage.currentSession()?.id}|${tabId}|${page}|${error}`;
   if (state.layoutErrorsLogged.has(once)) return;
   state.layoutErrorsLogged.add(once);
-  usage.log({ type: 'layout_error', carrier: carrier.id, page, reason, error });
+  usage.log({ type: 'layout_error', carrier: carrier.id, page, view: viewOf(tabId, page, carrier), reason, error });
 }
 
 // What kind of failure, never its message: Chrome's and the page's errors can quote the page's
@@ -1227,6 +1239,8 @@ function cancelLayouts() {
 // text the new intake's redaction doesn't cover. No layouts from them until they move on.
 function holdLayouts() {
   state.layoutHold = true;
+  // Views number the tabs of one quote.
+  state.viewTabs = new Map();
   state.layoutReadyTabs = new Set();
   state.layoutNewTabs = new Set();
   // What was kept for the previous quote's layouts is no use any more.
@@ -1449,7 +1463,7 @@ async function fillPage({ auto = false } = {}) {
     followUp = afterFill(frames, { carrier, page });
     recordLayout(page);
     if (!carrier.practice) usage.log(...fillEvents(frames, {
-      carrier: carrier.id, page, overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
+      carrier: carrier.id, page, view: viewOf(tabId, page, carrier), overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
       keySalt: usage.currentSession()?.keySalt,
     }));
     renderReport(frames);
