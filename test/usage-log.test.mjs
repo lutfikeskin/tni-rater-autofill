@@ -44,3 +44,140 @@ test('uploads go to the central server with the built-in token unless the agent 
   await usage.saveSettings({ serverUrl: '' });
   assert.equal((await usage.serverConfig()).serverUrl, '', 'blank: export only');
 });
+
+// A fake collection server: `reply(body)` answers each upload; health checks just say ok.
+function fakeServer(reply) {
+  const requests = [];
+  globalThis.fetch = async (url, init) => {
+    if (!init?.body) return { ok: true, status: 200, json: async () => ({ ok: true }) };
+    const body = JSON.parse(init.body);
+    requests.push({ body, chars: init.body.length });
+    return reply(body);
+  };
+  return requests;
+}
+const stores = (body) => ({ ok: true, status: 200, json: async () => ({ accepted: body.events.length, duplicates: 0, rejected: [] }) });
+
+test('an event keeps the quote it was logged in, even when the panel moves on before it is written', async () => {
+  const requests = fakeServer(stores);
+  await usage.saveSettings({ serverUrl: 'http://usage.test' });
+  const a = usage.startSession('intake-a');
+  usage.log({ type: 'page_view', page: 'A' });
+  // Replace: the old quote's close is logged, then the next intake's session starts at once.
+  usage.log({ type: 'intake_closed', reason: 'replaced' });
+  const b = usage.startSession('intake-b');
+  usage.log({ type: 'intake_loaded' });
+  // Clear: the close is logged, then the panel has no session.
+  usage.log({ type: 'intake_closed', reason: 'cleared' });
+  usage.restoreSession(null);
+  await usage.upload();
+  const events = requests.flatMap((r) => r.body.events);
+  assert.deepEqual(events.map((e) => [e.type, e.session, e.intakeId]), [
+    ['page_view', a.id, 'intake-a'],
+    ['intake_closed', a.id, 'intake-a'],
+    ['intake_loaded', b.id, 'intake-b'],
+    ['intake_closed', b.id, 'intake-b'],
+  ]);
+  const seqs = events.map((e) => e.seq);
+  assert.ok(seqs.every((n, i) => Number.isInteger(n) && n > 0 && (i === 0 || n === seqs[i - 1] + 1)), `numbered in order: ${seqs}`);
+  assert.ok(a.keySalt && b.keySalt && a.keySalt !== b.keySalt, 'each quote has its own key salt');
+  assert.ok(events.every((e) => !('keySalt' in e) && !JSON.stringify(e).includes(a.keySalt)), 'the salt never goes in an event');
+  usage.restoreSession({ id: 'saved-before-salts', intakeId: 'intake-c' });
+  assert.ok(usage.currentSession().keySalt, 'an older saved session gets a salt');
+  usage.restoreSession(null);
+});
+
+test('uploads are split to fit the server, and one event too large on its own is set aside', async () => {
+  let requests = fakeServer(stores);
+  await usage.saveSettings({ serverUrl: 'http://usage.test' });
+  // Three layouts of 400k characters: two fit in one request, the third goes in the next.
+  await usage.log(...[0, 1, 2].map((i) => ({ type: 'page_layout', page: `P${i}`, fields: [{ label: 'x'.repeat(400_000) }] })));
+  await usage.upload();
+  assert.deepEqual(requests.map((r) => r.body.events.length), [2, 1]);
+  assert.ok(requests.every((r) => r.chars < 1_100_000));
+  assert.equal(await usage.count(), 0);
+
+  // A server (or a proxy in front of it) with a smaller limit: fewer at a time until it fits.
+  const tooLarge = { ok: false, status: 413, json: async () => ({ error: 'request too large' }) };
+  requests = fakeServer((body) => (body.events.length > 2 ? tooLarge : stores(body)));
+  await usage.log(...[0, 1, 2, 3, 4].map((i) => ({ type: 'page_view', page: `Q${i}` })));
+  await usage.upload();
+  assert.deepEqual(requests.map((r) => r.body.events.length), [5, 3, 2, 2, 1]);
+  assert.equal(await usage.count(), 0);
+
+  requests = fakeServer((body) => (body.events.some((e) => e.page === 'huge') ? tooLarge : stores(body)));
+  await usage.log({ type: 'page_view', page: 'huge' }, { type: 'page_view', page: 'after' });
+  await usage.upload();
+  assert.deepEqual(requests.map((r) => r.body.events.map((e) => e.page)), [['huge', 'after'], ['huge'], ['after']]);
+  assert.equal(await usage.count(), 0, 'the queue is not stuck behind it');
+  await usage.upload();
+  assert.equal(requests.length, 3, 'set aside, not sent again');
+});
+
+test('a reply that does not account for every event sent keeps them in the queue', async () => {
+  let requests = fakeServer(() => ({ ok: true, status: 200, json: async () => { throw new SyntaxError('an HTML page'); } }));
+  await usage.saveSettings({ serverUrl: 'http://usage.test' });
+  await usage.log({ type: 'page_view', page: 'R1' }, { type: 'page_view', page: 'R2' });
+  await usage.upload();
+  assert.equal(await usage.count(), 2);
+  assert.equal(usage.lastUpload().state, 'error');
+
+  requests = fakeServer(() => ({ ok: true, status: 200, json: async () => ({ accepted: 1, duplicates: 0, rejected: [] }) }));
+  await usage.upload();
+  assert.equal(await usage.count(), 2, 'one event unaccounted for');
+
+  requests = fakeServer(() => ({ ok: true, status: 200, json: async () => ({ accepted: 1, duplicates: 0, rejected: [{ index: 7, error: 'x' }] }) }));
+  await usage.upload();
+  assert.equal(await usage.count(), 2, 'a refusal for an event that was not sent');
+
+  requests = fakeServer(() => ({ ok: true, status: 200, json: async () => ({ accepted: 0, duplicates: 0, rejected: [{ index: 0, error: 'x' }, { index: 0, error: 'x' }] }) }));
+  await usage.upload();
+  assert.equal(await usage.count(), 2, 'the same event refused twice leaves the other unaccounted for');
+
+  requests = fakeServer(() => ({ ok: true, status: 200, json: async () => ({ accepted: 3, duplicates: -1, rejected: [] }) }));
+  await usage.upload();
+  assert.equal(await usage.count(), 2, 'negative counts');
+
+  requests = fakeServer(stores);
+  await usage.upload();
+  assert.equal(await usage.count(), 0);
+  assert.equal(requests.length, 1);
+  assert.equal(usage.lastUpload().state, 'ok');
+});
+
+test('side panels in two windows share the stored log without losing events or reusing numbers', async () => {
+  // chrome.storage.local, slow enough that two unsynchronized writers would overwrite each other.
+  const data = {};
+  const later = () => new Promise((resolve) => setTimeout(resolve, 3));
+  globalThis.chrome = {
+    storage: { local: {
+      get: async (key) => { await later(); return { [key]: structuredClone(data[key]) }; },
+      set: async (items) => { await later(); Object.assign(data, structuredClone(items)); },
+    } },
+    runtime: { getManifest: () => ({ version: 'test' }) },
+  };
+  // Web Locks where this Node has none: one holder at a time, in request order.
+  const addedLocks = !globalThis.navigator?.locks;
+  if (addedLocks) {
+    let tail = Promise.resolve();
+    Object.defineProperty(globalThis.navigator, 'locks', { configurable: true, value: { request: (name, fn) => {
+      const run = tail.then(() => fn());
+      tail = run.catch(() => {});
+      return run;
+    } } });
+  }
+  try {
+    const [left, right] = await Promise.all(['left', 'right'].map((w) => import(`../sidepanel/usage-log.js?window=${w}`)));
+    left.startSession('intake-1');
+    right.startSession('intake-2');
+    await Promise.all([1, 2, 3].flatMap((i) => [left.log({ type: 'page_view', page: `L${i}` }), right.log({ type: 'page_view', page: `R${i}` })]));
+    const pages = data.usageLog.map((e) => e.page).sort();
+    assert.deepEqual(pages, ['L1', 'L2', 'L3', 'R1', 'R2', 'R3'], 'no event lost');
+    const seqs = data.usageLog.map((e) => e.seq);
+    assert.equal(new Set(seqs).size, seqs.length, `no number used twice: ${seqs}`);
+    assert.equal(data.usageSeq, Math.max(...seqs));
+  } finally {
+    delete globalThis.chrome;
+    if (addedLocks) delete globalThis.navigator.locks;
+  }
+});

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
+import { sha256Hex } from '../src/usage.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
@@ -305,7 +306,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }],
-    redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events) },
+    redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events), currentSession: () => null },
     runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
     pickListItem: async () => {}, retireAiOrigins: async () => {},
     afterFill: () => {},
@@ -1138,7 +1139,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
     const context = {
       state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
-      recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {} },
+      recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, retireAiOrigins: async () => {},
       afterFill: () => followUp, runPendingPage: () => {},
     };
@@ -1412,4 +1413,31 @@ test('a retired AI pick is unprotected in its own vehicle scope, not the active 
   assert.equal(await context.retireAiOrigins({ tabId: 1, tabUrl: state.tab.url, intake: state.intake, carrier }), true);
   assert.deepEqual([...state.agentKeys.get('AddVehicle|v0')], [], 'removed where the pick was made');
   assert.deepEqual([...state.agentKeys.get('AddVehicle|v1')], ['2CA7'], 'the active vehicle\'s own protection is untouched');
+});
+
+test('a page layout is logged again when only its choices or required questions change', async () => {
+  const logged = [];
+  let controls;
+  const record = { garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], trailers: [], drivers: [{}], coverage: {} };
+  const context = {
+    state: { tab: { id: 1, carrier: { id: 'progressive' } }, intake: { record }, active: {}, layoutsSent: new Set() },
+    sha256Hex, buildPlan: () => [], redactionTerms: () => [],
+    runKit: async () => [{ result: { controls, buttons: ['Continue'] } }],
+    usage: { currentSession: () => ({ id: 'quote-1' }), log: (e) => logged.push(e) },
+  };
+  vm.runInNewContext(extractFunction('recordLayout'), context);
+  const distance = (options, extra = {}) => ({ q: '2B9D', kind: 'select', label: 'Farthest distance', required: false, options, ...extra });
+  controls = [distance(['50 miles', '200 miles'])];
+  await context.recordLayout('Vehicles');
+  await context.recordLayout('Vehicles');
+  // The same first choices, but the list grew past what a capture keeps.
+  controls = [distance(['50 miles', '200 miles'], { optionsTruncated: true })];
+  await context.recordLayout('Vehicles');
+  controls = [distance(['50 miles', '200 miles', 'Unlimited'], { optionsTruncated: true })];
+  await context.recordLayout('Vehicles');
+  controls = [distance(['50 miles', '200 miles', 'Unlimited'], { optionsTruncated: true, required: true })];
+  await context.recordLayout('Vehicles');
+  assert.equal(logged.length, 4, 'an unchanged layout once; a change of choices, cut or required again');
+  assert.deepEqual(logged.map((e) => [e.fields[0].options.length, !!e.fields[0].required, !!e.fields[0].optionsTruncated]),
+    [[2, false, false], [2, false, true], [3, false, true], [3, true, true]]);
 });

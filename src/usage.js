@@ -87,6 +87,27 @@ export function redactor(terms) {
 // ---------------------------------------------------------------------------------------------
 // Events
 
+// The control, not only its question: a question repeated per vehicle row (`<q>@<row>`) or a
+// field without a question id keeps its own key, the same one in fill and change events. Keys are
+// element ids and names, redacted like labels in case a page ever builds one from client data. A
+// redacted key gets a digest under the quote's secret salt, so `owner_<one name>` and
+// `owner_<another>` stay two controls and a guessed name can't be checked; without a salt it's
+// left out rather than merged with others.
+function fieldKeyOf(key, redact, salt) {
+  if (!key) return null;
+  const raw = String(key);
+  const shown = redact(raw);
+  if (shown === raw) return raw;
+  return salt ? `${shown}#${digest(`${salt}|${raw}`)}` : null;
+}
+
+// FNV-1a (32 bits): tells a quote's keys apart; the salt is what keeps it from identifying anyone.
+function digest(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0).toString(16).padStart(8, '0');
+}
+
 // Values that look typed rather than picked from a list. If the recorder ever mistakes a typed
 // box for a dropdown (date pickers look like dropdowns), these still never reach the log.
 const LOOKS_TYPED = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|@|\d{5,}/;
@@ -94,16 +115,17 @@ const LOOKS_TYPED = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|@|\d{5,}/;
 /**
  * Turns one field change seen on the rater page into a log event.
  * @param {{key, q, label, kind, before, after, agent}} change  from the page recorder (raw values)
- * @param {{record, filled: Map, redact: Function, labels?: Map}} ctx  filled: field key -> what
- *   autofill put there; labels: field key -> question text as the fill engine read it (more
- *   reliable than the recorder's guess)
+ * @param {{record, filled: Map, redact: Function, labels?: Map, keySalt?: string}} ctx  filled: field
+ *   key -> what autofill put there; labels: field key -> question text as the fill engine read it
+ *   (more reliable than the recorder's guess); keySalt: the session's (see fieldKeyOf)
  */
-export function fieldChangeEvent(change, { record, filled, redact, labels }) {
+export function fieldChangeEvent(change, { record, filled, redact, labels, keySalt }) {
   const ours = filled.get(change.key) ?? null;
   const kind = change.kind !== 'text' && (LOOKS_TYPED.test(redact(change.before ?? '')) || LOOKS_TYPED.test(redact(change.after ?? ''))) ? 'text' : change.kind;
   const base = {
     type: 'field_change',
     q: change.q ?? null,
+    key: fieldKeyOf(change.key, redact, keySalt),
     label: redact(labels?.get(change.key) ?? change.label),
     kind,
     by: change.agent ? 'agent' : 'page',
@@ -128,7 +150,7 @@ export function fieldChangeEvent(change, { record, filled, redact, labels }) {
 }
 
 // Fill results, minus typed values (text boxes) and client names.
-export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms, redact }) {
+export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms, redact, keySalt }) {
   const all = (k) => frames.flatMap((f) => f[k] ?? []);
   const isChoice = (x) => x.controlKind && x.controlKind !== 'text';
   const events = [{
@@ -145,7 +167,7 @@ export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms,
     advanced: frames.find((f) => f.advanced)?.advanced ?? null,
   }];
   const item = (result) => (x) => ({
-    type: 'fill_field', carrier, page, result, q: x.q ?? null, label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
+    type: 'fill_field', carrier, page, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
     reason: x.reason ? redact(x.reason) : undefined,
     options: x.options?.map(redact),

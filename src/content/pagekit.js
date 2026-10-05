@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 41) return;
+  if (globalThis.__raterKit?.version === 42) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1444,8 +1444,7 @@
         selector: cssPath(c.el),
         required: c.required,
         section: r(sectionOf(c.el)),
-        // Agency staff / agent-code lists aren't page structure.
-        options: /agent|producer/i.test(c.label ?? '') ? [] : optionsOf(c).map((o) => r(o.text)).slice(0, 60),
+        ...captureOptions(c, r),
         wouldFill: matched.get(c) ?? null,
         pageHasValue: hasValue(c),
         // Which choice is picked (never text typed into boxes): shows which answers make
@@ -1458,6 +1457,14 @@
       customWidgets: deepQueryAll(document, '[role=combobox]:not(input):not(select), [role=listbox], [contenteditable=true]')
         .filter(isVisible).slice(0, 50).map((el) => ({ role: el.getAttribute('role') ?? 'contenteditable', label: r(labelFor(el)), selector: cssPath(el) })),
     };
+  }
+
+  // A captured field's choices, as the page has them loaded (never agency staff / agent-code
+  // lists, which aren't page structure). Long lists are cut, and say so.
+  const CAPTURE_OPTIONS = 250;
+  function captureOptions(c, r) {
+    const all = /agent|producer/i.test(c.label ?? '') ? [] : optionsOf(c);
+    return { options: all.slice(0, CAPTURE_OPTIONS).map((o) => r(o.text)), optionsTruncated: all.length > CAPTURE_OPTIONS || undefined };
   }
 
   function cssPath(el) {
@@ -1491,5 +1498,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 41, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 42, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

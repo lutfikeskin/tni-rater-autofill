@@ -49,6 +49,8 @@ export function buildLayouts(events) {
         caption: f.label,
         req: f.required || undefined,
         opts: dedupe([...(prev?.opts ?? []), ...(f.options ?? [])]),
+        // Some capture cut the list short (very long lists): the choices here aren't all of them.
+        optsTruncated: f.optionsTruncated || prev?.optsTruncated || undefined,
         mapped: f.mapped ?? prev?.mapped ?? null,
         seen: (prev?.seen ?? 0) + 1,
       });

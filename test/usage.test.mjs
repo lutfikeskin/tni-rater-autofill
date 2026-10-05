@@ -63,6 +63,24 @@ test('agent edits to text boxes are logged without the text', () => {
   assertNoClientData(typed);
 });
 
+test('change and fill events name the control, so repeated vehicle rows stay apart', () => {
+  const second = fieldChangeEvent({ key: '2B9D@2', q: '2B9D', label: 'Farthest distance', kind: 'select', before: '', after: '500 miles', agent: true }, { record, filled: new Map(), redact });
+  assert.deepEqual([second.q, second.key], ['2B9D', '2B9D@2']);
+  // A key with client data is redacted, and a digest under the session's secret salt keeps two
+  // such controls apart. Without a salt the key is left out rather than merged with the other.
+  const owner = (key, keySalt) => fieldChangeEvent({ key, label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact, keySalt }).key;
+  const [jordan, casey] = [owner('owner_Jordan', 'salt-1'), owner('owner_Casey', 'salt-1')];
+  assert.match(jordan, /^owner_\[client\]#[0-9a-f]{8}$/);
+  assert.notEqual(jordan, casey);
+  assert.equal(owner('owner_Jordan', 'salt-1'), jordan, 'the same control keeps its key within the quote');
+  assert.notEqual(owner('owner_Jordan', 'salt-2'), jordan, 'another quote\'s salt gives another digest');
+  assert.equal(owner('owner_Jordan'), null);
+  assertNoClientData({ jordan, casey });
+  assert.equal(owner('2B9D@2', 'salt-1'), '2B9D@2', 'keys without client data stay as they are');
+  const [, filled] = fillEvents([{ filled: [{ key: '2B9D@3', q: '2B9D', label: 'Farthest distance', controlKind: 'select', shown: '500 miles' }] }], { carrier: 'progressive', page: 'Rates', overwrite: false, ms: 1, redact });
+  assert.deepEqual([filled.q, filled.key], ['2B9D', '2B9D@3']);
+});
+
 test('dropdown changes keep the option text, minus client names', () => {
   const filled = new Map([['2B9D', { path: 'progressive.q2B9D', shown: 'More than 500 miles' }]]);
   const e = fieldChangeEvent({ key: '2B9D', q: '2B9D', label: 'Farthest distance', kind: 'select', before: 'More than 500 miles', after: '500 miles', agent: true }, { record, filled, redact });
