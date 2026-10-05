@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 43 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 44 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -912,7 +912,8 @@
   // anything the page changes later is given again (see `refill`).
   // `doneSteps`: steps of a one-address application (stepKey) already continued from: a step the
   // agent goes back to is theirs, never continued again.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [] } = {}) {
+  // `stopPages`: pages where the carrier has stopped the quote: nothing is filled or clicked there.
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [] } = {}) {
     const skipKeys = new Set(skip);
     const quiet = new Set(optional);
     const actions = plan.filter((s) => s.kind === 'action');
@@ -937,6 +938,11 @@
     if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
     const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], halted: false, rounds: 0 };
+    if (stopPages.includes(startPage)) {
+      report.halted = true;
+      report.reason = 'The carrier stopped this quote on this page: nothing is filled or clicked here.';
+      return report;
+    }
     const serverBacked = !!ext();
     let pendingAction = null;
     let progressed = false; // did the last round fill or click anything?
@@ -1505,5 +1511,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 43, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 44, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

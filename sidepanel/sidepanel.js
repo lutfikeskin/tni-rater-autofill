@@ -151,7 +151,7 @@ function aiAnswerOrigin(frames, x, answerFrame) {
 
 function aiActionCurrent(ctx, list) {
   return !!ctx.intake && state.intake === ctx.intake && state.tab?.id === ctx.tabId
-    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page
+    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page && !state.tab?.carrier?.stopPages?.[ctx.page]
     && list.every(x => [...state.aiCache.values()].includes(x));
 }
 
@@ -956,13 +956,15 @@ const fillOptions = (carrier, extra = {}) => ({
   // Add NTL done on this intake's quote survives a panel reload (its removal hold depends on it).
   doneActions: [...state.doneActions, ...(state.intake?.ntlAdded ? ['addNtl'] : [])],
   visitedPages: [...state.visitedPages],
+  // The carrier's own stop (see showStopPage): the page kit refuses to fill or click there too.
+  stopPages: Object.keys(carrier.stopPages ?? {}),
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
   skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
   ...extra,
 });
 
 function scheduleAutoFill(page) {
-  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage()) return;
+  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || state.tab?.carrier?.stopPages?.[page]) return;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
   state.autoTimer = setTimeout(() => autoFill(page), 600);
@@ -971,6 +973,7 @@ function scheduleAutoFill(page) {
 async function autoFill(page) {
   // The client may have been cleared while this fill was waiting to run.
   if (state.autoPaused || state.filling || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
+  if (state.tab.carrier.stopPages?.[page]) return;
   const { id: tabId, carrier } = state.tab;
   await pickListItem(carrier, page);
   state.filling = true;
@@ -1011,6 +1014,8 @@ async function autoFill(page) {
     state.filling = false;
     if (state.autoPending) scheduleAutoFill(page);
   }
+  // The page moved on to a stop page while this ran: its card stays on top of this fill's report.
+  if (state.tab?.carrier?.stopPages?.[pageOf(state.tab?.url)]) showStopPage();
   runPendingPage();
   if (assistFrames) assistAfterFill(assistFrames, { tabId, page, carrier }, followUp);
 }
@@ -1321,17 +1326,47 @@ function renderSite() {
   $('recording').hidden = !state.intake || !!carrier?.practice;
   site.title = title;
   site.classList.toggle('on', !!carrier);
-  const canFill = inExtension && !!carrier && !!state.intake;
+  const stopped = !!carrier?.stopPages?.[pageOf(state.tab?.url)];
+  const canFill = inExtension && !!carrier && !!state.intake && !stopped;
   $('fill').disabled = !canFill || state.filling;
   if (!state.filling) $('fill').textContent = state.autoPages.has(pageOf(state.tab?.url)) ? 'Fill this page again' : 'Fill this page';
   $('capture').disabled = !(inExtension && carrier);
   $('fill-hint').textContent = !inExtension
     ? 'Filling works when this runs as the Chrome extension.'
+    : stopped ? 'The carrier stopped this quote. Nothing on this page is filled or clicked.'
     : carrier && state.tab.background ? 'Working on the quote tab in the background. Fill this page fills that tab; go back to it to review.'
     : carrier ? 'Nothing is submitted. Review the page, then click Next yourself.'
       : noAccess
         ? "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page."
         : 'Open a Progressive, GEICO or AmWINS quote page to fill it.';
+  showStopPage();
+}
+
+// Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client
+// already has a commercial auto policy with Progressive). Nothing is filled or clicked there,
+// automatically or on request, and Luna isn't asked; the panel says why at the top and the page
+// is the agent's. Logged once per arrival (no client data: the page name only).
+function showStopPage() {
+  const carrier = state.tab?.carrier;
+  const page = pageOf(state.tab?.url);
+  const note = state.intake ? carrier?.stopPages?.[page] : null;
+  const key = note ? `${state.tab.id}|${page}` : null;
+  if (!note) {
+    // Left the stop page (the agent went back): its card goes too.
+    if (state.stopShown) { state.stopShown = null; $('report').replaceChildren(); }
+    return;
+  }
+  clearTimeout(state.autoTimer);
+  state.autoPending = false;
+  state.pagePending = null;
+  const box = $('report');
+  box.className = 'report';
+  box.replaceChildren(
+    h('div', { class: 'agent-page stop-page', role: 'alert' }, h('b', {}, `${carrier.name} stopped this quote`), h('p', {}, note)),
+    h('p', { class: 'muted small' }, 'Nothing was filled or clicked on this page, and nothing will be. Fill this page is off here.'));
+  if (state.stopShown === key) return;
+  state.stopShown = key;
+  if (!carrier.practice) usage.log({ type: 'fill_run', carrier: carrier.id, page, auto: 'stop', fields: 0, filled: 0, clicked: [], blockers: 1, blockerList: [`stop: ${page}`], advanced: null });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1351,6 +1386,8 @@ async function runKit(tabId, carrier, func, args = []) {
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 async function fillPage({ auto = false } = {}) {
+  // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
+  if (state.intake && state.tab?.carrier?.stopPages?.[pageOf(state.tab.url)]) { showStopPage(); return; }
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }

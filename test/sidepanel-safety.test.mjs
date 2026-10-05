@@ -1998,3 +1998,92 @@ test('a page whose last question goes away logs its empty layout, so the questio
   await context.recordLayout('Vehicles', 'appeared');
   assert.deepEqual(logged.map((e) => [e.reason, e.fields.length]), [['arrived', 1], ['removed', 0], ['appeared', 1]]);
 });
+
+// 2026-10-05: Progressive showed DeclinationNotice after Business Owner Info (the client already
+// has a commercial auto policy with Progressive). The quote stops there: nothing filled, nothing
+// clicked, Luna not asked, and the agent is told why.
+function stopHarness(page = 'DeclinationNotice') {
+  const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
+  const report = { className: '', children: [], replaceChildren(...next) { this.children = next; } };
+  const ui = { report, 'auto-followups': { checked: true }, 'auto-pages': { checked: true }, 'auto-advance': { checked: true } };
+  const carrier = { id: 'progressive', name: 'Progressive', stopPages: { DeclinationNotice: 'Progressive says this client already has a commercial auto policy with Progressive.' } };
+  const record = { applicant: { name: 'Synthetic Client LLC' } };
+  const state = {
+    intake: { record }, tab: { id: 4, url: `https://clpolicy.foragentsonly.com/Express/Default.aspx?pageName=${page}`, carrier },
+    autoPages: new Set(['DeclinationNotice', 'BusinessOwnerInfo']), autoPaused: false, filling: false, autoTimer: null, autoPending: false,
+    pagePending: null, agentKeys: new Map(), aiCache: new Map(), active: {},
+  };
+  const logged = [], kits = [], timers = [];
+  const context = {
+    state, URL, h: node, $: (id) => ui[id], onQuotePage: () => true,
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
+    usage: { log: (...events) => logged.push(...events) },
+    runKit: async (...args) => { kits.push(args); return []; }, tellRecorder: async () => {}, ensureRecorder: async () => {},
+    pickListItem: async () => {}, retireAiOrigins: async () => {}, buildPlan: () => [], fillOptions: () => ({}),
+  };
+  vm.runInNewContext(`${PAGE_HELPERS}\n${['showStopPage', 'fillPage', 'scheduleAutoFill', 'autoFill', 'aiActionCurrent'].map(extractFunction).join('\n')}`, context);
+  return { state, context, report, logged, kits, timers, carrier };
+}
+
+test('on a carrier stop page nothing is filled, clicked or scheduled, manual or automatic, and Luna is not asked', async () => {
+  const t = stopHarness();
+  await t.context.fillPage({ auto: 'page' });
+  await t.context.fillPage();
+  t.context.scheduleAutoFill('DeclinationNotice');
+  await t.context.autoFill('DeclinationNotice');
+  assert.deepEqual(t.kits, [], 'the page kit is never run on the stop page');
+  assert.deepEqual(t.timers, [], 'no follow-up fill is scheduled');
+  assert.equal(t.state.filling, false);
+  assert.equal(t.state.pagePending, null);
+  // A fill already running when the page opens doesn't queue the stop page for afterwards.
+  t.state.filling = true;
+  await t.context.fillPage({ auto: 'page' });
+  assert.equal(t.state.pagePending, null);
+  t.state.filling = false;
+  // Luna's suggestions (asking or applying) are never current on the stop page.
+  const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: 'DeclinationNotice' };
+  assert.equal(t.context.aiActionCurrent(ctx, []), false);
+  // The panel says why, prominently.
+  const text = JSON.stringify(t.report.children);
+  assert.match(text, /Progressive stopped this quote/);
+  assert.match(text, /already has a commercial auto policy with Progressive/);
+  assert.match(text, /"role":"alert"/);
+});
+
+test('a stop page is logged once per arrival as a fill_run blocker, without client data', async () => {
+  const t = stopHarness();
+  t.context.showStopPage();
+  await t.context.fillPage();
+  t.context.showStopPage();
+  assert.equal(t.logged.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(t.logged[0])), { type: 'fill_run', carrier: 'progressive', page: 'DeclinationNotice', auto: 'stop', fields: 0, filled: 0, clicked: [], blockers: 1, blockerList: ['stop: DeclinationNotice'], advanced: null });
+  assert.doesNotMatch(JSON.stringify(t.logged), /Synthetic Client/);
+  // The agent goes back: the card goes, and coming to the page again is a new arrival.
+  t.state.tab = { ...t.state.tab, url: t.state.tab.url.replace('DeclinationNotice', 'BusinessOwnerInfo') };
+  t.context.showStopPage();
+  assert.deepEqual(t.report.children, []);
+  t.state.tab = { ...t.state.tab, url: t.state.tab.url.replace('BusinessOwnerInfo', 'DeclinationNotice') };
+  t.context.showStopPage();
+  assert.equal(t.logged.length, 2);
+  // Practice pages are never logged.
+  const practice = stopHarness();
+  practice.carrier.practice = true;
+  practice.context.showStopPage();
+  assert.deepEqual(practice.logged, []);
+});
+
+test('pages that are not stop pages are still filled and followed up', async () => {
+  const t = stopHarness('BusinessOwnerInfo');
+  t.context.scheduleAutoFill('BusinessOwnerInfo');
+  assert.equal(t.timers.length, 1, 'a follow-up fill is scheduled as before');
+  const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: 'BusinessOwnerInfo' };
+  assert.equal(t.context.aiActionCurrent(ctx, []), true);
+  t.context.showStopPage();
+  assert.deepEqual(t.logged, []);
+});
+
+test('the fill options hand the carrier\'s stop pages to the page kit', () => {
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
+  assert.match(body, /stopPages: Object\.keys\(carrier\.stopPages \?\? \{\}\)/);
+});

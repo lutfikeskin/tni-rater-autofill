@@ -533,3 +533,12 @@ test('Rates waits for an unanswered NTL mention, and an NTL quote keeps Continue
   flagged.coverage.ntl = false;
   assert.ok(!ids(flagged).includes('ntlDecide') && ids(flagged).includes('billPlan'), 'answered No: a normal quote');
 });
+
+test('DeclinationNotice is a stop page: the agent is told the client already has Progressive commercial auto', () => {
+  const note = progressive.stopPages?.DeclinationNotice;
+  assert.match(note, /already has a commercial auto policy with Progressive/);
+  assert.match(note, /stops here/);
+  // Only that page: the quote pages around it are filled as before.
+  assert.deepEqual(Object.keys(progressive.stopPages), ['DeclinationNotice']);
+  assert.ok(!progressive.actions.some((a) => [].concat(a.page ?? []).includes('DeclinationNotice')), 'no helper button belongs to it');
+});
