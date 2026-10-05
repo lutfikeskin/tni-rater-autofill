@@ -13,7 +13,7 @@ import { normalizeIntake } from '../src/normalize.js';
 import { buildPlan } from '../src/plan.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { progressive } from '../src/carriers/progressive.js';
-import { collectItems } from '../src/ai/assist.js';
+import { collectItems } from '../src/ai/common.js';
 import { STATES } from '../src/util.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

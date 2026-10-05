@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectItems, AssistError, LEAVE } from '../src/ai/assist.js';
+import { collectItems, AssistError, LEAVE } from '../src/ai/common.js';
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
   DEFAULT_MODEL, API_URL } from '../src/ai/luna.js';
 import { settingsFrom } from '../src/ai/providers.js';
@@ -314,19 +314,19 @@ test('usage counters ignore malformed values and reasoning is already included i
   assert.equal(result.modelCalls, 2);
 });
 
-test('provider keys and opt-in automatic selection are isolated', () => {
-  const legacy = { aiOn: true, aiAuto: true, aiKey: 'legacy', jevKey: 'typesafe', lunaKey: 'openai' };
-  assert.equal(settingsFrom(legacy).provider, 'jev');
-  const cfg = settingsFrom({ ...legacy, aiProvider: 'luna' });
-  assert.equal(cfg.apiKey, 'openai');
-  assert.equal(cfg.auto, false);
-  assert.equal(cfg.model, DEFAULT_MODEL);
-  assert.equal(settingsFrom({ ...legacy, aiProvider: 'luna', lunaAuto: true }).auto, true);
-  assert.equal(settingsFrom({ aiProvider: 'jev', lunaAuto: true }).auto, false);
-  assert.equal(settingsFrom({ ...legacy, aiProvider: 'jev', lunaAuto: false }).auto, true);
-  assert.equal(settingsFrom().auto, false);
+test('Luna settings ignore legacy providers and use only Luna opt-in fields', () => {
+  const legacy = { aiOn: true, aiAuto: true, aiKey: 'legacy', jevKey: 'typesafe', jevModel: 'jev-old', lunaKey: 'openai' };
+  assert.deepEqual(settingsFrom(legacy), {
+    provider: 'luna', on: true, auto: false, apiKey: 'openai', model: DEFAULT_MODEL,
+  });
+  assert.deepEqual(settingsFrom({ ...legacy, lunaAuto: true, aiProvider: 'jev' }), {
+    provider: 'luna', on: true, auto: true, apiKey: 'openai', model: DEFAULT_MODEL,
+  });
+  assert.deepEqual(settingsFrom({ aiProvider: 'jev', jevKey: 'typesafe', jevModel: 'jev-old' }), {
+    provider: 'luna', on: false, auto: false, apiKey: '', model: DEFAULT_MODEL,
+  });
   assert.equal(settingsFrom({ aiProvider: 'luna', aiKey: 'legacy', jevKey: 'typesafe' }).apiKey, '');
-  assert.equal(settingsFrom({ aiProvider: 'jev', lunaKey: 'openai' }).apiKey, '');
+  assert.equal(settingsFrom({ lunaKey: 'openai', lunaAuto: 'true' }).auto, false);
 });
 
 test('HTTP integration sends the key only to OpenAI and hides provider errors', async () => {

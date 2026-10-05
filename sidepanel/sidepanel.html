@@ -148,14 +148,12 @@
   <section id="agent-popover" class="agent-popover" role="dialog" aria-modal="false" aria-labelledby="agent-title" tabindex="-1" hidden>
     <div class="popover-head"><h2 id="agent-title">Agent options</h2><button type="button" id="close-agent" class="icon-btn" aria-label="Close agent options"><svg aria-hidden="true"><use href="#close"/></svg></button></div>
     <div class="selected-agent"><span class="agent-avatar"><svg aria-hidden="true"><use href="#brain"/></svg></span><div><div class="agent-name"><b id="agent-name">GPT-6 Luna</b> <span>Current agent</span></div><p><span id="agent-provider">OpenAI</span> · <span id="agent-model">gpt-6-luna</span></p></div><svg class="selected-check" aria-hidden="true"><use href="#check"/></svg></div>
-    <label class="field-stack">Agent<select id="ai-provider"><option value="luna">GPT-6 Luna · OpenAI</option><option value="jev">Jev · TypeSafe AI</option></select></label>
     <label class="agent-option option"><span><b>Assistant enabled</b><small>Suggest answers for questions left for me.</small></span><input id="ai-on" type="checkbox" role="switch" class="plain-switch"></label>
     <div id="agent-status" class="agent-status" aria-live="polite"><span class="status-dot"></span><p id="ai-note"></p></div>
     <label id="ai-auto-option" class="auto-option option"><span><b>Apply verified choices automatically</b><small>Evidence-checked choices are marked purple; you approve them before Continue.</small></span><input id="ai-auto" type="checkbox" role="switch" class="plain-switch"></label>
     <details id="ai-connection" class="connection"><summary>Connection &amp; model <svg aria-hidden="true"><use href="#arrow"/></svg></summary><div class="connection-body">
-      <label id="jev-key-row" class="field-stack">TypeSafe API key<input id="ai-key" type="password" placeholder="TypeSafe API key" autocomplete="off"></label>
       <label id="luna-key-row" class="field-stack">OpenAI API key<input id="ai-openai-key" type="password" placeholder="OpenAI API key" autocomplete="off"></label>
-      <label class="field-stack">Model<input id="ai-model" type="text" placeholder="jev-1.13.0" autocomplete="off" spellcheck="false"></label>
+      <label class="field-stack">Model<input id="ai-model" type="text" value="gpt-6-luna" disabled readonly></label>
     </div></details>
     <p id="ai-privacy" class="agent-note">Relevant intake facts and TNI rules are sent to OpenAI with your key. Missing facts stay unanswered. Keys are saved on this device.</p>
   </section>

@@ -7,7 +7,8 @@ import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import * as usage from './usage-log.js';
-import { collectItems, AssistError, POLICY_VERSION, assistContextKey } from '../src/ai/assist.js';
+import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
+import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest } from '../src/ai/providers.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
@@ -194,7 +195,7 @@ const state = {
   // Which screen shows: Settings over everything; otherwise the start screen or the quote, on
   // its Check intake or Fill pages step.
   settingsOpen: false,
-  // The Jev controls are available from the brain button even while the Settings screen is
+  // The Luna controls are available from the brain button even while the Settings screen is
   // hidden. Keep the opening trigger so Escape and the close button return focus
   // to the control the agent used.
   agentPopoverOpen: false,
@@ -255,7 +256,6 @@ function aiPendingRecord(sig, x, scope) {
     snapshotHash: x.snapshotHash ?? (x.snapshots ? snapshotFingerprint(x.snapshots) : null),
     origin: aiOriginRecord(x.origin),
     originAmbiguous: !!x.originAmbiguous,
-    confidence: Number.isFinite(x.confidence) ? x.confidence : null,
   };
 }
 
@@ -286,12 +286,14 @@ async function restoreAiPending() {
   for (const x of records) {
     const sig = aiCacheSignature(x);
     if (state.aiCache.has(sig)) continue;
+    const retired = x.model !== DEFAULT_MODEL || x.policy !== POLICY_VERSION;
     state.aiCache.set(sig, {
-      ...x, restored: true, pendingScope: x.scope, pendingLabel: x.label, pendingChoice: x.choice,
-      done: 'auto', approved: !!x.approved, rejected: !!x.rejected,
+      ...x, restored: true, retired, provider: 'luna', pendingScope: x.scope,
+      pendingLabel: x.label, pendingChoice: x.choice, done: 'auto', approved: !!x.approved,
+      rejected: !!x.rejected || (retired && !x.approved && !x.manual && !x.confirmed),
       manual: !!x.manual, confirmed: !!x.confirmed, tip: '', checks: [], leave: false,
       origin: aiOriginRecord(x.origin), originAmbiguous: !!x.originAmbiguous,
-      applyable: true, autoOk: true, contextKey: null, snapshots: null,
+      applyable: true, autoOk: !retired, contextKey: null, snapshots: null,
     });
   }
   if (valid.length !== all.length) await aiPendingStore.set(valid);
@@ -578,9 +580,9 @@ function setStep(step) {
 
 function openSettings(focusId = null) {
   // The assistant connection fields live in the agent popover now. Setup notices still call
-  // openSettings('ai-key'/'ai-model'), so route those requests to the visible controls instead of
+  // openSettings('ai-openai-key'), so route those requests to the visible controls instead of
   // opening a Settings screen whose fields may be hidden behind the popover.
-  if (focusId === 'ai-key' || focusId === 'ai-openai-key' || focusId === 'ai-model') {
+  if (focusId === 'ai-openai-key' || focusId === 'ai-model') {
     state.settingsOpen = false;
     showScreen();
     openAgentPopover({ trigger: state.agentPopoverTrigger || $('agent-btn'), focusId });
@@ -1299,9 +1301,8 @@ async function capturePage() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// AI assistant (src/ai/assist.js): after a fill, suggests answers for the questions left for the
-// agent. Suggestions go in only when the agent accepts them, or, with "Let the AI select answers
-// it's sure of", when the answer comes straight from the intake or a written TNI rule.
+// Luna assistant: after a fill, suggests answers for the questions left for the agent.
+// Verified choices can be applied automatically, but Continue waits for explicit agent review.
 
 async function aiSettings() {
   return settingsFrom(await usage.settings());
@@ -1332,7 +1333,7 @@ async function runAssist(frames, ctx) {
   }
   if (head) head.before(holder); else $('report').append(holder);
   if (!cfg.apiKey) {
-    holder.append(h('p', { class: 'muted small' }, `${provider.name} needs ${cfg.provider === 'luna' ? 'an OpenAI' : 'a TypeSafe'} API key. Add it in Agent options.`));
+    holder.append(h('p', { class: 'muted small' }, `${provider.name} needs an OpenAI API key. Add it in Agent options.`));
     return;
   }
   const run = ++state.aiRun;
@@ -1344,7 +1345,7 @@ async function runAssist(frames, ctx) {
     || ctx.contextKey !== assistContextKey(state.intake?.record, state.active) || !holder.isConnected;
   // Reuse an answer for the same question (as the page shows it now) in the same intake and
   // driver/vehicle, model and policy. Not keyed on the rest of the page: every automatic
-  // follow-up fill changes that, which asked Jev again each time. Putting an answer in still
+  // follow-up fill changes that, which asked the assistant again each time. Putting an answer in still
   // checks the page snapshot (applyAi), and approving checks it again.
   const onPage = frames.flatMap(f => f.filled ?? []).map(x => ({ question: x.label, answer: x.shown, controlKind: x.controlKind }));
   const contextHash = aiFingerprint(ctx.contextKey);
@@ -1543,8 +1544,7 @@ function aiDecisionEvent(x, ctx, decision) {
   return {
     type: 'ai_decision', carrier: ctx.carrier.id, page: ctx.page, q: x.q ?? null, label: redact(x.label), controlKind: x.controlKind,
     decision, choice: x.controlKind !== 'text' && x.choice ? redact(x.choice) : undefined,
-    model: x.model, policy: x.policy, probability: x.probability, support: x.support, evidenceProbability: x.evidenceProbability,
-    confidence: x.confidence, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
+    model: x.model, policy: x.policy, basis: x.basis, intakePath: x.intakePath, reason: x.error ? redact(x.error) : undefined,
   };
 }
 
@@ -1645,15 +1645,14 @@ function renderAi(holder, suggestions, ctx) {
       && aiActionCurrent(ctx, list)) fillPage();
   };
   const why = (x) => [
-    x.provider === 'luna' ? `cited evidence: ${x.evidenceSources.map(source => source.basis === 'intake' ? source.path : 'TNI rule').join(', ')}`
-      : x.basis === 'intake' ? `from the intake: ${x.intakePath}` : x.basis === 'tni_rule' ? 'TNI rule' : x.basis === 'page' ? 'from other answers on the page' : x.basis === 'judgement' ? 'AI judgement' : null,
-    x.provider === 'luna' ? 'Luna evidence check passed · agent review required' : `Jev confidence ${Math.round(x.confidence * 100)}% (not measured accuracy)`,
+    x.evidenceSources?.length ? `cited evidence: ${x.evidenceSources.map(source => source.basis === 'intake' ? source.path : 'TNI rule').join(', ')}` : null,
+    'Luna evidence check passed · agent review required',
   ].filter(Boolean).join(' · ');
   const answer = (x) => (x.controlKind === 'text' ? `typing “${x.choice}”` : `“${x.choice}”`);
   // What goes on an item: the suggestion and its buttons, or what happened to it.
   const box = (x) => {
     if (x.manual) return h('div', { class: 'ai-done' }, 'You changed this answer on the page.');
-    if (x.rejected) return h('div', { class: 'ai-done bad' }, x.confirmError ?? 'AI answer rejected: answer it on the page.');
+    if (x.rejected) return h('div', { class: 'ai-done bad' }, x.confirmError ?? (x.retired ? 'Saved answer from a retired assistant: review the current page answer.' : 'AI answer rejected: answer it on the page.'));
     if (x.error) return h('div', { class: 'ai-done bad' }, `The page didn't take the AI answer (${x.error}). Answer it on the page.`);
     if (x.done === 'auto' && !x.approved) return h('div', { class: 'ai-box' }, h('div', { class: 'ai-says' }, 'Picked by the AI: ', h('b', {}, x.choice)), h('div', { class: 'ai-tip' }, 'Approve or reject it above.'));
     if (x.done) return h('div', { class: 'ai-done' }, h('b', {}, '✓'), h('span', { class: 'grow' }, `Put in ${answer(x)} (purple on the page). Change it on the page if needed.`));
@@ -1690,6 +1689,7 @@ function renderAi(holder, suggestions, ctx) {
         : canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.'),
       h('ul', {}, pending.map((x) => h('li', {},
         h('span', {}, h('b', {}, x.label), ' ← ', x.choice,
+          x.retired ? h('span', { class: 'small muted' }, ' (saved by a retired assistant; review the current page answer)') : null,
           (x.contextKey ? x.contextKey !== current : x.contextHash !== currentHash) ? h('span', { class: 'small muted' }, ' (picked before you changed the intake or the driver/vehicle)') : null),
         x.rejected
           ? h('button', { type: 'button', class: 'link small ai-reject', onclick: () => confirmRejected([x]) }, 'Confirm the current page answer')
@@ -1728,7 +1728,7 @@ function wireAgentPopover() {
 function wireAi() {
   const save = async patch => {
     state.aiRun++;
-    if (Object.hasOwn(patch, 'jevKey') || Object.hasOwn(patch, 'lunaKey')) {
+    if (Object.hasOwn(patch, 'lunaKey')) {
       for (const [key, value] of state.aiCache) if (!value.done) state.aiCache.delete(key);
     }
     // Keep pending approvals; their cache keys remain bound to the original model and context.
@@ -1736,14 +1736,8 @@ function wireAi() {
     await renderAiSettings();
   };
   $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
-  $('ai-auto').addEventListener('change', (e) => {
-    const provider = PROVIDERS[$('ai-provider').value];
-    save({ [provider.autoSetting]: e.target.checked });
-  });
-  $('ai-key').addEventListener('change', (e) => save({ jevKey: e.target.value.trim() }));
+  $('ai-auto').addEventListener('change', (e) => save({ lunaAuto: e.target.checked }));
   $('ai-openai-key').addEventListener('change', (e) => save({ lunaKey: e.target.value.trim() }));
-  $('ai-provider').addEventListener('change', (e) => save({ aiProvider: e.target.value }));
-  $('ai-model').addEventListener('change', (e) => save({ jevModel: e.target.value.trim() }));
 }
 
 async function renderAiSettings() {
@@ -1751,17 +1745,13 @@ async function renderAiSettings() {
   const provider = PROVIDERS[cfg.provider];
   const saved = await usage.settings();
   $('ai-on').checked = cfg.on;
-  $('ai-provider').value = cfg.provider;
   $('ai-auto').checked = cfg.auto;
   $('ai-auto').disabled = !cfg.on || !provider.automatic;
   $('ai-auto-option').hidden = !provider.automatic;
-  $('jev-key-row').hidden = cfg.provider !== 'jev';
-  $('luna-key-row').hidden = cfg.provider !== 'luna';
-  if (document.activeElement !== $('ai-key')) $('ai-key').value = saved.jevKey || '';
   if (document.activeElement !== $('ai-openai-key')) $('ai-openai-key').value = saved.lunaKey || '';
-  $('ai-model').disabled = cfg.provider === 'luna';
+  $('ai-model').disabled = true;
   $('ai-model').placeholder = provider.defaultModel;
-  if (document.activeElement !== $('ai-model')) $('ai-model').value = cfg.model === provider.defaultModel ? '' : cfg.model;
+  if (document.activeElement !== $('ai-model')) $('ai-model').value = cfg.model;
   $('agent-btn').dataset.on = String(cfg.on);
   $('agent-btn').title = cfg.on
     ? (cfg.apiKey ? `${provider.name} assistant on · ${cfg.model}` : `${provider.name} assistant on · ${provider.keyLabel} needed`)
@@ -1813,7 +1803,7 @@ async function renderHealth({ n, agent, serverUrl, up }) {
   // Things the agent fixes (one card, a button each) and things that need nothing from them.
   const setup = [
     !agent && { title: 'Add your initials', text: 'So your quotes are counted as yours.', button: 'Add', go: () => openSettings('agent') },
-    ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: `They're turned on, but no ${PROVIDERS[ai.provider].keyLabel} is set.`, button: 'Add key', go: () => openSettings(ai.provider === 'luna' ? 'ai-openai-key' : 'ai-key') },
+    ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: `They're turned on, but no ${PROVIDERS[ai.provider].keyLabel} is set.`, button: 'Add key', go: () => openSettings('ai-openai-key') },
     up.state === 'off' && { title: 'Usage log has no server', text: 'Nothing is recorded centrally (Export log only).', button: 'Set up', go: () => openSettings('server-url') },
   ].filter(Boolean);
   const info = up.state === 'error'
@@ -1943,7 +1933,7 @@ async function init() {
   state.active = (await store.get('active')) ?? state.active;
   usage.restoreSession((await store.get('session')) ?? null);
   await restoreAiPending();
-  const saved = await usage.settings();
+  const saved = await usage.migrateAssistantSettings();
   $('auto-followups').checked = saved.autoFollowUps ?? true;
   $('auto-pages').checked = saved.autoPages ?? false;
   $('auto-advance').checked = saved.autoAdvance ?? true;

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { assistContextKey } from '../src/ai/assist.js';
+import { assistContextKey } from '../src/ai/common.js';
+import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
@@ -404,6 +405,49 @@ test('legacy in-memory holds require a fresh unique sender frame', async () => {
   finish(fresh);
   assert.equal(await pending, false, 'a cleared intake cannot be settled by a late snapshot');
   assert.equal(legacy.manual, false);
+});
+
+test('retired assistant decisions retain their hold and require current-answer review', async () => {
+  const record = { scope: 'intake', tabId: 1, page: 'Quote', model: 'retired-model', policy: 'retired-policy',
+    contextHash: 'context', itemHash: 'item', key: 'choice', label: 'Choice', choice: 'No', done: 'auto' };
+  const state = { tab: { id: 1, carrier: {} }, aiCache: new Map() };
+  const fresh = [{ frameId: 0, documentId: 'doc-0', result: JSON.stringify(['Quote', [{ key: 'choice', label: 'Choice', current: 'No' }]]) }];
+  const context = { state, aiFingerprint: JSON.stringify, runKit: async () => fresh, DEFAULT_MODEL, POLICY_VERSION, usage: { currentSession: () => ({ intakeId: 'intake' }) },
+    aiPendingStore: { get: async () => [record], set: async () => {} }, persistAiPending: () => {} };
+  vm.createContext(context);
+  vm.runInContext(['aiOriginRecord', 'aiSnapshotFields', 'aiQuestionHash', 'aiCacheSignature', 'restoreAiPending', 'aiDecisionBlocks', 'pendingAi', 'settleRejectedAi']
+    .map(extractFunction).join('\n'), context);
+  await context.restoreAiPending();
+  const restored = [...state.aiCache.values()][0];
+  assert.equal(restored.retired, true);
+  assert.equal(restored.autoOk, false, 'old model verification cannot qualify as Luna verification');
+  assert.equal(restored.rejected, true, 'explicit confirmation or a manual correction is required');
+  assert.equal(context.pendingAi(1, 'Quote').length, 1);
+  const sender = { frameId: 0, documentId: 'doc-0' };
+  assert.equal(await context.settleRejectedAi('Quote', [{ key: 'unrelated', label: 'Other' }], sender), false);
+  assert.equal(context.pendingAi(1, 'Quote').length, 1);
+  assert.equal(await context.settleRejectedAi('Quote', [{ key: 'choice', label: 'Choice' }], sender), true);
+  assert.equal(context.pendingAi(1, 'Quote').length, 0);
+});
+
+test('current Luna decisions and completed retired corrections retain their review state', async () => {
+  const base = { scope: 'intake', tabId: 1, page: 'Quote', contextHash: 'context', key: 'choice', done: 'auto' };
+  const records = [{ ...base, model: DEFAULT_MODEL, policy: POLICY_VERSION, itemHash: 'current' },
+    { ...base, model: 'retired-model', policy: 'retired-policy', itemHash: 'manual', manual: true },
+    { ...base, model: 'retired-model', policy: 'retired-policy', itemHash: 'confirmed', confirmed: true }];
+  const state = { aiCache: new Map() };
+  const context = { state, DEFAULT_MODEL, POLICY_VERSION, usage: { currentSession: () => ({ intakeId: 'intake' }) },
+    aiPendingStore: { get: async () => records, set: async () => {} } };
+  vm.createContext(context);
+  vm.runInContext(['aiOriginRecord', 'aiCacheSignature', 'restoreAiPending', 'aiDecisionBlocks', 'pendingAi'].map(extractFunction).join('\n'), context);
+  await context.restoreAiPending();
+  const [current, manual, confirmed] = [...state.aiCache.values()];
+  assert.equal(current.retired, false);
+  assert.equal(current.rejected, false);
+  assert.equal(current.autoOk, true);
+  assert.equal(manual.manual, true);
+  assert.equal(confirmed.confirmed, true);
+  assert.equal(context.pendingAi(1, 'Quote').length, 1, 'only the unresolved Luna answer blocks');
 });
 
 test('safety metadata changes invalidate cached choice fingerprints', () => {
