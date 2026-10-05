@@ -1,6 +1,6 @@
 // Luna resolves bounded choices; code gates automatic picks and the agent approves them.
 import { AssistError, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake } from './common.js';
-import { ntlMention } from '../normalize.js';
+import { ntlMention, NTL_WORDS } from '../normalize.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
 export const API_URL = 'https://api.openai.com/v1/responses';
@@ -285,13 +285,14 @@ export function parseNotesReview(json, { lines, ids }) {
   return lines.map((line, i) => ({ line, ...data.lines[ids[i]] }));
 }
 
-// Check intake items for the flagged lines. The line the intake's own NTL item already quotes
-// (`quoted`) isn't repeated, nor listed as a coverage change; another NTL line still is ("does not
-// want bobtail" quoted, then "needs NTL off dispatch").
+// Check intake items for the flagged lines. The NTL sentence of the line the intake's own NTL item
+// already quotes (`quoted`) isn't repeated, nor listed as a coverage change; another NTL line still
+// is ("does not want bobtail" quoted, then "needs NTL off dispatch"), and so is another request in
+// the quoted line ("Needs NTL. Also needs physical damage.").
 export function notesWarnings(results, { quoted = null } = {}) {
   const out = [];
   for (const x of results) {
-    if (quoted && quoted.includes(x.line)) continue;
+    if (quoted && quoted.includes(x.line) && NTL_WORDS.test(x.line)) continue;
     if (x.ntl) {
       out.push({ code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: the claims box may be about non-trucking liability (NTL): "${x.line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you.` });
     } else if (x.coverageChange) {

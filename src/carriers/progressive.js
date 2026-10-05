@@ -149,6 +149,11 @@ const oneLineAddress = (r) => {
 };
 
 const PRINT_EMAIL_FAX = '^print(,? ?[/,]? ?e-?mail)?(,? ?[/,]? ?(and |or )?fax)?$';
+// The link under the liability coverage that opens the Non-Trucking Liability section.
+const ADD_NTL = '^add non-?trucking liability( instead)?\\??$';
+// Later Rates helpers wait while an NTL added on this quote is still there after the agent set it
+// back to No (until the page offers Add NTL again).
+const NTL_HOLD = ['ntlStillAdded'];
 
 // A small, reviewed label fallback for practice layouts and carrier redraws that omit a Duck
 // Creek question id. Keep optional contact fields and unvalidated GL out of this list.
@@ -247,32 +252,33 @@ export const progressive = {
     // list, so it comes before cargo. Done only when the link is gone afterwards (a click lost in a
     // redraw stays a blocker). What the section asks hasn't been seen on a live quote: its
     // questions, the bill plan and the rest of Rates are the agent's (agentPages below).
-    { id: 'addNtl', page: 'CoveragesRates', text: '^add non-?trucking liability( instead)?\\??$', verify: 'gone', when: (r) => r.coverage.ntl === true },
+    { id: 'addNtl', page: 'CoveragesRates', text: ADD_NTL, verify: 'gone', when: (r) => r.coverage.ntl === true },
     // NTL added on this quote, then set back to No: the filler doesn't remove it. Never clicked; a
-    // "needs you" item on Rates for as long as the quote has it.
-    { id: 'ntlStillAdded', page: 'CoveragesRates', afterActions: ['addNtl'], label: 'Non-trucking liability', when: (r) => r.coverage.ntl !== true,
+    // "needs you" item on Rates, holding the later Rates helpers, until the page offers Add NTL
+    // again (the agent removed it).
+    { id: 'ntlStillAdded', page: 'CoveragesRates', afterActions: ['addNtl'], resolvedBy: ADD_NTL, label: 'Non-trucking liability', when: (r) => r.coverage.ntl !== true,
       missing: () => 'NTL was added on this quote, but Non-trucking liability is no longer Yes on the intake: remove it on this page yourself, or set it back to Yes.' },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
     // With NTL the cargo helpers are the agent's too (the rest of Rates is, see agentPages).
-    { id: 'openCargo', page: 'CoveragesRates', text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true && notNtl(r) },
-    { id: 'addCargoCommodity', page: 'CoveragesRates', text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true && notNtl(r) },
-    { id: 'doneCargo', page: 'CoveragesRates', text: '^done with this coverage$', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true && notNtl(r) },
     // Rates, as TNI agents work it: once cargo is added (and no GL is requested), open the bill
     // plan options, pick automatic payments there, come back (Continue), then Recalculate, then
     // Print, Email, Fax. With GL or NTL requested the agent does the rates page by hand.
     // None of the rates helpers run while the liability limit is unresolved (missing, rejected or
     // different from the intake); a limit the agent set themselves counts as resolved.
-    { id: 'billPlan', page: 'CoveragesRates', text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: ourBillPlan },
+    { id: 'billPlan', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: ourBillPlan },
     // Back from the bill plan Progressive has usually recalculated already (Recalculate is gone,
     // Print, Email, Fax is there): Recalculate only when the rates say they're out of date.
     // Recalculate and Print follow the bill plan, which waited for a resolved liability limit.
     // They don't re-check that field: back from the bill plan, the reloaded Rates page failed the
     // same check on a limit that was fine (FL and NJ runs: Print, Email, Fax never ran).
     // With GL there is no bill plan step of ours: they keep the liability check instead.
-    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
+    { id: 'recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^recalculate$', after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal.
-    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], when: notNtl },
+    { id: 'print', page: 'CoveragesRates', heldBy: NTL_HOLD, text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], when: notNtl },
     // This page may have been opened by the agent or restored after a panel reload. Its own
     // document and delivery controls establish readiness; no in-memory navigation history is needed.
     // Again on every return to the page (the agent went back, changed something, and reprints).

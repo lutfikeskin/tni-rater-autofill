@@ -491,6 +491,10 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   const kept = actions(no).find((s) => s.action === 'ntlStillAdded');
   assert.deepEqual([kept.text, kept.afterActions, kept.label], [null, ['addNtl'], 'Non-trucking liability']);
   assert.match(kept.missing, /remove it on this page yourself/);
+  assert.ok(new RegExp(kept.resolvedBy, 'i').test('Add Non-Trucking Liability instead?'), 'settled when the page offers Add NTL again');
+  for (const id of ['openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print']) {
+    assert.deepEqual(actions(no).find((s) => s.action === id).heldBy, ['ntlStillAdded'], `${id} waits while NTL is still on the quote`);
+  }
   // Codex on PR #22: an earlier bill plan visit must not let Recalculate or Print run while the
   // new NTL questions are open. Until the section has been seen live, the whole page is the agent's.
   for (const id of ['billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} is the agent's`);

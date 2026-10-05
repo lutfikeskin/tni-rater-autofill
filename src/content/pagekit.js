@@ -1178,6 +1178,13 @@
       return accepted;
     }
 
+    // A helper the agent must otherwise do by hand is open while the helpers it follows have run
+    // and the page hasn't settled it (NTL added, then set back to No, and still on the quote).
+    function holdOpen(a) {
+      return !!a.missing && a.afterActions.every((id) => clicked.has(id)) && !clicked.has(a.action)
+        && (!a.pages.length || a.pages.includes(currentPage())) && !(a.resolvedBy && findButton({ text: a.resolvedBy }));
+    }
+
     function clickNextAction(controls, immediateOnly = false) {
       const pairs = assign(controls, plan);
       // A prerequisite holds when its field shows the intake's answer, or an answer the agent chose
@@ -1201,7 +1208,8 @@
         const button = findButton(a);
         // Menu items ("Add Vehicle" under "Add") only show once their menu button is opened.
         if (!button && !a.opener) continue;
-        const ready = (!a.afterAny?.length || a.afterAny.some(has))
+        const holds = actions.filter((h) => (a.heldBy ?? []).includes(h.baseAction) && holdOpen(h));
+        const ready = !holds.length && (!a.afterAny?.length || a.afterAny.some(has))
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
           && a.after.every(has)
@@ -1218,6 +1226,7 @@
             ...(a.afterPages.length && !a.afterPages.some((p) => visited.has(p)) ? [`${a.afterPages.join(' / ')} visited`] : []),
             ...(a.needsPremium && !premiumReady() ? ['a current premium'] : []),
             ...(a.afterValue ? [`${a.afterValue[0]} set`] : []),
+            ...holds.map((h) => `${h.label ?? h.baseAction} resolved`),
           ];
           blocked.push(a.action);
           report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites' });
@@ -1276,7 +1285,7 @@
     if (window === window.top && currentPage() === startPage) {
       for (const a of actions) {
         if (!a.missing || clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage())) || findButton(a)
-          || !a.afterActions.every((id) => clicked.has(id))) continue;
+          || !a.afterActions.every((id) => clicked.has(id)) || (a.resolvedBy && findButton({ text: a.resolvedBy }))) continue;
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing });
       }
     }

@@ -940,6 +940,22 @@ test('a helper verified by its link going away counts only when the link is gone
   assert.equal(report.noData.length, 0, 'not before NTL was added');
   report = await h.kit.fill([kept], { maxRounds: 2, doneActions: ['addNtl'] });
   assert.deepEqual(Array.from(report.noData, (x) => x.note), ['remove it yourself']);
+  // Codex on PR #22: while it's open the later Rates helpers wait; once the page offers Add NTL
+  // again (the agent removed it) the item is settled and they run.
+  const heldKept = { ...kept, resolvedBy: '^add non-?trucking liability( instead)?\\??$' };
+  const billPlan = { id: 'bill', kind: 'action', action: 'billPlan', baseAction: 'billPlan', text: '^view bill plan options$', heldBy: ['ntlStillAdded'],
+    pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  const withBase = { ...heldKept, baseAction: 'ntlStillAdded', heldBy: [] };
+  h = harness();
+  const bill = addButton(h, 'View bill plan options');
+  bill.onclick = () => { bill._clicked = true; };
+  report = await h.kit.fill([withBase, billPlan], { maxRounds: 3, doneActions: ['addNtl'] });
+  assert.equal(bill._clicked, undefined, 'held while NTL is still on the quote');
+  assert.ok(report.blockers.some((b) => /billPlan \(waiting for Non-trucking liability resolved\)/.test(b)), Array.from(report.blockers).join(' | '));
+  addButton(h, 'Add Non-Trucking Liability instead?');
+  report = await h.kit.fill([withBase, billPlan], { maxRounds: 3, doneActions: ['addNtl'] });
+  assert.equal(bill._clicked, true, 'NTL removed: the bill plan runs');
+  assert.equal(report.noData.length, 0, 'and the item is settled');
 });
 
 function coverageActionPlan() {

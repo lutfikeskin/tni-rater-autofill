@@ -384,6 +384,11 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.equal(two.quoted, 'Does not want bobtail');
   assert.deepEqual(notesWarnings(parseNotesReview(flags([[false, false], [true, true]]), two), two).map((w) => [w.code, w.msg.includes('Needs NTL off dispatch')]),
     [['ai.ntl', true]], 'a second, positive NTL line is still flagged');
+  // Codex on PR #22: another request in the quoted line itself is kept.
+  const shared = buildNotesReview({ coverage: {}, claims: { text: 'No\nNeeds NTL. Also needs physical damage.' } });
+  assert.deepEqual(shared.lines, ['Needs NTL.', 'Also needs physical damage.']);
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[true, true], [false, true]]), shared), shared).map((w) => [w.code, w.msg.includes('physical damage')]),
+    [['ai.coverage-change', true]], 'only the NTL sentence is the intake\'s');
 
   assert.throws(() => parseNotesReview(flags([[false, true]]), review), AssistError, 'a missing line fails the whole review');
   assert.throws(() => parseNotesReview(envelope({ lines: { l0: { ntl: 'yes', coverageChange: false }, l1: { ntl: false, coverageChange: false }, l2: { ntl: false, coverageChange: false }, l3: { ntl: false, coverageChange: false } } }), review), AssistError);
