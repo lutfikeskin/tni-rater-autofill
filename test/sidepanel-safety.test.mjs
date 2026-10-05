@@ -114,7 +114,7 @@ function harness() {
     },
     clearTimeout: (handle) => cleared.push(handle),
     renderSite: () => rendered.push(state.tab?.id ?? null),
-    ensureRecorder: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {},
+    ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
       scripting: {},
@@ -302,7 +302,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }],
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events) },
     runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
-    pickListItem: async () => {},
+    pickListItem: async () => {}, retireAiOrigins: async () => {},
     afterFill: () => {},
     runPendingPage: () => {},
   };
@@ -590,7 +590,8 @@ test('approval expects the successful answer when a carrier redraw changes its v
   const ctx = { tabId: 1, page: '/quote', tabUrl: state.tab.url, intake, carrier: { practice: true },
     contextKey: assistContextKey(record, state.active), snapshots: pre };
   const context = { state, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
-    runKit: async () => responses.shift(), tellRecorder: async () => {}, persistAiPending: async () => {} };
+    runKit: async () => responses.shift(), tellRecorder: async () => {}, persistAiPending: async () => {},
+    usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
   vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
     'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
     'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent',
@@ -781,4 +782,131 @@ test('renderAi approval and confirmation allow an active-driver change when inta
   await confirmation;
   assert.equal(confirmed.x.confirmed, true, 'active-driver change does not invalidate confirmation');
   assert.equal(confirmed.fillCalls(), 1, 'current confirmation still continues the fill');
+});
+
+const DISPATCH_HELPERS = ['aiOriginRecord', 'aiSnapshotFields', 'aiSnapshotFieldMatches', 'aiQuestionHash',
+  'aiLiveFieldHash', 'aiAnswerOrigin', 'aiActionCurrent', 'aiCacheSignature', 'aiDecisionBlocks',
+  'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots', 'snapshotsEqual',
+  'snapshotFingerprint', 'aiPendingRecord', 'persistAiPending', 'restoreAiPending',
+  'discardAiSuggestions', 'pendingAi', 'applyAi'].map(extractFunction).join('\n');
+
+test('dispatched answers retain durable holds across intake, cache and transport changes', async () => {
+  for (const scenario of ['intake-replaced', 'intake-cleared', 'cache-cleared', 'transport-error']) {
+    const record = {}, intake = { record }, url = 'https://example.test/quote';
+    const x = { key: 'choice', label: 'Choice', controlKind: 'radio', choice: 'No', autoOk: true };
+    const quoteHash = JSON.stringify(url);
+    const sig = ['1', '/quote', 'gpt-6-luna', 'policy', 'context', 'item', quoteHash].join('\n');
+    const field = { key: x.key, label: x.label, current: '' };
+    const pre = [{ frameId: 0, documentId: 'doc-0', result: JSON.stringify(['Quote', [field]]) }];
+    const after = [{ ...pre[0], result: JSON.stringify(['Quote', [{ ...field, current: 'No' }]]) }];
+    const state = { filling: false, intake, active: {}, tab: { id: 1, url },
+      aiCache: new Map([[sig, x]]), agentKeys: new Map(), filled: new Map() };
+    const ctx = { tabId: 1, page: '/quote', tabUrl: url, intake, carrier: { practice: true },
+      contextKey: assistContextKey(record, state.active), snapshots: pre };
+    let stored = [], scope = 'original-intake', calls = 0, release, fail, entered;
+    const started = new Promise(resolve => { entered = resolve; });
+    const settlement = new Promise((resolve, reject) => { release = resolve; fail = reject; });
+    const context = { state, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String,
+      DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy', pageOf: value => new URL(value).pathname,
+      usage: { currentSession: () => scope ? { intakeId: scope } : null },
+      aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
+      aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
+      tellRecorder: async () => {},
+      runKit: () => {
+        calls++;
+        if (calls === 1) return Promise.resolve(pre);
+        if (calls === 2) { entered(); return settlement; }
+        return Promise.resolve(after);
+      } };
+    vm.runInNewContext(DISPATCH_HELPERS, context);
+    const action = context.applyAi([x], ctx, 'auto');
+    await started;
+    assert.equal(stored.length, 1, 'the hold is saved before answer dispatch settles');
+    assert.equal(stored[0].origin.documentId, 'doc-0');
+    if (scenario === 'intake-replaced') {
+      state.intake = { record: { replacement: true } }; scope = 'replacement-intake';
+      context.discardAiSuggestions();
+    } else if (scenario === 'intake-cleared') {
+      state.intake = null; scope = null; state.aiCache.clear();
+    } else state.aiCache.clear();
+    if (scenario === 'transport-error') fail(new Error('settlement unavailable'));
+    else release([{ frameId: 0, documentId: 'doc-0', result: [{ key: x.key, label: x.label, ok: true, shown: 'No' }] }]);
+    await action;
+    assert.equal(stored.length, 1, `${scenario}: no lost or duplicated pending record`);
+    assert.equal(stored[0].scope, 'original-intake');
+    assert.equal(context.pendingAi(1, '/quote').length, 1, `${scenario}: Continue still waits`);
+    assert.equal(state.filled.size, 0, 'stale execution does not update the replacement intake bookkeeping');
+    state.aiCache.clear(); scope = 'replacement-intake';
+    await context.restoreAiPending();
+    assert.equal(context.pendingAi(1, '/quote').length, 1, 'the physical quote hold survives reload under a new intake');
+    assert.equal(stored.some(value => Object.hasOwn(value, 'record') || Object.hasOwn(value, 'contextKey')), false);
+  }
+});
+
+test('a trusted correction before Reject settles the originating automatic choice', async () => {
+  const x = { key: 'choice', done: 'auto', rejected: false,
+    origin: { frameId: 0, documentId: 'doc-0', questionHash: JSON.stringify(['choice', 'Choice']), fieldHash: 'expected' } };
+  const state = { tab: { id: 1 }, aiCache: new Map([['1\nQuote', x]]) };
+  const context = { state, aiQuestionHash: value => JSON.stringify([value.key, value.label]), persistAiPending: async () => {} };
+  vm.runInNewContext(['aiDecisionBlocks', 'pendingAi', 'settleRejectedAi'].map(extractFunction).join('\n'), context);
+  assert.equal(await context.settleRejectedAi('Quote', [{ key: 'choice', label: 'Choice' }], { frameId: 0, documentId: 'doc-0' }), true);
+  assert.equal(x.manual, true);
+  x.rejected = true;
+  assert.equal(context.pendingAi(1, 'Quote').length, 0, 'Reject cannot reinstate a hold on an already trusted correction');
+});
+
+function quoteRetirementHarness() {
+  const url = 'https://example.test/quote?id=one', intake = { record: {} };
+  const x = { key: 'choice', done: 'auto', rejected: true, quoteHash: JSON.stringify(url),
+    origin: { frameId: 0, documentId: 'original-doc', questionHash: 'question', fieldHash: 'value' } };
+  const other = { ...x };
+  const state = { intake, tab: { id: 1, url }, aiCache: new Map([['1\n/quote', x], ['2\n/quote', other]]),
+    agentKeys: new Map([['/quote', new Set(['choice'])]]) };
+  let saved = 0;
+  const context = { state, aiFingerprint: JSON.stringify, aiRetiredSignatures: new Set(),
+    persistAiPending: async () => { saved++; }, persistAgentKeys: async () => {},
+    aiDocumentGone: async () => false, runKit: async () => [] };
+  vm.runInNewContext(['aiOriginRecord', 'aiDecisionBlocks', 'pendingAi', 'retireAiOrigins'].map(extractFunction).join('\n'), context);
+  return { state, context, x, other, ctx: { tabId: 1, tabUrl: url, intake, carrier: {} }, saved: () => saved };
+}
+
+test('retirement distinguishes replacement documents from changed answers and isolates quotes', async () => {
+  const live = quoteRetirementHarness();
+  assert.equal(await live.context.retireAiOrigins(live.ctx, [{ frameId: 0, documentId: 'original-doc', result: 'changed value' }]), false);
+  assert.equal(live.context.pendingAi(1, '/quote').length, 1, 'a changed answer in the same document still requires review');
+  const replaced = quoteRetirementHarness();
+  assert.equal(await replaced.context.retireAiOrigins(replaced.ctx, [{ frameId: 0, documentId: 'replacement-doc' }]), true);
+  assert.equal(replaced.context.pendingAi(1, '/quote').length, 0);
+  assert.equal(replaced.state.aiCache.get('2\n/quote'), replaced.other, 'another tab is untouched');
+  assert.equal(replaced.x.approved, undefined, 'retirement cannot approve an answer');
+  const otherQuote = quoteRetirementHarness();
+  otherQuote.state.tab.url = 'https://example.test/quote?id=two';
+  assert.equal(otherQuote.context.pendingAi(1, '/quote').length, 0, 'normalized page names cannot inherit another quote hold');
+  assert.equal(await otherQuote.context.retireAiOrigins({ ...otherQuote.ctx, tabUrl: otherQuote.state.tab.url }, []), true);
+});
+
+test('missing frame results do not retire a hold without explicit document-gone proof', async () => {
+  const h = quoteRetirementHarness();
+  h.x.origin.frameId = 2;
+  const frames = [{ frameId: 0, documentId: 'top-doc' }];
+  assert.equal(await h.context.retireAiOrigins(h.ctx, frames), false);
+  assert.equal(h.context.pendingAi(1, '/quote').length, 1);
+  h.context.aiDocumentGone = async () => true;
+  assert.equal(await h.context.retireAiOrigins(h.ctx, frames), true);
+});
+
+test('stale retirement snapshots cannot remove a replacement intake or cached decision', async () => {
+  for (const change of ['intake', 'url', 'cache']) {
+    const h = quoteRetirementHarness();
+    let release;
+    h.context.runKit = () => new Promise(resolve => { release = resolve; });
+    const action = h.context.retireAiOrigins(h.ctx);
+    if (change === 'intake') h.state.intake = { record: {} };
+    if (change === 'url') h.state.tab.url = 'https://example.test/quote?id=two';
+    if (change === 'cache') h.state.aiCache.set('1\n/quote', { ...h.x });
+    release([{ frameId: 0, documentId: 'replacement-doc' }]);
+    assert.equal(await action, false);
+    assert.equal(h.state.aiCache.has('1\n/quote'), true);
+    assert.equal(h.saved(), 0);
+  }
 });

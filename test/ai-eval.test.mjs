@@ -109,6 +109,15 @@ test('saved safe results score choices, abstentions and evidence paths', () => {
   assert.ok(report.cases.every(entry => entry.status === 'pass'));
 });
 
+test('saved results reject duplicate case IDs before scoring', () => {
+  const entries = cases.slice(0, 2);
+  const result = safeLiveResult('luna', entries, entries.map(entry => ({
+    suggestions: entry.expected.map(expected => ({ ...expected })),
+  })));
+  result.cases[1].id = result.cases[0].id;
+  assert.throws(() => scoreResult(result, entries), /unique case IDs/i);
+});
+
 test('timing median averages the two middle values for even samples', () => {
   const entries = cases.slice(0, 2);
   const result = safeLiveResult('luna', entries, entries.map((entry, index) => ({

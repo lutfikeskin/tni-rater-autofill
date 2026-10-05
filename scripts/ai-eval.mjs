@@ -190,6 +190,11 @@ function resultMap(resultCase) {
 
 export function scoreResult(result, entries) {
   if (!result || result.version !== 1 || !Array.isArray(result.cases)) fail('Saved AI evaluation results must be version 1 with cases.');
+  const resultIds = new Set();
+  for (const resultCase of result.cases) {
+    if (resultIds.has(resultCase?.id)) fail('Saved AI evaluation results must have unique case IDs.');
+    resultIds.add(resultCase?.id);
+  }
   const resultCases = new Map(result.cases.map(value => [value?.id, value]));
   let total = 0;
   let scoredChoices = 0;

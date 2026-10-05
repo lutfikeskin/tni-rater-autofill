@@ -159,6 +159,7 @@ function aiItemFingerprint(x) {
     x.reviewOnly, x.manualOnly, x.fieldType]);
 }
 let aiPersistQueue = Promise.resolve();
+const aiRetiredSignatures = new Set();
 
 const $ = (id) => document.getElementById(id);
 const state = {
@@ -221,8 +222,8 @@ function aiSafeText(value) {
   return redact(String(value)).slice(0, 240);
 }
 
-function aiCacheSignature({ tabId, page, model, policy = POLICY_VERSION, contextHash, itemHash }) {
-  return [tabId, page, model, policy, contextHash, itemHash].join('\n');
+function aiCacheSignature({ tabId, page, model, policy = POLICY_VERSION, contextHash, itemHash, quoteHash }) {
+  return [tabId, page, model, policy, contextHash, itemHash, ...(quoteHash ? [quoteHash] : [])].join('\n');
 }
 
 function aiDecisionBlocks(x) {
@@ -235,7 +236,8 @@ function aiDecisionBlocks(x) {
 function aiSettledOnPage(tabId, page, item) {
   for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
-    if (t !== String(tabId) || p !== page || x.key !== item.key) continue;
+    if (t !== String(tabId) || p !== page || x.key !== item.key
+      || (x.quoteHash && x.quoteHash !== aiFingerprint(state.tab?.url))) continue;
     if (aiDecisionBlocks(x)) return true;
     if (x.manual || x.confirmed || x.approved) return true;
     if (x.rejected && (item.current === x.choice || (item.current != null && item.current !== ''))) return true;
@@ -246,8 +248,8 @@ function aiSettledOnPage(tabId, page, item) {
 function aiPendingRecord(sig, x, scope) {
   const [tabId, page, model, policy, contextHash, itemHash] = sig.split('\n');
   return {
-    version: 1, scope, tabId: Number(tabId), page, model, policy, contextHash, itemHash,
-    key: x.key, label: aiSafeText(x.label), choice: aiSafeText(x.choice), controlKind: x.controlKind,
+    version: 1, scope: x.pendingScope ?? x.scope ?? scope, quoteHash: x.quoteHash ?? null, tabId: Number(tabId), page, model, policy, contextHash, itemHash,
+    key: x.key, label: x.pendingLabel ?? aiSafeText(x.label), choice: x.pendingChoice ?? aiSafeText(x.choice), controlKind: x.controlKind,
     done: x.done, approved: !!x.approved, rejected: !!x.rejected, manual: !!x.manual, confirmed: !!x.confirmed,
     fieldHash: x.fieldHash ?? (x.restored ? null : aiFingerprint([x.key, x.label, x.choice])),
     snapshotHash: x.snapshotHash ?? (x.snapshots ? snapshotFingerprint(x.snapshots) : null),
@@ -260,13 +262,15 @@ function aiPendingRecord(sig, x, scope) {
 function persistAiPending() {
   const task = aiPersistQueue.then(async () => {
     const scope = usage.currentSession()?.intakeId;
-    if (!scope) return;
-    const records = [...state.aiCache.entries()]
-      .filter(([, x]) => x.done === 'auto' && !x.approved)
-      .map(([sig, x]) => aiPendingRecord(sig, x, scope));
+    const entries = [...state.aiCache.entries()];
+    const retired = [...aiRetiredSignatures];
+    const managed = new Set([...entries.map(([sig]) => sig), ...retired]);
+    const records = entries.filter(([, x]) => x.done === 'auto' && !x.approved)
+      .map(([sig, x]) => aiPendingRecord(sig, x, scope)).filter(x => x.scope);
     const existing = await aiPendingStore.get();
-    const otherScopes = existing.filter((x) => x?.scope && x.scope !== scope);
-    await aiPendingStore.set([...otherScopes, ...records].slice(-200));
+    const others = existing.filter(x => !managed.has(aiCacheSignature(x)));
+    await aiPendingStore.set([...others, ...records].slice(-200));
+    retired.forEach(sig => aiRetiredSignatures.delete(sig));
   });
   aiPersistQueue = task.catch(() => {});
   return task;
@@ -274,24 +278,32 @@ function persistAiPending() {
 
 async function restoreAiPending() {
   const scope = usage.currentSession()?.intakeId;
-  if (!scope) return;
   const all = await aiPendingStore.get();
-  const records = all.filter((x) => x?.scope === scope && Number.isInteger(x.tabId) && x.page && x.itemHash && x.contextHash);
+  const valid = all.filter(x => x?.scope && Number.isInteger(x.tabId) && x.page && x.itemHash && x.contextHash);
+  // New records follow their physical quote/document even after the intake changes. Legacy
+  // records without that identity retain their original intake scope.
+  const records = valid.filter(x => x.quoteHash || aiOriginRecord(x.origin) || x.scope === scope);
   for (const x of records) {
-    state.aiCache.set(aiCacheSignature(x), {
-      ...x, restored: true, done: 'auto', approved: !!x.approved, rejected: !!x.rejected,
+    const sig = aiCacheSignature(x);
+    if (state.aiCache.has(sig)) continue;
+    state.aiCache.set(sig, {
+      ...x, restored: true, pendingScope: x.scope, pendingLabel: x.label, pendingChoice: x.choice,
+      done: 'auto', approved: !!x.approved, rejected: !!x.rejected,
       manual: !!x.manual, confirmed: !!x.confirmed, tip: '', checks: [], leave: false,
       origin: aiOriginRecord(x.origin), originAmbiguous: !!x.originAmbiguous,
       applyable: true, autoOk: true, contextKey: null, snapshots: null,
     });
   }
-  if (records.length !== all.length) await aiPendingStore.set(records);
+  if (valid.length !== all.length) await aiPendingStore.set(valid);
 }
 
-function clearAiPending() {
-  const task = aiPersistQueue.then(() => aiPendingStore.set([]));
-  aiPersistQueue = task.catch(() => {});
-  return task;
+// An intake replacement can discard suggestions, but an answer already sent to the carrier
+// remains a review hold in its original quote until the agent settles it or its document is gone.
+function discardAiSuggestions() {
+  for (const [sig, x] of state.aiCache) if (!aiDecisionBlocks(x)) {
+    state.aiCache.delete(sig);
+    aiRetiredSignatures.add(sig);
+  }
 }
 
 function persistAgentKeys() {
@@ -353,7 +365,8 @@ async function settleRejectedAi(page, changes, sender, tabId = state.tab?.id) {
   const tab = state.tab, intake = state.intake;
   const eligible = [...state.aiCache].filter(([sig, x]) => {
     const [cachedTab, cachedPage] = sig.split('\n');
-    return cachedTab === String(tabId) && cachedPage === page && x.done === 'auto' && x.rejected && !x.confirmed;
+    return cachedTab === String(tabId) && cachedPage === page && x.done === 'auto' && !x.approved && !x.manual && !x.confirmed
+      && (!x.quoteHash || x.quoteHash === aiFingerprint(tab?.url));
   });
   let fresh = null;
   if (eligible.some(([, x]) => !x.origin && !x.originAmbiguous)) {
@@ -381,6 +394,60 @@ async function settleRejectedAi(page, changes, sender, tabId = state.tab?.id) {
     changed = true;
   }
   if (changed) persistAiPending();
+  return changed;
+}
+
+// Missing injection results alone can mean denied access. Retire a missing source document only
+// when Chrome explicitly reports that it no longer exists; other failures keep the hold.
+async function aiDocumentGone(tabId, documentId, carrier) {
+  try {
+    await chrome.scripting.executeScript({ target: { tabId, documentIds: [documentId] },
+      world: worldFor(carrier), func: () => true });
+    return false;
+  } catch (e) {
+    return /No (?:document|frame) with id .+ in tab with id/i.test(String(e?.message ?? e));
+  }
+}
+
+async function retireAiOrigins(ctx, frames = null) {
+  const current = () => state.tab?.id === ctx.tabId && state.tab?.url === ctx.tabUrl
+    && state.intake === ctx.intake;
+  if (!current()) return false;
+  const quoteHash = aiFingerprint(ctx.tabUrl);
+  const entries = [...state.aiCache].filter(([sig, x]) => sig.split('\n')[0] === String(ctx.tabId)
+    && x.done === 'auto' && (x.quoteHash || aiOriginRecord(x.origin)));
+  if (!entries.length) return false;
+  if (frames == null && entries.some(([, x]) => x.origin && (!x.quoteHash || x.quoteHash === quoteHash))) {
+    try { frames = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot()); }
+    catch { frames = null; }
+  }
+  if (!current()) return false;
+  const known = Array.isArray(frames) ? frames.filter(f => Number.isInteger(f?.frameId)
+    && typeof f.documentId === 'string') : [];
+  const retiring = [];
+  for (const [sig, x] of entries) {
+    if (state.aiCache.get(sig) !== x) continue;
+    let gone = !!x.quoteHash && x.quoteHash !== quoteHash;
+    const origin = aiOriginRecord(x.origin);
+    if (!gone && origin && known.length) {
+      const replacement = known.find(f => f.frameId === origin.frameId);
+      if (replacement) gone = replacement.documentId !== origin.documentId;
+      else gone = await aiDocumentGone(ctx.tabId, origin.documentId, ctx.carrier);
+    }
+    if (!current()) return false;
+    if (gone) retiring.push([sig, x]);
+  }
+  let changed = false;
+  for (const [sig, x] of retiring) if (state.aiCache.get(sig) === x) {
+    state.aiCache.delete(sig);
+    aiRetiredSignatures.add(sig);
+    state.agentKeys.get(sig.split('\n')[1])?.delete(x.key);
+    changed = true;
+  }
+  if (changed) {
+    await persistAiPending();
+    await persistAgentKeys();
+  }
   return changed;
 }
 
@@ -424,9 +491,10 @@ async function loadFile(file) {
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
   state.filled = new Map();
   state.doneActions = new Set();
-  state.aiCache.clear();
+  discardAiSuggestions();
   await store.set('session', usage.startSession(summary.intakeId));
-  await clearAiPending();
+  await restoreAiPending();
+  await persistAiPending();
   await clearAgentKeys();
   usage.log({ type: 'intake_loaded', ...summary });
   uploadNow();
@@ -702,6 +770,7 @@ async function refreshTab() {
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false } : null;
   await restoreAgentKeys(state.tab?.id);
+  if (state.tab?.carrier && !state.filling) await retireAiOrigins({ tabId: state.tab.id, tabUrl: state.tab.url, intake: state.intake, carrier: state.tab.carrier });
   renderSite();
   ensureRecorder();
 }
@@ -827,6 +896,7 @@ async function autoFill(page) {
   let assistFrames = null;
   await tellRecorder('pause');
   try {
+    await retireAiOrigins({ tabId, tabUrl: state.tab.url, intake: state.intake, carrier });
     const plan = buildPlan(state.intake.record, carrier, state.active);
     const skip = [...(state.agentKeys.get(page) ?? [])];
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite: false, skip, keepMarks: true })]);
@@ -1022,6 +1092,7 @@ async function fillPage({ auto = false } = {}) {
   await ensureRecorder();
   await tellRecorder('pause');
   try {
+    await retireAiOrigins({ tabId, tabUrl: state.tab.url, intake: state.intake, carrier });
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite })]);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
@@ -1277,7 +1348,7 @@ async function runAssist(frames, ctx) {
   // checks the page snapshot (applyAi), and approving checks it again.
   const onPage = frames.flatMap(f => f.filled ?? []).map(x => ({ question: x.label, answer: x.shown, controlKind: x.controlKind }));
   const contextHash = aiFingerprint(ctx.contextKey);
-  const sigOf = x => aiCacheSignature({ tabId: ctx.tabId, page: ctx.page, model: cfg.model, policy: provider.policy, contextHash, itemHash: aiItemFingerprint(x) });
+  const sigOf = x => aiCacheSignature({ tabId: ctx.tabId, page: ctx.page, model: cfg.model, policy: provider.policy, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl) });
   const missing = items.filter((x) => !state.aiCache.has(sigOf(x)));
   if (missing.length) {
     holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking ${provider.name} about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
@@ -1289,7 +1360,7 @@ async function runAssist(frames, ctx) {
       if (stale()) return;
       const fresh = result.suggestions;
       fresh.forEach(x => state.aiCache.set(sigOf(x), {
-        ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x),
+        ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),
       }));
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length,
@@ -1320,7 +1391,8 @@ function pendingAi(tabId, page) {
   const out = [];
   for (const [sig, x] of state.aiCache) {
     const [t, p] = sig.split('\n');
-    if (t === String(tabId) && p === page && aiDecisionBlocks(x)) out.push(x);
+    if (t === String(tabId) && p === page && aiDecisionBlocks(x)
+      && (!x.quoteHash || x.quoteHash === aiFingerprint(state.tab?.url))) out.push(x);
   }
   return out;
 }
@@ -1361,6 +1433,8 @@ async function applyAi(list, ctx, decision) {
   const isCurrent = () => aiActionCurrent(ctx, list)
     && ctx.contextKey === assistContextKey(state.intake?.record, state.active)
     && (ctx.run === undefined || ctx.run === state.aiRun);
+  const entries = [...state.aiCache].filter(([, x]) => list.includes(x));
+  let dispatched = false, prepared = false;
   state.filling = true;
   await tellRecorder('pause', ctx.tabId);
   try {
@@ -1382,54 +1456,85 @@ async function applyAi(list, ctx, decision) {
       expected: { kind: x.controlKind, section: x.section, options: x.options, current: x.current },
       note: `${decision === 'auto' ? 'selected by the AI' : 'AI suggestion you accepted'}: ${x.tip}`.slice(0, 240),
     }));
+    // Persist a conservative hold before dispatch. The carrier can change a field before answer()
+    // returns, so replacing the intake or clearing a cache must never erase that operation.
+    prepared = true;
+    for (const x of list) {
+      const [{ frame }] = aiSnapshotFieldMatches(current, x);
+      x.pendingScope = usage.currentSession()?.intakeId ?? `pending:${aiFingerprint(ctx.contextKey)}`;
+      x.pendingLabel = aiSafeText(x.label);
+      x.pendingChoice = aiSafeText(x.choice);
+      x.quoteHash = aiFingerprint(ctx.tabUrl);
+      x.origin = aiAnswerOrigin(current, x, { ...frame, shown: x.choice });
+      x.originAmbiguous = !x.origin;
+      x.fieldHash = x.origin?.fieldHash ?? null;
+      x.snapshots = current;
+      x.snapshotHash = snapshotFingerprint(current);
+      x.done = 'auto';
+    }
+    await persistAiPending();
+    if (!isCurrent()) return false;
+    dispatched = true;
     const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots) => globalThis.__raterKit.answer(a, snapshots), [answers, ctx.snapshots.map(r => r.result)]);
-    // A driver/vehicle switch after execution must not discard an answer already on the page.
-    if (!aiActionCurrent(ctx, list)) return false;
     const results = answerFrames.flatMap((frame) => (Array.isArray(frame.result) ? frame.result : [])
       .filter(result => result && typeof result === 'object')
       .map(result => ({ ...result, frameId: frame.frameId, documentId: frame.documentId })));
-    const keys = state.agentKeys.get(ctx.page) ?? new Set();
+    const sameContext = isCurrent();
+    const keys = sameContext ? state.agentKeys.get(ctx.page) ?? new Set() : null;
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
       const ok = mine.find((r) => r.ok);
-      if (ok) {
-        // Remember the expected value before any further page read can fail or change context.
-        const origin = aiAnswerOrigin(current, x, ok);
-        x.origin = origin;
-        x.originAmbiguous = !origin;
-        if (origin) x.fieldHash = origin.fieldHash;
-      }
       const problem = mine.find((r) => !r.ok && !/no longer on this page/.test(r.reason ?? '')) ?? mine[0];
-      x.done = ok ? decision : null;
-      x.error = ok ? null : problem?.reason ?? 'the question is no longer on this page';
       if (ok) {
-        // Decided now: later fills leave this question alone instead of asking again.
-        keys.add(x.key);
-        state.filled.set(x.key, { path: null, shown: ok.shown });
+        x.origin = aiOriginRecord({ frameId: ok.frameId, documentId: ok.documentId,
+          questionHash: aiQuestionHash(x), fieldHash: aiLiveFieldHash({ ...x, current: ok.shown }) });
+        x.originAmbiguous = !x.origin;
+        x.fieldHash = x.origin?.fieldHash ?? null;
+        x.done = sameContext ? decision : 'auto';
+        x.error = null;
+        if (sameContext) {
+          keys.add(x.key);
+          state.filled.set(x.key, { path: null, shown: ok.shown });
+        }
+      } else {
+        x.done = null;
+        x.error = problem?.reason ?? 'the question is no longer on this page';
       }
-      if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
+      if (sameContext && !ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
     }
-    state.agentKeys.set(ctx.page, keys);
-    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
-    if (!aiActionCurrent(ctx, list)) return false;
-    // Each applied pick remembers the page as it left it, for approving it later (also after a
-    // context change, when the snapshot of this run is gone).
+    if (sameContext) state.agentKeys.set(ctx.page, keys);
+    // Read the original carrier tab even if the panel has since switched to another intake/tab.
+    const after = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     for (const x of list) if (x.done) {
-      x.snapshots = ctx.snapshots;
-      x.snapshotHash = snapshotFingerprint(ctx.snapshots);
+      x.snapshots = after;
+      x.snapshotHash = snapshotFingerprint(after);
     }
+    if (sameContext) ctx.snapshots = after;
     return true;
   } catch (e) {
-    if (!aiActionCurrent(ctx, list)) return false;
-    for (const x of list) x.error = `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
+    // A transport failure after dispatch does not prove that no carrier field changed.
+    for (const x of list) x.error = dispatched
+      ? 'the answer was sent but could not be confirmed; review the page before continuing'
+      : `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
     return false;
   } finally {
+    if (prepared && !dispatched) for (const x of list) x.done = null;
+    if (dispatched) for (const [sig, x] of entries) if (list.includes(x) && x.done === 'auto') {
+      if (!aiActionCurrent(ctx, list)) {
+        x.rejected = true;
+        x.label = x.pendingLabel;
+        x.choice = x.pendingChoice;
+        x.contextKey = null;
+        x.autoOk = false;
+        x.tip = ''; x.checks = [];
+      }
+      state.aiCache.set(sig, x);
+      aiRetiredSignatures.delete(sig);
+    }
     await tellRecorder('resume', ctx.tabId);
     state.filling = false;
-    if (aiActionCurrent(ctx, list)) {
-      await persistAiPending();
-      if (isCurrent() && state.autoPending) scheduleAutoFill(ctx.page);
-    }
+    if (prepared) await persistAiPending();
+    if (isCurrent() && state.autoPending) scheduleAutoFill(ctx.page);
   }
 }
 
@@ -1813,7 +1918,7 @@ function wire() {
     usage.restoreSession(null);
     await store.remove('intake');
     await store.remove('session');
-    await clearAiPending();
+    await persistAiPending();
     await clearAgentKeys();
     $('report').replaceChildren();
     render();
