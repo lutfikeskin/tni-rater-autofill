@@ -181,7 +181,9 @@
     let layout = null;
     let runner = params.get('runner') ?? (bakeoff ? 'agent' : 'extension');
 
-    await new Promise((res) => { const s = document.createElement('script'); s.src = '/src/content/pagekit.js'; s.onload = res; document.head.append(s); });
+    for (const file of ['field-key.js', 'pagekit.js']) {
+      await new Promise((res) => { const s = document.createElement('script'); s.src = `/src/content/${file}`; s.onload = res; document.head.append(s); });
+    }
 
     async function intakeRecord() {
       const file = $('pdf').files[0];

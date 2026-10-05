@@ -11,8 +11,10 @@ import {
   buildVerification,
   callModel,
   collectItems,
+  evidenceFor,
   neverReason,
   parseResponse,
+  scopedIntake,
   settingsFrom,
   suggest,
   verifyResponse,
@@ -54,6 +56,15 @@ const context = {
 function item(key, label = 'Synthetic question', options = ['Yes', 'No'], extra = {}) {
   return { key, q: key, label, controlKind: 'radio', options, ...extra };
 }
+
+test('payment and billing choices stay agent-owned while Medical Payments coverage remains eligible', () => {
+  for (const label of ['Automatic payments from checking account', 'Payment plan', 'Billing method', 'ACH debit', 'Pay in full']) {
+    assert.ok(neverReason(item('pay', label)), label);
+    assert.equal(collectItems([{ unknown: [item('pay', label)] }]).items.length, 0);
+    assert.throws(() => buildRequest([{ ...item('pay', label), id: 'f1' }], context), AssistError);
+  }
+  assert.equal(neverReason(item('med', 'Medical Payments coverage')), null);
+});
 
 function responseFor(body, items, {
   choice = 'o0',
@@ -108,6 +119,8 @@ test('collectItems sends only bounded choices and blocks unsafe or unsupported f
       item('duplicate', 'Duplicated question'),
       { key: 'typed', label: 'VIN', controlKind: 'text', options: [] },
       { key: 'mvr', label: 'Order the MVR report?', controlKind: 'radio', options: ['Yes', 'No'] },
+      { key: 'exclusions', label: 'Driver exclusions?', controlKind: 'radio', options: ['Yes', 'No'] },
+      { key: 'excluding', label: 'Are any drivers being excluded?', controlKind: 'radio', options: ['Yes', 'No'] },
       { key: 'lookup', label: 'Does this DOT belong to the business?', controlKind: 'radio', options: ['Yes', 'No'], reviewOnly: true },
       { key: 'empty', label: 'Business type', controlKind: 'select', options: [] },
       { key: 'too-many', label: 'Synthetic long list', controlKind: 'select', options: Array.from({ length: 255 }, (_, i) => `Option ${i}`) },
@@ -118,11 +131,13 @@ test('collectItems sends only bounded choices and blocks unsafe or unsupported f
   const { items, blocked } = collectItems(frames);
   assert.deepEqual(items.map((x) => x.key), ['choice', 'duplicate', 'check']);
   assert.deepEqual(items.find((x) => x.key === 'check').options, ['checked', 'unchecked']);
-  assert.deepEqual(blocked.map((x) => x.key).sort(), ['empty', 'lookup', 'mvr', 'too-many', 'typed']);
+  assert.deepEqual(blocked.map((x) => x.key).sort(), ['empty', 'excluding', 'exclusions', 'lookup', 'mvr', 'too-many', 'typed']);
   assert.match(blocked.find((x) => x.key === 'lookup').why, /review/i);
   assert.match(blocked.find((x) => x.key === 'typed').why, /identifier/i);
   assert.match(blocked.find((x) => x.key === 'too-many').why, /choices/i);
   assert.ok(neverReason({ section: 'Reports', label: 'Order CLUE report?' }));
+  assert.ok(neverReason({ section: 'Reports', label: 'Driver exclusions?', controlKind: 'radio' }));
+  assert.ok(neverReason({ section: 'Reports', label: 'Are any drivers being excluded?', controlKind: 'radio' }));
   assert.equal(neverReason({ section: 'Business', label: 'Has a USDOT number?', controlKind: 'radio' }), null);
 });
 
@@ -146,6 +161,8 @@ test('request shape scopes active rows, strips identifiers, and includes only ca
   assert.equal(body.state.intake.applicant.fein, undefined);
   assert.equal(body.state.intake['vehicles[1]'].vin, undefined);
   assert.equal(body.state.intake.extraPrivateValue, undefined);
+  assert.equal(body.state.intake.coverage.reeferBreakdown, false, 'explicit No stays present');
+  assert.equal(body.state.intake.coverage.missingFact, undefined, 'missing stays absent');
 
   assert.deepEqual(Object.keys(body.questions).sort(), ['f1', 'f1_source']);
   assert.deepEqual(Object.keys(body.questions.f1.criteria), ['o0', 'o1', LEAVE]);
@@ -160,6 +177,13 @@ test('request shape scopes active rows, strips identifiers, and includes only ca
   const amwinsRules = Object.values(amwins.state.sources).filter((x) => x.basis === 'tni_rule').map((x) => x.rule);
   assert.ok(amwinsRules.some((rule) => /Commercial Lines dashboard/i.test(rule)));
   assert.ok(amwinsRules.every((rule) => !/vehicle tile/i.test(rule)));
+
+  const facts = scopedIntake(record, context.active);
+  assert.equal(facts.coverage.reeferBreakdown, false);
+  assert.equal(facts.coverage.missingFact, undefined);
+  const sources = evidenceFor(context).sources;
+  assert.ok(Object.values(sources).some((x) => x.path === 'coverage.reeferBreakdown' && x.value === false));
+  assert.equal(Object.values(sources).some((x) => x.path === 'coverage.missingFact'), false);
 });
 
 test('response validation rejects invented choices, malformed probabilities, and unsupported evidence', () => {
@@ -171,7 +195,7 @@ test('response validation rejects invented choices, malformed probabilities, and
   assert.equal(good.leave, false);
   assert.equal(good.basis, 'intake');
   assert.match(good.intakePath, /^applicant\.|^operations\.|^garaging\.|^coverage\.|^drivers\[1\]|^vehicles\[1\]/);
-  assert.equal(good.policy, 'jev-evidence-v1');
+  assert.equal(good.policy, 'jev-evidence-v2');
 
   const invented = structuredClone(valid);
   invented.answers.f1.choice = 'o99';
@@ -216,6 +240,15 @@ test('verification uses Noul support and auto-selection remains fail-closed', ()
     [{ ...suggestion, label: 'Annual mileage' }]);
   assert.equal(numericReview[0].autoOk, false);
   assert.match(numericReview[0].tip, /Review this suggestion/);
+
+  for (const label of ['Annual distance', 'Liability CSL', 'Is this VIN correct?']) {
+    const manual = verifyResponse({ model: DEFAULT_MODEL, answers: { f1: { type: 'noul', noul: 0.995 } } },
+      [{ ...suggestion, label }]);
+    assert.equal(manual[0].autoOk, false, `${label} stays manual`);
+  }
+  const explicitManual = verifyResponse({ model: DEFAULT_MODEL, answers: { f1: { type: 'noul', noul: 0.995 } } },
+    [{ ...suggestion, label: 'Synthetic bounded field', fieldType: 'numeric' }]);
+  assert.equal(explicitManual[0].autoOk, false, 'explicit numeric metadata stays manual');
 
   const belowProbability = verifyResponse({ model: DEFAULT_MODEL, answers: { f1: { type: 'noul', noul: 0.995 } } },
     [{ ...suggestion, probability: AUTO_POLICY.probability - 0.001 }]);

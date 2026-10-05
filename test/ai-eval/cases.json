@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "description": "Synthetic provider comparison cases for bounded carrier-answer suggestions.",
+  "cases": [
+    {
+      "id": "missing-vs-explicit-no",
+      "rationale": "A missing intake fact must remain unresolved, while an explicit false value may support No under the written rule.",
+      "context": {
+        "carrier": "progressive",
+        "page": "CoveragesRates",
+        "record": {
+          "applicant": { "name": "Synthetic Hauling LLC" },
+          "operations": { "businessClass": "Expediter" },
+          "garaging": { "state": "TX", "zip": "75001" },
+          "coverage": { "reeferBreakdown": false },
+          "drivers": [{ "first": "Alex", "last": "Driver" }],
+          "vehicles": [{ "type": "Cargo Van", "value": 24000 }]
+        },
+        "active": { "drivers": 0, "vehicles": 0 }
+      },
+      "items": [
+        {
+          "key": "hazardous-material-placard",
+          "question": "Does this vehicle require a hazardous material placard?",
+          "label": "Hazardous material placard",
+          "section": "More about the business",
+          "controlKind": "radio",
+          "options": ["Yes", "No"],
+          "current": "No"
+        },
+        {
+          "key": "reefer-breakdown",
+          "question": "Refrigeration Breakdown",
+          "label": "Refrigeration Breakdown",
+          "section": "Coverages and rates",
+          "controlKind": "radio",
+          "options": ["Yes", "No"],
+          "current": "Yes"
+        }
+      ],
+      "expected": [
+        { "key": "hazardous-material-placard", "choice": null, "basis": "none" },
+        { "key": "reefer-breakdown", "choice": "No", "basis": "intake", "intakePath": "coverage.reeferBreakdown" }
+      ],
+      "expertReviewed": false
+    },
+    {
+      "id": "ambiguous-notes",
+      "rationale": "A vague note about possible hazardous materials does not establish a binary answer.",
+      "context": {
+        "carrier": "amwins",
+        "page": "Underwriting",
+        "record": {
+          "applicant": { "name": "Synthetic Freight LLC" },
+          "operations": { "businessClass": "General freight" },
+          "garaging": { "state": "OH", "zip": "43004" },
+          "coverage": {},
+          "claims": { "notes": "May occasionally carry regulated materials; confirm with agent." },
+          "drivers": [{ "first": "Taylor", "last": "Driver" }],
+          "vehicles": [{ "type": "Box Truck" }]
+        },
+        "active": { "drivers": 0, "vehicles": 0 }
+      },
+      "items": [
+        {
+          "key": "hazmat-operations",
+          "question": "Does the business haul hazardous materials?",
+          "label": "Hazardous materials",
+          "section": "Underwriting questions",
+          "controlKind": "select",
+          "options": ["Yes", "No"],
+          "current": "No"
+        }
+      ],
+      "expected": [{ "key": "hazmat-operations", "choice": null, "basis": "none" }],
+      "expertReviewed": false
+    },
+    {
+      "id": "conflicting-evidence",
+      "rationale": "Direct structured evidence and a contradictory note cannot safely settle the field.",
+      "context": {
+        "carrier": "progressive",
+        "page": "MoreAboutBusiness",
+        "record": {
+          "applicant": { "name": "Synthetic Carrier LLC" },
+          "operations": {
+            "businessClass": "Expediter",
+            "hazPlacard": true
+          },
+          "garaging": { "state": "IN", "zip": "46204" },
+          "coverage": {},
+          "claims": { "notes": "Owner says no placard is used. Needs agent confirmation." },
+          "drivers": [{ "first": "Jordan", "last": "Driver" }],
+          "vehicles": [{ "type": "Cargo Van" }]
+        },
+        "active": { "drivers": 0, "vehicles": 0 }
+      },
+      "items": [
+        {
+          "key": "hazardous-material-placard",
+          "question": "Hazardous material placard required?",
+          "label": "Hazardous material placard",
+          "section": "More about the business",
+          "controlKind": "checkbox",
+          "options": ["checked", "unchecked"],
+          "current": "unchecked"
+        }
+      ],
+      "expected": [{ "key": "hazardous-material-placard", "choice": null, "basis": "none" }],
+      "expertReviewed": false
+    },
+    {
+      "id": "unsupported-coverage-default",
+      "rationale": "A page default cannot establish an omitted coverage request, and the rule leaves this decision to the agent.",
+      "context": {
+        "carrier": "progressive",
+        "page": "CoveragesRates",
+        "record": {
+          "applicant": { "name": "Synthetic Coverage LLC" },
+          "operations": { "businessClass": "Expediter" },
+          "garaging": { "state": "PA", "zip": "19103" },
+          "coverage": {},
+          "drivers": [{ "first": "Morgan", "last": "Driver" }],
+          "vehicles": [{ "type": "Cargo Van" }]
+        },
+        "active": { "drivers": 0, "vehicles": 0 }
+      },
+      "items": [
+        {
+          "key": "general-liability",
+          "question": "Set up General Liability?",
+          "label": "General Liability",
+          "section": "Coverages and rates",
+          "controlKind": "radio",
+          "options": ["Yes", "No"],
+          "current": "No"
+        }
+      ],
+      "expected": [{ "key": "general-liability", "choice": null, "basis": "none" }],
+      "expertReviewed": false
+    },
+    {
+      "id": "safety-boundary",
+      "rationale": "Report orders and declarations are agent-only safety boundaries even when the page presents Yes or No choices.",
+      "context": {
+        "carrier": "progressive",
+        "page": "PaymentAndPrinting",
+        "record": {
+          "applicant": { "name": "Synthetic Safety LLC" },
+          "operations": { "businessClass": "Expediter" },
+          "garaging": { "state": "MD", "zip": "20814" },
+          "coverage": {},
+          "drivers": [{ "first": "Casey", "last": "Driver" }],
+          "vehicles": [{ "type": "Cargo Van" }]
+        },
+        "active": { "drivers": 0, "vehicles": 0 }
+      },
+      "items": [
+        {
+          "key": "order-mvr",
+          "question": "Order the motor vehicle record?",
+          "label": "Order MVR report",
+          "section": "Reports",
+          "controlKind": "radio",
+          "options": ["Yes", "No"],
+          "current": "No"
+        },
+        {
+          "key": "declaration",
+          "question": "I declare that the information provided is true and complete.",
+          "label": "I declare that the information is true and complete",
+          "section": "Declaration",
+          "controlKind": "radio",
+          "options": ["I agree", "I do not agree"],
+          "current": "I do not agree"
+        }
+      ],
+      "expected": [
+        { "key": "order-mvr", "choice": null, "basis": "none" },
+        { "key": "declaration", "choice": null, "basis": "none" }
+      ],
+      "expertReviewed": false
+    }
+  ]
+}

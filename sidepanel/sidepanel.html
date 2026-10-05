@@ -7,36 +7,59 @@
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
-  <!-- Layout from the "Rater Autofill Drawer" design (claude.ai/design): a start screen, a loaded
-       quote in two steps (Check intake, Fill pages), and a separate Settings screen. -->
+  <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="brain" viewBox="0 0 24 24">
+      <path d="M12 18V5a3 3 0 0 0-5.8-1.1A4 4 0 0 0 3 10a4 4 0 0 0 .8 7.6A4 4 0 0 0 12 18Zm0 0V5a3 3 0 0 1 5.8-1.1A4 4 0 0 1 21 10a4 4 0 0 1-.8 7.6A4 4 0 0 1 12 18Z"/>
+      <path d="M8 3.5A3 3 0 0 0 9 8m-6 2a4 4 0 0 1 3-.5m-2.2 8.1A4 4 0 0 1 8 14m8-10.5A3 3 0 0 1 15 8m6 2a4 4 0 0 0-3-.5m2.2 8.1A4 4 0 0 0 16 14"/>
+    </symbol>
+    <symbol id="gear" viewBox="0 0 24 24">
+      <path d="m9.5 3-.5 2a7 7 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A7 7 0 0 0 9 19l.5 2h5l.5-2a7 7 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A7 7 0 0 0 15 5l-.5-2Z"/>
+      <circle cx="12" cy="12" r="3"/>
+    </symbol>
+    <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="upload" viewBox="0 0 24 24"><path d="M12 16V4m-4 4 4-4 4 4M4 16v4h16v-4"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+    <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+  </svg>
+
   <header class="top">
     <img class="top-logo" src="logo.png" alt="">
     <h1 class="brand-text"><strong>Truckers National</strong><span>Rater Autofill</span></h1>
     <span class="top-right">
-      <span id="site" class="site">…</span>
-      <button type="button" id="settings-btn" class="ghost small-btn settings-btn" aria-expanded="false">Settings<span id="settings-dot" class="dot" hidden></span></button>
+      <button type="button" id="settings-btn" class="icon-btn settings-btn" aria-label="Settings" title="Settings" aria-expanded="false"><svg aria-hidden="true"><use href="#gear"/></svg><span id="settings-dot" class="dot" hidden></span></button>
+      <button type="button" id="agent-btn" class="icon-btn brain-btn" aria-label="Open agent options" aria-haspopup="dialog" aria-expanded="false" aria-controls="agent-popover" title="Agent options"><svg aria-hidden="true"><use href="#brain"/></svg></button>
     </span>
   </header>
+
+  <div class="carrier-row">
+    <img id="site-logo" class="rater-logo" alt="" hidden>
+    <span id="site" class="site">…</span>
+    <span id="site-caption" class="carrier-caption" hidden></span>
+  </div>
 
   <!-- 1. No intake loaded: setup notices, drop zone, what happens next -->
   <main id="home" class="screen">
     <div id="home-notices" class="notices"></div>
     <div id="intro" class="intro">
       <h2>Start a quote</h2>
-      <p class="muted">Add the client's TNI quote application and this panel fills the Progressive, GEICO or AmWINS pages for you.</p>
+      <p class="muted">Add the client’s TNI quote application.<br>We’ll help with the rater pages.</p>
     </div>
     <section id="load" class="drop" tabindex="0">
       <input id="file" type="file" accept="application/pdf,.pdf" hidden>
-      <p class="drop-title">Drop the intake PDF here</p>
-      <button type="button" id="choose" class="primary big">Choose a PDF</button>
-      <p class="small muted">Stays on this computer. Cleared when Chrome closes.</p>
+      <div class="upload-mark"><svg aria-hidden="true"><use href="#upload"/></svg></div>
+      <div><h3 class="drop-title">Drop your intake PDF here</h3><p class="drop-hint">or choose a file from your computer</p></div>
+      <button type="button" id="choose" class="primary">Choose a PDF <svg aria-hidden="true"><use href="#arrow"/></svg></button>
     </section>
+    <p class="privacy-line"><svg aria-hidden="true"><use href="#lock"/></svg>Stays on this computer. Cleared when Chrome closes.</p>
     <div id="load-error" class="card bad" role="alert" hidden></div>
     <div id="next-steps" class="steps">
       <div class="eyebrow">What happens next</div>
-      <div class="step"><span class="num">1</span><span>Check anything the intake got wrong.</span></div>
-      <div class="step"><span class="num">2</span><span>Open the rater page and click Fill this page.</span></div>
-      <div class="step"><span class="num">3</span><span>Answer what's left, then click Next yourself. Nothing is submitted for you.</span></div>
+      <ol class="steps-list">
+        <li class="step"><span class="num">1</span><div><b>Check the intake</b><p>Review anything missing or incorrect.</p></div></li>
+        <li class="step"><span class="num">2</span><div><b>Fill the rater page</b><p>Open Progressive, GEICO or AmWINS,<br>then click Fill this page.</p></div></li>
+        <li class="step"><span class="num">3</span><div><b>You’re in control</b><p>Review what’s left and continue yourself.<br>Nothing is submitted for you.</p></div></li>
+      </ol>
     </div>
   </main>
 
@@ -92,19 +115,12 @@
     </div>
     <div class="card form">
       <div class="eyebrow">Filling</div>
-      <label class="opt"><input type="checkbox" id="auto-followups" checked><span><b>Fill new questions as they appear</b><span>Some answers open more questions on the page.</span></span></label>
-      <label class="opt"><input type="checkbox" id="auto-advance" checked><span><b>Click Continue when the page is done</b><span>Only when nothing is left for you. Never Bind or Submit.</span></span></label>
-      <label class="opt"><input type="checkbox" id="auto-pages"><span><b>Fill each page as soon as it opens</b><span>Skips pressing Fill this page.</span></span></label>
-      <label class="opt"><input type="checkbox" id="overwrite"><span><b>Replace answers already on the page</b><span>Off keeps what the rater filled, e.g. from a DOT lookup.</span></span></label>
+      <label class="opt filling-option"><span><b>Fill new questions as they appear</b><span>Some answers open more questions on the page.</span></span><input type="checkbox" role="switch" class="plain-switch" id="auto-followups" checked></label>
+      <label class="opt filling-option"><span><b>Click Continue when the page is done</b><span>Only when nothing is left for you. Never Bind or Submit.</span></span><input type="checkbox" role="switch" class="plain-switch" id="auto-advance" checked></label>
+      <label class="opt filling-option"><span><b>Fill each page as soon as it opens</b><span>Skips pressing Fill this page.</span></span><input type="checkbox" role="switch" class="plain-switch" id="auto-pages"></label>
+      <label class="opt filling-option"><span><b>Replace answers already on the page</b><span>Off keeps what the rater filled, e.g. from a DOT lookup.</span></span><input type="checkbox" role="switch" class="plain-switch" id="overwrite"></label>
     </div>
-    <div id="ai" class="card form">
-      <div class="eyebrow">Jev assistant</div>
-      <label class="opt"><input type="checkbox" id="ai-on"><span><b>Suggest answers for questions left for me</b><span>Jev checks unresolved choices against your intake and TNI rules.</span></span></label>
-      <label class="opt"><input type="checkbox" id="ai-auto"><span><b>Apply verified Jev choices automatically</b><span>Only strongly supported choices. Marked purple; you approve before Continue.</span></span></label>
-      <label class="field-stack">TypeSafe API key<input id="ai-key" type="password" placeholder="TypeSafe API key" autocomplete="off"></label>
-      <p id="ai-note" class="small muted" aria-live="polite"></p>
-      <p class="small muted">Relevant intake facts, page context and TNI rules are sent to TypeSafe with your key. Missing facts stay unanswered. MVR/CLUE orders, exclusions, signatures and payment details are never sent.</p>
-    </div>
+    <button type="button" id="settings-agent" class="agent-settings-link" aria-haspopup="dialog" aria-expanded="false" aria-controls="agent-popover"><svg aria-hidden="true"><use href="#brain"/></svg><span><b id="settings-agent-name">GPT-6 Luna assistant</b><span>Manage your agent from the brain icon.</span></span><svg aria-hidden="true"><use href="#arrow"/></svg></button>
     <div id="usage" class="card form">
       <div class="eyebrow">Usage log</div>
       <p class="small muted">While an intake is loaded, how the extension is used on rater pages is recorded to improve it: which fields it filled, what you changed afterwards, and problems you report. Client names, numbers and anything you type are never recorded.</p>
@@ -116,7 +132,6 @@
     <details id="advanced" class="advanced">
       <summary class="eyebrow">Advanced (for setup)</summary>
       <div class="advanced-body">
-        <label class="field-row">Model<input id="ai-model" type="text" placeholder="jev-1.13.0" autocomplete="off" spellcheck="false"></label>
         <label class="field-row">Server<input id="server-url" type="url" placeholder="https://usage-server-production.up.railway.app" autocomplete="off"></label>
         <label class="field-row">Token<input id="server-token" type="password" placeholder="if the server needs one" autocomplete="off"></label>
         <div class="actions wrap">
@@ -129,6 +144,21 @@
     </details>
     <p id="version" class="eyebrow"></p>
   </main>
+
+  <section id="agent-popover" class="agent-popover" role="dialog" aria-modal="false" aria-labelledby="agent-title" tabindex="-1" hidden>
+    <div class="popover-head"><h2 id="agent-title">Agent options</h2><button type="button" id="close-agent" class="icon-btn" aria-label="Close agent options"><svg aria-hidden="true"><use href="#close"/></svg></button></div>
+    <div class="selected-agent"><span class="agent-avatar"><svg aria-hidden="true"><use href="#brain"/></svg></span><div><div class="agent-name"><b id="agent-name">GPT-6 Luna</b> <span>Current agent</span></div><p><span id="agent-provider">OpenAI</span> · <span id="agent-model">gpt-6-luna</span></p></div><svg class="selected-check" aria-hidden="true"><use href="#check"/></svg></div>
+    <label class="field-stack">Agent<select id="ai-provider"><option value="luna">GPT-6 Luna · OpenAI</option><option value="jev">Jev · TypeSafe AI</option></select></label>
+    <label class="agent-option option"><span><b>Assistant enabled</b><small>Suggest answers for questions left for me.</small></span><input id="ai-on" type="checkbox" role="switch" class="plain-switch"></label>
+    <div id="agent-status" class="agent-status" aria-live="polite"><span class="status-dot"></span><p id="ai-note"></p></div>
+    <label id="ai-auto-option" class="auto-option option"><span><b>Apply verified choices automatically</b><small>Evidence-checked choices are marked purple; you approve them before Continue.</small></span><input id="ai-auto" type="checkbox" role="switch" class="plain-switch"></label>
+    <details id="ai-connection" class="connection"><summary>Connection &amp; model <svg aria-hidden="true"><use href="#arrow"/></svg></summary><div class="connection-body">
+      <label id="jev-key-row" class="field-stack">TypeSafe API key<input id="ai-key" type="password" placeholder="TypeSafe API key" autocomplete="off"></label>
+      <label id="luna-key-row" class="field-stack">OpenAI API key<input id="ai-openai-key" type="password" placeholder="OpenAI API key" autocomplete="off"></label>
+      <label class="field-stack">Model<input id="ai-model" type="text" placeholder="jev-1.13.0" autocomplete="off" spellcheck="false"></label>
+    </div></details>
+    <p id="ai-privacy" class="agent-note">Relevant intake facts and TNI rules are sent to OpenAI with your key. Missing facts stay unanswered. Keys are saved on this device.</p>
+  </section>
 
   <footer class="foot">
     <div class="foot-row">

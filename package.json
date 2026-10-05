@@ -19,6 +19,8 @@
     "mock:amwins": "node scripts/amwins-mock.mjs",
     "test:intakes": "node scripts/intake-mocks.mjs",
     "mock:ai": "node scripts/ai-mock.mjs",
+    "mock:luna": "node scripts/luna-mock.mjs",
+    "ai:eval": "node scripts/ai-eval.mjs",
     "e2e:extension": "node scripts/extension-e2e.mjs",
     "pull": "node scripts/logs-pull.mjs",
     "push-logs": "node scripts/logs-push.mjs",

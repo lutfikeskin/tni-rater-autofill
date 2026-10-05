@@ -8,6 +8,7 @@ import { progressive } from '../src/carriers/progressive.js';
 // This is a deliberately small DOM/ExtJS replay.  It exercises the injected MAIN-world
 // script itself, without a browser session, real quote data, or customer identifiers.
 const PAGEKIT = fs.readFileSync(new URL('../src/content/pagekit.js', import.meta.url), 'utf8');
+const FIELD_KEY = fs.readFileSync(new URL('../src/content/field-key.js', import.meta.url), 'utf8');
 const RECORDER = fs.readFileSync(new URL('../src/content/recorder.js', import.meta.url), 'utf8');
 
 function attrSelector(node, selector) {
@@ -320,12 +321,12 @@ function harness({ ext = false, pathname = '/rater', search = '' } = {}) {
       _components: components,
     };
   }
+  vm.runInNewContext(FIELD_KEY, context, { filename: 'src/content/field-key.js' });
   vm.runInNewContext(PAGEKIT, context, { filename: 'src/content/pagekit.js' });
   return { context, document, kit: context.__raterKit };
 }
 
-function recorderHarness() {
-  const document = new FakeDocument();
+function recorderHarness(document = new FakeDocument()) {
   const sent = [];
   const listeners = [];
   let tick;
@@ -336,7 +337,7 @@ function recorderHarness() {
     NodeFilter: { SHOW_TEXT: 4 },
     Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
     URLSearchParams,
-    addEventListener(type, fn) { listeners.push(fn); },
+    addEventListener(type, fn) { listeners.push({ type, fn }); },
     setInterval: (fn) => { tick = fn; return 1; },
     clearInterval() {},
     chrome: {
@@ -349,9 +350,10 @@ function recorderHarness() {
   };
   context.window = context;
   context.top = context;
+  vm.runInNewContext(FIELD_KEY, context, { filename: 'src/content/field-key.js' });
   vm.runInNewContext(RECORDER, context, { filename: 'src/content/recorder.js' });
   // A real (trusted) click or key press by the agent.
-  return { context, document, sent, tick: () => tick?.(), trusted: () => listeners.forEach((fn) => fn({ isTrusted: true })) };
+  return { context, document, sent, tick: () => tick?.(), trusted: target => listeners.filter(l => l.type === 'pointerdown').forEach(({ fn }) => fn({ isTrusted: true, target })) };
 }
 
 function addExtText(h, prefix, question, options = {}) {
@@ -374,6 +376,76 @@ test('reinjection reuses the installed pagekit and preserves its state', () => {
   const h = harness();
   vm.runInNewContext(PAGEKIT, h.context);
   assert.equal(h.context.__raterKit, h.kit);
+});
+
+test('anonymous repeated carrier fields have distinct keys and protecting one does not skip the others', async () => {
+  const h = harness();
+  const garage = new FakeNode('div', { id: 'garagePanel' });
+  const state = new SelectNode([{ text: '', value: '' }, { text: 'New Jersey', value: 'NJ' }], { attrs: { 'data-id': 'state' } });
+  garage.append(state); h.document.body.append(garage);
+  const rows = Array.from({ length: 3 }, (_, i) => {
+    const row = new FakeNode('div', { id: `priorCarrierCoveragePanel${i}` });
+    const carrier = new SelectNode([{ text: '', value: '' }, { text: 'NO PRIOR', value: 'np' }, { text: 'ALLIANZ', value: 'allianz' }],
+      { required: true, attrs: { 'data-id': 'carrierName' } });
+    row.append(carrier); h.document.body.append(row);
+    return { row, carrier };
+  });
+  const keys = [state, ...rows.map(x => x.carrier)].map(el => h.context.__raterFieldKey(el));
+  assert.equal(new Set(keys).size, 4);
+  assert.ok(keys.every(Boolean));
+  const plan = rows.map((_, i) => ({ id: `prior${i}`, path: `prior${i}`, withOption: 'NO PRIOR', kind: 'choice', value: 'NO PRIOR' }));
+  const report = await h.kit.fill(plan, { skip: [keys[0]], maxRounds: 5 });
+  assert.deepEqual(rows.map(x => x.carrier.value), ['np', 'np', 'np']);
+  assert.equal(report.filled.length, 3);
+  // Redrawn controls in the same row retain their identity, without sharing another row's edit.
+  const previous = rows[1].carrier;
+  const replacement = new SelectNode([{ text: '', value: '' }, { text: 'NO PRIOR', value: 'np' }, { text: 'ALLIANZ', value: 'allianz' }],
+    { required: true, attrs: { 'data-id': 'carrierName' } });
+  rows[1].row.replaceChild(replacement, previous);
+  assert.equal(h.context.__raterFieldKey(replacement), keys[2]);
+  replacement.value = 'allianz';
+  rows[0].carrier.value = ''; rows[2].carrier.value = '';
+  await h.kit.fill(plan, { skip: [keys[2]], maxRounds: 5, replaceChoices: true });
+  assert.deepEqual([rows[0].carrier.value, replacement.value, rows[2].carrier.value], ['np', 'allianz', 'np']);
+});
+
+test('an agent-confirmed missing-intake choice is resolved while prefilled values and explicit notes still require review', async () => {
+  const plan = [{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: null, name: 'Years in business' }];
+  const h = harness();
+  const years = new SelectNode([{ text: '', value: '' }, { text: '3', value: '3' }], { id: 'yrsInBusiness', ariaLabel: 'Years in Business' });
+  years.value = '3'; h.document.body.append(years);
+  const unconfirmed = await h.kit.fill(plan, { maxRounds: 3 });
+  assert.equal(unconfirmed.noData.length, 1, 'a page value alone does not prove the missing client fact');
+  const confirmed = await h.kit.fill(plan, { skip: ['yrsInBusiness'], maxRounds: 3 });
+  assert.equal(confirmed.noData.length, 0);
+  assert.equal(confirmed.blockers.length, 0);
+  assert.equal(years.value, '3');
+  const review = await h.kit.fill([{ ...plan[0], value: '3', note: 'Confirm the source before continuing.' }], { maxRounds: 3 });
+  assert.equal(review.noData.length, 1, 'the missing-data fix must not erase intentional review notes');
+});
+
+test('anonymous radio options share one answer key while separate groups stay distinct', async () => {
+  const h = harness();
+  const groups = ['First question', 'Second question'].map((label, i) => {
+    const group = new FakeNode('fieldset', { id: `anonymousGroup${i}`, role: 'radiogroup', ariaLabel: label });
+    const yes = makeInput({ type: 'radio', value: 'Yes' });
+    const no = makeInput({ type: 'radio', value: 'No' });
+    group.append(yes, no); h.document.body.append(group);
+    return { yes, no };
+  });
+  const keyOf = el => h.context.__raterFieldKey(el);
+  assert.equal(keyOf(groups[0].yes), keyOf(groups[0].no));
+  assert.notEqual(keyOf(groups[0].yes), keyOf(groups[1].yes));
+  const recorder = recorderHarness(h.document);
+  recorder.trusted(groups[0].no);
+  groups[0].no.checked = true;
+  recorder.tick();
+  const edit = recorder.sent.filter(m => m.event === 'field_changes').flatMap(m => m.changes).find(c => c.agent);
+  assert.equal(edit?.key, keyOf(groups[0].yes), 'the non-first option uses the fill engine group key');
+  const plan = ['First question', 'Second question'].map((label, i) => ({ id: `question${i}`, path: `question${i}`, re: `^${label}$`, kind: 'bool', value: null, name: label }));
+  const report = await h.kit.fill(plan, { skip: [edit.key], maxRounds: 3 });
+  assert.equal(report.noData.length, 1);
+  assert.equal(report.noData[0].key, keyOf(groups[1].yes));
 });
 
 test('an existing blank driver row prevents a duplicate Add Driver action', async () => {
@@ -1466,7 +1538,7 @@ test('fields that reappear already answered (a step shown again) are never count
   const existing = makeInput({ id: 'existing', ariaLabel: 'Existing question', value: 'before' });
   h.document.body.append(existing);
   h.context.__raterRecorder.rebaseline();
-  h.trusted();
+  h.trusted(existing);
   // The agent clicks Prev: the earlier step comes back with its saved answers, and they edit one field.
   h.document.body.append(makeInput({ id: 'restored', ariaLabel: 'Restored question', value: 'saved answer' }));
   existing.value = 'after';

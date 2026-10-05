@@ -12,7 +12,7 @@ The extension uses plain ES modules with no source build step. `npm install` ins
 | Progressive rules or page execution | `test/progressive.test.mjs`, `test/pagekit.test.mjs`, `npm run e2e -- --fixtures` |
 | AmWINS rules or application flow | `npm run mock:amwins` before completing an AmWINS rule change |
 | Panel orchestration or packaged behavior | `test/sidepanel-safety.test.mjs`, `npm run e2e:extension` |
-| AI validation, approvals, caching | `test/assist.test.mjs`, `npm run mock:ai` |
+| AI validation, approvals, caching | `test/assist.test.mjs`, `test/luna.test.mjs`, `test/ai-eval.test.mjs`, `npm run mock:ai`, `npm run mock:luna` |
 | Events, learning, layout coverage, transport | Corresponding `usage`, `usage-log`, `learn`, `coverage`, `server`, and `consistency` test files |
 | Documentation only | Link/command checks, current-code audit, and `git diff --check`; no browser run or version bump |
 
@@ -20,10 +20,15 @@ Run `npm test` for code changes, plus affected integration checks. Repeat or bro
 
 ## Browser harnesses and limits
 
-- `npm run e2e` runs Progressive layout replays; `--fixtures` uses committed per-state fixtures, including in CI. Local runs can also include captures and generated layouts. A replay does not establish complete live navigation, server acceptance, or real lookup reliability.
+- `npm run e2e` runs Progressive layout replays; `--fixtures` uses committed per-state fixtures for local verification. Local runs can also include captures and generated layouts. A replay does not establish complete live navigation, server acceptance, or real lookup reliability.
 - `npm run mock:amwins` checks the saved-site behavior mock and its expected answers, including continuation and no submission.
 - `npm run e2e:extension` needs `npm run package` and `npm run replay` serving on port 8792. It runs the packaged panel/extension on the AmWINS mock.
 - `npm run mock:ai` needs the package and uses controlled model responses. It checks interaction and approval behavior, not a live model's accuracy or latency.
+- `npm run mock:luna` also needs the package. It intercepts OpenAI requests and checks the dedicated key field, Luna's independent automatic-selection setting, the approval hold and reload retention, rejection/manual correction, conflicting evidence and stale provider responses. Neither mock makes live AI requests.
+- The Luna mock should also preserve the request-budget contract: low reasoning and low verbosity, no `temperature` or `top_p`, up to 12 eligible fields per adaptive request, a combined state/schema bound of 48,000 characters, 4,096-token choice output, 2,048-token verification output, and the complete evidence/scoped-intake split between the two calls. Before verification, the planner must bound the whole scoped intake, keep at most four cited sources per field, include the longest visible answer in its size estimate, split oversized groups, and reject a single oversized field for manual review. These caps bound request work; they do not measure billed tokens, live latency, or live accuracy.
+- Usage assertions should cover `tokensIn`, `tokensOut`, `modelCalls`, `reasoningTokens`, `cachedTokens`, and `cacheWriteTokens`. Reasoning is included in output tokens, while `modelCalls` counts logical provider calls and excludes HTTP retries. Controlled mocks can verify the counters and boundaries; they cannot establish live performance.
+- Schema checks should cover the shared citation definition and adaptive splitting at 1,000 total enum values, preserving all options and sources.
+- `npm run ai:eval -- --score <saved-result.json>` scores saved comparison output. Live comparison requires explicit `--live --provider jev|luna|both` and the relevant process environment keys. Committed cases are synthetic and not expert-reviewed; they are a starting scaffold, not a production accuracy claim.
 - `npm run test:intakes -- --carrier amwins --cases 03,09` selects synthetic cases. The pool under `dist/synthetic-intakes` is local and untracked; read [intake-mocks.mjs](../scripts/intake-mocks.mjs) for available options. Missing pool data is a stated limitation, not evidence of a pass.
 
 ## Baselines and fixtures
@@ -34,8 +39,10 @@ For AmWINS page changes, update the scrubbed [fixtures](../test/fixtures/amwins/
 
 ## CI and authorized releases
 
-[checks.yml](../.github/workflows/checks.yml) runs unit tests, AmWINS mock, Progressive committed-fixture replay, packaging, and packaged-extension E2E. Run the release checks before shipping. Do not claim CI passed based only on local tests.
+[checks.yml](../.github/workflows/checks.yml) runs unit tests and packaging on pull requests, with a five-minute limit and cancellation of superseded runs. Browser installation, carrier mocks and replays, assistant browser workflows, and packaged-extension E2E run locally. Merging a tested PR avoids a duplicate main-branch run. Do not claim CI passed based only on local tests.
 
 For a shipped extension version, keep [manifest.json](../manifest.json) and [package.json](../package.json) in sync and update the lockfile's package metadata. `npm run package` produces the zip and unpacked directory under ignored `dist/`. A local correction or documentation change does not itself authorize a version bump or upload.
 
 Use [store release](chrome-web-store.md) only for distribution, and [hosting](hosting.md) only for server deployment. Verify the requested outcome, including retained page values or a generated document when that is part of the task; distinguish mock, packaged-extension, and live evidence.
+
+For the provider's general guidance, see the official [GPT-6 Luna model documentation](https://developers.openai.com/api/docs/models/gpt-6-luna), [latency optimization](https://developers.openai.com/api/docs/guides/latency-optimization), [deployment checklist](https://developers.openai.com/api/docs/guides/deployment-checklist), and [prompt caching](https://developers.openai.com/api/docs/guides/prompt-caching). A passing mock confirms the request shape and integration behavior only; it does not establish a production latency or cost improvement.
