@@ -1106,7 +1106,11 @@ async function captureLayout(job, reason) {
     if (fillStarted()) return waitForFill(job);
     // The page actually read, as the page itself names it: the tab's address in the panel can
     // lag behind a navigation, and the next page must never be logged under this one's name.
-    if (results.map((r) => r.result).find((f) => f?.isTopFrame)?.page !== page) return;
+    const top = results.map((r) => r.result).find((f) => f?.isTopFrame);
+    if (top?.page !== page) return;
+    // On a one-address application, which step (Insured Info, Vehicles, …): otherwise every step
+    // would look like one page whose questions come and go.
+    const step = carrier.layoutSteps ? top.step || null : undefined;
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
@@ -1132,9 +1136,10 @@ async function captureLayout(job, reason) {
     const signature = await sha256Hex(JSON.stringify(shape));
     if (!jobCurrent(job) || superseded(job)) return;
     // Per quote tab too: each tab keeps its own quote state (refreshTab).
-    const scope = `${job.session}|${tabId}|${carrier.id}|${editScope(page)}`;
-    // An empty page counts too (an answer can hide the last question): otherwise the question's
-    // going away, and its coming back, would never be logged.
+    const scope = `${job.session}|${tabId}|${carrier.id}|${editScope(page)}|${step ?? ''}`;
+    // An empty page counts only when questions went away (an answer hid the last one): a fill or
+    // an arrival that finds nothing is a page still loading, or one without questions.
+    if (!fields.length && !why().split('+').includes('removed')) return;
     if (state.lastLayouts.get(scope) === signature) return;
     state.lastLayouts.set(scope, signature);
     const r = state.intake.record;
@@ -1147,7 +1152,7 @@ async function captureLayout(job, reason) {
       vehicles: r.vehicles.length,
       coverages: Object.entries(r.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     };
-    usage.log({ type: 'page_layout', carrier: carrier.id, page, reason: why(), context, fields, buttons });
+    usage.log({ type: 'page_layout', carrier: carrier.id, page, step, reason: why(), context, fields, buttons });
   } catch (e) {
     // A capture overtaken by a later change (a redraw can make its read fail) hands its reasons
     // on instead of reporting a failure for a page that is being captured anyway.
@@ -1244,9 +1249,9 @@ async function layoutWhenQuiet(job, tries = 0) {
   if (state.filling) return afterFill();
   if (busy) {
     // Still loading (an answer's server round trip): look again shortly, a few times at most.
-    // A page still busy after that is counted like one that couldn't be read: nothing else may
-    // ask for its layout again.
-    if (tries < 3) state.layoutTimer = setTimeout(() => layoutWhenQuiet(job, tries + 1), LAYOUT_DELAY_MS);
+    // A page still busy after that (about eight seconds in all) is counted like one that couldn't
+    // be read: nothing else may ask for its layout again.
+    if (tries < 6) state.layoutTimer = setTimeout(() => layoutWhenQuiet(job, tries + 1), LAYOUT_DELAY_MS);
     else {
       layoutFailed(job, reason(), 'page busy');
       drop();

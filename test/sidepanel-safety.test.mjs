@@ -1452,7 +1452,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
         return [{ result: context.busy }];
       }
       // The page as the page itself names it (pagekit's capture), normally the tab's.
-      return [{ result: { controls: controls(), buttons: ['Continue'], isTopFrame: true, page: context.domPage ?? context.state.tab.url } }];
+      return [{ result: { controls: controls(), buttons: ['Continue'], isTopFrame: true, page: context.domPage ?? context.state.tab.url, step: context.domStep ?? '' } }];
     },
     sessionId: session,
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
@@ -1705,7 +1705,9 @@ test('a page still busy after the retries is counted, not silently dropped', asy
   const { context, logged } = layoutHarness(() => []);
   context.busy = true;
   context.scheduleLayout('Vehicles', 'changed');
-  for (let i = 0; i < 4; i++) await context.pending();
+  for (let i = 0; i < 6; i++) await context.pending();
+  assert.equal(context.state.layoutErrors, 0, 'still waiting');
+  await context.pending();
   assert.equal(context.state.layoutErrors, 1);
   assert.deepEqual(logged.map((e) => [e.type, e.reason, e.error]), [['layout_error', 'changed', 'page busy']]);
   assert.equal(context.state.layoutPending, null);
@@ -2117,4 +2119,39 @@ test('the fill options hand the carrier\'s stop pages to the page kit', () => {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
   assert.match(body, /stopPages: Object\.keys\(carrier\.stopPages \?\? \{\}\)/);
+});
+
+test('an empty page is logged only when questions went away, never from a fill or an arrival', async () => {
+  let controls = [];
+  const { context, logged } = layoutHarness(() => controls);
+  // A fill that ran before the page drew its questions, or an arrival on a page still loading.
+  await context.recordLayout('Vehicles', 'fill');
+  await context.recordLayout('Vehicles', 'arrived');
+  assert.deepEqual(logged, []);
+  controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  await context.recordLayout('Vehicles', 'arrived');
+  controls = [];
+  await context.recordLayout('Vehicles', 'changed+removed');
+  assert.deepEqual(logged.map((e) => [e.reason, e.fields.length]), [['arrived', 1], ['changed+removed', 0]]);
+});
+
+test('a one-address application names the step of each layout, and steps are compared apart', async () => {
+  let controls = [{ label: 'VIN', kind: 'text' }];
+  const { context, logged } = layoutHarness(() => controls);
+  context.state.tab.carrier = { id: 'amwins', layoutUrl: /./, layoutSteps: true };
+  context.domStep = 'Vehicles';
+  await context.recordLayout('Vehicles', 'arrived');
+  context.domStep = 'Coverages';
+  controls = [{ label: 'Exclude Collision Coverage', kind: 'radio', options: ['Yes', 'No'] }];
+  await context.recordLayout('Vehicles', 'changed');
+  // Back on the Vehicles step, unchanged: already logged for that step.
+  context.domStep = 'Vehicles';
+  controls = [{ label: 'VIN', kind: 'text' }];
+  await context.recordLayout('Vehicles', 'changed');
+  assert.deepEqual(logged.map((e) => [e.step, e.fields[0].label]), [['Vehicles', 'VIN'], ['Coverages', 'Exclude Collision Coverage']]);
+  // Other carriers' layouts carry no step (their pages have their own names).
+  context.state.tab.carrier = { id: 'progressive', layoutUrl: /./ };
+  controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'] }];
+  await context.recordLayout('Vehicles', 'arrived');
+  assert.equal('step' in logged.at(-1) && logged.at(-1).step !== undefined, false);
 });

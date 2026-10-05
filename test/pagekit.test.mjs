@@ -1890,3 +1890,9 @@ test('on a carrier stop page (Progressive DeclinationNotice) the kit fills and c
     }
   }
 });
+
+test('a capture names the step on screen from its visible headings', () => {
+  const h = harness();
+  h.document.body.append(new FakeNode('h3', { textContent: 'Vehicles' }), makeInput({ id: 'vin', ariaLabel: 'VIN' }));
+  assert.equal(h.kit.capture(null, []).step, 'Vehicles');
+});
