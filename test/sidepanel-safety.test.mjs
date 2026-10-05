@@ -307,7 +307,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     afterFill: () => {},
     runPendingPage: () => {},
   };
-  vm.runInNewContext(extractFunction('autoFill'), context);
+  vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
   await context.autoFill('Rates');
   assert.equal(state.autoPaused, false);
   assert.equal(state.filling, false);
@@ -980,4 +980,107 @@ test('reloading an intake drops settled ledger entries without losing unresolved
   assert.equal(state.aiCache.get(pendingSig), pending, 'the existing unresolved hold keeps its identity');
   assert.equal(stored.length, 1);
   assert.equal(stored[0].key, 'pending');
+});
+
+// 2026-10-05 FL run: after the first vehicle's Add Vehicle was continued, the second and third
+// vehicles' (same headings) were taken for the agent going back, and Continue wasn't clicked.
+test('a continued step is remembered per vehicle and driver on carriers that add them one at a time', () => {
+  const progressive = { vehicleList: 'VehicleSummary', driverList: 'DriverSummary' };
+  const state = { active: { vehicles: 0, drivers: 0 }, doneSteps: new Set(), autoPaused: false, tab: { carrier: progressive } };
+  const watched = [];
+  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: (...args) => watched.push(args) };
+  vm.runInNewContext(extractFunction('stepScope') + extractFunction('afterFill'), context);
+  context.afterFill([{ advanced: 'Continue', signatureBefore: 'before', stepKey: 'Vehicle Information / Common Questions' }], { carrier: progressive, page: 'AddVehicle' });
+  assert.deepEqual([...state.doneSteps], ['AddVehicle|v0d0|Vehicle Information / Common Questions']);
+  assert.equal(watched[0][3], 'AddVehicle|v0d0|Vehicle Information / Common Questions', 'the lost-Continue retry uses the same entry');
+  const remembered = (carrier) => [...state.doneSteps].filter((s) => s.startsWith(context.stepScope('AddVehicle', carrier)));
+  assert.equal(remembered(progressive).length, 1, 'back on the first vehicle: not continued again');
+  state.active.vehicles = 1;
+  assert.equal(remembered(progressive).length, 0, 'the next vehicle is a new step');
+  // One-address applications (AmWINS) keep one entry per page and step, whatever the active row.
+  assert.equal(context.stepScope('Step', {}), 'Step||');
+});
+
+function assistHarness({ suggest, cfg = {} } = {}) {
+  const logged = [], rendered = [], applied = [];
+  const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat(), isConnected: true,
+    replaceChildren(...next) { this.children = next; }, remove() { this.isConnected = false; }, before() {} });
+  const report = { append(child) { child.isConnected = true; this.children = [...(this.children ?? []), child]; }, querySelector: () => null };
+  const record = { vehicles: [] };
+  const state = { intake: { record }, active: { drivers: 0, vehicles: 0 }, tab: { id: 1, url: 'https://rater.test/Default.aspx?pageName=CoveragesRates' },
+    aiRun: 0, aiCache: new Map(), agentKeys: new Map(), filling: false };
+  const context = {
+    state, assistContextKey, pageOf: (url) => new URL(url).searchParams.get('pageName'), h: node, $: () => report,
+    aiSettings: async () => ({ on: true, apiKey: 'synthetic', model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
+    PROVIDERS: { luna: { name: 'Luna', policy: 'synthetic-policy' } },
+    collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
+    aiSettledOnPage: () => false, aiFingerprint: (v) => JSON.stringify(v), aiItemFingerprint: (x) => `${x.key}|${x.label}`,
+    aiCacheSignature: (x) => JSON.stringify(x), runKit: async () => [{ frameId: 0, result: 'snapshot' }],
+    suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events) },
+    renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
+    syncAiBanner: () => {}, pendingAi: () => [],
+  };
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('runAssist'), context);
+  const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
+  return { state, context, ctx, report, logged, rendered, applied, holder: () => report.children.at(-1) };
+}
+
+// 2026-10-05 FL run: Luna answered in 17 s, but the page had changed meanwhile; the panel kept
+// "Asking Luna about 14 questions…" on screen for minutes.
+test('an AI answer that arrives after the page changed replaces the waiting message and is still logged', async () => {
+  const answer = { suggestions: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125', leave: true }], tokensIn: 10, tokensOut: 2, modelCalls: 1 };
+  const t = assistHarness({ suggest: async () => {
+    t.state.tab = { ...t.state.tab, url: 'https://rater.test/Default.aspx?pageName=CoveragesRates-Reload' };
+    return answer;
+  } });
+  await t.context.runAssist([{}], t.ctx);
+  const text = JSON.stringify(t.holder().children);
+  assert.match(text, /Luna: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
+  assert.doesNotMatch(text, /Asking/);
+  assert.equal(t.rendered.length, 0, 'stale suggestions are never shown as current');
+  assert.equal(t.state.aiCache.size, 0, 'nor cached');
+  assert.equal(t.logged[0].type, 'ai_suggest');
+  assert.equal(t.logged[0].tokensIn, 10, 'the spent tokens are logged');
+  assert.equal(t.logged[0].error, 'Answer discarded: the tab or page changed.');
+  // The same answer while the page is unchanged is shown.
+  const fresh = assistHarness({ suggest: async () => answer });
+  await fresh.context.runAssist([{}], fresh.ctx);
+  assert.equal(fresh.rendered.length, 1);
+  assert.equal(fresh.logged[0].error, undefined);
+});
+
+test('Luna waits for the follow-up fill of a helper it clicked, and is not asked about a page the fill left', async () => {
+  const asked = [];
+  const state = { assistPage: null };
+  const context = { state, runAssist: (frames, ctx) => asked.push(ctx.page) };
+  vm.runInNewContext(extractFunction('assistAfterFill'), context);
+  context.assistAfterFill([{ actions: [{ id: 'openCargo' }] }], { page: 'CoveragesRates' }, true);
+  assert.deepEqual(asked, []);
+  assert.equal(state.assistPage, 'CoveragesRates', 'held for the follow-up fill');
+  context.assistAfterFill([{ navigatedTo: 'ChangePaymentPlan' }], { page: 'CoveragesRates' }, false);
+  assert.deepEqual(asked, [], 'the bill plan opened: nothing to ask about this page');
+  assert.equal(state.assistPage, null);
+  context.assistAfterFill([{}], { page: 'CoveragesRates' }, false);
+  assert.deepEqual(asked, ['CoveragesRates']);
+});
+
+test('the follow-up fill a Luna request waited for asks it, even with nothing unfamiliar left', async () => {
+  const run = async (followUp) => {
+    const frames = [{ fields: 2, filled: [], actions: [], unknown: [], noData: [{ key: 'k', label: 'Cargo limit' }], halted: false }];
+    const rendered = [], assisted = [];
+    const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(),
+      autoPaused: false, filling: false, assistPage: 'Rates' };
+    const context = {
+      state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
+      runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
+      recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {} },
+      runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, retireAiOrigins: async () => {},
+      afterFill: () => followUp, runPendingPage: () => {},
+    };
+    vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
+    await context.autoFill('Rates');
+    return { rendered: rendered.length, assisted, assistPage: state.assistPage };
+  };
+  assert.deepEqual(await run(false), { rendered: 1, assisted: ['Rates'], assistPage: null });
+  assert.deepEqual(await run(true), { rendered: 1, assisted: [], assistPage: 'Rates' }, 'another follow-up is coming: still held');
 });

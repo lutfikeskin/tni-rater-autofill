@@ -39,6 +39,10 @@ function actionSteps(carrier, record, active) {
       text: resolve(a.text) ?? null,
       token: a.token ?? null,
       near: a.near ?? null,
+      unique: !!a.unique,
+      // A helper the agent must otherwise do by hand: what the panel says when it can't be clicked.
+      label: a.label ?? null,
+      missing: resolve(a.missing) ?? null,
       opener: a.opener ?? null,
       immediate: !!a.immediate,
       after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
@@ -58,14 +62,22 @@ function actionSteps(carrier, record, active) {
       scopeIndex: resolve(a.scopeIndex),
       value: null,
     }))
-    .filter((s) => s.text || s.token);
+    .filter((s) => s.text || s.token || s.missing);
 }
 
 function fieldSteps(rules, record, carrier, active) {
-  const expanded = rules.flatMap((rule) => rule.repeat
-    ? (record[rule.repeat] ?? []).map((_, index) => ({ rule, active: { ...active, [rule.repeat]: index } }))
-    : [{ rule, active }]);
-  return expanded.map(({ rule, active }, id) => {
+  const expanded = rules.flatMap((rule) => {
+    if (rule.repeat) return (record[rule.repeat] ?? []).map((_, index) => ({ rule, active: { ...active, [rule.repeat]: index } }));
+    // A per-vehicle question with several vehicles: a step for each vehicle, which finds its own
+    // row (Progressive's Rates shows every vehicle's coverages on one page). On a page showing one
+    // vehicle at a time, only the active vehicle's step answers.
+    const scope = typeof rule.scope === 'function' ? rule.scope(record, active) : rule.scope;
+    if (scope === 'vehicle' && (record.vehicles?.length ?? 0) > 1) {
+      return record.vehicles.map((_, index) => ({ rule, active: { ...active, vehicles: index }, activeVehicle: index === (active.vehicles ?? 0) }));
+    }
+    return [{ rule, active }];
+  });
+  return expanded.map(({ rule, active, activeVehicle = null }, id) => {
     const list = rule.path ? listOf(rule.path) : null;
     const path = rule.path
       ? (list ? rule.path.replace('[]', `[${active[list] ?? 0}]`) : rule.path)
@@ -84,7 +96,7 @@ function fieldSteps(rules, record, carrier, active) {
     const scope = typeof rule.scope === 'function' ? rule.scope(record, active) : rule.scope ?? null;
     const scopeIndex = typeof rule.scopeIndex === 'function' ? rule.scopeIndex(record, active) : rule.scopeIndex;
     // Per-vehicle questions repeat once per vehicle, labelled "2021 MERCEDES-BENZ SPRINTER": the
-    // active vehicle's year/make/model picks its row when there are several.
+    // step's vehicle's year/make/model picks its row when there are several.
     const v = scope === 'vehicle' && (record.vehicles?.length ?? 0) > 1 ? record.vehicles[active.vehicles ?? 0] : null;
     const vehicleHint = v ? [v.year, v.make, v.model].filter(Boolean).map((x) => String(x).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()).filter((x) => x.length >= 2) : null;
     return {
@@ -114,6 +126,7 @@ function fieldSteps(rules, record, carrier, active) {
       scope,
       scopeIndex,
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
+      activeVehicle,
       businessNames: rule.businessNames ? rule.businessNames(record, active) : null,
       // What an address box gets when the page offers no suggestion (e.g. just the street).
       fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,

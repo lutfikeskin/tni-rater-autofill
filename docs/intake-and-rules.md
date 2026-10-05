@@ -15,7 +15,7 @@ Read this when changing the client record, interpreting an intake, or adding an 
 | Leave a decision to the agent | `note`; unresolved value becomes a review item |
 | Deliberately preserve/skip a field | `ignore`; use only for a known reason |
 | Fill but require confirmation | `warn` |
-| Address repeated entities | Active list index, `repeat`, selectors, and `scope: 'vehicle'` rows matched by year/make/model hints (`vehicleHint`). `scopeIndex` is copied onto steps but `assign()` does not read it, so it does not pick a row. |
+| Address repeated entities | Active list index, `repeat`, selectors, and `scope: 'vehicle'`. With several vehicles, a `scope: 'vehicle'` rule becomes one step per vehicle; each takes the one row naming its vehicle (`vehicleHint`: at least two of year, make and model), and a row's questions without the vehicle in their label belong to the vehicle its labelled questions name. On a page with no vehicle-labelled rows, only the active vehicle's step answers. `scopeIndex` is copied onto steps but `assign()` does not read it. |
 | Interpret existing carrier values | `replace`, `trustPage`, `verifyOnly`, `emptyNote` |
 
 Carrier rules precede generic rules, and exact matching precedes label fallback. There is no general most-specific-rule resolver; ordering and conditional functions matter. Read [browser filling](browser-filling.md) only when changing matching or execution behavior.

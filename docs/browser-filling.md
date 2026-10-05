@@ -10,7 +10,7 @@ Read this when changing control discovery, matching, repeated rows, helper actio
 
 The fill loop collects controls, assigns rules, applies answers, waits for the page, rereads values, and rescans. Server-backed pages generally fill one answer per round; a carrier with `batch: true` fills a visible round before settling. Enable batching only with evidence about that carrier's behavior.
 
-Exact question IDs/selectors/known options precede label fallback. Repeated question IDs require row disambiguation; the active vehicle index alone does not prove which visible column belongs to it. Reacquire controls after redraws and verify the retained value. Retries are bounded; do not bypass acceptance checks to improve completion counts.
+Exact question IDs/selectors/known options precede label fallback. Repeated question IDs require row disambiguation; the active vehicle index alone does not prove which visible column belongs to it. A label fallback never takes one of several rows of a question, or a question the plan answers per vehicle; ambiguous rows (two vehicles that read the same) stay with the agent. Reacquire controls after redraws and verify the retained value. Retries are bounded; do not bypass acceptance checks to improve completion counts.
 
 ## Review and navigation
 

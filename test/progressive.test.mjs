@@ -155,8 +155,10 @@ test('Progressive coverage and helper ordering are conservative', () => {
   assert.ok(bill.afterAny.includes('progressive.q216F'));
   const multi = structuredClone(record);
   multi.vehicles.push({ type: 'Van', year: 2021, make: 'FORD', model: 'Transit', vin: '1FTBR3X87MKA12345', value: 40000 });
-  assert.deepEqual(byQ(buildPlan(multi, progressive, { vehicles: 1 }), '1FCD').vehicleHint, ['2021', 'ford', 'transit']);
-  assert.equal(byQ(buildPlan(multi, progressive, { vehicles: 1 }), '1FCD').note, null);
+  const comprehensive = buildPlan(multi, progressive, { vehicles: 1 }).filter((step) => step.q === '1FCD');
+  assert.equal(comprehensive.length, 2, 'every vehicle row on Rates gets its own step');
+  assert.deepEqual(comprehensive.find((step) => step.activeVehicle).vehicleHint, ['2021', 'ford', 'transit']);
+  assert.ok(comprehensive.every((step) => step.note === null));
   assert.equal(byQ(buildPlan(record, progressive, {}), '1FCD').vehicleHint, null, 'one vehicle: no row matching needed');
 });
 
@@ -412,4 +414,50 @@ test('the owner with a two-word surname is matched to their driver row (date of 
   assert.equal(owner(record).driver, null, 'a shared surname word with another first name is someone else');
   record.drivers = [{ first: 'Bob', middle: null, last: 'Smith', dob: '01/02/1980' }];
   assert.equal(owner(record).driver?.dob, '01/02/1980', 'the same one-word surname, as before');
+});
+
+// 2026-10-05 FL run: two vans and a Semi Truck.
+test('vehicle tiles follow the intake type; unmapped types and a Reefer outside a Reefer business go to the agent', () => {
+  const tile = (type, businessClass = 'Expediter') => {
+    const record = baseRecord();
+    record.vehicles[0].type = type;
+    record.operations.businessClass = businessClass;
+    return buildPlan(record, progressive, {}).find((step) => step.action === 'vehicleTile:0');
+  };
+  assert.equal(tile('Van').text, '^Cargo Van$');
+  assert.equal(tile('Semi Truck').text, '^Truck Tractor$');
+  assert.equal(tile('Flatbed').text, '^Flatbed Truck$');
+  assert.equal(tile('Box Truck').text, '^Box Truck$');
+  assert.ok(tile('Semi Truck').unique, 'two matching tiles are never guessed between');
+  const reefer = tile('Reefer Truck', 'Reefer');
+  assert.ok(new RegExp(reefer.text, 'i').test('Refrigerated Truck'));
+  assert.ok(new RegExp(reefer.text, 'i').test('Reefer'));
+  assert.equal(tile('Reefer Truck', 'Expediter').text, null, 'Reefer needs the Reefer business class too');
+  assert.match(tile('Reefer Truck', 'Expediter').missing, /business class is not Reefer/);
+  for (const type of ['Tanker', 'Dump Truck', 'Other']) {
+    assert.equal(tile(type).text, null, `${type} is the agent's to pick`);
+    assert.match(tile(type).missing, /pick the vehicle yourself/);
+  }
+  assert.match(tile('Semi Truck').missing, /No tile on this page matches the intake's Semi Truck/);
+});
+
+test('every vehicle on Rates gets the standard per-vehicle coverages; Rental with downtime is Not selected', () => {
+  const record = baseRecord();
+  record.vehicles = [
+    { type: 'Van', year: 2025, make: 'RAM', model: 'ProMaster 2500', vin: 'SYNTHETICVIN00001', value: 31000 },
+    { type: 'Van', year: 2019, make: 'MERCEDES-BENZ', model: 'Sprinter', vin: 'SYNTHETICVIN00002', value: 17000 },
+    { type: 'Semi Truck', year: 2016, make: 'FREIGHTLINER', model: 'Cascadia', vin: 'SYNTHETICVIN00003', value: 22000 },
+  ];
+  const plan = buildPlan(record, progressive, { vehicles: 2 });
+  const steps = (q) => plan.filter((step) => step.q === q);
+  for (const q of ['1FCD', '1FD2', '1FE4', '1FF2', '1FF9', '2000', '200F', '207F', '208A', '2091', '2007']) {
+    assert.equal(steps(q).length, 3, `q${q}: one step per vehicle`);
+    assert.deepEqual(steps(q).map((step) => step.activeVehicle), [false, false, true]);
+  }
+  assert.deepEqual(steps('1FF2').map((step) => step.value), Array(3).fill('$40 per day, $1,200 max'));
+  assert.deepEqual(steps('1FF9').map((step) => step.value), Array(3).fill('Not selected'));
+  assert.deepEqual(steps('2091').map((step) => [step.path, step.value]), [['vehicles[0].value', 31000], ['vehicles[1].value', 17000], ['vehicles[2].value', 22000]]);
+  assert.deepEqual(steps('2091').map((step) => step.vehicleHint), [['2025', 'ram', 'promaster 2500'], ['2019', 'mercedes benz', 'sprinter'], ['2016', 'freightliner', 'cascadia']]);
+  // One vehicle: one step, no row matching, as before.
+  assert.equal(buildPlan(baseRecord(), progressive, {}).filter((step) => step.q === '2091').length, 1);
 });

@@ -249,6 +249,10 @@
     const done = { actions: new Set(), pages: new Set() };
     async function fillPage(record) {
       const carrier = CARRIERS.find((c) => c.id === layout.carrier) ?? null;
+      // A layout is one captured quote: replay it with as many intake vehicles as that quote had,
+      // or its per-vehicle rows (named after the captured vehicle) match none of the intake's.
+      const count = layout.context?.vehicles;
+      if (Number.isInteger(count) && count > 0 && count < (record.vehicles?.length ?? 0)) record = { ...record, vehicles: record.vehicles.slice(0, count) };
       const plan = buildPlan(record, carrier, {});
       const before = window.__raterKit.capture(plan, []).controls;
       const r = await window.__raterKit.fill(plan, {
