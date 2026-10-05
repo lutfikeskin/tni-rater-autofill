@@ -38,15 +38,24 @@ export async function saveSettings(patch) {
   await local.set('settings', { ...(await settings()), ...patch });
 }
 
-// Appends events in order, even when called from several places at once.
+const SEQ_KEY = 'usageSeq';
+
+// Appends events in order, even when called from several places at once. The time and the quote
+// (session) are taken when log() is called, not when the queue gets to the event: Clear and
+// Replace log intake_closed just before the panel moves to another session. `seq` numbers every
+// event this computer logs, so a quote's events keep their order even when they share a time.
 export function log(...events) {
+  const t = new Date().toISOString();
+  const { id: sessionId = null, intakeId = null } = session ?? {};
   queue = queue.then(async () => {
     const { agent = null } = await settings();
-    const now = new Date().toISOString();
     const list = (await local.get(LOG_KEY)) ?? [];
+    let seq = (await local.get(SEQ_KEY)) ?? 0;
     for (const e of events) {
-      list.push({ id: crypto.randomUUID(), t: now, v: version, agent, session: session?.id ?? null, intakeId: session?.intakeId ?? null, ...e });
+      list.push({ id: crypto.randomUUID(), t, v: version, agent, session: sessionId, intakeId, seq: ++seq, ...e });
     }
+    // Saved first: a failed write leaves a gap in the numbers, never a number used twice.
+    await local.set(SEQ_KEY, seq);
     // Oldest events go first if nobody has exported in a long time.
     await local.set(LOG_KEY, list.length > MAX_EVENTS ? list.slice(-MAX_EVENTS) : list);
   }).catch((e) => console.error('usage log:', e));
@@ -92,9 +101,38 @@ export async function serverConfig() {
 }
 const REJECTED_KEY = 'usageRejected';
 const BATCH = 500;
+// Keeps a request well under the server's 4 MB body limit: a million characters is at most 3 MB
+// of UTF-8. Page layouts can be tens of KB each.
+const BATCH_CHARS = 1_000_000;
 let uploadStatus = { state: 'idle' }; // idle | ok | error | off
 
 export const lastUpload = () => uploadStatus;
+
+// The first events of the queue that fit in one request (always at least one).
+function nextBatch(list, max) {
+  const batch = [];
+  let chars = 0;
+  for (const e of list) {
+    const size = JSON.stringify(e).length;
+    if (batch.length >= max || (batch.length && chars + size > BATCH_CHARS)) break;
+    batch.push(e);
+    chars += size;
+  }
+  return batch;
+}
+
+// The server's reply accounts for every event sent (stored, already stored, or refused by index).
+// Anything else, e.g. a proxy's page answering 200, is no proof the events arrived.
+function receiptFor(body, sent) {
+  const rejected = body?.rejected ?? [];
+  return Number.isInteger(body?.accepted) && Number.isInteger(body?.duplicates) && Array.isArray(rejected)
+    && rejected.every((r) => Number.isInteger(r?.index) && r.index >= 0 && r.index < sent)
+    && body.accepted + body.duplicates + rejected.length === sent;
+}
+
+async function park(events) {
+  await local.set(REJECTED_KEY, [...((await local.get(REJECTED_KEY)) ?? []), ...events].slice(-MAX_EVENTS));
+}
 
 // Sends pending events in batches. Events leave this computer's list only after the server has
 // stored them (or already had them), so a server outage loses nothing.
@@ -128,9 +166,10 @@ export function upload() {
     // Events recorded before ids existed get one now (the server needs ids to skip duplicates).
     const pending = (await local.get(LOG_KEY)) ?? [];
     if (pending.some((e) => !e.id)) await local.set(LOG_KEY, pending.map((e) => (e.id ? e : { ...e, id: crypto.randomUUID() })));
+    let max = BATCH;
     for (;;) {
       const list = (await local.get(LOG_KEY)) ?? [];
-      const batch = list.slice(0, BATCH);
+      const batch = nextBatch(list, max);
       if (!batch.length) break;
       let res;
       try {
@@ -143,18 +182,30 @@ export function upload() {
         uploadStatus = { state: 'error', at: new Date().toISOString(), message: `can't reach ${serverUrl}` };
         return;
       }
+      // Too large for this server (or a proxy in front of it): send fewer at a time. One event
+      // that is too large on its own is set aside like a refused one, so the rest still go.
+      if (res.status === 413 && batch.length > 1) { max = Math.ceil(batch.length / 2); continue; }
+      if (res.status === 413) {
+        await park([{ ...batch[0], rejectedBecause: 'request too large' }]);
+        await local.set(LOG_KEY, list.filter((e) => e.id !== batch[0].id));
+        continue;
+      }
       if (!res.ok) {
         const msg = await res.json().then((b) => b.error).catch(() => res.statusText);
         uploadStatus = { state: 'error', at: new Date().toISOString(), message: `server said ${res.status}: ${msg}` };
         return;
       }
-      const body = await res.json().catch(() => ({}));
+      const body = await res.json().catch(() => null);
+      if (!receiptFor(body, batch.length)) {
+        uploadStatus = { state: 'error', at: new Date().toISOString(), message: "the server's reply didn't confirm the upload; the events stay here" };
+        return;
+      }
       // Events the server refused would be refused again, so they leave the upload queue, but
       // they're kept aside (and still exported) rather than deleted.
       const refused = (body.rejected ?? []).map((r) => ({ ...batch[r.index], rejectedBecause: r.error }));
       if (refused.length) {
         console.warn('usage upload: server rejected', body.rejected);
-        await local.set(REJECTED_KEY, [...((await local.get(REJECTED_KEY)) ?? []), ...refused].slice(-MAX_EVENTS));
+        await park(refused);
       }
       const ids = new Set(batch.map((e) => e.id));
       await local.set(LOG_KEY, list.filter((e) => !ids.has(e.id)));

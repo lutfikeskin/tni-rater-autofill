@@ -87,6 +87,11 @@ export function redactor(terms) {
 // ---------------------------------------------------------------------------------------------
 // Events
 
+// The control, not only its question: a question repeated per vehicle row (`<q>@<row>`) or a
+// field without a question id keeps its own key, the same one in fill and change events. Keys are
+// element ids and names, redacted like labels in case a page ever builds one from client data.
+const fieldKeyOf = (key, redact) => (key ? redact(String(key)) : null);
+
 // Values that look typed rather than picked from a list. If the recorder ever mistakes a typed
 // box for a dropdown (date pickers look like dropdowns), these still never reach the log.
 const LOOKS_TYPED = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|@|\d{5,}/;
@@ -104,6 +109,7 @@ export function fieldChangeEvent(change, { record, filled, redact, labels }) {
   const base = {
     type: 'field_change',
     q: change.q ?? null,
+    key: fieldKeyOf(change.key, redact),
     label: redact(labels?.get(change.key) ?? change.label),
     kind,
     by: change.agent ? 'agent' : 'page',
@@ -145,7 +151,7 @@ export function fillEvents(frames, { carrier, page, overwrite, auto = false, ms,
     advanced: frames.find((f) => f.advanced)?.advanced ?? null,
   }];
   const item = (result) => (x) => ({
-    type: 'fill_field', carrier, page, result, q: x.q ?? null, label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
+    type: 'fill_field', carrier, page, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
     reason: x.reason ? redact(x.reason) : undefined,
     options: x.options?.map(redact),

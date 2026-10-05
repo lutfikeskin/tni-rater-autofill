@@ -63,6 +63,15 @@ test('agent edits to text boxes are logged without the text', () => {
   assertNoClientData(typed);
 });
 
+test('change and fill events name the control, so repeated vehicle rows stay apart', () => {
+  const second = fieldChangeEvent({ key: '2B9D@2', q: '2B9D', label: 'Farthest distance', kind: 'select', before: '', after: '500 miles', agent: true }, { record, filled: new Map(), redact });
+  assert.deepEqual([second.q, second.key], ['2B9D', '2B9D@2']);
+  const named = fieldChangeEvent({ key: 'owner_Jordan', label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact });
+  assert.equal(named.key, 'owner_[client]', 'keys are redacted like labels');
+  const [, filled] = fillEvents([{ filled: [{ key: '2B9D@3', q: '2B9D', label: 'Farthest distance', controlKind: 'select', shown: '500 miles' }] }], { carrier: 'progressive', page: 'Rates', overwrite: false, ms: 1, redact });
+  assert.deepEqual([filled.q, filled.key], ['2B9D', '2B9D@3']);
+});
+
 test('dropdown changes keep the option text, minus client names', () => {
   const filled = new Map([['2B9D', { path: 'progressive.q2B9D', shown: 'More than 500 miles' }]]);
   const e = fieldChangeEvent({ key: '2B9D', q: '2B9D', label: 'Farthest distance', kind: 'select', before: 'More than 500 miles', after: '500 miles', agent: true }, { record, filled, redact });

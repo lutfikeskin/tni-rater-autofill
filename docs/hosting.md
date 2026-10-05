@@ -39,6 +39,9 @@ and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
 
 Redeploy after a server change: `railway up --service usage-server` from the repository root
 (`.railwayignore` keeps the upload to what the image needs).
+Deploy a server change that accepts new event fields before releasing the extension that sends
+them: an older server drops unknown fields (and refuses layouts over its size limit) rather than
+storing them.
 
 ## Logs on your computer
 

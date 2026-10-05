@@ -114,3 +114,34 @@ test('export: only with the admin token, the upload token is not enough; days an
     assert.equal((await fetch(`${base}/v1/export`, { headers: { authorization: 'Bearer ' } })).status, 401, 'no admin token configured: export off');
   });
 });
+
+test('keeps an event\'s order number and field key, and nothing else in their place', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'field_change', q: '2B9D', key: '2B9D@2', seq: 41, kind: 'select', from: 'a', to: 'b' }),
+      ev({ type: 'fill_field', result: 'filled', q: '2B9D', key: { name: 'x' }, seq: -1 }),
+      ev({ type: 'fill_field', result: 'filled', key: 'k'.repeat(300), seq: '7' }),
+    ] })).json();
+    assert.equal(r.accepted, 3);
+  });
+  const [change, odd, long] = stored(dataDir);
+  assert.deepEqual([change.key, change.seq], ['2B9D@2', 41]);
+  assert.deepEqual([odd.key, odd.seq], [undefined, undefined]);
+  assert.deepEqual([long.key, long.seq], [undefined, undefined]);
+});
+
+test('a page layout with long choice lists fits, other events keep the smaller limit', async () => {
+  const dataDir = tmp();
+  const options = Array.from({ length: 250 }, (_, i) => `Synthetic business type ${i}`);
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'page_layout', context: { state: 'FL' }, fields: Array.from({ length: 6 }, (_, i) => ({ q: `Q${i}`, label: `Question ${i}`, options })) }),
+      ev({ type: 'problem_report', text: 'x'.repeat(40 * 1024) }),
+      ev({ type: 'page_layout', fields: Array.from({ length: 30 }, () => ({ options })) }),
+    ] })).json();
+    assert.equal(r.accepted, 1);
+    assert.deepEqual(r.rejected.map((x) => [x.index, x.error]), [[1, 'event too large'], [2, 'event too large']]);
+  });
+  assert.equal(stored(dataDir)[0].fields[5].options.length, 250);
+});

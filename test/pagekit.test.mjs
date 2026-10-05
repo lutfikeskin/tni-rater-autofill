@@ -1745,3 +1745,16 @@ test('fields that reappear already answered (a step shown again) are never count
   assert.equal(changes.find((c) => c.key === 'existing')?.agent, true, 'a real edit is still the agent\'s');
   assert.equal(changes.find((c) => c.key === 'restored')?.agent, false, 'reappearing with a value is the page');
 });
+
+test('a capture keeps up to 250 choices per question and says when a list was cut', () => {
+  const h = harness();
+  const long = new SelectNode(Array.from({ length: 300 }, (_, i) => ({ text: `Business type ${i + 1}`, value: `b${i}` })), { id: 'bizType', ariaLabel: 'Business type list' });
+  const short = new SelectNode([{ text: 'Yes', value: 'Y' }, { text: 'No', value: 'N' }], { id: 'hazmat', ariaLabel: 'Hazmat' });
+  h.document.body.append(long, short);
+  const byId = Object.fromEntries(h.kit.capture(null, []).controls.map((c) => [c.id, c]));
+  assert.equal(byId.bizType.options.length, 250);
+  assert.equal(byId.bizType.options.at(-1), 'Business type 250');
+  assert.equal(byId.bizType.optionsTruncated, true);
+  assert.deepEqual([...byId.hazmat.options], ['Yes', 'No']);
+  assert.equal(byId.hazmat.optionsTruncated, undefined);
+});

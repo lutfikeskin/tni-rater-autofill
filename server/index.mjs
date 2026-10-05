@@ -30,9 +30,11 @@ import { fileURLToPath } from 'node:url';
 const MAX_BODY = 4 * 1024 * 1024;
 const MAX_EVENTS_PER_REQUEST = 2000;
 const MAX_EVENT_BYTES = 32 * 1024;
+// A page's layout lists every question and its choices (up to 250 per question).
+const MAX_LAYOUT_BYTES = 128 * 1024;
 
 // Event type -> fields kept. Anything else in an event is dropped.
-export const COMMON = ['id', 't', 'v', 'agent', 'session', 'intakeId', 'type', 'carrier', 'page'];
+export const COMMON = ['id', 't', 'v', 'agent', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page'];
 export const EVENT_FIELDS = {
   intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings'],
   intake_closed: ['reason'],
@@ -41,9 +43,9 @@ export const EVENT_FIELDS = {
   page_view: ['from', 'fields'],
   page_layout: ['context', 'fields', 'buttons'],
   fill_run: ['overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced'],
-  fill_field: ['result', 'q', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing'],
+  fill_field: ['result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing'],
   fill_error: ['auto', 'error'],
-  field_change: ['q', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
+  field_change: ['q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   problem_report: ['text'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
   // setting) acted on. Choices are option texts; typed text suggestions are never logged.
@@ -79,9 +81,12 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     if (!keep) return { error: `unknown event type "${String(e.type).slice(0, 40)}"` };
     if (typeof e.id !== 'string' || !/^[\w-]{8,64}$/.test(e.id)) return { error: 'event id missing or invalid' };
     if (typeof e.t !== 'string' || Number.isNaN(Date.parse(e.t))) return { error: 'event time missing or invalid' };
-    if (JSON.stringify(e).length > MAX_EVENT_BYTES) return { error: 'event too large' };
+    if (JSON.stringify(e).length > (e.type === 'page_layout' ? MAX_LAYOUT_BYTES : MAX_EVENT_BYTES)) return { error: 'event too large' };
     const out = {};
     for (const k of [...COMMON, ...keep]) if (e[k] !== undefined) out[k] = e[k];
+    // An order number and a field key (an element id or name), nothing else in those places.
+    if (out.seq !== undefined && !(Number.isSafeInteger(out.seq) && out.seq > 0)) delete out.seq;
+    if (out.key != null && !(typeof out.key === 'string' && out.key.length <= 256)) delete out.key;
     // Layouts: never keep option lists naming agency staff (agent of record, producer codes).
     if (out.type === 'page_layout' && Array.isArray(out.fields)) {
       out.fields = out.fields.map((f) => (/agent|producer/i.test(f?.label ?? '') ? { ...f, options: undefined } : f));

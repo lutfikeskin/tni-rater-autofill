@@ -18,7 +18,9 @@ This is reviewed software improvement, not model training or automatic correctio
 
 The recorder observes page changes; the panel builds redacted events and layouts. Text changes are compared with the intake locally, retaining signals such as `matchesIntake` instead of typed values. Choice labels and agent notes are redacted, but derived artifacts still need privacy review before sharing. Practice pages do not record usage.
 
-Events queue in Chrome local storage and uploads run periodically. Successfully stored events are removed; retries are deduplicated by ID. The queue is capped (`MAX_EVENTS`), so this is not an unlimited lossless archive. New event fields/types must be accepted by the server allowlist as well as emitted by the extension.
+Each event takes its time and quote session when it is logged, and a `seq` number that orders one computer's events. Field change and fill events carry the control's `key` as well as its question ID, so a question repeated per vehicle row (`<q>@<row>`) or a field without an ID stays distinct. A page layout is logged once per session for each distinct version of the page: its questions, choices and required flags. Captured choice lists keep up to 250 options and set `optionsTruncated` when the page had more.
+
+Events queue in Chrome local storage and uploads run periodically, in requests sized to the server's body limit (smaller after a 413). Events leave the queue only when the server's reply accounts for each one: stored, duplicate, or refused by index. Refused events and a single event too large to send are kept aside for export. Retries are deduplicated by ID. The queue is capped (`MAX_EVENTS`), so this is not an unlimited lossless archive. New event fields/types must be accepted by the server allowlist as well as emitted by the extension.
 
 ## What the learner actually infers
 
@@ -31,7 +33,7 @@ Events queue in Chrome local storage and uploads run periodically. Successfully 
 
 These are review thresholds, not correctness probabilities. Page-provided values can enter observations, and repeated agent habits may be wrong. Validate the answer and its applicability before promotion.
 
-Question grouping uses carrier plus question ID, or page/label when there is no ID. It can collapse repeated driver/vehicle answers within a session. The learner splits by state but does not discover arbitrary coverage/vehicle/driver interactions.
+Question grouping uses carrier plus question ID, or page/label when there is no ID. It can collapse repeated driver/vehicle answers within a session; events now carry the per-row `key`, but the learner does not use it yet. The learner splits by state but does not discover arbitrary coverage/vehicle/driver interactions.
 
 Layout grouping uses carrier, state, business class, vehicle-type set, and trailer presence. Coverage context is recorded but is not part of that grouping key. A field seen in only some snapshots is marked conditional; this does not establish its trigger. Aggregated options are not proof that every option is available in every scenario.
 
