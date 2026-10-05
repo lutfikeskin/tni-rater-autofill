@@ -57,7 +57,9 @@ test('manifest and package versions match', () => {
 });
 
 test('committed fixtures and captures hold no client data', () => {
-  const files = [...walk('test/fixtures'), ...walk('captures').filter((f) => !f.includes('generated'))].filter((f) => /\.(json|html|js|md)$/.test(f));
+  // captures/ may hold only ignored generated layouts, so a fresh checkout has none.
+  const captures = fs.existsSync(path.join(root, 'captures')) ? walk('captures').filter((f) => !f.includes('generated')) : [];
+  const files = [...walk('test/fixtures'), ...captures].filter((f) => /\.(json|html|js|md)$/.test(f));
   for (const f of files) {
     const hits = findPii(read(f));
     assert.deepEqual(hits.slice(0, 5), [], `${f} looks like it holds client data`);
