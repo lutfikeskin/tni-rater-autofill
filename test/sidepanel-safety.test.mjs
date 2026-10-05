@@ -306,7 +306,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }],
-    redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events) },
+    redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events), currentSession: () => null },
     runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
     pickListItem: async () => {}, retireAiOrigins: async () => {},
     afterFill: () => {},
@@ -1139,7 +1139,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
     const context = {
       state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
-      recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {} },
+      recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, retireAiOrigins: async () => {},
       afterFill: () => followUp, runPendingPage: () => {},
     };
@@ -1430,11 +1430,14 @@ test('a page layout is logged again when only its choices or required questions 
   controls = [distance(['50 miles', '200 miles'])];
   await context.recordLayout('Vehicles');
   await context.recordLayout('Vehicles');
+  // The same first choices, but the list grew past what a capture keeps.
+  controls = [distance(['50 miles', '200 miles'], { optionsTruncated: true })];
+  await context.recordLayout('Vehicles');
   controls = [distance(['50 miles', '200 miles', 'Unlimited'], { optionsTruncated: true })];
   await context.recordLayout('Vehicles');
   controls = [distance(['50 miles', '200 miles', 'Unlimited'], { optionsTruncated: true, required: true })];
   await context.recordLayout('Vehicles');
-  assert.equal(logged.length, 3, 'an unchanged layout once; a change of choices or required again');
+  assert.equal(logged.length, 4, 'an unchanged layout once; a change of choices, cut or required again');
   assert.deepEqual(logged.map((e) => [e.fields[0].options.length, !!e.fields[0].required, !!e.fields[0].optionsTruncated]),
-    [[2, false, false], [3, false, true], [3, true, true]]);
+    [[2, false, false], [2, false, true], [3, false, true], [3, true, true]]);
 });

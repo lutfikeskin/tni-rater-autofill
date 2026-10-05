@@ -847,7 +847,7 @@ function onRecorderMessage(msg, sender) {
     return;
   }
   if (msg.event === 'field_changes') {
-    const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, redact: redactor(redactionTerms(state.intake.record)) };
+    const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt };
     log(...msg.changes.map((c) => ({ carrier, page: msg.page, ...fieldChangeEvent(c, ctx) })));
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
@@ -944,7 +944,7 @@ async function autoFill(page) {
     if (state.autoPaused || hasWarnings || state.assistPage === page) { renderReport(frames); assistFrames = frames; }
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings) {
-      if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)) }));
+      if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }));
       if (n) {
         const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
         $('report').append(note);
@@ -990,7 +990,7 @@ async function recordLayout(page) {
     }));
     // Once per quote, page and layout. Not only the questions count: an answer can change another
     // question's choices or make it required, which is a different layout of the same page.
-    const shape = fields.map((f) => [f.q ?? f.label, f.label, !!f.required, f.options ?? []]);
+    const shape = fields.map((f) => [f.q ?? f.label, f.label, !!f.required, f.options ?? [], !!f.optionsTruncated]);
     const signature = `${usage.currentSession()?.id}|${page}|${await sha256Hex(JSON.stringify(shape))}`;
     if (!fields.length || state.layoutsSent.has(signature)) return;
     state.layoutsSent.add(signature);
@@ -1147,6 +1147,7 @@ async function fillPage({ auto = false } = {}) {
     recordLayout(page);
     if (!carrier.practice) usage.log(...fillEvents(frames, {
       carrier: carrier.id, page, overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
+      keySalt: usage.currentSession()?.keySalt,
     }));
     renderReport(frames);
     assistFrames = frames;

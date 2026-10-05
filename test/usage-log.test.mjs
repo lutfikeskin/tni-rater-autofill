@@ -80,6 +80,11 @@ test('an event keeps the quote it was logged in, even when the panel moves on be
   ]);
   const seqs = events.map((e) => e.seq);
   assert.ok(seqs.every((n, i) => Number.isInteger(n) && n > 0 && (i === 0 || n === seqs[i - 1] + 1)), `numbered in order: ${seqs}`);
+  assert.ok(a.keySalt && b.keySalt && a.keySalt !== b.keySalt, 'each quote has its own key salt');
+  assert.ok(events.every((e) => !('keySalt' in e) && !JSON.stringify(e).includes(a.keySalt)), 'the salt never goes in an event');
+  usage.restoreSession({ id: 'saved-before-salts', intakeId: 'intake-c' });
+  assert.ok(usage.currentSession().keySalt, 'an older saved session gets a salt');
+  usage.restoreSession(null);
 });
 
 test('uploads are split to fit the server, and one event too large on its own is set aside', async () => {
@@ -125,9 +130,54 @@ test('a reply that does not account for every event sent keeps them in the queue
   await usage.upload();
   assert.equal(await usage.count(), 2, 'a refusal for an event that was not sent');
 
+  requests = fakeServer(() => ({ ok: true, status: 200, json: async () => ({ accepted: 0, duplicates: 0, rejected: [{ index: 0, error: 'x' }, { index: 0, error: 'x' }] }) }));
+  await usage.upload();
+  assert.equal(await usage.count(), 2, 'the same event refused twice leaves the other unaccounted for');
+
+  requests = fakeServer(() => ({ ok: true, status: 200, json: async () => ({ accepted: 3, duplicates: -1, rejected: [] }) }));
+  await usage.upload();
+  assert.equal(await usage.count(), 2, 'negative counts');
+
   requests = fakeServer(stores);
   await usage.upload();
   assert.equal(await usage.count(), 0);
   assert.equal(requests.length, 1);
   assert.equal(usage.lastUpload().state, 'ok');
+});
+
+test('side panels in two windows share the stored log without losing events or reusing numbers', async () => {
+  // chrome.storage.local, slow enough that two unsynchronized writers would overwrite each other.
+  const data = {};
+  const later = () => new Promise((resolve) => setTimeout(resolve, 3));
+  globalThis.chrome = {
+    storage: { local: {
+      get: async (key) => { await later(); return { [key]: structuredClone(data[key]) }; },
+      set: async (items) => { await later(); Object.assign(data, structuredClone(items)); },
+    } },
+    runtime: { getManifest: () => ({ version: 'test' }) },
+  };
+  // Web Locks where this Node has none: one holder at a time, in request order.
+  const addedLocks = !globalThis.navigator?.locks;
+  if (addedLocks) {
+    let tail = Promise.resolve();
+    Object.defineProperty(globalThis.navigator, 'locks', { configurable: true, value: { request: (name, fn) => {
+      const run = tail.then(() => fn());
+      tail = run.catch(() => {});
+      return run;
+    } } });
+  }
+  try {
+    const [left, right] = await Promise.all(['left', 'right'].map((w) => import(`../sidepanel/usage-log.js?window=${w}`)));
+    left.startSession('intake-1');
+    right.startSession('intake-2');
+    await Promise.all([1, 2, 3].flatMap((i) => [left.log({ type: 'page_view', page: `L${i}` }), right.log({ type: 'page_view', page: `R${i}` })]));
+    const pages = data.usageLog.map((e) => e.page).sort();
+    assert.deepEqual(pages, ['L1', 'L2', 'L3', 'R1', 'R2', 'R3'], 'no event lost');
+    const seqs = data.usageLog.map((e) => e.seq);
+    assert.equal(new Set(seqs).size, seqs.length, `no number used twice: ${seqs}`);
+    assert.equal(data.usageSeq, Math.max(...seqs));
+  } finally {
+    delete globalThis.chrome;
+    if (addedLocks) delete globalThis.navigator.locks;
+  }
 });

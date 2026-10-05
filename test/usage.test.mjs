@@ -66,8 +66,17 @@ test('agent edits to text boxes are logged without the text', () => {
 test('change and fill events name the control, so repeated vehicle rows stay apart', () => {
   const second = fieldChangeEvent({ key: '2B9D@2', q: '2B9D', label: 'Farthest distance', kind: 'select', before: '', after: '500 miles', agent: true }, { record, filled: new Map(), redact });
   assert.deepEqual([second.q, second.key], ['2B9D', '2B9D@2']);
-  const named = fieldChangeEvent({ key: 'owner_Jordan', label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact });
-  assert.equal(named.key, 'owner_[client]', 'keys are redacted like labels');
+  // A key with client data is redacted, and a digest under the session's secret salt keeps two
+  // such controls apart. Without a salt the key is left out rather than merged with the other.
+  const owner = (key, keySalt) => fieldChangeEvent({ key, label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact, keySalt }).key;
+  const [jordan, casey] = [owner('owner_Jordan', 'salt-1'), owner('owner_Casey', 'salt-1')];
+  assert.match(jordan, /^owner_\[client\]#[0-9a-f]{8}$/);
+  assert.notEqual(jordan, casey);
+  assert.equal(owner('owner_Jordan', 'salt-1'), jordan, 'the same control keeps its key within the quote');
+  assert.notEqual(owner('owner_Jordan', 'salt-2'), jordan, 'another quote\'s salt gives another digest');
+  assert.equal(owner('owner_Jordan'), null);
+  assertNoClientData({ jordan, casey });
+  assert.equal(owner('2B9D@2', 'salt-1'), '2B9D@2', 'keys without client data stay as they are');
   const [, filled] = fillEvents([{ filled: [{ key: '2B9D@3', q: '2B9D', label: 'Farthest distance', controlKind: 'select', shown: '500 miles' }] }], { carrier: 'progressive', page: 'Rates', overwrite: false, ms: 1, redact });
   assert.deepEqual([filled.q, filled.key], ['2B9D', '2B9D@3']);
 });

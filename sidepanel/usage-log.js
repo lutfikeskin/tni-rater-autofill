@@ -15,11 +15,14 @@ const version = hasChrome ? chrome.runtime.getManifest().version : 'dev';
 let session = null; // { id, intakeId } for the intake currently loaded
 let queue = Promise.resolve();
 
+// keySalt stays on this computer (never in an event): it keeps redacted field keys apart
+// without identifying anyone (fieldChangeEvent in src/usage.js).
 export function startSession(intakeId) {
-  session = { id: crypto.randomUUID(), intakeId };
+  session = { id: crypto.randomUUID(), intakeId, keySalt: crypto.randomUUID() };
   return session;
 }
-export const restoreSession = (s) => { session = s ?? null; };
+// A session saved before keys had a salt gets one for as long as this panel is open.
+export const restoreSession = (s) => { session = s ? { keySalt: crypto.randomUUID(), ...s } : null; };
 export const currentSession = () => session;
 
 export async function settings() {
@@ -40,6 +43,10 @@ export async function saveSettings(patch) {
 
 const SEQ_KEY = 'usageSeq';
 
+// Panels open in two windows keep a queue each but share the stored log and its numbering. A Web
+// Lock (shared by all of the extension's pages) lets one of them read and write it at a time.
+const exclusive = (fn) => (globalThis.navigator?.locks ? navigator.locks.request('usage-log', fn) : fn());
+
 // Appends events in order, even when called from several places at once. The time and the quote
 // (session) are taken when log() is called, not when the queue gets to the event: Clear and
 // Replace log intake_closed just before the panel moves to another session. `seq` numbers every
@@ -47,7 +54,7 @@ const SEQ_KEY = 'usageSeq';
 export function log(...events) {
   const t = new Date().toISOString();
   const { id: sessionId = null, intakeId = null } = session ?? {};
-  queue = queue.then(async () => {
+  queue = queue.then(() => exclusive(async () => {
     const { agent = null } = await settings();
     const list = (await local.get(LOG_KEY)) ?? [];
     let seq = (await local.get(SEQ_KEY)) ?? 0;
@@ -58,7 +65,7 @@ export function log(...events) {
     await local.set(SEQ_KEY, seq);
     // Oldest events go first if nobody has exported in a long time.
     await local.set(LOG_KEY, list.length > MAX_EVENTS ? list.slice(-MAX_EVENTS) : list);
-  }).catch((e) => console.error('usage log:', e));
+  })).catch((e) => console.error('usage log:', e));
   return queue;
 }
 
@@ -121,12 +128,13 @@ function nextBatch(list, max) {
   return batch;
 }
 
-// The server's reply accounts for every event sent (stored, already stored, or refused by index).
-// Anything else, e.g. a proxy's page answering 200, is no proof the events arrived.
+// The server's reply accounts for every event sent, once each: stored, already stored, or refused
+// by its index. Anything else, e.g. a proxy's page answering 200, is no proof the events arrived.
 function receiptFor(body, sent) {
   const rejected = body?.rejected ?? [];
-  return Number.isInteger(body?.accepted) && Number.isInteger(body?.duplicates) && Array.isArray(rejected)
+  return [body?.accepted, body?.duplicates].every((n) => Number.isInteger(n) && n >= 0) && Array.isArray(rejected)
     && rejected.every((r) => Number.isInteger(r?.index) && r.index >= 0 && r.index < sent)
+    && new Set(rejected.map((r) => r.index)).size === rejected.length
     && body.accepted + body.duplicates + rejected.length === sent;
 }
 
@@ -137,7 +145,7 @@ async function park(events) {
 // Sends pending events in batches. Events leave this computer's list only after the server has
 // stored them (or already had them), so a server outage loses nothing.
 export function upload() {
-  queue = queue.then(async () => {
+  queue = queue.then(() => exclusive(async () => {
     const { agent = null } = await settings();
     const { serverUrl, serverToken } = await serverConfig();
     if (!serverUrl) { uploadStatus = { state: 'off' }; return; }
@@ -212,11 +220,11 @@ export function upload() {
       sent += batch.length - refused.length;
     }
     uploadStatus = { state: 'ok', at: new Date().toISOString(), sent };
-  }).catch((e) => { uploadStatus = { state: 'error', message: String(e.message) }; });
+  })).catch((e) => { uploadStatus = { state: 'error', message: String(e.message) }; });
   return queue;
 }
 
 export async function clearLog() {
   await queue;
-  await local.set(LOG_KEY, []);
+  await exclusive(() => local.set(LOG_KEY, []));
 }
