@@ -19,13 +19,16 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
 const PAGEKIT = ['field-key.js', 'pagekit.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')).join('\n');
 
-// A synthetic client like the recorded quotes: an expediter with a box truck, no company name.
+// A synthetic client like the recorded quotes: an expediter with box trucks, no company name.
+// Three vehicles, as on the 2026-10-05 quote: the Coverages step asks its "Exclude …" boxes once
+// per vehicle, and every vehicle's row must be answered.
 const record = {
   applicant: { name: null, dot: '1234567', mc: 'MC-765432', owner1: 'SAMPLE', phone: '(402) 555-0100', email: 'client@example.test', yearsInBusiness: null, yearsExperience: 7, yearEstablished: null },
   garaging: { street: '1 Test Way', unit: null, city: 'Omaha', state: 'NE', zip: '68102' },
   operations: { businessClass: 'Expediter', whatHaul: 'General freight hauler', radius: 'Unlimited', radiusMiles: null, hazmat: false, filingsRequired: true, filingsWhich: 'Federal Liability Filing', vehicleOwnership: 'Owned' },
   drivers: [{ first: 'SAMPLE A', middle: null, last: 'DRIVER', dob: '01/02/1968', licenseNumber: 'H1234567', licenseState: 'NE', maritalStatus: 'Married' }],
-  vehicles: [{ type: 'Box Truck', year: 2019, make: 'ISUZU', model: 'NPR', vin: '54DC4W1B5KS800000', value: 45000 }],
+  vehicles: ['54DC4W1B5KS800000', '54DC4W1B5KS800001', '54DC4W1B5KS800002']
+    .map((vin) => ({ type: 'Box Truck', year: 2019, make: 'ISUZU', model: 'NPR', vin, value: 45000 })),
   trailers: [],
   priorInsurance: [{ type: 'Commercial Auto', carrier: 'PROGRESSIVE', limit: '$1M CSL', expiration: '12/01/2026' }],
   coverage: { autoLiabLimit: '$1M', cargo: true, cargoLimit: 100000, cargoDeductible: 1000 },
@@ -56,8 +59,9 @@ const EXPECT = [
   ['#comprehensiveDeductible', '$1,000'], ['#collisionDeductible', '$1,000'], ['radio:hasWaiverOfCollision', 'No'], ['#towingAndLaborReimbursement', '$75'],
   ['#transportationExpenseReimbursement', '$40 day / $1,200 total'],
   ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => [`#autoSymbol${n}`, n === 6]),
-  ...['medicalPayment', 'uninsuredMotorists', 'comprehensiveDeductible', 'collisionDeductible', 'towingAndLaborReimbursement', 'transportationExpenseReimbursement']
-    .map((c) => [`[name="${c}Exclude"]`, false]),
+  // Every vehicle's row (data-id 0-2), ticked or not, and nothing left for the agent there.
+  ...[0, 1, 2].flatMap((row) => ['medicalPayment', 'uninsuredMotorists', 'comprehensiveDeductible', 'collisionDeductible', 'towingAndLaborReimbursement', 'transportationExpenseReimbursement']
+    .map((c) => [`#vehicleCoveragesPanel > .app-rp-section[data-id="${row}"] [data-id="${c}Exclude"]`, false])),
   ...['subsidiaryToOther', 'subsidiary', 'safetyInfo', 'hazardExposure', 'otherInsurance', 'coverageDenial', 'pastCriminalActivity', 'criminalActivityInPast5Years',
     'codeVoilation', 'finacialDefault', 'finacialJudgement', 'trust', 'foreignOperations', 'otherVenture', 'ownDrones', 'hireOtherToOperateDrones',
     'anyVehicleNotOwned', 'useTheirAuto', 'vehicleMaintenanceProgram', 'vehicleLeased', 'transportingHazardousMaterial', 'vehicleUsedByFamily',
@@ -83,6 +87,9 @@ const plan = buildPlan(record, amwins, {});
 const done = new Set();
 const skip = new Set();
 const lines = [];
+// Questions the rules didn't recognise ("Unfamiliar question — left for you"). An unticked box
+// already reads as its expected answer, so this is what shows a row the rules missed.
+const unfamiliar = [];
 let stoppedAt = null;
 let reachedDeclaration = false;
 let totalMs = 0;
@@ -91,6 +98,7 @@ for (let i = 0; i < 12; i++) {
   const t0 = Date.now();
   const report = await page.evaluate(([p, o]) => globalThis.__raterKit.fill(p, o), [plan, { advance: amwins.advance, batch: !process.argv.includes('--no-batch') && !!amwins.batch, doneActions: [...done], skip: [...skip], optional: amwins.optional ?? [], maxRounds: 120 }]);
   for (const a of report.actions ?? []) done.add(a.id);
+  unfamiliar.push(...(report.unknown ?? []).map((x) => `${step}: ${x.label}`));
   const list = (k) => (report[k] ?? []).map((x) => x.label + (x.reason ? ` (${x.reason})` : ''));
   const ms = Date.now() - t0;
   totalMs += ms;
@@ -142,7 +150,8 @@ lines.push(`Steps seen: ${mock.steps.join(' → ')} · Save & Continue ×${mock.
 if (errors.length) lines.push(`Page errors: ${errors.join(' | ')}`);
 lines.push('', wrong.length ? `${wrong.length} wrong answer(s):` : `All ${EXPECT.length} answers as expected.`);
 for (const w of wrong) lines.push(`  ${w.sel}: expected ${JSON.stringify(String(w.want))}, got ${JSON.stringify(w.got)}`);
+if (unfamiliar.length) lines.push(`${unfamiliar.length} question(s) left unfamiliar:`, ...unfamiliar.map((u) => `  ${u}`));
 if (stoppedAt) lines.push(`Stopped on ${stoppedAt} with something left that isn't the agent's.`);
 else if (reachedDeclaration) lines.push('Reached the declaration: everything before it was filled; the declaration and Submit are the agent\'s.');
 console.log(lines.join('\n'));
-process.exit(wrong.length || stoppedAt || !reachedDeclaration || mock.submitted || errors.length ? 1 : 0);
+process.exit(wrong.length || unfamiliar.length || stoppedAt || !reachedDeclaration || mock.submitted || errors.length ? 1 : 0);

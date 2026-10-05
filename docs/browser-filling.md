@@ -6,7 +6,7 @@ Read this when changing control discovery, matching, repeated rows, helper actio
 
 [sidepanel.js](../sidepanel/sidepanel.js) builds a plan and injects [pagekit.js](../src/content/pagekit.js) into the quote tab's frames. Progressive runs in `MAIN` world to access ExtJS. Pagekit is a classic script without imports; bump its `__raterKit.version` when changing the injected API.
 
-[field-key.js](../src/content/field-key.js) loads before both pagekit and the recorder, in each script's world. Known question IDs, names, and IDs retain their keys. Anonymous controls use a versioned structural key anchored to their container and row, so repeated carrier fields do not share manual-edit protection or fill history. Labels and current values do not determine those keys.
+[field-key.js](../src/content/field-key.js) loads before both pagekit and the recorder, in each script's world. Known question IDs, names, and IDs retain their keys; a Progressive per-vehicle question row past the first gets `@<row>`. Checkboxes that share one name across rows, with the row only in their id (AmWINS' Vehicle Coverages), get `name#<row>` on every row; a plain name saved by an older build protects all of that name's rows. Anonymous controls use a versioned structural key anchored to their container and row, so repeated carrier fields do not share manual-edit protection or fill history. Labels and current values do not determine those keys.
 
 The fill loop collects controls, assigns rules, applies answers, waits for the page, rereads values, and rescans. Server-backed pages generally fill one answer per round; a carrier with `batch: true` fills a visible round before settling. Enable batching only with evidence about that carrier's behavior.
 

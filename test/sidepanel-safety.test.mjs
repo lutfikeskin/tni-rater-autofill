@@ -72,8 +72,9 @@ function extractFunction(name) {
     if (ch === '}') {
       depth -= 1;
       if (!depth) {
-        const source = SIDEPANEL.slice(start, i + 1);
+        let source = SIDEPANEL.slice(start, i + 1);
         // Agent-edit scoping is shared by many functions: bring its helpers along.
+        if (name !== 'agentEdited' && /\bagentEdited\(/.test(source)) source += `\n${extractFunction('agentEdited')}`;
         return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
       }
     }
@@ -2034,4 +2035,15 @@ test('a one-address application names the step of each layout, and steps are com
   controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'] }];
   await context.recordLayout('Vehicles', 'arrived');
   assert.equal('step' in logged.at(-1) && logged.at(-1).step !== undefined, false);
+});
+
+test('a row key is settled by its own edit, or by the plain name an older build saved for any row', () => {
+  const state = { tab: { carrier: { id: 'amwins' } }, active: {}, agentKeys: new Map() };
+  const context = { state };
+  vm.runInNewContext(`${extractFunction('agentEdited')}\n${extractFunction('stepScope')}`, context);
+  const edited = (keys, key) => { state.agentKeys = new Map([['/application/businessauto', new Set(keys)]]); return context.agentEdited('/application/businessauto', key); };
+  assert.equal(edited(['medicalPaymentExclude#2'], 'medicalPaymentExclude#2'), true);
+  assert.equal(edited(['medicalPaymentExclude#2'], 'medicalPaymentExclude#3'), false, 'one vehicle\'s edit leaves the others');
+  assert.equal(edited(['medicalPaymentExclude'], 'medicalPaymentExclude#3'), true, 'a legacy shared-name edit covers every row');
+  assert.equal(edited(['2C1A'], '2C1A@2'), false, 'Progressive rows are unchanged');
 });

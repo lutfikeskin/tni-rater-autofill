@@ -155,8 +155,21 @@ const filingsText = (r) => (filings(r) ? r.operations.filingsWhich ?? null : nul
 const federalLiability = (r) => { const t = filingsText(r); return t == null ? null : /liab|bmc.?91|mcs.?90|federal/i.test(t); };
 const federalCargo = (r) => { const t = filingsText(r); return t == null ? null : /cargo|bmc.?3[24]/i.test(t); };
 
-// Coverages that each have an "Exclude …" box (spelled Exclude / Exlucde / Exlude on the page).
-const EXCLUSIONS = ['medical', 'uninsured', 'comprehensive', 'collision', 'transportation|rental', 'towing'];
+// Vehicle Coverages: one row per vehicle (#vehicleCoveragesPanel, the same 0-based data-id as
+// its vehicle's row), each with an "Exclude …" box per coverage. The boxes are found by their
+// data-id; the label is the fallback, and the page misspells it (Exlude Towing & Labor, Exlucde
+// Transportation Expense/ Rental Reimbursement). TNI: nothing is excluded. The intake has no
+// per-vehicle (or per-coverage) answer for these six, so there is no client "not requested" to
+// turn into an exclusion. "Exclude Waiver of Collision" only shows with waiver Yes (ours is No).
+const VEHICLE_COVERAGES = '#vehicleCoveragesPanel';
+const EXCLUSIONS = [
+  ['medicalPaymentExclude', 'Medical Payments', 'medical'],
+  ['uninsuredMotoristsExclude', 'Uninsured Motorists', 'uninsured'],
+  ['comprehensiveDeductibleExclude', 'Comprehensive', 'comprehensive'],
+  ['collisionDeductibleExclude', 'Collision', 'collision'],
+  ['towingAndLaborReimbursementExclude', 'Towing & Labor', 'towing'],
+  ['transportationExpenseReimbursementExclude', 'Rental Reimbursement', 'transportation|rental'],
+];
 
 const vehicleValueNote = (r, a) => {
   const v = r.vehicles?.[a.vehicles ?? 0]?.value;
@@ -312,8 +325,9 @@ export const amwins = {
     { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit (only with PIP Yes)', ignore: true },
     // Liability auto symbol: 6 only.
     ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ selector: `#autoSymbol${n}`, name: `Auto symbol ${n}${n === 6 ? ' (TNI: 6)' : ''}`, kind: 'bool', value: () => n === 6 })),
-    // Nothing is excluded: one rule per box (a rule fills one field).
-    ...EXCLUSIONS.map((topic) => ({ name: `Exclude ${topic.split('|')[0]} (standard: not excluded)`, label: `^ex\\w*de\\b.*(${topic})`, kind: 'bool', value: () => false })),
+    // Nothing is excluded, on every vehicle's row: one rule per box, repeated per vehicle below.
+    ...EXCLUSIONS.map(([id, title, topic]) => ({ selector: dataId(id, VEHICLE_COVERAGES), name: `Exclude ${title} (standard: No, not excluded)`,
+      label: `^ex\\w*de\\b.*(${topic})`, not: 'waiver', kind: 'bool', value: () => false })),
 
     // --- Underwriting questions --------------------------------------------------------------------
     { name: 'Vehicles not owned (standard: No)', label: '^any vehicle not owned$', kind: 'bool', value: () => false },
@@ -330,7 +344,8 @@ export const amwins = {
   ].map((rule) => {
     // AmWINS shows several repeater rows on one page. Give every row its own values;
     // the active-driver picker is for carriers that show one driver page at a time.
-    let panel = rule.selector?.startsWith(DRIVER) ? DRIVER : rule.selector?.startsWith(VEHICLE) || rule.selector === '#marketValue' ? VEHICLE : null;
+    let panel = rule.selector?.startsWith(DRIVER) ? DRIVER : rule.selector?.startsWith(VEHICLE) || rule.selector === '#marketValue' ? VEHICLE
+      : rule.selector?.startsWith(VEHICLE_COVERAGES) ? VEHICLE_COVERAGES : null;
     if (rule.label === '^permanently attached equipment') panel = VEHICLE;
     if (!panel) return rule;
     const list = panel === DRIVER ? 'drivers' : 'vehicles';
