@@ -8,6 +8,8 @@ import { sha256Hex } from '../src/usage.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
+// Layout scheduling has its own tests (layoutHarness); others only need it to exist.
+const LAYOUT_STUB = '\nfunction scheduleLayout() {}';
 
 test('AI accept refuses a suggestion for a previous driver, vehicle or intake', async () => {
   const record = { vehicles: [{ value: 34000 }, { value: 36000 }] };
@@ -82,8 +84,7 @@ function extractFunction(name) {
 const HELPERS_START = SIDEPANEL.indexOf('const samePage =');
 const HELPERS_END = SIDEPANEL.indexOf('\n\n// Watch the rater tab', HELPERS_START);
 const PAGE_HELPERS = SIDEPANEL.slice(HELPERS_START, HELPERS_END);
-// Layout scheduling is tested on its own (below); these tests only need refreshTab to call it.
-const FUNCTIONS = ['rememberFill', 'scheduleAutoFill', 'refreshTab'].map(extractFunction).join('\n') + '\nfunction scheduleLayout() {}';
+const FUNCTIONS = ['rememberFill', 'scheduleAutoFill', 'refreshTab'].map(extractFunction).join('\n') + LAYOUT_STUB;
 
 function harness() {
   const state = {
@@ -631,7 +632,7 @@ test('AI application drops stale in-flight work and refuses duplicate frame ques
       runKit: () => { calls++; snapshotEntered(); return snapshot; }, tellRecorder: async () => {},
       persistAiPending: async () => { persisted++; } };
     vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
-      'snapshotsEqual', 'aiSnapshotFields', 'aiSnapshotFieldMatches', 'applyAi'].map(extractFunction).join('\n'), context);
+      'snapshotsEqual', 'aiSnapshotFields', 'aiSnapshotFieldMatches', 'applyAi'].map(extractFunction).join('\n') + LAYOUT_STUB, context);
     const action = context.applyAi([x], ctx, 'auto');
     await started;
     if (scenario === 'new-intake') state.intake = { record };
@@ -663,7 +664,7 @@ test('approval expects the successful answer when a carrier redraw changes its v
   vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
     'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
     'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent',
-    'applyAi'].map(extractFunction).join('\n'), context);
+    'applyAi'].map(extractFunction).join('\n') + LAYOUT_STUB, context);
   assert.equal(await context.applyAi([x], ctx, 'auto'), true);
   assert.equal(x.done, 'auto', 'the applied choice remains a review hold');
   assert.equal(x.origin.fieldHash, JSON.stringify(['choice', 'Choice', 'No']));
@@ -856,7 +857,7 @@ const DISPATCH_HELPERS = ['aiOriginRecord', 'aiSnapshotFields', 'aiSnapshotField
   'aiLiveFieldHash', 'aiAnswerOrigin', 'aiActionCurrent', 'aiCacheSignature', 'aiDecisionBlocks',
   'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots', 'snapshotsEqual',
   'snapshotFingerprint', 'aiPendingRecord', 'persistAiPending', 'restoreAiPending',
-  'discardAiSuggestions', 'pendingAi', 'applyAi'].map(extractFunction).join('\n');
+  'discardAiSuggestions', 'pendingAi', 'applyAi'].map(extractFunction).join('\n') + LAYOUT_STUB;
 
 test('dispatched answers retain durable holds across intake, cache and transport changes', async () => {
   for (const scenario of ['intake-replaced', 'intake-cleared', 'cache-cleared', 'transport-error']) {
@@ -1439,7 +1440,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
   const logged = [];
   const record = { garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], trailers: [], drivers: [{}], coverage: {} };
   const context = {
-    state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0, layoutGeneration: 0, layoutHold: false, layoutReadyTabs: new Set(),
+    state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0, layoutGeneration: 0, layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), layoutLatest: null,
       lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set() },
     sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
     busy: false, runs: [],
@@ -1450,13 +1451,14 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
         if (context.busyError) throw context.busyError;
         return [{ result: context.busy }];
       }
-      return [{ result: { controls: controls(), buttons: ['Continue'] } }];
+      // The page as the page itself names it (pagekit's capture), normally the tab's.
+      return [{ result: { controls: controls(), buttons: ['Continue'], isTopFrame: true, page: context.domPage ?? context.state.tab.url } }];
     },
     sessionId: session,
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; },
   };
-  vm.runInNewContext(['recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'superseded', 'holdLayouts', 'captureLayout', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
+  vm.runInNewContext(['recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);
   return { context, logged };
 }
@@ -1838,4 +1840,102 @@ test('layout errors are logged once per quote tab, not once for all tabs', async
 test('attaching to a tab asks for its layout, since a recorder already there does not announce the page', () => {
   const body = extractFunction('refreshTab');
   assert.equal((body.match(/scheduleLayout\(pageOf\(state\.tab\??\.url\), 'arrived'\)/g) ?? []).length, 2, 'both when following the quote tab in the background and after switching');
+});
+
+test('a capture is logged only when the page read is the page it was asked for', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  // The panel still has the old address while the tab has already moved on to Drivers.
+  context.domPage = 'Drivers';
+  await context.recordLayout('Vehicles', 'arrived');
+  assert.deepEqual(logged, []);
+  context.domPage = undefined;
+  await context.recordLayout('Vehicles', 'arrived');
+  assert.equal(logged.length, 1);
+});
+
+test('a change while a capture is asking whether the page is quiet starts a new wait with both reasons', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  const kit = context.runKit;
+  context.scheduleLayout('Vehicles', 'changed');
+  const first = context.pending;
+  // The page changes again while the first capture is asking.
+  context.runKit = async (...args) => {
+    context.runKit = kit;
+    controls.push({ q: '2A2', kind: 'text', label: 'Placards carried' });
+    context.scheduleLayout('Vehicles', 'appeared');
+    return kit(...args);
+  };
+  await first();
+  await context.state.layoutChain;
+  assert.deepEqual(logged, [], 'the first stops: the page changed after it was asked');
+  await context.pending();
+  await context.state.layoutChain;
+  assert.deepEqual(logged.map((e) => [e.reason, e.fields.length]), [['appeared+changed', 2]]);
+});
+
+test('of two queued captures for one page, the later logs with both reasons', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  let release;
+  context.state.layoutChain = new Promise((resolve) => { release = resolve; });
+  context.scheduleLayout('Vehicles', 'changed');
+  const a = context.pending();
+  await new Promise((resolve) => setImmediate(resolve));
+  controls.push({ q: '2A2', kind: 'text', label: 'Placards carried' });
+  context.scheduleLayout('Vehicles', 'appeared');
+  const b = context.pending();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(context.state.layoutPending, null, 'both are queued');
+  release();
+  await Promise.all([a, b]);
+  await context.state.layoutChain;
+  assert.deepEqual(logged.map((e) => e.reason), ['appeared+changed']);
+});
+
+test('after an intake is loaded, only a tab opened since may give its first page without a new page or fill', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  Object.assign(context, { samePage: (p) => p, $: () => ({ checked: false }) });
+  Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set() });
+  vm.runInContext(extractFunction('onRecorderMessage'), context);
+  context.holdLayouts();
+  // A tab that was already open gets a recorder for the first time: it may show the old quote.
+  context.onRecorderMessage({ ra: 'usage', event: 'page_view', page: 'Vehicles', from: null, fields: 3 }, { tab: { id: 1 } });
+  assert.equal(context.pending, undefined);
+  // The quote Progressive opens in a new tab.
+  context.state.layoutNewTabs.add(2);
+  context.state.tab = { ...context.state.tab, id: 2 };
+  context.onRecorderMessage({ ra: 'usage', event: 'page_view', page: 'Vehicles', from: null, fields: 3 }, { tab: { id: 2 } });
+  await context.pending();
+  await context.state.layoutChain;
+  assert.deepEqual(logged.filter((e) => e.type === 'page_layout').map((e) => e.reason), ['arrived']);
+  assert.match(SIDEPANEL, /chrome\.tabs\.onCreated\.addListener\(\(tab\) => \{ if \(state\.layoutHold\) state\.layoutNewTabs\.add\(tab\.id\); \}\)/);
+});
+
+test('after Luna\'s picks go in (with the recorder paused), the page\'s layout is asked for', () => {
+  const body = extractFunction('applyAi');
+  assert.match(body, /await tellRecorder\('resume', ctx\.tabId\);\s+state\.filling = false;[\s\S]{0,300}if \(dispatched\) scheduleLayout\(ctx\.page, 'changed'\);/);
+});
+
+test('a queued page-change capture waits again when a fill starts before it reads the page', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  let release;
+  context.state.layoutChain = new Promise((resolve) => { release = resolve; });
+  context.scheduleLayout('Vehicles', 'changed');
+  const queued = context.pending();
+  await new Promise((resolve) => setImmediate(resolve));
+  // The agent clicks Fill this page before the queue gets to it.
+  context.state.filling = true;
+  release();
+  await queued;
+  await context.state.layoutChain;
+  assert.deepEqual(logged, [], 'never read half filled');
+  assert.ok(context.state.layoutPending, 'waiting again');
+  context.state.filling = false;
+  await context.pending();
+  await context.state.layoutChain;
+  assert.deepEqual(logged.map((e) => e.reason), ['changed']);
 });

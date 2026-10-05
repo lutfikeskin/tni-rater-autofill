@@ -202,6 +202,8 @@ const state = {
   // layouts wait until that tab shows a new page or is filled with this intake (layoutReadyTabs).
   layoutHold: false,
   layoutReadyTabs: new Set(),
+  layoutNewTabs: new Set(), // tabs opened since then (a new quote, as Progressive opens one)
+  layoutLatest: null, // the capture asked for last (waiting or queued), which later changes feed
   layoutErrors: 0,
   layoutErrorsLogged: new Set(),
   // Carrier buttons already clicked in this quote (Verify DOT, Bill plan options, …).
@@ -859,9 +861,10 @@ function onRecorderMessage(msg, sender) {
   const layoutPage = sender.frameId ? pageOf(state.tab.url) : samePage(msg.page);
   if (msg.event === 'page_view') {
     if (msg.from) state.visitedPages.add(samePage(msg.from));
-    // A new page since this intake was loaded (or a recorder new to this tab, as on the quote
-    // Progressive opens in a new tab): this tab's layouts may be taken again.
-    if (!msg.from || samePage(msg.from) !== samePage(msg.page)) state.layoutReadyTabs.add(sender.tab.id);
+    // A new page since this intake was loaded, or the first page of a tab opened since (the quote
+    // Progressive opens in a new tab): this tab's layouts may be taken again. A tab that was
+    // already open and only now gets a recorder may still show the previous client's quote.
+    if (msg.from ? samePage(msg.from) !== samePage(msg.page) : state.layoutNewTabs.has(sender.tab.id)) state.layoutReadyTabs.add(sender.tab.id);
     log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
     // Even with no fields in the top frame: a form may be all in child frames, which don't report
     // arrivals themselves.
@@ -1023,7 +1026,7 @@ function runPendingPage() {
 // test pages. `reason`: fill, or what changed on the page (see scheduleLayout). One at a time, in
 // order, so a page's layouts are logged in the order they were seen.
 function recordLayout(page, reason = 'fill', job = layoutJob(page)) {
-  const run = state.layoutChain.then(() => captureLayout(job, reason));
+  const run = state.layoutChain.then(() => captureLayout(job, reason)).finally(() => { job.done = !job.waitsForFill; });
   state.layoutChain = run.catch(() => {});
   return run;
 }
@@ -1055,23 +1058,38 @@ function intakeEdited() {
 }
 
 // A capture asked for by a page change is also dropped when a later change has been asked for
-// since: this one would log the later state under the earlier answer. The later capture reads
-// the page after both, and gets this one's reasons while it still waits. (A fill's own capture
+// since: this one would log the later state under the earlier answer. The latest capture reads
+// the page after both and, until it's logged, takes this one's reasons. (A fill's own capture
 // has no generation.)
+function sameLayoutScope(a, b) {
+  return ['session', 'tabId', 'page', 'active'].every((k) => a[k] === b[k]);
+}
 function superseded(job) {
   if (job.generation === undefined || job.generation === state.layoutGeneration) return false;
-  const later = state.layoutPending;
-  if (job.reasons && later && ['session', 'tabId', 'page', 'active'].every((k) => later[k] === job[k])) job.reasons.forEach((r) => later.reasons.add(r));
+  const later = state.layoutLatest;
+  if (job.reasons && later && later !== job && !later.done && sameLayoutScope(later, job)) job.reasons.forEach((r) => later.reasons.add(r));
   return true;
 }
 
+// `reason`: given for a fill's capture; one asked for by page changes says its reasons when it's
+// logged, since later changes may have handed it theirs.
 async function captureLayout(job, reason) {
+  const why = () => reason ?? [...job.reasons].sort().join('+');
+  job.waitsForFill = false;
   if (!jobCurrent(job) || job.carrier.practice || superseded(job)) return;
+  // A fill started while this page change's capture was queued: reading now could catch the page
+  // half filled. It waits for the fill again, as it did before it was queued.
+  const fillStarted = () => job.generation !== undefined && state.filling;
+  if (fillStarted()) return waitForFill(job);
   const { tabId, carrier, page } = job;
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
       [buildPlan(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
     if (!jobCurrent(job) || superseded(job)) return;
+    if (fillStarted()) return waitForFill(job);
+    // The page actually read, as the page itself names it: the tab's address in the panel can
+    // lag behind a navigation, and the next page must never be logged under this one's name.
+    if (results.map((r) => r.result).find((f) => f?.isTopFrame)?.page !== page) return;
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
@@ -1110,10 +1128,17 @@ async function captureLayout(job, reason) {
       vehicles: r.vehicles.length,
       coverages: Object.entries(r.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     };
-    usage.log({ type: 'page_layout', carrier: carrier.id, page, reason, context, fields, buttons });
+    usage.log({ type: 'page_layout', carrier: carrier.id, page, reason: why(), context, fields, buttons });
   } catch (e) {
-    if (jobCurrent(job)) layoutFailed(job, reason, layoutErrorKind(e));
+    if (jobCurrent(job)) layoutFailed(job, why(), layoutErrorKind(e));
   }
+}
+
+function waitForFill(job) {
+  job.waitsForFill = true;
+  state.layoutPending = job;
+  clearTimeout(state.layoutTimer);
+  state.layoutTimer = setTimeout(() => layoutWhenQuiet(job), LAYOUT_DELAY_MS);
 }
 
 // A layout that couldn't be read: counted for the panel, and logged once per quote, page and kind
@@ -1140,9 +1165,10 @@ function layoutErrorKind(e) {
 
 // Layouts as the page changes, whether or not anything is filled: on arrival, when questions
 // appear or go away, after an answer changes (which can change another question's choices or
-// make it required without adding a question), and when the agent picks another vehicle or driver. Waits for the page to be quiet; changes close
-// together on the same page make one capture with all their reasons, and a change elsewhere
-// replaces a capture still waiting for the page it left. A fill logs its own layout when it ends.
+// make it required without adding a question), and when the agent picks another vehicle or
+// driver. Waits for the page to be quiet after the last change: each change starts a new wait,
+// taking over the reasons of the one before on the same page (whose run, if under way, then stops
+// itself); a change elsewhere just replaces it. A fill logs its own layout when it ends.
 const LAYOUT_DELAY_MS = 1200;
 function scheduleLayout(page, reason) {
   // Only on the carrier's quote pages, named for it: never a portal, account or search page,
@@ -1150,13 +1176,12 @@ function scheduleLayout(page, reason) {
   const quotePages = state.tab?.carrier?.layoutUrl ?? state.tab?.carrier?.autoFillUrl;
   if (!state.intake || !state.tab?.carrier || state.tab.carrier.practice || !quotePages?.test(state.tab.url ?? '')) return;
   if (state.layoutHold && !state.layoutReadyTabs.has(state.tab.id)) return;
-  const job = { ...layoutJob(page), generation: ++state.layoutGeneration };
-  const pending = state.layoutPending;
-  if (pending && ['session', 'tabId', 'page', 'active'].every((k) => pending[k] === job[k])) Object.assign(pending, { generation: job.generation }).reasons.add(reason);
-  else state.layoutPending = { ...job, reasons: new Set([reason]) };
-  const mine = state.layoutPending;
+  const job = { ...layoutJob(page), generation: ++state.layoutGeneration, reasons: new Set([reason]) };
+  const before = state.layoutPending;
+  if (before && sameLayoutScope(before, job)) before.reasons.forEach((r) => job.reasons.add(r));
+  state.layoutPending = state.layoutLatest = job;
   clearTimeout(state.layoutTimer);
-  state.layoutTimer = setTimeout(() => layoutWhenQuiet(mine), LAYOUT_DELAY_MS);
+  state.layoutTimer = setTimeout(() => layoutWhenQuiet(job), LAYOUT_DELAY_MS);
 }
 
 // Another intake loaded or the client cleared: a capture still waiting is for the old quote.
@@ -1170,6 +1195,10 @@ function cancelLayouts() {
 function holdLayouts() {
   state.layoutHold = true;
   state.layoutReadyTabs = new Set();
+  state.layoutNewTabs = new Set();
+  // What was kept for the previous quote's layouts is no use any more.
+  state.lastLayouts = new Map();
+  state.layoutErrorsLogged = new Set();
 }
 
 async function layoutWhenQuiet(job, tries = 0) {
@@ -1177,7 +1206,7 @@ async function layoutWhenQuiet(job, tries = 0) {
   // isn't live only drops itself. While a fill runs (here or in another tab, and it may fail
   // without logging a layout), the capture waits for it rather than counting on it.
   const live = () => state.layoutPending === job && jobCurrent(job);
-  const drop = () => { if (state.layoutPending === job) state.layoutPending = null; };
+  const drop = () => { job.done = true; if (state.layoutPending === job) state.layoutPending = null; };
   const reason = () => [...job.reasons].sort().join('+');
   const afterFill = () => { state.layoutTimer = setTimeout(() => layoutWhenQuiet(job, tries), LAYOUT_DELAY_MS); };
   if (!live()) return drop();
@@ -1204,7 +1233,8 @@ async function layoutWhenQuiet(job, tries = 0) {
     return;
   }
   state.layoutPending = null;
-  await recordLayout(job.page, reason(), job);
+  // No reason given (null, not a fill's): the job says its own when it's logged.
+  await recordLayout(job.page, null, job);
 }
 
 function rememberFill(frames) {
@@ -1932,6 +1962,9 @@ async function applyAi(list, ctx, decision) {
     }
     await tellRecorder('resume', ctx.tabId);
     state.filling = false;
+    // The recorder was paused while Luna's picks went in, so it won't report the questions they
+    // revealed or hid: ask for the page's layout (on that tab and page, if still in front).
+    if (dispatched) scheduleLayout(ctx.page, 'changed');
     if (prepared) await persistAiPending();
     if (isCurrent() && state.autoPending) scheduleAutoFill(ctx.page);
   }
@@ -2324,6 +2357,7 @@ function wire() {
   if (inExtension) {
     chrome.runtime.onMessage.addListener(onRecorderMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
+    chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
     chrome.windows.onFocusChanged.addListener(refreshTab);
   }
