@@ -41,7 +41,7 @@ export const EVENT_FIELDS = {
   intake_edit: ['path', 'kind', 'change', 'warnings'],
   warning_checked: ['code', 'path', 'checked'],
   page_view: ['from', 'fields'],
-  page_layout: ['context', 'fields', 'buttons', 'reason'],
+  page_layout: ['context', 'fields', 'buttons', 'reason', 'step'],
   // A page layout the panel couldn't record (why it was asked for, and the error's first words).
   layout_error: ['reason', 'error'],
   fill_run: ['overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced'],

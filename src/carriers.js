@@ -8,6 +8,7 @@
 //
 // `layoutUrl` (or else `autoFillUrl`): the carrier's quote pages, where page layouts are recorded
 // as the agent works even without a fill. A carrier with neither gets layouts from fills only.
+// `layoutSteps`: one address for several steps (AmWINS); each layout also names its step.
 //
 // `world: 'MAIN'` runs the page script in the page's own JavaScript world, needed when the
 // carrier's widgets (e.g. ExtJS) are only reachable through the page's own objects.
