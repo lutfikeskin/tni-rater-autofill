@@ -290,7 +290,7 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.equal(byQ('3E98').value, 'Automatic payments from checking account');
   assert.equal(byQ('32CC').value, true);
   const actions = plan.filter((s) => s.kind === 'action');
-  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'addVehicle:0', 'addDriver:0', 'businessTypeSearch', 'vehicleTile:0', 'lookupVin:0', 'openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print', 'printSend']);
+  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'addVehicle:0', 'addDriver:0', 'businessTypeSearch', 'vehicleTile:0', 'lookupVin:0', 'ntlStillAdded', 'openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print', 'printSend']);
   assert.deepEqual(actions.find((a) => a.action === 'addVehicle:0').unlessActions, ['lookupVin:0']);
   assert.equal(actions.find((a) => a.action === 'addVehicle:0').opener, '^add$');
   assert.ok(actions.find((a) => a.action === 'lookupVin:0').immediate);
@@ -350,4 +350,22 @@ test('an owner whose surname has two words is found in the driver list', () => {
   assert.ok(other.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a different person still warns');
   const sharedWord = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO' }, { today: new Date('2026-09-30') });
   assert.ok(sharedWord.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a surname word with another first name still warns');
+});
+
+// PR #17 review: a mention ("no bobtail") must never become NTL coverage. The agent sets it.
+test('NTL / non-trucking / bobtail in the claims box asks the agent; coverage.ntl stays unset', () => {
+  const today = { today: new Date('2026-09-30') };
+  for (const text of ['No\nNTL', 'No\nNeeds non-trucking liability', 'no claims\nnon tracking', 'No\nBob-tail coverage', 'No\nnontrucking only', 'No\nno bobtail', 'No\nDoes not want NTL']) {
+    const r = normalizeIntake({ ...raw, claims_details: text }, today);
+    assert.equal(r.record.coverage.ntl, null, `${text}: only the agent sets NTL`);
+    const w = r.warnings.find((x) => x.code === 'coverage.ntl');
+    assert.equal(w?.level, 'check', text);
+    assert.equal(w.path, 'coverage.ntl', 'the Check intake card edits the field itself');
+    assert.ok(w.msg.includes(text.split('\n').at(-1)), 'the line is quoted for the agent');
+  }
+  for (const text of ['No\nFinanced', 'No\nUntle Bobcat control', 'Yes\nTruck stopped at the toll']) {
+    const r = normalizeIntake({ ...raw, claims_details: text }, today);
+    assert.equal(r.record.coverage.ntl, null, text);
+    assert.ok(!r.warnings.some((x) => x.code === 'coverage.ntl'), text);
+  }
 });

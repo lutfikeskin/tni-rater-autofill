@@ -118,7 +118,7 @@ function harness() {
       return handle;
     },
     clearTimeout: (handle) => cleared.push(handle),
-    renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {},
+    renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {}, save: () => {},
     ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
@@ -974,7 +974,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }),
     normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
     store: { set: async () => {} }, clearAgentKeys: async () => {}, uploadNow() {},
-    save: async () => {}, render() {}, refreshTab() {} };
+    save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
     'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'loadFile'].map(extractFunction).join('\n'), context);
   await context.persistAiPending();
@@ -1148,6 +1148,237 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
   };
   assert.deepEqual(await run(false), { rendered: 1, assisted: ['Rates'], assistPage: null });
   assert.deepEqual(await run(true), { rendered: 1, assisted: [], assistPage: 'Rates' }, 'another follow-up is coming: still held');
+});
+
+// PR #17 review, on Luna: the in-flight marker is taken before the first await (two triggers
+// close together ask once), a replaced intake never gets the result, and a failed review is
+// visible on Check intake and tried again only when the assistant settings change.
+function claimsHarness() {
+  const logs = [], requests = [];
+  const gates = [];
+  const t = { logs, requests, reply: 'ok', onRequest: null };
+  const state = { intake: null, notesAsking: null, notesRetry: null };
+  class AssistError extends Error {}
+  const context = {
+    state, AssistError, Date, redactor: () => (s) => s, redactionTerms: () => [], claimsTruncated: (text) => /LONG/.test(text ?? ''),
+    aiSettings: async () => ({ on: !state.offline, apiKey: 'k', model: 'gpt-6-luna' }),
+    reviewNotes: async (record, cfg, opts) => {
+      requests.push({ record, opts, reply: t.reply });
+      const reply = t.reply;
+      await new Promise((resolve) => gates.push(resolve));
+      if (reply === 'fail') throw new AssistError('Luna took too long. Nothing was applied.');
+      return { warnings: [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }], lines: 1, flagged: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0, cachedTokens: 2, cacheWriteTokens: 1 };
+    },
+    usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
+  };
+  vm.runInNewContext(extractFunction('claimsContext') + extractFunction('supersedeClaimsItems') + extractFunction('reviewClaimsBox'), context);
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  // Lets the oldest pending request answer, then lets the panel finish with it.
+  t.answer = async () => { await settle(); gates.shift()(); for (let i = 0; i < 5; i++) await settle(); };
+  return Object.assign(t, { state, review: context.reviewClaimsBox, settle });
+}
+const claimsIntake = (text) => ({ record: { claims: { text }, coverage: { cargo: true, ntl: null } }, warnings: [{ code: 'other', level: 'check' }], done: [] });
+
+test('Luna reads the claims box once per intake, visibly fails, and retries on a settings change', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('Leased on, needs coverage off dispatch');
+  t.state.intake = intake;
+  const first = t.review();
+  t.review();
+  assert.equal(t.state.notesAsking, intake, 'taken before the settings were read');
+  await t.answer();
+  await first;
+  assert.equal(t.requests.length, 1, 'two triggers close together ask once');
+  assert.equal(typeof t.requests[0].opts.redact, 'function', 'names are redacted before the request');
+  assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
+  assert.deepEqual(Object.keys(t.logs[0]).sort(), ['cacheWriteTokens', 'cachedTokens', 'items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
+  await t.review({ retry: true });
+  assert.equal(t.requests.length, 1, 'once per intake');
+
+  // A failure is a Check intake item, not silence; a plain reload doesn't ask again.
+  const failing = claimsIntake('Needs physical damage');
+  failing.done = [0];
+  t.state.intake = failing;
+  t.reply = 'fail';
+  t.review();
+  await t.answer();
+  assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-review-failed', 'check']]);
+  assert.match(failing.warnings[1].msg, /Read it yourself/);
+  assert.equal(t.logs.at(-1).error, 'Luna took too long. Nothing was applied.');
+  await t.review();
+  assert.equal(t.requests.length, 2, 'not retried on every panel reload');
+  // A settings change tries again; the failure item is replaced in place (checked marks are by position).
+  t.reply = 'ok';
+  t.review({ retry: true });
+  await t.answer();
+  assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-reviewed', 'info'], ['ai.ntl', 'check']]);
+  assert.deepEqual(failing.done, [0]);
+});
+
+// Codex on PR #22.
+test('a settings change during a review runs it again, an edit during it discards the answer, a replaced intake logs nothing', async () => {
+  // The key is corrected while the old-key request is still out: tried again once it fails.
+  let t = claimsHarness();
+  const intake = claimsIntake('Needs physical damage');
+  t.state.intake = intake;
+  t.reply = 'fail';
+  t.review();
+  await t.settle();
+  t.reply = 'ok';
+  await t.review({ retry: true });
+  assert.equal(t.requests.length, 1, 'one request at a time');
+  await t.answer();
+  assert.equal(t.requests.length, 2, 'the queued retry runs once the first ends');
+  await t.answer();
+  assert.equal(intake.notesReview.done, true);
+  assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.claims-reviewed', 'ai.ntl']);
+
+  // The agent edits the claims box while Luna reads the old text: that answer is dropped, the
+  // new text is read. Setting NTL itself (not sent to Luna) doesn't count as a change.
+  t = claimsHarness();
+  const edited = claimsIntake('Needs physical damage');
+  t.state.intake = edited;
+  t.review();
+  await t.settle();
+  edited.record.coverage.ntl = true;
+  edited.record.claims.text = 'Needs hired auto';
+  await t.answer();
+  assert.equal(t.logs[0].error, 'Answer discarded: the claims box or coverages changed.');
+  assert.equal(edited.notesReview, undefined, 'not marked reviewed');
+  assert.deepEqual(edited.warnings.map((w) => w.code), ['other'], 'no warning from the old text');
+  assert.equal(t.requests.length, 2, 'the new text is read');
+  assert.equal(t.requests[1].record.claims.text, 'Needs hired auto');
+  await t.answer();
+  assert.equal(edited.notesReview.done, true);
+  const untouched = claimsHarness();
+  const ntlOnly = claimsIntake('NTL please');
+  untouched.state.intake = ntlOnly;
+  untouched.review();
+  await untouched.settle();
+  ntlOnly.record.coverage.ntl = true;
+  await untouched.answer();
+  assert.equal(untouched.requests.length, 1, 'setting NTL is not a change to what Luna read');
+  assert.equal(ntlOnly.notesReview.done, true);
+
+  // A request for an intake that was replaced meanwhile: no result and nothing logged.
+  for (const reply of ['ok', 'fail']) {
+    t = claimsHarness();
+    const old = claimsIntake('NTL please');
+    t.state.intake = old;
+    t.reply = reply;
+    t.review();
+    await t.settle();
+    t.state.intake = claimsIntake('');
+    await t.answer();
+    assert.deepEqual(old.warnings.map((w) => w.code), ['other'], reply);
+    assert.equal(old.notesReview, undefined, reply);
+    assert.equal(t.logs.length, 0, `${reply}: not attributed to the new intake`);
+  }
+});
+
+// Codex on PR #22: an edit after a finished review is read again; Luna's old items are replaced in place.
+test('the claims box is reviewed again after the agent edits what Luna read', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('Needs physical damage');
+  t.state.intake = intake;
+  t.review();
+  await t.answer();
+  assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
+  intake.done = [1];
+  await t.review();
+  assert.equal(t.requests.length, 1, 'unchanged: not read again');
+  intake.record.coverage.ntl = true;
+  await t.review({ retry: true });
+  assert.equal(t.requests.length, 1, 'setting NTL is not a change to what Luna read');
+  intake.record.claims.text = 'Needs physical damage\nNeeds hired auto';
+  t.review({ retry: true });
+  await t.answer();
+  assert.equal(t.requests.length, 2, 'the edited box is read again');
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-superseded', 'info'], ['ai.ntl', 'check']],
+    'the old item is replaced in place (checked marks are by position), the new one added');
+  assert.deepEqual(intake.done, [1]);
+});
+
+// Codex on PR #22: an edit retires Luna's old items even when no new review can run.
+test('editing what Luna read retires its items at once, also with the assistant off', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('Needs physical damage');
+  t.state.intake = intake;
+  t.review();
+  await t.answer();
+  assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
+  intake.record.claims.text = 'Financed';
+  t.state.offline = true;
+  await t.review({ retry: true });
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-superseded', 'info']]);
+  assert.equal(t.requests.length, 1, 'no request without the assistant');
+  assert.equal(intake.notesReview, null, 'read again once the assistant can');
+});
+
+// Codex on PR #22: the long-claims-box item is the code's own; a coverage edit doesn't retire it.
+test('the long-claims-box item stays while the box is still too long, and isn\'t added twice', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('LONG claims box');
+  intake.warnings.push({ code: 'ai.claims-truncated', level: 'check', path: 'claims.text', msg: 'read the rest' });
+  intake.notesReview = { done: true, context: JSON.stringify(['LONG claims box', { cargo: true }]) };
+  t.state.intake = intake;
+  t.state.offline = true;
+  intake.record.coverage.cargo = false;
+  await t.review({ retry: true });
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-truncated', 'check']], 'kept with the assistant off');
+  t.state.offline = false;
+  const reviewing = t.review({ retry: true });
+  await t.answer();
+  await reviewing;
+  assert.equal(intake.warnings.filter((w) => w.code === 'ai.claims-truncated').length, 1);
+  intake.record.claims.text = 'short now';
+  t.state.offline = true;
+  await t.review({ retry: true });
+  assert.ok(!intake.warnings.some((w) => w.code === 'ai.claims-truncated' && w.level === 'check'), 'retired once the box is short enough');
+});
+
+// Codex on PR #22: the intake's own NTL item and the checked long-box / failed-review items follow
+// claims-box edits; Luna's NTL flag holds Rates; a done Add NTL survives a panel reload.
+test('claims-box edits keep the NTL, long-box and failed-review items current', () => {
+  const ntlCheckMessage = (line) => `NTL: ${line}`;
+  const ntlMention = (text) => String(text ?? '').split('\n').find((l) => /\bntl\b|bobtail/i.test(l))?.trim() || null;
+  const intake = { record: { claims: { text: 'No\nNeeds NTL' } }, done: [0, 1, 2],
+    warnings: [{ code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: 'NTL: Needs NTL' },
+      { code: 'ai.claims-truncated', level: 'check' }, { code: 'ai.claims-review-failed', level: 'check' }] };
+  const context = { ntlMention, ntlCheckMessage, save() {}, render() {} };
+  vm.runInNewContext(extractFunction('claimsTextEdited'), context);
+  intake.record.claims.text = 'No\nNeeds bobtail off dispatch';
+  context.claimsTextEdited(intake);
+  assert.equal(intake.warnings[0].msg, 'NTL: Needs bobtail off dispatch', 'the quoted line follows the edit');
+  assert.deepEqual(intake.done, [], 'all three are asked again for the new text');
+  intake.done = [0];
+  intake.record.claims.text = 'No\nFinanced';
+  context.claimsTextEdited(intake);
+  assert.deepEqual([intake.warnings[0].level, intake.warnings.length], ['info', 3], 'retired in place when NTL is no longer mentioned');
+  intake.record.claims.text = 'No\nNTL please';
+  context.claimsTextEdited(intake);
+  assert.equal(intake.warnings.length, 3, 'the retired item is not reused');
+  const fresh = { record: { claims: { text: 'No\nNTL please' } }, done: [], warnings: [] };
+  context.claimsTextEdited(fresh);
+  assert.deepEqual(fresh.warnings.map((w) => [w.code, w.level]), [['coverage.ntl', 'check']], 'an NTL mention added after load is asked');
+});
+
+test('Luna\'s NTL flag holds Rates until superseded, and a done Add NTL survives a panel reload', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('Needs bobtale coverage');
+  t.state.intake = intake;
+  t.review();
+  await t.answer();
+  assert.equal(intake.record.claims.aiNtl, true, 'the plan sees the unresolved NTL flag');
+  intake.record.claims.text = 'Financed';
+  t.state.offline = true;
+  await t.review({ retry: true });
+  assert.equal(intake.record.claims.aiNtl, false, 'cleared with its item');
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'CoveragesRates'), carrier: { id: 'progressive' } };
+  h.state.intake = { record: {} };
+  h.rememberFill([{ actions: [{ id: 'addNtl' }], protectedKeys: [], filled: [] }]);
+  assert.equal(h.state.intake.ntlAdded, true, 'kept with the intake (session storage), not only in memory');
 });
 
 // Codex on PR #21: on Add Vehicle (one vehicle at a time, the same field keys for each) an agent

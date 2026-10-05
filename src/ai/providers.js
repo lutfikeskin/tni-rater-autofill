@@ -3,7 +3,7 @@ import * as luna from './luna.js';
 export const PROVIDERS = Object.freeze({
   luna: { name: 'GPT-6 Luna', company: 'OpenAI', keyLabel: 'OpenAI API key', keySetting: 'lunaKey',
     autoSetting: 'lunaAuto', defaultModel: luna.DEFAULT_MODEL, policy: luna.POLICY_VERSION,
-    suggest: luna.suggest, automatic: true },
+    suggest: luna.suggest, reviewNotes: luna.reviewNotes, automatic: true },
 });
 
 export function settingsFrom(saved = {}) {
@@ -13,3 +13,4 @@ export function settingsFrom(saved = {}) {
 }
 
 export const suggest = (items, context, config, opts) => luna.suggest(items, context, config, opts);
+export const reviewNotes = (record, config, opts) => luna.reviewNotes(record, config, opts);

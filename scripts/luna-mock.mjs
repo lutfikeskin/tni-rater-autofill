@@ -21,6 +21,8 @@ const base = `http://127.0.0.1:${server.address().port}`;
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-luna-'));
 const checks = [], errors = [];
 let context, mock, panel, phase = 'startup', requests = 0, mode = 'normal', started, release;
+// The claims-box review (once per intake), counted apart from page questions.
+let claimsRequests = 0;
 const unexpectedProviderHosts = new Set();
 const verify = (name, actual, expected) => {
   checks.push({ name, ok: actual === expected });
@@ -34,9 +36,21 @@ try {
   await context.route('**/*', async route => {
     const url = new URL(route.request().url());
     if (url.hostname === 'api.openai.com') {
+      const body = route.request().postDataJSON(), state = JSON.parse(body.input[0].content);
+      if (body.text?.format?.name === 'claims_review') {
+        claimsRequests++;
+        assert.equal(body.store, false);
+        assert.equal(body.reasoning.effort, 'low');
+        assert.equal(body.max_output_tokens, 2048);
+        assert.equal(body.temperature, undefined);
+        // Nothing flagged: the synthetic claims box holds no coverage request.
+        const lines = Object.fromEntries(Object.keys(state.claimsBox).map(id => [id, { ntl: false, coverageChange: false }]));
+        return route.fulfill({ json: { status: 'completed', model: 'gpt-6-luna',
+          output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify({ lines }) }] }],
+          usage: { input_tokens: 50, output_tokens: 5 } } });
+      }
       requests++;
       if (mode === 'slow') { started?.(); await new Promise(resolve => { release = resolve; }); }
-      const body = route.request().postDataJSON(), state = JSON.parse(body.input[0].content);
       assert.equal(body.reasoning.effort, 'low');
       assert.equal(body.text.verbosity, 'low');
       assert.equal(body.temperature, undefined);
@@ -101,8 +115,15 @@ try {
       await panel.locator('#clear-client').click();
       await panel.locator('#home').waitFor({ state: 'visible' });
     }
+    const claimsBefore = claimsRequests;
     await panel.setInputFiles('#file', path.join(root, 'test/fixtures/sample-intake.pdf'));
     await panel.locator('#quote').waitFor({ state: 'visible' });
+    // With Luna on and its key set, the panel reads the new intake's claims box: let that save
+    // first, or it would write over the fixture edit below.
+    if (await panel.evaluate(async () => { const { settings } = await chrome.storage.local.get('settings'); return !!(settings?.aiOn && settings?.lunaKey); })) {
+      await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake?.notesReview, null, { timeout: 15000 });
+      verify('a new intake gets one claims-box review', claimsRequests - claimsBefore, 1);
+    }
     // This controlled fixture fact is synthetic; no customer data or external provider is used.
     await panel.evaluate(async () => {
       const { intake } = await chrome.storage.session.get('intake');
@@ -238,7 +259,7 @@ try {
   await panel.locator('.ai-approve').waitFor({ timeout: 30000 });
   verify('retired automatic decision requires explicit review', await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true }).count(), 1);
   verify('legacy automatic decision remains a review hold after reload', await mock.evaluate(() => window.__amwinsMock.saves), 0);
-  verify('legacy profile makes no Luna or Jev request', requests, 0);
+  verify('legacy profile makes no Luna or Jev request', requests + claimsRequests, 0);
   verify('legacy profile does not contact the Jev host', unexpectedProviderHosts.size, 0);
   const migratedSettings = await panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings ?? {});
   verify('legacy OpenAI/TypeSafe fields do not become a Luna key', migratedSettings.lunaKey ?? '', '');
@@ -263,7 +284,7 @@ try {
   phase = 'missing-key';
   await panel.locator('#fill').click();
   await panel.getByText(/GPT-6 Luna needs an OpenAI API key/).waitFor();
-  verify('Luna never reuses legacy or TypeSafe keys', requests, 0);
+  verify('Luna never reuses legacy or TypeSafe keys', requests + claimsRequests, 0);
   await panel.locator('#fill-notices').getByRole('button', { name: 'Add key', exact: true }).click();
   await panel.locator('#ai-openai-key').waitFor({ state: 'visible' });
   verify('missing OpenAI key focuses its dedicated field', await panel.evaluate(() => document.activeElement.id), 'ai-openai-key');
@@ -274,6 +295,9 @@ try {
   await panel.locator('#ai-openai-key').fill('synthetic-openai');
   await panel.locator('#ai-openai-key').press('Tab');
   await panel.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.lunaKey === 'synthetic-openai');
+  // The key arrived with this intake open: its claims box is read now, once.
+  await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake?.notesReview, null, { timeout: 15000 });
+  verify('adding the key reviews the open intake\'s claims box', claimsRequests, 1);
   verify('OpenAI key save stays in the dedicated Luna field', await panel.evaluate(async () =>
     (await chrome.storage.local.get('settings')).settings.lunaKey === 'synthetic-openai'), true);
   await panel.locator('#agent-btn').click();
@@ -476,7 +500,7 @@ try {
       const value = globalThis.__raterKit?.decisionSnapshot?.();
       return { available: typeof globalThis.__raterKit?.decisionSnapshot === 'function', length: value?.length ?? null };
     })),
-    requestCounts: { luna: requests, unexpectedProviderHosts: [...unexpectedProviderHosts] },
+    requestCounts: { luna: requests, claimsReview: claimsRequests, unexpectedProviderHosts: [...unexpectedProviderHosts] },
     panelReport: (await safe(() => panel?.locator('#report').innerText(), '')).slice(0, 4000),
     pageErrors: errors.slice(-20),
   };

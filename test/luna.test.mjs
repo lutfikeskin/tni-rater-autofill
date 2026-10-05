@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectItems, AssistError, LEAVE } from '../src/ai/common.js';
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
-  DEFAULT_MODEL, API_URL } from '../src/ai/luna.js';
+  DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes } from '../src/ai/luna.js';
 import { settingsFrom } from '../src/ai/providers.js';
 
 const context = { carrier: 'geico', page: 'operations', active: { drivers: 0, vehicles: 0 },
@@ -346,4 +346,109 @@ test('HTTP integration sends the key only to OpenAI and hides provider errors', 
   await assert.rejects(callModel({ apiKey: 'synthetic', body, fetchImpl: refused }), error =>
     /OpenAI API key was refused/.test(error.message) && !error.message.includes('private'));
   await assert.rejects(callModel({ body, fetchImpl }), /needs an OpenAI API key/);
+});
+
+// Synthetic claims box. PR #17 moved from Jev to Luna: flags only, one call, nothing applied.
+test('claims-box review: one strict call with two flags per line, redacted, flags only', async () => {
+  const record = { coverage: { autoLiability: 'Yes', autoLiabLimit: '$750k CSL', cargo: true, ntl: null },
+    claims: { text: 'No\nWants $1M liability instead. Leased on with Sample Carrier, needs coverage off dispatch\nFinanced\nFinanced\nno bobtail' } };
+  assert.deepEqual(noteLines(record.claims.text), ['Wants $1M liability instead.', 'Leased on with Sample Carrier, needs coverage off dispatch', 'Financed', 'no bobtail'], 'sentences, no repeats, no bare yes/no');
+  const review = buildNotesReview(record, { redact: (line) => line.replace('Sample Carrier', '[client]') });
+  const { body } = review;
+  assert.equal(body.model, DEFAULT_MODEL);
+  assert.equal(body.store, false);
+  assert.equal(body.reasoning.effort, 'low');
+  assert.equal(body.max_output_tokens, 2048);
+  assert.equal(body.temperature, undefined);
+  assert.equal(body.text.format.name, 'claims_review');
+  assert.equal(body.text.format.strict, true);
+  const state = JSON.parse(body.input[0].content);
+  assert.deepEqual(Object.keys(state.claimsBox), ['l0', 'l1', 'l2', 'l3']);
+  assert.match(state.claimsBox.l1, /\[client\]/, 'names are replaced before the request');
+  assert.doesNotMatch(body.input[0].content, /Sample Carrier/);
+  assert.deepEqual(state.formCoverage, { autoLiability: 'Yes', autoLiabLimit: '$750k CSL', cargo: true }, 'the form coverage, not the agent-set NTL');
+  assert.deepEqual(body.text.format.schema.properties.lines.required, ['l0', 'l1', 'l2', 'l3']);
+  assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'nothing to read');
+
+  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
+  // coverageChange means a change other than NTL (NTL has its own flag).
+  const json = flags([[false, true], [true, false], [false, false], [false, false]]);
+  const results = parseNotesReview(json, review);
+  assert.equal(review.quoted, 'no bobtail', 'the line the intake\'s own NTL item quotes');
+  assert.deepEqual(notesWarnings(results, review).map((w) => [w.code, w.path, w.level]), [['ai.coverage-change', 'claims.text', 'check'], ['ai.ntl', 'coverage.ntl', 'check']],
+    'NTL and other coverage changes are separate flags');
+  assert.ok(notesWarnings(results, review)[1].msg.includes('needs coverage off dispatch'), 'the line is quoted');
+  assert.ok(notesWarnings(parseNotesReview(flags([[false, false], [false, false], [false, false], [true, false]]), review), review).length === 0,
+    'the line the intake already quotes for NTL is not repeated');
+  // Codex on PR #22: only that line, not every NTL line ("does not want bobtail" quoted first).
+  const two = buildNotesReview({ coverage: {}, claims: { text: 'No\nDoes not want bobtail\nNeeds NTL off dispatch' } });
+  assert.equal(two.quoted, 'Does not want bobtail');
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[false, false], [true, false]]), two), two).map((w) => [w.code, w.msg.includes('Needs NTL off dispatch')]),
+    [['ai.ntl', true]], 'a second, positive NTL line is still flagged');
+  // Codex on PR #22: another request in the quoted line itself is kept.
+  const shared = buildNotesReview({ coverage: {}, claims: { text: 'No\nNeeds NTL. Also needs physical damage.' } });
+  assert.deepEqual(shared.lines, ['Needs NTL.', 'Also needs physical damage.']);
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[true, false], [false, true]]), shared), shared).map((w) => [w.code, w.msg.includes('physical damage')]),
+    [['ai.coverage-change', true]], 'only the NTL sentence is the intake\'s');
+  // Codex on PR #22: one fragment with NTL and another request keeps the other request.
+  const mixed = buildNotesReview({ coverage: {}, claims: { text: 'No\nNeeds NTL and physical damage' } });
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[true, true]]), mixed), mixed).map((w) => w.code), ['ai.coverage-change'],
+    'the NTL is the intake\'s item; the physical damage request is still flagged');
+  assert.match(JSON.parse(JSON.stringify(mixed.body)).instructions, /other than non-trucking liability \(that is the ntl question\)/);
+
+  assert.throws(() => parseNotesReview(flags([[false, true]]), review), AssistError, 'a missing line fails the whole review');
+  assert.throws(() => parseNotesReview(envelope({ lines: { l0: { ntl: 'yes', coverageChange: false }, l1: { ntl: false, coverageChange: false }, l2: { ntl: false, coverageChange: false }, l3: { ntl: false, coverageChange: false } } }), review), AssistError);
+  assert.throws(() => parseNotesReview({ ...json, model: 'other-model' }, review), AssistError, 'an unexpected model fails');
+
+  let sent;
+  const done = await reviewNotes(record, { apiKey: 'synthetic-key' }, { call: async ({ apiKey, body }) => { sent = { apiKey, body }; return json; } });
+  assert.equal(sent.apiKey, 'synthetic-key');
+  assert.deepEqual(done.warnings.map((w) => w.code), ['ai.coverage-change', 'ai.ntl']);
+  assert.equal(done.lines, 4);
+  assert.equal(done.modelCalls, 1);
+  assert.equal(done.tokensIn, 100);
+  const cached = await reviewNotes(record, { apiKey: 'k' }, { call: async () => ({ ...json, usage: { input_tokens: 100, output_tokens: 5,
+    input_tokens_details: { cached_tokens: 60, cache_write_tokens: 40 }, output_tokens_details: { reasoning_tokens: 3 } } }) });
+  assert.deepEqual([cached.cachedTokens, cached.cacheWriteTokens, cached.reasoningTokens], [60, 40, 3], 'the same usage counters as page reviews');
+  const none = await reviewNotes({ coverage: {}, claims: { text: '' } }, { apiKey: 'k' }, { call: async () => { throw new Error('no call expected'); } });
+  assert.equal(none.modelCalls, 0);
+});
+
+// Codex on PR #22: Progressive's NTL section is unvalidated: its questions never reach Luna.
+test('non-trucking liability questions stay with the agent', () => {
+  const { items, blocked } = collectItems([{ unknown: [
+    { key: 'ntl1', label: 'Does the customer operate under dispatch?', section: 'Non-Trucking Liability', controlKind: 'radio', options: ['Yes', 'No'] },
+    { key: 'ntl2', label: 'Bobtail coverage limit', controlKind: 'select', options: ['$300k', '$500k'] },
+    { key: 'other', label: 'Does the customer haul hazardous materials?', controlKind: 'radio', options: ['Yes', 'No'] },
+  ] }]);
+  assert.deepEqual(items.map((x) => x.key), ['other']);
+  assert.deepEqual(blocked.map((x) => x.key), ['ntl1', 'ntl2']);
+});
+
+// Codex on PR #22: counts are lines, not cards; a long claims box says what wasn't read.
+test('claims-box review counts flagged lines and says when the box was too long to read whole', async () => {
+  const mixed = { coverage: {}, claims: { text: 'No\nNeeds bobtail and physical damage\nFinanced' } };
+  const two = (body) => envelope({ lines: { l0: { ntl: true, coverageChange: true }, l1: { ntl: false, coverageChange: false } } });
+  const done = await reviewNotes(mixed, { apiKey: 'k' }, { call: async ({ body }) => two(body) });
+  assert.deepEqual(done.warnings.map((w) => w.code), ['ai.coverage-change'], 'the intake quotes the bobtail line');
+  assert.equal(done.flagged, 1);
+  assert.equal(done.lines, 2);
+  assert.ok(done.warnings.every((w) => !('line' in w)), 'no extra fields on the intake items');
+  const long = { coverage: {}, claims: { text: Array.from({ length: 25 }, (_, i) => `Line number ${i + 1} about the truck`).join('\n') } };
+  const all = await reviewNotes(long, { apiKey: 'k' }, { call: async ({ body }) => envelope({ lines: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).claimsBox).map((id) => [id, { ntl: false, coverageChange: false }])) }) });
+  assert.equal(all.lines, 20);
+  assert.deepEqual(all.warnings.map((w) => [w.code, w.level]), [['ai.claims-truncated', 'check']]);
+  assert.match(all.warnings[0].msg, /first 20 lines only/);
+});
+
+// Codex on PR #22: a later "NTL" line isn't the quoted "Does not want NTL"; "GL" alone is read.
+test('claims-box review: only the quoted line\'s own sentences are the intake\'s, and short coverage words are read', () => {
+  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
+  const review = buildNotesReview({ coverage: {}, claims: { text: 'No\nDoes not want NTL\nNTL' } });
+  assert.deepEqual(review.lines, ['Does not want NTL', 'NTL']);
+  assert.deepEqual(review.quotedFragments, ['Does not want NTL']);
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[false, false], [true, false]]), review), review).map((w) => [w.code, w.line]),
+    [['ai.ntl', 'NTL']], 'the later positive line keeps its item');
+  assert.deepEqual(buildNotesReview({ coverage: { gl: false }, claims: { text: 'No\nGL' } }).lines, ['GL']);
+  assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'a bare No is still nothing to read');
 });

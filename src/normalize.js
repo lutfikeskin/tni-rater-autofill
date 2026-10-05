@@ -145,6 +145,12 @@ export function parseLimitDeductible(v) {
 // License numbers are entered plain: letters (rare) and digits only, never dashes or spaces.
 const plain = (s) => String(s).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 
+// Words that name a non-trucking liability (NTL) customer in the claims box, and the line the
+// intake's review item quotes (the first that has them).
+export const NTL_WORDS = /\b(ntl|non[\s-]*tr[ua]ck(ing)?|bob[\s-]*tail(ing)?)\b/i;
+export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
+export const ntlCheckMessage = (line) => `The claims box mentions non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. AmWINS has no NTL option the filler knows: quote it by hand.`;
+
 // "MD - 10123456789" -> { state: 'MD', number: 'MD10123456789' }: a leading state code tells us
 // the license state, but it stays in the number (agents enter it that way).
 export function parseLicense(v) {
@@ -259,6 +265,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       gl: yesNo(raw.gen_liability),
       glLimit: txt('gen_liab_limit'),
       reeferBreakdown: yesNo(raw.reefer_breakdown),
+      // Not on the form: only the agent sets it, after reading the claims box.
+      ntl: null,
     },
     claims: { text: cleanMultiline(raw.claims_details), hasClaims: null, notes: null },
     crossSell: [
@@ -443,6 +451,11 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     // A blank ownership answer that turns up in the notes ("Financed") is the ownership answer.
     const own = record.claims.notes?.match(/\b(owned|leased|financed)\b/i);
     if (own && !ops.vehicleOwnership) ops.vehicleOwnership = own[1][0].toUpperCase() + own[1].slice(1).toLowerCase();
+    // Non-trucking liability (NTL) is named only here: "NTL", "non-trucking" (also written "non
+    // tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the agent
+    // decides, and nothing is added until they set it to Yes.
+    const ntlLine = ntlMention(claims);
+    if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
   } else check('claims.blank', 'claims.text', 'Claims question left blank.');
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
     check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.');

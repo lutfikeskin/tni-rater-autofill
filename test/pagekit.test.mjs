@@ -908,6 +908,62 @@ test('a helper the agent must otherwise do says so when it cannot be clicked, an
   assert.equal(report.noData.length, 0);
 });
 
+// PR #17 review: a click on Add Non-Trucking Liability that the page dropped must not count.
+test('a helper verified by its link going away counts only when the link is gone', async () => {
+  const ntl = { id: 'ntl', kind: 'action', action: 'addNtl', text: '^add non-?trucking liability( instead)?\\??$', verify: 'gone',
+    pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  let h = harness();
+  let link = addButton(h, 'Add Non-Trucking Liability instead?');
+  link.onclick = () => link.remove();
+  let report = await h.kit.fill([ntl], { maxRounds: 3 });
+  assert.deepEqual(Array.from(report.actions, (x) => x.id), ['addNtl']);
+  assert.ok(!report.blockers.some((b) => /addNtl/.test(b)));
+  // The page kept the link (the click was lost in a redraw): not done, and the agent sees it.
+  h = harness();
+  link = addButton(h, 'Add Non-Trucking Liability instead?');
+  link.onclick = () => {};
+  report = await h.kit.fill([ntl], { maxRounds: 3 });
+  assert.equal(report.actions.length, 0);
+  assert.ok(report.blockers.includes('button: addNtl'), Array.from(report.blockers).join(' | '));
+  // Codex on PR #22: left on screen but disabled is not gone.
+  h = harness();
+  link = addButton(h, 'Add Non-Trucking Liability instead?');
+  link.onclick = () => { link.disabled = true; };
+  report = await h.kit.fill([ntl], { maxRounds: 3 });
+  assert.equal(report.actions.length, 0);
+  assert.ok(report.blockers.includes('button: addNtl'));
+  // NTL added earlier in the quote, then set back to No: a "needs you" item, never a click.
+  h = harness();
+  const kept = { id: 'kept', kind: 'action', action: 'ntlStillAdded', text: null, label: 'Non-trucking liability', missing: 'remove it yourself',
+    path: 'action.ntlStillAdded', name: 'Click ntlStillAdded', pages: [], after: [], afterActions: ['addNtl'], afterPages: [], unless: [] };
+  report = await h.kit.fill([kept], { maxRounds: 2 });
+  assert.equal(report.noData.length, 0, 'not before NTL was added');
+  report = await h.kit.fill([kept], { maxRounds: 2, doneActions: ['addNtl'] });
+  assert.deepEqual(Array.from(report.noData, (x) => x.note), ['remove it yourself']);
+  // Codex on PR #22: while it's open the later Rates helpers wait; once the page offers Add NTL
+  // again (the agent removed it) the item is settled and they run.
+  const heldKept = { ...kept, resolvedBy: '^add non-?trucking liability( instead)?\\??$' };
+  const billPlan = { id: 'bill', kind: 'action', action: 'billPlan', baseAction: 'billPlan', text: '^view bill plan options$', heldBy: ['ntlStillAdded'],
+    pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  const withBase = { ...heldKept, baseAction: 'ntlStillAdded', heldBy: [] };
+  h = harness();
+  const bill = addButton(h, 'View bill plan options');
+  bill.onclick = () => { bill._clicked = true; };
+  report = await h.kit.fill([withBase, billPlan], { maxRounds: 3, doneActions: ['addNtl'] });
+  assert.equal(bill._clicked, undefined, 'held while NTL is still on the quote');
+  assert.ok(report.blockers.some((b) => /billPlan \(waiting for Non-trucking liability resolved\)/.test(b)), Array.from(report.blockers).join(' | '));
+  addButton(h, 'Add Non-Trucking Liability instead?');
+  report = await h.kit.fill([withBase, billPlan], { maxRounds: 3, doneActions: ['addNtl'] });
+  assert.equal(bill._clicked, true, 'NTL removed: the bill plan runs');
+  assert.equal(report.noData.length, 0, 'and the item is settled');
+  // Codex on PR #22: Yes, No, removed by hand, Yes again: the link is back, so it's clicked again.
+  h = harness();
+  link = addButton(h, 'Add Non-Trucking Liability instead?');
+  link.onclick = () => link.remove();
+  report = await h.kit.fill([ntl], { maxRounds: 3, doneActions: ['addNtl'] });
+  assert.deepEqual(Array.from(report.actions, (x) => x.id), ['addNtl'], 're-armed while its link is on the page');
+});
+
 function coverageActionPlan() {
   return [
     { id: 'limit', selector: '#liab-limit', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },

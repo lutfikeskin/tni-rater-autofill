@@ -1,6 +1,6 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseEdit } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, ntlMention, ntlCheckMessage } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
@@ -8,8 +8,8 @@ import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
-import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
-import { PROVIDERS, settingsFrom, suggest } from '../src/ai/providers.js';
+import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated } from '../src/ai/luna.js';
+import { PROVIDERS, settingsFrom, suggest, reviewNotes } from '../src/ai/providers.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -179,6 +179,8 @@ const state = {
   doneSteps: new Set(),
   advanceRetried: new Set(), // steps whose lost Continue was clicked a second time (once each)
   assistPage: null, // a page whose Luna request waits for a helper's follow-up fill (per tab, like the above)
+  notesAsking: null, // the intake whose claims box Luna is reading now
+  notesRetry: null, // that intake again, when the settings changed meanwhile
   tabSessions: new Map(),
   agentKeys: new Map(),
   filling: false,
@@ -508,6 +510,7 @@ async function loadFile(file) {
   await save();
   render();
   refreshTab();
+  reviewClaimsBox();
 }
 
 function showLoadError(msg) {
@@ -694,6 +697,9 @@ function fieldRow(path, label, kind, flagged, layout = 'row') {
     const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
     usage.log({ type: 'intake_edit', path, kind, change: before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
     await save();
+    // Luna read the claims box against the form's coverages: an edit to either is read again.
+    if (path === 'claims.text') claimsTextEdited(state.intake);
+    if (path === 'claims.text' || (path.startsWith('coverage.') && path !== 'coverage.ntl')) reviewClaimsBox({ retry: true });
   });
   if (layout === 'stack') {
     // On a check card the same field may also be open in the client details: keep one id.
@@ -899,7 +905,8 @@ const fillOptions = (carrier, extra = {}) => ({
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
   advance: $('auto-advance').checked && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
-  doneActions: [...state.doneActions],
+  // Add NTL done on this intake's quote survives a panel reload (its removal hold depends on it).
+  doneActions: [...state.doneActions, ...(state.intake?.ntlAdded ? ['addNtl'] : [])],
   visitedPages: [...state.visitedPages],
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
   skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
@@ -999,6 +1006,10 @@ async function recordLayout(page) {
 
 function rememberFill(frames) {
   const page = pageOf(state.tab?.url);
+  if (state.intake && !state.intake.ntlAdded && frames.some((f) => (f.actions ?? []).some((a) => a.id === 'addNtl'))) {
+    state.intake.ntlAdded = true;
+    save();
+  }
   const keys = state.agentKeys.get(editScope(page)) ?? new Set();
   for (const key of frames.flatMap((f) => f.protectedKeys ?? [])) keys.add(key);
   state.agentKeys.set(editScope(page), keys);
@@ -1279,7 +1290,9 @@ function renderReport(frames) {
   ];
   const waiting = all('blocked');
   const advanced = frames.find((f) => f.advanced)?.advanced;
-  const agentPage = state.tab?.carrier?.agentPages?.[page];
+  // A page note may depend on the intake (Progressive's Rates for an NTL quote).
+  const pageNote = state.tab?.carrier?.agentPages?.[page];
+  const agentPage = typeof pageNote === 'function' ? pageNote(state.intake?.record ?? {}) : pageNote;
   const pct = fields ? Math.round(((fields - needs.length) / fields) * 100) : 100;
   const need = (x) => h('div', { class: 'need', dataset: { need: `${x.key}|${x.label}` } },
     h('div', { class: 'need-head' },
@@ -1355,6 +1368,110 @@ async function capturePage() {
 
 async function aiSettings() {
   return settingsFrom(await usage.settings());
+}
+
+// Luna reads the claims box once per intake (reviewNotes in src/ai/luna.js): lines that may name
+// non-trucking liability or ask for a coverage change become Check intake items, and the tab
+// count goes up (the panel doesn't switch steps under the agent). Flags only; the agent decides.
+// Logged as counts, never the text. A review that failed says so on Check intake and is tried
+// again when the assistant settings change (`retry`), not on every panel reload. What it read
+// (the claims box and the form's coverages) must still be the intake's when Luna answers;
+// otherwise the answer is dropped and the box read again.
+// Luna's claims-box items for a text the agent has since edited become info notes, in place
+// (warnings are marked checked by position).
+// The claims box text changed: the intake's own NTL item follows it (updated, re-asked, or retired
+// when NTL is no longer mentioned), and a checked long-box or failed-review item is asked again,
+// since its check was for the old text. Items are kept by position (checked marks are).
+function claimsTextEdited(intake) {
+  const uncheck = (i) => { intake.done = intake.done.filter((d) => d !== i); };
+  const mention = ntlMention(intake.record.claims?.text);
+  const i = intake.warnings.findIndex((w) => w.code === 'coverage.ntl');
+  if (mention && i < 0) intake.warnings.push({ code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: ntlCheckMessage(mention) });
+  else if (mention && intake.warnings[i].msg !== ntlCheckMessage(mention)) {
+    intake.warnings[i] = { code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: ntlCheckMessage(mention) };
+    uncheck(i);
+  } else if (!mention && i >= 0 && intake.warnings[i].level === 'check') {
+    intake.warnings[i] = { code: 'coverage.ntl', path: 'coverage.ntl', level: 'info', msg: 'The claims box no longer mentions non-trucking liability (NTL).' };
+  }
+  intake.warnings.forEach((w, j) => { if (['ai.claims-truncated', 'ai.claims-review-failed'].includes(w.code)) uncheck(j); });
+  save();
+  render();
+}
+
+// The long-claims-box item is the code's own: it stays while the box is still too long to read whole.
+function supersedeClaimsItems(intake) {
+  const truncated = claimsTruncated(intake.record.claims?.text);
+  intake.warnings.forEach((w, i) => {
+    if (['ai.ntl', 'ai.coverage-change'].includes(w.code) || (w.code === 'ai.claims-truncated' && !truncated)) {
+      if (w.code === 'ai.ntl' && intake.record.claims) intake.record.claims.aiNtl = false;
+      intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box since edited: ${w.msg}` };
+    }
+  });
+}
+
+function claimsContext(record) {
+  const { ntl, ...coverage } = record.coverage ?? {};
+  return JSON.stringify([record.claims?.text ?? null, coverage]);
+}
+
+async function reviewClaimsBox({ retry = false } = {}) {
+  const intake = state.intake;
+  // A finished review stands while what it read is unchanged (older records didn't keep that).
+  // Once the agent has edited it, Luna's items for the old text are retired right away, whether or
+  // not a new review can run now (assistant off, no key, a failure).
+  if (intake?.notesReview?.done && intake.notesReview.context != null && intake.notesReview.context !== claimsContext(intake.record)) {
+    supersedeClaimsItems(intake);
+    intake.notesReview = null;
+    await save();
+    render();
+  }
+  if (!intake?.record.claims?.text || intake.notesReview?.done || (intake.notesReview?.failed && !retry)) return;
+  // One at a time: a settings change during a review runs once it ends (a corrected key).
+  if (state.notesAsking === intake) { if (retry) state.notesRetry = intake; return; }
+  // Taken before the first await: two triggers close together ask once.
+  state.notesAsking = intake;
+  let again = false;
+  try {
+    const cfg = await aiSettings();
+    if (!cfg.on || !cfg.apiKey || state.intake !== intake) return;
+    const started = Date.now();
+    const read = claimsContext(intake.record);
+    const logged = { type: 'ai_suggest', page: 'ClaimsBox', model: cfg.model };
+    const failed = intake.warnings.findIndex((w) => w.code === 'ai.claims-review-failed');
+    try {
+      const result = await reviewNotes(intake.record, cfg, { redact: redactor(redactionTerms(intake.record)) });
+      // Nothing about a replaced intake is logged under the new one.
+      if (state.intake !== intake) return;
+      const changed = claimsContext(intake.record) !== read;
+      usage.log({ ...logged, ms: Date.now() - started, items: result.lines, suggested: result.flagged, leave: result.lines - result.flagged,
+        tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens,
+        cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens, ...(changed ? { error: 'Answer discarded: the claims box or coverages changed.' } : {}) });
+      if (changed) { again = true; return; }
+      // Warnings are marked checked by position: an earlier failure, or Luna's items from a claims
+      // box the agent has since edited, are replaced in place, never removed.
+      if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Luna reviewed the claims box after an earlier failure.' };
+      supersedeClaimsItems(intake);
+      // One long-claims-box item, kept from an earlier review.
+      const kept = intake.warnings.some((w) => w.code === 'ai.claims-truncated');
+      intake.warnings.push(...result.warnings.filter((w) => !(kept && w.code === 'ai.claims-truncated')));
+      // Luna's NTL flag holds Progressive's Rates until the agent answers it, like an NTL mention.
+      if (result.warnings.some((w) => w.code === 'ai.ntl') && intake.record.claims) intake.record.claims.aiNtl = true;
+      intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length, context: read };
+    } catch (e) {
+      if (state.intake !== intake) return;
+      const msg = e instanceof AssistError ? e.message : 'The claims-box review failed.';
+      usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+      if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Luna couldn't review the claims box. Read it yourself for coverage requests, such as non-trucking liability (NTL) or a different limit." });
+      intake.notesReview = { failed: true, model: cfg.model };
+    }
+    await save();
+    render();
+  } finally {
+    if (state.notesAsking === intake) state.notesAsking = null;
+    const queued = state.notesRetry === intake;
+    if (queued) state.notesRetry = null;
+    if ((again || queued) && state.intake === intake) reviewClaimsBox({ retry: true });
+  }
 }
 
 // ctx: { tabId, page, carrier } of the fill these frames came from.
@@ -1802,6 +1919,8 @@ function wireAi() {
     // Keep pending approvals; their cache keys remain bound to the original model and context.
     await usage.saveSettings(patch);
     await renderAiSettings();
+    // Luna just turned on or got a key: read the open intake's claims box if not done yet.
+    reviewClaimsBox({ retry: true });
   };
   $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
   $('ai-auto').addEventListener('change', (e) => save({ lunaAuto: e.target.checked }));
@@ -2009,6 +2128,7 @@ async function init() {
   render();
   renderUsage();
   renderAiSettings();
+  reviewClaimsBox();
   await refreshTab();
 }
 

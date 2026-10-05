@@ -464,3 +464,72 @@ test('every vehicle on Rates gets the standard per-vehicle coverages; Rental wit
   // One vehicle: one step, no row matching, as before.
   assert.equal(buildPlan(baseRecord(), progressive, {}).filter((step) => step.q === '2091').length, 1);
 });
+
+// PR #17 review: NTL is added only once the agent set it, the click is verified, and the bill
+// plan, Recalculate and Print wait for the agent (who answers the NTL section first).
+test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, then Rates is the agent\'s', () => {
+  const record = baseRecord();
+  const actions = (r) => buildPlan(r, progressive, {}).filter((s) => s.kind === 'action');
+  const ids = (r) => actions(r).map((s) => s.action);
+  assert.ok(!ids(record).includes('addNtl'), 'not without NTL');
+  assert.equal(progressive.agentPages.CoveragesRates(record), null);
+  record.coverage.ntl = null;
+  assert.ok(!ids(record).includes('addNtl'), 'not while unresolved (a claims-box mention only)');
+  record.coverage.ntl = true;
+  const plan = actions(record);
+  const ntl = plan.find((s) => s.action === 'addNtl');
+  assert.deepEqual(ntl.pages, ['CoveragesRates']);
+  assert.equal(ntl.verify, 'gone', 'done only when the link is gone afterwards');
+  assert.ok(new RegExp(ntl.text, 'i').test('Add Non-Trucking Liability instead?'));
+  assert.ok(!new RegExp(ntl.text, 'i').test('Help Text For Non-Trucking Liability'));
+  // Codex on PR #22: cargo helpers are the agent's too once NTL is on, and NTL added then set back
+  // to No stays a "needs you" item (the filler never removes it).
+  assert.ok(!ids(record).some((id) => /Cargo/.test(id)), 'no cargo helpers with NTL');
+  assert.ok(!ids(record).includes('ntlStillAdded'));
+  const no = structuredClone(record);
+  no.coverage.ntl = false;
+  const kept = actions(no).find((s) => s.action === 'ntlStillAdded');
+  assert.deepEqual([kept.text, kept.afterActions, kept.label], [null, ['addNtl'], 'Non-trucking liability']);
+  assert.match(kept.missing, /remove it on this page yourself/);
+  assert.ok(new RegExp(kept.resolvedBy, 'i').test('Add Non-Trucking Liability instead?'), 'settled when the page offers Add NTL again');
+  for (const id of ['openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print']) {
+    assert.deepEqual(actions(no).find((s) => s.action === id).heldBy, ['ntlStillAdded'], `${id} waits while NTL is still on the quote`);
+  }
+  // Codex on PR #22: an earlier bill plan visit must not let Recalculate or Print run while the
+  // new NTL questions are open. Until the section has been seen live, the whole page is the agent's.
+  for (const id of ['billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} is the agent's`);
+  assert.ok(ids(record).includes('printSend'), 'the Print page the agent opens still works as before');
+  assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print/);
+  // GL without NTL is unchanged: no bill plan of ours, the liability check stays.
+  const gl = baseRecord();
+  gl.coverage.gl = true;
+  assert.deepEqual(actions(gl).find((s) => s.action === 'print').after, ['coverage.autoLiabLimit']);
+  assert.ok(ids(baseRecord()).includes('billPlan'), 'and a plain quote keeps our bill plan');
+});
+
+// Codex on PR #22: an NTL mention not answered yet is not a No, and an NTL quote's Rates page is
+// never continued for the agent.
+test('Rates waits for an unanswered NTL mention, and an NTL quote keeps Continue for the agent', () => {
+  const record = baseRecord();
+  const ids = (r) => buildPlan(r, progressive, {}).filter((s) => s.kind === 'action').map((s) => s.action);
+  const step = (r, id) => buildPlan(r, progressive, {}).find((s) => s.action === id);
+  record.claims = { text: 'No\nAsked about bobtail' };
+  record.coverage.ntl = null;
+  for (const id of ['openCargo', 'billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} waits for the agent's NTL answer`);
+  assert.match(step(record, 'ntlDecide').missing, /set it to Yes or No/);
+  assert.equal(step(record, 'ntlDecide').text, null, 'never clicked');
+  record.coverage.ntl = false;
+  assert.ok(ids(record).includes('billPlan') && !ids(record).includes('ntlDecide'), 'an explicit No is a normal quote');
+  record.coverage.ntl = true;
+  assert.match(step(record, 'ntlRates').missing, /Continue yourself/, 'a needs-you item: Rates is never continued for the agent');
+  assert.ok(!ids(record).includes('ntlDecide'));
+  const plain = baseRecord();
+  assert.ok(!ids(plain).includes('ntlDecide') && !ids(plain).includes('ntlRates'), 'no mention, no NTL: nothing');
+  // Codex on PR #22: Luna's NTL flag for a line the words miss ("bobtale") holds Rates the same way.
+  const flagged = baseRecord();
+  flagged.claims = { text: 'No\nNeeds bobtale coverage', aiNtl: true };
+  flagged.coverage.ntl = null;
+  assert.ok(ids(flagged).includes('ntlDecide') && !ids(flagged).includes('billPlan'));
+  flagged.coverage.ntl = false;
+  assert.ok(!ids(flagged).includes('ntlDecide') && ids(flagged).includes('billPlan'), 'answered No: a normal quote');
+});
