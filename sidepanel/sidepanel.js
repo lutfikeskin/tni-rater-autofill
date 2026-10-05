@@ -501,6 +501,7 @@ async function loadFile(file) {
   state.advanceRetried = new Set();
   state.assistPage = null;
   state.layoutErrors = 0;
+  cancelLayouts();
   state.intake = { ...result, fileName: file.name, done: [] };
   // Start on Check intake when something on the intake needs a look, else straight on Fill.
   state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
@@ -989,19 +990,27 @@ function runPendingPage() {
 // layouts for every state and product collect themselves as agents quote, and a follow-up
 // question's appearing and going away are both seen. scripts/build-layouts.mjs turns them into
 // test pages. `reason`: fill, or what changed on the page (see scheduleLayout). One at a time, in
-// order, so a page's layouts are logged in the order they were seen.
-function recordLayout(page, reason = 'fill') {
-  const run = state.layoutChain.then(() => captureLayout(page, reason));
+// order, so a page's layouts are logged in the order they were seen. Each belongs to the quote it
+// was asked for: once another intake is loaded (or the client cleared), it's dropped, so one
+// client's page is never logged with another's context or redaction.
+function recordLayout(page, reason = 'fill', session = usage.currentSession()?.id) {
+  const run = state.layoutChain.then(() => captureLayout(page, reason, session));
   state.layoutChain = run.catch(() => {});
   return run;
 }
 
-async function captureLayout(page, reason) {
+function sameQuote(session) {
+  return !!session && !!state.intake && usage.currentSession()?.id === session;
+}
+
+async function captureLayout(page, reason, session) {
+  if (!sameQuote(session)) return;
   const { id: tabId, carrier } = state.tab;
   if (carrier.practice) return;
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
       [buildPlan(state.intake.record, carrier, state.active), redactionTerms(state.intake.record)]);
+    if (!sameQuote(session)) return;
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
@@ -1012,9 +1021,10 @@ async function captureLayout(page, reason) {
         id: c.id && !/\d{5,}|ext-|-inputEl$/.test(c.id) ? c.id : null, dataId: c.dataId ?? null, name: c.name ?? null,
         options: c.options?.length && !staff ? c.options : undefined,
         optionsTruncated: c.optionsTruncated, mapped: c.wouldFill ?? null,
-        // The choice picked now (redacted; never text typed into a box) and whether a box has
-        // something in it: which answers were on the page when follow-up questions appeared.
-        selected: !staff && c.selected ? c.selected : undefined,
+        // The choice picked now and whether a box has something in it: which answers were on the
+        // page when follow-up questions appeared. Only a pick that is one of the captured choices
+        // (or a checkbox's state): an editable dropdown's text may be typed or half-searched.
+        selected: !staff && c.selected && (c.kind === 'checkbox' || (c.options ?? []).includes(c.selected)) ? c.selected : undefined,
         pageHasValue: c.pageHasValue,
       };
     });
@@ -1039,16 +1049,19 @@ async function captureLayout(page, reason) {
     };
     usage.log({ type: 'page_layout', carrier: carrier.id, page, reason, context, fields, buttons });
   } catch (e) {
-    // Counted for the panel, and logged once per quote, page and error, so a page whose layout
-    // can't be read shows up in the review instead of just missing.
-    state.layoutErrors++;
-    const error = String(e?.message ?? e).slice(0, 120);
-    const once = `${usage.currentSession()?.id}|${page}|${error}`;
-    if (!state.layoutErrorsLogged.has(once)) {
-      state.layoutErrorsLogged.add(once);
-      usage.log({ type: 'layout_error', carrier: carrier.id, page, reason, error });
-    }
+    if (sameQuote(session)) layoutFailed(carrier, page, reason, e);
   }
+}
+
+// A layout that couldn't be read: counted for the panel, and logged once per quote, page and
+// error, so it shows up in the review instead of just missing.
+function layoutFailed(carrier, page, reason, e) {
+  state.layoutErrors++;
+  const error = String(e?.message ?? e).slice(0, 120);
+  const once = `${usage.currentSession()?.id}|${page}|${error}`;
+  if (state.layoutErrorsLogged.has(once)) return;
+  state.layoutErrorsLogged.add(once);
+  usage.log({ type: 'layout_error', carrier: carrier.id, page, reason, error });
 }
 
 // Layouts as the page changes, whether or not anything is filled: on arrival, when questions
@@ -1060,29 +1073,42 @@ function scheduleLayout(page, reason) {
   if (!state.intake || !state.tab?.carrier || state.tab.carrier.practice || !onQuotePage()) return;
   state.layoutReasons.add(reason);
   const tabId = state.tab.id;
+  const session = usage.currentSession()?.id;
   clearTimeout(state.layoutTimer);
-  state.layoutTimer = setTimeout(() => layoutWhenQuiet(tabId, page), LAYOUT_DELAY_MS);
+  state.layoutTimer = setTimeout(() => layoutWhenQuiet(tabId, page, session), LAYOUT_DELAY_MS);
 }
 
-async function layoutWhenQuiet(tabId, page, tries = 0) {
-  const tab = state.tab;
-  if (!state.intake || tab?.id !== tabId || pageOf(tab.url) !== page) { state.layoutReasons.clear(); return; }
-  // A fill under way records the layout it leaves.
-  if (state.filling) { state.layoutReasons.clear(); return; }
+// Another intake loaded or the client cleared: a capture still waiting is for the old quote.
+function cancelLayouts() {
+  clearTimeout(state.layoutTimer);
+  state.layoutReasons.clear();
+}
+
+async function layoutWhenQuiet(tabId, page, session, tries = 0) {
+  // Still this quote, tab and page, and no fill under way (a fill records the layout it leaves).
+  const current = () => sameQuote(session) && state.tab?.id === tabId && pageOf(state.tab.url) === page && !state.filling;
+  if (!current()) { state.layoutReasons.clear(); return; }
+  const { carrier } = state.tab;
+  let busy;
   try {
-    const busy = (await runKit(tabId, tab.carrier, () => globalThis.__raterKit.busy())).some((r) => r.result);
-    if (busy) {
-      // Still loading (an answer's server round trip): look again shortly, a few times at most.
-      if (tries < 3) state.layoutTimer = setTimeout(() => layoutWhenQuiet(tabId, page, tries + 1), LAYOUT_DELAY_MS);
-      else state.layoutReasons.clear();
-      return;
-    }
-  } catch { state.layoutReasons.clear(); return; }
-  // A fill may have started while the page was asked.
-  if (state.filling || pageOf(state.tab?.url) !== page) { state.layoutReasons.clear(); return; }
+    busy = (await runKit(tabId, carrier, () => globalThis.__raterKit.busy())).some((r) => r.result);
+  } catch (e) {
+    // Couldn't ask the page: the same as a layout that couldn't be read, unless it moved on.
+    const reason = [...state.layoutReasons].sort().join('+');
+    if (current()) layoutFailed(carrier, page, reason, e);
+    state.layoutReasons.clear();
+    return;
+  }
+  if (!current()) { state.layoutReasons.clear(); return; }
+  if (busy) {
+    // Still loading (an answer's server round trip): look again shortly, a few times at most.
+    if (tries < 3) state.layoutTimer = setTimeout(() => layoutWhenQuiet(tabId, page, session, tries + 1), LAYOUT_DELAY_MS);
+    else state.layoutReasons.clear();
+    return;
+  }
   const reason = [...state.layoutReasons].sort().join('+');
   state.layoutReasons.clear();
-  await recordLayout(page, reason);
+  await recordLayout(page, reason, session);
 }
 
 function rememberFill(frames) {
@@ -2174,6 +2200,7 @@ function wire() {
   }
   $('clear-client').addEventListener('click', async () => {
     usage.log({ type: 'intake_closed', reason: 'cleared' });
+    cancelLayouts();
     state.intake = null;
     usage.restoreSession(null);
     await store.remove('intake');

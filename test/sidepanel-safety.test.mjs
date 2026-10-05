@@ -966,7 +966,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
   const pendingSig = '1\n/quote\ngpt-6-luna\npolicy\ncontext\npending';
   const manual = { key: 'manual', label: 'Manual', choice: 'Yes', done: 'auto', manual: true };
   const pending = { key: 'pending', label: 'Pending', choice: 'No', done: 'auto' };
-  const state = { intake: { record }, tabSessions: new Map(), aiCache: new Map([[manualSig, manual], [pendingSig, pending]]) };
+  const state = { intake: { record }, tabSessions: new Map(), layoutReasons: new Set(), aiCache: new Map([[manualSig, manual], [pendingSig, pending]]) };
   let stored = [];
   const context = { state, DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
     aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
@@ -977,7 +977,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     store: { set: async () => {} }, clearAgentKeys: async () => {}, uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
-    'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'loadFile'].map(extractFunction).join('\n'), context);
+    'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'cancelLayouts', 'loadFile'].map(extractFunction).join('\n'), context);
   await context.persistAiPending();
   assert.equal(stored.length, 2, 'the previous ledger contains the settled and unresolved decisions');
   await context.loadFile({ name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) });
@@ -1427,13 +1427,18 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
     runKit: async (tabId, carrier, func) => {
       const source = String(func);
       context.runs.push(source.includes('busy') ? 'busy' : 'capture');
-      if (source.includes('busy')) return [{ result: context.busy }];
+      if (source.includes('busy')) {
+        if (context.busyError) throw context.busyError;
+        return [{ result: context.busy }];
+      }
       return [{ result: { controls: controls(), buttons: ['Continue'] } }];
     },
-    usage: { currentSession: () => ({ id: session }), log: (e) => logged.push(e) },
+    sessionId: session,
+    usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; },
   };
-  vm.runInNewContext(['recordLayout', 'captureLayout', 'scheduleLayout', 'layoutWhenQuiet'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['recordLayout', 'sameQuote', 'captureLayout', 'layoutFailed', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
+    .map(extractFunction).join('\n'), context);
   return { context, logged };
 }
 
@@ -1544,4 +1549,51 @@ test('with no fill at all, Yes, No, Yes on the page logs each change and the thr
     'change:No', 'layout:2A1:changed+removed',
     'change:Yes', 'layout:2A1+2A2:appeared+changed',
   ]);
+});
+
+test('layout work for one quote is dropped once another intake is loaded or the client cleared', async () => {
+  let controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  const fire = async () => { const fn = context.pending; context.pending = null; await fn?.(); await context.state.layoutChain; };
+  // Waiting for the page to be quiet when the next intake loads.
+  context.scheduleLayout('Vehicles', 'changed');
+  const waiting = context.pending;
+  context.cancelLayouts();
+  context.sessionId = 'quote-2';
+  await waiting();
+  assert.equal(logged.length, 0);
+  // Already capturing when the client is cleared: what comes back isn't logged.
+  context.runKit = async () => { context.sessionId = null; return [{ result: { controls, buttons: [] } }]; };
+  await context.recordLayout('Vehicles', 'fill', 'quote-2');
+  // Queued under the old quote, run after the switch.
+  context.sessionId = 'quote-3';
+  await context.recordLayout('Vehicles', 'fill', 'quote-2');
+  assert.equal(logged.length, 0);
+  assert.equal(context.state.layoutErrors, 0);
+  await fire();
+});
+
+test('a page that cannot be asked whether it is quiet is counted like an unreadable layout', async () => {
+  const { context, logged } = layoutHarness(() => []);
+  context.busyError = new Error('Cannot access contents of the page.');
+  context.scheduleLayout('Vehicles', 'arrived');
+  await context.pending();
+  assert.equal(context.state.layoutErrors, 1);
+  assert.deepEqual(logged.map((e) => [e.type, e.reason, e.error]), [['layout_error', 'arrived', 'Cannot access contents of the page.']]);
+  // The tab moved on meanwhile: nothing to report.
+  context.runKit = async () => { context.state.tab.url = 'Drivers'; throw new Error('Frame was removed.'); };
+  context.scheduleLayout('Vehicles', 'changed');
+  await context.pending();
+  assert.equal(context.state.layoutErrors, 1);
+});
+
+test('a layout keeps a pick only when it is one of the captured choices', async () => {
+  const { context, logged } = layoutHarness(() => [
+    { q: '2B1', kind: 'select', label: 'Make', options: ['FORD', 'ISUZU'], selected: 'FORD' },
+    // An editable dropdown with text typed into it: not a choice from its list.
+    { q: '2B2', kind: 'select', label: 'Model', options: ['NPR', 'NQR'], selected: 'Transit 250 typed' },
+    { q: '2B3', kind: 'checkbox', label: 'Same as mailing', options: [], selected: 'checked' },
+  ]);
+  await context.recordLayout('Vehicles', 'changed');
+  assert.deepEqual(logged[0].fields.map((f) => f.selected), ['FORD', undefined, 'checked']);
 });
