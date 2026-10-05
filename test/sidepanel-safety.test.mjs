@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 
+
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
 
 test('AI accept refuses a suggestion for a previous driver, vehicle or intake', async () => {
@@ -49,6 +50,15 @@ function extractFunction(name) {
       if (escaped) escaped = false;
       else if (ch === '\\') escaped = true;
       else if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '/' && SIDEPANEL[i + 1] === '/') {
+      i = SIDEPANEL.indexOf('\n', i);
+      if (i < 0) break;
+      continue;
+    }
+    if (ch === '/' && SIDEPANEL[i + 1] === '*') {
+      i = SIDEPANEL.indexOf('*/', i + 2) + 1;
       continue;
     }
     if (ch === '"' || ch === "'" || ch === '`') {
@@ -353,27 +363,59 @@ test('an AI pick made before an intake or driver/vehicle change still holds Cont
   assert.equal(context.pendingAi(1, '/quote')[0], fresh);
 });
 
-test('correcting a rejected field releases only the current tab’s hold', () => {
-  const first = { key: 'choice', done: 'auto', rejected: true };
-  const second = { key: 'choice', done: 'auto', rejected: true };
-  const state = { tab: { id: 1 }, aiCache: new Map([['1\nQuote', first], ['2\nQuote', second]]) };
+test('correcting a rejected field releases only its originating frame hold', async () => {
+  const origin = { frameId: 0, documentId: 'doc-1', questionHash: JSON.stringify(['choice', 'Choice']), fieldHash: 'live' };
+  const first = { key: 'choice', done: 'auto', rejected: true, origin };
+  const second = { key: 'choice', done: 'auto', rejected: true, origin: { ...origin, documentId: 'doc-2' } };
+  const otherTab = { key: 'choice', done: 'auto', rejected: true, origin };
+  const state = { tab: { id: 1 }, aiCache: new Map([['1\nQuote\nfirst', first], ['1\nQuote\nsecond', second], ['2\nQuote\nother', otherTab]]) };
   let writes = 0;
-  const context = { state, persistAiPending: () => { writes++; } };
+  const context = { state, aiQuestionHash: field => JSON.stringify([field.key, field.label]), persistAiPending: () => { writes++; } };
   vm.runInNewContext(extractFunction('settleRejectedAi'), context);
-  assert.equal(context.settleRejectedAi('Quote', new Set(['choice'])), true);
+  const sender = { frameId: 0, documentId: 'doc-1' };
+  assert.equal(await context.settleRejectedAi('Quote', [{ key: 'choice', label: 'Choice' }], sender), true,
+    'only the sender document is settled');
   assert.equal(first.manual, true);
-  assert.equal(second.manual, undefined, 'another quote tab still needs review');
+  assert.equal(second.manual, undefined);
+  assert.equal(otherTab.manual, undefined, 'another quote tab remains untouched');
   assert.equal(writes, 1);
+  first.manual = undefined;
+  assert.equal(await context.settleRejectedAi('Quote', [{ key: 'choice', label: 'Choice' }], { frameId: 1, documentId: 'other-doc' }), false,
+    'a same-key edit from another frame cannot release the hold');
+});
+
+test('legacy in-memory holds require a fresh unique sender frame', async () => {
+  const legacy = { key: 'choice', done: 'auto', rejected: true };
+  const fresh = [{ frameId: 3, documentId: 'doc-3', result: JSON.stringify(['Quote', [{ key: 'choice', label: 'Choice', current: 'No' }]]) }];
+  const state = { tab: { id: 1, carrier: {} }, aiCache: new Map([['1\nQuote', legacy]]) };
+  const context = { state, aiQuestionHash: field => JSON.stringify([field.key, field.label]),
+    aiSnapshotFields: null, runKit: async () => fresh, persistAiPending: () => {} };
+  vm.runInNewContext(`${extractFunction('aiSnapshotFields')}\n${extractFunction('settleRejectedAi')}`, context);
+  assert.equal(await context.settleRejectedAi('Quote', [{ key: 'choice', label: 'Choice' }], { frameId: 4, documentId: 'doc-4' }), false);
+  fresh.push({ ...fresh[0], frameId: 4, documentId: 'doc-4' });
+  assert.equal(await context.settleRejectedAi('Quote', [{ key: 'choice', label: 'Choice' }], { frameId: 3, documentId: 'doc-3' }), false,
+    'a duplicate key in another frame leaves legacy holds unresolved');
+  fresh.pop();
+  assert.equal(await context.settleRejectedAi('Quote', [{ key: 'choice', label: 'Choice' }], { frameId: 3, documentId: 'doc-3' }), true);
+  legacy.manual = false;
+  let finish;
+  context.runKit = () => new Promise(resolve => { finish = resolve; });
+  const pending = context.settleRejectedAi('Quote', [{ key: 'choice', label: 'Choice' }], { frameId: 3, documentId: 'doc-3' });
+  state.aiCache.clear();
+  finish(fresh);
+  assert.equal(await pending, false, 'a cleared intake cannot be settled by a late snapshot');
+  assert.equal(legacy.manual, false);
 });
 
 test('retired assistant decisions retain their hold and require current-answer review', async () => {
   const record = { scope: 'intake', tabId: 1, page: 'Quote', model: 'retired-model', policy: 'retired-policy',
     contextHash: 'context', itemHash: 'item', key: 'choice', label: 'Choice', choice: 'No', done: 'auto' };
-  const state = { tab: { id: 1 }, aiCache: new Map() };
-  const context = { state, DEFAULT_MODEL, POLICY_VERSION, usage: { currentSession: () => ({ intakeId: 'intake' }) },
+  const state = { tab: { id: 1, carrier: {} }, aiCache: new Map() };
+  const fresh = [{ frameId: 0, documentId: 'doc-0', result: JSON.stringify(['Quote', [{ key: 'choice', label: 'Choice', current: 'No' }]]) }];
+  const context = { state, aiFingerprint: JSON.stringify, runKit: async () => fresh, DEFAULT_MODEL, POLICY_VERSION, usage: { currentSession: () => ({ intakeId: 'intake' }) },
     aiPendingStore: { get: async () => [record], set: async () => {} }, persistAiPending: () => {} };
   vm.createContext(context);
-  vm.runInContext(['aiCacheSignature', 'restoreAiPending', 'aiDecisionBlocks', 'pendingAi', 'settleRejectedAi']
+  vm.runInContext(['aiOriginRecord', 'aiSnapshotFields', 'aiQuestionHash', 'aiCacheSignature', 'restoreAiPending', 'aiDecisionBlocks', 'pendingAi', 'settleRejectedAi']
     .map(extractFunction).join('\n'), context);
   await context.restoreAiPending();
   const restored = [...state.aiCache.values()][0];
@@ -381,9 +423,10 @@ test('retired assistant decisions retain their hold and require current-answer r
   assert.equal(restored.autoOk, false, 'old model verification cannot qualify as Luna verification');
   assert.equal(restored.rejected, true, 'explicit confirmation or a manual correction is required');
   assert.equal(context.pendingAi(1, 'Quote').length, 1);
-  assert.equal(context.settleRejectedAi('Quote', new Set(['unrelated'])), false);
+  const sender = { frameId: 0, documentId: 'doc-0' };
+  assert.equal(await context.settleRejectedAi('Quote', [{ key: 'unrelated', label: 'Other' }], sender), false);
   assert.equal(context.pendingAi(1, 'Quote').length, 1);
-  assert.equal(context.settleRejectedAi('Quote', new Set(['choice'])), true);
+  assert.equal(await context.settleRejectedAi('Quote', [{ key: 'choice', label: 'Choice' }], sender), true);
   assert.equal(context.pendingAi(1, 'Quote').length, 0);
 });
 
@@ -396,7 +439,7 @@ test('current Luna decisions and completed retired corrections retain their revi
   const context = { state, DEFAULT_MODEL, POLICY_VERSION, usage: { currentSession: () => ({ intakeId: 'intake' }) },
     aiPendingStore: { get: async () => records, set: async () => {} } };
   vm.createContext(context);
-  vm.runInContext(['aiCacheSignature', 'restoreAiPending', 'aiDecisionBlocks', 'pendingAi'].map(extractFunction).join('\n'), context);
+  vm.runInContext(['aiOriginRecord', 'aiCacheSignature', 'restoreAiPending', 'aiDecisionBlocks', 'pendingAi'].map(extractFunction).join('\n'), context);
   await context.restoreAiPending();
   const [current, manual, confirmed] = [...state.aiCache.values()];
   assert.equal(current.retired, false);
@@ -493,15 +536,293 @@ test('restored confirmation uses a field fingerprint instead of redacted display
   vm.runInNewContext([
     extractFunction('canonicalSnapshotMetadata'), extractFunction('canonicalSnapshotFrame'),
     extractFunction('canonicalSnapshots'), extractFunction('snapshotFingerprint'),
+    extractFunction('aiSnapshotFields'), extractFunction('aiLiveFieldHash'),
+    extractFunction('aiQuestionHash'), extractFunction('aiOriginRecord'),
     extractFunction('snapshotHashMatches'), extractFunction('aiCurrentAnswerPresent'),
   ].join('\n'), context);
   const field = { key: 'choice', label: 'Driver Alex Example', current: 'Client 12345' };
   const frames = [{ result: JSON.stringify(['Quote', [field]]) }];
-  const x = { key: 'choice', label: 'Driver [redacted]', choice: 'Client [redacted]',
+  const origin = { frameId: 0, documentId: 'doc-0', questionHash: JSON.stringify([field.key, field.label]),
     fieldHash: JSON.stringify([field.key, field.label, field.current]) };
-  assert.equal(context.aiCurrentAnswerPresent(frames, x), true);
-  assert.equal(context.aiCurrentAnswerPresent([{ result: JSON.stringify(['Quote', [{ ...field, current: 'Other value' }]]) }], x), false);
-  assert.equal(context.aiCurrentAnswerPresent([{ result: JSON.stringify(['Quote', [{ ...field, key: 'other' }]]) }], x), false);
-  assert.equal(context.aiCurrentAnswerPresent(frames, { ...x, fieldHash: null, snapshotHash: JSON.stringify(frames) }), true,
+  const x = { key: 'choice', label: 'Driver [redacted]', choice: 'Client [redacted]', origin,
+    fieldHash: origin.fieldHash };
+  const identified = [{ frameId: 0, documentId: 'doc-0', result: frames[0].result }];
+  assert.equal(context.aiCurrentAnswerPresent(identified, x), true);
+  assert.equal(context.aiCurrentAnswerPresent([{ frameId: 0, documentId: 'doc-0', result: JSON.stringify(['Quote', [{ ...field, current: 'Other value' }]]) }], x), false);
+  assert.equal(context.aiCurrentAnswerPresent([{ frameId: 1, documentId: 'doc-1', result: frames[0].result }], x), false);
+  assert.equal(context.aiCurrentAnswerPresent(frames, { ...x, origin: null, fieldHash: null, snapshotHash: JSON.stringify(frames) }), true,
     'old redacted records can be confirmed only if their whole page is unchanged');
+  assert.equal(context.aiCurrentAnswerPresent(frames, { ...x, origin: null, fieldHash: x.fieldHash }), false,
+    'old field hashes without a whole-page proof cannot identify a frame');
+});
+
+test('restored confirmation requires the originating frame and rejects duplicate questions', () => {
+  const context = { aiFingerprint: JSON.stringify };
+  vm.runInNewContext([
+    extractFunction('aiSnapshotFields'), extractFunction('aiLiveFieldHash'),
+    extractFunction('aiQuestionHash'), extractFunction('aiOriginRecord'),
+    extractFunction('aiSnapshotFieldMatches'), extractFunction('aiAnswerOrigin'),
+    extractFunction('aiCurrentAnswerPresent'),
+  ].join('\n'), context);
+  const field = { key: 'choice', label: 'Choice', current: 'No' };
+  const frame = { frameId: 4, documentId: 'doc-4', result: JSON.stringify(['Quote', [field]]) };
+  const answerFrame = { ...frame, shown: 'No' };
+  const origin = context.aiAnswerOrigin([frame], field, answerFrame);
+  assert.equal(JSON.stringify(origin), JSON.stringify({
+    frameId: 4, documentId: 'doc-4',
+    questionHash: JSON.stringify(['choice', 'Choice']),
+    fieldHash: JSON.stringify(['choice', 'Choice', 'No']),
+  }));
+  assert.equal(context.aiCurrentAnswerPresent([frame], { ...field, origin }), true);
+  assert.equal(context.aiCurrentAnswerPresent([{ ...frame, documentId: 'replaced-doc' }], { ...field, origin }), false,
+    'a replacement document cannot satisfy the confirmation');
+  assert.equal(context.aiCurrentAnswerPresent([{ ...frame, frameId: 5 }], { ...field, origin }), false,
+    'the same value in another frame cannot satisfy the confirmation');
+  assert.equal(context.aiCurrentAnswerPresent([frame, { ...frame, frameId: 5, documentId: 'doc-5' }], { ...field, origin }), false,
+    'duplicate same-key same-label frames fail closed');
+  assert.equal(context.aiCurrentAnswerPresent([{ ...frame, result: JSON.stringify(['Quote', [{ ...field, current: 'Yes' }]]) }], { ...field, origin }), false,
+    'the originating live value must still match');
+  const changed = [{ ...frame, result: JSON.stringify(['Quote', [{ ...field, current: 'Yes' }]]) }];
+  const expectedOrigin = context.aiAnswerOrigin(changed, field, answerFrame);
+  assert.equal(expectedOrigin.fieldHash, origin.fieldHash, 'the successful answer value remains the expected value');
+  assert.equal(context.aiCurrentAnswerPresent(changed, { ...field, origin: expectedOrigin }), false,
+    'a changed post-answer value cannot be approved');
+});
+
+
+test('AI application drops stale in-flight work and refuses duplicate frame questions', async () => {
+  for (const scenario of ['new-intake', 'evicted', 'tab', 'url', 'duplicates']) {
+    const record = { drivers: [] }, intake = { record };
+    const x = { key: 'choice', label: 'Choice', controlKind: 'radio', choice: 'No', autoOk: true };
+    const frame = { frameId: 0, documentId: 'doc-0', result: JSON.stringify(['Quote', [{ key: x.key, label: x.label, current: '' }]]) };
+    const frames = scenario === 'duplicates' ? [frame, { ...frame, frameId: 2, documentId: 'doc-2' }] : [frame];
+    const state = { filling: false, intake, active: {}, tab: { id: 1, url: 'https://example.test/quote' },
+      aiCache: new Map([['1\n/quote', x]]), agentKeys: new Map() };
+    const ctx = { tabId: 1, page: '/quote', tabUrl: state.tab.url, intake, carrier: { practice: true },
+      contextKey: assistContextKey(record, state.active), snapshots: frames };
+    let resolveSnapshot, snapshotEntered, calls = 0, persisted = 0;
+    const started = new Promise(resolve => { snapshotEntered = resolve; });
+    const snapshot = new Promise(resolve => { resolveSnapshot = resolve; });
+    const context = { state, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+      runKit: () => { calls++; snapshotEntered(); return snapshot; }, tellRecorder: async () => {},
+      persistAiPending: async () => { persisted++; } };
+    vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
+      'snapshotsEqual', 'aiSnapshotFields', 'aiSnapshotFieldMatches', 'applyAi'].map(extractFunction).join('\n'), context);
+    const action = context.applyAi([x], ctx, 'auto');
+    await started;
+    if (scenario === 'new-intake') state.intake = { record };
+    if (scenario === 'evicted') state.aiCache.clear();
+    if (scenario === 'tab') state.tab = { ...state.tab, id: 2 };
+    if (scenario === 'url') state.tab = { ...state.tab, url: 'https://example.test/quote?quote=other' };
+    resolveSnapshot(frames);
+    assert.equal(await action, false, scenario);
+    assert.equal(calls, 1, `${scenario}: no answer execution follows the snapshot`);
+    assert.equal(x.done, undefined, `${scenario}: stale work cannot become a pending approval`);
+    if (scenario !== 'duplicates') assert.equal(persisted, 0, `${scenario}: stale work is not persisted`);
+  }
+});
+
+test('approval expects the successful answer when a carrier redraw changes its value', async () => {
+  const record = {}, intake = { record };
+  const x = { key: 'choice', label: 'Choice', controlKind: 'radio', choice: 'No', autoOk: true };
+  const field = { key: x.key, label: x.label, current: '' };
+  const pre = [{ frameId: 0, documentId: 'doc-0', result: JSON.stringify(['Quote', [field]]) }];
+  const post = [{ ...pre[0], result: JSON.stringify(['Quote', [{ ...field, current: 'Yes' }]]) }];
+  const responses = [pre, [{ frameId: 0, documentId: 'doc-0', result: [{ key: x.key, label: x.label, ok: true, shown: 'No' }] }], post];
+  const state = { filling: false, intake, active: {}, tab: { id: 1, url: 'https://example.test/quote' },
+    aiCache: new Map([['1\n/quote', x]]), agentKeys: new Map(), filled: new Map() };
+  const ctx = { tabId: 1, page: '/quote', tabUrl: state.tab.url, intake, carrier: { practice: true },
+    contextKey: assistContextKey(record, state.active), snapshots: pre };
+  const context = { state, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+    runKit: async () => responses.shift(), tellRecorder: async () => {}, persistAiPending: async () => {} };
+  vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
+    'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
+    'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent',
+    'applyAi'].map(extractFunction).join('\n'), context);
+  assert.equal(await context.applyAi([x], ctx, 'auto'), true);
+  assert.equal(x.done, 'auto', 'the applied choice remains a review hold');
+  assert.equal(x.origin.fieldHash, JSON.stringify(['choice', 'Choice', 'No']));
+  assert.equal(context.aiCurrentAnswerPresent(post, x), false, 'the redraw cannot substitute a new approval value');
+  assert.equal(context.aiCurrentAnswerPresent([{ ...post[0], result: JSON.stringify(['Quote', [{ ...field, current: 'No' }]]) }], x), true);
+});
+
+const AI_ACTION_FUNCTIONS = [
+  'canonicalSnapshotMetadata', 'canonicalSnapshotFrame',
+  'canonicalSnapshots', 'snapshotFingerprint', 'snapshotsEqual', 'snapshotHashMatches',
+  'aiSnapshotFields', 'aiLiveFieldHash', 'aiQuestionHash', 'aiOriginRecord',
+  'aiCurrentAnswerPresent', 'aiActionCurrent', 'aiDecisionBlocks', 'pendingAi', 'renderAi',
+].map(extractFunction).join('\n');
+
+function aiActionTreeText(node) {
+  if (!node) return '';
+  if (Array.isArray(node)) return node.map(aiActionTreeText).join('');
+  if (typeof node === 'string') return node;
+  return aiActionTreeText(node.children);
+}
+
+function aiActionButtons(node, out = []) {
+  if (!node) return out;
+  if (Array.isArray(node)) {
+    for (const child of node) aiActionButtons(child, out);
+    return out;
+  }
+  if (node.tag === 'button') out.push(node);
+  aiActionButtons(node.children, out);
+  return out;
+}
+
+function makeAiActionHarness({ rejected = false } = {}) {
+  const frame = {
+    frameId: 0,
+    documentId: 'doc-1',
+    result: JSON.stringify(['Quote', [{
+      key: 'choice', label: 'Choice', current: 'No', options: ['Yes', 'No'],
+    }]]),
+  };
+  const intake = { record: { client: 'synthetic' } };
+  const tab = { id: 1, url: 'https://example.test/quote' };
+  const x = {
+    key: 'choice', label: 'Choice', choice: 'No', controlKind: 'select',
+    section: 'Quote', options: ['Yes', 'No'], current: 'No', done: 'auto',
+    autoOk: true, approved: false, rejected, manual: false, confirmed: false,
+    dismissed: false, leave: false, applyable: true, provider: 'luna', evidenceSources: [],
+    model: 'synthetic-model', policy: 'synthetic-policy', basis: 'intake',
+    intakePath: 'record.client', confidence: 0.9, checks: [], tip: '',
+  };
+  const signature = '1\n/quote\nsynthetic-model\nsynthetic-policy\ncontext\nitem';
+  const state = {
+    filling: false, tab, intake, active: { drivers: 0, vehicles: 0 },
+    aiCache: new Map([[signature, x]]), agentKeys: new Map(), aiRun: 0,
+  };
+  const ctx = {
+    tabId: 1, tabUrl: tab.url, page: '/quote', intake, contextKey: 'context',
+    snapshots: [frame], carrier: { id: 'synthetic', practice: true, advance: () => {} },
+  };
+  const ui = { 'auto-advance': { checked: true }, 'ai-note': { textContent: '' } };
+  const holder = {
+    isConnected: true, children: [],
+    replaceChildren(...children) { this.children = children; },
+  };
+  const report = { querySelectorAll() { return []; }, append(...children) { this.children = children; } };
+  let releaseSnapshot;
+  let snapshotStarted;
+  const snapshotStartedPromise = new Promise(resolve => { snapshotStarted = resolve; });
+  const calls = [];
+  let fillCalls = 0;
+  const fakeH = (tag, props = {}, ...children) => {
+    const node = {
+      tag, props, children: children.flat().filter(child => child != null && child !== false),
+      dataset: { ...(props.dataset ?? {}) }, disabled: false, textContent: '',
+    };
+    node.textContent = aiActionTreeText(node.children);
+    return node;
+  };
+  const context = {
+    state,
+    $: id => id === 'report' ? report : ui[id],
+    h: fakeH,
+    pageOf: url => new URL(url).pathname,
+    assistContextKey: () => 'context',
+    aiFingerprint: JSON.stringify,
+    runKit: (...args) => {
+      calls.push(args);
+      snapshotStarted();
+      return new Promise(resolve => { releaseSnapshot = resolve; });
+    },
+    fillPage: () => { fillCalls += 1; },
+    persistAiPending: async () => {},
+    syncAiBanner: async () => {},
+    usage: { log: () => {} },
+  };
+  vm.runInNewContext(AI_ACTION_FUNCTIONS, context, { filename: 'sidepanel/sidepanel.js' });
+  x.snapshotHash = context.snapshotFingerprint([frame]);
+  x.origin = {
+    frameId: frame.frameId, documentId: frame.documentId,
+    questionHash: context.aiQuestionHash({ key: 'choice', label: 'Choice' }),
+    fieldHash: context.aiLiveFieldHash({ key: 'choice', label: 'Choice', current: 'No' }),
+  };
+  context.renderAi(holder, [x], ctx);
+  const phrase = rejected ? 'Confirm the current page answer' : 'Approve and continue';
+  const button = () => aiActionButtons(holder.children)
+    .find(candidate => aiActionTreeText(candidate.children) === phrase);
+  assert.ok(button(), 'real renderAi ' + (rejected ? 'Confirm' : 'Approve') + ' button rendered');
+  return {
+    state, ctx, x, frame, holder, calls, fillCalls: () => fillCalls, button,
+    snapshotStartedPromise, release: (snapshot = [frame]) => releaseSnapshot(snapshot),
+  };
+}
+
+async function awaitDeferredAction(harness, mutate) {
+  const action = harness.button().props.onclick();
+  await harness.snapshotStartedPromise;
+  mutate(harness);
+  harness.release();
+  await action;
+}
+
+test('renderAi approval ignores a deferred snapshot after intake, cache, tab, or URL changes', async () => {
+  const mutations = [
+    ['new intake', h => { h.state.intake = { record: { client: 'replacement' } }; }],
+    ['cleared intake', h => { h.state.intake = null; h.state.aiCache.clear(); }],
+    ['cache eviction', h => { h.state.aiCache.clear(); }],
+    ['cached item replacement', h => {
+      const [sig] = h.state.aiCache.keys();
+      h.state.aiCache.set(sig, { ...h.x });
+    }],
+    ['cache replacement', h => {
+      h.state.aiCache = new Map([['1\n/quote\nreplacement', { key: 'replacement' }]]);
+    }],
+    ['tab replacement', h => { h.state.tab = { id: 2, url: h.ctx.tabUrl }; }],
+    ['URL change', h => { h.state.tab.url = 'https://example.test/quote?quote=other'; }],
+  ];
+  for (const [label, mutate] of mutations) {
+    const h = makeAiActionHarness();
+    await awaitDeferredAction(h, mutate);
+    assert.equal(h.x.approved, false, label + ': late approval did not mark the cached item');
+    assert.equal(h.x.rejected, false, label + ': late approval did not rewrite the item as moved');
+    assert.equal(h.fillCalls(), 0, label + ': late approval did not call fillPage');
+  }
+});
+
+test('renderAi confirmation ignores a deferred snapshot after intake, cache, tab, or URL changes', async () => {
+  const mutations = [
+    ['new intake', h => { h.state.intake = { record: { client: 'replacement' } }; }],
+    ['cleared intake', h => { h.state.intake = null; h.state.aiCache.clear(); }],
+    ['cache eviction', h => { h.state.aiCache.clear(); }],
+    ['cached item replacement', h => {
+      const [sig] = h.state.aiCache.keys();
+      h.state.aiCache.set(sig, { ...h.x });
+    }],
+    ['cache replacement', h => {
+      h.state.aiCache = new Map([['1\n/quote\nreplacement', { key: 'replacement' }]]);
+    }],
+    ['tab replacement', h => { h.state.tab = { id: 2, url: h.ctx.tabUrl }; }],
+    ['URL change', h => { h.state.tab.url = 'https://example.test/quote?quote=other'; }],
+  ];
+  for (const [label, mutate] of mutations) {
+    const h = makeAiActionHarness({ rejected: true });
+    await awaitDeferredAction(h, mutate);
+    assert.equal(h.x.confirmed, false, label + ': late confirmation did not settle the hold');
+    assert.equal(h.fillCalls(), 0, label + ': late confirmation did not call fillPage');
+  }
+});
+
+test('renderAi approval and confirmation allow an active-driver change when intake/page/cache remain current', async () => {
+  const approved = makeAiActionHarness();
+  const approval = approved.button().props.onclick();
+  await approved.snapshotStartedPromise;
+  approved.state.active = { drivers: 1, vehicles: 0 };
+  approved.release();
+  await approval;
+  assert.equal(approved.x.approved, true, 'active-driver change does not invalidate approval');
+  assert.equal(approved.fillCalls(), 1, 'current approval still continues the fill');
+
+  const confirmed = makeAiActionHarness({ rejected: true });
+  const confirmation = confirmed.button().props.onclick();
+  await confirmed.snapshotStartedPromise;
+  confirmed.state.active = { drivers: 1, vehicles: 0 };
+  confirmed.release();
+  await confirmation;
+  assert.equal(confirmed.x.confirmed, true, 'active-driver change does not invalidate confirmation');
+  assert.equal(confirmed.fillCalls(), 1, 'current confirmation still continues the fill');
 });
