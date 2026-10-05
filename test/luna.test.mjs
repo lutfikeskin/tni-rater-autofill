@@ -402,3 +402,14 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   const none = await reviewNotes({ coverage: {}, claims: { text: '' } }, { apiKey: 'k' }, { call: async () => { throw new Error('no call expected'); } });
   assert.equal(none.modelCalls, 0);
 });
+
+// Codex on PR #22: Progressive's NTL section is unvalidated: its questions never reach Luna.
+test('non-trucking liability questions stay with the agent', () => {
+  const { items, blocked } = collectItems([{ unknown: [
+    { key: 'ntl1', label: 'Does the customer operate under dispatch?', section: 'Non-Trucking Liability', controlKind: 'radio', options: ['Yes', 'No'] },
+    { key: 'ntl2', label: 'Bobtail coverage limit', controlKind: 'select', options: ['$300k', '$500k'] },
+    { key: 'other', label: 'Does the customer haul hazardous materials?', controlKind: 'radio', options: ['Yes', 'No'] },
+  ] }]);
+  assert.deepEqual(items.map((x) => x.key), ['other']);
+  assert.deepEqual(blocked.map((x) => x.key), ['ntl1', 'ntl2']);
+});

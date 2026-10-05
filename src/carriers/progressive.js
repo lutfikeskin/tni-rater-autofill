@@ -248,10 +248,15 @@ export const progressive = {
     // redraw stays a blocker). What the section asks hasn't been seen on a live quote: its
     // questions, the bill plan and the rest of Rates are the agent's (agentPages below).
     { id: 'addNtl', page: 'CoveragesRates', text: '^add non-?trucking liability( instead)?\\??$', verify: 'gone', when: (r) => r.coverage.ntl === true },
+    // NTL added on this quote, then set back to No: the filler doesn't remove it. Never clicked; a
+    // "needs you" item on Rates for as long as the quote has it.
+    { id: 'ntlStillAdded', page: 'CoveragesRates', afterActions: ['addNtl'], label: 'Non-trucking liability', when: (r) => r.coverage.ntl !== true,
+      missing: () => 'NTL was added on this quote, but Non-trucking liability is no longer Yes on the intake: remove it on this page yourself, or set it back to Yes.' },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
-    { id: 'openCargo', page: 'CoveragesRates', text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true },
-    { id: 'addCargoCommodity', page: 'CoveragesRates', text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true },
-    { id: 'doneCargo', page: 'CoveragesRates', text: '^done with this coverage$', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true },
+    // With NTL the cargo helpers are the agent's too (the rest of Rates is, see agentPages).
+    { id: 'openCargo', page: 'CoveragesRates', text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'addCargoCommodity', page: 'CoveragesRates', text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'doneCargo', page: 'CoveragesRates', text: '^done with this coverage$', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true && notNtl(r) },
     // Rates, as TNI agents work it: once cargo is added (and no GL is requested), open the bill
     // plan options, pick automatic payments there, come back (Continue), then Recalculate, then
     // Print, Email, Fax. With GL or NTL requested the agent does the rates page by hand.
@@ -285,7 +290,7 @@ export const progressive = {
   agentPages: {
     NoHit: "Progressive couldn't verify the business owner. Check the owner's name, date of birth and home address with the client (and enter the SSN if they gave it), then Continue.",
     CoveragesRates: (r) => (r.coverage?.ntl === true
-      ? 'Non-trucking liability (NTL) quote: the filler opens it with "Add Non-Trucking Liability instead?". The rest of this page is yours: answer that section, then the bill plan, Recalculate and Print.'
+      ? 'Non-trucking liability (NTL) quote: the filler opens it with "Add Non-Trucking Liability instead?". The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print.'
       : null),
   },
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is

@@ -290,7 +290,7 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.equal(byQ('3E98').value, 'Automatic payments from checking account');
   assert.equal(byQ('32CC').value, true);
   const actions = plan.filter((s) => s.kind === 'action');
-  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'addVehicle:0', 'addDriver:0', 'businessTypeSearch', 'vehicleTile:0', 'lookupVin:0', 'openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print', 'printSend']);
+  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'addVehicle:0', 'addDriver:0', 'businessTypeSearch', 'vehicleTile:0', 'lookupVin:0', 'ntlStillAdded', 'openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print', 'printSend']);
   assert.deepEqual(actions.find((a) => a.action === 'addVehicle:0').unlessActions, ['lookupVin:0']);
   assert.equal(actions.find((a) => a.action === 'addVehicle:0').opener, '^add$');
   assert.ok(actions.find((a) => a.action === 'lookupVin:0').immediate);

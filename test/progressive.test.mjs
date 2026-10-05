@@ -482,12 +482,20 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   assert.equal(ntl.verify, 'gone', 'done only when the link is gone afterwards');
   assert.ok(new RegExp(ntl.text, 'i').test('Add Non-Trucking Liability instead?'));
   assert.ok(!new RegExp(ntl.text, 'i').test('Help Text For Non-Trucking Liability'));
-  assert.ok(ids(record).indexOf('addNtl') < ids(record).indexOf('openCargo'), 'before cargo');
+  // Codex on PR #22: cargo helpers are the agent's too once NTL is on, and NTL added then set back
+  // to No stays a "needs you" item (the filler never removes it).
+  assert.ok(!ids(record).some((id) => /Cargo/.test(id)), 'no cargo helpers with NTL');
+  assert.ok(!ids(record).includes('ntlStillAdded'));
+  const no = structuredClone(record);
+  no.coverage.ntl = false;
+  const kept = actions(no).find((s) => s.action === 'ntlStillAdded');
+  assert.deepEqual([kept.text, kept.afterActions, kept.label], [null, ['addNtl'], 'Non-trucking liability']);
+  assert.match(kept.missing, /remove it on this page yourself/);
   // Codex on PR #22: an earlier bill plan visit must not let Recalculate or Print run while the
   // new NTL questions are open. Until the section has been seen live, the whole page is the agent's.
   for (const id of ['billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} is the agent's`);
   assert.ok(ids(record).includes('printSend'), 'the Print page the agent opens still works as before');
-  assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: answer that section, then the bill plan, Recalculate and Print/);
+  assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print/);
   // GL without NTL is unchanged: no bill plan of ours, the liability check stays.
   const gl = baseRecord();
   gl.coverage.gl = true;

@@ -17,6 +17,8 @@ const NEVER = [
   /\b(signature|sign here|e-?sign|attest|acknowledg|i agree|i certify|i declare|declare that|true,? (and )?complete|consent|authori[sz])/i,
   /\b(bank|routing|account (number|no)|card (number|no)|credit card|cvv|ssn|social security|password)\b/i,
   /\b(payments?|billing|bill\s*plan|ach|eft|autopay|checking\s*account|direct\s*debit|pay\s*in\s*full)\b/i,
+  // Progressive's NTL section has not been seen on a live quote: its questions are the agent's.
+  /\bnon[\s-]*trucking\b|\bntl\b|\bbob[\s-]*tail/i,
 ];
 const TYPED_ID = /\b(vin|license|licence|usdot|dot (number|no|#)|mc (number|no|#)|fein|ein|tax id|policy (number|no|#))\b/i;
 // These require exact calculations or independent lookup identity checks, not semantic guesses.

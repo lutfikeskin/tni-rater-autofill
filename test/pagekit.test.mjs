@@ -911,6 +911,21 @@ test('a helper verified by its link going away counts only when the link is gone
   report = await h.kit.fill([ntl], { maxRounds: 3 });
   assert.equal(report.actions.length, 0);
   assert.ok(report.blockers.includes('button: addNtl'), Array.from(report.blockers).join(' | '));
+  // Codex on PR #22: left on screen but disabled is not gone.
+  h = harness();
+  link = addButton(h, 'Add Non-Trucking Liability instead?');
+  link.onclick = () => { link.disabled = true; };
+  report = await h.kit.fill([ntl], { maxRounds: 3 });
+  assert.equal(report.actions.length, 0);
+  assert.ok(report.blockers.includes('button: addNtl'));
+  // NTL added earlier in the quote, then set back to No: a "needs you" item, never a click.
+  h = harness();
+  const kept = { id: 'kept', kind: 'action', action: 'ntlStillAdded', text: null, label: 'Non-trucking liability', missing: 'remove it yourself',
+    path: 'action.ntlStillAdded', name: 'Click ntlStillAdded', pages: [], after: [], afterActions: ['addNtl'], afterPages: [], unless: [] };
+  report = await h.kit.fill([kept], { maxRounds: 2 });
+  assert.equal(report.noData.length, 0, 'not before NTL was added');
+  report = await h.kit.fill([kept], { maxRounds: 2, doneActions: ['addNtl'] });
+  assert.deepEqual(Array.from(report.noData, (x) => x.note), ['remove it yourself']);
 });
 
 function coverageActionPlan() {

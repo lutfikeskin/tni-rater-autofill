@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 40) return;
+  if (globalThis.__raterKit?.version === 41) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -855,13 +855,15 @@
     return best;
   }
 
-  function findButton(step) {
+  // `disabledToo`: also a visible button the page has disabled (a link that must be gone).
+  function findButton(step, { disabledToo = false } = {}) {
     const re = step.text ? new RegExp(step.text, 'i') : null;
     let best = null;
     // `unique`: two separate matches (two reefer tiles) leave the choice to the agent.
     const separate = [];
     for (const el of deepQueryAll(document, 'a, button, [role=button], [role=link], input[type=button], input[type=submit], .x-btn, [onclick]')) {
-      if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]')) continue;
+      if (!el.getClientRects().length) continue;
+      if (!disabledToo && (el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]'))) continue;
       const text = oneLine(el.value || el.textContent);
       if (NEVER_CLICK.test(text)) continue;
       const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
@@ -1154,8 +1156,9 @@
       }
       let accepted = true;
       if (a.verify === 'premium') accepted = premiumReady();
-      // A link that opens a section (Add Non-Trucking Liability) is gone once it took.
-      if (a.verify === 'gone') accepted = !findButton(a);
+      // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
+      // screen but disabled is not gone.
+      if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
       if (a.verify === 'cargoClosed') {
         const controls = collectControls();
         const expanded = controls.some((c) => ['2158', '215A', '216A', '216B'].includes(c.q));
@@ -1268,10 +1271,12 @@
         mark(c, 'needs', 'required, and not on the intake form');
       }
     }
-    // A helper the agent must otherwise do by hand (the vehicle tile) that couldn't be clicked here.
+    // A helper the agent must otherwise do by hand (the vehicle tile) that couldn't be clicked here,
+    // once the helpers it follows have run (an NTL still on the quote after the agent set it to No).
     if (window === window.top && currentPage() === startPage) {
       for (const a of actions) {
-        if (!a.missing || clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage())) || findButton(a)) continue;
+        if (!a.missing || clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage())) || findButton(a)
+          || !a.afterActions.every((id) => clicked.has(id))) continue;
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing });
       }
     }
@@ -1474,5 +1479,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 40, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 41, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();
