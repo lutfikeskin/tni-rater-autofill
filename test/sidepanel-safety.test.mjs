@@ -114,7 +114,7 @@ function harness() {
       return handle;
     },
     clearTimeout: (handle) => cleared.push(handle),
-    renderSite: () => rendered.push(state.tab?.id ?? null),
+    renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {},
     ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
@@ -1020,6 +1020,21 @@ test('a Luna request waiting for a follow-up fill belongs to its tab', async () 
   assert.equal(h.state.assistPage, 'CoveragesRates', 'back on the first quote it is still waiting');
 });
 
+test('each quote tab keeps its own active vehicle and driver', async () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'AddVehicle'), carrier: { id: 'progressive' } };
+  h.state.active = { drivers: 0, vehicles: 2, trailers: 0 };
+  h.setActiveTab(quoteTab(2, 'AddVehicle'));
+  await h.refreshTab();
+  h.state.active.vehicles = 0;
+  h.setActiveTab(quoteTab(1, 'AddVehicle'));
+  await h.refreshTab();
+  assert.equal(h.state.active.vehicles, 2, 'the first quote is back on its own vehicle');
+  h.setActiveTab(quoteTab(2, 'AddVehicle'));
+  await h.refreshTab();
+  assert.equal(h.state.active.vehicles, 0);
+});
+
 // Codex on PR #21: on a page of tiles only, the vehicle-type note was hidden by "No form fields".
 test('a page without form fields still shows what needs the agent', () => {
   const box = { replaceChildren(...children) { this.children = children; } };
@@ -1088,17 +1103,26 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
 
 test('Luna waits for the follow-up fill of a helper it clicked, and is not asked about a page the fill left', async () => {
   const asked = [];
-  const state = { assistPage: null };
+  const state = { assistPage: null, tab: { id: 1 }, tabSessions: new Map() };
   const context = { state, runAssist: (frames, ctx) => asked.push(ctx.page) };
   vm.runInNewContext(extractFunction('assistAfterFill'), context);
-  context.assistAfterFill([{ actions: [{ id: 'openCargo' }] }], { page: 'CoveragesRates' }, true);
+  context.assistAfterFill([{ actions: [{ id: 'openCargo' }] }], { tabId: 1, page: 'CoveragesRates' }, true);
   assert.deepEqual(asked, []);
   assert.equal(state.assistPage, 'CoveragesRates', 'held for the follow-up fill');
-  context.assistAfterFill([{ navigatedTo: 'ChangePaymentPlan' }], { page: 'CoveragesRates' }, false);
+  context.assistAfterFill([{ navigatedTo: 'ChangePaymentPlan' }], { tabId: 1, page: 'CoveragesRates' }, false);
   assert.deepEqual(asked, [], 'the bill plan opened: nothing to ask about this page');
   assert.equal(state.assistPage, null);
-  context.assistAfterFill([{}], { page: 'CoveragesRates' }, false);
+  context.assistAfterFill([{}], { tabId: 1, page: 'CoveragesRates' }, false);
   assert.deepEqual(asked, ['CoveragesRates']);
+  // Codex on PR #21: the agent switched to another quote tab while this fill ran.
+  const other = { assistPage: null };
+  state.tab = { id: 2 };
+  state.tabSessions.set(1, other);
+  context.assistAfterFill([{ actions: [{ id: 'openCargo' }] }], { tabId: 1, page: 'CoveragesRates' }, true);
+  assert.equal(state.assistPage, null, 'the visible tab is untouched');
+  assert.equal(other.assistPage, 'CoveragesRates', 'its own tab waits');
+  context.assistAfterFill([{}], { tabId: 1, page: 'CoveragesRates' }, false);
+  assert.deepEqual(asked, ['CoveragesRates'], 'Luna is not asked about a tab in the background');
 });
 
 test('the follow-up fill a Luna request waited for asks it, even with nothing unfamiliar left', async () => {
