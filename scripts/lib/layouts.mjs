@@ -33,7 +33,9 @@ export function buildLayouts(events) {
     };
     layout.sessions.add(e.session);
     layout.to = e.t;
-    const page = layout.pages.get(e.page) ?? { snapshots: 0, fields: new Map() };
+    // A one-address application's steps (AmWINS `step`) are pages of their own.
+    const name = e.step ? `${e.page} › ${e.step}` : e.page;
+    const page = layout.pages.get(name) ?? { snapshots: 0, fields: new Map() };
     page.snapshots++;
     for (const f of e.fields ?? []) {
       // Our own mark tooltips got into early layouts as captions; they aren't questions.
@@ -55,7 +57,7 @@ export function buildLayouts(events) {
         seen: (prev?.seen ?? 0) + 1,
       });
     }
-    layout.pages.set(e.page, page);
+    layout.pages.set(name, page);
     layouts.set(key, layout);
   }
 
