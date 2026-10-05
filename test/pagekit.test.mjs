@@ -868,6 +868,25 @@ test('a helper the agent must otherwise do says so when it cannot be clicked, an
   assert.equal(report.noData.length, 0);
 });
 
+// PR #17 review: a click on Add Non-Trucking Liability that the page dropped must not count.
+test('a helper verified by its link going away counts only when the link is gone', async () => {
+  const ntl = { id: 'ntl', kind: 'action', action: 'addNtl', text: '^add non-?trucking liability( instead)?\\??$', verify: 'gone',
+    pages: [], after: [], afterActions: [], afterPages: [], unless: [] };
+  let h = harness();
+  let link = addButton(h, 'Add Non-Trucking Liability instead?');
+  link.onclick = () => link.remove();
+  let report = await h.kit.fill([ntl], { maxRounds: 3 });
+  assert.deepEqual(Array.from(report.actions, (x) => x.id), ['addNtl']);
+  assert.ok(!report.blockers.some((b) => /addNtl/.test(b)));
+  // The page kept the link (the click was lost in a redraw): not done, and the agent sees it.
+  h = harness();
+  link = addButton(h, 'Add Non-Trucking Liability instead?');
+  link.onclick = () => {};
+  report = await h.kit.fill([ntl], { maxRounds: 3 });
+  assert.equal(report.actions.length, 0);
+  assert.ok(report.blockers.includes('button: addNtl'), Array.from(report.blockers).join(' | '));
+});
+
 function coverageActionPlan() {
   return [
     { id: 'limit', selector: '#liab-limit', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },

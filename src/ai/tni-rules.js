@@ -62,6 +62,7 @@ export const TNI_RULES = `
 - Motor Truck Cargo only when the intake asks for it: special cargo questions (mobile/modular homes; business documents) No; "General freight" is category "Consumer Goods", commodity "Other Consumer Goods"; limit and deductible from the intake ("$100K/$1K Ded" is "$100k with a $1,000 Deductible").
 - Refrigeration Breakdown: use the intake's Reefer breakdown option (coverage.reeferBreakdown). If selected, choose "Yes, match Motor Truck Cargo limits". If unselected, No, or blank/null, answer "No"; an unselected Reefer option does not need agent review.
 - General liability: not set up yet; the agent answers it.
+- Non-trucking liability (NTL): only when the agent has set coverage.ntl to Yes; a claims-box mention alone is not a request. The filler opens it with "Add Non-Trucking Liability instead?". Its limit and its other questions are the agent's: leave them.
 - Florida: Property Damage Liability Only "Not Selected"; Personal Injury Protection "$10k w/ $0 Deductible" (Florida requires it).
 - Pennsylvania first-party benefits: Medical Expense Benefits $5,000 (required, lowest); Extraordinary Medical, Income Loss, Funeral Expense and Accidental Death: Not Selected unless the intake asks for them.
 - Cargo without a deductible on the intake: $1,000 deductible.

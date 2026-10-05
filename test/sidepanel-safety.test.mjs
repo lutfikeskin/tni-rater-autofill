@@ -970,7 +970,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }),
     normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
     store: { set: async () => {} }, clearAgentKeys: async () => {}, uploadNow() {},
-    save: async () => {}, render() {}, refreshTab() {} };
+    save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
     'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'loadFile'].map(extractFunction).join('\n'), context);
   await context.persistAiPending();
@@ -1083,4 +1083,68 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
   };
   assert.deepEqual(await run(false), { rendered: 1, assisted: ['Rates'], assistPage: null });
   assert.deepEqual(await run(true), { rendered: 1, assisted: [], assistPage: 'Rates' }, 'another follow-up is coming: still held');
+});
+
+// PR #17 review, on Luna: the in-flight marker is taken before the first await (two triggers
+// close together ask once), a replaced intake never gets the result, and a failed review is
+// visible on Check intake and tried again only when the assistant settings change.
+test('Luna reads the claims box once per intake, visibly fails, and retries on a settings change', async () => {
+  const logs = [], requests = [];
+  let settingsGate, reply = 'ok';
+  const flagged = [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }];
+  const intake = { record: { claims: { text: 'Leased on, needs coverage off dispatch' }, coverage: {} }, warnings: [{ code: 'other', level: 'check' }], done: [] };
+  const state = { intake, notesAsking: null };
+  class AssistError extends Error {}
+  const context = {
+    state, AssistError, Date, redactor: () => (s) => s, redactionTerms: () => [],
+    aiSettings: () => new Promise((resolve) => { settingsGate = () => resolve({ on: true, apiKey: 'k', model: 'gpt-6-luna' }); }),
+    reviewNotes: async (record, cfg, opts) => {
+      requests.push({ record, opts });
+      if (reply === 'fail') throw new AssistError('Luna took too long. Nothing was applied.');
+      return { warnings: flagged, lines: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0 };
+    },
+    usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
+  };
+  vm.runInNewContext(extractFunction('reviewClaimsBox'), context);
+  const first = context.reviewClaimsBox();
+  await context.reviewClaimsBox();
+  assert.equal(state.notesAsking, intake, 'taken before the settings were read');
+  settingsGate();
+  await first;
+  assert.equal(requests.length, 1, 'two triggers close together ask once');
+  assert.equal(typeof requests[0].opts.redact, 'function', 'names are redacted before the request');
+  assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
+  assert.deepEqual(Object.keys(logs[0]).sort(), ['items', 'leave', 'model', 'modelCalls', 'ms', 'page', 'reasoningTokens', 'suggested', 'tokensIn', 'tokensOut', 'type'], 'counts only, never the text');
+  await context.reviewClaimsBox({ retry: true });
+  assert.equal(requests.length, 1, 'once per intake');
+
+  // A failure is a Check intake item, not silence; a plain reload doesn't ask again.
+  const failing = { record: { claims: { text: 'Needs physical damage' }, coverage: {} }, warnings: [{ code: 'a', level: 'check' }], done: [0] };
+  state.intake = failing;
+  reply = 'fail';
+  const pending = context.reviewClaimsBox();
+  settingsGate();
+  await pending;
+  assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['a', 'check'], ['ai.claims-review-failed', 'check']]);
+  assert.match(failing.warnings[1].msg, /Read it yourself/);
+  assert.equal(logs.at(-1).error, 'Luna took too long. Nothing was applied.');
+  await context.reviewClaimsBox();
+  assert.equal(requests.length, 2, 'not retried on every panel reload');
+  // A settings change tries again; the failure item is replaced in place (checked marks are by position).
+  reply = 'ok';
+  const retried = context.reviewClaimsBox({ retry: true });
+  settingsGate();
+  await retried;
+  assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['a', 'check'], ['ai.claims-reviewed', 'info'], ['ai.ntl', 'check']]);
+  assert.deepEqual(failing.done, [0]);
+
+  // A result for a replaced intake is dropped.
+  const old = { record: { claims: { text: 'NTL please' }, coverage: {} }, warnings: [], done: [] };
+  state.intake = old;
+  const late = context.reviewClaimsBox();
+  state.intake = { record: { claims: { text: '' }, coverage: {} }, warnings: [], done: [] };
+  settingsGate();
+  await late;
+  assert.deepEqual(old.warnings, []);
+  assert.equal(old.notesReview, undefined);
 });

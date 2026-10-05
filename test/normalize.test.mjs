@@ -351,3 +351,21 @@ test('an owner whose surname has two words is found in the driver list', () => {
   const sharedWord = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO' }, { today: new Date('2026-09-30') });
   assert.ok(sharedWord.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a surname word with another first name still warns');
 });
+
+// PR #17 review: a mention ("no bobtail") must never become NTL coverage. The agent sets it.
+test('NTL / non-trucking / bobtail in the claims box asks the agent; coverage.ntl stays unset', () => {
+  const today = { today: new Date('2026-09-30') };
+  for (const text of ['No\nNTL', 'No\nNeeds non-trucking liability', 'no claims\nnon tracking', 'No\nBob-tail coverage', 'No\nnontrucking only', 'No\nno bobtail', 'No\nDoes not want NTL']) {
+    const r = normalizeIntake({ ...raw, claims_details: text }, today);
+    assert.equal(r.record.coverage.ntl, null, `${text}: only the agent sets NTL`);
+    const w = r.warnings.find((x) => x.code === 'coverage.ntl');
+    assert.equal(w?.level, 'check', text);
+    assert.equal(w.path, 'coverage.ntl', 'the Check intake card edits the field itself');
+    assert.ok(w.msg.includes(text.split('\n').at(-1)), 'the line is quoted for the agent');
+  }
+  for (const text of ['No\nFinanced', 'No\nUntle Bobcat control', 'Yes\nTruck stopped at the toll']) {
+    const r = normalizeIntake({ ...raw, claims_details: text }, today);
+    assert.equal(r.record.coverage.ntl, null, text);
+    assert.ok(!r.warnings.some((x) => x.code === 'coverage.ntl'), text);
+  }
+});

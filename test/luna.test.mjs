@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectItems, AssistError, LEAVE } from '../src/ai/common.js';
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
-  DEFAULT_MODEL, API_URL } from '../src/ai/luna.js';
+  DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes } from '../src/ai/luna.js';
 import { settingsFrom } from '../src/ai/providers.js';
 
 const context = { carrier: 'geico', page: 'operations', active: { drivers: 0, vehicles: 0 },
@@ -346,4 +346,50 @@ test('HTTP integration sends the key only to OpenAI and hides provider errors', 
   await assert.rejects(callModel({ apiKey: 'synthetic', body, fetchImpl: refused }), error =>
     /OpenAI API key was refused/.test(error.message) && !error.message.includes('private'));
   await assert.rejects(callModel({ body, fetchImpl }), /needs an OpenAI API key/);
+});
+
+// Synthetic claims box. PR #17 moved from Jev to Luna: flags only, one call, nothing applied.
+test('claims-box review: one strict call with two flags per line, redacted, flags only', async () => {
+  const record = { coverage: { autoLiability: 'Yes', autoLiabLimit: '$750k CSL', cargo: true, ntl: null },
+    claims: { text: 'No\nWants $1M liability instead. Leased on with Sample Carrier, needs coverage off dispatch\nFinanced\nFinanced\nno bobtail' } };
+  assert.deepEqual(noteLines(record.claims.text), ['Wants $1M liability instead.', 'Leased on with Sample Carrier, needs coverage off dispatch', 'Financed', 'no bobtail'], 'sentences, no repeats, no bare yes/no');
+  const review = buildNotesReview(record, { redact: (line) => line.replace('Sample Carrier', '[client]') });
+  const { body } = review;
+  assert.equal(body.model, DEFAULT_MODEL);
+  assert.equal(body.store, false);
+  assert.equal(body.reasoning.effort, 'low');
+  assert.equal(body.max_output_tokens, 2048);
+  assert.equal(body.temperature, undefined);
+  assert.equal(body.text.format.name, 'claims_review');
+  assert.equal(body.text.format.strict, true);
+  const state = JSON.parse(body.input[0].content);
+  assert.deepEqual(Object.keys(state.claimsBox), ['l0', 'l1', 'l2', 'l3']);
+  assert.match(state.claimsBox.l1, /\[client\]/, 'names are replaced before the request');
+  assert.doesNotMatch(body.input[0].content, /Sample Carrier/);
+  assert.deepEqual(state.formCoverage, { autoLiability: 'Yes', autoLiabLimit: '$750k CSL', cargo: true }, 'the form coverage, not the agent-set NTL');
+  assert.deepEqual(body.text.format.schema.properties.lines.required, ['l0', 'l1', 'l2', 'l3']);
+  assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'nothing to read');
+
+  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
+  const json = flags([[false, true], [true, true], [false, false], [false, false]]);
+  const results = parseNotesReview(json, review);
+  assert.deepEqual(notesWarnings(results).map((w) => [w.code, w.path, w.level]), [['ai.coverage-change', 'claims.text', 'check'], ['ai.ntl', 'coverage.ntl', 'check']],
+    'the NTL line is not also a coverage change; "no bobtail" is left to the intake\'s own NTL item');
+  assert.ok(notesWarnings(results)[1].msg.includes('needs coverage off dispatch'), 'the line is quoted');
+  assert.ok(notesWarnings(parseNotesReview(flags([[false, false], [false, false], [false, false], [true, true]]), review)).length === 0,
+    'a line the intake already quotes for NTL is not repeated');
+
+  assert.throws(() => parseNotesReview(flags([[false, true]]), review), AssistError, 'a missing line fails the whole review');
+  assert.throws(() => parseNotesReview(envelope({ lines: { l0: { ntl: 'yes', coverageChange: false }, l1: { ntl: false, coverageChange: false }, l2: { ntl: false, coverageChange: false }, l3: { ntl: false, coverageChange: false } } }), review), AssistError);
+  assert.throws(() => parseNotesReview({ ...json, model: 'other-model' }, review), AssistError, 'an unexpected model fails');
+
+  let sent;
+  const done = await reviewNotes(record, { apiKey: 'synthetic-key' }, { call: async ({ apiKey, body }) => { sent = { apiKey, body }; return json; } });
+  assert.equal(sent.apiKey, 'synthetic-key');
+  assert.deepEqual(done.warnings.map((w) => w.code), ['ai.coverage-change', 'ai.ntl']);
+  assert.equal(done.lines, 4);
+  assert.equal(done.modelCalls, 1);
+  assert.equal(done.tokensIn, 100);
+  const none = await reviewNotes({ coverage: {}, claims: { text: '' } }, { apiKey: 'k' }, { call: async () => { throw new Error('no call expected'); } });
+  assert.equal(none.modelCalls, 0);
 });

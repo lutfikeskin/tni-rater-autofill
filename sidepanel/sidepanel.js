@@ -9,7 +9,7 @@ import { intakeSummary, fieldChangeEvent, fillEvents, redactor } from '../src/us
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
-import { PROVIDERS, settingsFrom, suggest } from '../src/ai/providers.js';
+import { PROVIDERS, settingsFrom, suggest, reviewNotes } from '../src/ai/providers.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -179,6 +179,7 @@ const state = {
   doneSteps: new Set(),
   advanceRetried: new Set(), // steps whose lost Continue was clicked a second time (once each)
   assistPage: null, // a page whose Luna request waits for a helper's follow-up fill
+  notesAsking: null, // the intake whose claims box Luna is reading now
   tabSessions: new Map(),
   agentKeys: new Map(),
   filling: false,
@@ -505,6 +506,7 @@ async function loadFile(file) {
   await save();
   render();
   refreshTab();
+  reviewClaimsBox();
 }
 
 function showLoadError(msg) {
@@ -1255,7 +1257,9 @@ function renderReport(frames) {
   ];
   const waiting = all('blocked');
   const advanced = frames.find((f) => f.advanced)?.advanced;
-  const agentPage = state.tab?.carrier?.agentPages?.[page];
+  // A page note may depend on the intake (Progressive's Rates for an NTL quote).
+  const pageNote = state.tab?.carrier?.agentPages?.[page];
+  const agentPage = typeof pageNote === 'function' ? pageNote(state.intake?.record ?? {}) : pageNote;
   const pct = fields ? Math.round(((fields - needs.length) / fields) * 100) : 100;
   const need = (x) => h('div', { class: 'need', dataset: { need: `${x.key}|${x.label}` } },
     h('div', { class: 'need-head' },
@@ -1331,6 +1335,45 @@ async function capturePage() {
 
 async function aiSettings() {
   return settingsFrom(await usage.settings());
+}
+
+// Luna reads the claims box once per intake (reviewNotes in src/ai/luna.js): lines that may name
+// non-trucking liability or ask for a coverage change become Check intake items, and the tab
+// count goes up (the panel doesn't switch steps under the agent). Flags only; the agent decides.
+// Logged as counts, never the text. A review that failed says so on Check intake and is tried
+// again when the assistant settings change (`retry`), not on every panel reload.
+async function reviewClaimsBox({ retry = false } = {}) {
+  const intake = state.intake;
+  if (!intake?.record.claims?.text || intake.notesReview?.done || (intake.notesReview?.failed && !retry) || state.notesAsking === intake) return;
+  // Taken before the first await: two triggers close together ask once.
+  state.notesAsking = intake;
+  try {
+    const cfg = await aiSettings();
+    if (!cfg.on || !cfg.apiKey || state.intake !== intake) return;
+    const started = Date.now();
+    const logged = { type: 'ai_suggest', page: 'ClaimsBox', model: cfg.model };
+    const failed = intake.warnings.findIndex((w) => w.code === 'ai.claims-review-failed');
+    try {
+      const result = await reviewNotes(intake.record, cfg, { redact: redactor(redactionTerms(intake.record)) });
+      if (state.intake !== intake) return;
+      usage.log({ ...logged, ms: Date.now() - started, items: result.lines, suggested: result.warnings.length, leave: result.lines - result.warnings.length,
+        tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens });
+      // Warnings are marked checked by position: an earlier failure is replaced in place, never removed.
+      if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Luna reviewed the claims box after an earlier failure.' };
+      intake.warnings.push(...result.warnings);
+      intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length };
+    } catch (e) {
+      const msg = e instanceof AssistError ? e.message : 'The claims-box review failed.';
+      usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+      if (state.intake !== intake) return;
+      if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Luna couldn't review the claims box. Read it yourself for coverage requests, such as non-trucking liability (NTL) or a different limit." });
+      intake.notesReview = { failed: true, model: cfg.model };
+    }
+    await save();
+    render();
+  } finally {
+    if (state.notesAsking === intake) state.notesAsking = null;
+  }
 }
 
 // ctx: { tabId, page, carrier } of the fill these frames came from.
@@ -1778,6 +1821,8 @@ function wireAi() {
     // Keep pending approvals; their cache keys remain bound to the original model and context.
     await usage.saveSettings(patch);
     await renderAiSettings();
+    // Luna just turned on or got a key: read the open intake's claims box if not done yet.
+    reviewClaimsBox({ retry: true });
   };
   $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
   $('ai-auto').addEventListener('change', (e) => save({ lunaAuto: e.target.checked }));
@@ -1985,6 +2030,7 @@ async function init() {
   render();
   renderUsage();
   renderAiSettings();
+  reviewClaimsBox();
   await refreshTab();
 }
 

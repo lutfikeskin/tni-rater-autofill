@@ -4,7 +4,7 @@ Read this when changing the client record, interpreting an intake, or adding an 
 
 ## Current contract
 
-[intake.js](../src/intake.js) reads named PDF form fields. [normalize.js](../src/normalize.js) builds the record and warnings; [schema.js](../src/schema.js) defines editable fields. Claims-box notes are retained, with limited special parsing such as missing ownership. This is not a general free-text extractor.
+[intake.js](../src/intake.js) reads named PDF form fields. [normalize.js](../src/normalize.js) builds the record and warnings; [schema.js](../src/schema.js) defines editable fields. Claims-box notes are retained, with limited special parsing such as missing ownership and non-trucking liability: a line with NTL, non-trucking (also "non tracking") or bobtail adds a review item quoting it, and `coverage.ntl` stays unset until the agent sets it (a mention such as "no bobtail" is not a request). This is not a general free-text extractor; Luna's claims-box review (see [AI assistance](ai-assistant.md)) only flags lines.
 
 [plan.js](../src/plan.js) resolves values before they enter the page. Rules come from [carriers.js](../src/carriers.js), [carrier modules](../src/carriers/), and [generic rules](../src/rules.js) unless the carrier disables them. Progressive disables broad generic rules.
 
@@ -30,7 +30,7 @@ Carrier rules precede generic rules, and exact matching precedes label fallback.
 
 ## Known gaps to account for
 
-Progressive currently defaults question `28C1` (Exclude driver) to No. AmWINS also has coverage-exclusion defaults. The AI exclusion filter does not protect these deterministic rules. The schema has no dedicated driver-exclusion or non-trucking-liability field; do not describe these cases as supported.
+Progressive currently defaults question `28C1` (Exclude driver) to No. AmWINS also has coverage-exclusion defaults. The AI exclusion filter does not protect these deterministic rules. The schema has no dedicated driver-exclusion field; do not describe that case as supported. Non-trucking liability (`coverage.ntl`, set by the agent) is only opened on Progressive ("Add Non-Trucking Liability instead?" on Rates, verified by the link disappearing); what that section asks has not been seen on a live quote, so its questions and the rest of Rates stay with the agent, and AmWINS has no known NTL option.
 
 Coverage and ownership are largely shared at policy/operations level. A correctly targeted vehicle row can still receive an inappropriate shared answer. Explicit entity-specific coverage, provenance, applicability/conflict resolution, and final requested-versus-entered reconciliation are design work, not existing guarantees.
 

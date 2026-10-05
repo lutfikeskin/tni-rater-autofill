@@ -134,6 +134,12 @@ const truckerType = (r) => (isExpediter(r) ? 'Other For-Hire Trucking' : null);
 const businessStructure = (r) => (/\b(llc|l\.l\.c|inc|corp|corporation|company|co)\.?$/i.test(r.applicant.name ?? '')
   ? 'Corporation or LLC / Non-Profit' : 'Individual / Sole Proprietor');
 
+// Rates as TNI agents work it (bill plan, back, Recalculate, Print) unless GL or NTL is requested:
+// then the agent does the page by hand. The liability limit check stays for GL only (NTL may
+// replace that liability).
+const ourBillPlan = (r) => r.coverage.gl !== true && r.coverage.ntl !== true;
+const liabilityCheck = (r) => r.coverage.gl === true && r.coverage.ntl !== true;
+
 // The whole address on one line, for address boxes that offer the carrier's own suggestions.
 const oneLineAddress = (r) => {
   const g = r.garaging ?? {};
@@ -235,26 +241,33 @@ export const progressive = {
     // Two tiles matching (two reefer tiles) means it's the agent's pick.
     { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
     { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle' },
+    // Non-trucking liability, once the agent set it to Yes (a claims-box mention alone never
+    // clicks it): the link under the liability coverage that opens the NTL section. First in this
+    // list, so it comes before cargo. Done only when the link is gone afterwards (a click lost in a
+    // redraw stays a blocker). What the section asks hasn't been seen on a live quote: its
+    // questions, the bill plan and the rest of Rates are the agent's (agentPages below).
+    { id: 'addNtl', page: 'CoveragesRates', text: '^add non-?trucking liability( instead)?\\??$', verify: 'gone', when: (r) => r.coverage.ntl === true },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
     { id: 'openCargo', page: 'CoveragesRates', text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true },
     { id: 'addCargoCommodity', page: 'CoveragesRates', text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true },
     { id: 'doneCargo', page: 'CoveragesRates', text: '^done with this coverage$', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true },
     // Rates, as TNI agents work it: once cargo is added (and no GL is requested), open the bill
     // plan options, pick automatic payments there, come back (Continue), then Recalculate, then
-    // Print, Email, Fax. With GL requested the agent does the rates page by hand.
+    // Print, Email, Fax. With GL or NTL requested the agent does the rates page by hand.
     // None of the rates helpers run while the liability limit is unresolved (missing, rejected or
     // different from the intake); a limit the agent set themselves counts as resolved.
-    { id: 'billPlan', page: 'CoveragesRates', text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.gl !== true },
+    { id: 'billPlan', page: 'CoveragesRates', text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: ourBillPlan },
     // Back from the bill plan Progressive has usually recalculated already (Recalculate is gone,
     // Print, Email, Fax is there): Recalculate only when the rates say they're out of date.
     // Recalculate and Print follow the bill plan, which waited for a resolved liability limit.
     // They don't re-check that field: back from the bill plan, the reloaded Rates page failed the
     // same check on a limit that was fine (FL and NJ runs: Print, Email, Fax never ran).
-    // With GL there is no bill plan step of ours: they keep the liability check instead.
-    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium' },
+    // With GL there is no bill plan step of ours: they keep the liability check instead. With NTL,
+    // which may replace that liability, the agent opening the bill plan is the signal.
+    { id: 'recalculate', page: 'CoveragesRates', text: '^recalculate$', after: (r) => liabilityCheck(r) ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => ourBillPlan(r) ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium' },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal.
-    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'] },
+    { id: 'print', page: 'CoveragesRates', text: PRINT_EMAIL_FAX, after: (r) => liabilityCheck(r) ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => ourBillPlan(r) ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'] },
     // This page may have been opened by the agent or restored after a panel reload. Its own
     // document and delivery controls establish readiness; no in-memory navigation history is needed.
     // Again on every return to the page (the agent went back, changed something, and reprints).
@@ -269,6 +282,9 @@ export const progressive = {
   // Pages that need the agent whatever the intake says; the side panel says so at the top.
   agentPages: {
     NoHit: "Progressive couldn't verify the business owner. Check the owner's name, date of birth and home address with the client (and enter the SSN if they gave it), then Continue.",
+    CoveragesRates: (r) => (r.coverage?.ntl === true
+      ? 'Non-trucking liability (NTL) quote: the filler opens it with "Add Non-Trucking Liability instead?". Answer that section yourself, then open the bill plan; Recalculate and Print follow when you come back.'
+      : null),
   },
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is
   // clicked. Never on the finish/buy pages.

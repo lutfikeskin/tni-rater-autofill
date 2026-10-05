@@ -461,3 +461,36 @@ test('every vehicle on Rates gets the standard per-vehicle coverages; Rental wit
   // One vehicle: one step, no row matching, as before.
   assert.equal(buildPlan(baseRecord(), progressive, {}).filter((step) => step.q === '2091').length, 1);
 });
+
+// PR #17 review: NTL is added only once the agent set it, the click is verified, and the bill
+// plan, Recalculate and Print wait for the agent (who answers the NTL section first).
+test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, then Rates is the agent\'s', () => {
+  const record = baseRecord();
+  const actions = (r) => buildPlan(r, progressive, {}).filter((s) => s.kind === 'action');
+  const ids = (r) => actions(r).map((s) => s.action);
+  assert.ok(!ids(record).includes('addNtl'), 'not without NTL');
+  assert.equal(progressive.agentPages.CoveragesRates(record), null);
+  record.coverage.ntl = null;
+  assert.ok(!ids(record).includes('addNtl'), 'not while unresolved (a claims-box mention only)');
+  record.coverage.ntl = true;
+  const plan = actions(record);
+  const ntl = plan.find((s) => s.action === 'addNtl');
+  assert.deepEqual(ntl.pages, ['CoveragesRates']);
+  assert.equal(ntl.verify, 'gone', 'done only when the link is gone afterwards');
+  assert.ok(new RegExp(ntl.text, 'i').test('Add Non-Trucking Liability instead?'));
+  assert.ok(!new RegExp(ntl.text, 'i').test('Help Text For Non-Trucking Liability'));
+  assert.ok(ids(record).indexOf('addNtl') < ids(record).indexOf('openCargo'), 'before cargo');
+  assert.ok(!ids(record).includes('billPlan'), 'the bill plan is the agent\'s');
+  for (const id of ['recalculate', 'print']) {
+    const step = plan.find((s) => s.action === id);
+    assert.deepEqual(step.afterActions, [], `${id}: no bill plan of ours to wait for`);
+    assert.deepEqual(step.after, [], `${id}: NTL may replace the liability limit`);
+    assert.deepEqual(step.afterPages, ['ChangePaymentPlan'], `${id}: only after the agent opened the bill plan`);
+  }
+  assert.match(progressive.agentPages.CoveragesRates(record), /Answer that section yourself, then open the bill plan/);
+  // GL without NTL is unchanged: no bill plan of ours, the liability check stays.
+  const gl = baseRecord();
+  gl.coverage.gl = true;
+  assert.deepEqual(actions(gl).find((s) => s.action === 'print').after, ['coverage.autoLiabLimit']);
+  assert.ok(ids(baseRecord()).includes('billPlan'), 'and a plain quote keeps our bill plan');
+});

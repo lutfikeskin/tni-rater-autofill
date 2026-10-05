@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 39) return;
+  if (globalThis.__raterKit?.version === 40) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1150,6 +1150,8 @@
       }
       let accepted = true;
       if (a.verify === 'premium') accepted = premiumReady();
+      // A link that opens a section (Add Non-Trucking Liability) is gone once it took.
+      if (a.verify === 'gone') accepted = !findButton(a);
       if (a.verify === 'cargoClosed') {
         const controls = collectControls();
         const expanded = controls.some((c) => ['2158', '215A', '216A', '216B'].includes(c.q));
@@ -1468,5 +1470,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 39, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 40, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();
