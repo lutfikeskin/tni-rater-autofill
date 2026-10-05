@@ -1891,6 +1891,34 @@ test('a kit left in the page by another build (an extension reload or update) is
   assert.equal(h.context.__raterKit.build, 'source');
 });
 
+test('on a carrier stop page (Progressive DeclinationNotice) the kit fills and clicks nothing', async () => {
+  const step = { id: 'zip-step', selector: '#zip', path: 'garaging.zip', kind: 'text', value: '17101' };
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const [action] = buildPlan(record, { id: 'synthetic', useGenericRules: false, rules: [], actions: [{ id: 'go', text: '^go$' }] }).filter((s) => s.kind === 'action');
+  for (const page of ['DeclinationNotice', 'BusinessOwnerInfo']) {
+    const h = harness({ search: `?pageName=${page}` });
+    const zip = makeInput({ id: 'zip', ariaLabel: 'Zip code' });
+    const go = addButton(h, 'Go');
+    const next = addButton(h, 'Continue');
+    let clicks = 0;
+    go.onclick = () => clicks++;
+    next.onclick = () => clicks++;
+    h.document.body.append(zip);
+    const report = await h.kit.fill([step, action], { maxRounds: 3, advance: { text: '^continue$' }, stopPages: Object.keys(progressive.stopPages) });
+    if (page === 'DeclinationNotice') {
+      assert.equal(report.halted, true);
+      assert.match(report.reason, /stopped this quote/);
+      assert.equal(zip.value, '', 'nothing typed');
+      assert.equal(clicks, 0, 'no helper and no Continue');
+      assert.deepEqual([...report.filled, ...report.actions], []);
+    } else {
+      // Any other page fills as before.
+      assert.equal(report.halted, false);
+      assert.equal(zip.value, '17101');
+    }
+  }
+});
+
 test('a capture names the step on screen from its visible headings', () => {
   const h = harness();
   h.document.body.append(new FakeNode('h3', { textContent: 'Vehicles' }), makeInput({ id: 'vin', ariaLabel: 'VIN' }));

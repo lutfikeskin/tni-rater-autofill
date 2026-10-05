@@ -310,6 +310,13 @@ export const progressive = {
       ? 'Non-trucking liability (NTL) quote: the filler opens it with "Add Non-Trucking Liability instead?". The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print.'
       : null),
   },
+  // Pages where Progressive has stopped the quote. Nothing is filled or clicked there (not even on
+  // Fill this page) and Luna isn't asked: the panel shows the note and the page is the agent's.
+  // DeclinationNotice follows Business Owner Info when the customer already has a Progressive
+  // commercial auto policy (2026-10-05; text and buttons only).
+  stopPages: {
+    DeclinationNotice: 'Progressive says this client already has a commercial auto policy with Progressive. The quote stops here: nothing on this page is filled or clicked. Let the client know; what to do next is yours.',
+  },
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is
   // clicked. Never on the finish/buy pages.
   advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFaxConfirm'] },
