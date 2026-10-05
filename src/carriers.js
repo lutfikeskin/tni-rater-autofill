@@ -6,6 +6,9 @@
 // and gets its value from `path` (a client-record path) or `value(record, active)`. A rule with
 // `note` and no value marks the field for the agent and never fills it.
 //
+// `layoutUrl` (or else `autoFillUrl`): the carrier's quote pages, where page layouts are recorded
+// as the agent works even without a fill. A carrier with neither gets layouts from fills only.
+//
 // `world: 'MAIN'` runs the page script in the page's own JavaScript world, needed when the
 // carrier's widgets (e.g. ExtJS) are only reachable through the page's own objects.
 //
@@ -45,7 +48,7 @@ export function carrierForUrl(url) {
   if (/^(localhost|127\.0\.0\.1)$/.test(u.hostname)) {
     const practice = PRACTICE.find((p) => p.path.test(u.pathname));
     const real = practice && CARRIERS.find((c) => c.id === practice.carrier);
-    if (real) return { ...real, name: `${real.name} (practice)`, practice: true, autoFillUrl: null };
+    if (real) return { ...real, name: `${real.name} (practice)`, practice: true, autoFillUrl: null, layoutUrl: null };
   }
   return CARRIERS.find((c) => c.hosts.some((re) => re.test(u.hostname))) ?? null;
 }

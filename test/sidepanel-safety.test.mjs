@@ -1438,7 +1438,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
   const logged = [];
   const record = { garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], trailers: [], drivers: [{}], coverage: {} };
   const context = {
-    state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive' } }, intake: { record }, active: {}, filling: false,
+    state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0,
       lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set() },
     sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
     busy: false, runs: [],
@@ -1455,7 +1455,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; },
   };
-  vm.runInNewContext(['recordLayout', 'layoutJob', 'jobCurrent', 'captureLayout', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
+  vm.runInNewContext(['recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'captureLayout', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);
   return { context, logged };
 }
@@ -1523,13 +1523,21 @@ test('layouts are taken as the page changes, without any fill, once the page is 
   assert.equal(logged.length, 2);
   assert.equal(logged[1].reason, 'removed');
 
-  // A fill under way records its own layout; another tab's page or a practice page none.
+  // A fill under way (here or in another tab, and it may fail without a layout): the capture
+  // waits for it instead of being dropped.
+  controls = [controls[0]];
   context.state.filling = true;
   context.scheduleLayout('Vehicles', 'changed');
   context.runs.length = 0;
   await fire();
-  assert.deepEqual(context.runs, []);
+  assert.deepEqual(context.runs, [], 'nothing read while the fill runs');
+  assert.ok(context.pending, 'asked again later');
+  await fire();
+  assert.equal(logged.length, 2);
   context.state.filling = false;
+  await fire();
+  assert.deepEqual(logged.map((e) => e.reason), ['appeared+changed', 'removed', 'changed']);
+  // A practice page: nothing scheduled.
   context.state.tab.carrier.practice = true;
   context.scheduleLayout('Vehicles', 'changed');
   assert.equal(context.pending, null);
@@ -1723,4 +1731,49 @@ test('picking another vehicle replaces a capture waiting for the previous one', 
   await context.state.layoutChain;
   assert.deepEqual(logged.map((e) => e.reason), ['picked']);
   assert.match(SIDEPANEL, /state\.active\[list\] = i;[\s\S]{0,300}scheduleLayout\(pageOf\(state\.tab\?\.url\), 'picked'\)/, 'the vehicle/driver picker asks for the layout');
+});
+
+test('layouts are taken by themselves only on the carrier\'s named quote pages', () => {
+  const { context } = layoutHarness(() => []);
+  const scheduled = () => { const fn = context.pending; context.pending = null; return !!fn; };
+  // A carrier with no quote-page address (GEICO for now): its portal, account and search pages
+  // are never captured on their own; fills still record theirs.
+  context.state.tab.carrier = { id: 'geico' };
+  context.scheduleLayout('Vehicles', 'arrived');
+  assert.equal(scheduled(), false);
+  context.state.tab.carrier = { id: 'progressive', autoFillUrl: /\/Express\/Default\.aspx/ };
+  context.state.tab.url = 'https://portal.example/Home/Search';
+  context.scheduleLayout('Vehicles', 'arrived');
+  assert.equal(scheduled(), false, 'a page outside the quote');
+  context.state.tab.url = 'https://portal.example/Express/Default.aspx?pageName=Vehicles';
+  context.scheduleLayout('Vehicles', 'arrived');
+  assert.equal(scheduled(), true);
+});
+
+test('two quote tabs keep their own last layout', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  await context.recordLayout('Vehicles', 'arrived');
+  context.state.tab = { ...context.state.tab, id: 2 };
+  await context.recordLayout('Vehicles', 'arrived');
+  assert.deepEqual(logged.length, 2, 'the same page in the second tab is its own first layout');
+});
+
+test('an intake correction redoes a waiting capture and drops one already reading the page', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  const kit = context.runKit;
+  context.scheduleLayout('Vehicles', 'arrived');
+  const stale = context.pending;
+  context.intakeEdited();
+  await stale();
+  assert.equal(logged.length, 0, 'the old request does nothing');
+  await context.pending();
+  await context.state.layoutChain;
+  assert.deepEqual(logged.map((e) => e.reason), ['arrived'], 'asked again for the corrected intake');
+  // A correction while the page is being read: that capture is dropped.
+  context.runKit = async (...args) => { context.intakeEdited(); return kit(...args); };
+  controls.push({ q: '2A2', kind: 'text', label: 'Placards carried' });
+  await context.recordLayout('Vehicles', 'changed');
+  assert.equal(logged.length, 1);
 });
