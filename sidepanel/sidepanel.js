@@ -866,6 +866,16 @@ function onRecorderMessage(msg, sender) {
     // already open and only now gets a recorder may still show the previous client's quote.
     if (msg.from ? samePage(msg.from) !== samePage(msg.page) : state.layoutNewTabs.has(sender.tab.id)) state.layoutReadyTabs.add(sender.tab.id);
     log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
+    // Arriving at a carrier stop page (a new document, a reload, or a move from another page; not
+    // its "-Reload" re-render): logged as a fill run that stopped, with the page name only, and
+    // only once the tab is shown to be this intake's quote.
+    const stopPage = samePage(msg.page);
+    if (state.tab.carrier?.stopPages?.[stopPage]) {
+      if ((!msg.from || samePage(msg.from) !== stopPage) && stopPageIsOurs()) {
+        log(...fillEvents([{ fields: 0, blockers: [`stop: ${stopPage}`] }], { carrier, page: stopPage, overwrite: false, auto: 'stop', ms: 0, redact: (text) => text }));
+      }
+      showStopPage();
+    }
     // Even with no fields in the top frame: a form may be all in child frames, which don't report
     // arrivals themselves.
     scheduleLayout(layoutPage, 'arrived');
@@ -1333,7 +1343,7 @@ function renderSite() {
   $('capture').disabled = !(inExtension && carrier);
   $('fill-hint').textContent = !inExtension
     ? 'Filling works when this runs as the Chrome extension.'
-    : stopped ? 'The carrier stopped this quote. Nothing on this page is filled or clicked.'
+    : stopped ? 'Nothing on this page is filled or clicked.'
     : carrier && state.tab.background ? 'Working on the quote tab in the background. Fill this page fills that tab; go back to it to review.'
     : carrier ? 'Nothing is submitted. Review the page, then click Next yourself.'
       : noAccess
@@ -1344,29 +1354,30 @@ function renderSite() {
 
 // Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client
 // already has a commercial auto policy with Progressive). Nothing is filled or clicked there,
-// automatically or on request, and Luna isn't asked; the panel says why at the top and the page
-// is the agent's. Logged once per arrival (no client data: the page name only).
+// automatically or on request, and Luna isn't asked; the panel says why above both steps (outside
+// the fill report, which Clear marks empties) and the page is the agent's. The carrier's reason is
+// said of this client only once the tab is shown to be this intake's quote (stopPageIsOurs).
 function showStopPage() {
   const carrier = state.tab?.carrier;
   const page = pageOf(state.tab?.url);
   const note = state.intake ? carrier?.stopPages?.[page] : null;
-  const key = note ? `${state.tab.id}|${page}` : null;
-  if (!note) {
-    // Left the stop page (the agent went back): its card goes too.
-    if (state.stopShown) { state.stopShown = null; $('report').replaceChildren(); }
-    return;
-  }
+  const box = $('stop-note');
+  box.hidden = !note;
+  if (!note) { box.replaceChildren(); return; }
   clearTimeout(state.autoTimer);
   state.autoPending = false;
   state.pagePending = null;
-  const box = $('report');
-  box.className = 'report';
-  box.replaceChildren(
-    h('div', { class: 'agent-page stop-page', role: 'alert' }, h('b', {}, `${carrier.name} stopped this quote`), h('p', {}, note)),
-    h('p', { class: 'muted small' }, 'Nothing was filled or clicked on this page, and nothing will be. Fill this page is off here.'));
-  if (state.stopShown === key) return;
-  state.stopShown = key;
-  if (!carrier.practice) usage.log({ type: 'fill_run', carrier: carrier.id, page, auto: 'stop', fields: 0, filled: 0, clicked: [], blockers: 1, blockerList: [`stop: ${page}`], advanced: null });
+  const ours = stopPageIsOurs();
+  box.replaceChildren(h('div', { class: 'agent-page stop-page', role: 'alert' },
+    h('b', {}, ours ? `${carrier.name} stopped this quote` : `${carrier.name} stop page`),
+    h('p', {}, ours ? note : `This tab was already on ${carrier.name}'s stop page before this client was loaded, so it may be another client's quote. Open or start this client's quote.`),
+    h('p', { class: 'small' }, 'Nothing on this page is filled or clicked.')));
+}
+
+// A tab may still show the previous client's quote after an intake is loaded (or the panel
+// started): the same evidence as for layouts (a new page since, or a fill with this intake).
+function stopPageIsOurs() {
+  return !state.layoutHold || state.layoutReadyTabs.has(state.tab?.id);
 }
 
 // ---------------------------------------------------------------------------------------------

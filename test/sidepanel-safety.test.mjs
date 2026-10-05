@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
-import { sha256Hex } from '../src/usage.js';
+import { fillEvents, sha256Hex } from '../src/usage.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
@@ -2004,25 +2004,33 @@ test('a page whose last question goes away logs its empty layout, so the questio
 // clicked, Luna not asked, and the agent is told why.
 function stopHarness(page = 'DeclinationNotice') {
   const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
-  const report = { className: '', children: [], replaceChildren(...next) { this.children = next; } };
-  const ui = { report, 'auto-followups': { checked: true }, 'auto-pages': { checked: true }, 'auto-advance': { checked: true } };
+  const box = () => ({ hidden: false, className: '', children: [], replaceChildren(...next) { this.children = next; } });
+  const ui = { report: box(), 'stop-note': box(), 'auto-followups': { checked: true }, 'auto-pages': { checked: true }, 'auto-advance': { checked: true } };
   const carrier = { id: 'progressive', name: 'Progressive', stopPages: { DeclinationNotice: 'Progressive says this client already has a commercial auto policy with Progressive.' } };
   const record = { applicant: { name: 'Synthetic Client LLC' } };
+  const url = (p) => `https://clpolicy.foragentsonly.com/Express/Default.aspx?pageName=${p}`;
   const state = {
-    intake: { record }, tab: { id: 4, url: `https://clpolicy.foragentsonly.com/Express/Default.aspx?pageName=${page}`, carrier },
+    intake: { record }, tab: { id: 4, url: url(page), carrier },
     autoPages: new Set(['DeclinationNotice', 'BusinessOwnerInfo']), autoPaused: false, filling: false, autoTimer: null, autoPending: false,
-    pagePending: null, agentKeys: new Map(), aiCache: new Map(), active: {},
+    pagePending: null, agentKeys: new Map(), aiCache: new Map(), active: {}, visitedPages: new Set(),
+    layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(),
   };
   const logged = [], kits = [], timers = [];
   const context = {
-    state, URL, h: node, $: (id) => ui[id], onQuotePage: () => true,
+    state, URL, h: node, $: (id) => ui[id], onQuotePage: () => true, fillEvents,
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
     usage: { log: (...events) => logged.push(...events) },
     runKit: async (...args) => { kits.push(args); return []; }, tellRecorder: async () => {}, ensureRecorder: async () => {},
     pickListItem: async () => {}, retireAiOrigins: async () => {}, buildPlan: () => [], fillOptions: () => ({}),
+    scheduleLayout: () => {},
   };
-  vm.runInNewContext(`${PAGE_HELPERS}\n${['showStopPage', 'fillPage', 'scheduleAutoFill', 'autoFill', 'aiActionCurrent'].map(extractFunction).join('\n')}`, context);
-  return { state, context, report, logged, kits, timers, carrier };
+  vm.runInNewContext(`${PAGE_HELPERS}\n${['showStopPage', 'stopPageIsOurs', 'fillPage', 'scheduleAutoFill', 'autoFill', 'aiActionCurrent', 'onRecorderMessage'].map(extractFunction).join('\n')}`, context);
+  // The recorder announcing a page (a new document has no `from`).
+  const arrive = (to, from = null) => {
+    state.tab = { ...state.tab, url: url(to) };
+    context.onRecorderMessage({ ra: 'usage', event: 'page_view', page: to, from, fields: 0 }, { tab: { id: 4 }, frameId: 0 });
+  };
+  return { state, context, ui, logged, kits, timers, carrier, arrive, stops: () => logged.filter((e) => e.type === 'fill_run') };
 }
 
 test('on a carrier stop page nothing is filled, clicked or scheduled, manual or automatic, and Luna is not asked', async () => {
@@ -2043,33 +2051,55 @@ test('on a carrier stop page nothing is filled, clicked or scheduled, manual or 
   // Luna's suggestions (asking or applying) are never current on the stop page.
   const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: 'DeclinationNotice' };
   assert.equal(t.context.aiActionCurrent(ctx, []), false);
-  // The panel says why, prominently.
-  const text = JSON.stringify(t.report.children);
+  // The panel says why, prominently, outside the fill report (Clear marks empties that).
+  const note = t.ui['stop-note'];
+  assert.equal(note.hidden, false);
+  const text = JSON.stringify(note.children);
   assert.match(text, /Progressive stopped this quote/);
   assert.match(text, /already has a commercial auto policy with Progressive/);
   assert.match(text, /"role":"alert"/);
+  t.ui.report.replaceChildren();
+  assert.match(JSON.stringify(note.children), /already has a commercial auto policy/);
 });
 
-test('a stop page is logged once per arrival as a fill_run blocker, without client data', async () => {
-  const t = stopHarness();
-  t.context.showStopPage();
-  await t.context.fillPage();
-  t.context.showStopPage();
-  assert.equal(t.logged.length, 1);
-  assert.deepEqual(JSON.parse(JSON.stringify(t.logged[0])), { type: 'fill_run', carrier: 'progressive', page: 'DeclinationNotice', auto: 'stop', fields: 0, filled: 0, clicked: [], blockers: 1, blockerList: ['stop: DeclinationNotice'], advanced: null });
+test('each arrival at a stop page, reloads included, is logged as a fill_run blocker without client data', () => {
+  const t = stopHarness('BusinessOwnerInfo');
+  t.arrive('DeclinationNotice', 'BusinessOwnerInfo');
+  // Progressive's "-Reload" re-render is the same arrival; a reloaded document is a new one.
+  t.arrive('DeclinationNotice-Reload', 'DeclinationNotice');
+  t.arrive('DeclinationNotice');
+  const stops = JSON.parse(JSON.stringify(t.stops()));
+  assert.equal(stops.length, 2);
+  // Every counter the usage summary adds up is there (zero), so its totals stay numbers.
+  for (const k of ['filled', 'failed', 'noData', 'kept', 'leftRequired', 'unknown', 'ms', 'fields']) assert.equal(stops[0][k], 0, k);
+  assert.deepEqual([stops[0].blockers, stops[0].blockerList, stops[0].auto, stops[0].page, stops[0].advanced], [1, ['stop: DeclinationNotice'], 'stop', 'DeclinationNotice', null]);
   assert.doesNotMatch(JSON.stringify(t.logged), /Synthetic Client/);
-  // The agent goes back: the card goes, and coming to the page again is a new arrival.
-  t.state.tab = { ...t.state.tab, url: t.state.tab.url.replace('DeclinationNotice', 'BusinessOwnerInfo') };
+  // The agent goes back: the note goes.
+  t.arrive('BusinessOwnerInfo', 'DeclinationNotice');
   t.context.showStopPage();
-  assert.deepEqual(t.report.children, []);
-  t.state.tab = { ...t.state.tab, url: t.state.tab.url.replace('BusinessOwnerInfo', 'DeclinationNotice') };
-  t.context.showStopPage();
-  assert.equal(t.logged.length, 2);
+  assert.equal(t.ui['stop-note'].hidden, true);
+  assert.deepEqual(t.ui['stop-note'].children, []);
   // Practice pages are never logged.
-  const practice = stopHarness();
+  const practice = stopHarness('BusinessOwnerInfo');
   practice.carrier.practice = true;
-  practice.context.showStopPage();
-  assert.deepEqual(practice.logged, []);
+  practice.arrive('DeclinationNotice', 'BusinessOwnerInfo');
+  assert.deepEqual(practice.stops(), []);
+});
+
+test('a stop page the tab showed before this client was loaded is not said of this client or logged', () => {
+  const t = stopHarness();
+  t.state.layoutHold = true;
+  t.arrive('DeclinationNotice');
+  assert.deepEqual(t.stops(), []);
+  const text = JSON.stringify(t.ui['stop-note'].children);
+  assert.doesNotMatch(text, /already has a commercial auto policy/);
+  assert.match(text, /may be another client's quote/);
+  assert.match(text, /Nothing on this page is filled or clicked/);
+  // Moving on to it from another page of the quote is the evidence.
+  t.arrive('BusinessOwnerInfo', 'DeclinationNotice');
+  t.arrive('DeclinationNotice', 'BusinessOwnerInfo');
+  assert.equal(t.stops().length, 1);
+  assert.match(JSON.stringify(t.ui['stop-note'].children), /already has a commercial auto policy with Progressive/);
 });
 
 test('pages that are not stop pages are still filled and followed up', async () => {
@@ -2079,7 +2109,8 @@ test('pages that are not stop pages are still filled and followed up', async () 
   const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: 'BusinessOwnerInfo' };
   assert.equal(t.context.aiActionCurrent(ctx, []), true);
   t.context.showStopPage();
-  assert.deepEqual(t.logged, []);
+  assert.equal(t.ui['stop-note'].hidden, true);
+  assert.deepEqual(t.stops(), []);
 });
 
 test('the fill options hand the carrier\'s stop pages to the page kit', () => {

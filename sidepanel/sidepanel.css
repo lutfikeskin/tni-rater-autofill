@@ -241,6 +241,7 @@ details.section[open] > summary { font-weight: 600; color: var(--ink-strong); }
 .mark.failed { border-color: var(--signal); }
 .mark.ai { border: 2px solid #6d28d9; }
 .agent-page { padding: 10px 12px; border: 2px solid var(--signal); border-radius: var(--radius-lg); background: var(--signal-soft); color: var(--signal-dark); font-weight: 600; }
+#stop-note { margin-top: 10px; }
 .stop-page { display: grid; gap: 4px; }
 .stop-page b { font-size: 15px; }
 .stop-page p { margin: 0; }
