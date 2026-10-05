@@ -125,6 +125,10 @@ export function parseAddress(raw) {
   }
   const u = streetPart.match(/^(.*?)[,\s]+((?:apt|apartment|unit|ste|suite|lot|bldg|building|rm|room|trlr)\.?\s*#?\s*[\w-]+|#\s*[\w-]+)$/i);
   if (u) { out.street = u[1]; out.unit = u[2]; } else out.street = streetPart;
+  // "12 Main St, Apt 5 Orlando, FL": the unit written after the comma, in front of the city.
+  // Its number needs a digit, so a city like "Ste Genevieve" stays whole.
+  const lead = !out.unit && out.city?.match(/^((?:apt|apartment|unit|ste|suite|lot|bldg|building|rm|room|trlr)\.?\s*#?\s*[\w-]*\d[\w-]*|#\s*[\w-]+)\s+(\S.*)$/i);
+  if (lead) { out.unit = lead[1]; out.city = lead[2]; }
   // "Ci" isn't a street suffix; clients mean "Cir" (and USDOT records say CIR).
   out.street = out.street.replace(/\bCi\.?$/i, 'Cir');
   return out;

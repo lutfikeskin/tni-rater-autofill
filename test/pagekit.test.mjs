@@ -358,7 +358,7 @@ function recorderHarness(document = new FakeDocument()) {
 
 function addExtText(h, prefix, question, options = {}) {
   const group = 'A'.repeat(32);
-  const id = `f_${prefix}${group}${question}_1_1`;
+  const id = `f_${prefix}${group}${question}_${options.row ?? '1_1'}`;
   const input = makeInput({ id, ariaLabel: options.caption ?? `Question ${question}`, value: options.value ?? '' });
   const cmp = extCmp(id, input, options);
   h.context.Ext._components.set(id, cmp);
@@ -635,8 +635,8 @@ test('unfamiliar required controls warn in yellow without blocking known fields 
 
 test('repeated question ids without a vehicle hint stay yellow, and a hint picks the right row', async () => {
   const h = harness({ ext: true });
-  const first = addExtText(h, 'U', '3C01', { caption: 'Vehicle one value' });
-  const second = addExtText(h, 'P', '3C01', { caption: 'Vehicle two value' });
+  const first = addExtText(h, 'U', '3C01', { caption: '2021 FORD TRANSIT 350', row: '8_1' });
+  const second = addExtText(h, 'P', '3C01', { caption: '2019 ISUZU NPR HD', row: '8_2' });
   const report = await h.kit.fill([
     { id: 'duplicate-step', q: '3C01', path: 'vehicles[0].value', kind: 'text', value: '45000' },
   ], { maxRounds: 2 });
@@ -644,13 +644,124 @@ test('repeated question ids without a vehicle hint stay yellow, and a hint picks
   assert.equal(first.input.value, '');
   assert.equal(second.input.value, '');
   assert.ok(report.unknown.length >= 2);
-  // With the active vehicle's year/make/model, the matching row is filled.
+  // With the step's vehicle's year/make/model, the matching row is filled.
   const hinted = await h.kit.fill([
-    { id: 'hinted-step', q: '3C01', path: 'vehicles[1].value', kind: 'text', value: '45000', vehicleHint: ['vehicle two'] },
+    { id: 'hinted-step', q: '3C01', path: 'vehicles[1].value', kind: 'text', value: '45000', vehicleHint: ['2019', 'isuzu', 'npr hd'], activeVehicle: false },
   ], { maxRounds: 2 });
   assert.equal(second.input.value, '45000');
   assert.equal(first.input.value, '');
   assert.equal(hinted.filled.length, 1);
+});
+
+// Progressive's Rates with three vehicles (2026-10-05 FL run): every vehicle's row is answered,
+// and a question without the vehicle in its label goes to its own row's vehicle.
+test('per-vehicle Rates rows each get their own vehicle, including rows without the vehicle in the label', async () => {
+  const h = harness({ ext: true });
+  const vehicles = [
+    { name: '2025 RAM PROMASTER 2500', hint: ['2025', 'ram', 'promaster 2500'], value: '31000' },
+    { name: '2019 MERCEDES-BENZ SPRINTER', hint: ['2019', 'mercedes benz', 'sprinter'], value: '17000' },
+    { name: '2016 FREIGHTLINER CASCADIA 125', hint: ['2016', 'freightliner', 'cascadia'], value: '22000' },
+  ];
+  const rows = vehicles.map((v, i) => ({
+    rental: addExtText(h, 'c', '1FF2', { caption: v.name, row: `8_${i + 1}` }),
+    worth: addExtText(h, 'r', '2091', { caption: 'If this vehicle was sold today, how much would it be worth?', row: `8_${i + 1}` }),
+  }));
+  const plan = vehicles.flatMap((v, i) => [
+    { id: `rental-${i}`, q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: `rental ${i}`, vehicleHint: v.hint, activeVehicle: i === 2 },
+    { id: `worth-${i}`, q: '2091', path: `vehicles[${i}].value`, kind: 'text', value: v.value, vehicleHint: v.hint, activeVehicle: i === 2 },
+  ]);
+  // A label fallback for the active (last) vehicle must not take the first row's box.
+  plan.push({ id: 'fallback', q: '2CE8', path: 'vehicles[2].value', kind: 'text', value: '22000', re: 'sold today' });
+  const report = await h.kit.fill(plan, { maxRounds: 12 });
+  assert.equal(report.halted, false);
+  assert.deepEqual(rows.map((r) => r.rental.input.value), ['rental 0', 'rental 1', 'rental 2']);
+  assert.deepEqual(rows.map((r) => r.worth.input.value), ['31000', '17000', '22000']);
+  assert.equal(report.unknown.length, 0);
+});
+
+// Codex on PR #21: an agent edit on one vehicle's row must not protect the other vehicles' rows.
+test('each vehicle row of a repeated question has its own field key', async () => {
+  const h = harness({ ext: true });
+  const ram = addExtText(h, 'c', '1FF2', { caption: '2025 RAM PROMASTER 2500', row: '8_1' });
+  const sprinter = addExtText(h, 'c', '1FF2', { caption: '2019 MERCEDES-BENZ SPRINTER', row: '8_2' });
+  const report = await h.kit.fill([
+    { id: 'ram', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'ram rental', vehicleHint: ['2025', 'ram', 'promaster 2500'], activeVehicle: false },
+    { id: 'sprinter', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'sprinter rental', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
+  ], { maxRounds: 4, skip: ['1FF2@2'] });
+  assert.equal(sprinter.input.value, '', 'the edited row is left alone');
+  assert.equal(ram.input.value, 'ram rental', 'the other vehicle still fills');
+  assert.deepEqual(Array.from(report.filled, (x) => x.key), ['1FF2'], 'the first row keeps the plain id');
+});
+
+test('two vehicles that read the same leave their rows to the agent', async () => {
+  const h = harness({ ext: true });
+  const first = addExtText(h, 'c', '1FF2', { caption: '2025 RAM PROMASTER 2500', row: '8_1' });
+  const second = addExtText(h, 'c', '1FF2', { caption: '2025 RAM PROMASTER 2500', row: '8_2' });
+  const hint = ['2025', 'ram', 'promaster 2500'];
+  const report = await h.kit.fill([
+    { id: 'a', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'A', vehicleHint: hint, activeVehicle: true },
+    { id: 'b', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'B', vehicleHint: hint, activeVehicle: false },
+  ], { maxRounds: 3 });
+  assert.equal(first.input.value, '');
+  assert.equal(second.input.value, '');
+  assert.equal(report.filled.length, 0);
+  // A year alone isn't enough to name a row.
+  const h2 = harness({ ext: true });
+  const ford = addExtText(h2, 'c', '1FF2', { caption: '2025 FORD TRANSIT', row: '8_1' });
+  await h2.kit.fill([{ id: 'c', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'C', vehicleHint: hint, activeVehicle: true }], { maxRounds: 2 });
+  assert.equal(ford.input.value, '');
+  // Codex on PR #21: an intake vehicle with one identifier can't name a row, even a unique match.
+  const h3 = harness({ ext: true });
+  const sprinter = addExtText(h3, 'c', '1FF2', { caption: '2019 MERCEDES-BENZ SPRINTER', row: '8_1' });
+  addExtText(h3, 'c', '1FF2', { caption: '2016 FREIGHTLINER CASCADIA 125', row: '8_2' });
+  await h3.kit.fill([{ id: 'd', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'D', vehicleHint: ['sprinter'], activeVehicle: true }], { maxRounds: 2 });
+  assert.equal(sprinter.input.value, '');
+});
+
+test('a page showing one vehicle at a time is answered by the active vehicle only', async () => {
+  const h = harness({ ext: true });
+  const worth = addExtText(h, 'r', '2091', { caption: 'If this vehicle was sold today, how much would it be worth?', row: '4_1' });
+  const report = await h.kit.fill([
+    { id: 'first', q: '2091', path: 'vehicles[0].value', kind: 'text', value: '31000', vehicleHint: ['2025', 'ram', 'promaster 2500'], activeVehicle: false },
+    { id: 'second', q: '2091', path: 'vehicles[1].value', kind: 'text', value: '17000', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
+  ], { maxRounds: 3 });
+  assert.equal(worth.input.value, '17000');
+  assert.equal(report.filled.length, 1);
+});
+
+// Codex on PR #21: an earlier vehicle the intake doesn't describe (no year/make/model) has no
+// hint, and must not take the box of the vehicle being added.
+test('a per-vehicle step without year/make/model answers only as the active vehicle, and names no row', async () => {
+  let h = harness({ ext: true });
+  const worth = addExtText(h, 'r', '2091', { caption: 'If this vehicle was sold today, how much would it be worth?', row: '4_1' });
+  await h.kit.fill([
+    { id: 'undescribed', q: '2091', path: 'vehicles[0].value', kind: 'text', value: '31000', vehicleHint: null, activeVehicle: false },
+    { id: 'active', q: '2091', path: 'vehicles[1].value', kind: 'text', value: '17000', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
+  ], { maxRounds: 3 });
+  assert.equal(worth.input.value, '17000');
+  // On Rates (rows named by their vehicle) it can't pick a row, even its own.
+  h = harness({ ext: true });
+  const row = addExtText(h, 'c', '1FF2', { caption: '2025 RAM PROMASTER 2500', row: '8_1' });
+  const report = await h.kit.fill([
+    { id: 'undescribed-rates', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'rental', vehicleHint: null, activeVehicle: true },
+  ], { maxRounds: 2 });
+  assert.equal(row.input.value, '');
+  assert.equal(report.filled.length, 0);
+});
+
+test('rows of several vehicles without their names are not given to the active vehicle', async () => {
+  const h = harness({ ext: true });
+  addExtText(h, 'c', '1FF2', { caption: 'Rental Reimbursement', row: '8_1' });
+  addExtText(h, 'c', '1FF2', { caption: 'Rental Reimbursement', row: '8_2' });
+  // Only the second vehicle has this one; nothing on the page says which vehicle that is.
+  const loan = addExtText(h, 'c', '2007', { caption: 'Loan/Lease', row: '8_2' });
+  const hint = (v) => (v ? ['2016', 'freightliner', 'cascadia'] : ['2019', 'mercedes benz', 'sprinter']);
+  const report = await h.kit.fill([0, 1].flatMap((v) => [
+    { id: `rental-${v}`, q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'rental', vehicleHint: hint(v), activeVehicle: v === 1 },
+    { id: `loan-${v}`, q: '2007', path: 'progressive.q2007', kind: 'text', value: 'loan', vehicleHint: hint(v), activeVehicle: v === 1 },
+  ]), { maxRounds: 4 });
+  assert.equal(loan.input.value, '');
+  assert.equal(report.filled.length, 0);
 });
 
 test('step.ignore makes a known optional question safe to leave untouched', async () => {
@@ -764,6 +875,37 @@ test('action prerequisites are conjunctive and unsafe Start Quote buttons never 
   assert.equal(recalc._clicked, true, 'recalculate waits for every prerequisite');
   assert.equal(start._clicked, undefined, 'Start Quote remains the agent navigation decision');
   assert.equal(report.actions.filter((x) => x.id === 'startQuote').length, 0);
+});
+
+// The vehicle tile (2026-10-05: a Semi Truck found no tile and the panel said nothing).
+test('a helper the agent must otherwise do says so when it cannot be clicked, and a unique one never guesses', async () => {
+  const tile = (text, missing) => ({ id: 'tile', kind: 'action', action: 'vehicleTile:2', text, unique: true, label: 'Vehicle type', missing,
+    path: 'action.vehicleTile', name: 'Click vehicleTile', pages: [], after: [], afterActions: [], afterPages: [], unless: [] });
+  const page = () => {
+    const h = harness();
+    for (const name of ['Truck Tractor', 'Box Truck', 'Cargo Van']) addButton(h, name).onclick = function () { this._clicked = true; };
+    return h;
+  };
+  // No tile for this type: nothing clicked, the agent is told.
+  let h = page();
+  let report = await h.kit.fill([tile(null, 'Tanker isn\'t matched to a Progressive tile yet: pick the vehicle yourself.')], { maxRounds: 2 });
+  assert.equal(report.actions.length, 0);
+  assert.deepEqual(Array.from(report.noData, (x) => [x.label, x.note]), [['Vehicle type', 'Tanker isn\'t matched to a Progressive tile yet: pick the vehicle yourself.']]);
+  assert.ok(report.blockers.includes('needs you: Vehicle type'));
+  // A mapped type whose tile isn't on the page: also told.
+  h = page();
+  report = await h.kit.fill([tile('reefer|refrigerat', 'No reefer tile here.')], { maxRounds: 2 });
+  assert.deepEqual(Array.from(report.noData, (x) => x.note), ['No reefer tile here.']);
+  // Two matching tiles: the agent's pick, not the first one.
+  h = page();
+  report = await h.kit.fill([tile('truck', 'Two tiles match.')], { maxRounds: 2 });
+  assert.equal(report.actions.length, 0);
+  assert.deepEqual(Array.from(report.noData, (x) => x.note), ['Two tiles match.']);
+  // The tile is there: clicked, no note.
+  h = page();
+  report = await h.kit.fill([tile('^Truck Tractor$', 'unused')], { maxRounds: 2 });
+  assert.deepEqual(Array.from(report.actions, (x) => x.text), ['Truck Tractor']);
+  assert.equal(report.noData.length, 0);
 });
 
 function coverageActionPlan() {

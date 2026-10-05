@@ -171,11 +171,31 @@ const SAFE_LABEL_RULES = [
   { name: 'Fire / theft additional coverage', label: 'fire\\s*/?\\s*theft', kind: 'choice', value: () => 'Not selected' },
 ];
 
-// Vehicle picker tile for the intake's vehicle type.
-const VEHICLE_TILES = { Van: 'Cargo Van' };
+// Vehicle picker tile for the intake's vehicle type (a regex on the tile's text). Types not listed
+// (Tanker, Dump Truck, Other) are the agent's to pick until we have seen their tiles.
+const VEHICLE_TILES = {
+  Van: '^Cargo Van$',
+  'Semi Truck': '^Truck Tractor$',
+  'Box Truck': '^Box Truck$',
+  'Pickup Truck': '^Pickup Truck$',
+  Flatbed: '^Flatbed Truck$',
+  // TNI: a reefer tile only when the business class says Reefer too. Its exact name isn't known yet.
+  'Reefer Truck': 'reefer|refrigerat',
+};
+const isReefer = (r) => /^reefer$/i.test((r.operations.businessClass ?? '').trim());
 const vehicleTile = (r, a) => {
   const type = r.vehicles[a.vehicles ?? 0]?.type;
-  return type ? `^${(VEHICLE_TILES[type] ?? type).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$` : null;
+  if (type === 'Reefer Truck' && !isReefer(r)) return null;
+  return VEHICLE_TILES[type] ?? null;
+};
+// Shown when no tile was clicked for this vehicle, so the agent knows to pick it.
+const vehicleTileNote = (r, a) => {
+  const type = r.vehicles[a.vehicles ?? 0]?.type;
+  if (!type) return 'The intake has no vehicle type for this vehicle: pick it yourself.';
+  if (type === 'Reefer Truck' && !isReefer(r)) return 'The intake says Reefer Truck but its business class is not Reefer: pick the vehicle yourself.';
+  return VEHICLE_TILES[type]
+    ? `No tile on this page matches the intake's ${type}: pick the vehicle yourself.`
+    : `${type} isn't matched to a Progressive tile yet: pick the vehicle yourself.`;
 };
 
 export const progressive = {
@@ -212,7 +232,8 @@ export const progressive = {
     // Some states (IN, OH) show the business type as a box with a Search next to it, which opens
     // the business type list (BECAPopup).
     { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
-    { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, scope: 'vehicle' },
+    // Two tiles matching (two reefer tiles) means it's the agent's pick.
+    { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
     { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle' },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
     { id: 'openCargo', page: 'CoveragesRates', text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true },
@@ -242,6 +263,8 @@ export const progressive = {
   // The page listing the quote's vehicles: the side panel works on the next intake vehicle not
   // added yet there, so Add Vehicle repeats until all are in, then Continue.
   vehicleList: 'VehicleSummary',
+  // The pages about one vehicle, repeated for each (their Continue is per vehicle).
+  vehiclePages: ['MostCommonVehicles', 'AddVehicle'],
   // Same for drivers: the AddDriver page marks its driver entered once filled.
   driverList: 'DriverSummary',
   driverPage: 'AddDriver',
@@ -372,7 +395,7 @@ export const progressive = {
     { q: '2CA7', name: 'Loan / lease (from ownership, standard: No)', kind: 'choice', label: 'loan lease', value: loanLease },
     // The same answer shown again on Rates (NJ), with its own wording: Progressive carries it over.
     // Left as Progressive set it, but a carryover that didn't happen (empty) goes to the agent.
-    { q: '2007', name: 'Loan / lease on Rates (carried over from Add Vehicle)', ignore: true, emptyNote: 'Loan / lease should carry over from Add Vehicle but is empty here: answer it yourself.' },
+    { q: '2007', name: 'Loan / lease on Rates (carried over from Add Vehicle)', ignore: true, emptyNote: 'Loan / lease should carry over from Add Vehicle but is empty here: answer it yourself.', scope: 'vehicle' },
     // NJ: who the vehicle is registered to.
     { q: '2C97', name: 'Vehicle registrant (standard: Named insured)', kind: 'choice', label: 'vehicle registrant', value: () => 'Named insured' },
     // NJ safety equipment boxes: the VIN lookup ticks what the vehicle has; left as Progressive set them.
@@ -383,9 +406,10 @@ export const progressive = {
     { q: '2CCE', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment },
     { q: '2CE3', name: 'Vehicle has no equipment (standard)', kind: 'bool', label: 'vehicle has no equipment', value: () => true },
     { q: '2CE8', path: 'vehicles[].value', name: 'Vehicle value if sold today', label: 'sold today', note: vehicleValueNote },
-    // Same two questions under the ids other states/products use (NC, OH).
-    { q: '208A', name: 'Vehicle has no equipment (standard)', kind: 'bool', value: () => true },
-    { q: '2091', path: 'vehicles[].value', name: 'Vehicle value if sold today', note: vehicleValueNote },
+    // Same two questions under the ids other states/products use (NC, OH), and on Rates (FL) once
+    // per vehicle, where each row gets its own vehicle's answer.
+    { q: '208A', name: 'Vehicle has no equipment (standard)', kind: 'bool', value: () => true, scope: 'vehicle' },
+    { q: '2091', path: 'vehicles[].value', name: 'Vehicle value if sold today', note: vehicleValueNote, scope: 'vehicle' },
 
     // --- Add driver (AddDriver) ------------------------------------------------------------------
     { q: '2898', path: 'drivers[].first' },
@@ -416,6 +440,8 @@ export const progressive = {
     { q: '1FCD', name: 'Comprehensive deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'comprehensiveDeductible'), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '1FD2', name: 'Collision deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'collisionDeductible'), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '1FF2', name: 'Rental reimbursement (standard: $40/day, $1,200 max)', kind: 'choice', value: () => '$40 per day, $1,200 max', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+    // Offered for a truck tractor next to Rental reimbursement (FL, 2026-10-05). TNI: Not selected.
+    { q: '1FF9', name: 'Rental with downtime (TNI: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '2000', name: 'Roadside / towing (first selected option)', kind: 'selected-option', value: () => 'Selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '200F', name: 'Additional fire / theft coverage (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
     { q: '1FDD', name: 'UMPD limit (standard: Not selected)', kind: 'choice', label: 'umpd', value: () => 'Not selected' },

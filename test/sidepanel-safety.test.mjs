@@ -68,7 +68,11 @@ function extractFunction(name) {
     if (ch === '{') depth += 1;
     if (ch === '}') {
       depth -= 1;
-      if (!depth) return SIDEPANEL.slice(start, i + 1);
+      if (!depth) {
+        const source = SIDEPANEL.slice(start, i + 1);
+        // Agent-edit scoping is shared by many functions: bring its helpers along.
+        return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
+      }
     }
   }
   throw new Error(`could not find the end of ${name}`);
@@ -114,7 +118,7 @@ function harness() {
       return handle;
     },
     clearTimeout: (handle) => cleared.push(handle),
-    renderSite: () => rendered.push(state.tab?.id ?? null),
+    renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {},
     ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
@@ -307,7 +311,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     afterFill: () => {},
     runPendingPage: () => {},
   };
-  vm.runInNewContext(extractFunction('autoFill'), context);
+  vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
   await context.autoFill('Rates');
   assert.equal(state.autoPaused, false);
   assert.equal(state.filling, false);
@@ -980,4 +984,201 @@ test('reloading an intake drops settled ledger entries without losing unresolved
   assert.equal(state.aiCache.get(pendingSig), pending, 'the existing unresolved hold keeps its identity');
   assert.equal(stored.length, 1);
   assert.equal(stored[0].key, 'pending');
+});
+
+// 2026-10-05 FL run: after the first vehicle's Add Vehicle was continued, the second and third
+// vehicles' (same headings) were taken for the agent going back, and Continue wasn't clicked.
+test('a continued step is remembered per vehicle on vehicle pages, per driver on the driver page, quote-wide elsewhere', () => {
+  const progressive = { vehicleList: 'VehicleSummary', driverList: 'DriverSummary', vehiclePages: ['MostCommonVehicles', 'AddVehicle'], driverPage: 'AddDriver' };
+  const state = { active: { vehicles: 0, drivers: 0 }, doneSteps: new Set(), autoPaused: false, tab: { carrier: progressive } };
+  const watched = [];
+  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: (...args) => watched.push(args) };
+  vm.runInNewContext(extractFunction('stepScope') + extractFunction('afterFill'), context);
+  const continued = (page, stepKey) => context.afterFill([{ advanced: 'Continue', signatureBefore: 'before', stepKey }], { carrier: progressive, page });
+  continued('AddVehicle', 'Vehicle Information / Common Questions');
+  continued('BusinessOwnerInfo', 'Named Insured');
+  continued('AddDriver', 'Driver');
+  assert.deepEqual([...state.doneSteps], ['AddVehicle|v0|Vehicle Information / Common Questions', 'BusinessOwnerInfo||Named Insured', 'AddDriver|d0|Driver']);
+  assert.equal(watched[0][3], 'AddVehicle|v0|Vehicle Information / Common Questions', 'the lost-Continue retry uses the same entry');
+  const remembered = (page) => [...state.doneSteps].filter((s) => s.startsWith(context.stepScope(page, progressive))).length;
+  assert.equal(remembered('AddVehicle'), 1, 'back on the first vehicle: not continued again');
+  state.active.vehicles = 1;
+  assert.equal(remembered('AddVehicle'), 0, 'the next vehicle is a new step');
+  state.active.drivers = 1;
+  assert.equal(remembered('BusinessOwnerInfo'), 1, 'a picker change never makes a page the agent left new again');
+  assert.equal(remembered('AddDriver'), 0, 'the next driver is a new step');
+  // One-address applications (AmWINS) keep one entry per page and step, whatever the active row.
+  assert.equal(context.stepScope('Step', {}), 'Step||');
+});
+
+test('a Luna request waiting for a follow-up fill belongs to its tab', async () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'CoveragesRates'), carrier: { id: 'progressive' } };
+  h.state.assistPage = 'CoveragesRates';
+  h.setActiveTab(quoteTab(2, 'CoveragesRates'));
+  await h.refreshTab();
+  assert.equal(h.state.assistPage, null, 'another quote on the same page starts without it');
+  h.state.assistPage = null;
+  h.setActiveTab(quoteTab(1, 'CoveragesRates'));
+  await h.refreshTab();
+  assert.equal(h.state.assistPage, 'CoveragesRates', 'back on the first quote it is still waiting');
+});
+
+test('each quote tab keeps its own active vehicle and driver', async () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'AddVehicle'), carrier: { id: 'progressive' } };
+  h.state.active = { drivers: 0, vehicles: 2, trailers: 0 };
+  h.setActiveTab(quoteTab(2, 'AddVehicle'));
+  await h.refreshTab();
+  h.state.active.vehicles = 0;
+  h.setActiveTab(quoteTab(1, 'AddVehicle'));
+  await h.refreshTab();
+  assert.equal(h.state.active.vehicles, 2, 'the first quote is back on its own vehicle');
+  h.setActiveTab(quoteTab(2, 'AddVehicle'));
+  await h.refreshTab();
+  assert.equal(h.state.active.vehicles, 0);
+});
+
+// Codex on PR #21: on a page of tiles only, the vehicle-type note was hidden by "No form fields".
+test('a page without form fields still shows what needs the agent', () => {
+  const box = { replaceChildren(...children) { this.children = children; } };
+  const context = {
+    $: () => box, state: { tab: { id: 7, url: 'MostCommonVehicles' } }, pageOf: (url) => url,
+    h: (tag, props, ...children) => ({ tag, props, children }), ignoreReview: () => {},
+  };
+  vm.runInNewContext(extractFunction('renderReport'), context);
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [],
+    noData: [{ label: 'Vehicle type', key: null, note: 'Tanker isn\'t matched to a Progressive tile yet: pick the vehicle yourself.' }] }]);
+  const text = JSON.stringify(box.children);
+  assert.match(text, /Vehicle type/);
+  assert.match(text, /pick the vehicle yourself/);
+  assert.doesNotMatch(text, /No form fields found/);
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [] }]);
+  assert.match(JSON.stringify(box.children), /No form fields found/, 'an empty page is still said to be empty');
+});
+
+function assistHarness({ suggest, cfg = {} } = {}) {
+  const logged = [], rendered = [], applied = [];
+  const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat(), isConnected: true,
+    replaceChildren(...next) { this.children = next; }, remove() { this.isConnected = false; }, before() {} });
+  const report = { append(child) { child.isConnected = true; this.children = [...(this.children ?? []), child]; }, querySelector: () => null };
+  const record = { vehicles: [] };
+  const state = { intake: { record }, active: { drivers: 0, vehicles: 0 }, tab: { id: 1, url: 'https://rater.test/Default.aspx?pageName=CoveragesRates' },
+    aiRun: 0, aiCache: new Map(), agentKeys: new Map(), filling: false };
+  const context = {
+    state, assistContextKey, pageOf: (url) => new URL(url).searchParams.get('pageName'), h: node, $: () => report,
+    aiSettings: async () => ({ on: true, apiKey: 'synthetic', model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
+    PROVIDERS: { luna: { name: 'Luna', policy: 'synthetic-policy' } },
+    collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
+    aiSettledOnPage: () => false, aiFingerprint: (v) => JSON.stringify(v), aiItemFingerprint: (x) => `${x.key}|${x.label}`,
+    aiCacheSignature: (x) => JSON.stringify(x), runKit: async () => [{ frameId: 0, result: 'snapshot' }],
+    suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events) },
+    renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
+    syncAiBanner: () => {}, pendingAi: () => [],
+  };
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('runAssist'), context);
+  const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
+  return { state, context, ctx, report, logged, rendered, applied, holder: () => report.children.at(-1) };
+}
+
+// 2026-10-05 FL run: Luna answered in 17 s, but the page had changed meanwhile; the panel kept
+// "Asking Luna about 14 questions…" on screen for minutes.
+test('an AI answer that arrives after the page changed replaces the waiting message and is still logged', async () => {
+  const answer = { suggestions: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125', leave: true }], tokensIn: 10, tokensOut: 2, modelCalls: 1 };
+  const t = assistHarness({ suggest: async () => {
+    t.state.tab = { ...t.state.tab, url: 'https://rater.test/Default.aspx?pageName=CoveragesRates-Reload' };
+    return answer;
+  } });
+  await t.context.runAssist([{}], t.ctx);
+  const text = JSON.stringify(t.holder().children);
+  assert.match(text, /Luna: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
+  assert.doesNotMatch(text, /Asking/);
+  assert.equal(t.rendered.length, 0, 'stale suggestions are never shown as current');
+  assert.equal(t.state.aiCache.size, 0, 'nor cached');
+  assert.equal(t.logged[0].type, 'ai_suggest');
+  assert.equal(t.logged[0].tokensIn, 10, 'the spent tokens are logged');
+  assert.equal(t.logged[0].error, 'Answer discarded: the tab or page changed.');
+  // The same answer while the page is unchanged is shown.
+  const fresh = assistHarness({ suggest: async () => answer });
+  await fresh.context.runAssist([{}], fresh.ctx);
+  assert.equal(fresh.rendered.length, 1);
+  assert.equal(fresh.logged[0].error, undefined);
+});
+
+test('Luna waits for the follow-up fill of a helper it clicked, and is not asked about a page the fill left', async () => {
+  const asked = [];
+  const state = { assistPage: null, tab: { id: 1 }, tabSessions: new Map() };
+  const context = { state, runAssist: (frames, ctx) => asked.push(ctx.page) };
+  vm.runInNewContext(extractFunction('assistAfterFill'), context);
+  context.assistAfterFill([{ actions: [{ id: 'openCargo' }] }], { tabId: 1, page: 'CoveragesRates' }, true);
+  assert.deepEqual(asked, []);
+  assert.equal(state.assistPage, 'CoveragesRates', 'held for the follow-up fill');
+  context.assistAfterFill([{ navigatedTo: 'ChangePaymentPlan' }], { tabId: 1, page: 'CoveragesRates' }, false);
+  assert.deepEqual(asked, [], 'the bill plan opened: nothing to ask about this page');
+  assert.equal(state.assistPage, null);
+  context.assistAfterFill([{}], { tabId: 1, page: 'CoveragesRates' }, false);
+  assert.deepEqual(asked, ['CoveragesRates']);
+  // Codex on PR #21: the agent switched to another quote tab while this fill ran.
+  const other = { assistPage: null };
+  state.tab = { id: 2 };
+  state.tabSessions.set(1, other);
+  context.assistAfterFill([{ actions: [{ id: 'openCargo' }] }], { tabId: 1, page: 'CoveragesRates' }, true);
+  assert.equal(state.assistPage, null, 'the visible tab is untouched');
+  assert.equal(other.assistPage, 'CoveragesRates', 'its own tab waits');
+  context.assistAfterFill([{}], { tabId: 1, page: 'CoveragesRates' }, false);
+  assert.deepEqual(asked, ['CoveragesRates'], 'Luna is not asked about a tab in the background');
+});
+
+test('the follow-up fill a Luna request waited for asks it, even with nothing unfamiliar left', async () => {
+  const run = async (followUp) => {
+    const frames = [{ fields: 2, filled: [], actions: [], unknown: [], noData: [{ key: 'k', label: 'Cargo limit' }], halted: false }];
+    const rendered = [], assisted = [];
+    const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(),
+      autoPaused: false, filling: false, assistPage: 'Rates' };
+    const context = {
+      state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
+      runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
+      recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {} },
+      runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, retireAiOrigins: async () => {},
+      afterFill: () => followUp, runPendingPage: () => {},
+    };
+    vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
+    await context.autoFill('Rates');
+    return { rendered: rendered.length, assisted, assistPage: state.assistPage };
+  };
+  assert.deepEqual(await run(false), { rendered: 1, assisted: ['Rates'], assistPage: null });
+  assert.deepEqual(await run(true), { rendered: 1, assisted: [], assistPage: 'Rates' }, 'another follow-up is coming: still held');
+});
+
+// Codex on PR #21: on Add Vehicle (one vehicle at a time, the same field keys for each) an agent
+// correction on the first vehicle must not leave the next vehicle's box unfilled.
+test('agent edits are protected per vehicle on vehicle pages and per page elsewhere', async () => {
+  const carrier = { vehiclePages: ['MostCommonVehicles', 'AddVehicle'], driverPage: 'AddDriver' };
+  const state = { tab: { id: 1, url: 'AddVehicle', carrier }, active: { vehicles: 0, drivers: 0 }, agentKeys: new Map(), filling: false };
+  const fills = [];
+  const context = { state, persistAgentKeys: async () => {}, pageOf: (url) => url, fillPage: async () => fills.push(1) };
+  vm.runInNewContext(extractFunction('ignoreReview'), context);
+  await context.ignoreReview('2091', 1, 'AddVehicle');
+  assert.deepEqual([...state.agentKeys.keys()], ['AddVehicle|v0']);
+  assert.equal(context.editScope('AddVehicle'), 'AddVehicle|v0');
+  state.active.vehicles = 1;
+  assert.equal(state.agentKeys.get(context.editScope('AddVehicle')), undefined, 'the next vehicle starts unprotected');
+  assert.equal(context.editScope('CoveragesRates'), 'CoveragesRates', 'other pages keep their page key');
+  state.tab.url = 'AddDriver';
+  assert.equal(context.editScope('AddDriver'), 'AddDriver|d0');
+});
+
+// Codex on PR #21: a retired AI pick's protected key is removed from the vehicle it was made on.
+test('a retired AI pick is unprotected in its own vehicle scope, not the active one', async () => {
+  const carrier = { vehiclePages: ['MostCommonVehicles', 'AddVehicle'], driverPage: 'AddDriver' };
+  const sig = '1\nAddVehicle\ngpt-6-luna\npolicy\ncontext\nitem\nquote-a';
+  const pick = { key: '2CA7', done: 'auto', quoteHash: 'quote-a', editScope: 'AddVehicle|v0' };
+  const state = { tab: { id: 1, url: 'https://rater.test/a', carrier }, intake: {}, active: { vehicles: 1, drivers: 0 },
+    aiCache: new Map([[sig, pick]]), agentKeys: new Map([['AddVehicle|v0', new Set(['2CA7'])], ['AddVehicle|v1', new Set(['2CA7'])]]) };
+  const context = { state, aiFingerprint: () => 'quote-b', aiOriginRecord: () => null, aiRetiredSignatures: new Set(),
+    persistAiPending: async () => {}, persistAgentKeys: async () => {}, runKit: async () => [] };
+  vm.runInNewContext(extractFunction('retireAiOrigins'), context);
+  assert.equal(await context.retireAiOrigins({ tabId: 1, tabUrl: state.tab.url, intake: state.intake, carrier }), true);
+  assert.deepEqual([...state.agentKeys.get('AddVehicle|v0')], [], 'removed where the pick was made');
+  assert.deepEqual([...state.agentKeys.get('AddVehicle|v1')], ['2CA7'], 'the active vehicle\'s own protection is untouched');
 });

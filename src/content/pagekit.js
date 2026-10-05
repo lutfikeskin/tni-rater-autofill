@@ -11,7 +11,7 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 
 (() => {
-  if (globalThis.__raterKit?.version === 38) return;
+  if (globalThis.__raterKit?.version === 39) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -163,6 +163,13 @@
     return String(id ?? '').match(/^f_[a-z]([0-9a-f]{32})([0-9a-f]+)_\d+_\d+/i)?.[2]?.toUpperCase() ?? null;
   }
 
+  // Its <page>_<row>: on Progressive's Rates every question of one vehicle shares the row, and
+  // one of them is labelled with the vehicle ("2025 RAM PROMASTER 2500").
+  const VEHICLE_LABEL = /^(?:19|20)\d{2}\s+\S/;
+  function dctRow(id) {
+    return String(id ?? '').match(/^f_[a-z][0-9a-f]{32}[0-9a-f]+_(\d+_\d+)/i)?.[1] ?? null;
+  }
+
   // The page is waiting on its server or re-drawing after an answer.
   function pageBusy() {
     const X = ext();
@@ -242,6 +249,16 @@
       c.hint = humanize(c.el.name || c.el.id || '');
       c.required = dctRequired(c.cmp) || isRequired(c.el, c.label);
     }
+    // The vehicle a per-vehicle row belongs to: a question labelled with it ("2025 RAM PROMASTER
+    // 2500") names its row, and the row's unlabelled questions (vehicle value, equipment) are its
+    // too. A row naming two vehicles names none.
+    const rowVehicle = new Map();
+    for (const c of out) {
+      c.row = dctRow(c.cmp?.id ?? c.el.id);
+      if (!c.row || !VEHICLE_LABEL.test(c.label ?? '')) continue;
+      rowVehicle.set(c.row, rowVehicle.has(c.row) && rowVehicle.get(c.row) !== c.text ? null : c.text);
+    }
+    for (const c of out) c.vehicle = VEHICLE_LABEL.test(c.label ?? '') ? c.text : (c.row && rowVehicle.get(c.row)) || null;
     return out;
   }
 
@@ -333,18 +350,31 @@
     const steps = plan.map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
     const take = (s, c) => { used.add(c); donePaths.add(s.path); pairs.push({ step: s, control: c }); };
     const fits = (s, c) => !(c.kind === 'checkbox' && s.kind !== 'bool');
+    // A label fallback can't tell rows of one question apart, nor a vehicle's question from
+    // another vehicle's: those are only answered by their question id and vehicle.
+    const repeated = new Set(controls.map((x) => x.q).filter((q, i, all) => q && all.indexOf(q) !== i));
+    // Steps of a per-vehicle question, one per vehicle (activeVehicle true or false), with or
+    // without a year/make/model to name its row.
+    const perVehicle = new Set(steps.filter((s) => s.activeVehicle != null && s.q).map((s) => s.q));
+    // A page about one vehicle (Add Vehicle): no question names a vehicle and the per-vehicle
+    // questions sit in one row. Rows of several vehicles without their names stay with the agent.
+    const oneVehicle = !controls.some((x) => x.vehicle) && new Set(controls.filter((x) => perVehicle.has(x.q)).map((x) => x.row)).size <= 1;
 
     // Distinct known questions may share intake data (business and home ZIP/City).
     // Match every explicit target; path deduplication applies only to label fallbacks.
     for (const s of steps) {
       let c = null;
-      if (s.q) {
+      if (s.q && s.activeVehicle != null) {
+        // One step per vehicle (several in the quote): on a page showing one vehicle at a time, the
+        // active vehicle's; otherwise the row labelled with this vehicle's year/make/model. A
+        // vehicle the intake doesn't describe can't name a row: left to the agent.
+        const same = controls.filter((x) => x.q === s.q);
+        c = oneVehicle ? (s.activeVehicle && same.length === 1 ? same[0] : null) : s.vehicleHint ? vehicleRow(same, s.vehicleHint) : null;
+        if (c && used.has(c)) c = null;
+      } else if (s.q) {
+        // Without a vehicle, several rows for one question are ambiguous: they stay yellow.
         const same = controls.filter((x) => !used.has(x) && x.q === s.q);
-        // Several rows with the same question (one per vehicle): take the active vehicle's row,
-        // recognised by its year/make/model in the label.
-        // Without a hint, several rows for one question are ambiguous: they stay yellow.
-        if (same.length > 1) c = s.vehicleHint ? same.find((x) => s.vehicleHint.some((h) => x.text.includes(h))) ?? null : null;
-        else c = same[0] ?? null;
+        c = same.length > 1 ? null : same[0] ?? null;
       }
       if (!c && s.selector) c = controls.find((x) => !used.has(x) && (safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector))));
       // A dropdown with no usable label, known by one of its options ("NO PRIOR").
@@ -354,11 +384,21 @@
     for (const field of ['text', 'hint']) {
       for (const s of steps) {
         if (!s.reC || donePaths.has(s.path)) continue;
-        const c = controls.find((x) => !used.has(x) && x[field] && fits(s, x) && s.reC.test(x[field]) && !(s.exC && s.exC.test(x[field])));
+        const c = controls.find((x) => !used.has(x) && !repeated.has(x.q) && !perVehicle.has(x.q) && x[field] && fits(s, x) && s.reC.test(x[field]) && !(s.exC && s.exC.test(x[field])));
         if (c) take(s, c);
       }
     }
     return pairs;
+  }
+
+  // The one row naming this vehicle best: at least two of its year, make and model as whole
+  // words, also when the intake gives only one of them. Two rows that fit equally well (two
+  // identical vans) are the agent's.
+  function vehicleRow(rows, hint) {
+    const score = (x) => hint.filter((h) => ` ${x.vehicle ?? ''} `.includes(` ${h} `)).length;
+    const best = Math.max(0, ...rows.map(score));
+    const top = rows.filter((x) => score(x) === best);
+    return best >= 2 && top.length === 1 ? top[0] : null;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -818,6 +858,8 @@
   function findButton(step) {
     const re = step.text ? new RegExp(step.text, 'i') : null;
     let best = null;
+    // `unique`: two separate matches (two reefer tiles) leave the choice to the agent.
+    const separate = [];
     for (const el of deepQueryAll(document, 'a, button, [role=button], [role=link], input[type=button], input[type=submit], .x-btn, [onclick]')) {
       if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]')) continue;
       const text = oneLine(el.value || el.textContent);
@@ -828,8 +870,9 @@
       if (!hit || (step.near && !isNear(el, step.near, re))) continue;
       // Prefer the innermost match (the link itself, not the table cell around it).
       if (!best || best.contains(el)) best = el;
+      if (!separate.some((s) => s.contains(el) || el.contains(s))) separate.push(el);
     }
-    return best;
+    return step.unique && separate.length > 1 ? null : best;
   }
 
   // For look-alike buttons ("+" next to every coverage): the button's section must mention
@@ -1223,6 +1266,13 @@
         mark(c, 'needs', 'required, and not on the intake form');
       }
     }
+    // A helper the agent must otherwise do by hand (the vehicle tile) that couldn't be clicked here.
+    if (window === window.top && currentPage() === startPage) {
+      for (const a of actions) {
+        if (!a.missing || clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage())) || findButton(a)) continue;
+        report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing });
+      }
+    }
     // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
     report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findIndex((x) => x.id === b.id) === i);
     // Anything the agent should look at before moving on.
@@ -1422,5 +1472,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 38, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 39, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

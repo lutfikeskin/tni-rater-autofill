@@ -175,9 +175,10 @@ const state = {
   // Automatic follow-up fills: pages the agent has filled in this tab, and per page the fields
   // the agent changed themselves (never refilled automatically).
   autoPages: new Set(),
-  // "page|step" of one-address applications already continued from (AmWINS steps).
+  // Steps already continued from, keyed by stepScope (AmWINS steps, Progressive's per-vehicle pages).
   doneSteps: new Set(),
   advanceRetried: new Set(), // steps whose lost Continue was clicked a second time (once each)
+  assistPage: null, // a page whose Luna request waits for a helper's follow-up fill (per tab, like the above)
   tabSessions: new Map(),
   agentKeys: new Map(),
   filling: false,
@@ -256,6 +257,8 @@ function aiPendingRecord(sig, x, scope) {
     snapshotHash: x.snapshotHash ?? (x.snapshots ? snapshotFingerprint(x.snapshots) : null),
     origin: aiOriginRecord(x.origin),
     originAmbiguous: !!x.originAmbiguous,
+    // Where its protected key lives (the page, with the vehicle/driver on vehicle and driver pages).
+    editScope: typeof x.editScope === 'string' ? x.editScope : null,
   };
 }
 
@@ -443,7 +446,8 @@ async function retireAiOrigins(ctx, frames = null) {
   for (const [sig, x] of retiring) if (state.aiCache.get(sig) === x) {
     state.aiCache.delete(sig);
     aiRetiredSignatures.add(sig);
-    state.agentKeys.get(sig.split('\n')[1])?.delete(x.key);
+    // From the vehicle/driver the pick was made on, not whichever is active now.
+    state.agentKeys.get(x.editScope ?? editScope(sig.split('\n')[1]))?.delete(x.key);
     changed = true;
   }
   if (changed) {
@@ -486,6 +490,7 @@ async function loadFile(file) {
   state.visitedPages = new Set();
   state.doneSteps = new Set();
   state.advanceRetried = new Set();
+  state.assistPage = null;
   state.intake = { ...result, fileName: file.name, done: [] };
   // Start on Check intake when something on the intake needs a look, else straight on Fill.
   state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
@@ -760,13 +765,16 @@ async function refreshTab() {
     }
   }
   if (tab?.id !== state.tab?.id) {
-    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps'];
+    // `active`: each quote tab is on its own vehicle and driver (Continue is remembered per vehicle).
+    const keys = ['filled', 'labels', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps', 'assistPage', 'active'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
     const previous = state.tabSessions.get(tab?.id);
     Object.assign(state, previous ?? {
       filled: new Map(), labels: new Map(), autoPages: new Set(), autoPaused: false,
-      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(),
+      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(), assistPage: null,
+      active: { ...state.active },
     });
+    if (state.intake) renderPickers();
     clearTimeout(state.autoTimer);
     state.autoPending = false;
   }
@@ -838,9 +846,9 @@ function onRecorderMessage(msg, sender) {
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
-      const keys = state.agentKeys.get(page) ?? new Set();
+      const keys = state.agentKeys.get(editScope(page)) ?? new Set();
       byAgent.forEach((c) => keys.add(c.key));
-      state.agentKeys.set(page, keys);
+      state.agentKeys.set(editScope(page), keys);
       persistAgentKeys();
       settleRejectedAi(page, byAgent, sender).then((released) => {
         if (released && state.tab?.id === sender.tab?.id && pageOf(state.tab?.url) === page) {
@@ -862,6 +870,24 @@ function onRecorderMessage(msg, sender) {
 // Automatic fills only run on the carrier's quote pages (never e.g. its quote-search page).
 const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUrl || state.tab.carrier.autoFillUrl.test(state.tab.url ?? ''));
 
+// A step counts as continued per page, and on a page about one vehicle or driver (Progressive's
+// Add Vehicle, Add Driver) per active vehicle/driver: Add Vehicle looks the same for every
+// vehicle, and the next vehicle's page is a new step, not the agent going back. Other pages stay
+// quote-wide, so changing a picker never makes a page the agent left new again.
+function stepScope(page, carrier = state.tab?.carrier) {
+  const entity = carrier?.vehiclePages?.includes(page) ? `v${state.active.vehicles ?? 0}`
+    : carrier?.driverPage && carrier.driverPage === page ? `d${state.active.drivers ?? 0}` : '';
+  return `${page}|${entity}|`;
+}
+
+// Agent edits are protected per page, and on a page about one vehicle or driver per that vehicle
+// or driver (the scope of stepScope): correcting the first vehicle's value on Add Vehicle doesn't
+// leave the next vehicle's box alone.
+function editScope(page, carrier = state.tab?.carrier) {
+  const scope = stepScope(page, carrier);
+  return scope.endsWith('||') ? page : scope.slice(0, -1);
+}
+
 const fillOptions = (carrier, extra = {}) => ({
   optional: carrier.optional ?? [],
   replaceChoices: !!carrier.replaceChoices,
@@ -869,14 +895,14 @@ const fillOptions = (carrier, extra = {}) => ({
   batch: !!carrier.batch,
   // Steps of a one-address application already continued from (a step the agent goes back to
   // isn't continued again).
-  doneSteps: [...state.doneSteps].filter((s) => s.startsWith(`${pageOf(state.tab?.url)}|`)).map((s) => s.slice(s.indexOf('|') + 1)),
+  doneSteps: [...state.doneSteps].filter((s) => s.startsWith(stepScope(pageOf(state.tab?.url), carrier))).map((s) => s.slice(stepScope(pageOf(state.tab?.url), carrier).length)),
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
   advance: $('auto-advance').checked && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
   doneActions: [...state.doneActions],
   visitedPages: [...state.visitedPages],
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
-  skip: [...(state.agentKeys.get(pageOf(state.tab?.url)) ?? [])],
+  skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
   ...extra,
 });
 
@@ -896,17 +922,19 @@ async function autoFill(page) {
   state.autoPending = false;
   const started = Date.now();
   let assistFrames = null;
+  let followUp = false;
   await tellRecorder('pause');
   try {
     await retireAiOrigins({ tabId, tabUrl: state.tab.url, intake: state.intake, carrier });
     const plan = buildPlan(state.intake.record, carrier, state.active);
-    const skip = [...(state.agentKeys.get(page) ?? [])];
+    const skip = [...(state.agentKeys.get(editScope(page)) ?? [])];
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite: false, skip, keepMarks: true })]);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
-    afterFill(frames, { carrier, page });
+    followUp = afterFill(frames, { carrier, page });
     const hasWarnings = frames.some((f) => f.unknown?.length);
-    if (state.autoPaused || hasWarnings) { renderReport(frames); assistFrames = frames; }
+    // The fill whose helper this follows up held Luna back for it.
+    if (state.autoPaused || hasWarnings || state.assistPage === page) { renderReport(frames); assistFrames = frames; }
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings) {
       if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)) }));
@@ -926,7 +954,7 @@ async function autoFill(page) {
     if (state.autoPending) scheduleAutoFill(page);
   }
   runPendingPage();
-  if (assistFrames) runAssist(assistFrames, { tabId, page, carrier });
+  if (assistFrames) assistAfterFill(assistFrames, { tabId, page, carrier }, followUp);
 }
 
 function runPendingPage() {
@@ -971,9 +999,9 @@ async function recordLayout(page) {
 
 function rememberFill(frames) {
   const page = pageOf(state.tab?.url);
-  const keys = state.agentKeys.get(page) ?? new Set();
+  const keys = state.agentKeys.get(editScope(page)) ?? new Set();
   for (const key of frames.flatMap((f) => f.protectedKeys ?? [])) keys.add(key);
-  state.agentKeys.set(page, keys);
+  state.agentKeys.set(editScope(page), keys);
   persistAgentKeys();
   if (frames.some((f) => f.halted)) {
     state.autoPaused = true;
@@ -1090,6 +1118,7 @@ async function fillPage({ auto = false } = {}) {
   $('report').replaceChildren(h('p', { class: 'muted small center' }, 'Filling one answer at a time: the page checks each answer with its server. Keep this tab open.'));
   const started = Date.now();
   let assistFrames = null;
+  let followUp = false;
   // Our own fills aren't the agent's changes: pause the recorder while filling.
   await ensureRecorder();
   await tellRecorder('pause');
@@ -1099,7 +1128,7 @@ async function fillPage({ auto = false } = {}) {
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
     state.autoPages.add(page);
-    afterFill(frames, { carrier, page });
+    followUp = afterFill(frames, { carrier, page });
     recordLayout(page);
     if (!carrier.practice) usage.log(...fillEvents(frames, {
       carrier: carrier.id, page, overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
@@ -1117,7 +1146,7 @@ async function fillPage({ auto = false } = {}) {
   }
   runPendingPage();
   await remarkAi({ tabId, page, carrier });
-  if (assistFrames && !assistFrames.some((f) => f.halted)) runAssist(assistFrames, { tabId, page, carrier });
+  if (assistFrames && !assistFrames.some((f) => f.halted)) assistAfterFill(assistFrames, { tabId, page, carrier }, followUp);
 }
 
 // On the carrier's vehicle list page, work on the first intake vehicle not added yet (its Add
@@ -1141,6 +1170,7 @@ async function pickListItem(carrier, page) {
 
 // Bookkeeping after a fill: the driver page marks its driver entered; a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
+// Returns whether that follow-up fill is coming.
 function afterFill(frames, { carrier, page }) {
   if (carrier.driverPage && carrier.driverPage === page && frames.some((f) => f.filled?.length)) {
     state.doneActions.add(`driverEntered:${state.active.drivers ?? 0}`);
@@ -1150,9 +1180,27 @@ function afterFill(frames, { carrier, page }) {
   if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 900);
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
   if (advanced) {
-    if (advanced.stepKey) state.doneSteps.add(`${page}|${advanced.stepKey}`);
-    watchNextStep(carrier, page, advanced.signatureBefore, advanced.stepKey);
+    const doneKey = advanced.stepKey ? stepScope(page, carrier) + advanced.stepKey : null;
+    if (doneKey) state.doneSteps.add(doneKey);
+    watchNextStep(carrier, page, advanced.signatureBefore, doneKey);
   }
+  return clicked && !moved && !state.autoPaused && $('auto-followups').checked;
+}
+
+// Luna is asked once the page has stopped changing: after the last follow-up fill of a helper
+// chain (cargo "+", Add a commodity), and never about a page the fill has just left
+// (2026-10-05: asked while the cargo follow-up still ran, its answer came back stale).
+function assistAfterFill(frames, ctx, followUp) {
+  const moved = frames.some((f) => f.navigatedTo || f.advanced);
+  const wait = followUp && !moved ? ctx.page : null;
+  // The agent switched rater tabs while this fill ran: its marker goes to its own tab's session.
+  if (state.tab?.id !== ctx.tabId) {
+    const saved = state.tabSessions.get(ctx.tabId);
+    if (saved) saved.assistPage = wait;
+    return;
+  }
+  state.assistPage = wait;
+  if (!followUp && !moved) runAssist(frames, ctx);
 }
 
 // After Continue on an application that keeps one address for every step (AmWINS' Save &
@@ -1161,7 +1209,8 @@ function afterFill(frames, { carrier, page }) {
 // fills the old step again, so Continue can't be clicked twice.
 // A Continue that didn't take (the page neither moved nor changed for about 6 s, and isn't
 // loading) is tried once more: Progressive's Change Payment Plan lost one while it redrew.
-async function watchNextStep(carrier, page, before, stepKey = null) {
+// `doneKey`: the continued step's entry in state.doneSteps (see stepScope).
+async function watchNextStep(carrier, page, before, doneKey = null) {
   const tabId = state.tab?.id;
   if (!$('auto-followups').checked && !$('auto-pages').checked) return;
   let last = null;
@@ -1181,10 +1230,9 @@ async function watchNextStep(carrier, page, before, stepKey = null) {
       return;
     }
     unchanged = now != null && now === before ? unchanged + 1 : 0;
-    const retryKey = `${page}|${stepKey}`;
-    if (unchanged >= 20 && stepKey && !state.filling && !state.advanceRetried.has(retryKey)) {
-      state.advanceRetried.add(retryKey);
-      state.doneSteps.delete(retryKey);
+    if (unchanged >= 20 && doneKey && !state.filling && !state.advanceRetried.has(doneKey)) {
+      state.advanceRetried.add(doneKey);
+      state.doneSteps.delete(doneKey);
       fillPage({ auto: 'page' });
       return;
     }
@@ -1194,9 +1242,9 @@ async function watchNextStep(carrier, page, before, stepKey = null) {
 
 async function ignoreReview(key, tabId, page) {
   if (!key || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
-  const keys = state.agentKeys.get(page) ?? new Set();
+  const keys = state.agentKeys.get(editScope(page)) ?? new Set();
   keys.add(key);
-  state.agentKeys.set(page, keys);
+  state.agentKeys.set(editScope(page), keys);
   await persistAgentKeys();
   await fillPage();
 }
@@ -1213,7 +1261,8 @@ function renderReport(frames) {
   const tabId = state.tab?.id;
   const page = pageOf(state.tab?.url);
   box.className = 'report';
-  if (!fields && !all('actions').length) {
+  // A page of tiles only (Most Common Vehicles) has no fields but may still need the agent.
+  if (!fields && !all('actions').length && !all('noData').length) {
     const halted = frames.find((f) => f.halted);
     box.replaceChildren(h('p', { class: halted ? 'error' : 'muted center' }, halted ? `Automatic filling and helpers paused. ${halted.reason ?? 'Review this page before retrying.'}` : 'No form fields found on this page.'));
     return;
@@ -1318,7 +1367,7 @@ async function runAssist(frames, ctx) {
   const provider = PROVIDERS[cfg.provider];
   // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
-  const items = collected.items.filter(x => !state.agentKeys.get(ctx.page)?.has(x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
+  const items = collected.items.filter(x => !state.agentKeys.get(editScope(ctx.page))?.has(x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
   const blocked = collected.blocked;
   // Messages, the approval card and suggestions without a list item go above "Needs you".
   const holder = h('div', { class: 'ai-holder' });
@@ -1341,8 +1390,19 @@ async function runAssist(frames, ctx) {
   try {
     ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
   } catch { return; }
-  const stale = () => run !== state.aiRun || !aiActionCurrent(ctx, [])
-    || ctx.contextKey !== assistContextKey(state.intake?.record, state.active) || !holder.isConnected;
+  // Why this request (or its answer) no longer fits what the panel shows; null while it does.
+  const staleWhy = () => (run !== state.aiRun ? 'a newer request'
+    : !aiActionCurrent(ctx, []) ? 'the tab or page changed'
+    : ctx.contextKey !== assistContextKey(state.intake?.record, state.active) ? 'the intake or driver/vehicle changed'
+    : !holder.isConnected ? 'the panel was redrawn' : null);
+  const stale = () => !!staleWhy();
+  // A dropped answer never leaves "Asking…" on screen (2026-10-05 FL run: Luna answered in 17 s,
+  // the panel kept waiting for minutes).
+  const dropped = (what, next = 'Click Fill this page to ask again.') => {
+    if (!holder.isConnected) return;
+    if (run !== state.aiRun) { holder.remove(); return; }
+    holder.replaceChildren(h('p', { class: 'card bad small' }, `${provider.name}: ${what}. ${next}`));
+  };
   // Reuse an answer for the same question (as the page shows it now) in the same intake and
   // driver/vehicle, model and policy. Not keyed on the rest of the page: every automatic
   // follow-up fill changes that, which asked the assistant again each time. Putting an answer in still
@@ -1358,29 +1418,37 @@ async function runAssist(frames, ctx) {
     const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
     try {
       const result = await suggest(missing, context, cfg, { isStale: stale });
-      if (stale()) return;
       const fresh = result.suggestions;
-      fresh.forEach(x => state.aiCache.set(sigOf(x), {
-        ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),
-      }));
+      // An answer that came too late is still logged (its tokens were spent), with the reason.
+      const why = staleWhy();
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
         leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length,
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
-        reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens });
+        reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
+        ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
+      if (why) { dropped(`it answered after ${why}, so nothing was applied`); return; }
+      fresh.forEach(x => state.aiCache.set(sigOf(x), {
+        ...x, policy: provider.policy, contextKey: ctx.contextKey, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl),
+      }));
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : 'The assistant could not review this page. Nothing was applied.';
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
       if (!stale()) holder.replaceChildren(h('p', { class: 'card bad small' }, `AI assistant: ${msg}`));
+      else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;
     }
   }
   const suggestions = items.map((x) => state.aiCache.get(sigOf(x))).filter(Boolean);
-  if (stale()) return;
+  if (stale()) { dropped(`${staleWhy()} before its answers were shown, so nothing was applied`); return; }
+  let applied = false;
   if (cfg.auto) {
     const picks = suggestions.filter((x) => x.autoOk && !x.done && !x.dismissed);
-    if (picks.length) await applyAi(picks, ctx, 'auto');
+    // Anything sent to the page counts, also an answer that couldn't be confirmed.
+    if (picks.length) { await applyAi(picks, ctx, 'auto'); applied = picks.some((x) => x.done); }
   }
   if (!stale()) renderAi(holder, suggestions, ctx);
+  else if (applied) dropped(`${staleWhy()} after its selections were put in`, 'Click Fill this page to review them before continuing.');
+  else dropped(`${staleWhy()} before its answers were shown, so nothing was applied`);
   syncAiBanner(ctx);
 }
 
@@ -1429,7 +1497,7 @@ async function applyAi(list, ctx, decision) {
   if (state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return false;
   if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return false;
   if (ctx.run !== undefined && ctx.run !== state.aiRun) return false;
-  list = list.filter(x => ['radio', 'select', 'checkbox'].includes(x.controlKind) && !x.leave && !state.agentKeys.get(ctx.page)?.has(x.key) && (decision !== 'auto' || x.autoOk));
+  list = list.filter(x => ['radio', 'select', 'checkbox'].includes(x.controlKind) && !x.leave && !state.agentKeys.get(editScope(ctx.page))?.has(x.key) && (decision !== 'auto' || x.autoOk));
   if (!list.length || !aiActionCurrent(ctx, list)) return false;
   const isCurrent = () => aiActionCurrent(ctx, list)
     && ctx.contextKey === assistContextKey(state.intake?.record, state.active)
@@ -1481,7 +1549,7 @@ async function applyAi(list, ctx, decision) {
       .filter(result => result && typeof result === 'object')
       .map(result => ({ ...result, frameId: frame.frameId, documentId: frame.documentId })));
     const sameContext = isCurrent();
-    const keys = sameContext ? state.agentKeys.get(ctx.page) ?? new Set() : null;
+    const keys = sameContext ? state.agentKeys.get(editScope(ctx.page)) ?? new Set() : null;
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
       const ok = mine.find((r) => r.ok);
@@ -1495,6 +1563,7 @@ async function applyAi(list, ctx, decision) {
         x.error = null;
         if (sameContext) {
           keys.add(x.key);
+          x.editScope = editScope(ctx.page);
           state.filled.set(x.key, { path: null, shown: ok.shown });
         }
       } else {
@@ -1503,7 +1572,7 @@ async function applyAi(list, ctx, decision) {
       }
       if (sameContext && !ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
     }
-    if (sameContext) state.agentKeys.set(ctx.page, keys);
+    if (sameContext) state.agentKeys.set(editScope(ctx.page), keys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
     const after = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     for (const x of list) if (x.done) {
@@ -1588,11 +1657,10 @@ function renderAi(holder, suggestions, ctx) {
         ? !snapshotHashMatches(now, x.snapshotHash)
         : !snapshotsEqual(now, x.snapshots ?? ctx.snapshots)));
       if (moved.length) {
-        const keys = state.agentKeys.get(ctx.page);
         for (const x of moved) {
           x.rejected = true;
           x.error = 'the page changed after this choice; run Fill again and review it';
-          keys?.delete(x.key);
+          state.agentKeys.get(x.editScope ?? editScope(ctx.page))?.delete(x.key);
         }
         list = list.filter((x) => !moved.includes(x));
         if (!list.length) {

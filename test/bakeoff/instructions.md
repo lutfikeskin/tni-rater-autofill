@@ -32,7 +32,7 @@ Leave a question as it is when the rules and the intake don't say anything about
 - Leave empty: middle initial, suffix, DBA name (always), quote vendor code. Don't touch agent code or policy start date.
 
 ### MostCommonVehicles (vehicle picker)
-- Click the tile for the intake's vehicle type. A "Van" is **Cargo Van**.
+- Click the tile for the intake's vehicle type: "Van" is **Cargo Van**, "Semi Truck" is **Truck Tractor**, "Flatbed" is **Flatbed Truck**; Box Truck and Pickup Truck by their names. "Reefer Truck" is the refrigerated tile only when the intake's business class is also Reefer. Tanker, Dump Truck and Other, or more than one matching tile: leave the tile to the agent.
 
 ### AddVehicle
 - Enter the VIN, then click **Lookup VIN** right away, before the other questions.
@@ -67,7 +67,8 @@ Leave a question as it is when the rules and the intake don't say anything about
 
 ### CoveragesRates
 - **Bodily injury and property damage liability**: the intake's requested limit. "$1M CSL" is "$1 million CSL". The page pre-selects $750k.
-- **Rental** (the "$… per day" dropdown): "$40 per day, $1,200 max".
+- **Rental** (the "$… per day" dropdown): "$40 per day, $1,200 max". **Rental with Downtime** (offered for a truck tractor): Not selected.
+- With several vehicles, each vehicle's coverages are listed under its name: the same per-vehicle answers apply to every vehicle.
 - **Total value of permanently attached equipment**: "$0 to $2,000".
 - Cargo, when the intake asks for it: click the **+** in the **Motor Truck Cargo** row (not another row's +). Then:
   - Special cargo (mobile/modular homes; business documents): both No.

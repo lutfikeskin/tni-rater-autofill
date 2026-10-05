@@ -27,7 +27,7 @@ export const TNI_RULES = `
 - Leave empty: middle initial, suffix, DBA name (always), quote vendor code. Don't change agent code or policy start date.
 
 ## Vehicles (MostCommonVehicles, AddVehicle)
-- Vehicle tile: the intake's vehicle type. A "Van" is "Cargo Van".
+- Vehicle tile: the intake's vehicle type. "Van" is "Cargo Van", "Semi Truck" is "Truck Tractor", "Flatbed" is "Flatbed Truck"; Box Truck and Pickup Truck by their names. "Reefer Truck" is the refrigerated tile only when the intake's business class is also Reefer. Tanker, Dump Truck and Other: the agent picks.
 - Garaging ZIP: the garaging address ZIP.
 - Farthest one-way distance: the intake's radius in miles. "Unlimited" or long haul is "More than 500 miles".
 - Business, personal or both: "Business Only" unless the intake says the vehicle is also for personal use.
@@ -57,7 +57,8 @@ export const TNI_RULES = `
 ## Coverages and rates (CoveragesRates)
 - Bodily injury and property damage liability: the intake's requested limit ("$1M CSL" is "$1 million CSL").
 - Medical payments per person (per vehicle): $5,000 per person.
-- UM/UIM: $100k CSL (also when asked separately as Uninsured and Underinsured Motorist). UMPD limit: Not selected. Comprehensive and collision deductibles: $1,000. Rental: "$40 per day, $1,200 max". Fire/theft additional coverage: Not selected. Roadside: keep what the page has selected.
+- UM/UIM: $100k CSL (also when asked separately as Uninsured and Underinsured Motorist). UMPD limit: Not selected. Comprehensive and collision deductibles: $1,000. Rental: "$40 per day, $1,200 max". Rental with Downtime (offered for a truck tractor): Not selected. Fire/theft additional coverage: Not selected. Roadside: keep what the page has selected.
+- With several vehicles, each vehicle's coverages are listed under its name; the same per-vehicle standards apply to every vehicle.
 - Motor Truck Cargo only when the intake asks for it: special cargo questions (mobile/modular homes; business documents) No; "General freight" is category "Consumer Goods", commodity "Other Consumer Goods"; limit and deductible from the intake ("$100K/$1K Ded" is "$100k with a $1,000 Deductible").
 - Refrigeration Breakdown: use the intake's Reefer breakdown option (coverage.reeferBreakdown). If selected, choose "Yes, match Motor Truck Cargo limits". If unselected, No, or blank/null, answer "No"; an unselected Reefer option does not need agent review.
 - General liability: not set up yet; the agent answers it.

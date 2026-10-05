@@ -105,6 +105,17 @@ test('helpers', () => {
   assert.equal(parseAddress('9 Oak Ave N Fort Worth TX 76102').city, 'Fort Worth');
   assert.equal(parseAddress('9 Oak Ave N Fort Worth TX 76102').street, '9 Oak Ave N');
   assert.equal(parseAddress('PO Box 12 Somewhere').state, null);
+  // The unit after the comma, in front of the city (2026-10-05 FL run: city read as "APT … ORLANDO").
+  assert.deepEqual(
+    (({ street, unit, city }) => ({ street, unit, city }))(parseAddress('100 Sample Way, APT 12 ORLANDO, FL, 32801')),
+    { street: '100 Sample Way', unit: 'APT 12', city: 'ORLANDO' });
+  assert.equal(parseAddress('100 Sample Way, #12 Rock Hill, SC 29730').unit, '#12');
+  assert.equal(parseAddress('100 Sample Way, #12 Rock Hill, SC 29730').city, 'Rock Hill');
+  // A city that starts like a unit word stays whole.
+  assert.equal(parseAddress('100 Main St, Ste Genevieve, MO 63670').city, 'Ste Genevieve');
+  assert.equal(parseAddress('100 Main St, Ste Genevieve, MO 63670').unit, null);
+  assert.equal(parseAddress('100 Main St Apt 4, Dover, DE 19901').unit, 'Apt 4');
+  assert.equal(parseAddress('100 Main St Apt 4, Dover, DE 19901').city, 'Dover');
 });
 
 test('plan resolves the chosen driver and vehicle', () => {
@@ -251,9 +262,11 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.equal(byQ('239', other).value, 'Dry Van', 'other classes: as written on the intake');
   assert.equal(byQ('267', other).ignore, true, 'type of trucker only exists for For Hire Trucking');
   assert.equal(byQ('1FF2').value, '$40 per day, $1,200 max');
-  // Two vehicles on the fixture: the active vehicle's row is picked by its year/make/model.
-  assert.deepEqual(byQ('1FF2').vehicleHint, ['2021', 'ford', 'transit 350']);
-  assert.deepEqual(buildPlan(record, carrier, { vehicles: 1 }).find((s) => s.q === '1FF2').vehicleHint, ['2019', 'isuzu', 'npr hd']);
+  // Two vehicles on the fixture: a step per vehicle, each finding its row by year/make/model;
+  // the active vehicle's is the one a page showing one vehicle at a time uses.
+  const rental = (active) => buildPlan(record, carrier, active).filter((s) => s.q === '1FF2');
+  assert.deepEqual(rental({}).map((s) => [s.vehicleHint, s.activeVehicle]), [[['2021', 'ford', 'transit 350'], true], [['2019', 'isuzu', 'npr hd'], false]]);
+  assert.deepEqual(rental({ vehicles: 1 }).map((s) => s.activeVehicle), [false, true]);
   assert.equal(carrier.replaceChoices, true);
   const federal = plan.find((s) => s.re === '^federal( liability)?( filing)?$');
   assert.equal(federal.value, true, 'filings needed: Federal ticked');
