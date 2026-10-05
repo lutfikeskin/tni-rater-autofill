@@ -40,7 +40,7 @@ For AmWINS page changes, update the scrubbed [fixtures](../test/fixtures/amwins/
 
 [checks.yml](../.github/workflows/checks.yml) runs unit tests and packaging on pull requests, with a five-minute limit and cancellation of superseded runs. Browser installation, carrier mocks and replays, assistant browser workflows, and packaged-extension E2E run locally. Merging a tested PR avoids a duplicate main-branch run. Do not claim CI passed based only on local tests.
 
-For a shipped extension version, keep [manifest.json](../manifest.json) and [package.json](../package.json) in sync and update the lockfile's package metadata. `npm run package` produces the zip and unpacked directory under ignored `dist/`. A local correction or documentation change does not itself authorize a version bump or upload.
+For a shipped extension version, keep [manifest.json](../manifest.json) and [package.json](../package.json) in sync and update the lockfile's package metadata. `npm run package` produces the zip and unpacked directory under ignored `dist/`; both stamp the page scripts with their build, and only the unpacked copy carries the fixed development extension key (`scripts/lib/package.mjs`), which the store zip must not. A local correction or documentation change does not itself authorize a version bump or upload.
 
 Use [store release](chrome-web-store.md) only for distribution, and [hosting](hosting.md) only for server deployment. Verify the requested outcome, including retained page values or a generated document when that is part of the task; distinguish mock, packaged-extension, and live evidence.
 

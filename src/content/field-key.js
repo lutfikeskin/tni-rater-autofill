@@ -1,6 +1,8 @@
 // Shared by the fill engine and recorder in their respective script worlds.
 (() => {
-  if (globalThis.__raterFieldKey?.version === 2) return;
+  // Stamped like pagekit.js (scripts/lib/package.mjs): another build left in the page is replaced.
+  const BUILD = 'source';
+  if (globalThis.__raterFieldKey?.version === 2 && globalThis.__raterFieldKey.build === BUILD) return;
 
   function fieldKey(el, { q = null } = {}) {
     // A known question keeps its id. Repeated per vehicle on one page (Progressive's Rates rows
@@ -36,5 +38,5 @@
     return `dom-v1:${radio ? 'radio/' : ''}${parts.join('/')}`;
   }
 
-  globalThis.__raterFieldKey = Object.assign(fieldKey, { version: 2 });
+  globalThis.__raterFieldKey = Object.assign(fieldKey, { version: 2, build: BUILD });
 })();

@@ -1847,3 +1847,18 @@ test('a fill reports each combo\'s choices under the key the recorder gives its 
   const repicked = logged();
   assert.deepEqual([repicked.kind, repicked.from, repicked.to], ['select', 'Transit 350', 'Transit 150']);
 });
+
+test('a kit left in the page by another build (an extension reload or update) is replaced', () => {
+  const h = harness();
+  const old = h.kit;
+  vm.runInNewContext(PAGEKIT, h.context);
+  assert.equal(h.context.__raterKit, old, 'the same build is reused');
+  old.build = 'older-build';
+  h.context.__raterFieldKey.build = 'older-build';
+  const oldKey = h.context.__raterFieldKey;
+  vm.runInNewContext(FIELD_KEY, h.context);
+  vm.runInNewContext(PAGEKIT, h.context);
+  assert.notEqual(h.context.__raterKit, old);
+  assert.notEqual(h.context.__raterFieldKey, oldKey);
+  assert.equal(h.context.__raterKit.build, 'source');
+});

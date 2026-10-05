@@ -12,14 +12,16 @@
 (() => {
   const VERSION = 5;
   const previous = globalThis.__raterRecorder;
+  // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
+  const orphaned = previous?.alive?.() === false;
   if (previous) {
     // Flush any trusted edit before rebaseline or replacing an older recorder. This keeps a
     // native change that landed immediately before reinjection from disappearing.
-    previous.rebaseline?.();
+    if (!orphaned) previous.rebaseline?.();
     // Reusing the current recorder avoids resetting its listeners on every fill. Older versions
     // have no dispose hook, so rebaseline and leave the sole installed recorder in place rather
     // than starting a second timer that would duplicate usage events.
-    if (previous.version === VERSION || typeof previous.dispose !== 'function') return;
+    if ((previous.version === VERSION && !orphaned) || typeof previous.dispose !== 'function') return;
     previous.dispose();
   }
 
@@ -340,6 +342,7 @@
     version: VERSION,
     rebaseline,
     dispose,
+    alive: () => !!chrome.runtime?.id,
   };
   globalThis.__raterRecorder = api;
 
