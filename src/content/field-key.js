@@ -2,7 +2,7 @@
 (() => {
   // Stamped like pagekit.js (scripts/lib/package.mjs): another build left in the page is replaced.
   const BUILD = 'source';
-  if (globalThis.__raterFieldKey?.version === 2 && globalThis.__raterFieldKey.build === BUILD) return;
+  if (globalThis.__raterFieldKey?.version === 3 && globalThis.__raterFieldKey.build === BUILD) return;
 
   function fieldKey(el, { q = null } = {}) {
     // A known question keeps its id. Repeated per vehicle on one page (Progressive's Rates rows
@@ -11,6 +11,15 @@
     if (q != null) {
       const row = String(el.id ?? '').match(/^f_[a-z][0-9a-f]{32}[0-9a-f]+_\d+_(\d+)/i)?.[1];
       return row && row !== '1' ? `${q}@${row}` : q;
+    }
+    // A checkbox repeated per row keeps the template's name, and only its id carries the row
+    // (AmWINS' vehicle coverage boxes: name "medicalPaymentExclude", ids
+    // medicalPaymentExclude<row>_<box>_). Every row gets its own key, name#<row> numbered from 1,
+    // so an edit or answer on one vehicle stays on that vehicle. The first row too: a plain name
+    // saved before (version 2) could be any row's edit, and protects them all (rowKeyBase).
+    if (el.name && el.type?.toLowerCase() !== 'radio') {
+      const row = String(el.id ?? '').startsWith(el.name) ? el.id.slice(el.name.length).match(/^(\d+)_\d+_/)?.[1] : null;
+      if (row) return `${el.name}#${Number(row) + 1}`;
     }
     const known = el.name || el.id;
     if (known) return known;
@@ -38,5 +47,8 @@
     return `dom-v1:${radio ? 'radio/' : ''}${parts.join('/')}`;
   }
 
-  globalThis.__raterFieldKey = Object.assign(fieldKey, { version: 2, build: BUILD });
+  // The plain name an older key used for a row key (name#<row>), else null.
+  const rowKeyBase = (key) => String(key ?? '').match(/^(.+)#\d+$/)?.[1] ?? null;
+
+  globalThis.__raterFieldKey = Object.assign(fieldKey, { version: 3, build: BUILD, rowKeyBase });
 })();

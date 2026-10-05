@@ -8,6 +8,9 @@
 //   vehicle: the row is redrawn from the decoded VIN (body type and GVW from the decoder, other
 //   answers on the row cleared) and the VIN list emptied;
 // - typing a VIN into a vehicle row decodes it the same way (overwrites body type and GVW);
+// - each vehicle added gets its own row on the Coverages step (Vehicle Coverages) with the
+//   "Exclude …" boxes, renumbered the way the site's repeater does it (ids per row, one shared
+//   name per box);
 // - Default all answers to "No" answers the first underwriting section;
 // - the classification box is a select2 type-ahead that opens on a left-button mousedown, with
 //   several results for 484122 (as on the live site);
@@ -154,19 +157,30 @@
   // --- Vehicles -----------------------------------------------------------------------------------
   const DECODED = { year: '2019', make: 'ISUZU', model: 'NPR', bodyType: 'INCOMPLETE - STRAIGHT TRUCK', grossVehicleWeight: '14500' };
   // Saved repeaters use a zero-based data-id. Clone the original blank controls, not answers.
-  const templates = Object.fromEntries(['drivers', 'vehicles'].map((kind) => [kind, $(`#${kind}Panel > .app-rp-section`).cloneNode(true)]));
+  const templates = Object.fromEntries(['drivers', 'vehicles', 'vehicleCoverages'].map((kind) => [kind, $(`#${kind}Panel > .app-rp-section`)?.cloneNode(true)]));
   const addRow = (kind) => {
     const panel = $(`#${kind}Panel`);
     const index = panel.querySelectorAll(':scope > .app-rp-section').length;
     const copy = templates[kind].cloneNode(true);
     copy.setAttribute('data-id', String(index));
     for (const el of [copy, ...copy.querySelectorAll('*')]) {
+      // The site's repeater renumbers a checkbox's id (<data-id><row>_<n>_) and its label's for,
+      // but leaves the checkbox's name as the template's: every row's box shares one name.
+      if (el.type === 'checkbox') {
+        const n = el.id.match(/(\d+)_$/)?.[1];
+        el.id = `${el.getAttribute('data-id')}${index}_${n}_`;
+        el.nextElementSibling?.setAttribute('for', el.id);
+        continue;
+      }
+      if (el.tagName === 'LABEL' && el.previousElementSibling?.type === 'checkbox') continue;
       for (const attr of ['id', 'name', 'for', 'data-bs-target']) {
         if (el.hasAttribute(attr)) el.setAttribute(attr, el.getAttribute(attr).replace(/Accordion0/g, `Accordion${index}`).replace(/_0_/g, `_${index}_`));
       }
       if (el.id === 'marketValue') el.id = `marketValue${index}`;
     }
     panel.append(copy);
+    // A vehicle added on the Vehicles step gets its row of coverages too (the site's OnAdd).
+    if (kind === 'vehicles' && templates.vehicleCoverages) addRow('vehicleCoverages');
     return copy;
   };
   for (const kind of ['drivers', 'vehicles']) {
@@ -188,6 +202,9 @@
     const values = scenario ? { year: String(result.modelYear), make: result.make, model: result.model,
       bodyType: 'CARGO VAN', grossVehicleWeight: result.grossVehicleWeight ?? '' } : DECODED;
     for (const [id, value] of Object.entries(values)) setRow(id, value, index);
+    // The vehicle's coverage row is titled "MAKE, Model, Year" (the site's SetCustomTitle).
+    const title = $(`#vehicleCoveragesPanel > .app-rp-section[data-id="${index}"] .customTitle`);
+    if (title) title.textContent = [values.make, values.model, values.year].join(', ');
   };
   const lookupError = document.createElement('div');
   lookupError.id = 'mockVinError';

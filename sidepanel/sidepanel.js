@@ -952,6 +952,13 @@ function editScope(page, carrier = state.tab?.carrier) {
   return scope.endsWith('||') ? page : scope.slice(0, -1);
 }
 
+// Whether the agent settled this field on the page. A row key (name#<row>, field-key v3) is also
+// settled by its plain name, saved by an older build, which could have been any row's edit.
+function agentEdited(page, key) {
+  const keys = state.agentKeys.get(editScope(page));
+  return !!keys && (keys.has(key) || keys.has(String(key ?? '').match(/^(.+)#\d+$/)?.[1]));
+}
+
 const fillOptions = (carrier, extra = {}) => ({
   optional: carrier.optional ?? [],
   replaceChoices: !!carrier.replaceChoices,
@@ -1785,7 +1792,7 @@ async function runAssist(frames, ctx) {
   const provider = PROVIDERS[cfg.provider];
   // Questions the agent (or an applied AI answer) already settled on this page are not asked again.
   const collected = collectItems(frames);
-  const items = collected.items.filter(x => !state.agentKeys.get(editScope(ctx.page))?.has(x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
+  const items = collected.items.filter(x => !agentEdited(ctx.page, x.key) && !aiSettledOnPage(ctx.tabId, ctx.page, x));
   const blocked = collected.blocked;
   // Messages, the approval card and suggestions without a list item go above "Needs you".
   const holder = h('div', { class: 'ai-holder' });
@@ -1915,7 +1922,7 @@ async function applyAi(list, ctx, decision) {
   if (state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return false;
   if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return false;
   if (ctx.run !== undefined && ctx.run !== state.aiRun) return false;
-  list = list.filter(x => ['radio', 'select', 'checkbox'].includes(x.controlKind) && !x.leave && !state.agentKeys.get(editScope(ctx.page))?.has(x.key) && (decision !== 'auto' || x.autoOk));
+  list = list.filter(x => ['radio', 'select', 'checkbox'].includes(x.controlKind) && !x.leave && !agentEdited(ctx.page, x.key) && (decision !== 'auto' || x.autoOk));
   if (!list.length || !aiActionCurrent(ctx, list)) return false;
   const isCurrent = () => aiActionCurrent(ctx, list)
     && ctx.contextKey === assistContextKey(state.intake?.record, state.active)

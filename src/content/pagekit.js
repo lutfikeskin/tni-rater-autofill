@@ -914,7 +914,11 @@
   // agent goes back to is theirs, never continued again.
   // `stopPages`: pages where the carrier has stopped the quote: nothing is filled or clicked there.
   async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [] } = {}) {
+    // An agent edit protects its field. A plain name saved by an older build (field-key v2)
+    // protects every row key made from it (name#<row>): it could have been any row's edit.
     const skipKeys = new Set(skip);
+    const skipped = Set.prototype.has.bind(skipKeys);
+    skipKeys.has = (key) => skipped(key) || skipped(globalThis.__raterFieldKey.rowKeyBase?.(key));
     const quiet = new Set(optional);
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');

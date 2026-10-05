@@ -412,6 +412,34 @@ test('anonymous repeated carrier fields have distinct keys and protecting one do
   assert.deepEqual([rows[0].carrier.value, replacement.value, rows[2].carrier.value], ['np', 'allianz', 'np']);
 });
 
+test('a checkbox repeated per row under one name gets a key per row: an answer or edit stays on its vehicle', async () => {
+  // AmWINS' Vehicle Coverages: every row's box is named "medicalPaymentExclude"; only the id
+  // (medicalPaymentExclude<row>_<box>_) carries the row, and the label is the same on each.
+  const h = harness();
+  const boxes = [0, 1, 2].map((row) => {
+    const box = makeInput({ type: 'checkbox', name: 'medicalPaymentExclude', id: `medicalPaymentExclude${row}_0_`, ariaLabel: 'Exclude Medical Payments' });
+    h.document.body.append(box);
+    return box;
+  });
+  const keys = boxes.map((el) => h.context.__raterFieldKey(el));
+  assert.deepEqual(keys, ['medicalPaymentExclude#1', 'medicalPaymentExclude#2', 'medicalPaymentExclude#3']);
+  const [ok] = await h.kit.answer([{ key: keys[2], label: 'Exclude Medical Payments', value: 'checked' }]);
+  assert.equal(ok.ok, true);
+  assert.deepEqual(boxes.map((b) => b.checked), [false, false, true], 'the third vehicle\'s answer lands on its own row');
+  boxes[2].checked = false;
+  const plan = [0, 1, 2].map((n) => ({ id: `exclude${n}`, path: `exclude${n}`, re: '^ex\\w*de\\b.*medical', kind: 'bool', value: true, name: 'Exclude' }));
+  await h.kit.fill(plan, { skip: [keys[1]], maxRounds: 3 });
+  assert.deepEqual(boxes.map((b) => b.checked), [true, false, true], 'an edit on one row protects only that row');
+  // An edit saved by an older build under the shared name could be any row's: it protects them all.
+  boxes.forEach((b) => { b.checked = false; });
+  const legacy = await h.kit.fill(plan, { skip: ['medicalPaymentExclude'], maxRounds: 3 });
+  assert.deepEqual(boxes.map((b) => b.checked), [false, false, false]);
+  assert.deepEqual([...legacy.skipped].map((x) => x.key), keys);
+  // Radios and boxes whose id doesn't extend their name keep the name.
+  assert.equal(h.context.__raterFieldKey(makeInput({ type: 'radio', name: 'isNonProfit', id: 'isNonProfit1_0_' })), 'isNonProfit');
+  assert.equal(h.context.__raterFieldKey(makeInput({ type: 'checkbox', name: 'accept', id: 'accept' })), 'accept');
+});
+
 test('an agent-confirmed missing-intake choice is resolved while prefilled values and explicit notes still require review', async () => {
   const plan = [{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: null, name: 'Years in business' }];
   const h = harness();

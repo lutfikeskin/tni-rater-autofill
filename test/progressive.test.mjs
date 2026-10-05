@@ -318,9 +318,21 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
   assert.equal(named(/^Garage city$/)[0].value, record.garaging.city);
   const exclusions = named(/^Exclude /);
   assert.equal(exclusions.length, 6, 'one rule per box: a rule fills one field');
-  for (const label of ['Exclude Medical Payments', 'Exclude Uninsured Motorists', 'Exclude Comprehensive Coverage', 'Exclude Collision Coverage',
-    'Exlucde Transportation Expense/ Rental Reimbursement', 'Exlude Towing & Labor']) {
-    assert.equal(exclusions.filter((s) => new RegExp(s.re, 'i').test(label)).length, 1, label);
+  const LABELS = ['Exclude Medical Payments', 'Exclude Uninsured Motorists', 'Exclude Comprehensive Coverage', 'Exclude Collision Coverage',
+    'Exlucde Transportation Expense/ Rental Reimbursement', 'Exlude Towing & Labor'];
+  for (const label of LABELS) {
+    assert.equal(exclusions.filter((s) => new RegExp(s.re, 'i').test(label) && !new RegExp(s.ex, 'i').test(label)).length, 1, label);
+  }
+  assert.ok(exclusions.every((s) => s.value === false && /^#vehicleCoveragesPanel \[data-id="\w+Exclude"\]$/.test(s.selector)), 'by data-id, not excluded');
+  assert.ok(exclusions.every((s) => new RegExp(s.ex, 'i').test('Exclude Waiver of Collision')), 'the waiver box is not the collision box');
+  // Three vehicles: each box once per vehicle, on that vehicle's row (the rows' 0-based data-id).
+  record.vehicles = [0, 1, 2].map((n) => ({ type: 'Box Truck', vin: `1FTBR3X87MKA1234${n}` }));
+  const perVehicle = buildPlan(record, amwins, {}).filter((x) => /^Exclude /.test(x.name ?? ''));
+  assert.equal(perVehicle.length, 18);
+  for (const row of [0, 1, 2]) {
+    const mine = perVehicle.filter((s) => s.selector.startsWith(`#vehicleCoveragesPanel > .app-rp-section[data-id="${row}"] `));
+    assert.equal(mine.length, 6, `vehicle ${row + 1}`);
+    for (const label of LABELS) assert.equal(mine.filter((s) => new RegExp(s.re, 'i').test(label)).length, 1, `vehicle ${row + 1}: ${label}`);
   }
   assert.ok(plan.some((s) => s.re && new RegExp(s.re, 'i').test('code voilation')), 'the page spells it "voilation"');
   assert.equal(named(/^Vehicles leased/)[0].value, false, 'second section: always No');
