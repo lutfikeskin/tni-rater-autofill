@@ -107,7 +107,7 @@ node scripts/find-intake.mjs <folder of intake PDFs> server-data   # which intak
 npm run replay
 ```
 
-Open `http://localhost:8792/test/replay/`. It rebuilds a carrier's pages from any layout file (the hand-made `captures/progressive/*.json`, or one from `npm run layouts`) as working ExtJS pages with Progressive-style ids and server round-trips, then runs the real fill engine. **Fill every page** gives a coverage table: questions per page, how many were filled, what failed, and which have no rule yet. It's built from recorded structure only; no carrier HTML or code is copied.
+Open `http://localhost:8792/test/replay/`. It rebuilds a carrier's pages from any layout file (a fixture in `test/fixtures/progressive/`, a bake-off course, or one from `npm run layouts`) as working ExtJS pages with Progressive-style ids and server round-trips, then runs the real fill engine. **Fill every page** gives a coverage table: questions per page, how many were filled, what failed, and which have no rule yet. It's built from recorded structure only; no carrier HTML or code is copied.
 
 ### Replay regression run (before every release)
 

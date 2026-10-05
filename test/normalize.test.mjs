@@ -369,3 +369,17 @@ test('NTL / non-trucking / bobtail in the claims box asks the agent; coverage.nt
     assert.ok(!r.warnings.some((x) => x.code === 'coverage.ntl'), text);
   }
 });
+
+// test/fixtures/multi-vehicle-intake.pdf: the FL expediter run with two vans and a semi truck,
+// personal details replaced with made-up ones (VINs keep make/model/year, new serials).
+test('multi-vehicle intake: unit before the city, three vehicles with their types', async () => {
+  const pdf = new Uint8Array(fs.readFileSync(new URL('./fixtures/multi-vehicle-intake.pdf', import.meta.url)));
+  const { record: r, warnings: w } = normalizeIntake(await readIntakeFields(pdfjs, pdf), { today: new Date('2026-10-02') });
+  assert.deepEqual(r.garaging, { street: '100 SAMPLE WAY', unit: 'APT 101', city: 'ORLANDO', state: 'FL', zip: '32801' });
+  assert.deepEqual(r.vehicles.map((v) => [v.type, v.year, v.make, v.value]), [
+    ['Van', 2025, 'RAM', 34000], ['Van', 2019, 'MERCEDES-BENZ', 15000], ['Semi Truck', 2016, 'FREIGHTLINER', 20000],
+  ]);
+  assert.equal(r.vehicles[1].vin, 'WD4PF1CD8KT100002', 'leading space and lowercase cleaned up');
+  assert.equal(r.operations.businessClass, 'Expediter');
+  assert.ok(!w.some((x) => x.path?.startsWith('vehicles')), 'no vehicle warnings');
+});
