@@ -1862,3 +1862,9 @@ test('a kit left in the page by another build (an extension reload or update) is
   assert.notEqual(h.context.__raterFieldKey, oldKey);
   assert.equal(h.context.__raterKit.build, 'source');
 });
+
+test('a capture names the step on screen from its visible headings', () => {
+  const h = harness();
+  h.document.body.append(new FakeNode('h3', { textContent: 'Vehicles' }), makeInput({ id: 'vin', ariaLabel: 'VIN' }));
+  assert.equal(h.kit.capture(null, []).step, 'Vehicles');
+});
