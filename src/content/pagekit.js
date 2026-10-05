@@ -392,12 +392,13 @@
   }
 
   // The one row naming this vehicle best: at least two of its year, make and model as whole
-  // words. Two rows that fit equally well (two identical vans) are the agent's.
+  // words, also when the intake gives only one of them. Two rows that fit equally well (two
+  // identical vans) are the agent's.
   function vehicleRow(rows, hint) {
     const score = (x) => hint.filter((h) => ` ${x.vehicle ?? ''} `.includes(` ${h} `)).length;
     const best = Math.max(0, ...rows.map(score));
     const top = rows.filter((x) => score(x) === best);
-    return best >= Math.min(2, hint.length) && top.length === 1 ? top[0] : null;
+    return best >= 2 && top.length === 1 ? top[0] : null;
   }
 
   // ---------------------------------------------------------------------------------------------
