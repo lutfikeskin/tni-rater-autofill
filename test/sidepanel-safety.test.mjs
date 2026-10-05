@@ -1678,3 +1678,49 @@ test('layout errors are logged by kind, never with their message', () => {
   assert.equal(context.layoutErrorKind(new TypeError('x')), 'other TypeError');
   assert.equal(context.layoutErrorKind('a string with a VIN 1FTBR3X87MKA12345'), 'other');
 });
+
+test('a capture whose quote, page or vehicle changes while its layout is being compared is dropped', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  context.sha256Hex = async (text) => { context.state.active = { vehicles: 1 }; return sha256Hex(text); };
+  await context.recordLayout('Vehicles', 'changed');
+  context.state.active = {};
+  context.sha256Hex = async (text) => { context.sessionId = 'quote-2'; return sha256Hex(text); };
+  await context.recordLayout('Vehicles', 'changed');
+  assert.deepEqual(logged, []);
+});
+
+test('a page still busy after the retries is counted, not silently dropped', async () => {
+  const { context, logged } = layoutHarness(() => []);
+  context.busy = true;
+  context.scheduleLayout('Vehicles', 'changed');
+  for (let i = 0; i < 4; i++) await context.pending();
+  assert.equal(context.state.layoutErrors, 1);
+  assert.deepEqual(logged.map((e) => [e.type, e.reason, e.error]), [['layout_error', 'changed', 'page busy']]);
+  assert.equal(context.state.layoutPending, null);
+});
+
+test('an arrival is captured even when the top frame has no fields of its own', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  Object.assign(context, { samePage: (p) => p, $: () => ({ checked: false }) });
+  Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set() });
+  vm.runInContext(extractFunction('onRecorderMessage'), context);
+  // The form is in child frames: the top frame reports the arrival with no fields.
+  context.onRecorderMessage({ ra: 'usage', event: 'page_view', page: 'Vehicles', from: 'Drivers', fields: 0 }, { tab: { id: 1 } });
+  await context.pending();
+  await context.state.layoutChain;
+  assert.deepEqual(logged.filter((e) => e.type === 'page_layout').map((e) => [e.page, e.reason]), [['Vehicles', 'arrived']]);
+});
+
+test('picking another vehicle replaces a capture waiting for the previous one', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  context.scheduleLayout('Vehicles', 'arrived');
+  context.state.active = { vehicles: 1 };
+  context.scheduleLayout('Vehicles', 'picked');
+  await context.pending();
+  await context.state.layoutChain;
+  assert.deepEqual(logged.map((e) => e.reason), ['picked']);
+  assert.match(SIDEPANEL, /state\.active\[list\] = i;[\s\S]{0,300}scheduleLayout\(pageOf\(state\.tab\?\.url\), 'picked'\)/, 'the vehicle/driver picker asks for the layout');
+});

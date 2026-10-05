@@ -753,7 +753,14 @@ function renderPickers() {
       h('div', { class: 'picker-q' }, `Which ${what} is this page about?`),
       h('div', { class: 'pills' }, record[list].map((it, i) => h('button', {
         type: 'button', class: 'pill', 'aria-pressed': String(state.active[list] === i),
-        onclick: async () => { state.active[list] = i; await save(); renderPickers(); },
+        onclick: async () => {
+          state.active[list] = i;
+          await save();
+          renderPickers();
+          // The page is now about this vehicle or driver: its own layout (a capture waiting for
+          // the previous one is dropped).
+          scheduleLayout(pageOf(state.tab?.url), 'picked');
+        },
       }, `${i + 1}. ${describe(it) || what}`))))));
 }
 
@@ -841,7 +848,9 @@ function onRecorderMessage(msg, sender) {
   if (msg.event === 'page_view') {
     if (msg.from) state.visitedPages.add(samePage(msg.from));
     log({ type: 'page_view', carrier, page: msg.page, from: msg.from, fields: msg.fields });
-    if (msg.fields) scheduleLayout(layoutPage, 'arrived');
+    // Even with no fields in the top frame: a form may be all in child frames, which don't report
+    // arrivals themselves.
+    scheduleLayout(layoutPage, 'arrived');
     // Buttons that run again on every new arrival at their page (Print / Send: after the agent goes
     // back and changes something, coming back to print means printing the new quote).
     if (msg.from && samePage(msg.from) !== samePage(msg.page)) {
@@ -1046,6 +1055,7 @@ async function captureLayout(job, reason) {
     // question that shows a follow-up logs three layouts.
     const shape = fields.map((f) => [f.q ?? f.label, f.label, !!f.required, f.options ?? [], !!f.optionsTruncated]);
     const signature = await sha256Hex(JSON.stringify(shape));
+    if (!jobCurrent(job)) return;
     const scope = `${job.session}|${editScope(page)}`;
     if (!fields.length || state.lastLayouts.get(scope) === signature) return;
     state.lastLayouts.set(scope, signature);
@@ -1061,15 +1071,14 @@ async function captureLayout(job, reason) {
     };
     usage.log({ type: 'page_layout', carrier: carrier.id, page, reason, context, fields, buttons });
   } catch (e) {
-    if (jobCurrent(job)) layoutFailed(carrier, page, reason, e);
+    if (jobCurrent(job)) layoutFailed(carrier, page, reason, layoutErrorKind(e));
   }
 }
 
 // A layout that couldn't be read: counted for the panel, and logged once per quote, page and kind
 // of failure, so it shows up in the review instead of just missing.
-function layoutFailed(carrier, page, reason, e) {
+function layoutFailed(carrier, page, reason, error) {
   state.layoutErrors++;
-  const error = layoutErrorKind(e);
   const once = `${usage.currentSession()?.id}|${page}|${error}`;
   if (state.layoutErrorsLogged.has(once)) return;
   state.layoutErrorsLogged.add(once);
@@ -1088,8 +1097,8 @@ function layoutErrorKind(e) {
 }
 
 // Layouts as the page changes, whether or not anything is filled: on arrival, when questions
-// appear or go away, and after an answer changes (which can change another question's choices or
-// make it required without adding a question). Waits for the page to be quiet; changes close
+// appear or go away, after an answer changes (which can change another question's choices or
+// make it required without adding a question), and when the agent picks another vehicle or driver. Waits for the page to be quiet; changes close
 // together on the same page make one capture with all their reasons, and a change elsewhere
 // replaces a capture still waiting for the page it left. A fill logs its own layout when it ends.
 const LAYOUT_DELAY_MS = 1200;
@@ -1122,14 +1131,19 @@ async function layoutWhenQuiet(job, tries = 0) {
     busy = (await runKit(job.tabId, job.carrier, () => globalThis.__raterKit.busy())).some((r) => r.result);
   } catch (e) {
     // Couldn't ask the page: the same as a layout that couldn't be read, unless it moved on.
-    if (live()) layoutFailed(job.carrier, job.page, reason(), e);
+    if (live()) layoutFailed(job.carrier, job.page, reason(), layoutErrorKind(e));
     return drop();
   }
   if (!live()) return drop();
   if (busy) {
     // Still loading (an answer's server round trip): look again shortly, a few times at most.
+    // A page still busy after that is counted like one that couldn't be read: nothing else may
+    // ask for its layout again.
     if (tries < 3) state.layoutTimer = setTimeout(() => layoutWhenQuiet(job, tries + 1), LAYOUT_DELAY_MS);
-    else drop();
+    else {
+      layoutFailed(job.carrier, job.page, reason(), 'page busy');
+      drop();
+    }
     return;
   }
   state.layoutPending = null;
