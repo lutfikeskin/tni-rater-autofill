@@ -1709,9 +1709,15 @@ async function capturePage() {
     $('report').replaceChildren(h('p', { class: 'muted small' }, 'Open a carrier page to capture its layout.'));
     return;
   }
+  // Client details are redacted with the loaded intake's names and numbers: without one, nothing
+  // on the page or typed in the scenario and note would be.
+  if (!state.intake?.record) {
+    $('report').replaceChildren(h('p', { class: 'muted small' }, 'Load the client\'s intake first, so their details can be redacted from the capture.'));
+    return;
+  }
   const { id: tabId, carrier } = state.tab;
   const record = state.intake?.record;
-  const redact = record ? redactor(redactionTerms(record)) : (x) => x;
+  const redact = redactor(redactionTerms(record));
   // Both are typed by the agent: a client's name or number in them is redacted like the page's.
   const scenario = redact($('capture-scenario').value.trim()).slice(0, 60) || 'unnamed';
   const typedNote = $('capture-note').value;

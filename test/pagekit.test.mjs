@@ -1965,3 +1965,12 @@ test('a capture takes typed text out of messages, and keeps no choices of a list
   assert.deepEqual(JSON.parse(JSON.stringify(page.openLists.map((l) => [l.label, l.options]))),
     [[null, []], ['Vehicle type', ['Cargo Van']], ['Garaging address', []]]);
 });
+
+test('typed text is taken out of messages from boxes question discovery skips: search boxes, editable regions', () => {
+  const h = harness();
+  const search = makeInput({ id: 'lookup', type: 'search', ariaLabel: 'Find a customer', value: 'Rivera Logistics' });
+  const notes = new FakeNode('div', { attrs: { contenteditable: 'true' }, textContent: 'Dock at 4 Pier Rd' });
+  h.document.body.append(search, notes,
+    new FakeNode('div', { role: 'alert', textContent: 'No customer named rivera logistics; check Dock at 4 Pier Rd' }));
+  assert.deepEqual([...h.kit.capture(null, []).messages], ['No customer named [typed]; check [typed]']);
+});

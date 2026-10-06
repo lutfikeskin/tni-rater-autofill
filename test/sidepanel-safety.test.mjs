@@ -2244,6 +2244,11 @@ test('a manual capture is numbered in its scenario, keeps a redacted note and sc
   context.domPage = 'Drivers';
   await context.capturePage();
   assert.equal(downloads.length, 3);
+  // No intake loaded: nothing to redact client details with, so no capture.
+  context.domPage = undefined;
+  context.state.intake = null;
+  await context.capturePage();
+  assert.equal(downloads.length, 3);
   assert.match(SIDEPANEL, /chrome\.commands\?\.onCommand\.addListener\(\(command\) => \{ if \(command === 'capture-page'\) captureFromShortcut\(\); \}\)/);
   assert.match(extractFunction('captureFromShortcut'), /mine\.id !== focused\.id\) return;/, 'only the focused window\'s panel captures');
 });

@@ -1498,9 +1498,13 @@
   // Text typed into the page's boxes, and anything shaped like a VIN or a long number, out of a
   // message the page shows (it may repeat what was typed, which the intake's terms don't cover).
   function withoutTyped(text, controls) {
-    // Every box that holds typed text, whatever its role: a combo you can type into included.
-    const typed = controls.filter((c) => c.el?.tagName === 'TEXTAREA' || (c.el?.tagName === 'INPUT' && !/^(radio|checkbox)$/i.test(c.el.type ?? '')))
-      .map((c) => oneLine(c.el.value)).filter((v) => v.length >= 3);
+    // Every box that holds typed text, whatever its role, read from the page itself: the questions
+    // found (a combo you can type into included) and the boxes question discovery skips (search
+    // boxes, editable regions).
+    const boxes = [...controls.map((c) => c.el), ...deepQueryAll(document, 'input, textarea, [contenteditable=""], [contenteditable=true]')];
+    const typed = [...new Set(boxes.filter((el) => el?.tagName === 'TEXTAREA' || el?.getAttribute?.('contenteditable') != null
+      || (el?.tagName === 'INPUT' && !/^(radio|checkbox|button|submit|reset|image|file|hidden|password|range|color)$/i.test(el.type ?? '')))
+      .map((el) => oneLine(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ? el.value : el.textContent)))].filter((v) => v.length >= 3);
     // Whatever the case or spacing the page shows it in (it may capitalize what was typed).
     const pattern = (v) => new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'), 'gi');
     let out = typed.reduce((acc, v) => acc.replace(pattern(v), '[typed]'), text);
