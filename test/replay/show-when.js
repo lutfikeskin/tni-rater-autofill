@@ -7,12 +7,18 @@
 // name, and only for a field with none of those, its caption. Answers compare like the layout's
 // options (spacing and case aside).
 const replayNorm = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-globalThis.replayShows = function replayShows(field, fields, textOf) {
+// A follow-up of a follow-up shows only while its own trigger shows: a hidden trigger's old answer
+// doesn't count.
+globalThis.replayShows = function replayShows(field, fields, textOf, seen = new Set()) {
   const when = field.showWhen;
   if (!when) return true;
   const key = ['q', 'id', 'dataId', 'name'].find((k) => when[k]);
-  const i = fields.findIndex((f) => (key ? f[key] === when[key] : !f.q && !f.id && !f.dataId && !f.name && f.caption === when.caption));
+  const i = fields.findIndex((f) => (key ? f[key] === when[key]
+    : !f.q && !f.id && !f.dataId && !f.name && f.caption === when.caption && (!when.kind || f.kind === when.kind)));
   if (i < 0) return true;
+  if (seen.has(field)) return false;
+  seen.add(field);
+  if (!replayShows(fields[i], fields, textOf, seen)) return false;
   const text = replayNorm(textOf(fields[i], i));
   return text !== '' && when.is.some((v) => replayNorm(v) === text);
 };

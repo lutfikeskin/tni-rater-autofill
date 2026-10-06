@@ -26,6 +26,10 @@ export const MIN_LAYOUTS = 2;
 // A list's prompt ("Select one", "--") isn't an answer to try.
 const isPlaceholder = (o) => /^(-+|select\b|choose\b|please\b)/i.test(o);
 
+// Picks compare as the layout's options are deduplicated, and as the replay compares answers:
+// spacing and case aside ("Yes" and "YES" are one answer).
+const sameAnswer = (v) => v.toLowerCase();
+
 const pickOf = (f) => (f?.selected === undefined || f.selected === null || tidy(f.selected) === '' ? null : tidy(f.selected));
 
 /**
@@ -73,11 +77,13 @@ export function inferShowWhen(snapshots, { min = MIN_LAYOUTS } = {}) {
         // one of its choices): the replay would hide it in that state, so this trigger can't be it.
         if (v === null) { if (present[i] && withPicks[i]) ok = false; return; }
         const side = present[i] ? shown : hidden;
-        side.set(v, (side.get(v) ?? 0) + 1);
+        const key = sameAnswer(v);
+        const was = side.get(key);
+        side.set(key, { spelling: was?.spelling ?? v, count: (was?.count ?? 0) + 1 });
       });
-      const count = (side) => [...side.values()].reduce((a, b) => a + b, 0);
+      const count = (side) => [...side.values()].reduce((a, b) => a + b.count, 0);
       if (!ok || count(shown) < min || count(hidden) < min || [...shown.keys()].some((v) => hidden.has(v))) continue;
-      const candidate = { trigger, is: [...shown.keys()], shown: count(shown), hidden: count(hidden), above: order.indexOf(trigger) < order.indexOf(target) };
+      const candidate = { trigger, is: [...shown.values()].map((x) => x.spelling), shown: count(shown), hidden: count(hidden), above: order.indexOf(trigger) < order.indexOf(target) };
       const support = (c) => c.shown + c.hidden;
       // Most layouts behind it; then a trigger above the question (follow-ups sit below what
       // they follow); then the fewest picks.
@@ -87,10 +93,10 @@ export function inferShowWhen(snapshots, { min = MIN_LAYOUTS } = {}) {
     }
     if (!best) { out.set(target, null); continue; }
     const triggerField = latest.get(best.trigger);
-    const seen = new Set(snaps.map((m) => pickOf(m.get(best.trigger))).filter((v) => v !== null));
+    const seen = new Set(snaps.map((m) => pickOf(m.get(best.trigger))).filter((v) => v !== null).map(sameAnswer));
     const options = [...new Set(snapshots.flatMap((s) => (s.fields ?? []).filter((f) => fieldId(f) === best.trigger).flatMap((f) => f.options ?? [])).map(tidy))];
     out.set(target, { trigger: best.trigger, triggerField, is: best.is, shown: best.shown, hidden: best.hidden,
-      unseen: options.filter((o) => o && !isPlaceholder(o) && !seen.has(o)) });
+      unseen: options.filter((o) => o && !isPlaceholder(o) && !seen.has(sameAnswer(o))) });
   }
   return out;
 }

@@ -36,3 +36,19 @@ test('the replay finds a trigger by its identity and compares answers as layouts
   const yes = { q: '2A2', caption: 'Placards', showWhen: { q: '2A1', caption: 'Hauls hazmat?', is: ['YES'] } };
   assert.equal(shows(yes, [{ q: '2A1', caption: 'Hauls hazmat?' }, yes], () => 'Yes '), true, 'case and spacing aside');
 });
+
+test('a follow-up of a hidden follow-up is hidden too, and a caption-only trigger matches its kind', () => {
+  const owned = { q: '2B1', caption: 'Owned or leased?' };
+  const leased = { q: '2B2', caption: 'Lease company', showWhen: { q: '2B1', caption: 'Owned or leased?', is: ['Leased'] } };
+  const address = { q: '2B3', caption: 'Lease company address', showWhen: { q: '2B2', caption: 'Lease company', is: ['Other'] } };
+  const fields = [owned, leased, address];
+  const answers = new Map([[owned, 'Leased'], [leased, 'Other']]);
+  assert.equal(shows(address, fields, (f) => answers.get(f)), true);
+  answers.set(owned, 'Owned');
+  assert.equal(shows(address, fields, (f) => answers.get(f)), false, 'its trigger is hidden, its old answer no longer counts');
+  const box = { kind: 'checkbox', caption: 'Same as mailing' };
+  const text = { kind: 'text', caption: 'Same as mailing' };
+  const follow = { kind: 'text', caption: 'Street', showWhen: { q: null, kind: 'checkbox', caption: 'Same as mailing', is: ['unchecked'] } };
+  assert.equal(shows(follow, [text, box, follow], (f) => (f === box ? 'unchecked' : 'unchecked')), true);
+  assert.equal(shows(follow, [text, box, follow], (f) => (f === box ? 'checked' : 'unchecked')), false, 'the checkbox, not the text box with that caption');
+});

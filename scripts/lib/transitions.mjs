@@ -90,7 +90,8 @@ export function layoutTransitions(events, { stepped = STEPPED } = {}) {
 export function summarizeTransitions(list) {
   const groups = new Map();
   for (const t of list) {
-    const cause = t.after.map((c) => `${c.question}: ${c.from ?? '∅'} → ${c.to ?? '∅'}`).join('; ');
+    // Who answered (the agent, the page, or the extension's fill) is part of the cause.
+    const cause = t.after.map((c) => `${c.question}: ${c.from ?? '∅'} → ${c.to ?? '∅'} (${c.by ?? '?'})`).join('; ');
     const effect = [
       ...t.appeared.map((x) => `+ ${x}`), ...t.removed.map((x) => `− ${x}`),
       ...t.options.map((o) => `${o.question}: choices ${o.added.map((x) => `+${x}`).concat(o.removed.map((x) => `−${x}`)).join(' ')}`),

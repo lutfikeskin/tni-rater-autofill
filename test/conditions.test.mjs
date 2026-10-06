@@ -83,7 +83,9 @@ test('transitions pair two layouts of a page with only that page\'s answers betw
   assert.deepEqual(list.map((t) => [t.page, t.after.map((c) => `${c.question}: ${c.from} → ${c.to}`), t.appeared, t.removed]),
     [['Operations', ['Hauls hazmat?: No → Yes'], ['Placards carried'], []]]);
   const [summary] = summarizeTransitions([...list, { ...list[0], session: 's2' }]);
-  assert.deepEqual([summary.cause, summary.effect, summary.quotes, summary.states], ['Hauls hazmat?: No → Yes', '+ Placards carried', 2, ['FL']]);
+  assert.deepEqual([summary.cause, summary.effect, summary.quotes, summary.states], ['Hauls hazmat?: No → Yes (agent)', '+ Placards carried', 2, ['FL']]);
+  const filled = summarizeTransitions([list[0], { ...list[0], session: 's3', after: [{ ...list[0].after[0], by: 'fill' }] }]);
+  assert.equal(filled.length, 2, 'the agent\'s answer and the extension\'s are counted apart');
 });
 
 test('a follow-up seen while its trigger was unanswered rules that trigger out', () => {
@@ -128,4 +130,20 @@ test('transitions skip repeated rows, use the layout\'s own state, and keep view
   ];
   const list = layoutTransitions(events);
   assert.deepEqual(list.map((t) => [t.appeared, t.removed, t.options, t.state]), [[['Placards carried'], [], [], 'GA']]);
+});
+
+test('picks differing only in case are one answer, so they can\'t split the two sides', () => {
+  const contradicted = inferShowWhen([snap(hazmat('Yes'), placards), snap(hazmat('Yes'), placards), snap(hazmat('YES')), snap(hazmat('YES'))]);
+  assert.equal(contradicted.get('2A2'), null);
+  const agreed = inferShowWhen([snap(hazmat('Yes'), placards), snap(hazmat('YES'), placards), snap(hazmat('No')), snap(hazmat('no'))]);
+  assert.deepEqual([...agreed.get('2A2').is], ['Yes']);
+  assert.deepEqual([...agreed.get('2A2').unseen], ['Unsure']);
+});
+
+test('a trigger known only by its caption keeps its kind', () => {
+  const same = (selected) => ({ kind: 'checkbox', label: 'Same as mailing', selected });
+  const events = [layoutEvent('a', [same('unchecked'), placards]), layoutEvent('a', [same('checked')]),
+    layoutEvent('b', [same('unchecked'), placards]), layoutEvent('b', [same('checked')])];
+  const f = buildLayouts(events)[0].layout.pages.Operations.fields.find((x) => x.q === '2A2');
+  assert.deepEqual([f.showWhen.q, f.showWhen.kind, f.showWhen.caption], [null, 'checkbox', 'Same as mailing']);
 });

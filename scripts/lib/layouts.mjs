@@ -34,12 +34,13 @@ export const layoutKey = (carrier, c = {}) => [
   c.trailers ? 'trailers' : null,
 ].filter(Boolean).join('_');
 
-function triggerIdentity(f) {
+// The fallback (no id of any kind) is the caption with the kind, as the inference tells them apart.
+function triggerIdentity(f, kind) {
   if (f.q) return { q: f.q };
   if (f.id) return { q: null, id: f.id };
   if (f.dataId) return { q: null, dataId: f.dataId };
   if (f.name) return { q: null, name: f.name };
-  return { q: null };
+  return { q: null, kind };
 }
 
 export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_PAGES } = {}) {
@@ -113,7 +114,7 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
               // The answer it showed with in every layout (conditions.mjs): an observation.
               // The trigger by the identity the inference used (question id, element id, data-id or
               // name; the caption only for a field with none), so the replay finds that control.
-              showWhen: cond && when ? { ...triggerIdentity(when.triggerField), caption: trigger?.caption ?? when.triggerField.label,
+              showWhen: cond && when ? { ...triggerIdentity(when.triggerField, trigger?.kind), caption: trigger?.caption ?? when.triggerField.label,
                 is: when.is, seen: { shown: when.shown, hidden: when.hidden }, unseen: when.unseen.length ? when.unseen : undefined } : undefined,
               // Shows sometimes, and no single answer on the page explains when (or too few layouts).
               condition: cond && !when ? 'unknown' : undefined,
