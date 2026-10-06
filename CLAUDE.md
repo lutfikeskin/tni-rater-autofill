@@ -10,6 +10,7 @@ TNI Rater Autofill is a Chrome MV3 extension that turns an intake PDF into comme
 - Keep raw carrier HTML/PDFs and client captures in ignored `layouts/`. Scrub committed fixtures; keep typed client values and credentials out of logs and commits.
 - Use a task branch (`codex/<topic>` for Codex). Commit, PR, publish, or deploy only within the requested scope; the maintainer merges unless authorized otherwise.
 - For code changes, run `npm test` and the affected system's checks below. For documentation-only work, check links, commands, and factual consistency; no release or version bump is needed.
+- When a change alters behavior, commands, or data that a document below or the README describes, update that document in the same PR. Say in the PR which documents changed, or why none needed to.
 - For AI integration, prompts, decision policies, or evaluation work, keep exact mappings, calculations, and execution in code; the model only resolves bounded semantic choices. Preserve manual review, provider request validation, safe failure, and restrictions on navigation or submission. Controlled mocks verify integration behavior, not live accuracy or calibrated thresholds.
 - Keep `AGENTS.md` and `CLAUDE.md` identical when editing shared guidance.
 
