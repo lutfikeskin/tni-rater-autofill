@@ -323,7 +323,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   const logged = [], rendered = [], layouts = [], assisted = [];
   const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
   const context = {
-    state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
+    state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }],
@@ -998,7 +998,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     store: { set: async () => {} }, clearAgentKeys: async () => {}, uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
-    'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'loadFile'].map(extractFunction).join('\n'), context);
+    'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile'].map(extractFunction).join('\n'), context);
   await context.persistAiPending();
   assert.equal(stored.length, 2, 'the previous ledger contains the settled and unresolved decisions');
   await context.loadFile({ name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) });
@@ -1162,7 +1162,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
       recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, retireAiOrigins: async () => {},
-      afterFill: () => followUp, runPendingPage: () => {},
+      afterFill: () => followUp, runPendingPage: () => {}, viewOf: () => 't1',
     };
     vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
     await context.autoFill('Rates');
@@ -1441,7 +1441,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
   const logged = [];
   const record = { garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], trailers: [], drivers: [{}], coverage: {} };
   const context = {
-    state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0, layoutGeneration: 0, layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), layoutLatest: null,
+    state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0, layoutGeneration: 0, layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), layoutLatest: null, viewTabs: new Map(),
       lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set() },
     sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
     busy: false, runs: [],
@@ -1457,9 +1457,10 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
     },
     sessionId: session,
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
+    store: { saved: {}, set(k, v) { this.saved[k] = v; return Promise.resolve(); } },
     LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; },
   };
-  vm.runInNewContext(['recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
+  vm.runInNewContext(['viewOf', 'saveViews', 'resetViews', 'stepScope', 'recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);
   return { context, logged };
 }
@@ -1951,7 +1952,7 @@ test('an automatic fill readies its tab for layouts only when it went through', 
       runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
       redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: () => {}, pickListItem: async () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
-      $: () => ({ append() {} }), h: () => ({}),
+      $: () => ({ append() {} }), h: () => ({}), viewOf: () => 't1',
     };
     vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
     await context.autoFill('Rates');
@@ -2016,18 +2017,18 @@ function stopHarness(page = 'DeclinationNotice') {
     intake: { record }, tab: { id: 4, url: url(page), carrier },
     autoPages: new Set(['DeclinationNotice', 'BusinessOwnerInfo']), autoPaused: false, filling: false, autoTimer: null, autoPending: false,
     pagePending: null, agentKeys: new Map(), aiCache: new Map(), active: {}, visitedPages: new Set(),
-    layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(),
+    layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), viewTabs: new Map(),
   };
   const logged = [], kits = [], timers = [];
   const context = {
     state, URL, h: node, $: (id) => ui[id], onQuotePage: () => true, fillEvents,
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
-    usage: { log: (...events) => logged.push(...events) },
+    usage: { log: (...events) => logged.push(...events), currentSession: () => ({ id: 'quote-1' }) },
     runKit: async (...args) => { kits.push(args); return []; }, tellRecorder: async () => {}, ensureRecorder: async () => {},
     pickListItem: async () => {}, retireAiOrigins: async () => {}, buildPlan: () => [], fillOptions: () => ({}),
-    scheduleLayout: () => {},
+    scheduleLayout: () => {}, store: { set: async () => {} },
   };
-  vm.runInNewContext(`${PAGE_HELPERS}\n${['showStopPage', 'stopPageIsOurs', 'fillPage', 'scheduleAutoFill', 'autoFill', 'aiActionCurrent', 'onRecorderMessage'].map(extractFunction).join('\n')}`, context);
+  vm.runInNewContext(`${PAGE_HELPERS}\n${['showStopPage', 'stopPageIsOurs', 'fillPage', 'scheduleAutoFill', 'autoFill', 'aiActionCurrent', 'onRecorderMessage', 'viewOf', 'saveViews', 'stepScope'].map(extractFunction).join('\n')}`, context);
   // The recorder announcing a page (a new document has no `from`).
   const arrive = (to, from = null) => {
     state.tab = { ...state.tab, url: url(to) };
@@ -2166,4 +2167,43 @@ test('a row key is settled by its own edit, or by the plain name an older build 
   assert.equal(edited(['medicalPaymentExclude#2'], 'medicalPaymentExclude#3'), false, 'one vehicle\'s edit leaves the others');
   assert.equal(edited(['medicalPaymentExclude'], 'medicalPaymentExclude#3'), true, 'a legacy shared-name edit covers every row');
   assert.equal(edited(['2C1A'], '2C1A@2'), false, 'Progressive rows are unchanged');
+});
+
+test('events name their view: the tab\'s order in the quote and the vehicle or driver, never ids', async () => {
+  const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
+  const { context, logged } = layoutHarness(() => controls);
+  const carrier = { id: 'progressive', layoutUrl: /./, vehiclePages: ['AddVehicle'], driverPage: 'AddDriver' };
+  context.state.tab = { id: 917, url: 'Vehicles', carrier };
+  assert.equal(context.viewOf(917, 'Vehicles', carrier), 't1');
+  assert.equal(context.viewOf(402, 'Vehicles', carrier), 't2', 'another tab of the quote');
+  context.state.active = { vehicles: 1, drivers: 0 };
+  assert.equal(context.viewOf(917, 'AddVehicle', carrier), 't1:v1');
+  assert.equal(context.viewOf(402, 'AddDriver', carrier), 't2:d0');
+  await context.recordLayout('Vehicles', 'arrived');
+  assert.equal(logged.at(-1).view, 't1');
+  // Field changes and arrivals from the recorder carry it too.
+  Object.assign(context, { samePage: (p) => p, $: () => ({ checked: false }), redactor: () => (s) => s, scheduleAutoFill: () => {},
+    fieldChangeEvent: () => ({ type: 'field_change' }) });
+  Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set(), filled: new Map(), labels: new Map() });
+  vm.runInContext(extractFunction('onRecorderMessage'), context);
+  context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: 'AddVehicle', changes: [{ key: 'x', before: '', after: 'Yes' }] }, { tab: { id: 917 } });
+  context.onRecorderMessage({ ra: 'usage', event: 'page_view', page: 'AddDriver', from: 'AddVehicle', fields: 3 }, { tab: { id: 917 } });
+  assert.deepEqual(logged.slice(-2).map((e) => [e.type, e.view]), [['field_change', 't1:v1'], ['page_view', 't1:d0']]);
+  // Kept with the quote's session for a panel opened again; a new quote numbers its tabs again.
+  assert.deepEqual(JSON.parse(JSON.stringify(context.store.saved.views)), { session: 'quote-1', tabs: [[917, 1], [402, 2]] });
+  context.holdLayouts();
+  assert.equal(context.viewOf(402, 'Vehicles', carrier), 't2', 'holding layouts keeps the numbers');
+  context.resetViews();
+  assert.equal(context.viewOf(402, 'Vehicles', carrier), 't1');
+});
+
+test('fills take their view before waiting, stop pages log theirs, and a reopened panel keeps the quote\'s views', () => {
+  for (const name of ['fillPage', 'autoFill']) {
+    const body = extractFunction(name);
+    assert.ok(body.indexOf('const view = viewOf(tabId, page, carrier);') < body.indexOf('await pickListItem('), `${name} takes the view before any waiting`);
+    assert.match(body, /fillEvents\(frames, \{[^}]*\bview\b/, `${name} logs that view`);
+  }
+  assert.match(extractFunction('onRecorderMessage'), /auto: 'stop'/);
+  assert.match(extractFunction('onRecorderMessage'), /page: stopPage, view: viewOf\(sender\.tab\.id, stopPage\)/);
+  assert.match(extractFunction('init'), /usage\.restoreSession\([\s\S]{0,80}\);\s+const views = await store\.get\('views'\);\s+if \(views\?\.session && views\.session === usage\.currentSession\(\)\?\.id\) state\.viewTabs = new Map\(views\.tabs\);/);
 });

@@ -163,3 +163,12 @@ test('layouts keep why they were taken, never a pick from a staff list; layout e
   assert.equal(layout.fields[1].selected, '50 miles');
   assert.deepEqual([error.reason, error.error], ['arrived', 'Frame was removed']);
 });
+
+test('a view is kept only as a tab order and a vehicle or driver number', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: ['t1', 't12:v0', 't2:d3', 'tab 917', 't1:Jordan', 7].map((view) => ev({ type: 'page_view', page: 'AddVehicle', view })) })).json();
+    assert.equal(r.accepted, 6);
+  });
+  assert.deepEqual(stored(dataDir).map((e) => e.view), ['t1', 't12:v0', 't2:d3', undefined, undefined, undefined]);
+});
