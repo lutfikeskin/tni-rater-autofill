@@ -32,7 +32,7 @@ Run `npm test` for code changes, plus affected integration checks. Repeat or bro
 
 ## Baselines and fixtures
 
-For relevant new Progressive captures: build layouts with `npm run layouts`, review them, and use `npm run fixtures:progressive` to refresh scrubbed fixtures. Review the expected behavior before accepting `npm run e2e -- --update`; a baseline is not an answer key. Preserve unrelated baseline entries.
+For relevant new Progressive captures: build layouts with `npm run layouts`, review them (and `npm run transitions` for their conditions), and use `npm run fixtures:progressive` to refresh scrubbed fixtures. Fixtures with `showWhen` make the replay hide those follow-ups until their trigger has a matching answer, as the live page does, so expect baseline changes when refreshing them. Review the expected behavior before accepting `npm run e2e -- --update`; a baseline is not an answer key. Preserve unrelated baseline entries.
 
 For AmWINS page changes, update the scrubbed [fixtures](../test/fixtures/amwins/) and expected answers in [amwins-mock.mjs](../scripts/amwins-mock.mjs). Retain branch behavior rather than only static markup.
 

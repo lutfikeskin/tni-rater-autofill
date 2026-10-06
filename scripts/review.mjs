@@ -52,6 +52,7 @@ const run = (script, scriptArgs) => {
 const summary = recent.length ? run('summarize-usage.mjs', [recentFile]) : '(no events in this period)';
 const learn = run('learn-rules.mjs', inputs).replace(/^# /m, '### ');
 const layouts = run('build-layouts.mjs', inputs);
+const transitions = run('transitions.mjs', inputs);
 fs.rmSync(tmp, { recursive: true, force: true });
 
 // --- Numbers for the top of the report ------------------------------------------------------
@@ -157,6 +158,7 @@ p('## Rule coverage of live pages (all data)', '', 'Questions agents met that no
 p('## Rule suggestions (all data)', '', learn, '');
 p('## Usage summary (this period)', '', '```', summary, '```', '');
 p('## Page layouts (all data)', '', 'Open these on the replay page (`npm run replay`, then the Layout box) to see what fills on each state/product.', '', '```', layouts, '```', '');
+p('## When questions show (all data)', '', 'Conditions seen in the layouts, answers not tried yet (a checklist for recordings) and what changed after an answer: the report named here.', '', '```', transitions, '```', '');
 
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, lines.join('\n'));
