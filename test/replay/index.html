@@ -225,6 +225,13 @@
       else $('status').textContent = 'Last page. Press "Finish & save results".';
     };
 
+    function shownAnswers(page, texts) {
+      const fields = layout?.pages?.[page]?.fields ?? [];
+      const textOf = (t, j) => texts[idFor(t, j).q] ?? (t.kind === 'checkbox' ? 'unchecked' : undefined);
+      const hidden = new Set(fields.map((f, i) => (replayShows(f, fields, textOf) ? null : idFor(f, i).q)).filter(Boolean));
+      return Object.fromEntries(Object.entries(texts).filter(([q]) => !hidden.has(q)));
+    }
+
     function results() {
       const r = window.replay;
       const finished = new Date();
@@ -235,7 +242,9 @@
         startedAt: r.started?.toISOString() ?? null,
         finishedAt: finished.toISOString(),
         seconds: r.started ? Math.round((finished - r.started) / 1000) : null,
-        answers: Object.fromEntries(Object.entries(r.byPage).map(([page, s]) => [page, s.texts])),
+        // Only answers to questions the page shows at the end: a follow-up hidden by a later answer
+        // keeps its old answer in the store (the agent may switch back), but not in the result.
+        answers: Object.fromEntries(Object.entries(r.byPage).map(([page, s]) => [page, shownAnswers(page, s.texts)])),
         clicks: r.clicks,
       };
     }

@@ -100,3 +100,23 @@ export function inferShowWhen(snapshots, { min = MIN_LAYOUTS } = {}) {
   }
   return out;
 }
+
+// The same inference within each group of layouts (quotes asking for the same coverages), so a
+// question that shows only for some coverages can't be pinned on an unrelated answer that happened
+// to go with them. A question keeps a condition only if every group that saw it come and go found
+// the same trigger; the counts add up and an answer is unseen only if no group saw it.
+export function inferShowWhenByGroup(groups, opts) {
+  const results = groups.map((snapshots) => inferShowWhen(snapshots, opts));
+  const out = new Map();
+  for (const id of new Set(results.flatMap((r) => [...r.keys()]))) {
+    const found = results.map((r) => r.get(id)).filter((x) => x !== undefined);
+    if (found.some((x) => x === null) || new Set(found.map((x) => x.trigger)).size > 1) { out.set(id, null); continue; }
+    const is = new Map();
+    for (const x of found) for (const v of x.is) if (!is.has(sameAnswer(v))) is.set(sameAnswer(v), v);
+    const unseen = found.map((x) => new Set(x.unseen.map(sameAnswer)));
+    out.set(id, { ...found[0], is: [...is.values()],
+      shown: found.reduce((n, x) => n + x.shown, 0), hidden: found.reduce((n, x) => n + x.hidden, 0),
+      unseen: found[0].unseen.filter((v) => unseen.every((u) => u.has(sameAnswer(v))) && !is.has(sameAnswer(v))) });
+  }
+  return out;
+}

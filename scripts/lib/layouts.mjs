@@ -4,7 +4,7 @@
 // (conditions.mjs). Same shape as the hand-made captures in captures/<carrier>/, so the replay
 // test page can load either.
 
-import { fieldId, inferShowWhen } from './conditions.mjs';
+import { fieldId, inferShowWhenByGroup } from './conditions.mjs';
 import { CARRIERS } from '../../src/carriers.js';
 
 // Carriers whose steps share one address (AmWINS): their layouts from before 0.9.6 name no step,
@@ -63,7 +63,7 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
     const name = e.step ? `${e.page} › ${e.step}` : e.page;
     const page = layout.pages.get(name) ?? { snapshots: [], fields: new Map(), buttons: [] };
     const fields = (e.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.label ?? ''));
-    page.snapshots.push({ fields, noInference: (stepped.has(e.carrier) && !e.step) || !!entityPages.get(e.carrier)?.has(e.page) });
+    page.snapshots.push({ fields, coverages: [...(e.context?.coverages ?? [])].sort().join('+'), noInference: (stepped.has(e.carrier) && !e.step) || !!entityPages.get(e.carrier)?.has(e.page) });
     for (const b of e.buttons ?? []) if (!page.buttons.includes(b)) page.buttons.push(b);
     for (const f of fields) {
       // Our own mark tooltips got into early layouts as captions; they aren't questions.
@@ -96,7 +96,11 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
       context: l.context,
       generated: { from: l.from, to: l.to, quotes: l.sessions.size, by: 'scripts/build-layouts.mjs' },
       pages: Object.fromEntries([...l.pages].map(([name, p]) => {
-        const conditions = inferShowWhen(p.snapshots.filter((s) => !s.noInference));
+        // Per coverage request: a question that shows for some coverages only is not one answer's
+        // follow-up across them (inferShowWhenByGroup).
+        const groups = new Map();
+        for (const s of p.snapshots.filter((x) => !x.noInference)) groups.set(s.coverages, [...(groups.get(s.coverages) ?? []), s]);
+        const conditions = inferShowWhenByGroup([...groups.values()]);
         const captionOf = (cid) => [...p.fields.values()].find((f) => f.cid === cid);
         return [name, {
           fields: [...p.fields.values()].map((f) => {

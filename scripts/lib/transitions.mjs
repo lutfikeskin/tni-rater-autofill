@@ -33,10 +33,12 @@ function diff(before, after) {
   for (const [id, f] of b) {
     const g = a.get(id);
     if (!g) continue;
-    const was = new Set(g.options ?? []);
-    const now = new Set(f.options ?? []);
-    const added = [...now].filter((o) => !was.has(o));
-    const gone = [...was].filter((o) => !now.has(o));
+    // Options compare as layouts deduplicate them: spacing and case aside.
+    const norm = (o) => String(o).replace(/\s+/g, ' ').trim().toLowerCase();
+    const was = new Map((g.options ?? []).map((o) => [norm(o), o]));
+    const now = new Map((f.options ?? []).map((o) => [norm(o), o]));
+    const added = [...now].filter(([k]) => !was.has(k)).map(([, o]) => o);
+    const gone = [...was].filter(([k]) => !now.has(k)).map(([, o]) => o);
     if (added.length || gone.length) options.push({ question: label(f), added, removed: gone });
     if (!!g.required !== !!f.required) required.push({ question: label(f), required: !!f.required });
   }
@@ -75,6 +77,9 @@ export function layoutTransitions(events, { stepped = STEPPED } = {}) {
         }
         last = { page, layout: e, changes: [] };
       } else if (e.type === 'page_view' && last && e.page !== last.layout.page) {
+        last = null;
+      } else if (e.type === 'layout_error' && last && e.page === last.layout.page) {
+        // The page changed but couldn't be read: the next layout isn't one step after the last.
         last = null;
       } else if (last && e.page === last.layout.page && (e.type === 'field_change' || (e.type === 'fill_field' && e.result === 'filled'))) {
         // A typed value is never logged: it shows as "edited".

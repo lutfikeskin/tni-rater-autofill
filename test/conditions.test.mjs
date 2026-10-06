@@ -147,3 +147,41 @@ test('a trigger known only by its caption keeps its kind', () => {
   const f = buildLayouts(events)[0].layout.pages.Operations.fields.find((x) => x.q === '2A2');
   assert.deepEqual([f.showWhen.q, f.showWhen.kind, f.showWhen.caption], [null, 'checkbox', 'Same as mailing']);
 });
+
+test('a question that shows only for some coverages is not pinned on an answer that went with them', () => {
+  const cargo = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: ['autoLiability', 'cargo'] };
+  const noCargo = { ...cargo, coverages: ['autoLiability'] };
+  const cargoLimit = { q: '3C1', kind: 'select', label: 'Cargo limit', options: ['$100k'] };
+  const events = [
+    layoutEvent('a', [hazmat('Yes'), cargoLimit], { context: cargo }), layoutEvent('b', [hazmat('Yes'), cargoLimit], { context: cargo }),
+    layoutEvent('c', [hazmat('No')], { context: noCargo }), layoutEvent('d', [hazmat('No')], { context: noCargo }),
+  ];
+  const f = buildLayouts(events)[0].layout.pages.Operations.fields.find((x) => x.q === '3C1');
+  assert.deepEqual([f.showWhen, f.condition], [undefined, 'unknown']);
+  // Within one coverage request the same pattern is a condition, and groups that agree add up.
+  const within = buildLayouts([
+    layoutEvent('a', [hazmat('Yes'), placards], { context: cargo }), layoutEvent('a', [hazmat('No')], { context: cargo }),
+    layoutEvent('b', [hazmat('Yes'), placards], { context: cargo }), layoutEvent('b', [hazmat('No')], { context: cargo }),
+    layoutEvent('c', [hazmat('Yes'), placards], { context: noCargo }), layoutEvent('c', [hazmat('No')], { context: noCargo }),
+    layoutEvent('d', [hazmat('Yes'), placards], { context: noCargo }), layoutEvent('d', [hazmat('No')], { context: noCargo }),
+  ])[0].layout.pages.Operations.fields.find((x) => x.q === '2A2');
+  assert.deepEqual([[...within.showWhen.is], within.showWhen.seen], [['Yes'], { shown: 4, hidden: 4 }]);
+});
+
+test('transitions ignore option spelling drift and break on a layout that could not be read', () => {
+  let seq = 0;
+  const e = (x) => ({ session: 's', seq: ++seq, t: '2026-10-06T10:00:00Z', carrier: 'progressive', ...x });
+  const change = () => e({ type: 'field_change', page: 'Operations', label: 'Hauls hazmat?', kind: 'radio', from: 'No', to: 'Yes', by: 'agent' });
+  const spelled = (options) => ({ ...hazmat('No'), options });
+  const drift = layoutTransitions([
+    e(layoutEvent('s', [spelled(['Yes', 'No'])], { reason: 'arrived' })), change(),
+    e(layoutEvent('s', [spelled(['YES ', 'no'])], { reason: 'changed' })),
+  ]);
+  assert.deepEqual(drift, [], 'the same options, spelled differently');
+  const broken = layoutTransitions([
+    e(layoutEvent('s', [hazmat('No')], { reason: 'arrived' })), change(),
+    e({ type: 'layout_error', page: 'Operations', reason: 'changed', error: 'page busy' }),
+    e(layoutEvent('s', [hazmat('Yes'), placards], { reason: 'changed' })),
+  ]);
+  assert.deepEqual(broken, [], 'the page between them was never seen');
+});
