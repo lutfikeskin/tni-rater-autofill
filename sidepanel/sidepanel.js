@@ -516,6 +516,7 @@ async function loadFile(file) {
   state.layoutErrors = 0;
   cancelLayouts();
   holdLayouts();
+  resetViews();
   state.intake = { ...result, fileName: file.name, done: [] };
   // Start on Check intake when something on the intake needs a look, else straight on Fill.
   state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
@@ -873,7 +874,7 @@ function onRecorderMessage(msg, sender) {
     const stopPage = samePage(msg.page);
     if (state.tab.carrier?.stopPages?.[stopPage]) {
       if ((!msg.from || samePage(msg.from) !== stopPage) && stopPageIsOurs()) {
-        log(...fillEvents([{ fields: 0, blockers: [`stop: ${stopPage}`] }], { carrier, page: stopPage, overwrite: false, auto: 'stop', ms: 0, redact: (text) => text }));
+        log(...fillEvents([{ fields: 0, blockers: [`stop: ${stopPage}`] }], { carrier, page: stopPage, view: viewOf(sender.tab.id, stopPage), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text }));
       }
       showStopPage();
     }
@@ -945,9 +946,22 @@ const onQuotePage = () => !!state.tab?.carrier && (!state.tab.carrier.autoFillUr
 // it to keep two quote tabs, or two vehicles, apart (scripts/lib/transitions.mjs).
 function viewOf(tabId, page, carrier = state.tab?.carrier) {
   if (!Number.isInteger(tabId)) return undefined;
-  if (!state.viewTabs.has(tabId)) state.viewTabs.set(tabId, state.viewTabs.size + 1);
+  if (!state.viewTabs.has(tabId)) {
+    state.viewTabs.set(tabId, state.viewTabs.size + 1);
+    saveViews();
+  }
   const entity = stepScope(page, carrier).split('|')[1];
   return `t${state.viewTabs.get(tabId)}${entity ? `:${entity}` : ''}`;
+}
+
+// Kept with the quote's session (in session storage, like the intake), so a panel that's closed
+// and opened again numbers the quote's tabs as before, and a new quote starts from t1.
+function saveViews() {
+  store.set('views', { session: usage.currentSession()?.id ?? null, tabs: [...state.viewTabs] })?.catch?.(() => {});
+}
+function resetViews() {
+  state.viewTabs = new Map();
+  saveViews();
 }
 
 function stepScope(page, carrier = state.tab?.carrier) {
@@ -1004,6 +1018,8 @@ async function autoFill(page) {
   if (state.autoPaused || state.filling || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   if (state.tab.carrier.stopPages?.[page]) return;
   const { id: tabId, carrier } = state.tab;
+  // Before any waiting: the agent may pick another vehicle or tab while the carrier works.
+  const view = viewOf(tabId, page, carrier);
   await pickListItem(carrier, page);
   state.filling = true;
   state.autoPending = false;
@@ -1027,7 +1043,7 @@ async function autoFill(page) {
     if (state.autoPaused || hasWarnings || state.assistPage === page) { renderReport(frames); assistFrames = frames; }
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings) {
-      if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, view: viewOf(tabId, page, carrier), overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }));
+      if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, view, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }));
       if (n) {
         const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
         $('report').append(note);
@@ -1239,8 +1255,6 @@ function cancelLayouts() {
 // text the new intake's redaction doesn't cover. No layouts from them until they move on.
 function holdLayouts() {
   state.layoutHold = true;
-  // Views number the tabs of one quote.
-  state.viewTabs = new Map();
   state.layoutReadyTabs = new Set();
   state.layoutNewTabs = new Set();
   // What was kept for the previous quote's layouts is no use any more.
@@ -1440,6 +1454,8 @@ async function fillPage({ auto = false } = {}) {
   clearTimeout(state.autoTimer);
   const { id: tabId, carrier } = state.tab;
   const page = pageOf(state.tab.url);
+  // Before any waiting: the agent may pick another vehicle or tab while the carrier works.
+  const view = viewOf(tabId, page, carrier);
   await pickListItem(carrier, page);
   const plan = buildPlan(state.intake.record, carrier, state.active);
   const overwrite = auto ? false : $('overwrite').checked;
@@ -1463,7 +1479,7 @@ async function fillPage({ auto = false } = {}) {
     followUp = afterFill(frames, { carrier, page });
     recordLayout(page);
     if (!carrier.practice) usage.log(...fillEvents(frames, {
-      carrier: carrier.id, page, view: viewOf(tabId, page, carrier), overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
+      carrier: carrier.id, page, view, overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
       keySalt: usage.currentSession()?.keySalt,
     }));
     renderReport(frames);
@@ -2420,6 +2436,7 @@ function wire() {
     usage.log({ type: 'intake_closed', reason: 'cleared' });
     cancelLayouts();
     holdLayouts();
+    resetViews();
     state.intake = null;
     usage.restoreSession(null);
     await store.remove('intake');
@@ -2452,6 +2469,8 @@ async function init() {
   state.intake = (await store.get('intake')) ?? null;
   state.active = (await store.get('active')) ?? state.active;
   usage.restoreSession((await store.get('session')) ?? null);
+  const views = await store.get('views');
+  if (views?.session && views.session === usage.currentSession()?.id) state.viewTabs = new Map(views.tabs);
   await restoreAiPending();
   const saved = await usage.migrateAssistantSettings();
   $('auto-followups').checked = saved.autoFollowUps ?? true;
