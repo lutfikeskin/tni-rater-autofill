@@ -6,7 +6,7 @@ Read this when adding a carrier, product, state, or materially different vehicle
 
 Define the initial supported scope: carrier/product, states, operations, vehicle types, driver/vehicle counts, requested coverages, and known exceptions. Reuse existing intake concepts where their meanings agree.
 
-Capture live page layouts and the answers that reveal follow-up questions within the authorized quoting workflow. Saved HTML/PDFs go in ignored `layouts/`; scrub derived fixtures. A saved page describes one visible state, often without runtime dropdown choices or hidden server-generated branches.
+Capture live page layouts and the answers that reveal follow-up questions within the authorized quoting workflow: name a scenario, capture, change one answer, capture again (Capture page layout or Alt+Shift+C), then `npm run captures` for the before/after of each step. Saved HTML/PDFs go in ignored `layouts/`; scrub derived fixtures. A saved page describes one visible state, often without runtime dropdown choices or hidden server-generated branches.
 
 For each discovered question, record its target, meaning, options, source of the answer, entity, applicability, and unresolved decisions. Include known combinations that change the flow. Do not infer all conditional behavior from a union of captured fields.
 

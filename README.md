@@ -43,9 +43,9 @@ The loaded intake record is kept in Chrome's session storage and cleared when Ch
 
 Until a carrier has exact mappings, the extension matches fields by their labels ("Date of Birth", "USDOT #", …) using the generic rules in `src/rules.js`. To make a carrier exact:
 
-1. Load any intake (so client details can be redacted), open a rater page, and click **Capture page layout (for setup)**.
-2. This saves a JSON file to Downloads. It lists every field's label, id/name, type, dropdown options and section, plus which intake field the generic rules would put there (`wouldFill`). It contains **no field values**, and client names and numbers are replaced with `[client]`.
-3. Do this for every page of the quote flow, send the files over, and the mappings go into `src/carriers.js`.
+1. Load the client's intake (required: its names and numbers are what get redacted), open a rater page, and under **Advanced (for setup)** give the series a **Scenario** name (e.g. "FL van, hazmat"), then click **Capture page layout**, or press **Alt+Shift+C** with the side panel open (handy with a dropdown list open).
+2. Each capture saves a JSON file to Downloads, numbered within its scenario (`capture-<carrier>-<scenario>-001-<page>.json`). It lists every field's label, id/name, type, dropdown options and section, which choice is picked, the messages on screen, any open dropdown list, and which intake field the generic rules would put there (`wouldFill`), with the page, step and view, and the **Note** you typed for it ("set hazmat to Yes"). It contains **no typed values**, and client names and numbers are replaced with `[client]`. Nothing is uploaded.
+3. For a follow-up question, capture, change the answer, capture again. Move the files to `layouts/` (kept out of git) and run `npm run captures` (also part of `npm run review`): `reviews/captures-<date>.md` lists each scenario in order with what changed since the last capture of the same page, view and intake. An open list keeps its choices only when it's a fixed list of a known question; a lookup filled from what was typed (an address, a business) keeps none. Do this for every page of the quote flow, and the mappings go into `src/carriers.js`.
 
 ## Status
 
@@ -97,6 +97,7 @@ npm run review    # everything below, plus AI accept/reject per question and pro
 npm run learn     # rule suggestions: standard answers, per-state answers, new intake mappings, rules agents keep correcting
 npm run layouts   # carrier page layouts per state/product -> captures/<carrier>/generated/
 npm run transitions  # when follow-up questions show, answers not seen yet, what changed after an answer -> reviews/
+npm run captures  # manual captures in layouts/, per scenario in order, with what changed between them -> reviews/
 npm run summary   # intake problems, corrections, failures, time per page
 node scripts/find-intake.mjs <folder of intake PDFs> server-data   # which intake a session used
 ```

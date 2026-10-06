@@ -46,6 +46,9 @@ const run = (script, scriptArgs) => {
   try {
     return execFileSync(process.execPath, [path.join(root, 'scripts', script), ...scriptArgs], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   } catch (e) {
+    // A script that reports a problem through its exit code (captures.mjs: a file not read) still
+    // printed its result.
+    if (String(e.stdout ?? '').trim()) return `${String(e.stdout).trim()} (exit ${e.status})`;
     return `(${script} failed: ${String(e.stderr || e.message).trim().split('\n')[0]})`;
   }
 };
@@ -53,6 +56,8 @@ const summary = recent.length ? run('summarize-usage.mjs', [recentFile]) : '(no 
 const learn = run('learn-rules.mjs', inputs).replace(/^# /m, '### ');
 const layouts = run('build-layouts.mjs', inputs);
 const transitions = run('transitions.mjs', inputs);
+// Manual captures kept in layouts/ (developer captures; not in the usage log).
+const captures = fs.existsSync(path.join(root, 'layouts')) ? run('captures.mjs', [path.join(root, 'layouts')]) : '(no layouts/ folder)';
 fs.rmSync(tmp, { recursive: true, force: true });
 
 // --- Numbers for the top of the report ------------------------------------------------------
@@ -158,6 +163,7 @@ p('## Rule coverage of live pages (all data)', '', 'Questions agents met that no
 p('## Rule suggestions (all data)', '', learn, '');
 p('## Usage summary (this period)', '', '```', summary, '```', '');
 p('## Page layouts (all data)', '', 'Open these on the replay page (`npm run replay`, then the Layout box) to see what fills on each state/product.', '', '```', layouts, '```', '');
+p('## Manual captures (layouts/)', '', 'Each scenario captured by hand, in order, with what changed between captures of the same page: the report named here.', '', '```', captures, '```', '');
 p('## When questions show (all data)', '', 'Conditions seen in the layouts, answers not tried yet (a checklist for recordings) and what changed after an answer: the report named here.', '', '```', transitions, '```', '');
 
 fs.mkdirSync(path.dirname(out), { recursive: true });

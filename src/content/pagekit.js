@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 45 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 46 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1475,7 +1475,62 @@
         .filter((el) => el.getClientRects().length).map((el) => r(oneLine(el.value || el.textContent)).slice(0, 60)).filter(Boolean))].slice(0, 80),
       customWidgets: deepQueryAll(document, '[role=combobox]:not(input):not(select), [role=listbox], [contenteditable=true]')
         .filter(isVisible).slice(0, 50).map((el) => ({ role: el.getAttribute('role') ?? 'contenteditable', label: r(labelFor(el)), selector: cssPath(el) })),
+      // Validation and help messages on screen (what the page said about the answers), redacted. A
+      // message can repeat what was typed into a box (a corrected VIN, a phone number): the boxes'
+      // text and anything shaped like a VIN or a long number are taken out as well.
+      messages: [...new Set(deepQueryAll(document, '[role=alert], .x-form-error-msg, .x-form-invalid-under, [class*="error-message"], [class*="validation-message"], [class*="help-block"]')
+        .filter(isVisible).map((el) => withoutTyped(r(oneLine(el.textContent)), controls).slice(0, 200)).filter(Boolean))].slice(0, 40),
+      // Dropdown lists open on screen (a capture taken with the keyboard shortcut while one is open):
+      // their choices as shown, and which question opened them. Choices are kept only for a fixed
+      // list of a known question: never agency staff lists, never a list whose question can't be
+      // found, and never a lookup filled from what was typed (addresses, businesses, customers).
+      openLists: deepQueryAll(document, '[role=listbox], .x-boundlist').filter(isVisible).slice(0, 10).map((list) => {
+        const owner = listOwner(list);
+        const label = owner?.label ?? null;
+        const items = [...list.querySelectorAll('[role=option], .x-boundlist-item')].map((o) => withoutTyped(r(oneLine(o.textContent)), controls)).filter(Boolean);
+        const kept = !!owner?.fixed && label !== null && !/agent|producer/i.test(label);
+        return { label: label === null ? null : r(label), selector: cssPath(list), count: items.length, fixed: !!owner?.fixed,
+          options: kept ? items.slice(0, CAPTURE_OPTIONS) : [], optionsTruncated: (kept && items.length > CAPTURE_OPTIONS) || undefined };
+      }),
     };
+  }
+
+  // Text typed into the page's boxes, and anything shaped like a VIN or a long number, out of a
+  // message the page shows (it may repeat what was typed, which the intake's terms don't cover).
+  function withoutTyped(text, controls) {
+    // Every box that holds typed text, whatever its role, read from the page itself: the questions
+    // found (a combo you can type into included) and the boxes question discovery skips (search
+    // boxes, editable regions).
+    const boxes = [...controls.map((c) => c.el), ...deepQueryAll(document, 'input, textarea, [contenteditable=""], [contenteditable=true]')];
+    const typed = [...new Set(boxes.filter((el) => el?.tagName === 'TEXTAREA' || el?.getAttribute?.('contenteditable') != null
+      || (el?.tagName === 'INPUT' && !/^(radio|checkbox|button|submit|reset|image|file|hidden|password|range|color)$/i.test(el.type ?? '')))
+      .map((el) => oneLine(el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ? el.value : el.textContent)))].filter((v) => v.length >= 3);
+    // Whatever the case or spacing the page shows it in (it may capitalize what was typed).
+    const pattern = (v) => new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'), 'gi');
+    let out = typed.reduce((acc, v) => acc.replace(pattern(v), '[typed]'), text);
+    out = out.replace(/\b[A-HJ-NPR-Z0-9]{17}\b/gi, '[typed]').replace(/\d[\d\s().-]{4,}\d/g, '[number]');
+    return out;
+  }
+
+  // The question an open dropdown list belongs to, and whether the list is a fixed one (a choice,
+  // not results looked up from what was typed): by ARIA (aria-owns / aria-controls), then ExtJS
+  // (the bound list's field; fixed when its store is local: typing only filters the carrier's own
+  // choices, a remote store looks results up),
+  // then the box the agent is in. null when none is found.
+  function listOwner(list) {
+    const fixedBox = (el) => !!el && (el.tagName !== 'INPUT' || el.readOnly || !String(el.value ?? '').trim());
+    if (list.id) {
+      const owner = deepQueryAll(document, 'input, [role=combobox]').find((el) =>
+        `${el.getAttribute('aria-owns') ?? ''} ${el.getAttribute('aria-controls') ?? ''}`.split(/\s+/).includes(list.id));
+      if (owner) return { label: labelFor(owner), fixed: fixedBox(owner) && owner.getAttribute('aria-autocomplete') !== 'list' };
+      const cmp = ext()?.getCmp(list.id);
+      const field = cmp?.pickerField ?? cmp?.ownerCmp;
+      const label = field?.dctCaption ?? field?.fieldLabel ?? (field?.inputEl?.dom ? labelFor(field.inputEl.dom) : null);
+      if (label) return { label, fixed: field.queryMode === 'local' && !field.remoteFilter };
+    }
+    const focused = document.activeElement;
+    return focused && focused !== document.body && /^(INPUT|SELECT)$/.test(focused.tagName ?? '')
+      ? { label: labelFor(focused), fixed: focused.tagName === 'SELECT' || !!focused.readOnly } : null;
   }
 
   // A captured field's choices, as the page has them loaded (never agency staff / agent-code
@@ -1517,5 +1572,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 45, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 46, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

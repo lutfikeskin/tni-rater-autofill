@@ -1924,3 +1924,53 @@ test('a capture names the step on screen from its visible headings', () => {
   h.document.body.append(new FakeNode('h3', { textContent: 'Vehicles' }), makeInput({ id: 'vin', ariaLabel: 'VIN' }));
   assert.equal(h.kit.capture(null, []).step, 'Vehicles');
 });
+
+test('a capture keeps the messages on screen and any open dropdown list, never a staff list', () => {
+  const h = harness();
+  const vehicleType = makeInput({ id: 'type', ariaLabel: 'Vehicle type', attrs: { 'aria-controls': 'typeList' } });
+  const producer = makeInput({ id: 'producer', ariaLabel: 'Producer', attrs: { 'aria-controls': 'producerList' } });
+  const list = (id, items) => {
+    const l = new FakeNode('ul', { id, role: 'listbox' });
+    l.append(...items.map((t) => new FakeNode('li', { role: 'option', textContent: t })));
+    return l;
+  };
+  h.document.body.append(vehicleType, producer, list('typeList', ['Cargo Van', 'Box Truck']), list('producerList', ['JANE DOE-1']),
+    new FakeNode('div', { role: 'alert', textContent: 'VIN for Jordan Avery is not valid' }));
+  const page = h.kit.capture(null, ['Jordan Avery']);
+  assert.deepEqual(JSON.parse(JSON.stringify(page.openLists.map((l) => [l.label, l.options]))), [['Vehicle type', ['Cargo Van', 'Box Truck']], ['Producer', []]]);
+  assert.deepEqual([...page.messages], ['VIN for [client] is not valid']);
+});
+
+test('a capture takes typed text out of messages, and keeps no choices of a list whose question is unknown', () => {
+  const h = harness({ ext: true });
+  const vin = makeInput({ id: 'vin', ariaLabel: 'VIN', value: '1HGBH41JXMN109186' });
+  const phone = makeInput({ id: 'phone', ariaLabel: 'Phone', value: '555 201 0199' });
+  const orphan = new FakeNode('div', { id: 'boundlist-1', className: 'x-boundlist' });
+  orphan.append(new FakeNode('li', { className: 'x-boundlist-item', textContent: 'JANE DOE-1' }));
+  const owned = new FakeNode('div', { id: 'boundlist-2', className: 'x-boundlist' });
+  owned.append(new FakeNode('li', { className: 'x-boundlist-item', textContent: 'Cargo Van' }));
+  h.context.Ext._components.set('boundlist-2', { pickerField: { dctCaption: 'Vehicle type', queryMode: 'local' } });
+  // A lookup filled from what was typed (a remote store): its results are not kept.
+  const lookup = new FakeNode('div', { id: 'boundlist-3', className: 'x-boundlist' });
+  lookup.append(new FakeNode('li', { className: 'x-boundlist-item', textContent: '12 Corrected Rd, Tampa' }));
+  h.context.Ext._components.set('boundlist-3', { pickerField: { dctCaption: 'Garaging address', queryMode: 'remote' } });
+  // Text typed into a combo the page treats as a choice is taken out of messages too.
+  const { input: business } = addExtText(h, 'c', '2D1', { caption: 'Business name' });
+  business.value = 'Corrected Hauling Co';
+  h.document.body.append(vin, phone, orphan, owned, lookup,
+    new FakeNode('div', { role: 'alert', textContent: 'VIN 1HGBH41JXMN109186 not found; call 555 201 0199' }),
+    new FakeNode('div', { role: 'alert', textContent: 'No match for CORRECTED  hauling co' }));
+  const page = h.kit.capture(null, []);
+  assert.deepEqual([...page.messages], ['VIN [typed] not found; call [typed]', 'No match for [typed]']);
+  assert.deepEqual(JSON.parse(JSON.stringify(page.openLists.map((l) => [l.label, l.options]))),
+    [[null, []], ['Vehicle type', ['Cargo Van']], ['Garaging address', []]]);
+});
+
+test('typed text is taken out of messages from boxes question discovery skips: search boxes, editable regions', () => {
+  const h = harness();
+  const search = makeInput({ id: 'lookup', type: 'search', ariaLabel: 'Find a customer', value: 'Rivera Logistics' });
+  const notes = new FakeNode('div', { attrs: { contenteditable: 'true' }, textContent: 'Dock at 4 Pier Rd' });
+  h.document.body.append(search, notes,
+    new FakeNode('div', { role: 'alert', textContent: 'No customer named rivera logistics; check Dock at 4 Pier Rd' }));
+  assert.deepEqual([...h.kit.capture(null, []).messages], ['No customer named [typed]; check [typed]']);
+});

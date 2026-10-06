@@ -136,8 +136,10 @@
       <div class="advanced-body">
         <label class="field-row">Server<input id="server-url" type="url" placeholder="https://usage-server-production.up.railway.app" autocomplete="off"></label>
         <label class="field-row">Token<input id="server-token" type="password" placeholder="if the server needs one" autocomplete="off"></label>
+        <label class="field-row">Scenario<input id="capture-scenario" type="text" placeholder="e.g. FL van, hazmat yes/no" autocomplete="off" maxlength="60"></label>
+        <label class="field-row">Note<input id="capture-note" type="text" placeholder="what you just changed (kept on this computer)" autocomplete="off" maxlength="200"></label>
         <div class="actions wrap">
-          <button type="button" id="capture" class="ghost small-btn">Capture page layout</button>
+          <button type="button" id="capture" class="ghost small-btn" title="Alt+Shift+C while the panel is open">Capture page layout</button>
           <button type="button" id="upload-usage" class="ghost small-btn">Upload now</button>
           <button type="button" id="export-usage" class="ghost small-btn">Export log</button>
           <button type="button" id="clear-usage" class="ghost small-btn">Clear log</button>

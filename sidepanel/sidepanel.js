@@ -1673,13 +1673,73 @@ async function clearMarks() {
   $('report').replaceChildren();
 }
 
+// A developer's capture of the page as it is now, for writing rules and mock pages (docs/learning.md):
+// its questions, choices, picks, messages and any open dropdown list, never typed text, client
+// details redacted. Captures belong to a scenario and are numbered within it, so a series (an
+// answer changed, then captured again) reads as before and after; `npm run captures` lists what
+// changed between them. Downloaded only: nothing is uploaded. Alt+Shift+C takes one without
+// leaving the page, e.g. with a dropdown open.
+const captureCountsStore = inExtension
+  ? { get: async () => (await chrome.storage.local.get('captureCounts')).captureCounts, set: (v) => chrome.storage.local.set({ captureCounts: v }) }
+  : { get: async () => memory.captureCounts, set: async (v) => { memory.captureCounts = v; } };
+
+// A scenario's next capture number, kept in the extension's settings (local storage, so a scenario
+// continued after Chrome restarts carries on) and taken one at a time, also across panels in two
+// windows (a Web Lock), so two quick captures never share a number.
+async function nextCaptureNumber(scenario) {
+  // Under its own storage key, not in the settings object other settings rewrite.
+  const take = async () => {
+    const counts = (await captureCountsStore.get()) ?? {};
+    const n = (counts[scenario] ?? 0) + 1;
+    await captureCountsStore.set({ ...counts, [scenario]: n });
+    return n;
+  };
+  return globalThis.navigator?.locks ? navigator.locks.request('capture-counts', take) : take();
+}
+
+// Alt+Shift+C reaches the side panel of every window: only the one in the focused window captures.
+async function captureFromShortcut() {
+  const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
+  if (mine && focused && mine.id !== focused.id) return;
+  capturePage();
+}
+
 async function capturePage() {
+  if (!state.tab?.carrier) {
+    $('report').replaceChildren(h('p', { class: 'muted small' }, 'Open a carrier page to capture its layout.'));
+    return;
+  }
+  // Client details are redacted with the loaded intake's names and numbers: without one, nothing
+  // on the page or typed in the scenario and note would be.
+  if (!state.intake?.record) {
+    $('report').replaceChildren(h('p', { class: 'muted small' }, 'Load the client\'s intake first, so their details can be redacted from the capture.'));
+    return;
+  }
   const { id: tabId, carrier } = state.tab;
   const record = state.intake?.record;
+  const redact = redactor(redactionTerms(record));
+  // Both are typed by the agent: a client's name or number in them is redacted like the page's.
+  const scenario = redact($('capture-scenario').value.trim()).slice(0, 60) || 'unnamed';
+  const typedNote = $('capture-note').value;
+  const note = redact(typedNote.trim()).slice(0, 200) || null;
+  // Which quote the scenario belongs to (its session's first characters, no client data): two
+  // clients' scenarios redacted to the same name stay apart.
+  const quote = String(usage.currentSession()?.id ?? '').slice(0, 8) || null;
+  const page = pageOf(state.tab.url);
+  const view = viewOf(tabId, page, carrier);
+  // What the capture is of; checked again once the page has been read (as layout jobs are).
+  const asked = JSON.stringify([tabId, page, state.active, state.intakeRevision, usage.currentSession()?.id ?? null]);
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
       [record ? buildPlan(record, carrier, state.active) : null, record ? redactionTerms(record) : []]);
-    const frames = results.map((r) => r.result).filter((f) => f && (f.controls.length || f.isTopFrame));
+    // Frames with questions, the top one, and any with messages or an open list (evidence only).
+    const frames = results.map((r) => r.result).filter((f) => f && (f.controls.length || f.isTopFrame || f.messages?.length || f.openLists?.length));
+    const top = frames.find((f) => f.isTopFrame);
+    const now = JSON.stringify([state.tab?.id, pageOf(state.tab?.url), state.active, state.intakeRevision, usage.currentSession()?.id ?? null]);
+    if (now !== asked || top?.page !== page) {
+      $('report').replaceChildren(h('p', { class: 'error' }, 'The page, vehicle or driver changed while it was being captured. Nothing was saved; capture again.'));
+      return;
+    }
     // Rater pages change with the state and product being quoted, so every capture records them.
     const context = record ? {
       state: record.garaging?.state ?? null,
@@ -1688,13 +1748,19 @@ async function capturePage() {
       hasTrailers: record.trailers.length > 0,
       coverages: Object.entries(record.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     } : null;
-    const data = { tool: 'tni-rater-autofill', version: 1, carrier: carrier.id, capturedAt: new Date().toISOString(), context, frames };
-    const slug = (frames.find((f) => f.isTopFrame)?.frame ?? '').replace(/^https?:\/\/[^/]+/, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, 40) || 'page';
+    const n = await nextCaptureNumber(`${quote ?? ''}|${scenario}`);
+    const data = { tool: 'tni-rater-autofill', kind: 'page-capture', version: 2, carrier: carrier.id, capturedAt: new Date().toISOString(),
+      // The step only for a one-address application (layoutSteps, AmWINS), as layouts do: other
+      // carriers' headings change with the questions shown (a follow-up's own heading).
+      scenario, quote, n, note, page: top?.page ?? page, step: (carrier.layoutSteps && top?.step) || null, view: view ?? null, context, frames };
+    const slug = (s, max) => String(s ?? '').replace(/^https?:\/\/[^/]+/, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, max) || 'page';
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
-    h('a', { href: url, download: `capture-${carrier.id}-${slug}-${Date.now()}.json` }).click();
+    h('a', { href: url, download: `capture-${carrier.id}-${slug(scenario, 30)}${quote ? `-${quote.slice(0, 4)}` : ''}-${String(n).padStart(3, '0')}-${slug(data.page, 30)}.json` }).click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    // Only the note this capture took: one being typed for the next step stays.
+    if ($('capture-note').value === typedNote) $('capture-note').value = '';
     $('report').replaceChildren(h('p', { class: 'muted small' },
-      `Saved the layout of ${frames.reduce((n, f) => n + f.controls.length, 0)} fields to your Downloads. It has no field values, and client names/numbers are replaced with [client] — still, skim it before sending.`));
+      `Saved capture ${n} of "${scenario}" (${frames.reduce((k, f) => k + f.controls.length, 0)} fields${top?.openLists?.length ? ', an open list' : ''}) to your Downloads. No typed values; client names and numbers are [client]. Move it to layouts/ (kept out of git) and skim it before sharing.`));
   } catch (e) {
     $('report').replaceChildren(h('p', { class: 'error' }, `Couldn't capture this page: ${e.message}`));
   }
@@ -2449,6 +2515,8 @@ function wire() {
   $('fill').addEventListener('click', () => fillPage());
   $('unmark').addEventListener('click', clearMarks);
   $('capture').addEventListener('click', capturePage);
+  // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
+  if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') captureFromShortcut(); });
   wireAgentPopover();
   wireUsage();
   wireAi();
