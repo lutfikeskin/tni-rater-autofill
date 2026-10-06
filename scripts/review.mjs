@@ -46,6 +46,9 @@ const run = (script, scriptArgs) => {
   try {
     return execFileSync(process.execPath, [path.join(root, 'scripts', script), ...scriptArgs], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   } catch (e) {
+    // A script that reports a problem through its exit code (captures.mjs: a file not read) still
+    // printed its result.
+    if (String(e.stdout ?? '').trim()) return `${String(e.stdout).trim()} (exit ${e.status})`;
     return `(${script} failed: ${String(e.stderr || e.message).trim().split('\n')[0]})`;
   }
 };

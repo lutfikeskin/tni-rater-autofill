@@ -1959,7 +1959,7 @@ test('a capture takes typed text out of messages, and keeps no choices of a list
   business.value = 'Corrected Hauling Co';
   h.document.body.append(vin, phone, orphan, owned, lookup,
     new FakeNode('div', { role: 'alert', textContent: 'VIN 1HGBH41JXMN109186 not found; call 555 201 0199' }),
-    new FakeNode('div', { role: 'alert', textContent: 'No match for Corrected Hauling Co' }));
+    new FakeNode('div', { role: 'alert', textContent: 'No match for CORRECTED  hauling co' }));
   const page = h.kit.capture(null, []);
   assert.deepEqual([...page.messages], ['VIN [typed] not found; call [typed]', 'No match for [typed]']);
   assert.deepEqual(JSON.parse(JSON.stringify(page.openLists.map((l) => [l.label, l.options]))),

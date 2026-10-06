@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 import { diff } from './lib/transitions.mjs';
 import { fieldId } from './lib/conditions.mjs';
 
+// Capture files that couldn't be read are returned too, so the report names them instead of
+// quietly comparing the captures on either side as if no step were missing.
 export function readCaptures(paths) {
   const files = [];
   const walk = (p) => {
@@ -23,12 +25,16 @@ export function readCaptures(paths) {
     else if (/^capture-.*\.json$/.test(path.basename(p))) files.push(p);
   };
   paths.forEach(walk);
-  return files.flatMap((file) => {
-    try {
-      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-      return data.kind === 'page-capture' && data.version >= 2 ? [{ ...data, file }] : [];
-    } catch { return []; }
-  });
+  const captures = [];
+  const unreadable = [];
+  for (const file of files) {
+    let data;
+    try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (e) { unreadable.push({ file, error: String(e.message).slice(0, 120) }); continue; }
+    if (data?.kind !== 'page-capture' || !(data.version >= 2)) continue; // version 1 captures: no scenario
+    if (!Array.isArray(data.frames) || typeof data.capturedAt !== 'string') { unreadable.push({ file, error: 'not a complete capture' }); continue; }
+    captures.push({ ...data, file });
+  }
+  return { captures, unreadable };
 }
 
 // A capture as a layout: its controls from every frame.
@@ -62,7 +68,8 @@ function picksChanged(before, after) {
 export function captureStory(captures) {
   const scenarios = new Map();
   for (const c of captures) {
-    const key = `${c.carrier} · ${c.scenario}`;
+    // Per quote too: two clients' scenarios redacted to the same name are two scenarios.
+    const key = `${c.carrier} · ${c.scenario}${c.quote ? ` (quote ${c.quote.slice(0, 4)})` : ''}`;
     scenarios.set(key, [...(scenarios.get(key) ?? []), c]);
   }
   const md = [];
@@ -111,12 +118,14 @@ export function captureStory(captures) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const inputs = process.argv.slice(2).length ? process.argv.slice(2) : ['layouts'];
-  const captures = readCaptures(inputs.filter((p) => fs.existsSync(p)));
+  const { captures, unreadable } = readCaptures(inputs.filter((p) => fs.existsSync(p)));
   const md = [`# Manual captures (${new Date().toISOString().slice(0, 10)})`, '',
     'Each scenario in the order captured. Changes are between consecutive captures of the same page; they were seen, not proven.', '',
+    ...(unreadable.length ? ['**Not read** (a step may be missing from the stories below):', ...unreadable.map((u) => `- ${u.file}: ${u.error}`), ''] : []),
     ...(captures.length ? captureStory(captures) : ['No captures (version 2) found. Take some with Capture page layout or Alt+Shift+C, then move them to layouts/.', ''])];
   const out = path.join('reviews', `captures-${new Date().toISOString().slice(0, 10)}.md`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${md.join('\n')}\n`);
-  console.log(`${out}: ${captures.length} capture(s) in ${new Set(captures.map((c) => `${c.carrier}|${c.scenario}`)).size} scenario(s)`);
+  console.log(`${out}: ${captures.length} capture(s) in ${new Set(captures.map((c) => `${c.carrier}|${c.scenario}|${c.quote}`)).size} scenario(s)${unreadable.length ? `, ${unreadable.length} file(s) not read` : ''}`);
+  if (unreadable.length) process.exitCode = 1;
 }

@@ -2220,23 +2220,30 @@ test('a manual capture is numbered in its scenario, keeps a redacted note and sc
     runKit: async () => [{ result: { isTopFrame: true, page: context.domPage ?? 'Operations', step: 'Business Owner Info', controls: [{ q: '2A1' }], openLists: [] } },
       // A child frame with no questions but a message: kept as evidence.
       { result: { isTopFrame: false, controls: [], messages: ['Enter a valid ZIP'], openLists: [] } }, { result: { isTopFrame: false, controls: [], messages: [], openLists: [] } }],
-    usage: { currentSession: () => ({ id: 'quote-1' }), settings: async () => settings, saveSettings: async (patch) => { settings = { ...settings, ...patch }; } },
+    usage: { currentSession: () => ({ id: 'quote-1' }) },
+    captureCountsStore: { get: async () => settings.captureCounts, set: async (v) => { settings = { ...settings, captureCounts: v }; } },
     Blob: class { constructor(parts) { blobs.push(JSON.parse(parts[0])); } },
     URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} }, setTimeout: () => 0, JSON, String,
   };
   vm.runInNewContext(['nextCaptureNumber', 'capturePage'].map(extractFunction).join('\n'), context);
   await context.capturePage();
   await context.capturePage();
-  assert.deepEqual(downloads, ['capture-progressive-client-van-001-Operations.json', 'capture-progressive-client-van-002-Operations.json']);
-  assert.deepEqual([blobs[0].kind, blobs[0].version, blobs[0].scenario, blobs[0].n, blobs[0].note, blobs[0].view], ['page-capture', 2, '[client] van', 1, 'set hazmat for [client] to Yes', 't1']);
+  assert.deepEqual(downloads, ['capture-progressive-client-van-quot-001-Operations.json', 'capture-progressive-client-van-quot-002-Operations.json']);
+  assert.deepEqual([blobs[0].kind, blobs[0].version, blobs[0].scenario, blobs[0].quote, blobs[0].n, blobs[0].note, blobs[0].view], ['page-capture', 2, '[client] van', 'quote-1', 1, 'set hazmat for [client] to Yes', 't1']);
   assert.equal(blobs[1].note, null, 'a note belongs to the capture it was written for');
   assert.equal(blobs[0].step, null, 'Progressive pages name themselves; their headings are no step');
   assert.equal(blobs[0].frames.length, 2, 'the frame with a message is kept, the empty one not');
-  assert.deepEqual(JSON.parse(JSON.stringify(settings.captureCounts)), { '[client] van': 2 }, 'kept in the settings, across browser restarts');
+  assert.deepEqual(JSON.parse(JSON.stringify(settings.captureCounts)), { 'quote-1|[client] van': 2 }, 'counted per quote and scenario, kept across browser restarts');
+  // A note typed for the next step while this capture runs is kept.
+  const kit = context.runKit;
+  context.runKit = async (...args) => { ui['capture-note'].value = 'next: hazmat No'; return kit(...args); };
+  await context.capturePage();
+  assert.equal(ui['capture-note'].value, 'next: hazmat No');
+  context.runKit = kit;
   // The page moved on while it was read: nothing saved.
   context.domPage = 'Drivers';
   await context.capturePage();
-  assert.equal(downloads.length, 2);
+  assert.equal(downloads.length, 3);
   assert.match(SIDEPANEL, /chrome\.commands\?\.onCommand\.addListener\(\(command\) => \{ if \(command === 'capture-page'\) captureFromShortcut\(\); \}\)/);
   assert.match(extractFunction('captureFromShortcut'), /mine\.id !== focused\.id\) return;/, 'only the focused window\'s panel captures');
 });

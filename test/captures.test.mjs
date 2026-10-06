@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { captureStory } from '../scripts/captures.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { captureStory, readCaptures } from '../scripts/captures.mjs';
 
 const capture = (n, controls, extra = {}) => ({ kind: 'page-capture', version: 2, carrier: 'progressive', scenario: 'FL van', n,
   capturedAt: `2026-10-06T10:0${n}:00Z`, page: 'Operations', step: null, view: 't1', note: null,
@@ -48,4 +51,17 @@ test('the story pairs a capture with the last one of the same page, view and int
   assert.match(md, /### 3\.[\s\S]*?Since capture 1:\n- Answer: Hauls hazmat\?: No → YES\n- Appeared: Placards carried/, 'back on the first van after the second');
   assert.match(md, /### 4\.[^\n]*\n\n[^\n]*\n\nFirst capture of this page, step, view and intake/, 'another intake is not compared');
   assert.match(md, /### 5\.[\s\S]*?Same questions as capture 3\./, 'YES and Yes are one answer');
+});
+
+test('capture files that cannot be read are named, and quotes keep same-named scenarios apart', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'captures-'));
+  fs.writeFileSync(path.join(dir, 'capture-progressive-a-001-Operations.json'), JSON.stringify(capture(1, [hazmat('No')], { quote: 'aaaa1111' })));
+  fs.writeFileSync(path.join(dir, 'capture-progressive-a-002-Operations.json'), '{"kind":"page-capture","vers');
+  fs.writeFileSync(path.join(dir, 'capture-progressive-old.json'), JSON.stringify({ tool: 'tni-rater-autofill', version: 1, frames: [] }));
+  const { captures, unreadable } = readCaptures([dir]);
+  assert.equal(captures.length, 1);
+  assert.deepEqual(unreadable.map((u) => path.basename(u.file)), ['capture-progressive-a-002-Operations.json']);
+  const md = captureStory([capture(1, [hazmat('No')], { quote: 'aaaa1111' }), capture(1, [hazmat('Yes')], { quote: 'bbbb2222', capturedAt: '2026-10-06T10:09:00Z' })]).join('\n');
+  assert.match(md, /## progressive · FL van \(quote aaaa\)[\s\S]*## progressive · FL van \(quote bbbb\)/);
+  assert.doesNotMatch(md, /Answer:/, 'two clients are not one before/after');
 });

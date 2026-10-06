@@ -1501,7 +1501,9 @@
     // Every box that holds typed text, whatever its role: a combo you can type into included.
     const typed = controls.filter((c) => c.el?.tagName === 'TEXTAREA' || (c.el?.tagName === 'INPUT' && !/^(radio|checkbox)$/i.test(c.el.type ?? '')))
       .map((c) => oneLine(c.el.value)).filter((v) => v.length >= 3);
-    let out = typed.reduce((acc, v) => acc.split(v).join('[typed]'), text);
+    // Whatever the case or spacing the page shows it in (it may capitalize what was typed).
+    const pattern = (v) => new RegExp(v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'), 'gi');
+    let out = typed.reduce((acc, v) => acc.replace(pattern(v), '[typed]'), text);
     out = out.replace(/\b[A-HJ-NPR-Z0-9]{17}\b/gi, '[typed]').replace(/\d[\d\s().-]{4,}\d/g, '[number]');
     return out;
   }
