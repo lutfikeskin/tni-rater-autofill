@@ -1924,3 +1924,19 @@ test('a capture names the step on screen from its visible headings', () => {
   h.document.body.append(new FakeNode('h3', { textContent: 'Vehicles' }), makeInput({ id: 'vin', ariaLabel: 'VIN' }));
   assert.equal(h.kit.capture(null, []).step, 'Vehicles');
 });
+
+test('a capture keeps the messages on screen and any open dropdown list, never a staff list', () => {
+  const h = harness();
+  const vehicleType = makeInput({ id: 'type', ariaLabel: 'Vehicle type', attrs: { 'aria-controls': 'typeList' } });
+  const producer = makeInput({ id: 'producer', ariaLabel: 'Producer', attrs: { 'aria-controls': 'producerList' } });
+  const list = (id, items) => {
+    const l = new FakeNode('ul', { id, role: 'listbox' });
+    l.append(...items.map((t) => new FakeNode('li', { role: 'option', textContent: t })));
+    return l;
+  };
+  h.document.body.append(vehicleType, producer, list('typeList', ['Cargo Van', 'Box Truck']), list('producerList', ['JANE DOE-1']),
+    new FakeNode('div', { role: 'alert', textContent: 'VIN for Jordan Avery is not valid' }));
+  const page = h.kit.capture(null, ['Jordan Avery']);
+  assert.deepEqual(JSON.parse(JSON.stringify(page.openLists.map((l) => [l.label, l.options]))), [['Vehicle type', ['Cargo Van', 'Box Truck']], ['Producer', []]]);
+  assert.deepEqual([...page.messages], ['VIN for [client] is not valid']);
+});

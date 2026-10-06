@@ -14,7 +14,8 @@ const pageOf = (e) => (e.step ? `${e.page} › ${e.step}` : e.page);
 const reasons = (e) => String(e.reason ?? '').split('+');
 const label = (f) => f.label ?? f.caption ?? f.q ?? '';
 
-function diff(before, after) {
+// What changed between two layouts of a page (also used for manual captures, scripts/captures.mjs).
+export function diff(before, after) {
   // A question repeated on either layout (a row per vehicle) can't be matched row to row: left
   // out of both, or a row going away would look like the question appearing.
   const pairsOf = (e) => (e.fields ?? []).map((f) => [fieldId(f), f]).filter(([id]) => id !== null);

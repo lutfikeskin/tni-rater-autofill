@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 45 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 46 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1475,6 +1475,19 @@
         .filter((el) => el.getClientRects().length).map((el) => r(oneLine(el.value || el.textContent)).slice(0, 60)).filter(Boolean))].slice(0, 80),
       customWidgets: deepQueryAll(document, '[role=combobox]:not(input):not(select), [role=listbox], [contenteditable=true]')
         .filter(isVisible).slice(0, 50).map((el) => ({ role: el.getAttribute('role') ?? 'contenteditable', label: r(labelFor(el)), selector: cssPath(el) })),
+      // Validation and help messages on screen (what the page said about the answers), redacted.
+      messages: [...new Set(deepQueryAll(document, '[role=alert], .x-form-error-msg, .x-form-invalid-under, [class*="error-message"], [class*="validation-message"], [class*="help-block"]')
+        .filter(isVisible).map((el) => r(oneLine(el.textContent)).slice(0, 200)).filter(Boolean))].slice(0, 40),
+      // Dropdown lists open on screen (a capture taken with the keyboard shortcut while one is open):
+      // their choices as shown, and which question opened them. Never agency staff lists.
+      openLists: deepQueryAll(document, '[role=listbox], .x-boundlist').filter(isVisible).slice(0, 10).map((list) => {
+        const owner = list.id ? deepQueryAll(document, 'input, [role=combobox]').find((el) =>
+          `${el.getAttribute('aria-owns') ?? ''} ${el.getAttribute('aria-controls') ?? ''}`.split(/\s+/).includes(list.id)) : null;
+        const label = owner ? r(labelFor(owner)) : '';
+        const items = [...list.querySelectorAll('[role=option], .x-boundlist-item')].map((o) => r(oneLine(o.textContent))).filter(Boolean);
+        return { label, selector: cssPath(list), count: items.length,
+          options: /agent|producer/i.test(label) ? [] : items.slice(0, CAPTURE_OPTIONS), optionsTruncated: items.length > CAPTURE_OPTIONS || undefined };
+      }),
     };
   }
 
@@ -1517,5 +1530,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 45, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 46, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

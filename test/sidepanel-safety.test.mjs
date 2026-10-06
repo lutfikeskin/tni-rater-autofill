@@ -2207,3 +2207,28 @@ test('fills take their view before waiting, stop pages log theirs, and a reopene
   assert.match(extractFunction('onRecorderMessage'), /page: stopPage, view: viewOf\(sender\.tab\.id, stopPage\)/);
   assert.match(extractFunction('init'), /usage\.restoreSession\([\s\S]{0,80}\);\s+const views = await store\.get\('views'\);\s+if \(views\?\.session && views\.session === usage\.currentSession\(\)\?\.id\) state\.viewTabs = new Map\(views\.tabs\);/);
 });
+
+test('a manual capture is numbered in its scenario, keeps a redacted note and is only downloaded', async () => {
+  const downloads = [], saved = {};
+  const ui = { 'capture-scenario': { value: ' FL van ' }, 'capture-note': { value: 'set hazmat for Jordan Avery to Yes' }, report: { replaceChildren() {} } };
+  const blobs = [];
+  const context = {
+    state: { tab: { id: 3, url: 'Operations', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, captureCounts: new Map() },
+    $: (id) => ui[id], h: (tag, props) => ({ click: () => downloads.push(props.download) }),
+    redactor: () => (s) => s.replace('Jordan Avery', '[client]'), redactionTerms: () => [], buildPlan: () => [],
+    pageOf: (u) => u, viewOf: () => 't1',
+    runKit: async () => [{ result: { isTopFrame: true, page: 'Operations', step: '', controls: [{ q: '2A1' }], openLists: [] } }],
+    store: { set: async (k, v) => { saved[k] = v; } },
+    Blob: class { constructor(parts) { blobs.push(JSON.parse(parts[0])); } },
+    URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} }, setTimeout: () => 0, JSON, String,
+  };
+  context.state.intake.record = { garaging: {}, operations: {}, vehicles: [], trailers: [], coverage: {} };
+  vm.runInNewContext(extractFunction('capturePage'), context);
+  await context.capturePage();
+  await context.capturePage();
+  assert.deepEqual(downloads, ['capture-progressive-FL-van-001-Operations.json', 'capture-progressive-FL-van-002-Operations.json']);
+  assert.deepEqual([blobs[0].kind, blobs[0].version, blobs[0].scenario, blobs[0].n, blobs[0].note, blobs[0].view], ['page-capture', 2, 'FL van', 1, 'set hazmat for [client] to Yes', 't1']);
+  assert.equal(blobs[1].note, null, 'a note belongs to the capture it was written for');
+  assert.deepEqual(JSON.parse(JSON.stringify(saved.captureCounts)), [['FL van', 2]]);
+  assert.match(SIDEPANEL, /chrome\.commands\?\.onCommand\.addListener\(\(command\) => \{ if \(command === 'capture-page'\) capturePage\(\); \}\)/);
+});
