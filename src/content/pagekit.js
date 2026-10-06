@@ -1475,20 +1475,47 @@
         .filter((el) => el.getClientRects().length).map((el) => r(oneLine(el.value || el.textContent)).slice(0, 60)).filter(Boolean))].slice(0, 80),
       customWidgets: deepQueryAll(document, '[role=combobox]:not(input):not(select), [role=listbox], [contenteditable=true]')
         .filter(isVisible).slice(0, 50).map((el) => ({ role: el.getAttribute('role') ?? 'contenteditable', label: r(labelFor(el)), selector: cssPath(el) })),
-      // Validation and help messages on screen (what the page said about the answers), redacted.
+      // Validation and help messages on screen (what the page said about the answers), redacted. A
+      // message can repeat what was typed into a box (a corrected VIN, a phone number): the boxes'
+      // text and anything shaped like a VIN or a long number are taken out as well.
       messages: [...new Set(deepQueryAll(document, '[role=alert], .x-form-error-msg, .x-form-invalid-under, [class*="error-message"], [class*="validation-message"], [class*="help-block"]')
-        .filter(isVisible).map((el) => r(oneLine(el.textContent)).slice(0, 200)).filter(Boolean))].slice(0, 40),
+        .filter(isVisible).map((el) => withoutTyped(r(oneLine(el.textContent)), controls).slice(0, 200)).filter(Boolean))].slice(0, 40),
       // Dropdown lists open on screen (a capture taken with the keyboard shortcut while one is open):
-      // their choices as shown, and which question opened them. Never agency staff lists.
+      // their choices as shown, and which question opened them. Never agency staff lists: a list
+      // whose question can't be found keeps no choices.
       openLists: deepQueryAll(document, '[role=listbox], .x-boundlist').filter(isVisible).slice(0, 10).map((list) => {
-        const owner = list.id ? deepQueryAll(document, 'input, [role=combobox]').find((el) =>
-          `${el.getAttribute('aria-owns') ?? ''} ${el.getAttribute('aria-controls') ?? ''}`.split(/\s+/).includes(list.id)) : null;
-        const label = owner ? r(labelFor(owner)) : '';
+        const label = listOwnerLabel(list);
         const items = [...list.querySelectorAll('[role=option], .x-boundlist-item')].map((o) => r(oneLine(o.textContent))).filter(Boolean);
-        return { label, selector: cssPath(list), count: items.length,
-          options: /agent|producer/i.test(label) ? [] : items.slice(0, CAPTURE_OPTIONS), optionsTruncated: items.length > CAPTURE_OPTIONS || undefined };
+        const kept = label !== null && !/agent|producer/i.test(label);
+        return { label: label === null ? null : r(label), selector: cssPath(list), count: items.length,
+          options: kept ? items.slice(0, CAPTURE_OPTIONS) : [], optionsTruncated: (kept && items.length > CAPTURE_OPTIONS) || undefined };
       }),
     };
+  }
+
+  // Text typed into the page's boxes, and anything shaped like a VIN or a long number, out of a
+  // message the page shows (it may repeat what was typed, which the intake's terms don't cover).
+  function withoutTyped(text, controls) {
+    const typed = controls.filter((c) => c.kind === 'text').map((c) => oneLine(c.el.value)).filter((v) => v.length >= 3);
+    let out = typed.reduce((acc, v) => acc.split(v).join('[typed]'), text);
+    out = out.replace(/\b[A-HJ-NPR-Z0-9]{17}\b/gi, '[typed]').replace(/\d[\d\s().-]{4,}\d/g, '[number]');
+    return out;
+  }
+
+  // The question an open dropdown list belongs to: by ARIA (aria-owns / aria-controls), then
+  // ExtJS (the bound list's field), then the box the agent is in. null when none is found.
+  function listOwnerLabel(list) {
+    if (list.id) {
+      const owner = deepQueryAll(document, 'input, [role=combobox]').find((el) =>
+        `${el.getAttribute('aria-owns') ?? ''} ${el.getAttribute('aria-controls') ?? ''}`.split(/\s+/).includes(list.id));
+      if (owner) return labelFor(owner);
+      const cmp = ext()?.getCmp(list.id);
+      const field = cmp?.pickerField ?? cmp?.ownerCmp;
+      const label = field?.dctCaption ?? field?.fieldLabel ?? (field?.inputEl?.dom ? labelFor(field.inputEl.dom) : null);
+      if (label) return label;
+    }
+    const focused = document.activeElement;
+    return focused && focused !== document.body && /^(INPUT|SELECT)$/.test(focused.tagName ?? '') ? labelFor(focused) : null;
   }
 
   // A captured field's choices, as the page has them loaded (never agency staff / agent-code

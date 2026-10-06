@@ -204,7 +204,6 @@ const state = {
   layoutReadyTabs: new Set(),
   layoutNewTabs: new Set(), // tabs opened since then (a new quote, as Progressive opens one)
   viewTabs: new Map(), // tab id -> its order in this quote, for events' `view` (viewOf)
-  captureCounts: new Map(), // scenario -> captures taken (capturePage)
   layoutLatest: null, // the capture asked for last (waiting or queued), which later changes feed
   layoutErrors: 0,
   layoutErrorsLogged: new Set(),
@@ -1688,15 +1687,23 @@ async function capturePage() {
   const { id: tabId, carrier } = state.tab;
   const record = state.intake?.record;
   const redact = record ? redactor(redactionTerms(record)) : (x) => x;
-  const scenario = $('capture-scenario').value.trim().slice(0, 60) || 'unnamed';
+  // Both are typed by the agent: a client's name or number in them is redacted like the page's.
+  const scenario = redact($('capture-scenario').value.trim()).slice(0, 60) || 'unnamed';
   const note = redact($('capture-note').value.trim()).slice(0, 200) || null;
   const page = pageOf(state.tab.url);
   const view = viewOf(tabId, page, carrier);
+  // What the capture is of; checked again once the page has been read (as layout jobs are).
+  const asked = JSON.stringify([tabId, page, state.active, state.intakeRevision, usage.currentSession()?.id ?? null]);
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
       [record ? buildPlan(record, carrier, state.active) : null, record ? redactionTerms(record) : []]);
     const frames = results.map((r) => r.result).filter((f) => f && (f.controls.length || f.isTopFrame));
     const top = frames.find((f) => f.isTopFrame);
+    const now = JSON.stringify([state.tab?.id, pageOf(state.tab?.url), state.active, state.intakeRevision, usage.currentSession()?.id ?? null]);
+    if (now !== asked || top?.page !== page) {
+      $('report').replaceChildren(h('p', { class: 'error' }, 'The page, vehicle or driver changed while it was being captured. Nothing was saved; capture again.'));
+      return;
+    }
     // Rater pages change with the state and product being quoted, so every capture records them.
     const context = record ? {
       state: record.garaging?.state ?? null,
@@ -1705,9 +1712,11 @@ async function capturePage() {
       hasTrailers: record.trailers.length > 0,
       coverages: Object.entries(record.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     } : null;
-    const n = (state.captureCounts.get(scenario) ?? 0) + 1;
-    state.captureCounts.set(scenario, n);
-    store.set('captureCounts', [...state.captureCounts])?.catch?.(() => {});
+    // Numbered in the extension's settings (local storage): a scenario continued after Chrome
+    // restarts carries on from its last number.
+    const counts = (await usage.settings()).captureCounts ?? {};
+    const n = (counts[scenario] ?? 0) + 1;
+    await usage.saveSettings({ captureCounts: { ...counts, [scenario]: n } });
     const data = { tool: 'tni-rater-autofill', kind: 'page-capture', version: 2, carrier: carrier.id, capturedAt: new Date().toISOString(),
       scenario, n, note, page: top?.page ?? page, step: top?.step || null, view: view ?? null, context, frames };
     const slug = (s, max) => String(s ?? '').replace(/^https?:\/\/[^/]+/, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, max) || 'page';
@@ -2495,7 +2504,6 @@ async function init() {
   usage.restoreSession((await store.get('session')) ?? null);
   const views = await store.get('views');
   if (views?.session && views.session === usage.currentSession()?.id) state.viewTabs = new Map(views.tabs);
-  state.captureCounts = new Map((await store.get('captureCounts')) ?? []);
   await restoreAiPending();
   const saved = await usage.migrateAssistantSettings();
   $('auto-followups').checked = saved.autoFollowUps ?? true;

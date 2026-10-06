@@ -1940,3 +1940,19 @@ test('a capture keeps the messages on screen and any open dropdown list, never a
   assert.deepEqual(JSON.parse(JSON.stringify(page.openLists.map((l) => [l.label, l.options]))), [['Vehicle type', ['Cargo Van', 'Box Truck']], ['Producer', []]]);
   assert.deepEqual([...page.messages], ['VIN for [client] is not valid']);
 });
+
+test('a capture takes typed text out of messages, and keeps no choices of a list whose question is unknown', () => {
+  const h = harness({ ext: true });
+  const vin = makeInput({ id: 'vin', ariaLabel: 'VIN', value: '1HGBH41JXMN109186' });
+  const phone = makeInput({ id: 'phone', ariaLabel: 'Phone', value: '555 201 0199' });
+  const orphan = new FakeNode('div', { id: 'boundlist-1', className: 'x-boundlist' });
+  orphan.append(new FakeNode('li', { className: 'x-boundlist-item', textContent: 'JANE DOE-1' }));
+  const owned = new FakeNode('div', { id: 'boundlist-2', className: 'x-boundlist' });
+  owned.append(new FakeNode('li', { className: 'x-boundlist-item', textContent: 'Cargo Van' }));
+  h.context.Ext._components.set('boundlist-2', { pickerField: { dctCaption: 'Vehicle type' } });
+  h.document.body.append(vin, phone, orphan, owned,
+    new FakeNode('div', { role: 'alert', textContent: 'VIN 1HGBH41JXMN109186 not found; call 555 201 0199' }));
+  const page = h.kit.capture(null, []);
+  assert.deepEqual([...page.messages], ['VIN [typed] not found; call [typed]']);
+  assert.deepEqual(JSON.parse(JSON.stringify(page.openLists.map((l) => [l.label, l.options]))), [[null, []], ['Vehicle type', ['Cargo Van']]]);
+});

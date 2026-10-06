@@ -34,16 +34,26 @@ export function readCaptures(paths) {
 const asLayout = (c) => ({ fields: c.frames.flatMap((f) => f.controls ?? []) });
 const label = (f) => f.label ?? f.q ?? '';
 
+// Picks of choice questions, unanswered ones included (an answer chosen from nothing is a change).
+// A question repeated on the page (a row per vehicle) can't be matched row to row: left out.
 function picksChanged(before, after) {
   const picks = (c) => {
     const m = new Map();
-    for (const f of asLayout(c).fields) { const id = fieldId(f); if (id !== null && f.selected) m.set(id, f); }
-    return m;
+    const repeated = new Set();
+    for (const f of asLayout(c).fields) {
+      const id = fieldId(f);
+      if (id === null || f.kind === 'text' || f.selected === undefined) continue;
+      if (m.has(id)) repeated.add(id);
+      m.set(id, f);
+    }
+    for (const id of repeated) m.delete(id);
+    return { m, repeated };
   };
   const a = picks(before);
   const b = picks(after);
-  return [...b].filter(([id, f]) => a.has(id) && a.get(id).selected !== f.selected)
-    .map(([id, f]) => `${label(f)}: ${a.get(id).selected} → ${f.selected}`);
+  const shown = (v) => (v ? v : '∅');
+  return [...b.m].filter(([id, f]) => a.m.has(id) && !a.repeated.has(id) && (a.m.get(id).selected ?? '') !== (f.selected ?? ''))
+    .map(([id, f]) => `${label(f)}: ${shown(a.m.get(id).selected)} → ${shown(f.selected)}`);
 }
 
 export function captureStory(captures) {
@@ -54,17 +64,24 @@ export function captureStory(captures) {
   }
   const md = [];
   for (const [key, list] of [...scenarios].sort(([a], [b]) => a.localeCompare(b))) {
-    list.sort((a, b) => a.n - b.n || a.capturedAt.localeCompare(b.capturedAt));
+    // In the order taken: numbers can repeat when a scenario's name is used again.
+    list.sort((a, b) => a.capturedAt.localeCompare(b.capturedAt) || a.n - b.n);
     md.push(`## ${key}`, '');
     let previous = null;
     for (const c of list) {
       const where = `${c.page}${c.step ? ` › ${c.step}` : ''}${c.view ? ` (${c.view})` : ''}`;
       const fields = asLayout(c).fields.length;
       md.push(`### ${c.n}. ${where}${c.note ? ` — ${c.note}` : ''}`, '', `${fields} question${fields === 1 ? '' : 's'}, ${c.capturedAt}.`);
-      const top = c.frames.find((f) => f.isTopFrame);
-      for (const list of top?.openLists ?? []) md.push(`- Open list${list.label ? ` for **${list.label}**` : ''}: ${list.options.join(' · ')}${list.optionsTruncated ? ' …' : ''}`);
-      for (const m of top?.messages ?? []) md.push(`- Message: ${m}`);
-      if (previous && previous.page === c.page && previous.step === c.step) {
+      // Every frame's lists and messages (a carrier's form may sit in a frame), its frame named.
+      for (const frame of c.frames) {
+        const where = frame.isTopFrame ? '' : ` (frame ${frame.frame ?? '?'})`;
+        for (const list of frame.openLists ?? []) {
+          md.push(`- Open list${list.label ? ` for **${list.label}**` : ''}${where}: ${list.options.length ? `${list.options.join(' · ')}${list.optionsTruncated ? ' …' : ''}` : '(choices not kept)'}`);
+        }
+        for (const m of frame.messages ?? []) md.push(`- Message${where}: ${m}`);
+      }
+      // Compared only with the previous capture of the same page, step and view (tab and vehicle).
+      if (previous && previous.page === c.page && previous.step === c.step && (previous.view ?? null) === (c.view ?? null)) {
         const d = diff(asLayout(previous), asLayout(c));
         const lines = [
           ...picksChanged(previous, c).map((x) => `- Answer: ${x}`),
@@ -74,7 +91,7 @@ export function captureStory(captures) {
         ];
         md.push('', lines.length ? `Since capture ${previous.n}:` : `Same questions as capture ${previous.n}.`, ...lines);
       } else if (previous) {
-        md.push('', `Another page than capture ${previous.n} (${previous.page}${previous.step ? ` › ${previous.step}` : ''}).`);
+        md.push('', `Not compared with capture ${previous.n} (${previous.page}${previous.step ? ` › ${previous.step}` : ''}${previous.view ? `, ${previous.view}` : ''}): another page, step, tab or vehicle.`);
       }
       md.push('');
       previous = c;
