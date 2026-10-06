@@ -13,7 +13,8 @@ The extension uses plain ES modules with no source build step. `npm install` ins
 | AmWINS rules or application flow | `npm run mock:amwins` before completing an AmWINS rule change |
 | Panel orchestration or packaged behavior | `test/sidepanel-safety.test.mjs`, `npm run e2e:extension` |
 | AI validation, approvals, caching | `test/luna.test.mjs`, `test/ai-eval.test.mjs`, `npm run mock:luna` |
-| Events, learning, layout coverage, transport | Corresponding `usage`, `usage-log`, `learn`, `coverage`, `server`, and `consistency` test files |
+| Events, learning, layout coverage, transport | Corresponding `usage`, `usage-log`, `learn`, `coverage`, `conditions`, `server`, and `consistency` test files |
+| Manual page captures and their report | `test/pagekit.test.mjs` (capture), `test/sidepanel-safety.test.mjs` (panel), `test/captures.test.mjs` (`npm run captures`) |
 | Documentation only | Link/command checks, current-code audit, and `git diff --check`; no browser run or version bump |
 
 Run `npm test` for code changes, plus affected integration checks. Repeat or broaden only for new changes, failures, or unresolved concerns. Do not add tests that merely mirror a low-impact edit.
@@ -32,7 +33,7 @@ Run `npm test` for code changes, plus affected integration checks. Repeat or bro
 
 ## Baselines and fixtures
 
-For relevant new Progressive captures: build layouts with `npm run layouts`, review them (and `npm run transitions` for their conditions), and use `npm run fixtures:progressive` to refresh scrubbed fixtures. Fixtures with `showWhen` make the replay hide those follow-ups until their trigger has a matching answer, as the live page does, so expect baseline changes when refreshing them. Review the expected behavior before accepting `npm run e2e -- --update`; a baseline is not an answer key. Preserve unrelated baseline entries.
+For relevant new Progressive captures: build layouts with `npm run layouts`, review them (and `npm run transitions` for their conditions, `npm run captures` for manual before/after captures), and use `npm run fixtures:progressive` to refresh scrubbed fixtures. Fixtures with `showWhen` make the replay hide those follow-ups until their trigger has a matching answer, as the live page does, so expect baseline changes when refreshing them. Review the expected behavior before accepting `npm run e2e -- --update`; a baseline is not an answer key. Preserve unrelated baseline entries.
 
 For AmWINS page changes, update the scrubbed [fixtures](../test/fixtures/amwins/) and expected answers in [amwins-mock.mjs](../scripts/amwins-mock.mjs). Retain branch behavior rather than only static markup.
 
