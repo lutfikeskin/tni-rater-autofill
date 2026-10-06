@@ -1949,10 +1949,19 @@ test('a capture takes typed text out of messages, and keeps no choices of a list
   orphan.append(new FakeNode('li', { className: 'x-boundlist-item', textContent: 'JANE DOE-1' }));
   const owned = new FakeNode('div', { id: 'boundlist-2', className: 'x-boundlist' });
   owned.append(new FakeNode('li', { className: 'x-boundlist-item', textContent: 'Cargo Van' }));
-  h.context.Ext._components.set('boundlist-2', { pickerField: { dctCaption: 'Vehicle type' } });
-  h.document.body.append(vin, phone, orphan, owned,
-    new FakeNode('div', { role: 'alert', textContent: 'VIN 1HGBH41JXMN109186 not found; call 555 201 0199' }));
+  h.context.Ext._components.set('boundlist-2', { pickerField: { dctCaption: 'Vehicle type', queryMode: 'local' } });
+  // A lookup filled from what was typed (a remote store): its results are not kept.
+  const lookup = new FakeNode('div', { id: 'boundlist-3', className: 'x-boundlist' });
+  lookup.append(new FakeNode('li', { className: 'x-boundlist-item', textContent: '12 Corrected Rd, Tampa' }));
+  h.context.Ext._components.set('boundlist-3', { pickerField: { dctCaption: 'Garaging address', queryMode: 'remote' } });
+  // Text typed into a combo the page treats as a choice is taken out of messages too.
+  const { input: business } = addExtText(h, 'c', '2D1', { caption: 'Business name' });
+  business.value = 'Corrected Hauling Co';
+  h.document.body.append(vin, phone, orphan, owned, lookup,
+    new FakeNode('div', { role: 'alert', textContent: 'VIN 1HGBH41JXMN109186 not found; call 555 201 0199' }),
+    new FakeNode('div', { role: 'alert', textContent: 'No match for Corrected Hauling Co' }));
   const page = h.kit.capture(null, []);
-  assert.deepEqual([...page.messages], ['VIN [typed] not found; call [typed]']);
-  assert.deepEqual(JSON.parse(JSON.stringify(page.openLists.map((l) => [l.label, l.options]))), [[null, []], ['Vehicle type', ['Cargo Van']]]);
+  assert.deepEqual([...page.messages], ['VIN [typed] not found; call [typed]', 'No match for [typed]']);
+  assert.deepEqual(JSON.parse(JSON.stringify(page.openLists.map((l) => [l.label, l.options]))),
+    [[null, []], ['Vehicle type', ['Cargo Van']], ['Garaging address', []]]);
 });

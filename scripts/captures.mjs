@@ -11,6 +11,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { diff } from './lib/transitions.mjs';
 import { fieldId } from './lib/conditions.mjs';
 
@@ -52,7 +53,9 @@ function picksChanged(before, after) {
   const a = picks(before);
   const b = picks(after);
   const shown = (v) => (v ? v : '∅');
-  return [...b.m].filter(([id, f]) => a.m.has(id) && !a.repeated.has(id) && (a.m.get(id).selected ?? '') !== (f.selected ?? ''))
+  // The same answer whatever its spacing or case (a redraw can change only that).
+  const norm = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  return [...b.m].filter(([id, f]) => a.m.has(id) && !a.repeated.has(id) && norm(a.m.get(id).selected) !== norm(f.selected))
     .map(([id, f]) => `${label(f)}: ${shown(a.m.get(id).selected)} → ${shown(f.selected)}`);
 }
 
@@ -67,6 +70,11 @@ export function captureStory(captures) {
     // In the order taken: numbers can repeat when a scenario's name is used again.
     list.sort((a, b) => a.capturedAt.localeCompare(b.capturedAt) || a.n - b.n);
     md.push(`## ${key}`, '');
+    // Each capture is compared with the last one of the same page, step, view (tab and vehicle)
+    // and intake context (state, product, coverages): a scenario name used again for another
+    // intake, or a detour to another vehicle, never pairs unlike pages.
+    const lastOf = new Map();
+    const sameAs = (c) => JSON.stringify([c.page, c.step ?? null, c.view ?? null, c.context ?? null]);
     let previous = null;
     for (const c of list) {
       const where = `${c.page}${c.step ? ` › ${c.step}` : ''}${c.view ? ` (${c.view})` : ''}`;
@@ -80,27 +88,28 @@ export function captureStory(captures) {
         }
         for (const m of frame.messages ?? []) md.push(`- Message${where}: ${m}`);
       }
-      // Compared only with the previous capture of the same page, step and view (tab and vehicle).
-      if (previous && previous.page === c.page && previous.step === c.step && (previous.view ?? null) === (c.view ?? null)) {
-        const d = diff(asLayout(previous), asLayout(c));
+      const before = lastOf.get(sameAs(c));
+      if (before) {
+        const d = diff(asLayout(before), asLayout(c));
         const lines = [
-          ...picksChanged(previous, c).map((x) => `- Answer: ${x}`),
+          ...picksChanged(before, c).map((x) => `- Answer: ${x}`),
           ...d.appeared.map((x) => `- Appeared: ${x}`), ...d.removed.map((x) => `- Went away: ${x}`),
           ...d.options.map((o) => `- Choices of ${o.question}: ${[...o.added.map((x) => `+${x}`), ...o.removed.map((x) => `−${x}`)].join(' ')}`),
           ...d.required.map((r) => `- ${r.question}: ${r.required ? 'now required' : 'no longer required'}`),
         ];
-        md.push('', lines.length ? `Since capture ${previous.n}:` : `Same questions as capture ${previous.n}.`, ...lines);
+        md.push('', lines.length ? `Since capture ${before.n}:` : `Same questions as capture ${before.n}.`, ...lines);
       } else if (previous) {
-        md.push('', `Not compared with capture ${previous.n} (${previous.page}${previous.step ? ` › ${previous.step}` : ''}${previous.view ? `, ${previous.view}` : ''}): another page, step, tab or vehicle.`);
+        md.push('', 'First capture of this page, step, view and intake in the scenario: nothing to compare with.');
       }
       md.push('');
+      lastOf.set(sameAs(c), c);
       previous = c;
     }
   }
   return md;
 }
 
-if (process.argv[1] === new URL(import.meta.url).pathname) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const inputs = process.argv.slice(2).length ? process.argv.slice(2) : ['layouts'];
   const captures = readCaptures(inputs.filter((p) => fs.existsSync(p)));
   const md = [`# Manual captures (${new Date().toISOString().slice(0, 10)})`, '',

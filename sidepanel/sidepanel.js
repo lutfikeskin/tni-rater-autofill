@@ -1679,6 +1679,26 @@ async function clearMarks() {
 // answer changed, then captured again) reads as before and after; `npm run captures` lists what
 // changed between them. Downloaded only: nothing is uploaded. Alt+Shift+C takes one without
 // leaving the page, e.g. with a dropdown open.
+// A scenario's next capture number, kept in the extension's settings (local storage, so a scenario
+// continued after Chrome restarts carries on) and taken one at a time, also across panels in two
+// windows (a Web Lock), so two quick captures never share a number.
+async function nextCaptureNumber(scenario) {
+  const take = async () => {
+    const counts = (await usage.settings()).captureCounts ?? {};
+    const n = (counts[scenario] ?? 0) + 1;
+    await usage.saveSettings({ captureCounts: { ...counts, [scenario]: n } });
+    return n;
+  };
+  return globalThis.navigator?.locks ? navigator.locks.request('capture-counts', take) : take();
+}
+
+// Alt+Shift+C reaches the side panel of every window: only the one in the focused window captures.
+async function captureFromShortcut() {
+  const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
+  if (mine && focused && mine.id !== focused.id) return;
+  capturePage();
+}
+
 async function capturePage() {
   if (!state.tab?.carrier) {
     $('report').replaceChildren(h('p', { class: 'muted small' }, 'Open a carrier page to capture its layout.'));
@@ -1697,7 +1717,8 @@ async function capturePage() {
   try {
     const results = await runKit(tabId, carrier, (p, r) => globalThis.__raterKit.capture(p, r),
       [record ? buildPlan(record, carrier, state.active) : null, record ? redactionTerms(record) : []]);
-    const frames = results.map((r) => r.result).filter((f) => f && (f.controls.length || f.isTopFrame));
+    // Frames with questions, the top one, and any with messages or an open list (evidence only).
+    const frames = results.map((r) => r.result).filter((f) => f && (f.controls.length || f.isTopFrame || f.messages?.length || f.openLists?.length));
     const top = frames.find((f) => f.isTopFrame);
     const now = JSON.stringify([state.tab?.id, pageOf(state.tab?.url), state.active, state.intakeRevision, usage.currentSession()?.id ?? null]);
     if (now !== asked || top?.page !== page) {
@@ -1712,13 +1733,11 @@ async function capturePage() {
       hasTrailers: record.trailers.length > 0,
       coverages: Object.entries(record.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     } : null;
-    // Numbered in the extension's settings (local storage): a scenario continued after Chrome
-    // restarts carries on from its last number.
-    const counts = (await usage.settings()).captureCounts ?? {};
-    const n = (counts[scenario] ?? 0) + 1;
-    await usage.saveSettings({ captureCounts: { ...counts, [scenario]: n } });
+    const n = await nextCaptureNumber(scenario);
     const data = { tool: 'tni-rater-autofill', kind: 'page-capture', version: 2, carrier: carrier.id, capturedAt: new Date().toISOString(),
-      scenario, n, note, page: top?.page ?? page, step: top?.step || null, view: view ?? null, context, frames };
+      // The step only for a one-address application (layoutSteps, AmWINS), as layouts do: other
+      // carriers' headings change with the questions shown (a follow-up's own heading).
+      scenario, n, note, page: top?.page ?? page, step: (carrier.layoutSteps && top?.step) || null, view: view ?? null, context, frames };
     const slug = (s, max) => String(s ?? '').replace(/^https?:\/\/[^/]+/, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(0, max) || 'page';
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
     h('a', { href: url, download: `capture-${carrier.id}-${slug(scenario, 30)}-${String(n).padStart(3, '0')}-${slug(data.page, 30)}.json` }).click();
@@ -2481,7 +2500,7 @@ function wire() {
   $('unmark').addEventListener('click', clearMarks);
   $('capture').addEventListener('click', capturePage);
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
-  if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') capturePage(); });
+  if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') captureFromShortcut(); });
   wireAgentPopover();
   wireUsage();
   wireAi();

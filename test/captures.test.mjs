@@ -16,7 +16,7 @@ test('captures read as a story per scenario: each one in order, and what changed
   assert.match(md, /## progressive · FL van/);
   assert.ok(md.indexOf('### 1. Operations (t1)') < md.indexOf('### 2. Operations (t1) — set hazmat to Yes'), 'in capture order');
   assert.match(md, /Since capture 1:\n- Answer: Hauls hazmat\?: No → Yes\n- Appeared: Placards carried/);
-  assert.match(md, /Not compared with capture 2 \(Operations, t1\): another page, step, tab or vehicle/);
+  assert.match(md, /### 3\. Drivers \(t1\)\n\n1 question, [^\n]*\n\nFirst capture of this page, step, view and intake in the scenario/);
 });
 
 test('the story compares like with like: same view, unanswered picks, no repeated rows, every frame, in the order taken', () => {
@@ -33,5 +33,19 @@ test('the story compares like with like: same view, unanswered picks, no repeate
   assert.doesNotMatch(md, /Rental per vehicle: None/, 'repeated rows are not matched');
   assert.match(md, /- Message \(frame https:\/\/synthetic\.example\/frame\): Enter a valid ZIP/);
   assert.match(md, /- Open list \(frame [^)]*\): \(choices not kept\)/);
-  assert.match(md, /Not compared with capture 1 \(Operations, t1\)/, 'another vehicle on the same page');
+  assert.match(md, /### 3\. Operations \(t1:v1\)[\s\S]*First capture of this page, step, view and intake/, 'another vehicle on the same page');
+});
+
+test('the story pairs a capture with the last one of the same page, view and intake, and ignores spelling', () => {
+  const fl = { state: 'FL', coverages: ['cargo'] };
+  const md = captureStory([
+    capture(1, [hazmat('No')], { capturedAt: '2026-10-06T09:00:00Z', context: fl }),
+    capture(2, [hazmat('No')], { capturedAt: '2026-10-06T09:01:00Z', context: fl, view: 't1:v1' }),
+    capture(3, [hazmat('YES'), { q: '2A2', kind: 'text', label: 'Placards carried' }], { capturedAt: '2026-10-06T09:02:00Z', context: fl }),
+    capture(4, [hazmat('yes ')], { capturedAt: '2026-10-06T09:03:00Z', context: { state: 'GA', coverages: [] } }),
+    capture(5, [hazmat('Yes'), { q: '2A2', kind: 'text', label: 'Placards carried' }], { capturedAt: '2026-10-06T09:04:00Z', context: fl }),
+  ]).join('\n');
+  assert.match(md, /### 3\.[\s\S]*?Since capture 1:\n- Answer: Hauls hazmat\?: No → YES\n- Appeared: Placards carried/, 'back on the first van after the second');
+  assert.match(md, /### 4\.[^\n]*\n\n[^\n]*\n\nFirst capture of this page, step, view and intake/, 'another intake is not compared');
+  assert.match(md, /### 5\.[\s\S]*?Same questions as capture 3\./, 'YES and Yes are one answer');
 });
