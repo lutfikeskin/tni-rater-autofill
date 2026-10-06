@@ -101,16 +101,34 @@ export function inferShowWhen(snapshots, { min = MIN_LAYOUTS } = {}) {
   return out;
 }
 
+// Whether every layout agrees with "target shows exactly when trigger is one of `is`": the target
+// never shows without the trigger, nor with it unanswered (in layouts with picks), and with an
+// answer it shows exactly for those in `is`.
+function agrees(snapshots, target, trigger, is) {
+  const accepted = new Set(is.map(sameAnswer));
+  return snapshots.every((s) => {
+    const fields = new Map((s.fields ?? []).map((f) => [fieldId(f), f]));
+    const shown = fields.has(target);
+    const t = fields.get(trigger);
+    if (!t) return !shown;
+    const v = pickOf(t);
+    if (v === null) return !shown || !(s.fields ?? []).some((f) => f.selected !== undefined);
+    return shown === accepted.has(sameAnswer(v));
+  });
+}
+
 // The same inference within each group of layouts (quotes asking for the same coverages), so a
 // question that shows only for some coverages can't be pinned on an unrelated answer that happened
 // to go with them. A question keeps a condition only if every group that saw it come and go found
-// the same trigger; the counts add up and an answer is unseen only if no group saw it.
+// the same trigger, and the layouts of every group (also those where it never came and went)
+// agree with it; the counts add up and an answer is unseen only if no group saw it.
 export function inferShowWhenByGroup(groups, opts) {
   const results = groups.map((snapshots) => inferShowWhen(snapshots, opts));
   const out = new Map();
   for (const id of new Set(results.flatMap((r) => [...r.keys()]))) {
     const found = results.map((r) => r.get(id)).filter((x) => x !== undefined);
-    if (found.some((x) => x === null) || new Set(found.map((x) => x.trigger)).size > 1) { out.set(id, null); continue; }
+    if (found.some((x) => x === null) || new Set(found.map((x) => x.trigger)).size > 1
+      || !agrees(groups.flat(), id, found[0].trigger, found.flatMap((x) => x.is))) { out.set(id, null); continue; }
     const is = new Map();
     for (const x of found) for (const v of x.is) if (!is.has(sameAnswer(v))) is.set(sameAnswer(v), v);
     const unseen = found.map((x) => new Set(x.unseen.map(sameAnswer)));

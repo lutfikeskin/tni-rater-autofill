@@ -185,3 +185,16 @@ test('transitions ignore option spelling drift and break on a layout that could 
   ]);
   assert.deepEqual(broken, [], 'the page between them was never seen');
 });
+
+test('a coverage group where the question stays while its trigger changes rules the condition out', () => {
+  const cargo = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: ['cargo'] };
+  const noCargo = { ...cargo, coverages: [] };
+  const events = [
+    layoutEvent('a', [hazmat('Yes'), placards], { context: cargo }), layoutEvent('a', [hazmat('No')], { context: cargo }),
+    layoutEvent('b', [hazmat('Yes'), placards], { context: cargo }), layoutEvent('b', [hazmat('No')], { context: cargo }),
+    // Without cargo the question is always there, whatever the answer.
+    layoutEvent('c', [hazmat('Yes'), placards], { context: noCargo }), layoutEvent('c', [hazmat('No'), placards], { context: noCargo }),
+  ];
+  const f = buildLayouts(events)[0].layout.pages.Operations.fields.find((x) => x.q === '2A2');
+  assert.deepEqual([f.showWhen, f.condition], [undefined, 'unknown']);
+});
