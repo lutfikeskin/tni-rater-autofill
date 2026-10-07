@@ -166,9 +166,9 @@
     "questions": 19,
     "filled": 11,
     "failed": [],
-    "noData": 1,
+    "noData": 0,
     "unmapped": 0,
-    "blockers": 1,
+    "blockers": 0,
     "clicked": []
    },
    "MoreAboutBusiness": {
@@ -255,9 +255,9 @@
     "questions": 9,
     "filled": 6,
     "failed": [],
-    "noData": 1,
+    "noData": 0,
     "unmapped": 0,
-    "blockers": 1,
+    "blockers": 0,
     "clicked": []
    },
    "MoreAboutBusiness": {
@@ -856,9 +856,9 @@
     "questions": 9,
     "filled": 6,
     "failed": [],
-    "noData": 1,
+    "noData": 0,
     "unmapped": 0,
-    "blockers": 1,
+    "blockers": 0,
     "clicked": []
    },
    "MoreAboutBusiness": {

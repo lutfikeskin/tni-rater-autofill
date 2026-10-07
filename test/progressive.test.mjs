@@ -224,7 +224,8 @@ test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () 
   assert.equal(byQ(plan, '1E66').value, '$5,000');
   assert.equal(byQ(plan, '1FE4').value, '$5,000 per person');
   for (const q of ['1E69', '1E6E', '1E71', '1E74']) assert.equal(byQ(plan, q).value, 'Not Selected');
-  assert.ok(byQ(plan, '1B8D').note, 'SSN is never filled');
+  assert.equal(byQ(plan, '1B8D').ignore, true, 'SSN: never filled, and not a "needs you" item (TNI 2026-10-07)');
+  assert.ok(progressive.advance.exceptPages.includes('NoHit'), 'NoHit is the agent\'s: never continued automatically');
   assert.equal(byQ(plan, '1B8D').value, null);
   assert.equal(byQ(plan, '1B80').optional, true, 'NoHit middle initial is never "needs you"');
 });

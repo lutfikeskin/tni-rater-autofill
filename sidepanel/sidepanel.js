@@ -1641,10 +1641,14 @@ function renderReport(frames) {
     x.options?.length && x.mark === 'failed' ? h('div', { class: 'options' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null,
     h('div', { class: 'ai-slot' }),
     h('div', { class: 'need-note' }, 'Answer it on the page.'));
+  // Answers an earlier pass on this page filled (a follow-up pass, after the VIN lookup or a
+  // redraw, finds them already there): still ours, shown as filled.
+  const earlier = kept.filter((x) => !x.differs && state.filled?.get?.(x.key));
   const doneRows = [
     ...filled.map((x) => [x.label, x.shown ?? '']),
+    ...earlier.map((x) => [x.label, state.filled.get(x.key).shown || 'filled']),
     ...all('actions').map((x) => ['Clicked', x.text || x.id]),
-    ...kept.filter((x) => !x.differs).map((x) => [x.label, 'left as the page had it']),
+    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => [x.label, 'left as the page had it']),
     ...all('skipped').map((x) => [x.label, 'ignored']),
   ];
   // The carrier probably changed this page (pagekit: a known field renamed, or most questions
@@ -1660,7 +1664,7 @@ function renderReport(frames) {
     frames.some((f) => f.halted) ? h('p', { class: 'card bad' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then click Fill this page to retry.`) : null,
     pageChanged ? h('p', { class: 'card bad' }, pageChanged) : null,
     h('div', { class: 'card summary' },
-      h('div', { class: 'summary-line' }, h('b', {}, `Filled ${filled.length} of ${fields} questions`),
+      h('div', { class: 'summary-line' }, h('b', {}, `Filled ${filled.length + earlier.length} of ${fields} questions`),
         h('span', { class: 'small muted' }, advanced ? `Clicked "${advanced}"` : needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you` : 'Nothing left for you')),
       h('div', { class: 'bar' }, h('div', { style: `width: ${pct}%` })),
       h('div', { class: 'legend' },
@@ -1672,7 +1676,7 @@ function renderReport(frames) {
     ...needs.map(need),
     waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Buttons waiting'), h('span', { class: 'muted' }, waiting.map((x) => `${x.id.replace(/:\d+$/, '')}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`).join('; '))) : null,
     doneRows.length ? h('details', { class: 'more' },
-      h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'See what was filled'), h('span', { class: 'small muted' }, String(filled.length))),
+      h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'See what was filled'), h('span', { class: 'small muted' }, String(filled.length + earlier.length))),
       h('div', { class: 'more-body' }, doneRows.map(([k, v]) => h('div', { class: 'kv' }, h('span', {}, k), h('span', {}, v))))) : null,
   ].filter((node) => node != null && node !== false));
 }

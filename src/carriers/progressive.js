@@ -314,7 +314,8 @@ export const progressive = {
   driverPage: 'AddDriver',
   // Pages that need the agent whatever the intake says; the side panel says so at the top.
   agentPages: {
-    NoHit: "Progressive couldn't verify the business owner. Check the owner's name, date of birth and home address with the client (and enter the SSN if they gave it), then Continue.",
+    // TNI (2026-10-07): an SSN only when the client gave one; the usual fix is the owner's name.
+    NoHit: "Progressive couldn't verify the business owner. Adjust the owner's name: removing the middle name and keeping only the first and last name often fixes it. Check the date of birth and home address too (an SSN only if the client gave one), then Continue.",
     CoveragesRates: (r) => (r.coverage?.ntl === true
       ? 'Non-trucking liability (NTL) quote: the filler opens it with "Add Non-Trucking Liability instead?". The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print.'
       : null),
@@ -328,7 +329,8 @@ export const progressive = {
   },
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is
   // clicked. Never on the finish/buy pages.
-  advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFaxConfirm'] },
+  // Never on NoHit either: the agent adjusts the owner's details there (agentPages).
+  advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFaxConfirm', 'NoHit'] },
   rules: [
     ...SAFE_LABEL_RULES,
     // --- Named Insured and Business Overview (pageName=BusinessOwnerInfo) ---------------------
@@ -402,7 +404,7 @@ export const progressive = {
       { q: '1B85', field: 'CurrentAddress.City', ask: 'City', path: 'garaging.city', name: 'Owner home city (NoHit)' },
       { q: '1B89', field: 'CurrentAddress.ZipCode', ask: 'Zip Code', path: 'garaging.zip', name: 'Owner home ZIP (NoHit)' },
       { q: '1B8B', field: 'NoHitCredit.DOB', ask: 'Date of Birth', name: 'Owner date of birth (NoHit)', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
-      { q: '1B8D', field: 'NoHitCredit.SSN', ask: 'Social Security Number', name: 'Social Security Number', note: 'Social Security Number: the agent enters it or leaves it; never filled.' },
+      { q: '1B8D', field: 'NoHitCredit.SSN', ask: 'Social Security Number', name: 'Social Security Number (never filled; the agent enters one only if the client gave it)', ignore: true },
     ]),
 
     // --- More about the business (MoreAboutBusiness) -------------------------------------------

@@ -278,6 +278,27 @@ test('fill report omits absent sections without rendering null text', () => {
   assert.ok(box.children.every((child) => child != null && child !== false), 'DOM replaceChildren must receive only actual report nodes');
 });
 
+// FL live run, 2026-10-07: "See what was filled always shows 0". A follow-up pass finds the
+// answers an earlier pass filled already there; they're still ours, counted and shown as filled.
+test('fill report counts answers an earlier pass on the page filled', () => {
+  const box = { className: '', children: [], replaceChildren(...children) { this.children = children; } };
+  const context = {
+    $: () => box,
+    state: { tab: { id: 1, url: 'https://example.test/?pageName=AddVehicle' }, filled: new Map([['ref:RiskInput.VIN', { path: 'vehicles[0].vin', shown: '1FTBR3X87MKA12345' }]]) },
+    pageOf: () => 'AddVehicle',
+    h: (tag, props, ...children) => ({ tag, props, children }),
+  };
+  vm.runInNewContext(extractFunction('renderReport'), context);
+  context.renderReport([{ fields: 3, filled: [], failed: [], noData: [], leftRequired: [], actions: [],
+    kept: [{ label: 'VIN', key: 'ref:RiskInput.VIN' }, { label: 'Annual Mileage', key: 'ref:RiskInput.AnnualMileage' }] }]);
+  const text = JSON.stringify(box.children);
+  assert.match(text, /Filled 1 of 3 questions/);
+  const more = box.children.find((c) => c?.tag === 'details');
+  assert.equal(more.children[0].children[2].children[0], '1', 'the count matches what we filled');
+  assert.match(text, /1FTBR3X87MKA12345/);
+  assert.match(text, /left as the page had it/, 'a value the page had itself is still said so');
+});
+
 // Fable on PR #43: a page the carrier changed (a known field renamed, most questions unfamiliar)
 // says so at the top of the report.
 test('fill report says when the carrier seems to have changed the page', () => {
