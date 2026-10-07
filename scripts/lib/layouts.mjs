@@ -15,7 +15,7 @@ export const STEPPED = new Set(CARRIERS.filter((c) => c.layoutSteps).map((c) => 
 // Pages about one vehicle or driver (Progressive's AddVehicle, AddDriver): their layouts come from
 // different vehicles and drivers, which can differ in ways no answer on the page explains, and the
 // layouts don't say which one they were about. Left out of conditions.
-export const ENTITY_PAGES = new Map(CARRIERS.map((c) => [c.id, new Set([...(c.vehiclePages ?? []), ...(c.driverPage ? [c.driverPage] : [])])]));
+export const ENTITY_PAGES = new Map(CARRIERS.map((c) => [c.id, new Set([...(c.vehiclePages ?? []), ...(c.trailerPages ?? []), ...(c.driverPage ? [c.driverPage] : [])])]));
 
 const KIND = { select: 'combo', radio: 'radio', checkbox: 'checkbox' };
 
@@ -44,20 +44,71 @@ function triggerIdentity(f, kind) {
 }
 
 // A field's key across a page's layouts: its data-model name (recorded since 0.9.9); a Duck Creek
-// question without one by its text, the nth of that text on the page, as its number is reassigned
-// (Progressive, 2026-10-07: the same question recorded on both sides would show up twice); rows
-// named after a vehicle by their number (their text names the vehicle, not the question); else its
-// element id, data-id, or kind and caption.
+// question without one by its text, as its number is reassigned (Progressive, 2026-10-07: the same
+// question recorded on both sides would show up twice); rows named after a vehicle by their number
+// (their text names the vehicle, not the question); else its element id, data-id, or kind and
+// caption. Two questions of a page reading the same (the business's and the owner's "City") are
+// told apart by the nearest question before them that every layout of the page shows once, so
+// one missing from a layout doesn't take the other's place.
 const VEHICLE_CAPTION = /^(19|20)\d{2}\s+\S/;
-function layoutFieldKey(f, seen) {
-  if (f.ref) return `ref:${f.ref}`;
-  const text = String(f.label ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
-  if (f.q && text && !VEHICLE_CAPTION.test(text)) {
-    const n = (seen.get(`${f.kind}:${text}`) ?? 0) + 1;
-    seen.set(`${f.kind}:${text}`, n);
-    return `text:${f.kind}:${text}#${n}`;
+const textOf = (f) => String(f.label ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+const byText = (f) => !f.ref && !!f.q && !!textOf(f) && !VEHICLE_CAPTION.test(textOf(f));
+function snapshotKeys(snapshots) {
+  const repeated = new Set();
+  for (const s of snapshots) {
+    const seen = new Set();
+    for (const f of s.fields.filter(byText)) {
+      const k = `${f.kind}:${textOf(f)}`;
+      if (seen.has(k)) repeated.add(k);
+      seen.add(k);
+    }
   }
-  return f.q ?? (f.id ? `#${f.id}` : f.dataId ? `${f.dataId}:${f.label}` : `${f.kind}:${f.label}`);
+  const counts = snapshots.filter((s) => s.fields.length).map((s) => {
+    const c = new Map();
+    for (const f of s.fields) if (textOf(f)) c.set(textOf(f), (c.get(textOf(f)) ?? 0) + 1);
+    return c;
+  });
+  const anchors = new Set([...(counts[0]?.keys() ?? [])].filter((t) => counts.every((c) => c.get(t) === 1)));
+  return snapshots.map((s) => {
+    let anchor = '';
+    const seen = new Map();
+    return s.fields.map((f) => {
+      let key;
+      if (f.ref) key = `ref:${f.ref}`;
+      else if (byText(f)) {
+        const k = `${f.kind}:${textOf(f)}`;
+        if (repeated.has(k)) {
+          // Two after the same anchor (rows of one block): their order there.
+          const group = `${k}@${anchor}`;
+          seen.set(group, (seen.get(group) ?? 0) + 1);
+          key = `text:${group}#${seen.get(group)}`;
+        } else key = `text:${k}`;
+      } else key = f.q ?? (f.id ? `#${f.id}` : f.dataId ? `${f.dataId}:${f.label}` : `${f.kind}:${f.label}`);
+      if (anchors.has(textOf(f))) anchor = textOf(f);
+      return key;
+    });
+  });
+}
+
+// One field of a page, merged over its layouts.
+function addField(fields, k, f) {
+  const prev = fields.get(k);
+  fields.set(k, {
+    q: f.q ?? null,
+    ref: f.ref ?? prev?.ref ?? undefined,
+    id: f.id ?? prev?.id ?? undefined,
+    dataId: f.dataId ?? prev?.dataId ?? undefined,
+    name: f.name ?? prev?.name ?? undefined,
+    kind: f.type === 'dctinputdatefield' ? 'date' : KIND[f.kind] ?? 'text',
+    caption: f.label,
+    opts: dedupe([...(prev?.opts ?? []), ...(f.options ?? [])]),
+    // Some capture cut the list short (very long lists): the choices here aren't all of them.
+    optsTruncated: f.optionsTruncated || prev?.optsTruncated || undefined,
+    mapped: f.mapped ?? prev?.mapped ?? null,
+    seen: (prev?.seen ?? 0) + 1,
+    required: (prev?.required ?? 0) + (f.required ? 1 : 0),
+    cid: prev?.cid ?? fieldId(f),
+  });
 }
 
 // Fields kept under their text (recorded before data-model names) join the one named field of the
@@ -112,33 +163,11 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
     layout.to = e.t;
     // A one-address application's steps (AmWINS) are pages of their own.
     const name = e.step ? `${e.page} › ${e.step}` : e.page;
-    const page = layout.pages.get(name) ?? { snapshots: [], fields: new Map(), buttons: [] };
+    const page = layout.pages.get(name) ?? { snapshots: [], buttons: [] };
     // Our own mark tooltips got into early layouts as captions; they aren't questions.
     const fields = (e.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.label ?? ''));
-    const seen = new Map();
-    const keys = fields.map((f) => layoutFieldKey(f, seen));
-    page.snapshots.push({ fields, keys, coverages: [...(e.context?.coverages ?? [])].sort().join('+'), noInference: (stepped.has(e.carrier) && !e.step) || !!entityPages.get(e.carrier)?.has(e.page) });
+    page.snapshots.push({ fields, coverages: [...(e.context?.coverages ?? [])].sort().join('+'), noInference: (stepped.has(e.carrier) && !e.step) || !!entityPages.get(e.carrier)?.has(e.page) });
     for (const b of e.buttons ?? []) if (!page.buttons.includes(b)) page.buttons.push(b);
-    for (const [i, f] of fields.entries()) {
-      const k = keys[i];
-      const prev = page.fields.get(k);
-      page.fields.set(k, {
-        q: f.q ?? null,
-        ref: f.ref ?? prev?.ref ?? undefined,
-        id: f.id ?? prev?.id ?? undefined,
-        dataId: f.dataId ?? prev?.dataId ?? undefined,
-        name: f.name ?? prev?.name ?? undefined,
-        kind: f.type === 'dctinputdatefield' ? 'date' : KIND[f.kind] ?? 'text',
-        caption: f.label,
-        opts: dedupe([...(prev?.opts ?? []), ...(f.options ?? [])]),
-        // Some capture cut the list short (very long lists): the choices here aren't all of them.
-        optsTruncated: f.optionsTruncated || prev?.optsTruncated || undefined,
-        mapped: f.mapped ?? prev?.mapped ?? null,
-        seen: (prev?.seen ?? 0) + 1,
-        required: (prev?.required ?? 0) + (f.required ? 1 : 0),
-        cid: prev?.cid ?? fieldId(f),
-      });
-    }
     layout.pages.set(name, page);
     layouts.set(key, layout);
   }
@@ -150,6 +179,14 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
       context: l.context,
       generated: { from: l.from, to: l.to, quotes: l.sessions.size, by: 'scripts/build-layouts.mjs' },
       pages: Object.fromEntries([...l.pages].map(([name, p]) => {
+        // Keys once every layout of the page is in (a repeated text's anchor is a question all of
+        // them show), then the fields merged in the order the layouts came.
+        const keys = snapshotKeys(p.snapshots);
+        p.fields = new Map();
+        p.snapshots.forEach((snap, j) => {
+          snap.keys = keys[j];
+          snap.fields.forEach((f, i) => addField(p.fields, snap.keys[i], f));
+        });
         sameIdentities(p, mergeUnnamed(p.fields));
         // Per coverage request: a question that shows for some coverages only is not one answer's
         // follow-up across them (inferShowWhenByGroup).

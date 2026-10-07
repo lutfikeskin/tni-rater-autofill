@@ -87,6 +87,29 @@ const loanLease = (r) => {
   return /financ|loan/i.test(own) ? 'Yes - Loan' : /leas/i.test(own) ? 'Yes - Lease' : 'No';
 };
 
+// Trailers: the intake's trailer ownership (one answer for all of them); none given is owned
+// (TNI 2026-10-07).
+const trailerLoanLease = (r) => {
+  const own = r.trailerInfo?.ownership ?? '';
+  return /financ|loan/i.test(own) ? 'Yes - Loan' : /leas/i.test(own) ? 'Yes - Lease' : 'No';
+};
+const trailerValueNote = (r, a) => {
+  const v = r.trailers?.[a.trailers ?? 0]?.value;
+  return v != null && typeof v !== 'number' ? `The intake's trailer value "${v}" isn't a dollar amount: enter it yourself.` : null;
+};
+
+// The trailer's pages carry the vehicle's data-model names (RiskInput.VIN, RiskInput.Radius…):
+// the vehicle's questions are never looked for there, and the trailer's only there.
+const TRAILER_PAGES = ['MostCommonTrailers', 'AddTrailer'];
+const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
+
+// The quote's state is the garaging state (as the quote on Progressive's home page is started).
+const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').trim());
+
+// Farthest one-way distance: "Unlimited" / long haul becomes 501 miles, which picks "More than
+// 500 miles". A trailer goes as far as the vehicle (TNI).
+const radiusMiles = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null);
+
 // Always "$0 to $2,000" at TNI; the agent changes it for the rare exception.
 const equipment = () => '$0 to $2,000';
 
@@ -175,11 +198,11 @@ const SAFE_LABEL_RULES = [
   { path: 'drivers[].licenseNumber', label: '(driver.?s? )?(license|licence|dl) (number|no|num|id)', not: 'state|year|date|status|type|class|cdl' },
   // VIN lookup owns these read-only values. Verify them against the intake when present, never
   // type over the server-decoded result.
-  { path: 'vehicles[].year', label: '^(vehicle |model |truck )?year$', not: 'trailer', verifyOnly: true },
-  { path: 'vehicles[].make', label: '^(vehicle |truck )?make$', not: 'trailer', verifyOnly: true },
-  { path: 'vehicles[].model', label: '^(vehicle |truck )?model$', not: 'trailer|year', verifyOnly: true },
-  { path: 'vehicles[].vin', label: '\\bvin\\b|vehicle identification', not: 'trailer' },
-  { path: 'vehicles[].value', label: 'stated (value|amount)|(vehicle|truck|unit) value|actual cash value|cost new|^value$', not: 'trailer|cargo|equipment' },
+  { path: 'vehicles[].year', label: '^(vehicle |model |truck )?year$', not: 'trailer', verifyOnly: true, notPages: TRAILER_PAGES },
+  { path: 'vehicles[].make', label: '^(vehicle |truck )?make$', not: 'trailer', verifyOnly: true, notPages: TRAILER_PAGES },
+  { path: 'vehicles[].model', label: '^(vehicle |truck )?model$', not: 'trailer|year', verifyOnly: true, notPages: TRAILER_PAGES },
+  { path: 'vehicles[].vin', label: '\\bvin\\b|vehicle identification', not: 'trailer', notPages: TRAILER_PAGES },
+  { path: 'vehicles[].value', label: 'stated (value|amount)|(vehicle|truck|unit) value|actual cash value|cost new|^value$', not: 'trailer|cargo|equipment', notPages: TRAILER_PAGES },
   { path: 'garaging.street', label: '(street|garaging|mailing|physical|business)? ?address( line)?( 1)?$|^street', not: 'e ?mail|web|\\bip\\b|2|city|state|zip' },
   { path: 'garaging.unit', label: 'address (line )?2|\\bapt\\b|apartment|suite|\\bunit (number|no)\\b|^unit$', ignore: (r) => !r.garaging?.unit },
   { path: 'garaging.city', label: '\\bcity\\b' },
@@ -204,6 +227,23 @@ const VEHICLE_TILES = {
   // TNI: a reefer tile only when the business class says Reefer too. Its exact name isn't known yet.
   'Reefer Truck': 'reefer|refrigerat',
 };
+// Trailer picker tile for the intake's trailer type (Most Common Trailers, TNI 2026-10-07: Dry
+// Freight, Flatbed, Refrigerated Dry Freight, Gooseneck, Other / Not Listed). Enclosed, Tanker,
+// Lowboy, Step Deck and Other are the agent's to pick.
+const TRAILER_TILES = {
+  Flatbed: '^Flatbed Trailer$',
+  'Dry Van': '^Dry Freight Trailer$',
+  Reefer: '^Refrigerated Dry Freight$',
+};
+const trailerTile = (r, a) => TRAILER_TILES[r.trailers?.[a.trailers ?? 0]?.type] ?? null;
+const trailerTileNote = (r, a) => {
+  const type = r.trailers?.[a.trailers ?? 0]?.type;
+  if (!type) return 'The intake has no trailer type for this trailer: pick it yourself.';
+  return TRAILER_TILES[type]
+    ? `No tile on this page matches the intake's ${type} trailer: pick it yourself.`
+    : `${type} isn't matched to a Progressive trailer tile yet: pick it yourself.`;
+};
+
 const isReefer = (r) => /^reefer$/i.test((r.operations.businessClass ?? '').trim());
 const vehicleTile = (r, a) => {
   const type = r.vehicles[a.vehicles ?? 0]?.type;
@@ -259,6 +299,12 @@ export const progressive = {
     // Two tiles matching (two reefer tiles) means it's the agent's pick.
     { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
     { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle' },
+    // Trailers, once every vehicle is in: Add Trailer (in the "Add" menu) for the next intake
+    // trailer not entered yet (the side panel moves the active trailer, see trailerList), its tile,
+    // then its Add Trailer page. When the button can't be found the agent is told, so Continue
+    // never leaves an intake trailer out (TN 2026-10-07).
+    { id: 'addTrailer', page: 'VehicleSummary', text: '^add (a |another )?trailer$', opener: '^add$', unlessActions: ['trailerEntered:trailer'], afterActions: (r) => (r.vehicles ?? []).map((_, i) => `lookupVin:${i}`), scope: 'trailer', label: 'Trailer', missing: 'Add the intake\'s trailer yourself (Add → Add Trailer).', when: (r) => (r.trailers?.length ?? 0) > 0 },
+    { id: 'trailerTile', page: 'MostCommonTrailers', text: trailerTile, unique: true, label: 'Trailer type', missing: trailerTileNote, scope: 'trailer', when: (r) => (r.trailers?.length ?? 0) > 0 },
     // Non-trucking liability, once the agent set it to Yes (a claims-box mention alone never
     // clicks it): the link under the liability coverage that opens the NTL section. First in this
     // list, so it comes before cargo. Done only when the link is gone afterwards (a click lost in a
@@ -309,6 +355,11 @@ export const progressive = {
   vehicleList: 'VehicleSummary',
   // The pages about one vehicle, repeated for each (their Continue is per vehicle).
   vehiclePages: ['MostCommonVehicles', 'AddVehicle'],
+  // Trailers are added from the same list; their pages are per trailer, and Add Trailer marks its
+  // trailer entered once filled.
+  trailerList: 'VehicleSummary',
+  trailerPages: TRAILER_PAGES,
+  trailerPage: 'AddTrailer',
   // Same for drivers: the AddDriver page marks its driver entered once filled.
   driverList: 'DriverSummary',
   driverPage: 'AddDriver',
@@ -453,7 +504,7 @@ export const progressive = {
       { q: '2B20', field: 'RiskInput.VIN', ask: 'Vehicle Identification Number (VIN)', path: 'vehicles[].vin' },
       { q: '2B92', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip' },
       // "Unlimited" / long haul becomes 501 miles, which picks "More than 500 miles".
-      { q: '2B9D', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this vehicle typically travels (90% or more of the time)', name: 'Farthest one-way distance', kind: 'int', value: (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null) },
+      { q: '2B9D', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this vehicle typically travels (90% or more of the time)', name: 'Farthest one-way distance', kind: 'int', value: radiusMiles },
       { q: '2C05', field: 'BCBTUVehQuestions.V01Use', ask: 'Is this vehicle used for business, personal or both?', name: 'Business / personal use', kind: 'choice', value: (r) => (r.operations.personalUse === false ? 'Business Only' : r.operations.personalUse ? 'Business & Personal' : null) },
       { q: '2C1A', field: 'BCBTUVehQuestions.V03GoodsHaulIndicator', ask: 'Is this vehicle used to haul goods on a For-Hire basis?', name: 'Hauls for hire', kind: 'bool', value: () => true },
       // Loan / lease: from the intake's vehicle ownership (also read from the claims-box notes);
@@ -471,7 +522,23 @@ export const progressive = {
       { q: '2CCE', field: 'RiskInput.PAValueOptions', ask: 'What is the total value of all permanently attached equipment (including aftermarket parts, mounted equipment, and modifications)?', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '2CE3', field: 'RiskInput.PAValueIndicator', ask: 'Vehicle has no equipment', name: 'Vehicle has no equipment (standard)', kind: 'bool', value: () => true, scope: 'vehicle' },
       { q: '2CE8', field: 'RiskInput.NonPAValue', ask: 'If this vehicle was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'vehicles[].value', name: 'Vehicle value if sold today', note: vehicleValueNote, scope: 'vehicle' },
-    ]),
+    ]).map(offTrailerPages),
+    // --- Add trailer (AddTrailer) ------------------------------------------------------------
+    // The active trailer's answers (TNI 2026-10-07): the intake's VIN, year, make and value, the
+    // vehicle's distance, loan/lease from the trailer ownership, comprehensive/collision Yes and
+    // no equipment. No VIN lookup here. Found on this page only (the names are the vehicle's).
+    ...onPage('AddTrailer', [
+      { q: '2A29', field: 'RiskInput.VIN', ask: 'VIN', path: 'trailers[].vin' },
+      { q: '2A2A', field: 'RiskInput.Year', ask: 'Year', path: 'trailers[].year', kind: 'choice' },
+      { q: '2A2B', field: 'RiskInput.MakeCode', ask: 'Make', path: 'trailers[].make', kind: 'choice' },
+      { q: '2A61', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', name: 'Trailer ZIP' },
+      { q: '2A65', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this trailer travels for work', name: 'Trailer farthest one-way distance (as the vehicle)', kind: 'int', value: radiusMiles },
+      { q: '2AD0', field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from trailer ownership, standard: No)', kind: 'choice', value: trailerLoanLease },
+      { q: '2AEE', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this trailer in an accident or loss?', name: 'Trailer comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
+      { q: '2AFF', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard)', kind: 'bool', value: () => true },
+      { q: '2AFC', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (standard: no equipment)', ignore: true },
+      { q: '2B04', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
+    ]).map((rule) => ({ ...rule, pageOnly: true })),
 
     // --- Add driver (AddDriver) ------------------------------------------------------------------
     ...onPage('AddDriver', [
@@ -498,7 +565,9 @@ export const progressive = {
       // FL: the CSL already covers property damage; PIP is required, $10k with no deductible (TNI).
       // Changing PIP makes Progressive invalidate the liability limit, which is picked again.
       { q: '1DB8', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
-      { q: '1E8D', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible)', kind: 'choice', value: () => '$10k w/ $0 Deductible' },
+      // PIP shares its data-model name across states: other states' lists (TX $2,500–$25,000, MD
+      // "Full PIP") are left as Progressive set them (TNI 2026-10-07: no standard there).
+      { q: '1E8D', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r) },
       { q: '1DEE', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
       // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
       ...[['1DCA', { ask: 'Uninsured Motorist Bodily Injury' }], ['1DDE', { ask: 'Underinsured Motorist Bodily Injury' }], ['1DD8', { field: 'LineInput.UIMBILimit' }], ['1DBF', { field: 'LineInput.UMBILimit' }]]
@@ -535,6 +604,18 @@ export const progressive = {
       // the agent for review instead of allowing generic label matching to make an assertion.
       { name: 'General Liability (manual review)', label: '^general liability', ignore: (r) => r.coverage.gl !== true, note: glNote },
     ]),
+    // Trailer rows on Rates ("2019 Wilson", TNI 2026-10-07): comprehensive and collision $1,000,
+    // rental and fire / theft not selected, no equipment and the trailer's value as on Add Trailer.
+    // They carry the vehicle rows' data-model names: each row is found by its trailer's year, make
+    // and model, on this page only.
+    ...onPage('CoveragesRates', [
+      { q: 'TR1FCD', field: 'ComprehensiveInput.Deductible', name: 'Trailer comprehensive deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000 Deductible' },
+      { q: 'TR1FD2', field: 'CollisionInput.Deductible', name: 'Trailer collision deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000 Deductible' },
+      { q: 'TR1FF2', field: 'RentalInput.Limit', name: 'Trailer rental reimbursement (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
+      { q: 'TR200F', field: 'FireAndTheftInput.Deductible', name: 'Trailer fire / theft (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
+      { q: 'TR2CE3', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard)', kind: 'bool', value: () => true },
+      { q: 'TR2CE8', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
+    ]).map((rule) => ({ ...rule, scope: 'trailer', pageOnly: true })),
 
     // --- Bill plan options (ChangePaymentPlan) ---------------------------------------------------
     ...onPage('ChangePaymentPlan', [

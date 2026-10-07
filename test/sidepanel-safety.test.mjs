@@ -1107,6 +1107,23 @@ test('the driver page marks its driver entered when its answers were filled or a
   assert.ok(!state.doneActions.has('driverEntered:1'), 'a driver page with nothing on it marks nothing');
 });
 
+// TN live run, 2026-10-07: the first intake trailer. Its pages are per trailer, its page marks it
+// entered, and the vehicle list then works on the next trailer not entered yet.
+test('trailers: their own page scope, entered once their page is filled, the next one picked on the list', async () => {
+  const carrier = { vehicleList: 'VehicleSummary', vehiclePages: ['MostCommonVehicles', 'AddVehicle'], trailerList: 'VehicleSummary', trailerPages: ['MostCommonTrailers', 'AddTrailer'], trailerPage: 'AddTrailer', driverPage: 'AddDriver' };
+  const record = { vehicles: [{}], trailers: [{}, {}], drivers: [{}] };
+  const state = { active: { drivers: 0, vehicles: 0, trailers: 0 }, doneActions: new Set(['lookupVin:0']), doneSteps: new Set(), autoPaused: false, intake: { record } };
+  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, save: async () => {}, renderPickers: () => {} };
+  vm.runInNewContext(['stepScope', 'afterFill', 'pickListItem'].map(extractFunction).join('\n'), context);
+  assert.equal(context.stepScope('AddTrailer', carrier), 'AddTrailer|tr0|');
+  assert.equal(context.stepScope('MostCommonTrailers', carrier), 'MostCommonTrailers|tr0|');
+  context.afterFill([{ filled: [{ label: 'VIN' }], kept: [] }], { carrier, page: 'AddTrailer' });
+  assert.ok(state.doneActions.has('trailerEntered:0'));
+  await context.pickListItem(carrier, 'VehicleSummary');
+  assert.equal(state.active.trailers, 1, 'the next trailer not entered');
+  assert.equal(state.active.vehicles, 0, 'the vehicle stays');
+});
+
 test('a Luna request waiting for a follow-up fill belongs to its tab', async () => {
   const h = harness();
   h.state.tab = { ...quoteTab(1, 'CoveragesRates'), carrier: { id: 'progressive' } };

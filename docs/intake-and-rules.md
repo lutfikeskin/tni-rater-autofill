@@ -10,12 +10,12 @@ Read this when changing the client record, interpreting an intake, or adding an 
 
 | Rule responsibility | Current mechanism |
 | --- | --- |
-| Find a question | `q`, `selector`, `withOption`, or `label` plus `not` |
+| Find a question | `field` (data-model name) or `ask`/`label` on the rule's `page`, `selector`, `withOption`, or `label` plus `not`; `pageOnly` keeps a data-model name to the rule's pages and `notPages` keeps a rule off pages (a trailer's questions carry the vehicle's names) |
 | Supply an answer | `path` or `value(record, active)` |
 | Leave a decision to the agent | `note`; unresolved value becomes a review item |
 | Deliberately preserve/skip a field | `ignore`; use only for a known reason |
 | Fill but require confirmation | `warn` |
-| Address repeated entities | Active list index, `repeat`, selectors, and `scope: 'vehicle'`. With several vehicles, a `scope: 'vehicle'` rule becomes one step per vehicle; each takes the one row naming its vehicle (`vehicleHint`: at least two of year, make and model), and a row's questions without the vehicle in their label belong to the vehicle its labelled questions name. On a page with no vehicle-labelled rows, only the active vehicle's step answers. `scopeIndex` is copied onto steps but `assign()` does not read it. |
+| Address repeated entities | Active list index, `repeat`, selectors, and `scope: 'vehicle'`. With several vehicles, a `scope: 'vehicle'` rule becomes one step per vehicle; each takes the one row naming its vehicle (`vehicleHint`: at least two of year, make and model), and a row's questions without the vehicle in their label belong to the vehicle its labelled questions name. On a page with no vehicle-labelled rows, only the active vehicle's step answers. A vehicle with a trailer on the quote also finds its row by name, and a `scope: 'trailer'` rule (a trailer's Rates row, "2019 Wilson") is one step per trailer, the same way. `scopeIndex` is copied onto steps but `assign()` does not read it. |
 | Interpret existing carrier values | `replace`, `trustPage`, `verifyOnly`, `emptyNote` |
 
 Carrier rules precede generic rules, and exact matching precedes label fallback. There is no general most-specific-rule resolver; ordering and conditional functions matter. Read [browser filling](browser-filling.md) only when changing matching or execution behavior.
@@ -31,6 +31,8 @@ Carrier rules precede generic rules, and exact matching precedes label fallback.
 ## Known gaps to account for
 
 Progressive currently defaults question `28C1` (Exclude driver) to No. AmWINS also has coverage-exclusion defaults. The AI exclusion filter does not protect these deterministic rules. The schema has no dedicated driver-exclusion field; do not describe that case as supported. Non-trucking liability (`coverage.ntl`, set by the agent) is only opened on Progressive ("Add Non-Trucking Liability instead?" on Rates, verified by the link disappearing); what that section asks has not been seen on a live quote, so its questions and the rest of Rates stay with the agent (Rates is never continued for them), and AmWINS has no known NTL option. An NTL mention the agent hasn't answered yet holds the Rates helpers like NTL itself; an explicit No doesn't.
+
+Progressive trailers (TNI, 2026-10-07): after the vehicles, Add Trailer, the trailer's tile (Flatbed, Dry Van and Reefer have one; other types are the agent's pick), then the intake trailer's VIN, year, make and value, the vehicle's distance, loan/lease from the intake's trailer ownership (none given: owned), comprehensive/collision Yes and no equipment; on Rates, its row gets $1,000 comprehensive and collision and no rental or fire/theft. Personal injury protection shares one data-model name across states: Florida gets TNI's standard, other states keep Progressive's choice.
 
 Coverage and ownership are largely shared at policy/operations level. A correctly targeted vehicle row can still receive an inappropriate shared answer. Explicit entity-specific coverage, provenance, applicability/conflict resolution, and final requested-versus-entered reconciliation are design work, not existing guarantees.
 

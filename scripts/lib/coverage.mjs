@@ -31,7 +31,10 @@ const textIs = (rule, f) => {
   return !!text && ([].concat(rule.ask ?? []).some((a) => squash(a) === text)
     || (!!rule.label && new RegExp(rule.label, 'i').test(text) && !(rule.not && new RegExp(rule.not, 'i').test(text))));
 };
-const onPage = (rule, page) => !rule.page || page == null || [].concat(rule.page).includes(page);
+const onPage = (rule, page) => (!rule.page || page == null || [].concat(rule.page).includes(page)) && !(page != null && rule.notPages?.includes(page));
+// A data-model name claims its field on any page, except where the rule is fenced off (as in
+// pagekit: a trailer's questions carry the vehicle's names).
+const nameHere = (rule, page) => (rule.pageOnly ? onPage(rule, page) : !(page != null && rule.notPages?.includes(page)));
 
 // The field kinds pagekit's assign() checks a known question against: a layout's combo is a
 // select and its date box a text box. A choice is never a text box, a date or address never a
@@ -50,7 +53,7 @@ const kindFits = (rule, f) => {
 // live page always carries the name. A question's text (`ask`, or `label` on its page) claims a
 // field no rule knows by name. A question id never claims anything (Progressive renumbers them).
 function claims(rule, f, page, named) {
-  if (rule.field) return (f.ref ? f.ref === rule.field : (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f)) && kindFits(rule, f);
+  if (rule.field) return (f.ref ? f.ref === rule.field && nameHere(rule, page) : (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f)) && kindFits(rule, f);
   if ((rule.ask || rule.label) && rule.page) return onPage(rule, page) && !(f.ref && named.has(f.ref)) && textIs(rule, f) && kindFits(rule, f);
   if (!onPage(rule, page)) return false;
   if (rule.selector) {

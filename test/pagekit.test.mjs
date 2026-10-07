@@ -1018,6 +1018,74 @@ test('a list that loads after another answer is given time; an unlabeled field i
   }
 });
 
+// TN live run, 2026-10-07: the trailer page carries the vehicle's data-model names (RiskInput.VIN,
+// RiskInput.NonPAValue). Each page gets its own unit's answers, never the other's.
+test('the trailer page gets the trailer\'s answers and the vehicle page the vehicle\'s, under the same names', async () => {
+  const record = {
+    applicant: {}, garaging: { street: '1 Test Way', city: 'Testville', state: 'TN', zip: '37000' },
+    operations: { businessClass: 'Freight Hauler', radius: 'Unlimited' }, drivers: [], priorInsurance: [], coverage: {}, claims: {},
+    vehicles: [{ type: 'Semi Truck', year: 2013, make: 'PETERBILT', model: '388', vin: '1XPWD40X1DD000001', value: 60000 }],
+    trailers: [{ type: 'Flatbed', year: 2019, make: 'WILSON', vin: '1W1MAFZB0KA000002', value: 45000 }], trailerInfo: {},
+  };
+  for (const [page, vin, value] of [['AddTrailer', '1W1MAFZB0KA000002', '45000'], ['AddVehicle', '1XPWD40X1DD000001', '60000']]) {
+    const h = harness({ ext: true, search: `?pageName=${page}` });
+    const box = addExtText(h, 'c', page === 'AddTrailer' ? '2A29' : '2B20', { caption: page === 'AddTrailer' ? 'VIN' : 'Vehicle Identification Number (VIN)', ref: 'RiskInput.VIN', row: '8_3' });
+    const worth = addExtText(h, 'c', page === 'AddTrailer' ? '2B04' : '2CE8', { ref: 'RiskInput.NonPAValue', row: '8_3',
+      caption: `If this ${page === 'AddTrailer' ? 'trailer' : 'vehicle'} was sold today, how much would it be worth (excluding any permanently attached equipment)?` });
+    const report = await h.kit.fill(buildPlan(record, progressive, { trailers: 0, vehicles: 0 }), { maxRounds: 8 });
+    assert.deepEqual([box.input.value, worth.input.value], [vin, value], page);
+    assert.equal(report.unknown.length, 0, page);
+    assert.equal(report.reworded.length, 0, `${page}: found by its own rule, so its wording is as expected`);
+  }
+});
+
+// The trailer's Rates row ("2019 Wilson") next to the vehicle's: each gets its own unit's answer.
+test('Rates rows of a vehicle and a trailer each get their own answer', async () => {
+  const record = {
+    applicant: {}, garaging: { state: 'TN' }, operations: {}, drivers: [], priorInsurance: [], coverage: {}, claims: {},
+    vehicles: [{ type: 'Semi Truck', year: 2013, make: 'PETERBILT', model: '388', value: 60000 }],
+    trailers: [{ type: 'Flatbed', year: 2019, make: 'WILSON', value: 45000 }], trailerInfo: {},
+  };
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const options = ['Not selected', '$40 per day, $1,200 max', '$50 per day, $1,500 max'].map((label) => ({ get: () => label }));
+  const rows = ['2013 PETERBILT 388', '2019 Wilson'].map((caption, i) => {
+    const row = addExtText(h, 'c', '1FF2', { caption, ref: 'RentalInput.Limit', row: `8_${i + 1}` });
+    Object.assign(row.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => options } });
+    return row;
+  });
+  const report = await h.kit.fill(buildPlan(record, progressive, {}).filter((s) => /^(TR)?1FF2$/.test(s.q ?? '')), { maxRounds: 6 });
+  assert.deepEqual(rows.map((r) => r.cmp.getValue()), ['$40 per day, $1,200 max', 'Not selected']);
+  assert.equal(report.unknown.length, 0);
+});
+
+// Add Trailer sits in a menu, so it's not on the page once the trailer is in: its "add it yourself"
+// note is only for a trailer not entered yet.
+test('a helper\'s "do it yourself" note is not shown once what it adds is already in', async () => {
+  const addTrailer = { id: 'add', kind: 'action', action: 'addTrailer:0', text: '^add trailer$', label: 'Trailer', missing: 'Add the trailer yourself.',
+    pages: [], after: [], afterActions: ['lookupVin:0'], afterPages: [], unless: [], unlessActions: ['trailerEntered:0'] };
+  for (const [done, notes] of [[['lookupVin:0'], 1], [['lookupVin:0', 'trailerEntered:0'], 0]]) {
+    const h = harness();
+    const report = await h.kit.fill([addTrailer], { maxRounds: 2, doneActions: done });
+    assert.equal(report.noData.length, notes, done.join(' '));
+  }
+});
+
+// Codex on PR #43: a question we leave as the page has it, found by its data-model name, whose
+// wording changed: the agent checks what the page has (it holds Continue).
+test('a left-alone question whose wording changed is a check for the agent', async () => {
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  addExtText(h, 'c', '194', { caption: 'When does the customer want coverage to begin?', value: '10/08/2026' });
+  const report = await h.kit.fill([{ id: 'start', q: '194', field: fieldOf('194'), ask: ['When should this Progressive Commercial Auto policy start?'], path: 'progressive.q194', name: 'Policy start date', kind: 'text', ignore: true, value: null }], { maxRounds: 2 });
+  assert.equal(report.checks.length, 1);
+  assert.match(report.checks[0].note, /wording of this question changed/);
+  assert.ok(report.blockers.some((b) => /^check: /.test(b)));
+  // Its wording as expected: left alone, nothing to check.
+  const h2 = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  addExtText(h2, 'c', '194', { value: '10/08/2026' });
+  const same = await h2.kit.fill([{ id: 'start', q: '194', field: fieldOf('194'), ask: [liveIdentity('194').caption], path: 'progressive.q194', name: 'Policy start date', kind: 'text', ignore: true, value: null }], { maxRounds: 2 });
+  assert.equal(same.checks.length, 0);
+});
+
 // PR #17 review: a click on Add Non-Trucking Liability that the page dropped must not count.
 test('a helper verified by its link going away counts only when the link is gone', async () => {
   const ntl = { id: 'ntl', kind: 'action', action: 'addNtl', text: '^add non-?trucking liability( instead)?\\??$', verify: 'gone',

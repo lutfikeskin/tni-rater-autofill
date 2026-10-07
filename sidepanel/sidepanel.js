@@ -966,7 +966,8 @@ function resetViews() {
 
 function stepScope(page, carrier = state.tab?.carrier) {
   const entity = carrier?.vehiclePages?.includes(page) ? `v${state.active.vehicles ?? 0}`
-    : carrier?.driverPage && carrier.driverPage === page ? `d${state.active.drivers ?? 0}` : '';
+    : carrier?.trailerPages?.includes(page) ? `tr${state.active.trailers ?? 0}`
+      : carrier?.driverPage && carrier.driverPage === page ? `d${state.active.drivers ?? 0}` : '';
   return `${page}|${entity}|`;
 }
 
@@ -1500,11 +1501,13 @@ async function fillPage({ auto = false } = {}) {
 
 // On the carrier's vehicle list page, work on the first intake vehicle not added yet (its Add
 // Vehicle or VIN lookup not done in this quote). When every vehicle is in, the active one stays
-// and nothing is left to add, so the page's Continue is clicked. The driver list works the same
-// way (a driver counts as entered once its driver page was filled).
+// and nothing is left to add, so the page's Continue is clicked. Trailers (added from the same
+// list) and the driver list work the same way (a driver or trailer counts as entered once its
+// page was filled).
 async function pickListItem(carrier, page) {
   const lists = [
     [carrier?.vehicleList, 'vehicles', (i) => ['lookupVin', 'addVehicle'].some((a) => state.doneActions.has(`${a}:${i}`))],
+    [carrier?.trailerList, 'trailers', (i) => ['trailerEntered', 'addTrailer'].some((a) => state.doneActions.has(`${a}:${i}`))],
     [carrier?.driverList, 'drivers', (i) => ['driverEntered', 'addDriver'].some((a) => state.doneActions.has(`${a}:${i}`))],
   ];
   for (const [listPage, list, done] of lists) {
@@ -1525,6 +1528,9 @@ function afterFill(frames, { carrier, page }) {
   // OK 2026-10-07: nothing to fill, and the driver list then added the same driver again).
   if (carrier.driverPage && carrier.driverPage === page && frames.some((f) => f.filled?.length || f.kept?.length)) {
     state.doneActions.add(`driverEntered:${state.active.drivers ?? 0}`);
+  }
+  if (carrier.trailerPage && carrier.trailerPage === page && frames.some((f) => f.filled?.length || f.kept?.length)) {
+    state.doneActions.add(`trailerEntered:${state.active.trailers ?? 0}`);
   }
   const clicked = frames.some((f) => (f.actions ?? []).length);
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);

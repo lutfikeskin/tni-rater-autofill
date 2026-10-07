@@ -143,3 +143,18 @@ test('layouts: a condition counts its layouts from before and after names and nu
   assert.deepEqual(follow.showWhen.is, ['Yes']);
   assert.equal(follow.showWhen.q, '1A0', 'the trigger by its current number');
 });
+
+// Codex on PR #43: two questions reading the same ("City" of the business and of the owner), the
+// first missing from a layout: the second keeps its own identity.
+test('layouts: a repeated text keeps its identity when the earlier one is missing', () => {
+  const context = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: [] };
+  const layout = (t, fields) => ({ type: 'page_layout', t, session: t, carrier: 'progressive', page: 'BusinessOwnerInfo', context, fields });
+  const text = (q, label) => ({ q, kind: 'text', label });
+  const fields = buildLayouts([
+    layout('2026-10-05T10:00:00Z', [text('27E', 'Street Address'), text('286', 'City'), text('2A9', 'Home Address'), text('2B0', 'City')]),
+    layout('2026-10-05T11:00:00Z', [text('2A9', 'Home Address'), text('2B0', 'City')]),
+  ])[0].layout.pages.BusinessOwnerInfo.fields;
+  const cities = fields.filter((f) => f.caption === 'City');
+  assert.equal(cities.length, 2);
+  assert.deepEqual(cities.map((f) => [f.q, !!f.cond]).sort(), [['286', true], ['2B0', false]], "the owner's City is on both layouts; the business's on one");
+});

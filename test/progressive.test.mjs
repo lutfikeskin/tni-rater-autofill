@@ -382,6 +382,7 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   record.applicant.dot = '4123456';
   record.applicant.name = null;
   record.applicant.owner1 = 'Amina Kone';
+  record.garaging.state = 'FL';
   const plan = buildPlan(record, progressive, {});
   assert.equal(byQ(plan, '21E').value, true, 'obtained within 60 days: Yes');
   assert.equal(byQ(plan, '21E').ignore, false);
@@ -393,6 +394,13 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   }
   assert.equal(byQ(plan, '1DB8').value, 'Not Selected');
   assert.equal(byQ(plan, '1E8D').value, '$10k w/ $0 Deductible');
+  assert.equal(byQ(plan, '1E8D').ignore, false);
+  // TX 2026-10-07: PIP shares its data-model name across states; TX's list has other amounts and
+  // TNI has no standard there: left as Progressive set it.
+  for (const state of ['TX', 'MD']) {
+    const other = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {}), '1E8D');
+    assert.deepEqual([other.value, other.ignore], [null, true], state);
+  }
   record.applicant.dot = null;
   assert.equal(byQ(buildPlan(record, progressive, {}), '21E').ignore, true);
 });
@@ -556,4 +564,48 @@ test('DeclinationNotice is a stop page: the agent is told the client already has
   // Only that page: the quote pages around it are filled as before.
   assert.deepEqual(Object.keys(progressive.stopPages), ['DeclinationNotice']);
   assert.ok(!progressive.actions.some((a) => [].concat(a.page ?? []).includes('DeclinationNotice')), 'no helper button belongs to it');
+});
+
+// TN live run, 2026-10-07: the first intake trailer (a flatbed), added by hand after Vehicle
+// Summary's Continue left it out. TNI's trailer answers (2026-10-07).
+const trailerRecord = () => ({
+  ...baseRecord(),
+  garaging: { street: '1 Test Way', unit: null, city: 'Testville', state: 'TN', zip: '37000' },
+  operations: { ...baseRecord().operations, businessClass: 'Freight Hauler', radius: 'Unlimited', radiusMiles: null },
+  vehicles: [{ type: 'Semi Truck', year: 2013, make: 'PETERBILT', model: '388', vin: '1XPWD40X1DD000001', value: 60000 }],
+  trailers: [{ type: 'Flatbed', year: 2019, make: 'WILSON', model: null, vin: '1W1MAFZB0KA000002', value: 45000 }],
+  trailerInfo: { ownership: 'Financed' },
+});
+
+test('trailers: Add Trailer once the vehicles are in, its tile, its page, and its own row on Rates', () => {
+  const record = trailerRecord();
+  const plan = buildPlan(record, progressive, { trailers: 0 });
+  const add = plan.find((s) => s.action === 'addTrailer:0');
+  assert.ok(add && new RegExp(add.text, 'i').test('Add Trailer'));
+  assert.deepEqual([add.afterActions, add.unlessActions, add.opener], [['lookupVin:0'], ['trailerEntered:0'], '^add$']);
+  assert.match(add.missing, /Add Trailer/, 'Continue never leaves the trailer out silently');
+  assert.ok(new RegExp(plan.find((s) => s.action === 'trailerTile:0').text).test('Flatbed Trailer'));
+  // Types without a known tile are the agent's to pick.
+  record.trailers[0].type = 'Lowboy';
+  const lowboy = buildPlan(record, progressive, { trailers: 0 }).find((s) => s.action === 'trailerTile:0');
+  assert.equal(lowboy.text, null);
+  assert.match(lowboy.missing, /Lowboy/);
+  record.trailers[0].type = 'Flatbed';
+  // Add Trailer: the trailer's answers, found on that page only; the vehicle's never there.
+  const step = (q) => plan.find((s) => s.q === q);
+  assert.deepEqual(['2A29', '2A2A', '2A2B', '2A65', '2AD0', '2AEE', '2AFF', '2B04'].map((q) => step(q).value),
+    ['1W1MAFZB0KA000002', 2019, 'WILSON', 501, 'Yes - Loan', true, true, 45000]);
+  assert.ok(['2A29', '2B04'].every((q) => step(q).pageOnly && step(q).pages.includes('AddTrailer')));
+  assert.ok(step('2B20').notPages.includes('AddTrailer'), "the vehicle's VIN is never looked for on the trailer page");
+  assert.ok(plan.find((s) => s.path === 'vehicles[0].vin' && s.re).notPages.includes('AddTrailer'));
+  // No trailer ownership on the intake: owned.
+  assert.equal(byQ(buildPlan({ ...record, trailerInfo: {} }, progressive, { trailers: 0 }), '2AD0').value, 'No');
+  // Rates: the trailer's row by its year and make; the vehicle's by its own (a row each).
+  assert.deepEqual([step('TR1FCD').value, step('TR1FF2').value, step('TR200F').value], ['$1,000 Deductible', 'Not selected', 'Not selected']);
+  assert.deepEqual(step('TR1FF2').vehicleHint, ['2019', 'wilson']);
+  assert.deepEqual(plan.find((s) => s.q === '1FF2').vehicleHint, ['2013', 'peterbilt', '388']);
+  // Without trailers: none of it.
+  const none = buildPlan({ ...record, trailers: [] }, progressive, {});
+  assert.ok(!none.some((s) => /^(addTrailer|trailerTile):/.test(s.action ?? '') || /^TR/.test(s.q ?? '')));
+  assert.equal(none.find((s) => s.q === '1FF2').vehicleHint, null, 'one vehicle, no trailer: its row needs no name');
 });

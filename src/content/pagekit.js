@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 48 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 49 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -383,12 +383,16 @@
     const take = (s, c, how, reworded = false) => { used.add(c); donePaths.add(s.path); pairs.push({ step: s, control: c, how, reworded }); };
     const fits = (s, c) => !(c.kind === 'checkbox' && s.kind !== 'bool');
     const known = (s) => !!(s.field || s.ask?.length || (s.reC && s.pages?.length));
-    const onPage = (s) => !s.pages?.length || s.pages.includes(page);
+    // A question's own pages (`notPages`: never there, whatever finds it).
+    const onPage = (s) => (!s.pages?.length || s.pages.includes(page)) && !s.notPages?.includes(page);
+    // A data-model name is found on any page, except where the step is fenced off: a trailer's
+    // questions carry the vehicle's names (RiskInput.VIN), so each is kept to its own pages.
+    const nameHere = (s) => (s.pageOnly ? onPage(s) : !s.notPages?.includes(page));
     const worded = (s) => !!s.ask?.length || !!s.reC;
     const textIs = (s, x) => !!x.text && ((s.ask ?? []).some((a) => squash(a) === x.text) || (!!s.reC && s.reC.test(x.text) && !(s.exC && s.exC.test(x.text))));
     // Data-model names some rule knows: those fields are that rule's, never a text rule's.
     const claimed = new Set(steps.map((s) => s.field).filter(Boolean));
-    const isIt = (s, x) => (s.field ? x.ref === s.field : onPage(s) && worded(s) && !claimed.has(x.ref) && textIs(s, x));
+    const isIt = (s, x) => (s.field ? x.ref === s.field && nameHere(s) : onPage(s) && worded(s) && !claimed.has(x.ref) && textIs(s, x));
     // A choice is never typed into a box, nor a typed address or date put in a choice; a plain
     // text step only gives way to a box when its text names a box and a choice.
     const definite = (s, x) => !(CHOICE_STEPS.has(s.kind) && x.kind === 'text') && !(TYPED_STEPS.has(s.kind) && x.kind !== 'text');
@@ -445,11 +449,11 @@
       if (c) take(s, c, how, !!s.field && worded(s) && !textIs(s, c));
     }
     // A data-model name not on the page, while its expected wording is: the field was probably renamed.
-    pairs.renamed = steps.filter((s) => s.field && worded(s) && onPage(s) && !found.get(s).length)
+    pairs.renamed = steps.filter((s) => s.field && worded(s) && onPage(s) && nameHere(s) && !found.get(s).length)
       .flatMap((s) => { const x = controls.find((y) => !used.has(y) && y.ref !== s.field && !claimed.has(y.ref) && textIs(s, y)); return x ? [{ step: s, control: x }] : []; });
     for (const field of ['text', 'hint']) {
       for (const s of steps) {
-        if (!s.reC || known(s) || donePaths.has(s.path)) continue;
+        if (!s.reC || known(s) || donePaths.has(s.path) || !onPage(s)) continue;
         const c = controls.find((x) => !used.has(x) && !repeated.has(x.q) && !perVehicle.has(x) && x[field] && fits(s, x) && s.reC.test(x[field]) && !(s.exC && s.exC.test(x[field])));
         if (c) take(s, c, field === 'text' ? 'label' : 'name');
       }
@@ -782,11 +786,13 @@
     cmp.doQuery(text, false, true);
     const start = Date.now();
     await sleep(200);
+    if (!cmp.store) return null;
     while (cmp.store?.isLoading?.() && Date.now() - start < 6000) await sleep(100);
     return storeOptions(cmp);
   }
 
-  const storeOptions = (cmp) => cmp.store.getRange().map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
+  // A list redrawn while it's answered may have lost its store (TX 2026-10-07): no options.
+  const storeOptions = (cmp) => (cmp.store?.getRange?.() ?? []).map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
   const hasOptions = (options) => options.some((o) => !isPlaceholderOption(o.text));
 
   async function applyExt(step, c) {
@@ -1131,6 +1137,16 @@
         // A known field whose question reads differently now: answered, and the agent checks it.
         const step = reworded ? { ...planned, warn: [planned.warn, `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check the answer.`].filter(Boolean).join(' ') } : planned;
         const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how };
+        // A question left as the page has it whose wording changed: what the page has may not fit
+        // any more, so the agent checks it (Continue waits).
+        const leftAlone = step.verifyOnly || step.ignore;
+        if (leftAlone && reworded) {
+          const note = `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check what the page has.`;
+          if (step.verifyOnly) report.kept.push(item);
+          report.checks.push({ ...item, note, ...describe(c) });
+          handled.set(step.id, { status: 'needs', note });
+          continue;
+        }
         if (step.verifyOnly) { report.kept.push(item); handled.set(step.id, { status: null }); continue; }
         if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { handled.set(step.id, { status: null }); continue; }
         if (step.businessNames?.length) {
@@ -1411,7 +1427,8 @@
     if (window === window.top && currentPage() === startPage) {
       for (const a of actions) {
         if (!a.missing || clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage())) || findButton(a)
-          || !a.afterActions.every((id) => clicked.has(id)) || (a.resolvedBy && findButton({ text: a.resolvedBy }))) continue;
+          || !a.afterActions.every((id) => clicked.has(id)) || a.unlessActions?.some((id) => clicked.has(id))
+          || (a.resolvedBy && findButton({ text: a.resolvedBy }))) continue;
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing });
       }
     }
@@ -1690,5 +1707,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 48, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 49, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

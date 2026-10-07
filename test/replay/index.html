@@ -199,6 +199,9 @@
       const bytes = file ? new Uint8Array(await file.arrayBuffer()) : new Uint8Array(await (await fetch('/test/fixtures/sample-intake.pdf')).arrayBuffer());
       const result = normalizeIntake(await readIntakeFields(pdfjs, bytes));
       if (result.error) throw new Error(result.error);
+      // The quote's state is the layout's: Progressive quotes a client in their garaging state, and
+      // some answers are a state's (Florida's PIP).
+      if (layout?.context?.state) result.record.garaging = { ...result.record.garaging, state: layout.context.state };
       return result.record;
     }
 

@@ -19,6 +19,9 @@ test('coverage: Progressive questions by data-model name or text, AmWINS by id /
   // Codex on PR #43: two kinds of field read "Business Type"; the kind decides, as when filling.
   assert.equal(fieldStatus({ caption: 'Business Type', kind: 'combo' }, progressive, 'BusinessOwnerInfo').rule, 'Business type');
   assert.equal(fieldStatus({ caption: 'Business Type', kind: 'text' }, progressive, 'BusinessOwnerInfo').status, 'ignored');
+  // The trailer page carries the vehicle's data-model names: there they are the trailer's.
+  assert.equal(fieldStatus({ ref: 'RiskInput.VIN', caption: 'VIN', kind: 'text' }, progressive, 'AddTrailer').rule, 'trailers[].vin');
+  assert.equal(fieldStatus({ ref: 'RiskInput.VIN', caption: 'Vehicle Identification Number (VIN)', kind: 'text' }, progressive, 'AddVehicle').rule, 'vehicles[].vin');
   assert.equal(fieldStatus({ id: 'ownerDob', caption: 'owner dob' }, amwins).status, 'filled');
   assert.equal(fieldStatus({ dataId: 'gender', caption: 'Gender', kind: 'combo' }, amwins).status, 'filled');
   assert.equal(fieldStatus({ id: 'agnecyName', caption: 'agnecy name' }, amwins).status, 'ignored');
