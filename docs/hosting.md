@@ -33,7 +33,9 @@ within hours of approval.
 
 The extension sends to this server by default (`sidepanel/usage-log.js`, `DEFAULT_SERVER` /
 `DEFAULT_TOKEN`); an agent's own Server setting (a local test server) overrides it, and a blank
-one turns uploads off. The upload token can only add events, which the server cleans; reading
+one turns uploads off. Harnesses that load the packaged extension must set that Server to a local
+server first (`npm run e2e:extension` does, and fails on any request to production), so test runs
+stay out of the pilot's usage data. The upload token can only add events, which the server cleans; reading
 them back needs the admin token, kept in Railway, in the repository secret `RATER_ADMIN_TOKEN`,
 and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
 
