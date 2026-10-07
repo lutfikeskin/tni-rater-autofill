@@ -95,7 +95,9 @@ class FakeNode {
     for (const node of nodes) {
       if (!node) continue;
       node.parentElement = this;
-      node.ownerDocument = this.ownerDocument;
+      // The whole subtree joins this document (a radio group appended with its radios).
+      const adopt = (n) => { n.ownerDocument = this.ownerDocument; for (const c of n.children ?? []) adopt(c); };
+      adopt(node);
       this.children.push(node);
     }
     return nodes.at(-1);
@@ -359,10 +361,30 @@ function recorderHarness(document = new FakeDocument()) {
   return { context, document, sent, tick: () => tick?.(), trusted: target => listeners.filter(l => l.type === 'pointerdown').forEach(({ fn }) => fn({ isTrusted: true, target })) };
 }
 
+// A Progressive field as the live page draws it: the question the rule written from this id
+// finds (its data-model name, else its question text), unless the test says otherwise.
+function liveIdentity(question) {
+  const rule = progressive.rules.find((r) => r.q === question);
+  return { ref: rule?.field, caption: [].concat(rule?.ask ?? [])[0] };
+}
+
+// The data-model name a step finds that field by.
+const fieldOf = (question) => liveIdentity(question).ref ?? `Test.${question}`;
+
+// Radios grouped under their question, as the page draws them.
+function radioGroup(question, ...radios) {
+  const group = new FakeNode('div', { attrs: { role: 'radiogroup', 'aria-label': question } });
+  group.append(...radios);
+  return group;
+}
+
 function addExtText(h, prefix, question, options = {}) {
+  const live = liveIdentity(question);
+  options = { ...options, ref: options.ref ?? live.ref, caption: options.caption ?? live.caption };
   const group = 'A'.repeat(32);
   const id = `f_${prefix}${group}${question}_${options.row ?? '1_1'}`;
-  const input = makeInput({ id, ariaLabel: options.caption ?? `Question ${question}`, value: options.value ?? '' });
+  // Duck Creek's data-model name on the input: how a rule finds the field (never its number).
+  const input = makeInput({ id, ariaLabel: options.caption ?? `Question ${question}`, value: options.value ?? '', attrs: { fieldref: options.ref ?? `Test.${question}` } });
   const cmp = extCmp(id, input, options);
   h.context.Ext._components.set(id, cmp);
   h.document.body.append(input);
@@ -524,7 +546,9 @@ test('TX refrigeration options fill from the intake without an AI review stop', 
     const radios = ['Yes, match Motor Truck Cargo limits', 'No'].map((value, i) => makeInput({
       id: i ? 'reefer-no' : `f_U${'A'.repeat(32)}215C_1_1`, name: 'string_215C', type: 'radio', value,
     }));
-    h.document.body.append(...radios);
+    const group = new FakeNode('div', { attrs: { role: 'radiogroup', 'aria-label': 'Does the customer require Refrigeration Breakdown coverage?' } });
+    group.append(...radios);
+    h.document.body.append(group);
     const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: { reeferBreakdown: selected }, claims: {} };
     const plan = buildPlan(record, progressive).filter(s => s.q === '215C');
     const report = await h.kit.fill(plan, { replaceChoices: true });
@@ -542,7 +566,7 @@ test('TX refrigeration options fill from the intake without an AI review stop', 
 test('Freight Hauler searches the remote business dropdown and verifies a collapsed General Freight summary', async () => {
   for (const offered of ['General Freight Hauler', 'General Freight Trucking']) {
     const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
-    const structure = new SelectNode([{ text: 'Individual / Sole Proprietor', value: 'individual' }], { id: `f_c${'A'.repeat(32)}22D_1_1`, ariaLabel: 'Business structure' });
+    const structure = new SelectNode([{ text: 'Individual / Sole Proprietor', value: 'individual' }], { id: `f_c${'A'.repeat(32)}22D_1_1`, ariaLabel: 'How is the customer\'s business structured?' });
     structure.value = 'individual';
     h.document.body.append(structure);
     const business = addExtText(h, 'c', '239', { caption: 'Business type list', onSet: () => {
@@ -570,7 +594,7 @@ test('currency formatting preserves accepted vehicle values but rejects a differ
       cmp._value = displayed;
       cmp.el.dom.value = displayed;
     } });
-    const report = await h.kit.fill([{ id: 'value', q: '2CE8', path: 'vehicles[0].value', kind: 'money', value: 25000 }]);
+    const report = await h.kit.fill([{ id: 'value', q: '2CE8', field: fieldOf('2CE8'), path: 'vehicles[0].value', kind: 'money', value: 25000 }]);
     assert.equal(report.halted, false);
     assert.equal(report.filled.length, displayed === '$25,000.00' ? 1 : 0);
     assert.equal(report.failed.length, displayed === '$25,000.00' ? 0 : 1, 'a different amount is reported, not silently accepted');
@@ -583,8 +607,8 @@ test('Duck Creek uppercase U/P component prefixes expose stable question ids', a
   const u = addExtText(h, 'U', '1A01', { caption: 'Upper U' });
   const p = addExtText(h, 'P', '1A02', { caption: 'Upper P' });
   const report = await h.kit.fill([
-    { id: 'u', q: '1A01', path: 'synthetic.u', name: 'U', kind: 'text', value: 'one' },
-    { id: 'p', q: '1A02', path: 'synthetic.p', name: 'P', kind: 'text', value: 'two' },
+    { id: 'u', q: '1A01', field: fieldOf('1A01'), path: 'synthetic.u', name: 'U', kind: 'text', value: 'one' },
+    { id: 'p', q: '1A02', field: fieldOf('1A02'), path: 'synthetic.p', name: 'P', kind: 'text', value: 'two' },
   ], { maxRounds: 4 });
   assert.equal(Array.from(report.filled, (x) => x.q).join(','), '1A01,1A02');
   assert.equal(u.cmp.getValue(), 'one');
@@ -611,11 +635,11 @@ test('accepted answers survive a server redraw and are marked on the fresh contr
   const field = addExtText(h, 'U', '2B01', { caption: 'Redrawn field' });
   field.cmp.setValue = function setValue(value) {
     this._value = String(value);
-    const replacement = makeInput({ id: field.id, ariaLabel: 'Redrawn field', value: String(value) });
+    const replacement = makeInput({ id: field.id, ariaLabel: 'Redrawn field', value: String(value), attrs: { fieldref: fieldOf('2B01') } });
     this.el.dom.parentElement.replaceChild(replacement, this.el.dom);
     this.el.dom = replacement;
   };
-  const report = await h.kit.fill([{ id: 'redraw', q: '2B01', path: 'redraw.value', kind: 'text', value: 'accepted' }], { maxRounds: 2 });
+  const report = await h.kit.fill([{ id: 'redraw', q: '2B01', field: fieldOf('2B01'), path: 'redraw.value', kind: 'text', value: 'accepted' }], { maxRounds: 2 });
   const fresh = h.document.getElementById(field.id);
   assert.equal(fresh.value, 'accepted');
   assert.equal(report.filled.length, 1);
@@ -628,13 +652,13 @@ test('a server redraw that rejects the answer is flagged and keeps the helper fr
   const field = addExtText(h, 'P', '2B02', { caption: 'Rejected field' });
   field.cmp.setValue = function setValue() {
     this._value = 'server value';
-    const replacement = makeInput({ id: field.id, ariaLabel: 'Rejected field', value: 'server value' });
+    const replacement = makeInput({ id: field.id, ariaLabel: 'Rejected field', value: 'server value', attrs: { fieldref: fieldOf('2B02') } });
     this.el.dom.parentElement.replaceChild(replacement, this.el.dom);
     this.el.dom = replacement;
   };
   const helper = addButton(h, 'Lookup VIN');
   const report = await h.kit.fill([
-    { id: 'reject', q: '2B02', path: 'rejected.value', kind: 'text', value: 'intake value' },
+    { id: 'reject', q: '2B02', field: fieldOf('2B02'), path: 'rejected.value', kind: 'text', value: 'intake value' },
     { id: 'lookup', kind: 'action', action: 'lookupVin', text: 'Lookup VIN', pages: [], after: ['rejected.value'], afterActions: [], afterPages: [], unless: [], immediate: false },
   ], { maxRounds: 2 });
   assert.equal(report.halted, false);
@@ -669,7 +693,7 @@ test('repeated question ids without a vehicle hint stay yellow, and a hint picks
   const first = addExtText(h, 'U', '3C01', { caption: '2021 FORD TRANSIT 350', row: '8_1' });
   const second = addExtText(h, 'P', '3C01', { caption: '2019 ISUZU NPR HD', row: '8_2' });
   const report = await h.kit.fill([
-    { id: 'duplicate-step', q: '3C01', path: 'vehicles[0].value', kind: 'text', value: '45000' },
+    { id: 'duplicate-step', q: '3C01', field: fieldOf('3C01'), path: 'vehicles[0].value', kind: 'text', value: '45000' },
   ], { maxRounds: 2 });
   assert.equal(report.halted, false);
   assert.equal(first.input.value, '');
@@ -677,7 +701,7 @@ test('repeated question ids without a vehicle hint stay yellow, and a hint picks
   assert.ok(report.unknown.length >= 2);
   // With the step's vehicle's year/make/model, the matching row is filled.
   const hinted = await h.kit.fill([
-    { id: 'hinted-step', q: '3C01', path: 'vehicles[1].value', kind: 'text', value: '45000', vehicleHint: ['2019', 'isuzu', 'npr hd'], activeVehicle: false },
+    { id: 'hinted-step', q: '3C01', field: fieldOf('3C01'), path: 'vehicles[1].value', kind: 'text', value: '45000', vehicleHint: ['2019', 'isuzu', 'npr hd'], activeVehicle: false },
   ], { maxRounds: 2 });
   assert.equal(second.input.value, '45000');
   assert.equal(first.input.value, '');
@@ -698,11 +722,11 @@ test('per-vehicle Rates rows each get their own vehicle, including rows without 
     worth: addExtText(h, 'r', '2091', { caption: 'If this vehicle was sold today, how much would it be worth?', row: `8_${i + 1}` }),
   }));
   const plan = vehicles.flatMap((v, i) => [
-    { id: `rental-${i}`, q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: `rental ${i}`, vehicleHint: v.hint, activeVehicle: i === 2 },
-    { id: `worth-${i}`, q: '2091', path: `vehicles[${i}].value`, kind: 'text', value: v.value, vehicleHint: v.hint, activeVehicle: i === 2 },
+    { id: `rental-${i}`, q: '1FF2', field: fieldOf('1FF2'), path: 'progressive.q1FF2', kind: 'text', value: `rental ${i}`, vehicleHint: v.hint, activeVehicle: i === 2 },
+    { id: `worth-${i}`, q: '2091', field: fieldOf('2091'), path: `vehicles[${i}].value`, kind: 'text', value: v.value, vehicleHint: v.hint, activeVehicle: i === 2 },
   ]);
   // A label fallback for the active (last) vehicle must not take the first row's box.
-  plan.push({ id: 'fallback', q: '2CE8', path: 'vehicles[2].value', kind: 'text', value: '22000', re: 'sold today' });
+  plan.push({ id: 'fallback', q: '2CE8', field: fieldOf('2CE8'), path: 'vehicles[2].value', kind: 'text', value: '22000', re: 'sold today' });
   const report = await h.kit.fill(plan, { maxRounds: 12 });
   assert.equal(report.halted, false);
   assert.deepEqual(rows.map((r) => r.rental.input.value), ['rental 0', 'rental 1', 'rental 2']);
@@ -716,8 +740,8 @@ test('each vehicle row of a repeated question has its own field key', async () =
   const ram = addExtText(h, 'c', '1FF2', { caption: '2025 RAM PROMASTER 2500', row: '8_1' });
   const sprinter = addExtText(h, 'c', '1FF2', { caption: '2019 MERCEDES-BENZ SPRINTER', row: '8_2' });
   const report = await h.kit.fill([
-    { id: 'ram', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'ram rental', vehicleHint: ['2025', 'ram', 'promaster 2500'], activeVehicle: false },
-    { id: 'sprinter', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'sprinter rental', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
+    { id: 'ram', q: '1FF2', field: fieldOf('1FF2'), path: 'progressive.q1FF2', kind: 'text', value: 'ram rental', vehicleHint: ['2025', 'ram', 'promaster 2500'], activeVehicle: false },
+    { id: 'sprinter', q: '1FF2', field: fieldOf('1FF2'), path: 'progressive.q1FF2', kind: 'text', value: 'sprinter rental', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
   ], { maxRounds: 4, skip: ['1FF2@2'] });
   assert.equal(sprinter.input.value, '', 'the edited row is left alone');
   assert.equal(ram.input.value, 'ram rental', 'the other vehicle still fills');
@@ -730,8 +754,8 @@ test('two vehicles that read the same leave their rows to the agent', async () =
   const second = addExtText(h, 'c', '1FF2', { caption: '2025 RAM PROMASTER 2500', row: '8_2' });
   const hint = ['2025', 'ram', 'promaster 2500'];
   const report = await h.kit.fill([
-    { id: 'a', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'A', vehicleHint: hint, activeVehicle: true },
-    { id: 'b', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'B', vehicleHint: hint, activeVehicle: false },
+    { id: 'a', q: '1FF2', field: fieldOf('1FF2'), path: 'progressive.q1FF2', kind: 'text', value: 'A', vehicleHint: hint, activeVehicle: true },
+    { id: 'b', q: '1FF2', field: fieldOf('1FF2'), path: 'progressive.q1FF2', kind: 'text', value: 'B', vehicleHint: hint, activeVehicle: false },
   ], { maxRounds: 3 });
   assert.equal(first.input.value, '');
   assert.equal(second.input.value, '');
@@ -739,13 +763,13 @@ test('two vehicles that read the same leave their rows to the agent', async () =
   // A year alone isn't enough to name a row.
   const h2 = harness({ ext: true });
   const ford = addExtText(h2, 'c', '1FF2', { caption: '2025 FORD TRANSIT', row: '8_1' });
-  await h2.kit.fill([{ id: 'c', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'C', vehicleHint: hint, activeVehicle: true }], { maxRounds: 2 });
+  await h2.kit.fill([{ id: 'c', q: '1FF2', field: fieldOf('1FF2'), path: 'progressive.q1FF2', kind: 'text', value: 'C', vehicleHint: hint, activeVehicle: true }], { maxRounds: 2 });
   assert.equal(ford.input.value, '');
   // Codex on PR #21: an intake vehicle with one identifier can't name a row, even a unique match.
   const h3 = harness({ ext: true });
   const sprinter = addExtText(h3, 'c', '1FF2', { caption: '2019 MERCEDES-BENZ SPRINTER', row: '8_1' });
   addExtText(h3, 'c', '1FF2', { caption: '2016 FREIGHTLINER CASCADIA 125', row: '8_2' });
-  await h3.kit.fill([{ id: 'd', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'D', vehicleHint: ['sprinter'], activeVehicle: true }], { maxRounds: 2 });
+  await h3.kit.fill([{ id: 'd', q: '1FF2', field: fieldOf('1FF2'), path: 'progressive.q1FF2', kind: 'text', value: 'D', vehicleHint: ['sprinter'], activeVehicle: true }], { maxRounds: 2 });
   assert.equal(sprinter.input.value, '');
 });
 
@@ -753,8 +777,8 @@ test('a page showing one vehicle at a time is answered by the active vehicle onl
   const h = harness({ ext: true });
   const worth = addExtText(h, 'r', '2091', { caption: 'If this vehicle was sold today, how much would it be worth?', row: '4_1' });
   const report = await h.kit.fill([
-    { id: 'first', q: '2091', path: 'vehicles[0].value', kind: 'text', value: '31000', vehicleHint: ['2025', 'ram', 'promaster 2500'], activeVehicle: false },
-    { id: 'second', q: '2091', path: 'vehicles[1].value', kind: 'text', value: '17000', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
+    { id: 'first', q: '2091', field: fieldOf('2091'), path: 'vehicles[0].value', kind: 'text', value: '31000', vehicleHint: ['2025', 'ram', 'promaster 2500'], activeVehicle: false },
+    { id: 'second', q: '2091', field: fieldOf('2091'), path: 'vehicles[1].value', kind: 'text', value: '17000', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
   ], { maxRounds: 3 });
   assert.equal(worth.input.value, '17000');
   assert.equal(report.filled.length, 1);
@@ -766,15 +790,15 @@ test('a per-vehicle step without year/make/model answers only as the active vehi
   let h = harness({ ext: true });
   const worth = addExtText(h, 'r', '2091', { caption: 'If this vehicle was sold today, how much would it be worth?', row: '4_1' });
   await h.kit.fill([
-    { id: 'undescribed', q: '2091', path: 'vehicles[0].value', kind: 'text', value: '31000', vehicleHint: null, activeVehicle: false },
-    { id: 'active', q: '2091', path: 'vehicles[1].value', kind: 'text', value: '17000', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
+    { id: 'undescribed', q: '2091', field: fieldOf('2091'), path: 'vehicles[0].value', kind: 'text', value: '31000', vehicleHint: null, activeVehicle: false },
+    { id: 'active', q: '2091', field: fieldOf('2091'), path: 'vehicles[1].value', kind: 'text', value: '17000', vehicleHint: ['2019', 'mercedes benz', 'sprinter'], activeVehicle: true },
   ], { maxRounds: 3 });
   assert.equal(worth.input.value, '17000');
   // On Rates (rows named by their vehicle) it can't pick a row, even its own.
   h = harness({ ext: true });
   const row = addExtText(h, 'c', '1FF2', { caption: '2025 RAM PROMASTER 2500', row: '8_1' });
   const report = await h.kit.fill([
-    { id: 'undescribed-rates', q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'rental', vehicleHint: null, activeVehicle: true },
+    { id: 'undescribed-rates', q: '1FF2', field: fieldOf('1FF2'), path: 'progressive.q1FF2', kind: 'text', value: 'rental', vehicleHint: null, activeVehicle: true },
   ], { maxRounds: 2 });
   assert.equal(row.input.value, '');
   assert.equal(report.filled.length, 0);
@@ -788,8 +812,8 @@ test('rows of several vehicles without their names are not given to the active v
   const loan = addExtText(h, 'c', '2007', { caption: 'Loan/Lease', row: '8_2' });
   const hint = (v) => (v ? ['2016', 'freightliner', 'cascadia'] : ['2019', 'mercedes benz', 'sprinter']);
   const report = await h.kit.fill([0, 1].flatMap((v) => [
-    { id: `rental-${v}`, q: '1FF2', path: 'progressive.q1FF2', kind: 'text', value: 'rental', vehicleHint: hint(v), activeVehicle: v === 1 },
-    { id: `loan-${v}`, q: '2007', path: 'progressive.q2007', kind: 'text', value: 'loan', vehicleHint: hint(v), activeVehicle: v === 1 },
+    { id: `rental-${v}`, q: '1FF2', field: fieldOf('1FF2'), path: 'progressive.q1FF2', kind: 'text', value: 'rental', vehicleHint: hint(v), activeVehicle: v === 1 },
+    { id: `loan-${v}`, q: '2007', field: fieldOf('2007'), path: 'progressive.q2007', kind: 'text', value: 'loan', vehicleHint: hint(v), activeVehicle: v === 1 },
   ]), { maxRounds: 4 });
   assert.equal(loan.input.value, '');
   assert.equal(report.filled.length, 0);
@@ -834,7 +858,7 @@ test('ignored reviews leave unknown, repeated and invalid fields untouched while
   const next = makeInput({ id: 'next', ariaLabel: 'Next field' });
   h.document.body.append(unknown, next);
   const report = await h.kit.fill([
-    { id: 'duplicate-step', q: '3C01', path: 'vehicle.value', kind: 'text', value: '45000' },
+    { id: 'duplicate-step', q: '3C01', field: fieldOf('3C01'), path: 'vehicle.value', kind: 'text', value: '45000' },
     { id: 'next-step', selector: '#next', path: 'next', kind: 'text', value: 'filled later' },
   ], { skip: ['3C01', 'unknown-required'], maxRounds: 3 });
   assert.equal(report.halted, false);
@@ -1050,7 +1074,7 @@ test('bill plans wait for recalculate and a fresh visible premium', async () => 
 
 function cargoPlan() {
   return [
-    { id: 'cargo-value', q: '216F', path: 'progressive.q216F', kind: 'text', value: '$100000/$1000' },
+    { id: 'cargo-value', q: '216F', field: fieldOf('216F'), path: 'progressive.q216F', kind: 'text', value: '$100000/$1000' },
     { id: 'done', kind: 'action', action: 'doneCargo', text: '^done with this coverage$', pages: ['CoveragesRates'], after: [], afterAny: ['progressive.q216F'], afterActions: [], afterPages: [], unless: [], verify: 'cargoClosed' },
   ];
 }
@@ -1072,7 +1096,7 @@ test('cargo Done verifies a collapsed retained result and rejects expanded or ch
   expandedButton.onclick = () => { expandedButton._clicked = true; };
   const expandedReport = await expanded.kit.fill([
     ...cargoPlan(),
-    { id: 'commodity', q: '216A', path: 'progressive.q216A', kind: 'text', value: null, ignore: true },
+    { id: 'commodity', q: '216A', field: fieldOf('216A'), path: 'progressive.q216A', kind: 'text', value: null, ignore: true },
   ], { maxRounds: 5 });
   assert.equal(expandedButton._clicked, true);
   assert.equal(expandedReport.halted, false);
@@ -1209,12 +1233,12 @@ test('Print/Send cannot send email even when the delivery checkbox is otherwise 
 
 test('standard business and home ZIP/City controls sharing an intake path remain recognized', async () => {
   const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
-  const controls = [
-    addExtText(h, 'U', '2AE', { caption: 'Zip Code', required: true }),
-    addExtText(h, 'U', '2B0', { caption: 'City', required: true }),
-    addExtText(h, 'P', '284', { caption: 'Zip Code', required: true }),
-    addExtText(h, 'P', '286', { caption: 'City', required: true }),
-  ];
+  // As the page lays them out: the business address, then the owner's home address.
+  addExtText(h, 'P', '27E', { caption: 'Street Address' });
+  const business = [addExtText(h, 'P', '284', { caption: 'Zip Code', required: true }), addExtText(h, 'P', '286', { caption: 'City', required: true })];
+  addExtText(h, 'U', '2A9', { caption: 'Home Address' });
+  const home = [addExtText(h, 'U', '2AE', { caption: 'ZIP Code', required: true }), addExtText(h, 'U', '2B0', { caption: 'City', required: true })];
+  const controls = [...home, ...business];
   const record = {
     applicant: { name: 'Example LLC', owner1: 'Test Owner' },
     garaging: { street: '1 Example St', city: 'Example City', zip: '21000' },
@@ -1225,7 +1249,7 @@ test('standard business and home ZIP/City controls sharing an intake path remain
   const report = await h.kit.fill(buildPlan(record, progressive), {});
   assert.equal(report.halted, false);
   assert.equal(report.unknown.length, 0);
-  assert.equal(report.filled.length, 4);
+  assert.equal(report.filled.filter((x) => /zip|city/i.test(x.name)).length, 4);
   assert.deepEqual(controls.map(({ input }) => input.value), ['21000', 'Example City', '21000', 'Example City']);
 });
 
@@ -1235,12 +1259,12 @@ test('blank optional address detail and blank DOT do not stop standard business-
     const detail = makeInput({ id: 'address-detail', ariaLabel: 'Apt, Building, Floor, Suite, etc.' });
     const street = makeInput({ id: `f_U${'A'.repeat(32)}27E_1_1`, ariaLabel: 'Street address' });
     const name = makeInput({ id: `f_U${'A'.repeat(32)}230_1_1`, ariaLabel: 'Business name' });
-    const dotNumber = makeInput({ id: `f_U${'A'.repeat(32)}1F3_1_1`, ariaLabel: 'USDOT Number' });
+    const dotNumber = makeInput({ id: `f_U${'A'.repeat(32)}1F3_1_1`, ariaLabel: 'USDOT Number associated with the customer\'s business:' });
     const dot = new SelectNode([
       { text: 'Yes - the customer has a USDOT number', value: 'yes' },
       { text: 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days', value: 'pending' },
       { text: 'No - and the customer will not have a USDOT number', value: 'no' },
-    ], { id: `f_U${'A'.repeat(32)}1ED_1_1`, ariaLabel: 'Has a USDOT number' });
+    ], { id: `f_U${'A'.repeat(32)}1ED_1_1`, ariaLabel: 'Does the customer have a USDOT Number?' });
     h.document.body.append(detail, street, dot, name, dotNumber);
     const record = {
       applicant: { name: 'Example LLC', dot: null, mcDotWithin60Days: null, owner1: 'Test Owner' },
@@ -1309,11 +1333,10 @@ test('home address takes the first offered option with or without DOT and collap
     const manual = makeInput({ id: 'manual-home', name: 'home_2A5', type: 'radio', value: 'Enter a different address', checked: true });
     const primary = makeInput({ id: `f_U${'A'.repeat(32)}2A5_1_1`, name: 'home_2A5', type: 'radio', value: '10 Test Road Example City MD 21000 (Primary Business Address)' });
     const usdot = makeInput({ id: 'usdot-home', name: 'home_2A5', type: 'radio', value: '20 Registered Road Example City MD 21000 (USDOT address)' });
-    const street = makeInput({ id: `f_U${'A'.repeat(32)}2AA_1_1`, ariaLabel: 'Street Address' });
-    const zip = makeInput({ id: `f_U${'A'.repeat(32)}2AE_1_1`, ariaLabel: 'Zip Code' });
+    const street = makeInput({ id: `f_U${'A'.repeat(32)}2AA_1_1`, ariaLabel: 'Business Owner Home Address Input Non Shredded Address For PB Address' });
+    const zip = makeInput({ id: `f_U${'A'.repeat(32)}2AE_1_1`, ariaLabel: 'ZIP Code' });
     const city = makeInput({ id: `f_U${'A'.repeat(32)}2B0_1_1`, ariaLabel: 'City' });
-    if (hasDot) h.document.body.append(usdot);
-    h.document.body.append(primary, manual, street, zip, city);
+    h.document.body.append(radioGroup('Home Address', ...(hasDot ? [usdot] : []), primary, manual), street, zip, city);
     primary.onclick = () => {
       h.document.body.children = h.document.body.children.filter((node) => ![street, zip, city].includes(node));
     };
@@ -1330,7 +1353,7 @@ test('home address takes the first offered option with or without DOT and collap
 test('home address retains manual entry when no address suggestion is offered', async () => {
   const h = harness({ search: '?pageName=BusinessOwnerInfo' });
   const manual = makeInput({ id: `f_U${'A'.repeat(32)}2A5_1_1`, name: 'home_2A5', type: 'radio', value: 'Enter a different address', checked: true });
-  h.document.body.append(manual);
+  h.document.body.append(radioGroup('Home Address', manual));
   const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
   const report = await h.kit.fill(buildPlan(record, progressive), { replaceChoices: true });
   assert.equal(report.halted, false);
@@ -1342,7 +1365,7 @@ test('home address uses offered USDOT address when Primary Business Address is a
   const h = harness({ search: '?pageName=BusinessOwnerInfo' });
   const offered = makeInput({ id: `f_U${'A'.repeat(32)}2A5_1_1`, name: 'home_2A5', type: 'radio', value: '10 Test Road Example City MD 21000 (USDOT address)' });
   const manual = makeInput({ id: 'manual-home', name: 'home_2A5', type: 'radio', value: 'Enter a different address', checked: true });
-  h.document.body.append(offered, manual);
+  h.document.body.append(radioGroup('Home Address', offered, manual));
   const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
   const report = await h.kit.fill(buildPlan(record, progressive), { replaceChoices: true });
   assert.equal(report.halted, false);
@@ -1456,7 +1479,7 @@ test('business type list picks For Hire Trucking when offered, else General Frei
       'General Freight Trucking Haul general goods (processed food, miscellaneous dry goods, etc.).',
     ];
     const radios = names.map((value, i) => makeInput({ id: i ? `bt-${i}` : `f_U${'A'.repeat(32)}36_1_1`, name: 'bt_36', type: 'radio', value }));
-    h.document.body.append(...radios);
+    h.document.body.append(radioGroup('Business Type Label', ...radios));
     const report = await h.kit.fill(buildPlan(record, progressive), { maxRounds: 3 });
     const picked = radios.find((r) => r.checked)?.value ?? '';
     assert.match(picked, offered ? /^For Hire Trucking/ : /^General Freight Trucking/);
@@ -1973,4 +1996,84 @@ test('typed text is taken out of messages from boxes question discovery skips: s
   h.document.body.append(search, notes,
     new FakeNode('div', { role: 'alert', textContent: 'No customer named rivera logistics; check Dock at 4 Pier Rd' }));
   assert.deepEqual([...h.kit.capture(null, []).messages], ['No customer named [typed]; check [typed]']);
+});
+
+// Progressive renumbered every question on 2026-10-07 (Agent Code 18F became 1C6, Type of Trucker
+// 267 became 29E, and 267 became Business Name). Questions are found by their data-model name or
+// their text, so the same page with other numbers fills the same way, and no answer goes to the
+// question that now has an old number.
+test('Progressive questions are found by name or text: renumbered, the same answers go to the same questions', async () => {
+  const record = {
+    applicant: { name: 'Example LLC', dot: null, owner1: 'Test Owner' },
+    garaging: { street: '1 Example St', city: 'Example City', zip: '21000', unit: null },
+    operations: { businessClass: 'Expediter' },
+    drivers: [], vehicles: [], trailers: [], priorInsurance: [],
+    coverage: { cargo: false, gl: false }, claims: {},
+  };
+  const page = (shift) => {
+    const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+    const id = (q) => (parseInt(q, 16) + shift).toString(16).toUpperCase();
+    const agent = addExtText(h, 'U', id('18F'), { caption: 'Agent Code', value: 'AGENT-1' });
+    const name = addExtText(h, 'U', id('230'), { caption: 'Business Name' });
+    const trucker = new SelectNode([{ text: 'Other For-Hire Trucking', value: 'other' }, { text: 'Household Goods Mover', value: 'hhg' }],
+      { id: `f_U${'A'.repeat(32)}${id('267')}_1_1`, ariaLabel: 'Type of Trucker' });
+    h.document.body.append(trucker);
+    addExtText(h, 'U', id('27E'), { caption: 'Street Address' });
+    const zip = addExtText(h, 'U', id('284'), { caption: 'Zip Code' });
+    const city = addExtText(h, 'U', id('286'), { caption: 'City' });
+    return { h, agent, name, trucker, zip, city };
+  };
+  const results = [];
+  for (const shift of [0, 0x37]) {
+    const p = page(shift);
+    const report = await p.h.kit.fill(buildPlan(record, progressive), {});
+    assert.equal(report.halted, false);
+    assert.deepEqual(Array.from(report.unknown, (x) => x.label), [], `nothing unfamiliar with shift ${shift}`);
+    results.push([p.agent.input.value, p.name.input.value, p.trucker.value, p.zip.input.value, p.city.input.value]);
+  }
+  assert.deepEqual(results[0], ['AGENT-1', 'Example LLC', 'other', '21000', 'Example City']);
+  assert.deepEqual(results[1], results[0]);
+});
+
+test('an old question number now on another question gets nothing from the rule written for it', async () => {
+  // Live on 2026-10-07: 267 (the rule "Type of trucker") is Business Name, 2BB (owner date of
+  // birth) is the business Zip Code.
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const name = addExtText(h, 'U', '267', { caption: 'Business Name' });
+  addExtText(h, 'U', '2B5', { caption: 'Street Address' });
+  const zip = addExtText(h, 'U', '2BB', { caption: 'Zip Code' });
+  const record = {
+    applicant: { name: 'Example LLC', owner1: 'Test Owner' },
+    garaging: { street: '1 Example St', city: 'Example City', zip: '21000' },
+    operations: { businessClass: 'Expediter' },
+    drivers: [{ first: 'Test', last: 'Owner', dob: '01/02/1980' }], vehicles: [], trailers: [], priorInsurance: [],
+    coverage: { cargo: false, gl: false }, claims: {},
+  };
+  const report = await h.kit.fill(buildPlan(record, progressive), {});
+  assert.equal(name.input.value, 'Example LLC');
+  assert.equal(zip.input.value, '21000');
+  assert.ok(!report.filled.some((x) => ['progressive.q267', 'progressive.q2BB'].includes(x.path)), 'the old numbers answer nothing');
+});
+
+test('a step with only a question number finds nothing', async () => {
+  const h = harness({ ext: true });
+  const field = addExtText(h, 'U', '3A01', { caption: 'Some question' });
+  const report = await h.kit.fill([{ id: 'n', q: '3A01', path: 'synthetic.n', kind: 'text', value: 'x' }], { maxRounds: 2 });
+  assert.equal(field.input.value, '');
+  assert.equal(report.filled.length, 0);
+  assert.equal(report.unknown.length, 1);
+});
+
+test('the cargo row and the cargo section both read "Motor Trucking Cargo": each gets the cargo answer', async () => {
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const limits = ['Not selected', '$100k with a $1,000 Deductible'].map((label) => ({ get: () => label }));
+  const row = addExtText(h, 'c', '2150', { caption: 'Motor Trucking Cargo' });
+  const section = addExtText(h, 'c', '216F', { caption: 'Motor Trucking Cargo' });
+  for (const f of [row, section]) Object.assign(f.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => limits } });
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: { cargo: true, cargoLimit: 100000, cargoDeductible: 1000 }, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => ['2150', '216F'].includes(s.q));
+  const report = await h.kit.fill(plan, { maxRounds: 4 });
+  assert.equal(row.cmp.getValue(), '$100k with a $1,000 Deductible');
+  assert.equal(section.cmp.getValue(), '$100k with a $1,000 Deductible');
+  assert.equal(report.unknown.length, 0);
 });

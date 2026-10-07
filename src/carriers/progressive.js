@@ -1,8 +1,13 @@
 // Progressive commercial auto, ForAgentsOnly (clpolicy.foragentsonly.com).
 //
-// The quote flow is an ExtJS 6 + Duck Creek ("DCT") single-page app. Every field is keyed by a
-// Duck Creek question id (`q`), taken from the element id / field name; `label` is a fallback
-// regex on the question text in case Progressive renumbers. Mapped from live MD for-hire
+// The quote flow is an ExtJS 6 + Duck Creek ("DCT") single-page app. A rule finds its question by
+// what it is, on its page (onPage): the field's data-model name (`field`, Duck Creek's fieldref,
+// "RiskInput.VIN"), else the question's text (`ask`, or the `label` regex). Never by the question
+// id in the element id: Progressive renumbered every question on 2026-10-07 (Agent Code 18F became
+// 1C6) and ids kept from before named other questions. `q` is the id the rule was written from,
+// kept only as the rule's name (its path progressive.q<q>, which logs and reviews use).
+// `field` names come from saved pages (layouts/fao-html, IA, 2026-10-02); the rest find their
+// question by its text until a layout records its fieldref. Mapped from live MD for-hire
 // expediter quotes (captures/progressive/). Questions that exist only in other states or for
 // other products are skipped when absent. Unmapped questions require agent review; only
 // the narrow, reviewed label rules below are used as fallbacks.
@@ -215,6 +220,10 @@ const vehicleTileNote = (r, a) => {
     : `${type} isn't matched to a Progressive tile yet: pick the vehicle yourself.`;
 };
 
+// A page's questions (its pageName): each question is looked for on its own page only, so "City" on
+// Business Owner Info and on NoHit are two questions, and a page's label rules stay on it.
+const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
+
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
@@ -223,11 +232,9 @@ export const progressive = {
   world: 'MAIN',
   // Only the quote flow is filled automatically (not the home or quote-search pages).
   autoFillUrl: /\/Express\/Default\.aspx/i,
-  // Live Progressive question ids are mapped explicitly below. Generic label fallbacks can
+  // Live Progressive questions are mapped explicitly below. Generic label fallbacks can
   // turn an unvalidated field (especially optional contact or GL fields) into an assertion.
   useGenericRules: false,
-  // Never flagged as "needs you" when empty: the agent fills these only when they apply.
-  optional: ['296', '298', '233', '1CC', '2899', '1B80', '1B82'],
   // Progressive pre-selects some answers (filings No, $750k CSL, manual payments, rental "Not
   // selected"). Those are replaced when ours differ; anything the agent changed is left alone.
   replaceChoices: true,
@@ -323,205 +330,229 @@ export const progressive = {
   rules: [
     ...SAFE_LABEL_RULES,
     // --- Named Insured and Business Overview (pageName=BusinessOwnerInfo) ---------------------
-    { q: '18F', name: 'Agent code (preserve prefilled value)', ignore: true },
-    { q: '194', name: 'Policy start date (preserve prefilled value)', ignore: true },
-    { q: '198', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive },
-    { q: '1CC', name: 'Quote vendor code (optional)', ignore: true },
-    { q: '1ED', name: 'Has a USDOT number', kind: 'choice', value: (r) => {
-      if (r.applicant.dot) return 'Yes - the customer has a USDOT number';
-      if (r.applicant.mcDotWithin60Days === true) return 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days';
-      return 'No - and the customer will not have a USDOT number';
-    } },
-    { q: '1F3', path: 'applicant.dot', label: 'usdot number', ignore: (r) => !r.applicant.dot },
-    // Shown when Verify USDOT finds no record for the number (a brand-new USDOT): TNI's answer is Yes.
-    { q: '21E', name: 'USDOT obtained within the last 60 days (standard: Yes)', kind: 'bool', label: 'obtain(ed)? their usdot number within the last 60 days', value: () => true, ignore: (r) => !r.applicant.dot },
-    { q: '20F', name: 'USDOT number belongs to the business (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, value: (r) => (r.applicant.dot ? true : null), businessNames },
-    { q: '22F', name: 'Business name (USDOT record)', ...registered(), businessNames },
-    { q: '277', name: 'Primary business address (USDOT record)', ...registered(), businessNames },
-    // Always the first choice offered. When that's "Enter a different address", the address box
-    // below gets the whole address and Progressive's first suggestion.
-    { q: '2A5', name: 'Owner home address (first option)', kind: 'first-option', value: () => 'first option' },
-    // Typed in whenever Progressive shows the box: without a USDOT number, and also with a brand-new
-    // one the lookup can't find yet (then there's no registered name to pick).
-    { q: '230', path: 'applicant.name', name: 'Business / sole proprietor name', value: (r) => r.applicant.name || [owner(r).first, owner(r).last].filter(Boolean).join(' ') || r.applicant.owner1 },
-    { q: '233', name: 'DBA name (always left empty)', ignore: true },
-    // Save Quote page (the agent saves the quote for the client): its contact boxes are theirs.
-    ...['2D42', '2D4C', '2D4E', '2D50', '2D55'].map((q) => ({ q, name: 'Save Quote contact details (the agent\'s)', ignore: true })),
-    // Owner home address box, shown when there's no registered address to pick ("2AA" after
-    // "Enter a different address", "2A9" when there's no choice at all): the whole address,
-    // then Progressive's first suggestion, which fills ZIP and city. The ZIP/city rules then
-    // check what it filled against the intake.
-    { q: '2AA', name: 'Owner home address (with suggestion)', kind: 'address-suggest', value: oneLineAddress },
-    { q: '2A9', name: 'Owner home address (with suggestion)', kind: 'address-suggest', value: oneLineAddress },
-    { q: '2AE', path: 'garaging.zip', name: 'Owner home ZIP' },
-    { q: '2B0', path: 'garaging.city', name: 'Owner home city' },
-    // Business address boxes, when there's no registered address to pick.
-    // Business street with Google's address suggestions, like the home address box: the whole
-    // address, then the first suggestion, which fills ZIP and city (checked by their rules).
-    { q: '27E', name: 'Business address (with suggestion)', kind: 'address-suggest', value: oneLineAddress, fallback: (r) => r.garaging?.street ?? null },
-    { q: '284', path: 'garaging.zip', name: 'Business ZIP' },
-    { q: '286', path: 'garaging.city', name: 'Business city' },
-    // Search-style business type (IN, OH): the box itself is left alone (typing filters the list
-    // away); the result list (BECAPopup q36) gets For Hire Trucking, or General Freight Trucking
-    // when the list doesn't have it. Options read "<name> <description>".
-    { q: '24D', name: 'Business type box (filled by the search)', ignore: true },
-    { q: '1D', name: 'Business type search box', ignore: true },
-    { q: '36', name: 'Business type (search list: For Hire Trucking, else General Freight Trucking)', kind: 'choice', value: () => 'For Hire Trucking', choiceAliases: () => ['General Freight Trucking'] },
-    { q: '239', name: 'Business type', kind: 'choice', label: '^business type(?: list)?$', value: businessType, choiceAliases: businessAliases, summaryAfter: (r) => isExpediter(r) ? '267' : '22D' },
-    { q: '22D', name: 'Business structure', kind: 'choice', label: 'business structured', value: businessStructure },
-    { q: '267', name: 'Type of trucker', kind: 'choice', label: 'type of trucker', value: truckerType, ignore: (r) => !isExpediter(r) },
-    { q: '295', name: 'Owner first name', label: '^first name$', value: (r) => owner(r).first },
-    { q: '296', name: 'Owner middle initial', value: (r) => owner(r).middle?.[0] ?? null, ignore: true },
-    { q: '297', name: 'Owner last name', label: '^last name$', value: (r) => owner(r).last },
-    { q: '298', name: 'Owner suffix (optional)', ignore: true },
-    { q: '29F', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives' },
-    { q: '2BB', name: 'Owner date of birth', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
-    // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
-    { q: '2DB', name: 'Phone area code (optional)', ignore: true },
-    { q: '2DD', name: 'Phone prefix (optional)', ignore: true },
-    { q: '2DF', name: 'Phone line number (optional)', ignore: true },
-    { q: '2F6', path: 'operations.hazPlacard', name: 'Hazmat placard required', label: 'hazardous material placard' },
+    ...onPage(['BusinessOwnerInfo', 'BECAPopup'], [
+      { q: '18F', ask: 'Agent Code', name: 'Agent code (preserve prefilled value)', ignore: true },
+      { q: '194', ask: 'When should this Progressive Commercial Auto policy start?', name: 'Policy start date (preserve prefilled value)', ignore: true },
+      { q: '198', ask: 'Is the customer currently insured with Progressive Commercial Auto?', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive },
+      { q: '1CC', ask: 'Quote Vendor Code', optional: true, name: 'Quote vendor code (optional)', ignore: true },
+      { q: '1ED', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: (r) => {
+        if (r.applicant.dot) return 'Yes - the customer has a USDOT number';
+        if (r.applicant.mcDotWithin60Days === true) return 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days';
+        return 'No - and the customer will not have a USDOT number';
+      } },
+      { q: '1F3', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !r.applicant.dot },
+      // Shown when Verify USDOT finds no record for the number (a brand-new USDOT): TNI's answer is Yes.
+      { q: '21E', ask: 'Did the customer obtain their USDOT Number within the last 60 days?', name: 'USDOT obtained within the last 60 days (standard: Yes)', kind: 'bool', value: () => true, ignore: (r) => !r.applicant.dot },
+      { q: '20F', ask: 'Does this USDOT Number belong to the customer\'s business?', name: 'USDOT number belongs to the business (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, value: (r) => (r.applicant.dot ? true : null), businessNames },
+      { q: '22F', ask: 'Business Name', registeredName: true, name: 'Business name (USDOT record)', ...registered(), businessNames },
+      { q: '277', ask: 'Business Address', name: 'Primary business address (USDOT record)', ...registered(), businessNames },
+      // Always the first choice offered. When that's "Enter a different address", the address box
+      // below gets the whole address and Progressive's first suggestion.
+      { q: '2A5', ask: 'Home Address', name: 'Owner home address (first option)', kind: 'first-option', value: () => 'first option' },
+      // Typed in whenever Progressive shows the box: without a USDOT number, and also with a brand-new
+      // one the lookup can't find yet (then there's no registered name to pick).
+      { q: '230', ask: 'Business Name', path: 'applicant.name', name: 'Business / sole proprietor name', value: (r) => r.applicant.name || [owner(r).first, owner(r).last].filter(Boolean).join(' ') || r.applicant.owner1 },
+      { q: '233', ask: 'DBA Name', optional: true, name: 'DBA name (always left empty)', ignore: true },
+      // Owner home address box, shown when there's no registered address to pick ("2AA" after
+      // "Enter a different address", "2A9" when there's no choice at all): the whole address,
+      // then Progressive's first suggestion, which fills ZIP and city. The ZIP/city rules then
+      // check what it filled against the intake.
+      { q: '2AA', label: '^business owner home address input', name: 'Owner home address (with suggestion)', kind: 'address-suggest', value: oneLineAddress },
+      { q: '2A9', ask: 'Home Address', name: 'Owner home address (with suggestion)', kind: 'address-suggest', value: oneLineAddress },
+      { q: '2AE', ask: 'ZIP Code', askAfter: 'Home Address', path: 'garaging.zip', name: 'Owner home ZIP' },
+      { q: '2B0', ask: 'City', askAfter: 'Home Address', path: 'garaging.city', name: 'Owner home city' },
+      // Business address boxes, when there's no registered address to pick.
+      // Business street with Google's address suggestions, like the home address box: the whole
+      // address, then the first suggestion, which fills ZIP and city (checked by their rules).
+      { q: '27E', ask: 'Street Address', name: 'Business address (with suggestion)', kind: 'address-suggest', value: oneLineAddress, fallback: (r) => r.garaging?.street ?? null },
+      { q: '284', ask: 'Zip Code', askAfter: 'Street Address', path: 'garaging.zip', name: 'Business ZIP' },
+      { q: '286', ask: 'City', askAfter: 'Street Address', path: 'garaging.city', name: 'Business city' },
+      // Search-style business type (IN, OH): the box itself is left alone (typing filters the list
+      // away); the result list (BECAPopup q36) gets For Hire Trucking, or General Freight Trucking
+      // when the list doesn't have it. Options read "<name> <description>".
+      { q: '24D', ask: 'Business Type', control: 'text', each: true, name: 'Business type box (filled by the search)', ignore: true },
+      { q: '1D', ask: 'Business Type', control: 'text', each: true, name: 'Business type search box', ignore: true },
+      { q: '36', ask: 'Business Type Label', name: 'Business type (search list: For Hire Trucking, else General Freight Trucking)', kind: 'choice', value: () => 'For Hire Trucking', choiceAliases: () => ['General Freight Trucking'] },
+      { q: '239', ask: ['Business type list', 'Business Type'], control: 'select', name: 'Business type', kind: 'choice', value: businessType, choiceAliases: businessAliases, summaryAfter: (r) => isExpediter(r) ? 'Type of Trucker' : 'How is the customer\'s business structured?' },
+      { q: '22D', ask: 'How is the customer\'s business structured?', name: 'Business structure', kind: 'choice', value: businessStructure },
+      { q: '267', ask: 'Type of Trucker', name: 'Type of trucker', kind: 'choice', value: truckerType, ignore: (r) => !isExpediter(r) },
+      { q: '295', ask: 'Business Owner\'s Name', name: 'Owner first name', value: (r) => owner(r).first },
+      { q: '296', ask: 'MIMiddle initial', optional: true, name: 'Owner middle initial', value: (r) => owner(r).middle?.[0] ?? null, ignore: true },
+      { q: '297', ask: 'Last Name', name: 'Owner last name', value: (r) => owner(r).last },
+      { q: '298', ask: 'Suffix', optional: true, name: 'Owner suffix (optional)', ignore: true },
+      { q: '29F', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives' },
+      { q: '2BB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
+      // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
+      { q: '2DB', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
+      { q: '2DD', ask: 'Three digit prefix of phone', name: 'Phone prefix (optional)', ignore: true },
+      { q: '2DF', ask: 'Four digit suffix of phone', name: 'Phone line number (optional)', ignore: true },
+      { q: '2F6', ask: 'Do any listed vehicles or the load require a hazardous material placard?', path: 'operations.hazPlacard', name: 'Hazmat placard required' },
+    ]),
 
     // --- Owner not found by Progressive's lookup (NoHit) ----------------------------------------
-    // The owner's details again, for a second search. The SSN is never filled.
-    { q: '1B7F', name: 'Owner first name (NoHit)', value: (r) => owner(r).first },
-    { q: '1B80', name: 'Owner middle initial (NoHit, optional)', ignore: true },
-    { q: '1B81', name: 'Owner last name (NoHit)', value: (r) => owner(r).last },
-    { q: '1B82', name: 'Owner suffix (NoHit, optional)', ignore: true },
-    { q: '1B84', name: 'Owner home address (NoHit)', value: (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null },
-    { q: '1B85', path: 'garaging.city', name: 'Owner home city (NoHit)' },
-    { q: '1B89', path: 'garaging.zip', name: 'Owner home ZIP (NoHit)' },
-    { q: '1B8B', name: 'Owner date of birth (NoHit)', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
-    { q: '1B8D', name: 'Social Security Number', note: 'Social Security Number: the agent enters it or leaves it; never filled.' },
+    ...onPage('NoHit', [
+      // The owner's details again, for a second search. The SSN is never filled.
+      { q: '1B7F', ask: 'Business Owner\'s Name', name: 'Owner first name (NoHit)', value: (r) => owner(r).first },
+      { q: '1B80', ask: 'MIMiddle initial', optional: true, name: 'Owner middle initial (NoHit, optional)', ignore: true },
+      { q: '1B81', ask: 'Last Name', name: 'Owner last name (NoHit)', value: (r) => owner(r).last },
+      { q: '1B82', ask: 'Suffix', optional: true, name: 'Owner suffix (NoHit, optional)', ignore: true },
+      { q: '1B84', ask: 'Home Address', name: 'Owner home address (NoHit)', value: (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null },
+      { q: '1B85', ask: 'City', path: 'garaging.city', name: 'Owner home city (NoHit)' },
+      { q: '1B89', ask: 'Zip Code', path: 'garaging.zip', name: 'Owner home ZIP (NoHit)' },
+      { q: '1B8B', ask: 'Date of Birth', name: 'Owner date of birth (NoHit)', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
+      { q: '1B8D', ask: 'Social Security Number', name: 'Social Security Number', note: 'Social Security Number: the agent enters it or leaves it; never filled.' },
+    ]),
 
     // --- More about the business (MoreAboutBusiness) -------------------------------------------
-    { q: '77', name: 'Customer email (optional in this workflow)', ignore: true },
-    { q: '81', name: 'Currently insured', kind: 'bool', label: '^is the customer currently insured$', value: currentlyInsured },
-    { q: '83', name: 'Continuous coverage (standard: Yes when insured)', kind: 'bool', label: 'continuous coverage', value: currentlyInsured },
-    { q: '95', path: 'priorInsurance[0].limit', kind: 'choice', label: 'current bodily injury', ignore: (r) => !currentlyInsured(r) },
-    { q: '9D', path: 'priorInsurance[0].expiration', label: 'current policy expiration', ignore: (r) => !currentlyInsured(r) },
-    { q: 'A2', name: 'Other business coverages (standard: None)', kind: 'choice', label: 'other coverages for the business', value: () => 'None' },
-    // Checkbox version of the same questions (IN): a coverage the intake doesn't mention is No,
-    // so "None of the above" in both groups and the coverages themselves left unticked.
-    { q: 'AA', name: 'Other coverages: None of the above (coverage not on the intake = No)', kind: 'bool', value: () => true },
-    { q: 'B2', name: 'Other coverages: None of the above (coverage not on the intake = No)', kind: 'bool', value: () => true },
-    ...['A7', 'A8', 'A9', 'AF', 'B0'].map((q) => ({ q, name: 'Other coverage (not on the intake = No)', kind: 'bool', value: () => false })),
-    { q: 'B7', name: 'Named additional insured count (preserve prefilled value)', ignore: true },
-    { q: 'B8', name: 'Named waiver count (preserve prefilled value)', ignore: true },
-    { q: 'BE', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },
-    { q: 'C1', name: 'Blanket waiver of subrogation (preserve prefilled value)', ignore: true },
-    { q: 'CA', name: 'Filings required', kind: 'bool', label: 'filings required', value: filings, note: filingsNote },
-    { q: 'D1', name: 'Electronic logging', kind: 'bool', label: 'electronic logging', value: usesEld, note: eldNote },
+    ...onPage('MoreAboutBusiness', [
+      { q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
+      { q: '81', field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
+      { q: '83', ask: 'Has the customer had continuous coverage?', name: 'Continuous coverage (standard: Yes when insured)', kind: 'bool', value: currentlyInsured },
+      { q: '95', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', ignore: (r) => !currentlyInsured(r) },
+      { q: '9D', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', ignore: (r) => !currentlyInsured(r) },
+      { q: 'A2', field: 'MoreBusinessInput.OtherBusinessCoverages', ask: 'Does the customer have other coverages for the business?', name: 'Other business coverages (standard: None)', kind: 'choice', value: () => 'None' },
+      // Checkbox version of the same questions (IN): a coverage the intake doesn't mention is No,
+      // so "None of the above" in both groups and the coverages themselves left unticked.
+      { q: 'AA', ask: 'None of the above', each: true, name: 'Other coverages: None of the above (coverage not on the intake = No)', kind: 'bool', value: () => true },
+      { q: 'B2', ask: 'None of the above', each: true, name: 'Other coverages: None of the above (coverage not on the intake = No)', kind: 'bool', value: () => true },
+      ...[['A7', 'Business Owners Policy'], ['A8', 'General Liability'], ['A9', 'Workers\' Compensation'], ['AF', 'Business Owners Policy'], ['B0', 'General Liability']]
+        .map(([q, ask]) => ({ q, ask, each: true, name: 'Other coverage (not on the intake = No)', kind: 'bool', value: () => false })),
+      { q: 'B7', field: 'MoreBusinessInput.AdditionalInsuredCount', ask: 'Number of Named Additional Insureds', name: 'Named additional insured count (preserve prefilled value)', ignore: true },
+      { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
+      { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },
+      { q: 'C1', field: 'AccountInput.BlanketWOSQuestion', ask: 'Is a Blanket Waiver of Subrogation endorsement needed by contract?', name: 'Blanket waiver of subrogation (preserve prefilled value)', ignore: true },
+      { q: 'CA', field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required', kind: 'bool', value: filings, note: filingsNote },
+      { q: 'D1', field: 'PolicyInput.ELDHoursOfServiceRecords', ask: 'Is an Electronic Logging Device (ELD) required to record hours of service?', name: 'Electronic logging', kind: 'bool', value: usesEld, note: eldNote },
+    ]),
 
     // --- Filings (pageName=Filings; only reached when filings are required) --------------------
-    { q: 'F11', name: 'All commercially owned vehicles on this quote (standard: Yes)', kind: 'bool', label: 'all the customers commercially owned', value: filings },
-    { label: '^federal( liability)?( filing)?$', name: 'Federal filing', kind: 'bool', value: filings },
-    { label: '^mcs ?-?90$', name: 'MCS-90 (ticked by the page with Federal)', kind: 'bool', ignore: true },
-    { label: '^state( filing)?$', name: 'State filing', kind: 'bool', ignore: true },
+    ...onPage('Filings', [
+      { q: 'F11', ask: 'Will this quote include all the customer\'s commercially owned and operated vehicles?', name: 'All commercially owned vehicles on this quote (standard: Yes)', kind: 'bool', value: filings },
+      { label: '^federal( liability)?( filing)?$', name: 'Federal filing', kind: 'bool', value: filings },
+      { label: '^mcs ?-?90$', name: 'MCS-90 (ticked by the page with Federal)', kind: 'bool', ignore: true },
+      { label: '^state( filing)?$', name: 'State filing', kind: 'bool', ignore: true },
+    ]),
 
     // --- Add vehicle (AddVehicle) ----------------------------------------------------------------
-    { q: '2B00', name: 'Vehicle entry method (agent chooses VIN)', ignore: true },
-    // Filled by the VIN lookup.
-    { q: '2BB4', name: 'Gross vehicle weight (from VIN lookup)', ignore: true },
-    { q: '2BCB', name: 'Annual mileage (from VIN lookup)', ignore: true },
-    // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
-    // a box the lookup leaves empty goes to the agent.
-    ...[['2BA1', 'Anti-lock brakes'], ['2BAC', 'Anti-theft device'], ['2BAE', 'Driver-side airbag']].map(([q, name]) => ({
-      q, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
-    })),
-    { q: '2B20', path: 'vehicles[].vin' },
-    { q: '2B92', path: 'garaging.zip', label: 'zip code where the vehicle' },
-    // "Unlimited" / long haul becomes 501 miles, which picks "More than 500 miles".
-    { q: '2B9D', name: 'Farthest one-way distance', kind: 'int', label: 'farthest one way distance', value: (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null) },
-    { q: '2C05', name: 'Business / personal use', kind: 'choice', label: 'used for business personal', value: (r) => (r.operations.personalUse === false ? 'Business Only' : r.operations.personalUse ? 'Business & Personal' : null) },
-    { q: '2C1A', name: 'Hauls for hire', kind: 'bool', label: 'for hire basis', value: () => true },
-    // Loan / lease: from the intake's vehicle ownership (also read from the claims-box notes);
-    // owned or not stated is TNI's standard No.
-    { q: '2CA7', name: 'Loan / lease (from ownership, standard: No)', kind: 'choice', label: 'loan lease', value: loanLease },
-    // The same answer shown again on Rates (NJ), with its own wording: Progressive carries it over.
-    // Left as Progressive set it, but a carryover that didn't happen (empty) goes to the agent.
-    { q: '2007', name: 'Loan / lease on Rates (carried over from Add Vehicle)', ignore: true, emptyNote: 'Loan / lease should carry over from Add Vehicle but is empty here: answer it yourself.', scope: 'vehicle' },
-    // NJ: who the vehicle is registered to.
-    { q: '2C97', name: 'Vehicle registrant (standard: Named insured)', kind: 'choice', label: 'vehicle registrant', value: () => 'Named insured' },
-    // NJ safety equipment boxes: the VIN lookup ticks what the vehicle has; left as Progressive set them.
-    ...[['2C2C', 'Anti-lock brakes'], ['2C2D', 'Traction control'], ['2C2E', 'Five MPH bumpers'], ['2C45', 'Anti-theft device 1'], ['2C46', 'Anti-theft device 2'], ['2C47', 'Anti-theft device 3'], ['2C48', 'Anti-theft device 4']]
-      .map(([q, name]) => ({ q, name: `${name} (from VIN lookup)`, ignore: true })),
-    { q: '2CCC', name: 'Comprehensive / collision (standard: Yes)', kind: 'bool', label: 'comprehensive or collision', value: () => true },
-    { q: '2CE0', name: 'Attached equipment amount (only with more than $2,000)', ignore: true },
-    { q: '2CCE', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment },
-    { q: '2CE3', name: 'Vehicle has no equipment (standard)', kind: 'bool', label: 'vehicle has no equipment', value: () => true },
-    { q: '2CE8', path: 'vehicles[].value', name: 'Vehicle value if sold today', label: 'sold today', note: vehicleValueNote },
-    // Same two questions under the ids other states/products use (NC, OH), and on Rates (FL) once
-    // per vehicle, where each row gets its own vehicle's answer.
-    { q: '208A', name: 'Vehicle has no equipment (standard)', kind: 'bool', value: () => true, scope: 'vehicle' },
-    { q: '2091', path: 'vehicles[].value', name: 'Vehicle value if sold today', note: vehicleValueNote, scope: 'vehicle' },
+    ...onPage(['AddVehicle', 'MostCommonVehicles'], [
+      { q: '2B00', ask: 'Add Vehicle By', name: 'Vehicle entry method (agent chooses VIN)', ignore: true },
+      // Filled by the VIN lookup.
+      { q: '2BB4', ask: 'What is the gross vehicle weight?', name: 'Gross vehicle weight (from VIN lookup)', ignore: true },
+      { q: '2BCB', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (from VIN lookup)', ignore: true },
+      // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
+      // a box the lookup leaves empty goes to the agent.
+      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?']].map(([q, name, ask]) => ({
+        q, ask, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
+      })),
+      { q: '2B20', field: 'RiskInput.VIN', ask: 'Vehicle Identification Number (VIN)', path: 'vehicles[].vin' },
+      { q: '2B92', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip' },
+      // "Unlimited" / long haul becomes 501 miles, which picks "More than 500 miles".
+      { q: '2B9D', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this vehicle typically travels (90% or more of the time)', name: 'Farthest one-way distance', kind: 'int', value: (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null) },
+      { q: '2C05', field: 'BCBTUVehQuestions.V01Use', ask: 'Is this vehicle used for business, personal or both?', name: 'Business / personal use', kind: 'choice', value: (r) => (r.operations.personalUse === false ? 'Business Only' : r.operations.personalUse ? 'Business & Personal' : null) },
+      { q: '2C1A', field: 'BCBTUVehQuestions.V03GoodsHaulIndicator', ask: 'Is this vehicle used to haul goods on a For-Hire basis?', name: 'Hauls for hire', kind: 'bool', value: () => true },
+      // Loan / lease: from the intake's vehicle ownership (also read from the claims-box notes);
+      // owned or not stated is TNI's standard No.
+      { q: '2CA7', field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this vehicle?', name: 'Loan / lease (from ownership, standard: No)', kind: 'choice', value: loanLease },
+      // NJ: who the vehicle is registered to.
+      { q: '2C97', ask: 'Vehicle Registrant?', name: 'Vehicle registrant (standard: Named insured)', kind: 'choice', value: () => 'Named insured' },
+      // NJ safety equipment boxes: the VIN lookup ticks what the vehicle has; left as Progressive set them.
+      ...[['2C2C', 'Anti-Lock Brakes'], ['2C2D', 'Traction Control'], ['2C2E', 'Five MPH Bumpers'], ['2C45', 'Anti-Theft Device 1'], ['2C46', 'Anti-Theft Device 2'], ['2C47', 'Anti-Theft Device 3'], ['2C48', 'Anti-Theft Device 4']]
+        .map(([q, ask]) => ({ q, ask, name: `${ask} (from VIN lookup)`, ignore: true })),
+      { q: '2CCC', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this vehicle in an accident or loss?', name: 'Comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
+      { q: '2CE0', ask: 'What is the value of the permanently attached equipment?', name: 'Attached equipment amount (only with more than $2,000)', ignore: true },
+      { q: '2CCE', ask: 'What is the total value of all permanently attached equipment (including aftermarket parts, mounted equipment, and modifications)?', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment },
+      { q: '2CE3', field: 'RiskInput.PAValueIndicator', ask: 'Vehicle has no equipment', name: 'Vehicle has no equipment (standard)', kind: 'bool', value: () => true },
+      { q: '2CE8', field: 'RiskInput.NonPAValue', ask: 'If this vehicle was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'vehicles[].value', name: 'Vehicle value if sold today', note: vehicleValueNote },
+    ]),
 
     // --- Add driver (AddDriver) ------------------------------------------------------------------
-    { q: '2898', path: 'drivers[].first' },
-    { q: '2899', name: 'Driver middle initial', value: (r, a) => r.drivers[a.drivers ?? 0]?.middle?.[0] ?? null, ignore: true },
-    { q: '289A', path: 'drivers[].last' },
-    { q: '28A7', path: 'drivers[].dob' },
-    { q: '28AC', path: 'drivers[].licenseState', label: 'drivers license state' },
-    { q: '28E6', path: 'drivers[].cdl', name: 'Has a CDL', kind: 'bool', label: 'commercial drivers? licen[cs]e' },
-    { q: '28B9', path: 'drivers[].licenseNumber', label: 'drivers license number' },
-    { q: '28C1', name: 'Exclude driver (standard: No)', kind: 'bool', label: 'exclude this driver', value: () => false },
-    { q: '28F5', path: 'claims.hasClaims', name: 'Accidents / claims / violations (3 yrs)', kind: 'bool', label: 'accidents claims or violations' },
+    ...onPage('AddDriver', [
+      { q: '2898', field: 'DriverInput.FirstName', ask: 'Name', path: 'drivers[].first' },
+      { q: '2899', field: 'DriverInput.DriverMiddleInitial', ask: 'MIMiddle initial', optional: true, name: 'Driver middle initial', value: (r, a) => r.drivers[a.drivers ?? 0]?.middle?.[0] ?? null, ignore: true },
+      { q: '289A', field: 'DriverInput.LastName', ask: 'Driver Last Name', path: 'drivers[].last' },
+      { q: '28A7', field: 'DriverInput.DateOfBirth', ask: 'Date of Birth', path: 'drivers[].dob' },
+      { q: '28AC', field: 'DriverInput.LicenseStateDup', ask: 'Driver\'s License State', path: 'drivers[].licenseState' },
+      { q: '28E6', ask: 'Does this driver have a Commercial Driver\'s License (CDL)?', path: 'drivers[].cdl', name: 'Has a CDL', kind: 'bool' },
+      { q: '28B9', field: 'DriverInput.DriverLicenseNumber', ask: 'Driver’s License Number', path: 'drivers[].licenseNumber' },
+      { q: '28C1', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (standard: No)', kind: 'bool', value: () => false },
+      { q: '28F5', field: 'DriverInput.AnyAccidentsViolationsPastExpYears', ask: ['Has this driver had any accidents, claims or violations in the past 5 years? (since 11/2021)', 'Has this driver had any accidents, claims or violations in the past 3 years? (since 10/2023)', 'Has this driver had any accidents, claims or violations in the past 5 years? (since 10/2021)'], path: 'claims.hasClaims', name: 'Accidents / claims / violations (3 yrs)', kind: 'bool' },
+    ]),
 
     // --- Coverages and rates (CoveragesRates) ----------------------------------------------------
-    { q: '1D97', path: 'coverage.autoLiabLimit', label: 'bodily injury and property damage liability' },
-    // FL: the CSL already covers property damage; PIP is required, $10k with no deductible (TNI).
-    // Changing PIP makes Progressive invalidate the liability limit, which is picked again.
-    { q: '1DB8', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', label: '^property damage liability only$', value: () => 'Not Selected' },
-    { q: '1E8D', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible)', kind: 'choice', label: '^personal injury protection$', value: () => '$10k w/ $0 Deductible' },
-    { q: '1DEE', name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
-    // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
-    ...['1DCA', '1DDE', '1DD8', '1DBF'].map((q) => ({ q, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
-    // Pennsylvania first-party benefits: not on the intake means not bought, except medical
-    // expense, which PA requires (its lowest, $5,000).
-    { q: '1E66', name: 'PA medical expense benefits (required: lowest, $5,000)', kind: 'choice', value: () => '$5,000' },
-    ...[['1E69', 'extraordinary medical expense'], ['1E6E', 'income loss'], ['1E71', 'funeral expense'], ['1E74', 'accidental death']]
-      .map(([q, what]) => ({ q, name: `PA ${what} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
-    { q: '1E7C', name: 'PIP (preserve prefilled state choice)', ignore: true },
-    { q: '1FCD', name: 'Comprehensive deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'comprehensiveDeductible'), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-    { q: '1FD2', name: 'Collision deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'collisionDeductible'), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-    { q: '1FF2', name: 'Rental reimbursement (standard: $40/day, $1,200 max)', kind: 'choice', value: () => '$40 per day, $1,200 max', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-    // Offered for a truck tractor next to Rental reimbursement (FL, 2026-10-05). TNI: Not selected.
-    { q: '1FF9', name: 'Rental with downtime (TNI: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-    { q: '2000', name: 'Roadside / towing (first selected option)', kind: 'selected-option', value: () => 'Selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-    { q: '200F', name: 'Additional fire / theft coverage (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-    { q: '1FDD', name: 'UMPD limit (standard: Not selected)', kind: 'choice', label: 'umpd', value: () => 'Not selected' },
-    // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle).
-    { q: '1FE4', name: 'Medical payments per person (standard: $5,000)', kind: 'choice', value: () => '$5,000 per person', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-    { q: '207F', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-    { q: '2158', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', label: 'mobile modular homes', value: () => false },
-    { q: '215A', name: 'Cargo for business documents (standard: No)', kind: 'bool', label: 'business documents or non negotiable', value: () => false },
-    // TNI: an unselected Reefer option on the intake means this coverage is not requested.
-    { q: '215C', path: 'coverage.reeferBreakdown', kind: 'bool', label: 'refrigeration breakdown', value: (r) => r.coverage.reeferBreakdown === true },
-    { q: '216A', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null },
-    { q: '216B', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
-    { q: '216F', name: 'Motor truck cargo', kind: 'choice', value: cargo, note: cargoNote },
-    { q: '2150', name: 'Motor truck cargo summary', kind: 'choice', value: cargo, note: cargoNote },
-    // No live Progressive GL question IDs have been validated. Keep any requested GL visible to
-    // the agent for review instead of allowing generic label matching to make an assertion.
-    { name: 'General Liability (manual review)', label: '^general liability', ignore: (r) => r.coverage.gl !== true, note: glNote },
+    ...onPage('CoveragesRates', [
+      // The same answer shown again on Rates (NJ), with its own wording: Progressive carries it over.
+      // Left as Progressive set it, but a carryover that didn't happen (empty) goes to the agent.
+      { q: '2007', field: 'LoanLeaseInput.Limit', ask: 'Loan/Lease', name: 'Loan / lease on Rates (carried over from Add Vehicle)', ignore: true, emptyNote: 'Loan / lease should carry over from Add Vehicle but is empty here: answer it yourself.', scope: 'vehicle' },
+      // The equipment and value questions of Add Vehicle, on Rates (FL) once per vehicle, where each
+      // row gets its own vehicle's answer (same fields: on Add Vehicle the rules above answer them).
+      { q: '208A', field: 'RiskInput.PAValueIndicator', ask: 'Vehicle has no equipment', name: 'Vehicle has no equipment (standard)', kind: 'bool', value: () => true, scope: 'vehicle' },
+      { q: '2091', field: 'RiskInput.NonPAValue', ask: 'If this vehicle was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'vehicles[].value', name: 'Vehicle value if sold today', note: vehicleValueNote, scope: 'vehicle' },
+      { q: '1D97', field: 'LineInput.RBIPDLimit', ask: 'Bodily Injury and Property Damage Liability', path: 'coverage.autoLiabLimit' },
+      // FL: the CSL already covers property damage; PIP is required, $10k with no deductible (TNI).
+      // Changing PIP makes Progressive invalidate the liability limit, which is picked again.
+      { q: '1DB8', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
+      { q: '1E8D', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible)', kind: 'choice', value: () => '$10k w/ $0 Deductible' },
+      { q: '1DEE', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
+      // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
+      ...[['1DCA', { ask: 'Uninsured Motorist Bodily Injury' }], ['1DDE', { ask: 'Underinsured Motorist Bodily Injury' }], ['1DD8', { field: 'LineInput.UIMBILimit' }], ['1DBF', { field: 'LineInput.UMBILimit' }]]
+        .map(([q, which]) => ({ q, ...which, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
+      // Pennsylvania first-party benefits: not on the intake means not bought, except medical
+      // expense, which PA requires (its lowest, $5,000).
+      { q: '1E66', ask: 'Medical Expense Benefits', name: 'PA medical expense benefits (required: lowest, $5,000)', kind: 'choice', value: () => '$5,000' },
+      ...[['1E69', 'Extraordinary Medical Expense'], ['1E6E', 'Income Loss'], ['1E71', 'Funeral Expense'], ['1E74', 'Accidental Death']]
+        .map(([q, what]) => ({ q, ask: `${what} Benefits`, name: `PA ${what.toLowerCase()} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
+      // PIP's state choice (FL): its box has no question text, and its fieldref isn't recorded yet, so
+      // nothing finds it; it's the agent's until a layout gives its name.
+      { q: '1E7C', name: 'PIP (preserve prefilled state choice)', ignore: true },
+      { q: '1FCD', field: 'ComprehensiveInput.Deductible', name: 'Comprehensive deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'comprehensiveDeductible'), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '1FD2', field: 'CollisionInput.Deductible', name: 'Collision deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'collisionDeductible'), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '1FF2', field: 'RentalInput.Limit', name: 'Rental reimbursement (standard: $40/day, $1,200 max)', kind: 'choice', value: () => '$40 per day, $1,200 max', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      // Offered for a truck tractor next to Rental reimbursement (FL, 2026-10-05). TNI: Not selected.
+      { q: '1FF9', field: 'RentalWithDTInput.Limit', name: 'Rental with downtime (TNI: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '2000', field: 'RoadsideInput.Limit', name: 'Roadside / towing (first selected option)', kind: 'selected-option', value: () => 'Selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '200F', field: 'FireAndTheftInput.Deductible', name: 'Additional fire / theft coverage (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '1FDD', ask: 'UMPDInput.Limit', name: 'UMPD limit (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
+      // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle).
+      { q: '1FE4', field: 'MedicalPaymentInput.Limit', name: 'Medical payments per person (standard: $5,000)', kind: 'choice', value: () => '$5,000 per person', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '207F', field: 'RiskInput.PAValueOptions', ask: 'What is the total value of all permanently attached equipment (including aftermarket parts, mounted equipment, and modifications)?', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      { q: '2158', ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
+      { q: '215A', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },
+      // TNI: an unselected Reefer option on the intake means this coverage is not requested.
+      { q: '215C', ask: 'Does the customer require Refrigeration Breakdown coverage?', path: 'coverage.reeferBreakdown', kind: 'bool', value: (r) => r.coverage.reeferBreakdown === true },
+      { q: '216A', withOption: (r) => commodity(r)?.category ?? null, name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null },
+      { q: '216B', withOption: (r) => commodity(r)?.commodity ?? null, name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
+      // The cargo row's limit (its data-model name), then the cargo section's, which reads the same:
+      // with the row's taken, "Motor Trucking Cargo" is left with one field, the section's.
+      { q: '2150', field: 'LineInput.MotorTruckingCargoLimit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo summary', kind: 'choice', value: cargo, note: cargoNote },
+      { q: '216F', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo', kind: 'choice', value: cargo, note: cargoNote },
+      // No live Progressive GL question IDs have been validated. Keep any requested GL visible to
+      // the agent for review instead of allowing generic label matching to make an assertion.
+      { name: 'General Liability (manual review)', label: '^general liability', ignore: (r) => r.coverage.gl !== true, note: glNote },
+    ]),
 
     // --- Bill plan options (ChangePaymentPlan) ---------------------------------------------------
-    { q: '3E96', name: 'Policy length (preserve prefilled value)', ignore: true },
-    { q: '3E97', name: 'Installment plan (preserve prefilled value)', ignore: true },
-    { q: '3E98', name: 'Payment method (standard: automatic payments from checking account)', kind: 'choice', label: 'payment method', value: () => 'Automatic payments from checking account' },
-    { q: '3EA4', name: 'Payment schedule detail (preserve prefilled value)', ignore: true },
+    ...onPage('ChangePaymentPlan', [
+      { q: '3E96', field: 'ChangePaymentPlanPage.PolicyTerm', ask: 'Policy length', name: 'Policy length (preserve prefilled value)', ignore: true },
+      { q: '3E97', field: 'ChangePaymentPlanPage.PaymentType', ask: 'How will the customer pay?', name: 'Installment plan (preserve prefilled value)', ignore: true },
+      { q: '3E98', field: 'BillingInfoInput.BillPlanEFTInd', ask: 'Payment method', name: 'Payment method (standard: automatic payments from checking account)', kind: 'choice', value: () => 'Automatic payments from checking account' },
+      { q: '3EA4', field: 'BillingInfoInput.TwelveMonthBillPlanOnUI', name: 'Payment schedule detail (preserve prefilled value)', ignore: true },
+    ]),
 
     // --- Print (PrintEmailFax) ---------------------------------------------------------------
-    { q: '32B0', name: 'Documents (standard: insurance quote)', kind: 'choice', value: () => 'Insurance Quote (with all bill plans)' },
-    { q: '32C8', name: 'Welcome letter closing message (optional)', ignore: true },
-    { q: '32CC', name: 'Print (standard)', kind: 'bool', value: () => true },
-    { q: '32CE', name: 'Agent Fax Cover Page (preserve portal selection)', ignore: true },
-    { q: '32D0', name: 'Email (leave unchecked)', ignore: true },
-    { q: '32DD', name: 'Fax (leave unchecked)', ignore: true },
+    ...onPage('PrintEmailFax', [
+      { q: '32B0', withOption: 'Insurance Quote (with all bill plans)', name: 'Documents (standard: insurance quote)', kind: 'choice', value: () => 'Insurance Quote (with all bill plans)' },
+      { q: '32C8', ask: 'Welcome Letter Closing Message', name: 'Welcome letter closing message (optional)', ignore: true },
+      { q: '32CC', ask: 'Print', name: 'Print (standard)', kind: 'bool', value: () => true },
+      { q: '32CE', ask: 'Agent Fax Cover Page', name: 'Agent Fax Cover Page (preserve portal selection)', ignore: true },
+      { q: '32D0', ask: 'Email', name: 'Email (leave unchecked)', ignore: true },
+      { q: '32DD', ask: 'Fax', name: 'Fax (leave unchecked)', ignore: true },
+    ]),
 
     // --- Finish & buy (AdditionalDetails) --------------------------------------------------------
-    { q: '396', name: 'Agent of Record (preserve prefilled value)', ignore: true },
-    { q: '3E3', name: 'Employer Identification Number (finish flow; agent review)', ignore: true },
-    { q: '450', name: 'Order MVR/CLUE reports', note: 'Agent decision — not filled' },
+    ...onPage('AdditionalDetails', [
+      { q: '396', label: 'agent of record', name: 'Agent of Record (preserve prefilled value)', ignore: true },
+      { q: '3E3', label: 'employer identification', name: 'Employer Identification Number (finish flow; agent review)', ignore: true },
+      { q: '450', label: '\\b(mvr|clue)\\b', name: 'Order MVR/CLUE reports', note: 'Agent decision — not filled' },
+    ]),
   ],
 };

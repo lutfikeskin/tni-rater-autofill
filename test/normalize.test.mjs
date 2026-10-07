@@ -200,7 +200,8 @@ test('progressive: fixes from the first live usage log', () => {
   const other = structuredClone(commercial);
   other.priorInsurance[0].carrier = 'GEICO';
   assert.equal(buildPlan(other, carrier).find((s) => s.q === '198').value, false);
-  assert.equal(byQ('81').re, '^is the customer currently insured$');
+  // "Currently insured" (any carrier) by its data-model name, not the "…with Progressive" question.
+  assert.equal(byQ('81').field, 'MoreBusinessInput.HasCurrentInsurancePolicy');
   // 2F6 is the hazmat placard question, not a consent question.
   assert.equal(byQ('2F6').value, false);
   assert.equal(byQ('2F6').note, null);

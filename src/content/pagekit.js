@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 46 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 47 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -161,7 +161,14 @@
     return !!cmp?.dctRequired;
   }
 
-  // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>.
+  // The field's name in the carrier's data model: Duck Creek puts it on every input
+  // (fieldref="RiskInput.VIN", "ComprehensiveInput.Deductible"). It names what the field holds,
+  // where the question id below is only a number, which Progressive renumbers (2026-10-07).
+  const fieldRef = (el) => el?.getAttribute?.('fieldref') || null;
+
+  // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>. The
+  // question id is a number Progressive reassigns: it keeps a page's rows of one question
+  // together, and is logged, but never says which question a field is (see assign).
   function dctQuestionId(id) {
     return String(id ?? '').match(/^f_[a-z]([0-9a-f]{32})([0-9a-f]+)_\d+_\d+/i)?.[2]?.toUpperCase() ?? null;
   }
@@ -235,8 +242,10 @@
         c.options = cmp.store.getRange().map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
       }
       // A checkbox in a group ("Filings: [ ] Federal [ ] MCS-90") is named by its own box label.
-      c.label = (c.kind === 'checkbox' && cmp?.boxLabel ? oneLine(String(cmp.boxLabel).replace(/<[^>]+>/g, ' ')) : null) ?? dctCaption(cmp) ?? labelFor(el);
+      // A list without a question of its own (Progressive's cargo commodity) by its empty text.
+      c.label = (c.kind === 'checkbox' && cmp?.boxLabel ? oneLine(String(cmp.boxLabel).replace(/<[^>]+>/g, ' ')) : null) ?? dctCaption(cmp) ?? (labelFor(el) || oneLine(cmp?.emptyText ?? el.placeholder ?? ''));
       c.q = dctQuestionId(cmp?.id ?? el.id);
+      c.ref = fieldRef(el);
       out.push(c);
     }
     for (const g of groups.values()) {
@@ -246,6 +255,7 @@
       });
       g.label = dctCaption(g.cmp) ?? radioGroupLabel(g.radios, g.options.map((o) => o.text));
       g.q = dctQuestionId(g.cmp?.id ?? g.el.id) ?? (String(g.el.name).match(/^[a-z]+_([0-9A-F]+)/)?.[1] ?? null);
+      g.ref = g.radios.map(fieldRef).find(Boolean) ?? null;
     }
     for (const c of out) {
       c.text = squash(c.label);
@@ -328,7 +338,7 @@
   // Some known answers become a summary plus a dependent question after the server redraw.
   // Require both witnesses so disappearing controls alone never count as accepted answers.
   function summaryAccepted(step, controls) {
-    if (!step.summaryAfter || !controls.some((c) => c.q === step.summaryAfter)) return false;
+    if (!step.summaryAfter || !controls.some((c) => c.text === squash(step.summaryAfter))) return false;
     return (document.body.innerText ?? '').split(/\r?\n/).some((line) => {
       const text = squash(line).replace(/^business(?: type)? /, '').replace(/ edit$/, '');
       return [step.value, ...(step.choiceAliases ?? [])].some((value) => text === squash(value));
@@ -344,50 +354,94 @@
     try { return el.matches(selector); } catch { return false; }
   }
 
-  // Pairs plan steps with page fields: carrier question ids and selectors first, then label
-  // rules, then a last pass on the field's name/id for pages with unhelpful labels.
+  // Kinds of step that answer a text box, and kinds that pick a choice: which of two questions
+  // reading the same ("Business Name" as a registered-name choice, or a box) is a step's.
+  const TEXT_STEPS = new Set(['text', 'date', 'address-suggest']);
+  const TYPED_STEPS = new Set(['date', 'address-suggest']);
+  const CHOICE_STEPS = new Set(['choice', 'pick-not', 'first-option', 'selected-option']);
+
+  // Pairs plan steps with page fields. A carrier's known question is found by what it is, never
+  // by its question id: Progressive renumbered every question on 2026-10-07, and an id kept from
+  // before then named another question (Business Name got the trucker type). So, by
+  // - the field's data-model name (`field`, Duck Creek's fieldref: "ComprehensiveInput.Deductible"),
+  //   on whatever page it is,
+  // - else its question on its page (`ask`, the exact text, or `re` on `pages`), the first one
+  //   after an anchor question when the text repeats (`askAfter`: the business "City" comes after
+  //   "Street Address", the owner's after "Home Address"; with no anchor on screen, none).
+  // A known question not found stays with the agent: it never falls back to a looser label rule.
+  // Then selectors and options, then label rules, then a last pass on the field's name/id.
   function assign(controls, plan) {
     const used = new Set();
     const donePaths = new Set();
     const pairs = [];
+    const page = currentPage();
     const steps = plan.map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
     const take = (s, c) => { used.add(c); donePaths.add(s.path); pairs.push({ step: s, control: c }); };
     const fits = (s, c) => !(c.kind === 'checkbox' && s.kind !== 'bool');
+    const known = (s) => !!(s.field || s.ask?.length || (s.reC && s.pages?.length));
+    const onPage = (s) => !s.pages?.length || s.pages.includes(page);
+    const textIs = (s, x) => !!x.text && ((s.ask ?? []).some((a) => squash(a) === x.text) || (!!s.reC && s.reC.test(x.text) && !(s.exC && s.exC.test(x.text))));
+    // A field is its data-model name's, on any page. Only on a page without data-model names (never
+    // seen live, but a redraw or another product might drop them) is a field rule's question found by
+    // its text, on its own page; otherwise a field without a name belongs to a text rule.
+    const named = controls.some((x) => x.ref);
+    const isIt = (s, x) => (s.field && named ? x.ref === s.field : onPage(s) && (!!s.ask?.length || !!s.reC) && textIs(s, x));
+    // A choice is never typed into a box, nor a typed address or date put in a choice; a plain
+    // text step only gives way to a box when its text names a box and a choice.
+    const definite = (s, x) => !(CHOICE_STEPS.has(s.kind) && x.kind === 'text') && !(TYPED_STEPS.has(s.kind) && x.kind !== 'text');
+    const kindFits = (s, x) => !(TEXT_STEPS.has(s.kind) && x.kind !== 'text');
+    const afterAnchor = (same, anchor) => {
+      const at = controls.findIndex((x) => x.text === squash(anchor));
+      const next = at < 0 ? null : same.find((x) => controls.indexOf(x) > at);
+      return next ? [next] : [];
+    };
+    // The fields a known question is on this page (several: one per vehicle, or one per group).
+    const fieldsOf = (s) => {
+      if (!known(s)) return [];
+      // `control`: the kind of field the question is, when its text is shared with another kind.
+      let same = controls.filter((x) => isIt(s, x) && definite(s, x) && (!s.control || x.kind === s.control));
+      if (same.length > 1 && same.some((x) => kindFits(s, x))) same = same.filter((x) => kindFits(s, x));
+      return s.askAfter ? afterAnchor(same, s.askAfter) : same;
+    };
+    const found = new Map(steps.map((s) => [s, fieldsOf(s)]));
     // A label fallback can't tell rows of one question apart, nor a vehicle's question from
-    // another vehicle's: those are only answered by their question id and vehicle.
+    // another vehicle's: those are only answered by a known question and its vehicle. (Rows of one
+    // question share a question id on the page: that compares the page with itself.)
     const repeated = new Set(controls.map((x) => x.q).filter((q, i, all) => q && all.indexOf(q) !== i));
-    // Steps of a per-vehicle question, one per vehicle (activeVehicle true or false), with or
-    // without a year/make/model to name its row.
-    const perVehicle = new Set(steps.filter((s) => s.activeVehicle != null && s.q).map((s) => s.q));
+    // Fields of a per-vehicle question: its steps come one per vehicle (activeVehicle true or
+    // false), with or without a year/make/model to name its row.
+    const perVehicle = new Set(steps.filter((s) => s.activeVehicle != null).flatMap((s) => found.get(s)));
     // A page about one vehicle (Add Vehicle): no question names a vehicle and the per-vehicle
     // questions sit in one row. Rows of several vehicles without their names stay with the agent.
-    const oneVehicle = !controls.some((x) => x.vehicle) && new Set(controls.filter((x) => perVehicle.has(x.q)).map((x) => x.row)).size <= 1;
+    const oneVehicle = !controls.some((x) => x.vehicle) && new Set([...perVehicle].map((x) => x.row)).size <= 1;
 
     // Distinct known questions may share intake data (business and home ZIP/City).
-    // Match every explicit target; path deduplication applies only to label fallbacks.
+    // Match every known question; path deduplication applies only to label fallbacks.
     for (const s of steps) {
       let c = null;
-      if (s.q && s.activeVehicle != null) {
+      const same = found.get(s);
+      if (known(s) && s.activeVehicle != null) {
         // One step per vehicle (several in the quote): on a page showing one vehicle at a time, the
         // active vehicle's; otherwise the row labelled with this vehicle's year/make/model. A
         // vehicle the intake doesn't describe can't name a row: left to the agent.
-        const same = controls.filter((x) => x.q === s.q);
         c = oneVehicle ? (s.activeVehicle && same.length === 1 ? same[0] : null) : s.vehicleHint ? vehicleRow(same, s.vehicleHint) : null;
         if (c && used.has(c)) c = null;
-      } else if (s.q) {
-        // Without a vehicle, several rows for one question are ambiguous: they stay yellow.
-        const same = controls.filter((x) => !used.has(x) && x.q === s.q);
-        c = same.length > 1 ? null : same[0] ?? null;
+      } else if (known(s)) {
+        // Without a vehicle, several fields for one question are ambiguous: they stay yellow.
+        // `each`: a question repeated in several groups ("None of the above"), one step per group.
+        const free = same.filter((x) => !used.has(x));
+        c = s.each ? free[0] ?? null : free.length > 1 ? null : free[0] ?? null;
+      } else if (onPage(s)) {
+        if (s.selector) c = controls.find((x) => !used.has(x) && (safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector))));
+        // A dropdown with no usable label, known by one of its options ("NO PRIOR").
+        if (!c && s.withOption) c = controls.find((x) => !used.has(x) && optionsOf(x).some((o) => squash(o.text) === squash(s.withOption)));
       }
-      if (!c && s.selector) c = controls.find((x) => !used.has(x) && (safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector))));
-      // A dropdown with no usable label, known by one of its options ("NO PRIOR").
-      if (!c && s.withOption) c = controls.find((x) => !used.has(x) && optionsOf(x).some((o) => squash(o.text) === squash(s.withOption)));
       if (c) take(s, c);
     }
     for (const field of ['text', 'hint']) {
       for (const s of steps) {
-        if (!s.reC || donePaths.has(s.path)) continue;
-        const c = controls.find((x) => !used.has(x) && !repeated.has(x.q) && !perVehicle.has(x.q) && x[field] && fits(s, x) && s.reC.test(x[field]) && !(s.exC && s.exC.test(x[field])));
+        if (!s.reC || known(s) || donePaths.has(s.path)) continue;
+        const c = controls.find((x) => !used.has(x) && !repeated.has(x.q) && !perVehicle.has(x) && x[field] && fits(s, x) && s.reC.test(x[field]) && !(s.exC && s.exC.test(x[field])));
         if (c) take(s, c);
       }
     }
@@ -453,7 +507,7 @@
     // address"), preferring one that matches `prefer` when there are several.
     if (step.kind === 'pick-not') {
       const allowed = usable.filter((o) => !new RegExp(step.value.not, 'i').test(o.text));
-      if (step.q === '22F' && step.businessNames?.length) {
+      if (step.registeredName && step.businessNames?.length) {
         // One registered name listed twice ("ACME LLC", "Acme, LLC") is still one match.
         const matches = uniqueBusinessNames(allowed.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name))));
         return matches.length === 1 ? matches[0] : null;
@@ -899,7 +953,6 @@
   // on pages that talk to their server after each answer (ExtJS/Duck Creek) stops after one
   // answer and waits. New questions that appear because of an answer get picked up next round.
   // `skip`: field keys to leave alone (ones the agent changed; used by automatic follow-up fills).
-  // `optional`: question ids never flagged as "needs you" (middle initial, suffix, DBA, …).
   // `doneActions`: button actions already clicked earlier in this quote.
   // `replaceChoices`: a dropdown/radio/checkbox answer the page pre-selected (not the agent) is
   // replaced when it differs from ours; agent changes are protected by `skip`.
@@ -913,13 +966,12 @@
   // `doneSteps`: steps of a one-address application (stepKey) already continued from: a step the
   // agent goes back to is theirs, never continued again.
   // `stopPages`: pages where the carrier has stopped the quote: nothing is filled or clicked there.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [] } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [] } = {}) {
     // An agent edit protects its field. A plain name saved by an older build (field-key v2)
     // protects every row key made from it (name#<row>): it could have been any row's edit.
     const skipKeys = new Set(skip);
     const skipped = Set.prototype.has.bind(skipKeys);
     skipKeys.has = (key) => skipped(key) || skipped(globalThis.__raterFieldKey.rowKeyBase?.(key));
-    const quiet = new Set(optional);
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
@@ -982,7 +1034,7 @@
       // Rows of one repeated question share a key; their labels (the vehicle) tell them apart.
       const flag = (list, item) => { if (!list.some((x) => x.key === item.key && x.label === item.label)) list.push(item); };
       for (const c of controls) {
-        if (mapped.has(c) || quiet.has(c.q) || skipKeys.has(fieldKey(c))) continue;
+        if (mapped.has(c) || skipKeys.has(fieldKey(c))) continue;
         flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, controlKind: c.kind, required: c.required, ...describe(c) });
         mark(c, 'needs', 'Unfamiliar question — left for you.');
       }
@@ -1046,7 +1098,8 @@
         if (step.verifyOnly) { report.kept.push(item); handled.set(step.id, { status: null }); continue; }
         if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { handled.set(step.id, { status: null }); continue; }
         if (step.businessNames?.length) {
-          const registered = controls.find((x) => x.q === '22F');
+          // The registered names the USDOT lookup offers (Progressive's Business Name choice).
+          const registered = assign(controls, plan).find((p) => p.step.registeredName)?.control;
           const names = uniqueBusinessNames(registered ? optionsOf(registered).filter((o) => o.text.trim() && !/^enter a different/i.test(o.text)) : []);
           const matches = names.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name)));
           if (names.length && matches.length !== 1) {
@@ -1057,7 +1110,7 @@
           }
         }
         if (step.note || step.value == null) {
-          if (quiet.has(c.q)) { handled.set(step.id, { status: null }); continue; }
+          if (step.optional) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note, ...describe(c) });
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
           continue;
@@ -1113,7 +1166,8 @@
         if (result.ok) {
           if (currentPage() === 'CoveragesRates') {
             // The bill plan (payment method) stays chosen; the premium needs recalculating.
-            for (const id of ['recalculate', 'print', 'printSend', ...(/^21/.test(c.q ?? '') ? ['doneCargo'] : [])]) {
+            // A cargo answer (the rules named 21xx) re-arms Done with this coverage too.
+            for (const id of ['recalculate', 'print', 'printSend', ...(/^21/.test(step.q ?? '') ? ['doneCargo'] : [])]) {
               clicked.delete(id);
               report.actions = report.actions.filter((x) => x.id !== id);
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
@@ -1174,7 +1228,8 @@
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
       if (a.verify === 'cargoClosed') {
         const controls = collectControls();
-        const expanded = controls.some((c) => ['2158', '215A', '216A', '216B'].includes(c.q));
+        // The cargo section's questions still on screen (found by the rules for them).
+        const expanded = assign(controls, plan).some(({ step }) => ['2158', '215A', '216A', '216B'].includes(step.q));
         const cargoSteps = plan.filter((s) => ['2150', '216F'].includes(s.q) && s.value != null);
         const retained = assign(controls, cargoSteps).some(({ step, control }) => agreesWith(step, control));
         const summary = (document.body.innerText ?? '').match(/motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i)?.[0] ?? '';
@@ -1214,7 +1269,7 @@
         // its fields have not been filled yet (or the agent went back to this step).
         if (a.unlessSelector && deepQueryAll(document, a.unlessSelector).length) { clicked.add(a.action); continue; }
         if (report.halted || pageBusy()) return false;
-        if (a.action === 'printSend' && controls.some((c) => (['32D0', '32DD'].includes(c.q) || /^(email|e mail|fax)$/.test(c.text)) && hasValue(c))) {
+        if (a.action === 'printSend' && controls.some((c) => /^(email|e mail|fax)$/.test(c.text) && hasValue(c))) {
           report.blocked.push({ id: a.action, why: 'Email or Fax is ticked; untick it to print' });
           continue;
         }
@@ -1295,7 +1350,7 @@
     const matched = new Set(pairs.map((p) => p.control));
     for (const c of controls) {
       if (!matched.has(c) && report.unknown.some((x) => x.key === fieldKey(c)) && !skipKeys.has(fieldKey(c))) mark(c, 'needs', 'Unfamiliar question — left for you.');
-      if (!matched.has(c) && c.required && !hasValue(c) && !quiet.has(c.q) && !skipKeys.has(fieldKey(c))) {
+      if (!matched.has(c) && c.required && !hasValue(c) && !skipKeys.has(fieldKey(c))) {
         report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
         mark(c, 'needs', 'required, and not on the intake form');
       }
@@ -1453,6 +1508,8 @@
       headings: deepQueryAll(document, 'h1, h2, h3, legend, [role=heading]').filter(isVisible).map((h) => r(h.textContent)).filter(Boolean).slice(0, 40),
       controls: controls.map((c) => ({
         q: c.q ?? undefined,
+        // The field's data-model name (fieldref): how a rule finds it (assign).
+        ref: c.ref ?? undefined,
         kind: c.kind,
         type: c.cmp?.xtype ?? c.type,
         label: r(c.label),
@@ -1572,5 +1629,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 46, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 47, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

@@ -108,7 +108,24 @@ function fieldSteps(rules, record, carrier, active) {
       path,
       name: rule.name ?? info.label,
       kind: rule.kind ?? info.kind,
+      // The carrier's question id when the rule was written: only the rule's name (its path), never
+      // how its field is found (Progressive renumbers questions). These find it (pagekit assign):
       q: rule.q ?? null,
+      // the field's data-model name (Duck Creek fieldref),
+      field: rule.field ?? null,
+      // else its question on the page: exact text(s), or `label` (re) on these pages,
+      ask: rule.ask ? [].concat(rule.ask) : null,
+      pages: rule.page ? [].concat(rule.page) : null,
+      // a select, radio, checkbox or text box, when a text is shared by two kinds of field,
+      control: rule.control ?? null,
+      // the first one after this question when its text repeats on the page,
+      askAfter: rule.askAfter ?? null,
+      // one field each for steps of a question repeated in several groups.
+      each: !!rule.each,
+      // Never "needs you" when empty (middle initial, suffix, DBA).
+      optional: !!rule.optional,
+      // The registered business names a USDOT lookup offers (checked against the intake).
+      registeredName: !!rule.registeredName,
       selector: rule.repeatSelector ? rule.repeatSelector(record, active) : rule.selector ?? null,
       re: rule.label ?? null,
       ex: rule.not ?? null,
@@ -136,7 +153,7 @@ function fieldSteps(rules, record, carrier, active) {
       fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,
       // Type-ahead lists: what to type (the value is what the chosen result must contain).
       search: typeof rule.search === 'function' ? rule.search(record, active) : rule.search ?? null,
-      withOption: rule.withOption ?? null,
+      withOption: typeof rule.withOption === 'function' ? rule.withOption(record, active) : rule.withOption ?? null,
       value: value === undefined || value === '' ? null : value,
     };
   });

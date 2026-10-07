@@ -67,10 +67,12 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
     for (const b of e.buttons ?? []) if (!page.buttons.includes(b)) page.buttons.push(b);
     for (const f of fields) {
       // Our own mark tooltips got into early layouts as captions; they aren't questions.
-      const k = f.q ?? (f.id ? `#${f.id}` : f.dataId ? `${f.dataId}:${f.label}` : `${f.kind}:${f.label}`);
+      // A field by its data-model name when recorded (0.9.9): its question id is renumbered.
+      const k = f.ref ? `ref:${f.ref}` : f.q ?? (f.id ? `#${f.id}` : f.dataId ? `${f.dataId}:${f.label}` : `${f.kind}:${f.label}`);
       const prev = page.fields.get(k);
       page.fields.set(k, {
         q: f.q ?? null,
+        ref: f.ref ?? prev?.ref ?? undefined,
         id: f.id ?? prev?.id ?? undefined,
         dataId: f.dataId ?? prev?.dataId ?? undefined,
         name: f.name ?? prev?.name ?? undefined,

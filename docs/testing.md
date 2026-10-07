@@ -21,7 +21,7 @@ Run `npm test` for code changes, plus affected integration checks. Repeat or bro
 
 ## Browser harnesses and limits
 
-- `npm run e2e` runs Progressive layout replays; `--fixtures` uses committed per-state fixtures for local verification. Local runs can also include captures and generated layouts. A replay does not establish complete live navigation, server acceptance, or real lookup reliability.
+- `npm run e2e` runs Progressive layout replays; `--fixtures` uses committed per-state fixtures for local verification; `--renumber` shifts every question id as Progressive did on 2026-10-07, and its results must equal the recorded run (questions are found by data-model name or text). Fixture fields carry `ref` (the data-model name) where it is known. Local runs can also include captures and generated layouts. A replay does not establish complete live navigation, server acceptance, or real lookup reliability.
 - `npm run mock:amwins` checks the saved-site behavior mock and its expected answers, including continuation and no submission.
 - `npm run e2e:extension` needs `npm run package` and `npm run replay` serving on port 8792. It runs the packaged panel/extension on the AmWINS mock.
 - `npm run mock:luna` also needs the package. It intercepts OpenAI requests and checks the dedicated key field, Luna's independent automatic-selection setting, the approval hold and reload retention, rejection/manual correction, conflicting evidence and stale provider responses. The mock makes no live AI requests.

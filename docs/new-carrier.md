@@ -8,7 +8,7 @@ Define the initial supported scope: carrier/product, states, operations, vehicle
 
 Capture live page layouts and the answers that reveal follow-up questions within the authorized quoting workflow: name a scenario, capture, change one answer, capture again (Capture page layout or Alt+Shift+C), then `npm run captures` for the before/after of each step. Saved HTML/PDFs go in ignored `layouts/`; scrub derived fixtures. A saved page describes one visible state, often without runtime dropdown choices or hidden server-generated branches.
 
-For each discovered question, record its target, meaning, options, source of the answer, entity, applicability, and unresolved decisions. Include known combinations that change the flow. Do not infer all conditional behavior from a union of captured fields.
+For each discovered question, record its target (by something the carrier keeps: a data-model name, an element name, or the question's text on its page, not a generated number), meaning, options, source of the answer, entity, applicability, and unresolved decisions. Include known combinations that change the flow. Do not infer all conditional behavior from a union of captured fields.
 
 ## Implement the adapter
 
@@ -28,6 +28,6 @@ After pilot runs, inspect `npm run coverage` and agent reports. Use [learning](l
 
 ## Reference implementations
 
-- [progressive.js](../src/carriers/progressive.js), [replay page](../test/replay/index.html), [e2e.mjs](../scripts/e2e.mjs): question IDs and server-backed replay.
+- [progressive.js](../src/carriers/progressive.js), [replay page](../test/replay/index.html), [e2e.mjs](../scripts/e2e.mjs): questions by data-model name or text, and server-backed replay (also renumbered).
 - [amwins.js](../src/carriers/amwins.js), [AmWINS fixtures](../test/fixtures/amwins/), [amwins-mock.mjs](../scripts/amwins-mock.mjs): selectors, repeated sections, and saved-page behavior.
 - [consistency tests](../test/consistency.test.mjs): host permissions and shared contracts; [testing](testing.md): commands and limits.

@@ -8,6 +8,8 @@
 //   npm run e2e -- --update     # accept the current results as the new baseline
 //   npm run e2e -- --headed     # watch it
 //   npm run e2e -- --fixtures   # only committed layouts (what CI runs: no usage logs there)
+//   npm run e2e -- --renumber   # every question renumbered, as Progressive did on 2026-10-07: the
+//                               # results must equal the baseline (questions are found by name/text)
 //
 // Layouts: test/bakeoff/course-*.json, captures/progressive/*.json and the per-state layouts
 // npm run layouts builds (captures/progressive/generated/, git-ignored). Needs internet (the
@@ -72,7 +74,7 @@ async function runLayout(layout) {
     page.on('pageerror', (e) => errors.push(String(e.message).slice(0, 200)));
 
     try {
-      await page.goto(`${base}/test/replay/`, { waitUntil: 'load' });
+      await page.goto(`${base}/test/replay/${args.has('--renumber') ? '?shift=55' : ''}`, { waitUntil: 'load' });
       await page.waitForFunction(() => window.Ext && window.replay && window.__raterKit, null, { timeout: 30000 });
       await page.fill('#layout', `/${layout}`);
       await page.click('#load');

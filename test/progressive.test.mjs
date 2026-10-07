@@ -226,7 +226,7 @@ test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () 
   for (const q of ['1E69', '1E6E', '1E71', '1E74']) assert.equal(byQ(plan, q).value, 'Not Selected');
   assert.ok(byQ(plan, '1B8D').note, 'SSN is never filled');
   assert.equal(byQ(plan, '1B8D').value, null);
-  assert.ok(progressive.optional.includes('1B80'));
+  assert.equal(byQ(plan, '1B80').optional, true, 'NoHit middle initial is never "needs you"');
 });
 
 test('a vehicle value that is not a dollar amount goes to the agent instead of being typed', () => {

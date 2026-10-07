@@ -986,7 +986,6 @@ function agentEdited(page, key) {
 }
 
 const fillOptions = (carrier, extra = {}) => ({
-  optional: carrier.optional ?? [],
   replaceChoices: !!carrier.replaceChoices,
   // Carriers whose pages never wait on a server per answer are filled a round at a time.
   batch: !!carrier.batch,
@@ -1151,7 +1150,7 @@ async function captureLayout(job, reason) {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
       const staff = /agent|producer/i.test(c.label ?? '');
       return {
-        q: c.q ?? null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
+        q: c.q ?? null, ref: c.ref ?? null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
         // Element ids (stable ones only) and data-ids: how id-based rules (AmWINS) find the field.
         id: c.id && !/\d{5,}|ext-|-inputEl$/.test(c.id) ? c.id : null, dataId: c.dataId ?? null, name: c.name ?? null,
         options: c.options?.length && !staff ? c.options : undefined,

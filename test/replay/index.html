@@ -72,11 +72,17 @@
     window.replay = { byPage: {}, form: null, fields: [], page: null, clicks: [], started: null };
     const store = (page) => (window.replay.byPage[page] ??= { answers: {}, texts: {} });
 
+    // ?shift=55 renumbers every question by that much, as Progressive did on 2026-10-07 (Agent Code
+    // 18F became 1C6): the fill must find the same questions by their names and texts.
+    const SHIFT = Number(new URLSearchParams(location.search).get('shift')) || 0;
     function idFor(f, i) {
       // Layout fields without a question id get a stable made-up one, so they still render.
-      const q = f.q && /^[0-9A-F]+$/.test(f.q) ? f.q : `F${(1000 + i).toString(16).toUpperCase()}`;
+      const recorded = f.q && /^[0-9A-F]+$/.test(f.q) ? f.q : `F${(1000 + i).toString(16).toUpperCase()}`;
+      const q = SHIFT ? (parseInt(recorded, 16) + SHIFT).toString(16).toUpperCase() : recorded;
       return { id: `f_a${GUID}${q}_8_1`, q };
     }
+    // Duck Creek's data-model name on the field's input (fieldref="RiskInput.VIN"), when recorded.
+    const refAttr = (f) => (f.ref ? { inputAttrTpl: `fieldref="${Ext.String.htmlEncode(f.ref)}"` } : {});
     const optionsOf = (f) => (f.opts ?? []).filter((o) => o && !/^…/.test(o));
 
     function fieldConfig(f, i) {
@@ -87,13 +93,13 @@
       if (record && f.q === '22F') f = { ...f, opts: (f.opts ?? []).map(o => o.includes('[client]') ? record.applicant.name || record.applicant.owner1 : o) };
       const { id, q } = idFor(f, i);
       const { answers, texts } = store(window.replay.page);
-      const common = { id, dctCaption: f.caption || '(no caption)', dctRequired: !!f.req };
+      const common = { id, dctCaption: f.caption || '(no caption)', dctRequired: !!f.req, ...refAttr(f) };
       const answer = (v, text) => { answers[q] = v; texts[q] = text ?? v; window.replay.roundTrip(); };
       const opts = optionsOf(f);
       if (f.kind === 'radio' || f.kind === 'checkgroup') {
         const list = opts.length ? opts : ['Yes', 'No'];
         return { ...common, xtype: 'dctradiogroup', columns: 1, vertical: true,
-          items: list.map((o, j) => ({ xtype: 'dctradiofield', id: `${id}_${j}`, name: `string_${q}`, boxLabel: o, inputValue: o, checked: answers[q] === o })),
+          items: list.map((o, j) => ({ xtype: 'dctradiofield', id: `${id}_${j}`, name: `string_${q}`, boxLabel: o, inputValue: o, checked: answers[q] === o, ...refAttr(f) })),
           listeners: { change: (g, v) => answer(v[`string_${q}`]) } };
       }
       if (f.kind === 'checkbox') {
