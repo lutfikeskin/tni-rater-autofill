@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 55 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 56 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -391,8 +391,9 @@
     const nameHere = (s) => (s.pageOnly ? onPage(s) : !s.notPages?.includes(page));
     const worded = (s) => !!s.ask?.length || !!s.reC;
     const textIs = (s, x) => !!x.text && ((s.ask ?? []).some((a) => squash(a) === x.text) || (!!s.reC && s.reC.test(x.text) && !(s.exC && s.exC.test(x.text))));
-    // Data-model names some rule knows: those fields are that rule's, never a text rule's.
-    const claimed = new Set(steps.map((s) => s.field).filter(Boolean));
+    // Data-model names some rule knows here: those fields are that rule's, never a text rule's. A
+    // name fenced off this page (a trailer's RiskInput.PAValue on Add Vehicle) claims nothing here.
+    const claimed = new Set(steps.filter((s) => s.field && nameHere(s)).map((s) => s.field));
     const isIt = (s, x) => (s.field ? x.ref === s.field && nameHere(s) : onPage(s) && worded(s) && !claimed.has(x.ref) && textIs(s, x));
     // A choice is never typed into a box, nor a typed address or date put in a choice; a plain
     // text step only gives way to a box when its text names a box and a choice.
@@ -1351,7 +1352,10 @@
         // Menu items ("Add Vehicle" under "Add") only show once their menu button is opened.
         if (!button && !a.opener) continue;
         const holds = actions.filter((h) => (a.heldBy ?? []).includes(h.baseAction) && holdOpen(h));
-        const ready = !holds.length && (!a.afterAny?.length || a.afterAny.some(has))
+        // A page button that the carrier refuses while a required question is empty (Rates' bill
+        // plan, SC 2026-10-07: clicked right after UM/UIM were cleared, and nothing opened).
+        const openRequired = a.waitRequired ? controls.filter((c) => c.required && !hasValue(c) && !skippedField(c)) : [];
+        const ready = !holds.length && !openRequired.length && (!a.afterAny?.length || a.afterAny.some(has))
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
           && a.after.every(has)
@@ -1369,6 +1373,7 @@
             ...(a.needsPremium && !premiumReady() ? ['a current premium'] : []),
             ...(a.afterValue ? [`${a.afterValue[0]} set`] : []),
             ...holds.map((h) => `${h.label ?? h.baseAction} resolved`),
+            ...openRequired.slice(0, 3).map((c) => `${c.label || 'a required question'} answered`),
           ];
           blocked.push(a.action);
           report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites' });
@@ -1413,6 +1418,12 @@
     for (const { step, control } of stillHere ? pairs : []) {
       const h = handled.get(step.id);
       if (h?.status) mark(control, h.status, h.note);
+    }
+    // An unfamiliar question that went away during the fill (hidden by an answer, such as the
+    // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
+    if (stillHere) {
+      const onPageNow = new Set(controls.map((c) => fieldKey(c)));
+      report.unknown = report.unknown.filter((x) => onPageNow.has(x.key));
     }
     // Question text for every field on the page, keyed like the usage recorder's changes.
     report.labels = controls.map((c) => [fieldKey(c), c.label]);
@@ -1738,5 +1749,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 55, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 56, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

@@ -327,9 +327,9 @@
  },
  "test/fixtures/progressive/progressive_IN_expediter_van.json": {
   "questions": 112,
-  "filled": 78,
+  "filled": 79,
   "failed": 2,
-  "unmapped": 1,
+  "unmapped": 0,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
@@ -392,13 +392,15 @@
    },
    "MoreAboutBusiness": {
     "questions": 29,
-    "filled": 23,
+    "filled": 24,
     "failed": [],
     "noData": 0,
-    "unmapped": 1,
-    "blockers": 2,
-    "clicked": [],
-    "outcomes": "860dbefda6b6"
+    "unmapped": 0,
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ],
+    "outcomes": "8d8924546cdd"
    },
    "CoveragesRates": {
     "questions": 12,

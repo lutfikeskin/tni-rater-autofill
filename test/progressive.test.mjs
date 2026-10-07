@@ -641,3 +641,28 @@ test('defensive driver discount: No, unless the description box mentions a cours
   assert.equal(step.value, null);
   assert.match(step.note, /defensive driving course/);
 });
+
+// Runs of 2026-10-07 (FL, UT, SC): the CDL year, UMPD per vehicle, SC's glass deductible and
+// combined UM/UIM, Rates buttons waiting on required questions, and vehicle ownership length.
+test('FL / UT / SC questions of 2026-10-07', () => {
+  const record = baseRecord();
+  record.drivers[0] = { ...record.drivers[0], cdl: true, cdlYear: 2015 };
+  record.vehicles = [{ ...record.vehicles[0] }, { ...record.vehicles[0], year: 2019, make: 'FORD', model: 'TRANSIT' }];
+  const plan = buildPlan(record, progressive, {});
+  assert.equal(byQ(plan, '295E').value, 2015, 'Year CDL Issued from the intake');
+  assert.equal(byQ(plan, '2960').ignore, true, '"Year is unknown" is the agent\'s');
+  assert.equal(plan.filter((s) => s.q === '1FDD').length, 2, 'UMPD: one step per vehicle');
+  assert.ok(plan.filter((s) => s.q === '1FDD').every((s) => s.value === 'Not selected' && s.vehicleHint));
+  assert.ok(byQ(plan, '1FCD').choiceAliases.includes('$1,000 Deductible w/ $0 Glass Deductible'));
+  assert.deepEqual([byQ(plan, '1E68').value, byQ(plan, '1E6C').value], ['$100k CSL w/ $200 Deductible', '$100k CSL w/ $0 Deductible']);
+  for (const id of ['billPlan', 'recalculate', 'print']) {
+    const a = plan.find((s) => s.action === id);
+    if (a) assert.equal(a.waitRequired, true, id);
+  }
+  assert.match(byQ(plan, '2C09').note, /answer it yourself/, 'how long the insured has had the vehicle: the agent\'s (TNI)');
+  // Codex on PR #43: a trailer's equipment amount from the intake goes to its Rates row too.
+  const trailer = trailerRecord();
+  trailer.trailerInfo.equipTrailer = 3500;
+  const tr = buildPlan(trailer, progressive, { trailers: 0 }).find((s) => s.q === 'TR2CE0');
+  assert.deepEqual([tr.value, tr.ignore, tr.pageOnly], [3500, false, true]);
+});

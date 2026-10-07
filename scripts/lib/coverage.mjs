@@ -86,7 +86,8 @@ export function fieldStatus(f, carrier, page = null, fields = null) {
   // the fill engine pairs them.
   const known = (r) => !!(r.field || ((r.ask || r.label) && r.page) || r.selector || r.withOption);
   const rules = [...all.filter(known), ...all.filter((r) => !known(r))];
-  const named = new Set(rules.map((r) => r.field).filter(Boolean));
+  // Names known on this page (a trailer's names fenced off Add Vehicle claim nothing there).
+  const named = new Set(rules.filter((r) => r.field && nameHere(r, page)).map((r) => r.field));
   let unsure = null;
   for (const rule of rules) {
     const hit = claims(rule, f, page, named, fields);

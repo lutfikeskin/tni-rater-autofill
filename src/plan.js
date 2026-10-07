@@ -58,6 +58,8 @@ function actionSteps(carrier, record, active) {
       // Clicked, but what it adds isn't in until one of these is done (a trailer entered): until
       // then the page says `unfinished` (Continue waits).
       doneWhen: resolve(a.doneWhen) ?? [],
+      // Waits while a required question on the page is empty (the carrier would refuse the click).
+      waitRequired: !!a.waitRequired,
       unfinished: resolve(a.unfinished) ?? null,
       unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (/:driver$/.test(id) || (a.scope === 'driver' && !/:/.test(id))
         ? `${id.replace(/:driver$/, '')}:${active.drivers ?? 0}`

@@ -1121,6 +1121,51 @@ test('a yes/no answer is never typed into a text box with its question\'s wordin
   assert.equal(report.unknown.length, 1, 'left for the agent as unfamiliar');
 });
 
+// SC 2026-10-07: "View bill plan options" clicked right after UM/UIM were cleared did nothing, and
+// the panel waited for the bill plan forever. A button the carrier refuses while a required
+// question is empty waits for it, and says so.
+test('a Rates button waits while a required question on the page is empty', async () => {
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const um = addExtText(h, 'c', '1E68', { caption: 'Uninsured Motorist Bodily Injury & Property Damage', ref: 'LineInput.UMBIPDLimit', required: true });
+  const button = addButton(h, 'View bill plan options');
+  button.onclick = () => { button._clicked = true; };
+  const billPlan = { id: 'bp', kind: 'action', action: 'billPlan', text: '^view bill plan options$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [], waitRequired: true };
+  let report = await h.kit.fill([billPlan], { maxRounds: 2 });
+  assert.equal(button._clicked, undefined);
+  assert.ok(report.blockers.some((b) => /^button: billPlan \(waiting for Uninsured Motorist Bodily Injury & Property Damage answered\)$/.test(b)));
+  um.cmp.setValue('$100k CSL w/ $200 Deductible');
+  um.input.value = '$100k CSL w/ $200 Deductible';
+  report = await h.kit.fill([billPlan], { maxRounds: 2 });
+  assert.equal(button._clicked, true);
+});
+
+// SC 2026-10-07: a trailer rule's data-model name (RiskInput.PAValue, kept to Add Trailer) left the
+// vehicle's own question for that field on Add Vehicle unclaimed. A name fenced off a page claims
+// nothing there.
+test('a data-model name fenced off this page does not keep a text rule from its field', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  addExtText(h, 'c', '2D50', { caption: 'What is the value of the permanently attached equipment?', ref: 'Test.SomeOtherName' });
+  const report = await h.kit.fill([
+    { id: 'trailer', q: '2AFC', field: 'Test.SomeOtherName', ask: ['What is the value of the permanently attached equipment?'], pages: ['AddTrailer'], pageOnly: true, path: 'progressive.q2AFC', kind: 'money', ignore: true },
+    { id: 'vehicle', q: '2CE0', ask: ['What is the value of the permanently attached equipment?'], pages: ['AddVehicle'], path: 'progressive.q2CE0', kind: 'text', ignore: true },
+  ], { maxRounds: 2 });
+  assert.equal(report.unknown.length, 0);
+});
+
+// SC 2026-10-07: the equipment amount showed until "no equipment" was ticked, then went away; it
+// stayed listed as unfamiliar. A question gone by the end of the fill isn't the agent's.
+test('an unfamiliar question that went away during the fill is not reported', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  const amount = addExtText(h, 'c', '9999', { caption: 'A brand new amount question', ref: 'Test.Brand.New' });
+  const box = makeInput({ id: 'noequip', type: 'checkbox', ariaLabel: 'Vehicle has no equipment' });
+  box.onclick = () => { amount.input.remove(); };
+  h.document.body.append(box);
+  const report = await h.kit.fill([{ id: 'none', selector: '#noequip', path: 'progressive.q2CE3', kind: 'bool', value: true }], { maxRounds: 4 });
+  assert.equal(box.checked, true);
+  assert.equal(report.unknown.length, 0);
+  assert.ok(!report.blockers.some((b) => /^unfamiliar/.test(b)));
+});
+
 // PR #17 review: a click on Add Non-Trucking Liability that the page dropped must not count.
 test('a helper verified by its link going away counts only when the link is gone', async () => {
   const ntl = { id: 'ntl', kind: 'action', action: 'addNtl', text: '^add non-?trucking liability( instead)?\\??$', verify: 'gone',
