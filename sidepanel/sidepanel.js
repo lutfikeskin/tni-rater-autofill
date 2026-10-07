@@ -1520,7 +1520,9 @@ async function pickListItem(carrier, page) {
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
 function afterFill(frames, { carrier, page }) {
-  if (carrier.driverPage && carrier.driverPage === page && frames.some((f) => f.filled?.length)) {
+  // Filled, or already there (Progressive fills the owner's driver page from Business Owner Info,
+  // OK 2026-10-07: nothing to fill, and the driver list then added the same driver again).
+  if (carrier.driverPage && carrier.driverPage === page && frames.some((f) => f.filled?.length || f.kept?.length)) {
     state.doneActions.add(`driverEntered:${state.active.drivers ?? 0}`);
   }
   const clicked = frames.some((f) => (f.actions ?? []).length);

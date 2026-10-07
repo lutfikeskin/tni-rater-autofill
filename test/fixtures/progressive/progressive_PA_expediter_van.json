@@ -1291,6 +1291,7 @@
     },
     {
      "q": "216A",
+     "ref": "MTCargoCommodityCategories.MTCargolistOfCommodityCategories",
      "kind": "combo",
      "caption": "",
      "req": true,
@@ -1312,6 +1313,7 @@
     },
     {
      "q": "216B",
+     "ref": "MTCargoCommodityCategories.MTCargoListOfCommodities",
      "kind": "combo",
      "caption": "",
      "req": true,

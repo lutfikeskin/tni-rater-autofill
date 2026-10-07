@@ -1053,6 +1053,20 @@ test('a continued step is remembered per vehicle on vehicle pages, per driver on
   assert.equal(context.stepScope('Step', {}), 'Step||');
 });
 
+// OK live run, 2026-10-07: Progressive had filled the owner's driver page itself (nothing to fill,
+// four answers kept), so the driver wasn't counted as entered and the driver list added it again.
+test('the driver page marks its driver entered when its answers were filled or already there', () => {
+  const progressive = { driverPage: 'AddDriver' };
+  const state = { active: { drivers: 0 }, doneActions: new Set(), doneSteps: new Set(), autoPaused: false };
+  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {} };
+  vm.runInNewContext(extractFunction('stepScope') + extractFunction('afterFill'), context);
+  context.afterFill([{ filled: [], kept: [{ label: 'Driver Last Name' }] }], { carrier: progressive, page: 'AddDriver' });
+  assert.ok(state.doneActions.has('driverEntered:0'));
+  state.active.drivers = 1;
+  context.afterFill([{ filled: [], kept: [] }], { carrier: progressive, page: 'AddDriver' });
+  assert.ok(!state.doneActions.has('driverEntered:1'), 'a driver page with nothing on it marks nothing');
+});
+
 test('a Luna request waiting for a follow-up fill belongs to its tab', async () => {
   const h = harness();
   h.state.tab = { ...quoteTab(1, 'CoveragesRates'), carrier: { id: 'progressive' } };

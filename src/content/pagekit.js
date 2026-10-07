@@ -869,8 +869,12 @@
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
       if (loose(c.el.value) === loose(textFor(step, c))) return true;
-      // Carriers standardize addresses to ZIP+4: 17101-1234 is the intake's 17101.
-      if (/zip/i.test(step.path ?? '') && /^\d{5}$/.test(String(step.value))) return String(c.el.value).replace(/\D/g, '').slice(0, 5) === String(step.value);
+      // Carriers standardize addresses to ZIP+4 (and intakes sometimes have it): 17101-1234 is
+      // 17101, whichever side has the +4.
+      if (/zip/i.test(step.path ?? '') && /^\d{5}(?:-?\d{4})?$/.test(String(step.value).trim())) {
+        const five = (v) => String(v ?? '').replace(/\D/g, '').slice(0, 5);
+        return five(c.el.value).length === 5 && five(c.el.value) === five(step.value);
+      }
       if (step.kind === 'money') {
         const amount = (v) => /^\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*$/.test(String(v)) ? Number(String(v).replace(/[$,\s]/g, '')) : null;
         const actual = amount(c.el.value), wanted = amount(step.value);
@@ -894,13 +898,16 @@
 
   function ratesStale() {
     const text = document.body.innerText ?? '';
-    return /\*{4}|(?:must|please|need to) recalculate|premium.*(?:out of date|not current)|changes.*recalculate/i.test(text);
+    // "The coverages have changed, please "recalculate" to see your rate." / "Recalculate to see
+    // coverage cost" (Progressive), or a premium of ****.
+    return /\*{4}|(?:must|please|need to)\W+recalculate|recalculate to see|premium.*(?:out of date|not current)|chang\w*.*recalculate/i.test(text);
   }
 
   function premiumReady() {
     if (pageBusy() || ratesStale()) return false;
     const text = document.body.innerText ?? '';
-    return /(?:total|annual|policy|estimated)\s+premium\s*:?\s*\$\s*[1-9][\d,]*(?:\.\d{2})?/i.test(text);
+    // "Total premium amount $12,815.00 per year" (Progressive), "Total premium: $12,345.67".
+    return /(?:total|annual|policy|estimated)\s+premium(?:\s+amount)?\s*:?\s*\$\s*[1-9][\d,]*(?:\.\d{2})?/i.test(text);
   }
 
   // The page's own "move on" button, only ever used when nothing is left for the agent. Buttons
@@ -987,6 +994,7 @@
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
     const openersTried = new Set();
+    const nudged = new Set();
     // Answers the page changed or cleared after we gave them (a lookup redrawing its boxes, a
     // panel re-rendering), or didn't keep the first time: given again, at most twice each.
     const retries = new Map();
@@ -1295,6 +1303,18 @@
         // Recalculate only when the rates are out of date; otherwise it isn't waited for.
         if (a.needsRecalculation && !ratesStale()) continue;
         const button = findButton(a);
+        // `nudge`: a button that shows only once the page took an answer (Progressive's "Done with
+        // this coverage" after the cargo commodity): with everything else ready and no button, that
+        // answer is picked again, once (the agent's re-pick is what made it show).
+        if (!button && a.nudge && !nudged.has(a.action) && a.after.every(has) && a.afterActions.every((id) => clicked.has(id))) {
+          const pair = pairs.find(({ step }) => step.path === a.nudge && step.value != null);
+          if (pair && agreesWith(pair.step, pair.control)) {
+            nudged.add(a.action);
+            if (pair.control.cmp) pair.control.cmp.fireEvent?.('select', pair.control.cmp, cmpValue(pair.control.cmp, pair.control.el));
+            else setNativeValue(pair.control.el, pair.control.el.value);
+            return true;
+          }
+        }
         // Menu items ("Add Vehicle" under "Add") only show once their menu button is opened.
         if (!button && !a.opener) continue;
         const holds = actions.filter((h) => (a.heldBy ?? []).includes(h.baseAction) && holdOpen(h));
@@ -1402,7 +1422,11 @@
       ...(report.halted ? [report.reason] : []),
     ];
     report.stepKey = stepKey();
-    if (advance && window === window.top && !report.blockers.length && currentPage() === startPage && !pageBusy()
+    // A page the plan expects questions on that shows none yet, with nothing done on it, is still
+    // drawing (Business Owner Info right after the state is picked, OK 2026-10-07): Continue there
+    // only gets "fields are empty" errors. (A tile page that was clicked continues.)
+    const notDrawn = !report.fields && !report.actions.length && plan.some((s) => s.pages?.includes(startPage));
+    if (advance && window === window.top && !report.blockers.length && !notDrawn && currentPage() === startPage && !pageBusy()
       && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)) {
       // The last answer may still be redrawing part of the page (a new payment method reloads the
       // plan list): a Continue clicked meanwhile is lost. Let it finish first.

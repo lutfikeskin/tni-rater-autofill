@@ -280,7 +280,9 @@ export const progressive = {
     // With NTL the cargo helpers are the agent's too (the rest of Rates is, see agentPages).
     { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true && notNtl(r) },
     { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true && notNtl(r) },
-    { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true && notNtl(r) },
+    // OK (2026-10-07): the commodity was chosen but Done didn't show until the agent chose it again
+    // (the category's reload still under way): with no Done, the commodity is chosen again, once.
+    { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', nudge: 'progressive.q216B', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true && notNtl(r) },
     // Rates, as TNI agents work it: once cargo is added (and no GL is requested), open the bill
     // plan options, pick automatic payments there, come back (Continue), then Recalculate, then
     // Print, Email, Fax. With GL or NTL requested the agent does the rates page by hand.
@@ -476,8 +478,11 @@ export const progressive = {
       { q: '28AC', field: 'DriverInput.LicenseStateDup', ask: 'Driver\'s License State', path: 'drivers[].licenseState' },
       { q: '28E6', field: 'DriverInput.HasCDL', ask: 'Does this driver have a Commercial Driver\'s License (CDL)?', path: 'drivers[].cdl', name: 'Has a CDL', kind: 'bool' },
       { q: '28B9', field: 'DriverInput.DriverLicenseNumber', ask: 'Driver’s License Number', path: 'drivers[].licenseNumber' },
+      // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; the agent changes it
+      // when the client has taken one. (299D: the id when it was first seen, after the renumbering.)
+      { q: '299D', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: () => false },
       { q: '28C1', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (standard: No)', kind: 'bool', value: () => false },
-      { q: '28F5', field: 'DriverInput.AnyAccidentsViolationsPastExpYears', ask: ['Has this driver had any accidents, claims or violations in the past 5 years? (since 11/2021)', 'Has this driver had any accidents, claims or violations in the past 3 years? (since 10/2023)', 'Has this driver had any accidents, claims or violations in the past 5 years? (since 10/2021)'], path: 'claims.hasClaims', name: 'Accidents / claims / violations (3 yrs)', kind: 'bool' },
+      { q: '28F5', field: 'DriverInput.AnyAccidentsViolationsPastExpYears', label: '^has this driver had any accidents claims or violations in the past', path: 'claims.hasClaims', name: 'Accidents / claims / violations (3 yrs)', kind: 'bool' },
     ]),
 
     // --- Coverages and rates (CoveragesRates) ----------------------------------------------------
@@ -490,7 +495,7 @@ export const progressive = {
       // Changing PIP makes Progressive invalidate the liability limit, which is picked again.
       { q: '1DB8', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
       { q: '1E8D', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible)', kind: 'choice', value: () => '$10k w/ $0 Deductible' },
-      { q: '1DEE', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
+      { q: '1DEE', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
       // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
       ...[['1DCA', { ask: 'Uninsured Motorist Bodily Injury' }], ['1DDE', { ask: 'Underinsured Motorist Bodily Injury' }], ['1DD8', { field: 'LineInput.UIMBILimit' }], ['1DBF', { field: 'LineInput.UMBILimit' }]]
         .map(([q, which]) => ({ q, ...which, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
@@ -516,8 +521,8 @@ export const progressive = {
       { q: '215A', cargo: 'section', ask: 'Does the customer require cargo coverage for business documents or non-negotiable securities?', name: 'Cargo for business documents (standard: No)', kind: 'bool', value: () => false },
       // TNI: an unselected Reefer option on the intake means this coverage is not requested.
       { q: '215C', cargo: true, ask: 'Does the customer require Refrigeration Breakdown coverage?', path: 'coverage.reeferBreakdown', kind: 'bool', value: (r) => r.coverage.reeferBreakdown === true },
-      { q: '216A', cargo: 'section', withOption: (r) => commodity(r)?.category ?? null, name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null },
-      { q: '216B', cargo: 'section', withOption: (r) => commodity(r)?.commodity ?? null, name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
+      { q: '216A', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargolistOfCommodityCategories', name: 'Cargo commodity category', kind: 'choice', value: (r) => commodity(r)?.category ?? null },
+      { q: '216B', cargo: 'section', field: 'MTCargoCommodityCategories.MTCargoListOfCommodities', name: 'Cargo commodity', kind: 'choice', value: (r) => commodity(r)?.commodity ?? null },
       // The cargo row's limit (its data-model name), then the cargo section's, which reads the same:
       // with the row's taken, "Motor Trucking Cargo" is left with one field, the section's.
       { q: '2150', cargo: 'limit', field: 'LineInput.MotorTruckingCargoLimit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo summary', kind: 'choice', value: cargo, note: cargoNote },

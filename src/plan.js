@@ -48,6 +48,7 @@ function actionSteps(carrier, record, active) {
       heldBy: resolve(a.heldBy) ?? [],
       resolvedBy: a.resolvedBy ?? null,
       opener: a.opener ?? null,
+      nudge: a.nudge ?? null,
       immediate: !!a.immediate,
       after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
       afterAny: (resolve(a.afterAny) ?? []).map((p) => withIndex(p, active)),

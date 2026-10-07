@@ -2124,3 +2124,81 @@ test('a reworded question is answered and flagged; a renamed field is reported a
   assert.equal(dba.input.value, '');
   assert.equal(report.unknown.length, 0);
 });
+
+// OK live run, 2026-10-07: what Progressive's Rates says, in its own words. "Total premium amount
+// $… per year" is a current premium; "please "recalculate"" / "Recalculate to see coverage cost"
+// are out-of-date rates.
+test("Progressive's premium and stale-rates wording are recognized", async () => {
+  const good = premiumHarness({ recalcResult: 'Total premium amount $12,815.00 per year including Electronic Funds Transfer (EFT) discount' });
+  good.h.document.body.innerText = 'The coverages have changed, please "recalculate" to see your rate.';
+  await good.h.kit.fill(coverageActionPlan(), { maxRounds: 4 });
+  assert.equal(good.recalc._clicked, true, 'quoted "recalculate" is out of date');
+  assert.equal(good.bill._clicked, true, '"Total premium amount $…" is a current premium');
+  const cost = premiumHarness({ recalcResult: 'Total premium amount $9,000.00 per year' });
+  cost.h.document.body.innerText = 'Recalculate to see coverage cost';
+  await cost.h.kit.fill(coverageActionPlan(), { maxRounds: 4 });
+  assert.equal(cost.recalc._clicked, true);
+  assert.equal(cost.bill._clicked, true);
+});
+
+test('ZIP+4 on either side is the same ZIP', async () => {
+  for (const [page, intake] of [['74129-1234', '74129'], ['74129', '74129-1234'], ['74129-5678', '74129-1234']]) {
+    const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+    const zip = addExtText(h, 'U', '2B92', { caption: 'Zip code where the vehicle is located', value: page });
+    const report = await h.kit.fill([{ id: 'zip', q: '2B92', field: fieldOf('2B92'), path: 'garaging.zip', kind: 'text', value: intake }], { maxRounds: 2 });
+    assert.equal(report.kept.some((x) => x.differs), false, `${page} vs ${intake}`);
+    assert.equal(zip.input.value, page, 'left as the page has it');
+  }
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  addExtText(h, 'U', '2B92', { caption: 'Zip code where the vehicle is located', value: '74130' });
+  const report = await h.kit.fill([{ id: 'zip', q: '2B92', field: fieldOf('2B92'), path: 'garaging.zip', kind: 'text', value: '74129-1234' }], { maxRounds: 2 });
+  assert.equal(report.kept.some((x) => x.differs), true, 'another ZIP still differs');
+});
+
+test('Continue is not clicked on a page whose questions have not drawn yet', async () => {
+  const plan = [{ id: 'name', q: '230', field: fieldOf('230'), pages: ['BusinessOwnerInfo'], path: 'applicant.name', kind: 'text', value: 'Example LLC' }];
+  const empty = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const start = addButton(empty, 'Ok, start quote.');
+  start.onclick = () => { start._clicked = true; };
+  await empty.kit.fill(plan, { maxRounds: 2, advance: { text: '^(continue|ok,? start quote\\.?)\\W*$' } });
+  assert.equal(start._clicked, undefined, 'nothing drawn yet: no Continue');
+  // A list page with no questions of its own still continues.
+  const list = harness({ ext: true, search: '?pageName=DriverSummary' });
+  const next = addButton(list, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  await list.kit.fill(plan, { maxRounds: 2, advance: { text: '^(continue|ok,? start quote\\.?)\\W*$' } });
+  assert.equal(next._clicked, true);
+});
+
+test('a button that shows only once the page took an answer: the answer is picked again, once', async () => {
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const commodity = new SelectNode([{ text: '', value: '' }, { text: 'Other Consumer Goods', value: 'ocg' }],
+    { id: `f_c${'A'.repeat(32)}21AB_1_1`, attrs: { fieldref: 'MTCargoCommodityCategories.MTCargoListOfCommodities' } });
+  commodity.value = 'ocg';
+  h.document.body.append(commodity);
+  let picks = 0;
+  commodity.addEventListener('change', () => { picks++; if (picks === 1) { const done = addButton(h, 'Done with this coverage'); done.onclick = () => { done._clicked = true; h.done = done; }; } });
+  const plan = [
+    { id: 'commodity', q: '216B', field: 'MTCargoCommodityCategories.MTCargoListOfCommodities', path: 'progressive.q216B', kind: 'choice', value: 'Other Consumer Goods', cargo: 'section' },
+    { id: 'done', kind: 'action', action: 'doneCargo', text: '^done with this coverage$', pages: ['CoveragesRates'], after: ['progressive.q216B'], afterAny: [], afterActions: [], afterPages: [], unless: [], nudge: 'progressive.q216B' },
+  ];
+  await h.kit.fill(plan, { maxRounds: 6 });
+  assert.equal(picks, 1, 'picked again once');
+  assert.equal(h.done?._clicked, true, 'then Done');
+});
+
+test('a question whose wording carries a date is not flagged as reworded when the date moves', async () => {
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+  const plan = buildPlan(record, progressive).filter((s) => ['28F5', '299D'].includes(s.q));
+  const h = harness({ search: '?pageName=AddDriver' });
+  const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
+  const accidents = yesNo('DriverInput.AnyAccidentsViolationsPastExpYears', 'Has this driver had any accidents, claims or violations in the past 3 years? (since 11/2023)');
+  const defensive = yesNo('DriverInput.DefensiveDriverDiscount', 'Defensive Driver Discount');
+  h.document.body.append(accidents, defensive);
+  const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+  assert.equal(report.reworded.length, 0);
+  assert.equal(report.checks.length, 0);
+  assert.equal(accidents.children.find((r) => r.checked)?.value, 'No');
+  assert.equal(defensive.children.find((r) => r.checked)?.value, 'No', 'defensive driver discount: standard No');
+  assert.equal(report.unknown.length, 0);
+});
