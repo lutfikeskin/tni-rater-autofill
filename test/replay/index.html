@@ -274,7 +274,7 @@
       const plan = buildPlan(record, carrier, {});
       const before = window.__raterKit.capture(plan, []).controls;
       const r = await window.__raterKit.fill(plan, {
-        optional: carrier?.optional ?? [], replaceChoices: !!carrier?.replaceChoices,
+        replaceChoices: !!carrier?.replaceChoices,
         doneActions: [...done.actions], visitedPages: [...done.pages],
         advance: carrier?.advance ?? null,
       });
@@ -288,6 +288,8 @@
         noData: r.noData.map((x) => x.label + (x.note ? ` (${x.note})` : '')),
         failed: r.failed.map((x) => `${x.label}: ${x.reason}`),
         unmapped: before.filter((c) => !c.wouldFill).map((c) => c.label),
+        // What kept the page from being continued (the panel's "needs you" list).
+        blockers: [...r.blockers],
       };
     }
 

@@ -1,7 +1,7 @@
 // Rule coverage of the questions agents actually met: every field of a recorded layout (built from
 // page_layout events, or a committed fixture) is matched against the current carrier rules the way
-// the fill engine pairs them (question id, then selector / data-id, then option, then label regex),
-// without a browser. A question no rule claims is one the extension leaves to the agent as
+// the fill engine pairs them (pagekit assign: data-model name, then the question's text on its page,
+// then option, selector / data-id, then label regex; never a question id), without a browser. A question no rule claims is one the extension leaves to the agent as
 // "unfamiliar": either a TNI rule is missing, or the carrier changed its page.
 
 import fs from 'node:fs';
@@ -26,11 +26,21 @@ function selectorMatch(selector, f) {
   return unknown ? 'unknown' : 'no';
 }
 
-// Like pagekit's assign(): exact targets (question id, selector, option) first; a rule's label
-// regex still applies when its exact target isn't there (a redraw without the question id).
-function claims(rule, f) {
-  if (rule.q && f.q === rule.q) return true;
-  if (rule.q && f.q) return false;
+const textIs = (rule, f) => {
+  const text = squash(f.caption);
+  return !!text && ([].concat(rule.ask ?? []).some((a) => squash(a) === text)
+    || (!!rule.label && new RegExp(rule.label, 'i').test(text) && !(rule.not && new RegExp(rule.not, 'i').test(text))));
+};
+const onPage = (rule, page) => !rule.page || page == null || [].concat(rule.page).includes(page);
+
+// Like pagekit's assign(). A data-model name (`field`) claims its field on any page; a layout
+// recorded before names were kept (0.9.9) is judged by the rule's expected wording instead, as the
+// live page always carries the name. A question's text (`ask`, or `label` on its page) claims a
+// field no rule knows by name. A question id never claims anything (Progressive renumbers them).
+function claims(rule, f, page, named) {
+  if (rule.field) return f.ref ? f.ref === rule.field : (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f);
+  if ((rule.ask || rule.label) && rule.page) return onPage(rule, page) && !(f.ref && named.has(f.ref)) && textIs(rule, f);
+  if (!onPage(rule, page)) return false;
   if (rule.selector) {
     const m = selectorMatch(rule.selector, f);
     if (m !== 'no') return m === 'yes' || 'unknown';
@@ -46,11 +56,16 @@ function claims(rule, f) {
 
 // What happens to a field: filled by a rule, left alone on purpose (ignore), left for the agent
 // on purpose (note), or unclaimed. `unsure` when only a DOM-only selector might match.
-export function fieldStatus(f, carrier) {
-  const rules = [...(carrier.rules ?? []), ...(carrier.useGenericRules === false ? [] : GENERIC_RULES)];
+export function fieldStatus(f, carrier, page = null) {
+  const all = [...(carrier.rules ?? []), ...(carrier.useGenericRules === false ? [] : GENERIC_RULES)];
+  // Known questions (a name, a text on its page, an option or a selector) before label rules, as
+  // the fill engine pairs them.
+  const known = (r) => !!(r.field || ((r.ask || r.label) && r.page) || r.selector || r.withOption);
+  const rules = [...all.filter(known), ...all.filter((r) => !known(r))];
+  const named = new Set(rules.map((r) => r.field).filter(Boolean));
   let unsure = null;
   for (const rule of rules) {
-    const hit = claims(rule, f);
+    const hit = claims(rule, f, page, named);
     if (hit === 'unknown') { unsure ??= rule; continue; }
     if (!hit) continue;
     const how = typeof rule.ignore === 'function' || rule.ignore ? 'ignored' : rule.note && !rule.value ? 'agent' : 'filled';
@@ -64,7 +79,7 @@ export function coverage(layout, carrier, { mockIds = null } = {}) {
   const totals = { fields: 0, filled: 0, ignored: 0, agent: 0, unsure: 0, none: 0, notInMock: 0 };
   for (const [page, p] of Object.entries(layout.pages ?? {})) {
     const rows = (p.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.caption ?? '')).map((f) => {
-      const s = fieldStatus(f, carrier);
+      const s = fieldStatus(f, carrier, page);
       // The page's own id/data-id isn't in the mock: the carrier changed the page, or the mock
       // misses a conditional part of it.
       const notInMock = !!mockIds && !!(f.id || f.dataId) && !mockIds.has(f.id) && !mockIds.has(f.dataId);

@@ -1,20 +1,21 @@
 {
  "test/bakeoff/course-MD-expediter-van.json": {
   "questions": 82,
-  "filled": 61,
+  "filled": 59,
   "failed": 2,
-  "unmapped": 1,
+  "unmapped": 2,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
     "questions": 32,
-    "filled": 21,
+    "filled": 19,
     "failed": [
      "Home Address: the page offered no address suggestion; check the address, city and ZIP",
      "Street Address: the page offered no address suggestion; check the address, city and ZIP"
     ],
     "noData": 0,
-    "unmapped": 0,
+    "unmapped": 2,
+    "blockers": 7,
     "clicked": [
      "Verify DOT"
     ]
@@ -25,6 +26,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Cargo Van",
      "Continue ›"
@@ -36,6 +38,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Lookup VIN",
      "Continue ›"
@@ -47,6 +50,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -57,6 +61,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -67,6 +72,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -76,7 +82,8 @@
     "filled": 14,
     "failed": [],
     "noData": 0,
-    "unmapped": 1,
+    "unmapped": 0,
+    "blockers": 2,
     "clicked": [
      "+"
     ]
@@ -87,6 +94,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -97,6 +105,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Print/Send",
      "Continue ›"
@@ -104,11 +113,11 @@
    }
   }
  },
- "captures/progressive/generated/progressive_IA_expediter_van.json": {
+ "test/fixtures/progressive/progressive_IA_expediter_van.json": {
   "questions": 101,
-  "filled": 67,
+  "filled": 65,
   "failed": 1,
-  "unmapped": 0,
+  "unmapped": 5,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
@@ -119,17 +128,17 @@
     ],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "MostCommonVehicles": {
     "questions": 6,
     "filled": 5,
     "failed": [],
-    "noData": 0,
+    "noData": 1,
     "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
+    "blockers": 1,
+    "clicked": []
    },
    "AddVehicle": {
     "questions": 11,
@@ -137,6 +146,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -147,6 +157,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -157,6 +168,7 @@
     "failed": [],
     "noData": 1,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "MoreAboutBusiness": {
@@ -165,570 +177,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "CoveragesRates": {
-    "questions": 22,
-    "filled": 16,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "ChangePaymentPlan": {
-    "questions": 4,
-    "filled": 1,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   }
-  }
- },
- "captures/progressive/generated/progressive_IN_expediter_van.json": {
-  "questions": 112,
-  "filled": 79,
-  "failed": 2,
-  "unmapped": 0,
-  "issues": [],
-  "pages": {
-   "BusinessOwnerInfo": {
-    "questions": 23,
-    "filled": 12,
-    "failed": [
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "BECAPopup": {
-    "questions": 25,
-    "filled": 13,
-    "failed": [
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MostCommonVehicles": {
-    "questions": 6,
-    "filled": 5,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddVehicle": {
-    "questions": 9,
-    "filled": 8,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddDriver": {
-    "questions": 4,
-    "filled": 4,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "MoreAboutBusiness": {
-    "questions": 29,
-    "filled": 24,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "CoveragesRates": {
-    "questions": 12,
-    "filled": 12,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "ChangePaymentPlan": {
-    "questions": 4,
-    "filled": 1,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   }
-  }
- },
- "captures/progressive/generated/progressive_MD_expediter_van.json": {
-  "questions": 105,
-  "filled": 68,
-  "failed": 4,
-  "unmapped": 3,
-  "issues": [],
-  "pages": {
-   "BusinessOwnerInfo": {
-    "questions": 37,
-    "filled": 21,
-    "failed": [
-     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
-     "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])",
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP",
-     "Business type list: no option matches \"For Hire Trucking\""
-    ],
-    "noData": 0,
-    "unmapped": 3,
-    "clicked": []
-   },
-   "AddVehicle": {
-    "questions": 12,
-    "filled": 10,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddDriver": {
-    "questions": 4,
-    "filled": 4,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "MoreAboutBusiness": {
-    "questions": 12,
-    "filled": 7,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "CoveragesRates": {
-    "questions": 15,
-    "filled": 14,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "ChangePaymentPlan": {
-    "questions": 4,
-    "filled": 1,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "PrintEmailFax": {
-    "questions": 6,
-    "filled": 2,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "SaveQuote": {
-    "questions": 8,
-    "filled": 3,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MostCommonVehicles": {
-    "questions": 6,
-    "filled": 5,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "Filings": {
-    "questions": 1,
-    "filled": 1,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   }
-  }
- },
- "captures/progressive/generated/progressive_NC_freight-hauler_box-truck.json": {
-  "questions": 95,
-  "filled": 59,
-  "failed": 4,
-  "unmapped": 0,
-  "issues": [],
-  "pages": {
-   "BusinessOwnerInfo": {
-    "questions": 25,
-    "filled": 13,
-    "failed": [
-     "Home Address: the page offered no address suggestion; check the address, city and ZIP",
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP",
-     "Business type list: no option matches \"For Hire Trucking\""
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MostCommonVehicles": {
-    "questions": 6,
-    "filled": 4,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddVehicle": {
-    "questions": 11,
-    "filled": 7,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddDriver": {
-    "questions": 6,
-    "filled": 6,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "MoreAboutBusiness": {
-    "questions": 11,
-    "filled": 6,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "CoveragesRates": {
-    "questions": 12,
-    "filled": 12,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "VehicleSummary": {
-    "questions": 20,
-    "filled": 10,
-    "failed": [
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "ChangePaymentPlan": {
-    "questions": 4,
-    "filled": 1,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   }
-  }
- },
- "captures/progressive/generated/progressive_OH_expediter_van.json": {
-  "questions": 104,
-  "filled": 64,
-  "failed": 5,
-  "unmapped": 0,
-  "issues": [],
-  "pages": {
-   "BusinessOwnerInfo": {
-    "questions": 26,
-    "filled": 13,
-    "failed": [
-     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
-     "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])",
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "BECAPopup": {
-    "questions": 26,
-    "filled": 13,
-    "failed": [
-     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MostCommonVehicles": {
-    "questions": 6,
-    "filled": 5,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddVehicle": {
-    "questions": 7,
-    "filled": 6,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddDriver": {
-    "questions": 5,
-    "filled": 5,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "MoreAboutBusiness": {
-    "questions": 12,
-    "filled": 7,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "CoveragesRates": {
-    "questions": 12,
-    "filled": 12,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "ChangePaymentPlan": {
-    "questions": 4,
-    "filled": 1,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "PrintEmailFax": {
-    "questions": 6,
-    "filled": 2,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   }
-  }
- },
- "captures/progressive/generated/progressive_PA_expediter_van.json": {
-  "questions": 111,
-  "filled": 85,
-  "failed": 1,
-  "unmapped": 0,
-  "issues": [],
-  "pages": {
-   "BusinessOwnerInfo": {
-    "questions": 22,
-    "filled": 12,
-    "failed": [
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MostCommonVehicles": {
-    "questions": 6,
-    "filled": 5,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddVehicle": {
-    "questions": 10,
-    "filled": 9,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddDriver": {
-    "questions": 5,
-    "filled": 5,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "NoHit": {
-    "questions": 9,
-    "filled": 6,
-    "failed": [],
-    "noData": 1,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MoreAboutBusiness": {
-    "questions": 30,
-    "filled": 25,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "CoveragesRates": {
-    "questions": 25,
-    "filled": 22,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "ChangePaymentPlan": {
-    "questions": 4,
-    "filled": 1,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   }
-  }
- },
- "test/fixtures/progressive/progressive_IA_expediter_van.json": {
-  "questions": 101,
-  "filled": 64,
-  "failed": 1,
-  "unmapped": 6,
-  "issues": [],
-  "pages": {
-   "BusinessOwnerInfo": {
-    "questions": 22,
-    "filled": 12,
-    "failed": [
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MostCommonVehicles": {
-    "questions": 6,
-    "filled": 5,
-    "failed": [],
-    "noData": 1,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "AddVehicle": {
-    "questions": 11,
-    "filled": 10,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddDriver": {
-    "questions": 5,
-    "filled": 5,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "NoHit": {
-    "questions": 19,
-    "filled": 10,
-    "failed": [],
-    "noData": 1,
-    "unmapped": 1,
-    "clicked": []
-   },
-   "MoreAboutBusiness": {
-    "questions": 12,
-    "filled": 7,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -739,6 +188,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 5,
+    "blockers": 4,
     "clicked": []
    },
    "ChangePaymentPlan": {
@@ -747,6 +197,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -768,6 +219,7 @@
     ],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "MostCommonVehicles": {
@@ -776,6 +228,7 @@
     "failed": [],
     "noData": 4,
     "unmapped": 0,
+    "blockers": 4,
     "clicked": []
    },
    "AddVehicle": {
@@ -784,6 +237,7 @@
     "failed": [],
     "noData": 3,
     "unmapped": 0,
+    "blockers": 3,
     "clicked": []
    },
    "AddDriver": {
@@ -792,6 +246,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -802,6 +257,7 @@
     "failed": [],
     "noData": 1,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "MoreAboutBusiness": {
@@ -810,6 +266,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -820,6 +277,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 5,
+    "blockers": 4,
     "clicked": []
    },
    "ChangePaymentPlan": {
@@ -828,6 +286,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -838,6 +297,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -859,6 +319,7 @@
     ],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "BECAPopup": {
@@ -869,6 +330,7 @@
     ],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "MostCommonVehicles": {
@@ -877,6 +339,7 @@
     "failed": [],
     "noData": 1,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "AddVehicle": {
@@ -885,6 +348,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -895,6 +359,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -905,6 +370,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 1,
+    "blockers": 2,
     "clicked": []
    },
    "CoveragesRates": {
@@ -913,6 +379,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -923,6 +390,89 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ]
+   }
+  }
+ },
+ "test/fixtures/progressive/progressive_NJ_expediter_van.json": {
+  "questions": 78,
+  "filled": 47,
+  "failed": 1,
+  "unmapped": 0,
+  "issues": [],
+  "pages": {
+   "BusinessOwnerInfo": {
+    "questions": 22,
+    "filled": 12,
+    "failed": [
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
+    ],
+    "noData": 0,
+    "unmapped": 0,
+    "blockers": 1,
+    "clicked": []
+   },
+   "MostCommonVehicles": {
+    "questions": 7,
+    "filled": 6,
+    "failed": [],
+    "noData": 1,
+    "unmapped": 0,
+    "blockers": 1,
+    "clicked": []
+   },
+   "AddVehicle": {
+    "questions": 16,
+    "filled": 8,
+    "failed": [],
+    "noData": 0,
+    "unmapped": 0,
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ]
+   },
+   "AddDriver": {
+    "questions": 5,
+    "filled": 5,
+    "failed": [],
+    "noData": 0,
+    "unmapped": 0,
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ]
+   },
+   "MoreAboutBusiness": {
+    "questions": 9,
+    "filled": 4,
+    "failed": [],
+    "noData": 0,
+    "unmapped": 0,
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ]
+   },
+   "CoveragesRates": {
+    "questions": 15,
+    "filled": 11,
+    "failed": [],
+    "noData": 1,
+    "unmapped": 0,
+    "blockers": 1,
+    "clicked": []
+   },
+   "ChangePaymentPlan": {
+    "questions": 4,
+    "filled": 1,
+    "failed": [],
+    "noData": 0,
+    "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -931,9 +481,9 @@
  },
  "test/fixtures/progressive/progressive_NC_freight-hauler_box-truck.json": {
   "questions": 95,
-  "filled": 56,
-  "failed": 3,
-  "unmapped": 13,
+  "filled": 59,
+  "failed": 4,
+  "unmapped": 0,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
@@ -946,6 +496,7 @@
     ],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 3,
     "clicked": []
    },
    "MostCommonVehicles": {
@@ -954,6 +505,7 @@
     "failed": [],
     "noData": 1,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "AddVehicle": {
@@ -962,6 +514,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -972,6 +525,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -982,6 +536,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -992,16 +547,20 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
    },
    "VehicleSummary": {
     "questions": 20,
-    "filled": 7,
-    "failed": [],
+    "filled": 10,
+    "failed": [
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
+    ],
     "noData": 0,
-    "unmapped": 13,
+    "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "ChangePaymentPlan": {
@@ -1010,6 +569,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1019,8 +579,8 @@
  "test/fixtures/progressive/progressive_MD_expediter_van.json": {
   "questions": 105,
   "filled": 68,
-  "failed": 3,
-  "unmapped": 10,
+  "failed": 4,
+  "unmapped": 3,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
@@ -1029,10 +589,12 @@
     "failed": [
      "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
      "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])",
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP",
      "Business type list: no option matches \"For Hire Trucking\""
     ],
     "noData": 0,
-    "unmapped": 4,
+    "unmapped": 3,
+    "blockers": 10,
     "clicked": []
    },
    "AddVehicle": {
@@ -1041,6 +603,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1051,6 +614,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1061,6 +625,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1070,8 +635,11 @@
     "filled": 14,
     "failed": [],
     "noData": 0,
-    "unmapped": 1,
-    "clicked": []
+    "unmapped": 0,
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ]
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -1079,6 +647,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1089,6 +658,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1098,7 +668,8 @@
     "filled": 3,
     "failed": [],
     "noData": 0,
-    "unmapped": 5,
+    "unmapped": 0,
+    "blockers": 0,
     "clicked": []
    },
    "MostCommonVehicles": {
@@ -1107,6 +678,7 @@
     "failed": [],
     "noData": 1,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "Filings": {
@@ -1115,6 +687,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1138,6 +711,7 @@
     ],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 3,
     "clicked": []
    },
    "BECAPopup": {
@@ -1149,6 +723,7 @@
     ],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 2,
     "clicked": []
    },
    "MostCommonVehicles": {
@@ -1157,6 +732,7 @@
     "failed": [],
     "noData": 1,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "AddVehicle": {
@@ -1165,6 +741,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1175,6 +752,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1185,6 +763,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1195,6 +774,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1205,6 +785,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1215,6 +796,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1236,6 +818,7 @@
     ],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "MostCommonVehicles": {
@@ -1244,6 +827,7 @@
     "failed": [],
     "noData": 1,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "AddVehicle": {
@@ -1252,6 +836,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1262,6 +847,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1272,6 +858,7 @@
     "failed": [],
     "noData": 1,
     "unmapped": 0,
+    "blockers": 1,
     "clicked": []
    },
    "MoreAboutBusiness": {
@@ -1280,6 +867,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 7,
+    "blockers": 14,
     "clicked": []
    },
    "CoveragesRates": {
@@ -1288,6 +876,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]
@@ -1298,251 +887,7 @@
     "failed": [],
     "noData": 0,
     "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   }
-  }
- },
- "test/fixtures/progressive/progressive_NJ_expediter_van.json": {
-  "questions": 78,
-  "filled": 47,
-  "failed": 1,
-  "unmapped": 0,
-  "issues": [],
-  "pages": {
-   "BusinessOwnerInfo": {
-    "questions": 22,
-    "filled": 12,
-    "failed": [
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MostCommonVehicles": {
-    "questions": 7,
-    "filled": 6,
-    "failed": [],
-    "noData": 1,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "AddVehicle": {
-    "questions": 16,
-    "filled": 8,
-    "failed": [],
-    "noData": 1,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "AddDriver": {
-    "questions": 5,
-    "filled": 5,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "MoreAboutBusiness": {
-    "questions": 9,
-    "filled": 4,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "CoveragesRates": {
-    "questions": 15,
-    "filled": 11,
-    "failed": [],
-    "noData": 1,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "ChangePaymentPlan": {
-    "questions": 4,
-    "filled": 1,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   }
-  }
- },
- "captures/progressive/generated/progressive_FL_expediter_van.json": {
-  "questions": 110,
-  "filled": 70,
-  "failed": 1,
-  "unmapped": 0,
-  "issues": [],
-  "pages": {
-   "BusinessOwnerInfo": {
-    "questions": 26,
-    "filled": 16,
-    "failed": [
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MostCommonVehicles": {
-    "questions": 9,
-    "filled": 5,
-    "failed": [],
-    "noData": 3,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "AddVehicle": {
-    "questions": 12,
-    "filled": 8,
-    "failed": [],
-    "noData": 3,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "AddDriver": {
-    "questions": 9,
-    "filled": 8,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "NoHit": {
-    "questions": 9,
-    "filled": 6,
-    "failed": [],
-    "noData": 1,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MoreAboutBusiness": {
-    "questions": 13,
-    "filled": 8,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "CoveragesRates": {
-    "questions": 22,
-    "filled": 16,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "ChangePaymentPlan": {
-    "questions": 4,
-    "filled": 1,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "PrintEmailFax": {
-    "questions": 6,
-    "filled": 2,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   }
-  }
- },
- "captures/progressive/generated/progressive_NJ_expediter_van.json": {
-  "questions": 78,
-  "filled": 47,
-  "failed": 1,
-  "unmapped": 0,
-  "issues": [],
-  "pages": {
-   "BusinessOwnerInfo": {
-    "questions": 22,
-    "filled": 12,
-    "failed": [
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
-    ],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": []
-   },
-   "MostCommonVehicles": {
-    "questions": 7,
-    "filled": 6,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddVehicle": {
-    "questions": 16,
-    "filled": 8,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "AddDriver": {
-    "questions": 5,
-    "filled": 5,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "MoreAboutBusiness": {
-    "questions": 9,
-    "filled": 4,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "CoveragesRates": {
-    "questions": 15,
-    "filled": 11,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "clicked": [
-     "Continue ›"
-    ]
-   },
-   "ChangePaymentPlan": {
-    "questions": 4,
-    "filled": 1,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
+    "blockers": 0,
     "clicked": [
      "Continue ›"
     ]

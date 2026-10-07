@@ -216,7 +216,7 @@ test('progressive: fixes from the first live usage log', () => {
   assert.equal(byQ('2AA').kind, 'address-suggest');
   assert.equal(byQ('2AA').value, '125 Maple Leaf Dr Apt 4, Springfield, IL 62704');
   assert.equal(byQ('2A9').value, '125 Maple Leaf Dr Apt 4, Springfield, IL 62704');
-  assert.equal(byQ('2091').value, 45000);
+  assert.equal(byQ('2CE8').value, 45000);
   assert.equal(byQ('2AE').value, '62704');
   assert.equal(byQ('28B9').value, 'ILS12345678901');
 });

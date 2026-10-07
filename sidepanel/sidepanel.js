@@ -1645,9 +1645,18 @@ function renderReport(frames) {
     ...kept.filter((x) => !x.differs).map((x) => [x.label, 'left as the page had it']),
     ...all('skipped').map((x) => [x.label, 'ignored']),
   ];
+  // The carrier probably changed this page (pagekit: a known field renamed, or most questions
+  // unfamiliar). The rest still filled; Continue waits for the agent.
+  const renamedNames = all('renamed').map((x) => '"' + x.name + '"').join(', ');
+  const pageChanged = frames.some((f) => f.pageChanged)
+    ? (state.tab?.carrier?.name ?? 'The carrier') + ' seems to have changed this page: ' + all('unknown').length + " question(s) aren't known"
+      + (renamedNames ? ', and ' + renamedNames + " moved to a field the extension doesn't know" : '')
+      + ". They're left for you and Continue waits. Please report it (a Capture page layout helps)."
+    : null;
   box.replaceChildren(...[
     agentPage ? h('p', { class: 'agent-page' }, agentPage) : null,
     frames.some((f) => f.halted) ? h('p', { class: 'card bad' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then click Fill this page to retry.`) : null,
+    pageChanged ? h('p', { class: 'card bad' }, pageChanged) : null,
     h('div', { class: 'card summary' },
       h('div', { class: 'summary-line' }, h('b', {}, `Filled ${filled.length} of ${fields} questions`),
         h('span', { class: 'small muted' }, advanced ? `Clicked "${advanced}"` : needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you` : 'Nothing left for you')),

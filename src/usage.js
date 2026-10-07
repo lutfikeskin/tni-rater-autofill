@@ -180,9 +180,14 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     // Why the page wasn't continued: "differs: Zip code", "button: recalculate", … (no values).
     blockerList: all('blockers').slice(0, 12).map((b) => redact(String(b)).slice(0, 120)),
     advanced: frames.find((f) => f.advanced)?.advanced ?? null,
+    // The carrier probably changed the page (pagekit fill): known fields reworded or renamed.
+    pageChanged: frames.some((f) => f.pageChanged),
+    reworded: all('reworded').length,
+    renamed: all('renamed').slice(0, 12).map((x) => ({ name: redact(x.name), field: x.field ?? null, now: x.now ?? null })),
   }];
   const item = (result) => (x) => ({
     type: 'fill_field', carrier, page, view, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
+    how: x.how ?? undefined,
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
     reason: x.reason ? redact(x.reason) : undefined,
     options: x.options?.map(redact),

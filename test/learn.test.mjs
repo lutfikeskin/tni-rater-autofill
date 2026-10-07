@@ -103,3 +103,23 @@ test('the steps of a one-address application are pages of their own in built lay
   assert.deepEqual(Object.keys(pages), ['/application/businessauto › Vehicles', '/application/businessauto › Coverages']);
   assert.equal(pages['/application/businessauto › Vehicles'].fields[0].cond, undefined, 'not a follow-up: on every layout of its step');
 });
+
+// Codex on PR #43: Progressive renumbered its questions on 2026-10-07. The same question recorded
+// before (267), after (29E) and with its data-model name (0.9.9) is one field of the page; two
+// questions reading the same ("City" of the business and of the owner) stay two.
+test('layouts: one question across the renumbering is one field; repeated texts stay apart', () => {
+  const context = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: [] };
+  const layout = (t, fields) => ({ type: 'page_layout', t, session: t, carrier: 'progressive', page: 'BusinessOwnerInfo', context, fields });
+  const trucker = (q, ref) => ({ q, ref, kind: 'select', label: 'Type of Trucker', options: ['Other For-Hire Trucking'] });
+  const cities = (a, b) => [{ q: a, kind: 'text', label: 'City' }, { q: b, kind: 'text', label: 'City' }];
+  const pages = buildLayouts([
+    layout('2026-10-05T10:00:00Z', [trucker('267'), ...cities('286', '2B0')]),
+    layout('2026-10-07T08:00:00Z', [trucker('29E'), ...cities('2BD', '2E7')]),
+    layout('2026-10-07T12:00:00Z', [trucker('29E', 'AccountInput.SpecificTruckHaulContractType')]),
+  ])[0].layout.pages;
+  const fields = pages.BusinessOwnerInfo.fields;
+  const truckers = fields.filter((f) => f.caption === 'Type of Trucker');
+  assert.equal(truckers.length, 1);
+  assert.equal(truckers[0].ref, 'AccountInput.SpecificTruckHaulContractType');
+  assert.equal(fields.filter((f) => f.caption === 'City').length, 2);
+});

@@ -126,6 +126,8 @@ function fieldSteps(rules, record, carrier, active) {
       optional: !!rule.optional,
       // The registered business names a USDOT lookup offers (checked against the intake).
       registeredName: !!rule.registeredName,
+      // Progressive's cargo questions: 'section' (the commodity section), 'limit', or true.
+      cargo: rule.cargo ?? null,
       selector: rule.repeatSelector ? rule.repeatSelector(record, active) : rule.selector ?? null,
       re: rule.label ?? null,
       ex: rule.not ?? null,

@@ -278,6 +278,26 @@ test('fill report omits absent sections without rendering null text', () => {
   assert.ok(box.children.every((child) => child != null && child !== false), 'DOM replaceChildren must receive only actual report nodes');
 });
 
+// Fable on PR #43: a page the carrier changed (a known field renamed, most questions unfamiliar)
+// says so at the top of the report.
+test('fill report says when the carrier seems to have changed the page', () => {
+  const box = { className: '', children: [], replaceChildren(...children) { this.children = children; } };
+  const context = {
+    $: () => box,
+    state: { tab: { id: 1, url: 'https://example.test/?pageName=BusinessOwnerInfo', carrier: { name: 'Progressive' } } },
+    pageOf: () => 'BusinessOwnerInfo',
+    h: (tag, props, ...children) => ({ tag, props, children }),
+  };
+  vm.runInNewContext(extractFunction('renderReport'), context);
+  const frame = { fields: 8, filled: [], kept: [], failed: [], noData: [], leftRequired: [], actions: [], unknown: Array.from({ length: 5 }, (_, i) => ({ label: `Q${i}`, key: `k${i}` })), renamed: [{ name: 'Business / sole proprietor name' }], pageChanged: true };
+  context.renderReport([frame]);
+  const alarm = box.children.find((c) => c?.tag === 'p' && /changed this page/.test(c.children[0]));
+  assert.ok(alarm, 'the alarm is shown');
+  assert.match(alarm.children[0], /^Progressive seems to have changed this page: 5 question\(s\) aren't known, and "Business \/ sole proprietor name" moved/);
+  context.renderReport([{ ...frame, pageChanged: false }]);
+  assert.ok(!box.children.some((c) => c?.tag === 'p' && /changed this page/.test(c.children[0])));
+});
+
 test('ignore button skips only the chosen field on the current page and resumes filling', async () => {
   const state = { tab: { id: 1, url: 'Rates' }, agentKeys: new Map(), filling: false, autoPaused: true };
   const calls = [];

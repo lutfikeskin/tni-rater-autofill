@@ -8,7 +8,7 @@ Define the initial supported scope: carrier/product, states, operations, vehicle
 
 Capture live page layouts and the answers that reveal follow-up questions within the authorized quoting workflow: name a scenario, capture, change one answer, capture again (Capture page layout or Alt+Shift+C), then `npm run captures` for the before/after of each step. Saved HTML/PDFs go in ignored `layouts/`; scrub derived fixtures. A saved page describes one visible state, often without runtime dropdown choices or hidden server-generated branches.
 
-For each discovered question, record its target (by something the carrier keeps: a data-model name, an element name, or the question's text on its page, not a generated number), meaning, options, source of the answer, entity, applicability, and unresolved decisions. Include known combinations that change the flow. Do not infer all conditional behavior from a union of captured fields.
+For each discovered question, record its target by a locator the carrier's own code depends on (a data-model name, element id/name, or data-id), scoped to its page or step; the question's text is the fallback where there is none and the check elsewhere. A generated number, a position, or a label alone is never a locator. Record also its meaning, options, source of the answer, entity, applicability, and unresolved decisions. Include known combinations that change the flow. Do not infer all conditional behavior from a union of captured fields.
 
 ## Implement the adapter
 

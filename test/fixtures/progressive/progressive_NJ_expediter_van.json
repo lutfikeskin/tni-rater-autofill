@@ -25,6 +25,7 @@
    "fields": [
     {
      "q": "18F",
+     "ref": "AgencyInfo.AgencyCodeAgent",
      "name": "f_a9D6C93D7EB834BC993AF0ECBC710DA3818F_8_1-inputEl",
      "kind": "combo",
      "caption": "Agent Code",
@@ -33,6 +34,7 @@
     },
     {
      "q": "194",
+     "ref": "PolicyInput.EffectiveDate",
      "name": "date_194|mm/dd/yyyy",
      "kind": "date",
      "caption": "When should this Progressive Commercial Auto policy start?",
@@ -41,6 +43,7 @@
     },
     {
      "q": "198",
+     "ref": "AccountInput.PGRInsuredIndicator",
      "name": "boolean_198",
      "kind": "radio",
      "caption": "Is the customer currently insured with Progressive Commercial Auto?",
@@ -53,6 +56,7 @@
     },
     {
      "q": "1CC",
+     "ref": "Warehouse.QuoteVendorCode",
      "name": "string_1CC|",
      "kind": "text",
      "caption": "Quote Vendor Code",
@@ -61,6 +65,7 @@
     },
     {
      "q": "1ED",
+     "ref": "USDOTInput.Question",
      "name": "string_1ED",
      "kind": "radio",
      "caption": "Does the customer have a USDOT Number?",
@@ -74,6 +79,7 @@
     },
     {
      "q": "22D",
+     "ref": "AccountInput.BusinessStructure",
      "name": "string_22D",
      "kind": "radio",
      "caption": "How is the customer's business structured?",
@@ -87,6 +93,7 @@
     },
     {
      "q": "233",
+     "ref": "AccountInput.DBA",
      "name": "string_233|",
      "kind": "text",
      "caption": "DBA Name",
@@ -95,6 +102,7 @@
     },
     {
      "q": "267",
+     "ref": "AccountInput.SpecificTruckHaulContractType",
      "name": "f_aA9EA803A058A437790E1F96D46292ED0267_8_1-inputEl",
      "kind": "combo",
      "caption": "Type of Trucker",
@@ -131,6 +139,7 @@
     },
     {
      "q": "27E",
+     "ref": "PrimaryBusinessAddressOutputNonShredded.StreetAddressDup",
      "name": "string_27E|",
      "kind": "text",
      "caption": "Street Address",
@@ -147,6 +156,7 @@
     },
     {
      "q": "284",
+     "ref": "PrimaryBusinessAddressInput.ZipCode",
      "name": "string_284|zipcode",
      "kind": "text",
      "caption": "Zip Code",
@@ -155,6 +165,7 @@
     },
     {
      "q": "286",
+     "ref": "PrimaryBusinessAddressInput.City",
      "name": "string_286|",
      "kind": "text",
      "caption": "City",
@@ -163,6 +174,7 @@
     },
     {
      "q": "295",
+     "ref": "AccountInput.BusinessOwnerName",
      "name": "string_295|regex:^[a-zA-Z0-9-' ]*$:What you entered is invalid - please enter letters, numbers, hyphen  (-), or apostrophe (') only.",
      "kind": "text",
      "caption": "Business Owner's Name",
@@ -171,6 +183,7 @@
     },
     {
      "q": "296",
+     "ref": "AccountInput.BusinessOwnerMiddleInitial",
      "name": "string_296|regex:^[A-Za-z ]*$:Enter only Letters",
      "kind": "text",
      "caption": "MIMiddle initial",
@@ -179,6 +192,7 @@
     },
     {
      "q": "297",
+     "ref": "AccountInput.BusinessOwnerLastName",
      "name": "string_297|regex:^[a-zA-Z0-9-' ]*$:What you entered is invalid - please enter letters, numbers, hyphen  (-), or apostrophe (') only.",
      "kind": "text",
      "caption": "Last Name",
@@ -187,6 +201,7 @@
     },
     {
      "q": "298",
+     "ref": "AccountInput.BusinessOwnerSuffix",
      "name": "f_aA9EA803A058A437790E1F96D46292ED0298_8_1-inputEl",
      "kind": "combo",
      "caption": "Suffix",
@@ -203,6 +218,7 @@
     },
     {
      "q": "2A5",
+     "ref": "BusinessOwnerHomeAddressInputNonShredded.AddressOptionsForPrimaryBsnsAdrs",
      "name": "string_2A5",
      "kind": "radio",
      "caption": "Home Address",
@@ -215,6 +231,7 @@
     },
     {
      "q": "2BB",
+     "ref": "AccountInput.BusinessOwnerDOB",
      "name": "date_2BB|mm/dd/yyyy",
      "kind": "date",
      "caption": "Date of Birth",
@@ -223,6 +240,7 @@
     },
     {
      "q": "2DB",
+     "ref": "AccountInput.PhoneAreaCodeString",
      "name": "string_2DB|regex:^([9][9][9]|[2-9][0-9][0-9]|)$:You've entered an invalid phone number. Please verify the number and re-enter.",
      "kind": "text",
      "caption": "Primary Phone Number",
@@ -231,6 +249,7 @@
     },
     {
      "q": "2DD",
+     "ref": "AccountInput.PhoneThreeDigitsString",
      "name": "string_2DD|regex:^([9][9][9]|[2-9][0-9][0-9]|)$:You've entered an invalid phone number. Please verify the number and re-enter.",
      "kind": "text",
      "caption": "Three digit prefix of phone",
@@ -239,6 +258,7 @@
     },
     {
      "q": "2DF",
+     "ref": "AccountInput.PhoneFourDigitsString",
      "name": "string_2DF|regex:^([0-9][0-9][0-9][0-9])$:You've entered an invalid phone number. Please verify the number and re-enter.",
      "kind": "text",
      "caption": "Four digit suffix of phone",
@@ -247,6 +267,7 @@
     },
     {
      "q": "2F6",
+     "ref": "BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard",
      "name": "string_2F6",
      "kind": "radio",
      "caption": "Do any listed vehicles or the load require a hazardous material placard?",
@@ -512,6 +533,7 @@
     },
     {
      "q": "2CCE",
+     "ref": "RiskInput.PAValueOptions",
      "name": "string_2CCE",
      "kind": "radio",
      "caption": "What is the total value of all permanently attached equipment (including aftermarket parts, mounted equipment, and modifications)?",

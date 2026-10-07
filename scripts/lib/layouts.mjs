@@ -43,6 +43,37 @@ function triggerIdentity(f, kind) {
   return { q: null, kind };
 }
 
+// A field's key across a page's layouts: its data-model name (recorded since 0.9.9); a Duck Creek
+// question without one by its text, the nth of that text on the page, as its number is reassigned
+// (Progressive, 2026-10-07: the same question recorded on both sides would show up twice); rows
+// named after a vehicle by their number (their text names the vehicle, not the question); else its
+// element id, data-id, or kind and caption.
+const VEHICLE_CAPTION = /^(19|20)\d{2}\s+\S/;
+function layoutFieldKey(f, seen) {
+  if (f.ref) return `ref:${f.ref}`;
+  const text = String(f.label ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (f.q && text && !VEHICLE_CAPTION.test(text)) {
+    const n = (seen.get(`${f.kind}:${text}`) ?? 0) + 1;
+    seen.set(`${f.kind}:${text}`, n);
+    return `text:${f.kind}:${text}#${n}`;
+  }
+  return f.q ?? (f.id ? `#${f.id}` : f.dataId ? `${f.dataId}:${f.label}` : `${f.kind}:${f.label}`);
+}
+
+// Fields kept under their text (recorded before data-model names) join the one named field of the
+// page with the same kind and text, when there is exactly one.
+function mergeUnnamed(fields) {
+  const named = [...fields].filter(([k]) => k.startsWith('ref:'));
+  for (const [k, f] of [...fields]) {
+    if (!k.startsWith('text:')) continue;
+    const same = named.filter(([, n]) => n.kind === f.kind && String(n.caption ?? '').trim().toLowerCase() === String(f.caption ?? '').trim().toLowerCase());
+    if (same.length !== 1) continue;
+    const [nk, n] = same[0];
+    fields.set(nk, { ...n, opts: dedupe([...(n.opts ?? []), ...(f.opts ?? [])]), seen: n.seen + f.seen, required: n.required + f.required, mapped: n.mapped ?? f.mapped });
+    fields.delete(k);
+  }
+}
+
 export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_PAGES } = {}) {
   const layouts = new Map();
   for (const e of events) {
@@ -65,10 +96,10 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
     const fields = (e.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.label ?? ''));
     page.snapshots.push({ fields, coverages: [...(e.context?.coverages ?? [])].sort().join('+'), noInference: (stepped.has(e.carrier) && !e.step) || !!entityPages.get(e.carrier)?.has(e.page) });
     for (const b of e.buttons ?? []) if (!page.buttons.includes(b)) page.buttons.push(b);
+    const seen = new Map();
     for (const f of fields) {
       // Our own mark tooltips got into early layouts as captions; they aren't questions.
-      // A field by its data-model name when recorded (0.9.9): its question id is renumbered.
-      const k = f.ref ? `ref:${f.ref}` : f.q ?? (f.id ? `#${f.id}` : f.dataId ? `${f.dataId}:${f.label}` : `${f.kind}:${f.label}`);
+      const k = layoutFieldKey(f, seen);
       const prev = page.fields.get(k);
       page.fields.set(k, {
         q: f.q ?? null,
@@ -98,6 +129,7 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
       context: l.context,
       generated: { from: l.from, to: l.to, quotes: l.sessions.size, by: 'scripts/build-layouts.mjs' },
       pages: Object.fromEntries([...l.pages].map(([name, p]) => {
+        mergeUnnamed(p.fields);
         // Per coverage request: a question that shows for some coverages only is not one answer's
         // follow-up across them (inferShowWhenByGroup).
         const groups = new Map();

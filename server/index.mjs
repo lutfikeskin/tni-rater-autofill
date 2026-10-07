@@ -44,8 +44,11 @@ export const EVENT_FIELDS = {
   page_layout: ['context', 'fields', 'buttons', 'reason', 'step'],
   // A page layout the panel couldn't record (why it was asked for, and the error's first words).
   layout_error: ['reason', 'error'],
-  fill_run: ['overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced'],
-  fill_field: ['result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing'],
+  // pageChanged: the carrier probably changed the page; reworded: known fields whose question reads
+  // differently; renamed: known questions whose data-model name isn't on the page (rule, names).
+  fill_run: ['overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
+  // how: what found the field (field = data-model name, text, option, selector, label, name).
+  fill_field: ['result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how'],
   fill_error: ['auto', 'error'],
   field_change: ['q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   problem_report: ['text'],

@@ -2,15 +2,19 @@
 (() => {
   // Stamped like pagekit.js (scripts/lib/package.mjs): another build left in the page is replaced.
   const BUILD = 'source';
-  if (globalThis.__raterFieldKey?.version === 3 && globalThis.__raterFieldKey.build === BUILD) return;
+  if (globalThis.__raterFieldKey?.version === 4 && globalThis.__raterFieldKey.build === BUILD) return;
 
   function fieldKey(el, { q = null } = {}) {
-    // A known question keeps its id. Repeated per vehicle on one page (Progressive's Rates rows
-    // _<page>_2, _<page>_3, …), each row past the first gets its own key, so an agent edit on one
-    // vehicle's row doesn't protect the others. First rows keep the plain id, as before.
-    if (q != null) {
+    // A Duck Creek field (Progressive) by its data-model name (fieldref): its question id is a
+    // number Progressive reassigns (2026-10-07), and an edit kept under it would protect whatever
+    // question has that number next. Repeated per vehicle on one page (Rates rows _<page>_2,
+    // _<page>_3, …), each row past the first gets its own key, so an agent edit on one vehicle's
+    // row doesn't protect the others. Without a data-model name, the question id (version 3).
+    const ref = el.getAttribute?.('fieldref');
+    if (ref || q != null) {
       const row = String(el.id ?? '').match(/^f_[a-z][0-9a-f]{32}[0-9a-f]+_\d+_(\d+)/i)?.[1];
-      return row && row !== '1' ? `${q}@${row}` : q;
+      const base = ref ? `ref:${ref}` : q;
+      return row && row !== '1' ? `${base}@${row}` : base;
     }
     // A checkbox repeated per row keeps the template's name, and only its id carries the row
     // (AmWINS' vehicle coverage boxes: name "medicalPaymentExclude", ids
@@ -50,5 +54,12 @@
   // The plain name an older key used for a row key (name#<row>), else null.
   const rowKeyBase = (key) => String(key ?? '').match(/^(.+)#\d+$/)?.[1] ?? null;
 
-  globalThis.__raterFieldKey = Object.assign(fieldKey, { version: 3, build: BUILD, rowKeyBase });
+  // The key an older build (version 3) gave a Duck Creek field: its question id (@row).
+  const legacyKey = (el, { q = null } = {}) => {
+    if (q == null) return null;
+    const row = String(el.id ?? '').match(/^f_[a-z][0-9a-f]{32}[0-9a-f]+_\d+_(\d+)/i)?.[1];
+    return row && row !== '1' ? `${q}@${row}` : q;
+  };
+
+  globalThis.__raterFieldKey = Object.assign(fieldKey, { version: 4, build: BUILD, rowKeyBase, legacyKey });
 })();

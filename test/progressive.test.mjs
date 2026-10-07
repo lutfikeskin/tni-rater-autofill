@@ -95,7 +95,7 @@ test('Progressive standard answers: USDOT belongs to the business, filings, MCS-
   assert.equal(byQ(plan, '2C1A').value, true, 'for-hire is the supported workflow default');
   assert.equal(byQ(plan, '29F').value, true, 'owner-as-driver follows the intake');
   assert.equal(byQ(plan, '2A5').kind, 'first-option', 'home address: always the first choice');
-  assert.equal(byQ(plan, '208A').value, true, 'no equipment, other-state id');
+  assert.equal(byQ(plan, '2CE3').value, true, 'no equipment (Add Vehicle and Rates: one field)');
   assert.equal(byQ(plan, '1FDD').value, 'Not selected', 'UMPD');
   assert.equal(byQ(plan, '20F').value, true);
   assert.equal(byQ(plan, '20F').note, null);
@@ -233,10 +233,8 @@ test('a vehicle value that is not a dollar amount goes to the agent instead of b
   const record = baseRecord();
   record.vehicles[0].value = 'about 40k';
   const plan = buildPlan(record, progressive, {});
-  for (const q of ['2CE8', '2091']) {
-    assert.equal(byQ(plan, q).value, null);
-    assert.match(byQ(plan, q).note, /about 40k/);
-  }
+  assert.equal(byQ(plan, '2CE8').value, null);
+  assert.match(byQ(plan, '2CE8').note, /about 40k/);
   record.vehicles[0].value = 40000;
   assert.equal(byQ(buildPlan(record, progressive, {}), '2CE8').value, 40000);
 });
@@ -465,16 +463,16 @@ test('every vehicle on Rates gets the standard per-vehicle coverages; Rental wit
   ];
   const plan = buildPlan(record, progressive, { vehicles: 2 });
   const steps = (q) => plan.filter((step) => step.q === q);
-  for (const q of ['1FCD', '1FD2', '1FE4', '1FF2', '1FF9', '2000', '200F', '207F', '208A', '2091', '2007']) {
+  for (const q of ['1FCD', '1FD2', '1FE4', '1FF2', '1FF9', '2000', '200F', '2CCE', '2CE3', '2CE8', '2007']) {
     assert.equal(steps(q).length, 3, `q${q}: one step per vehicle`);
     assert.deepEqual(steps(q).map((step) => step.activeVehicle), [false, false, true]);
   }
   assert.deepEqual(steps('1FF2').map((step) => step.value), Array(3).fill('$40 per day, $1,200 max'));
   assert.deepEqual(steps('1FF9').map((step) => step.value), Array(3).fill('Not selected'));
-  assert.deepEqual(steps('2091').map((step) => [step.path, step.value]), [['vehicles[0].value', 31000], ['vehicles[1].value', 17000], ['vehicles[2].value', 22000]]);
-  assert.deepEqual(steps('2091').map((step) => step.vehicleHint), [['2025', 'ram', 'promaster 2500'], ['2019', 'mercedes benz', 'sprinter'], ['2016', 'freightliner', 'cascadia']]);
+  assert.deepEqual(steps('2CE8').map((step) => [step.path, step.value]), [['vehicles[0].value', 31000], ['vehicles[1].value', 17000], ['vehicles[2].value', 22000]]);
+  assert.deepEqual(steps('2CE8').map((step) => step.vehicleHint), [['2025', 'ram', 'promaster 2500'], ['2019', 'mercedes benz', 'sprinter'], ['2016', 'freightliner', 'cascadia']]);
   // One vehicle: one step, no row matching, as before.
-  assert.equal(buildPlan(baseRecord(), progressive, {}).filter((step) => step.q === '2091').length, 1);
+  assert.equal(buildPlan(baseRecord(), progressive, {}).filter((step) => step.q === '2CE8').length, 1);
 });
 
 // PR #17 review: NTL is added only once the agent set it, the click is verified, and the bill

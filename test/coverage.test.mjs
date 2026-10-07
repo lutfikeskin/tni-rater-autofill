@@ -5,9 +5,16 @@ import { findPii } from '../scripts/lib/privacy.mjs';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 
-test('coverage: Progressive questions by id, AmWINS by id / data-id, and what no rule claims', () => {
+test('coverage: Progressive questions by data-model name or text, AmWINS by id / data-id, and what no rule claims', () => {
   assert.equal(fieldStatus({ q: '1D97', caption: 'Bodily Injury and Property Damage Liability' }, progressive).status, 'filled');
   assert.equal(fieldStatus({ q: '2BCB', caption: 'Annual Mileage' }, progressive).status, 'ignored');
+  // Renumbered (2026-10-07): 267 is Business Name now. Its data-model name says which rule it is.
+  assert.equal(fieldStatus({ q: '267', ref: 'AccountInput.BusinessName', caption: 'Business Name' }, progressive, 'BusinessOwnerInfo').rule, 'Business / sole proprietor name');
+  // A question id alone claims nothing, and a name no rule knows is unclaimed whatever its number.
+  assert.equal(fieldStatus({ q: '1D97', caption: 'A reworded liability question' }, progressive, 'CoveragesRates').status, 'none');
+  assert.equal(fieldStatus({ q: '1D97', ref: 'LineInput.SomethingNew', caption: 'Something new' }, progressive, 'CoveragesRates').status, 'none');
+  // Text claims only on the question's page: "Zip Code" on NoHit is NoHit's.
+  assert.equal(fieldStatus({ caption: 'Zip Code' }, progressive, 'NoHit').rule, 'Owner home ZIP (NoHit)');
   assert.equal(fieldStatus({ q: 'ZZZZ', caption: 'A brand new Progressive question' }, progressive).status, 'none');
   assert.equal(fieldStatus({ id: 'ownerDob', caption: 'owner dob' }, amwins).status, 'filled');
   assert.equal(fieldStatus({ dataId: 'gender', caption: 'Gender', kind: 'combo' }, amwins).status, 'filled');

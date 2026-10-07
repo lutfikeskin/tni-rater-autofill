@@ -25,6 +25,7 @@
    "fields": [
     {
      "q": "18F",
+     "ref": "AgencyInfo.AgencyCodeAgent",
      "kind": "combo",
      "caption": "Agent Code",
      "req": true,
@@ -32,6 +33,7 @@
     },
     {
      "q": "194",
+     "ref": "PolicyInput.EffectiveDate",
      "kind": "date",
      "caption": "When should this Progressive Commercial Auto policy start?",
      "req": true,
@@ -39,6 +41,7 @@
     },
     {
      "q": "198",
+     "ref": "AccountInput.PGRInsuredIndicator",
      "kind": "radio",
      "caption": "Is the customer currently insured with Progressive Commercial Auto?",
      "req": true,
@@ -50,6 +53,7 @@
     },
     {
      "q": "1CC",
+     "ref": "Warehouse.QuoteVendorCode",
      "kind": "text",
      "caption": "Quote Vendor Code",
      "req": true,
@@ -57,6 +61,7 @@
     },
     {
      "q": "1ED",
+     "ref": "USDOTInput.Question",
      "kind": "radio",
      "caption": "Does the customer have a USDOT Number?",
      "req": true,
@@ -69,6 +74,7 @@
     },
     {
      "q": "1F3",
+     "ref": "USDOTInput.NumberCollection",
      "kind": "text",
      "caption": "USDOT Number associated with the customer's business:",
      "req": true,
@@ -76,6 +82,7 @@
     },
     {
      "q": "21E",
+     "ref": "USDOTInput.SixtyDayQuestion",
      "kind": "radio",
      "caption": "Did the customer obtain their USDOT Number within the last 60 days?",
      "req": true,
@@ -87,6 +94,7 @@
     },
     {
      "q": "22D",
+     "ref": "AccountInput.BusinessStructure",
      "kind": "radio",
      "caption": "How is the customer's business structured?",
      "req": true,
@@ -99,6 +107,7 @@
     },
     {
      "q": "230",
+     "ref": "AccountInput.BusinessName",
      "kind": "text",
      "caption": "Business Name",
      "req": true,
@@ -106,6 +115,7 @@
     },
     {
      "q": "233",
+     "ref": "AccountInput.DBA",
      "kind": "text",
      "caption": "DBA Name",
      "req": true,
@@ -113,6 +123,7 @@
     },
     {
      "q": "267",
+     "ref": "AccountInput.SpecificTruckHaulContractType",
      "kind": "combo",
      "caption": "Type of Trucker",
      "req": true,
@@ -148,6 +159,7 @@
     },
     {
      "q": "27E",
+     "ref": "PrimaryBusinessAddressOutputNonShredded.StreetAddressDup",
      "kind": "text",
      "caption": "Street Address",
      "req": true,
@@ -162,6 +174,7 @@
     },
     {
      "q": "284",
+     "ref": "PrimaryBusinessAddressInput.ZipCode",
      "kind": "text",
      "caption": "Zip Code",
      "req": true,
@@ -169,6 +182,7 @@
     },
     {
      "q": "286",
+     "ref": "PrimaryBusinessAddressInput.City",
      "kind": "text",
      "caption": "City",
      "req": true,
@@ -176,6 +190,7 @@
     },
     {
      "q": "295",
+     "ref": "AccountInput.BusinessOwnerName",
      "kind": "text",
      "caption": "Business Owner's Name",
      "req": true,
@@ -183,6 +198,7 @@
     },
     {
      "q": "296",
+     "ref": "AccountInput.BusinessOwnerMiddleInitial",
      "kind": "text",
      "caption": "MIMiddle initial",
      "req": true,
@@ -190,6 +206,7 @@
     },
     {
      "q": "297",
+     "ref": "AccountInput.BusinessOwnerLastName",
      "kind": "text",
      "caption": "Last Name",
      "req": true,
@@ -197,6 +214,7 @@
     },
     {
      "q": "298",
+     "ref": "AccountInput.BusinessOwnerSuffix",
      "kind": "combo",
      "caption": "Suffix",
      "req": true,
@@ -212,12 +230,14 @@
     },
     {
      "q": "29F",
+     "ref": "AccountInput.DriverInPolicyIndicator",
      "kind": "checkbox",
      "caption": "[client] is a driver on the policy.",
      "mapped": "applicant.ownerDrives"
     },
     {
      "q": "2A5",
+     "ref": "BusinessOwnerHomeAddressInputNonShredded.AddressOptionsForPrimaryBsnsAdrs",
      "kind": "radio",
      "caption": "Home Address",
      "req": true,
@@ -229,6 +249,7 @@
     },
     {
      "q": "2BB",
+     "ref": "AccountInput.BusinessOwnerDOB",
      "kind": "date",
      "caption": "Date of Birth",
      "req": true,
@@ -236,6 +257,7 @@
     },
     {
      "q": "2DB",
+     "ref": "AccountInput.PhoneAreaCodeString",
      "kind": "text",
      "caption": "Primary Phone Number",
      "req": true,
@@ -243,6 +265,7 @@
     },
     {
      "q": "2DD",
+     "ref": "AccountInput.PhoneThreeDigitsString",
      "kind": "text",
      "caption": "Three digit prefix of phone",
      "req": true,
@@ -250,6 +273,7 @@
     },
     {
      "q": "2DF",
+     "ref": "AccountInput.PhoneFourDigitsString",
      "kind": "text",
      "caption": "Four digit suffix of phone",
      "req": true,
@@ -257,6 +281,7 @@
     },
     {
      "q": "2F6",
+     "ref": "BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard",
      "kind": "radio",
      "caption": "Do any listed vehicles or the load require a hazardous material placard?",
      "req": true,
@@ -315,6 +340,7 @@
     },
     {
      "q": "2BA1",
+     "ref": "RiskInput.AntiLockBrakes",
      "kind": "radio",
      "caption": "Anti-Lock Brakes?",
      "req": true,
@@ -326,6 +352,7 @@
     },
     {
      "q": "2BAC",
+     "ref": "RiskInput.AntiTheftDevice",
      "kind": "combo",
      "caption": "Anti-Theft Device Discount",
      "req": true,
@@ -338,6 +365,7 @@
     },
     {
      "q": "2BAE",
+     "ref": "RiskInput.Airbag",
      "kind": "radio",
      "caption": "Driver-Side Airbag?",
      "req": true,
@@ -411,6 +439,7 @@
     },
     {
      "q": "2BA1",
+     "ref": "RiskInput.AntiLockBrakes",
      "kind": "radio",
      "caption": "Anti-Lock Brakes?",
      "req": true,
@@ -422,6 +451,7 @@
     },
     {
      "q": "2BAC",
+     "ref": "RiskInput.AntiTheftDevice",
      "kind": "combo",
      "caption": "Anti-Theft Device Discount",
      "req": true,
@@ -434,6 +464,7 @@
     },
     {
      "q": "2BAE",
+     "ref": "RiskInput.Airbag",
      "kind": "radio",
      "caption": "Driver-Side Airbag?",
      "req": true,
@@ -617,6 +648,7 @@
     },
     {
      "q": "28E6",
+     "ref": "DriverInput.HasCDL",
      "kind": "radio",
      "caption": "Does this driver have a Commercial Driver's License (CDL)?",
      "req": true,
@@ -680,6 +712,7 @@
    "fields": [
     {
      "q": "1B7F",
+     "ref": "NoHitCredit.FirstName",
      "kind": "text",
      "caption": "Business Owner's Name",
      "req": true,
@@ -687,6 +720,7 @@
     },
     {
      "q": "1B80",
+     "ref": "NoHitCredit.MiddleInitial",
      "kind": "text",
      "caption": "MIMiddle initial",
      "req": true,
@@ -694,6 +728,7 @@
     },
     {
      "q": "1B81",
+     "ref": "NoHitCredit.LastName",
      "kind": "text",
      "caption": "Last Name",
      "req": true,
@@ -701,6 +736,7 @@
     },
     {
      "q": "1B82",
+     "ref": "NoHitCredit.Suffix",
      "kind": "combo",
      "caption": "Suffix",
      "req": true,
@@ -716,6 +752,7 @@
     },
     {
      "q": "1B84",
+     "ref": "CurrentAddress.Address1",
      "kind": "text",
      "caption": "Home Address",
      "req": true,
@@ -723,6 +760,7 @@
     },
     {
      "q": "1B85",
+     "ref": "CurrentAddress.City",
      "kind": "text",
      "caption": "City",
      "req": true,
@@ -730,6 +768,7 @@
     },
     {
      "q": "1B89",
+     "ref": "CurrentAddress.ZipCode",
      "kind": "text",
      "caption": "Zip Code",
      "req": true,
@@ -737,6 +776,7 @@
     },
     {
      "q": "1B8B",
+     "ref": "NoHitCredit.DOB",
      "kind": "date",
      "caption": "Date of Birth",
      "req": true,
@@ -744,6 +784,7 @@
     },
     {
      "q": "1B8D",
+     "ref": "NoHitCredit.SSN",
      "kind": "text",
      "caption": "Social Security Number",
      "req": true,
@@ -775,6 +816,7 @@
     },
     {
      "q": "83",
+     "ref": "MoreBusinessInput.HasContinuousCoverage",
      "kind": "radio",
      "caption": "Has the customer had continuous coverage?",
      "req": true,
@@ -786,6 +828,7 @@
     },
     {
      "q": "95",
+     "ref": "MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage",
      "kind": "combo",
      "caption": "Current Bodily Injury Liability Limit",
      "req": true,
@@ -809,6 +852,7 @@
     },
     {
      "q": "9D",
+     "ref": "PriorInsurance.ExpirationDate",
      "kind": "date",
      "caption": "Current Policy Expiration Date",
      "req": true,
@@ -816,12 +860,14 @@
     },
     {
      "q": "AA",
+     "ref": "MoreBusinessInputNonShredded.OtherBusinessCoveragesNoneInd",
      "kind": "checkbox",
      "caption": "None of the above",
      "mapped": "progressive.qAA"
     },
     {
      "q": "B2",
+     "ref": "MoreBusinessInputNonShredded.ProgressiveBundleNoneInd",
      "kind": "checkbox",
      "caption": "None of the above",
      "mapped": "progressive.qB2"
