@@ -228,6 +228,10 @@ test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () 
   assert.ok(progressive.advance.exceptPages.includes('NoHit'), 'NoHit is the agent\'s: never continued automatically');
   assert.equal(byQ(plan, '1B8D').value, null);
   assert.equal(byQ(plan, '1B80').optional, true, 'NoHit middle initial is never "needs you"');
+  // FL run 2026-10-07: Progressive's home address line has no suite; street + suite read as a
+  // different address on every quote with one.
+  record.garaging = { ...record.garaging, street: '100 Example Way', unit: 'Suite 4' };
+  assert.equal(byQ(buildPlan(record, progressive, {}), '1B84').value, '100 Example Way');
 });
 
 test('a vehicle value that is not a dollar amount goes to the agent instead of being typed', () => {

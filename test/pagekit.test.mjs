@@ -976,6 +976,48 @@ test('a helper the agent must otherwise do says so when it cannot be clicked, an
   assert.equal(report.noData.length, 0);
 });
 
+// 2026-10-07 FL run: after the tile opened Add Vehicle, the tile page's report listed Add
+// Vehicle's still-empty safety questions ("needs you: Anti-Lock Brakes?").
+test('a helper that opens the next page leaves that page\'s questions to its own fill', async () => {
+  const h = harness({ ext: true, search: '?pageName=MostCommonVehicles' });
+  addButton(h, 'Cargo Van').onclick = () => {
+    h.context.location.search = '?pageName=AddVehicle';
+    addExtText(h, 'c', '2BA1', { required: true });
+  };
+  const report = await h.kit.fill([
+    { id: 'tile', kind: 'action', action: 'vehicleTile:0', text: '^Cargo Van$', unique: true, label: 'Vehicle type', missing: 'Pick the vehicle yourself.',
+      path: 'action.vehicleTile', name: 'Click vehicleTile', pages: [], after: [], afterActions: [], afterPages: [], unless: [] },
+    { id: 'abs', q: '2BA1', field: fieldOf('2BA1'), path: 'progressive.q2BA1', name: 'Anti-lock brakes', kind: 'text', ignore: true, emptyNote: 'Answer it yourself.', value: null },
+  ], { maxRounds: 3 });
+  assert.deepEqual(Array.from(report.actions, (x) => x.text), ['Cargo Van']);
+  assert.equal(report.navigatedTo, 'AddVehicle');
+  assert.equal(report.noData.length, 0);
+  assert.equal(report.leftRequired.length, 0);
+  assert.deepEqual(Array.from(report.blockers), []);
+});
+
+// 2026-10-07 FL run: the commodity list fills in only after its category is picked, and its
+// first try found it empty ("failed: " with no name, as the list has no caption).
+test('a list that loads after another answer is given time; an unlabeled field is named after its rule', async () => {
+  for (const late of [true, false]) {
+    const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+    // Drawn with a blank caption, as Progressive draws it.
+    const list = addExtText(h, 'c', '216B', { caption: ' ' });
+    const commodities = ['', 'Appliances', 'Other Consumer Goods'].map((label) => ({ get: () => label }));
+    let records = late ? [] : commodities.slice(0, 2);
+    Object.assign(list.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records, isLoading: () => false } });
+    if (late) setTimeout(() => { records = commodities; }, 600);
+    const report = await h.kit.fill([{ id: 'commodity', q: '216B', field: fieldOf('216B'), path: 'progressive.q216B', name: 'Cargo commodity', kind: 'choice', value: 'Other Consumer Goods' }], { maxRounds: 3 });
+    if (late) {
+      assert.equal(list.cmp.getValue(), 'Other Consumer Goods', 'picked once the list loaded');
+      assert.equal(report.failed.length, 0);
+    } else {
+      assert.equal(report.failed.length, 1, 'a loaded list without the answer fails at once');
+      assert.ok(report.blockers.includes('failed: Cargo commodity'), 'named after its rule');
+    }
+  }
+});
+
 // PR #17 review: a click on Add Non-Trucking Liability that the page dropped must not count.
 test('a helper verified by its link going away counts only when the link is gone', async () => {
   const ntl = { id: 'ntl', kind: 'action', action: 'addNtl', text: '^add non-?trucking liability( instead)?\\??$', verify: 'gone',

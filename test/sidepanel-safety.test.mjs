@@ -299,6 +299,25 @@ test('fill report counts answers an earlier pass on the page filled', () => {
   assert.match(text, /left as the page had it/, 'a value the page had itself is still said so');
 });
 
+// FL live run, 2026-10-07: the cargo commodity list has no caption, and the panel showed a
+// failure with no name. Such a field is named after its rule.
+test('fill report names a field without a caption after its rule', () => {
+  const box = { className: '', children: [], replaceChildren(...children) { this.children = children; } };
+  const context = {
+    $: () => box,
+    state: { tab: { id: 1, url: 'https://example.test/?pageName=CoveragesRates' } },
+    pageOf: () => 'CoveragesRates',
+    h: (tag, props, ...children) => ({ tag, props, children }),
+  };
+  vm.runInNewContext(extractFunction('renderReport'), context);
+  context.renderReport([{ fields: 2, kept: [], noData: [], leftRequired: [], actions: [],
+    filled: [{ label: '', name: 'Cargo commodity category', key: 'a', shown: 'Consumer Goods' }],
+    failed: [{ label: '', name: 'Cargo commodity', key: 'b', reason: 'no option matches' }] }]);
+  const text = JSON.stringify(box.children);
+  assert.match(text, /"children":\["Cargo commodity"\]/, 'the failure is named');
+  assert.match(text, /Cargo commodity category/, 'so is the filled list');
+});
+
 // Fable on PR #43: a page the carrier changed (a known field renamed, most questions unfamiliar)
 // says so at the top of the report.
 test('fill report says when the carrier seems to have changed the page', () => {

@@ -1636,8 +1636,8 @@ function renderReport(frames) {
   const need = (x) => h('div', { class: 'need', dataset: { need: `${x.key}|${x.label}` } },
     h('div', { class: 'need-head' },
       h('span', { class: `mark ${x.mark}` }),
-      h('div', { class: 'row-text' }, h('b', {}, x.label), h('span', {}, x.why)),
-      x.key ? h('button', { class: 'ignore-review', type: 'button', title: 'Ignore this question and continue', 'aria-label': `Ignore ${x.label} and continue`, onclick: () => ignoreReview(x.key, tabId, page) }, '×') : null),
+      h('div', { class: 'row-text' }, h('b', {}, x.label || x.name), h('span', {}, x.why)),
+      x.key ? h('button', { class: 'ignore-review', type: 'button', title: 'Ignore this question and continue', 'aria-label': `Ignore ${x.label || x.name} and continue`, onclick: () => ignoreReview(x.key, tabId, page) }, '×') : null),
     x.options?.length && x.mark === 'failed' ? h('div', { class: 'options' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null,
     h('div', { class: 'ai-slot' }),
     h('div', { class: 'need-note' }, 'Answer it on the page.'));
@@ -1645,10 +1645,10 @@ function renderReport(frames) {
   // redraw, finds them already there): still ours, shown as filled.
   const earlier = kept.filter((x) => !x.differs && state.filled?.get?.(x.key));
   const doneRows = [
-    ...filled.map((x) => [x.label, x.shown ?? '']),
-    ...earlier.map((x) => [x.label, state.filled.get(x.key).shown || 'filled']),
+    ...filled.map((x) => [x.label || x.name, x.shown ?? '']),
+    ...earlier.map((x) => [x.label || x.name, state.filled.get(x.key).shown || 'filled']),
     ...all('actions').map((x) => ['Clicked', x.text || x.id]),
-    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => [x.label, 'left as the page had it']),
+    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => [x.label || x.name, 'left as the page had it']),
     ...all('skipped').map((x) => [x.label, 'ignored']),
   ];
   // The carrier probably changed this page (pagekit: a known field renamed, or most questions

@@ -400,7 +400,9 @@ export const progressive = {
       { q: '1B80', field: 'NoHitCredit.MiddleInitial', ask: 'MIMiddle initial', optional: true, name: 'Owner middle initial (NoHit, optional)', ignore: true },
       { q: '1B81', field: 'NoHitCredit.LastName', ask: 'Last Name', name: 'Owner last name (NoHit)', value: (r) => owner(r).last },
       { q: '1B82', field: 'NoHitCredit.Suffix', ask: 'Suffix', optional: true, name: 'Owner suffix (NoHit, optional)', ignore: true },
-      { q: '1B84', field: 'CurrentAddress.Address1', ask: 'Home Address', name: 'Owner home address (NoHit)', value: (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null },
+      // The street line only: Progressive keeps the suite/unit (Business Owner Info's line 2) apart,
+      // and the street plus unit read as a different address on every quote with a unit.
+      { q: '1B84', field: 'CurrentAddress.Address1', ask: 'Home Address', name: 'Owner home address (NoHit)', value: (r) => r.garaging?.street ?? null },
       { q: '1B85', field: 'CurrentAddress.City', ask: 'City', path: 'garaging.city', name: 'Owner home city (NoHit)' },
       { q: '1B89', field: 'CurrentAddress.ZipCode', ask: 'Zip Code', path: 'garaging.zip', name: 'Owner home ZIP (NoHit)' },
       { q: '1B8B', field: 'NoHitCredit.DOB', ask: 'Date of Birth', name: 'Owner date of birth (NoHit)', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },

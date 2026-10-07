@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 47 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 48 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -782,8 +782,11 @@
     const start = Date.now();
     await sleep(200);
     while (cmp.store?.isLoading?.() && Date.now() - start < 6000) await sleep(100);
-    return cmp.store.getRange().map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
+    return storeOptions(cmp);
   }
+
+  const storeOptions = (cmp) => cmp.store.getRange().map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
+  const hasOptions = (options) => options.some((o) => !isPlaceholderOption(o.text));
 
   async function applyExt(step, c) {
     const { cmp, el } = c;
@@ -805,7 +808,13 @@
           if (opt) break;
         }
       }
-      if (!opt) return noMatch(step, c.options);
+      // A list that fills in only after another answer (Progressive's cargo commodities, once
+      // their category is picked) may still be empty: give it a few seconds to load.
+      for (const start = Date.now(); !opt && !hasOptions(storeOptions(cmp)) && Date.now() - start < 6000;) {
+        await sleep(250);
+        opt = matchOption(storeOptions(cmp), step);
+      }
+      if (!opt) return noMatch(step, hasOptions(c.options) ? c.options : storeOptions(cmp));
       extFocusAndBlur(cmp, el, () => {
         cmp.setValue(opt.value);
         cmp.fireEvent('select', cmp, opt.rec);
@@ -1083,7 +1092,7 @@
           mark(control, 'failed', 'lookup result differs from the intake');
         } else if (!step.verifyOnly && !step.ignore && !step.note && !step.replace && !step.trustPage && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id)) {
           // The page already had a different value (e.g. from the USDOT lookup): keep it, show it.
-          flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, differs: true });
+          flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, name: step.name, differs: true });
           mark(control, 'needs', `page says something different from the intake (${step.name})`);
           handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
         }
@@ -1358,9 +1367,12 @@
       return false;
     }
 
+    // A helper that opened the next page (the vehicle tile opens Add Vehicle) leaves its questions
+    // to that page's own fill: none of them is reported or marked as this page's.
+    const stillHere = !report.navigatedTo && currentPage() === startPage;
     // Answers still waiting for another try when the fill ended are left for the agent, and so is
     // a field the page should have filled itself (emptyNote) but didn't.
-    for (const { step, control } of assign(collectControls(), plan)) {
+    for (const { step, control } of stillHere ? assign(collectControls(), plan) : []) {
       if (step.emptyNote && !hasValue(control) && !skippedField(control)) {
         report.noData.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, note: step.emptyNote, ...describe(control) });
         handled.set(step.id, { status: 'needs', note: step.emptyNote });
@@ -1374,7 +1386,7 @@
     // The page may have redrawn while filling, so mark the final fields.
     const controls = collectControls();
     const pairs = assign(controls, plan);
-    for (const { step, control } of pairs) {
+    for (const { step, control } of stillHere ? pairs : []) {
       const h = handled.get(step.id);
       if (h?.status) mark(control, h.status, h.note);
     }
@@ -1386,7 +1398,7 @@
       .map((c) => [fieldKey(c), [...new Set(c.options.map((o) => o.text).filter(Boolean))]]);
     report.skipped = controls.filter((c) => skippedField(c)).map((c) => ({ label: c.label, key: fieldKey(c) }));
     const matched = new Set(pairs.map((p) => p.control));
-    for (const c of controls) {
+    for (const c of stillHere ? controls : []) {
       if (!matched.has(c) && report.unknown.some((x) => x.key === fieldKey(c)) && !skippedField(c)) mark(c, 'needs', 'Unfamiliar question — left for you.');
       if (!matched.has(c) && c.required && !hasValue(c) && !skippedField(c)) {
         report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
@@ -1408,16 +1420,18 @@
     // The carrier probably changed this page: a known field renamed, or most of its questions
     // unfamiliar at once. Continue waits for the agent, and the panel says so.
     report.pageChanged = report.renamed.length > 0 || (report.unknown.length >= 5 && report.unknown.length >= 0.4 * Math.max(1, report.fields));
+    // A field drawn without a caption (the cargo commodity lists) is named after its rule.
+    const called = (x) => x.label || x.name || x.path || 'a question with no label';
     report.blockers = [
       ...(report.pageChanged ? [`page changed: ${report.unknown.length} unfamiliar question(s)${report.renamed.length ? `, ${report.renamed.length} known field(s) renamed` : ''}`] : []),
       // An unfamiliar question with no answer yet is left for the agent even when the page
       // doesn't mark it required (Progressive validates some only on Continue).
-      ...report.unknown.filter((x) => x.required || x.current == null).map((x) => `unfamiliar: ${x.label}`),
-      ...report.noData.map((x) => `needs you: ${x.label}`),
-      ...report.failed.map((x) => `failed: ${x.label}`),
-      ...report.leftRequired.map((x) => `required: ${x.label}`),
-      ...report.kept.filter((x) => x.differs).map((x) => `differs: ${x.label}`),
-      ...report.checks.map((x) => `check: ${x.label}`),
+      ...report.unknown.filter((x) => x.required || x.current == null).map((x) => `unfamiliar: ${called(x)}`),
+      ...report.noData.map((x) => `needs you: ${called(x)}`),
+      ...report.failed.map((x) => `failed: ${called(x)}`),
+      ...report.leftRequired.map((x) => `required: ${called(x)}`),
+      ...report.kept.filter((x) => x.differs).map((x) => `differs: ${called(x)}`),
+      ...report.checks.map((x) => `check: ${called(x)}`),
       ...report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
       ...(report.halted ? [report.reason] : []),
     ];
@@ -1675,5 +1689,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 47, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 48, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();
