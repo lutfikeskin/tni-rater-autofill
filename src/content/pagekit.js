@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 53 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 54 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1539,12 +1539,15 @@
 
   // Re-marks one field (e.g. an AI choice the agent rejected). Returns whether it was found.
   // Which of these the page shows: a VIN as a whole run of letters and digits (the vehicle list's
-  // units on the quote), or a name as all its words (the driver list). Only true/false goes back.
+  // units on the quote), or a name as all its words on one line (one driver of the driver list, not
+  // a first name from one and a last name from another). Only true/false goes back.
   function listed(items) {
-    const page = ` ${String(document.body?.innerText ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ')} `;
+    const text = String(document.body?.innerText ?? '').toUpperCase();
+    const page = ` ${text.replace(/[^A-Z0-9]+/g, ' ')} `;
+    const lines = text.split(/\n+/).map((l) => ` ${l.replace(/[^A-Z0-9]+/g, ' ')} `);
     const word = (w) => String(w ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     return (items ?? []).map((t) => {
-      if (Array.isArray(t)) { const words = t.map(word).filter((w) => w.length >= 2); return words.length >= 2 && words.every((w) => page.includes(` ${w} `)); }
+      if (Array.isArray(t)) { const words = t.map(word).filter((w) => w.length >= 2); return words.length >= 2 && lines.some((l) => words.every((w) => l.includes(` ${w} `))); }
       const v = word(t);
       return v.length >= 11 && page.includes(` ${v} `);
     });
@@ -1729,5 +1732,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 53, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 54, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

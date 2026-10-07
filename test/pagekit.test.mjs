@@ -1102,9 +1102,12 @@ test('listed() says which VINs the page shows, as whole runs', () => {
   const h = harness();
   h.document.body.innerText = 'Vehicles on the quote:\nVehicle 1\n2013\nPETERBILT 388\n1XPWD40X1DD000001\nEdit\nRemove';
   assert.deepEqual(Array.from(h.kit.listed(['1xpwd40x1dd000001', '1W1MAFZB0KA000002', '0X1DD000001', null])), [true, false, false, false]);
-  // Names: every word, whole.
+  // Names: every word, whole, on one line (one driver).
   h.document.body.innerText = 'Here are the drivers on the quote:\nJordan Avery Sample\nEdit';
   assert.deepEqual(Array.from(h.kit.listed([['Jordan', 'Sample'], ['Jordan', 'Samples'], ['Jo', 'Sample']])), [true, false, false]);
+  // Codex on PR #43: a first name from one driver and a last name from another is not a driver.
+  h.document.body.innerText = 'Here are the drivers on the quote:\nJordan Example\nEdit\nCasey Sample\nEdit';
+  assert.deepEqual(Array.from(h.kit.listed([['Jordan', 'Sample'], ['Casey', 'Sample']])), [false, true]);
 });
 
 // Codex on PR #43: a Yes / No question that became a text box is never typed "Yes" into.
