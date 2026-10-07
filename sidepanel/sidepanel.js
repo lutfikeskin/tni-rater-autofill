@@ -926,7 +926,7 @@ function onRecorderMessage(msg, sender) {
         for (const id of [...state.doneActions]) if (id === a.id || id.startsWith(`${a.id}:`)) state.doneActions.delete(id);
         persistDoneActions();
       }
-      if (state.tab.carrier?.trailerPage) trailerArrival(state.tab.carrier, samePage(msg.from), samePage(msg.page));
+      if (state.tab.carrier?.trailerPage || state.tab.carrier?.driverPage) unitArrival(state.tab.carrier, samePage(msg.from), samePage(msg.page));
     }
     // Setting "Fill each new page as soon as it opens": fill right away (the fill itself waits
     // for the page to settle first).
@@ -1191,7 +1191,7 @@ async function captureLayout(job, reason) {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
       const staff = /agent|producer/i.test(c.label ?? '');
       return {
-        q: c.q ?? null, ref: c.ref ?? null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
+        q: c.q ?? null, ref: c.ref ?? null, row: /^\d{1,3}_\d{1,3}$/.test(c.row ?? '') ? c.row : null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
         // Element ids (stable ones only) and data-ids: how id-based rules (AmWINS) find the field.
         id: c.id && !/\d{5,}|ext-|-inputEl$/.test(c.id) ? c.id : null, dataId: c.dataId ?? null, name: c.name ?? null,
         options: c.options?.length && !staff ? c.options : undefined,
@@ -1551,7 +1551,7 @@ async function pickListItem(carrier, page) {
     // A trailer only once its page was filled: Add Trailer opened and left (an unsupported tile)
     // doesn't count, and Vehicle Summary holds Continue for it (the action's `unfinished` note).
     [carrier?.trailerList, 'trailers', (i) => state.doneActions.has(`trailerEntered:${i}`)],
-    [carrier?.driverList, 'drivers', (i) => ['driverEntered', 'addDriver'].some((a) => state.doneActions.has(`${a}:${i}`))],
+    [carrier?.driverList, 'drivers', (i) => state.doneActions.has(`driverEntered:${i}`)],
   ];
   for (const [listPage, list, done] of lists) {
     if (!listPage || page !== listPage) continue;
@@ -1563,24 +1563,22 @@ async function pickListItem(carrier, page) {
   }
 }
 
-// A trailer is entered once Progressive took its page: the list comes back from Add Trailer (its
+// A driver or trailer is entered once the carrier took its page: its list comes back from it (its
 // Continue went through). Answers filled there alone don't count: the page may still have failed
-// or been left (Codex on PR #43).
-function trailerArrival(carrier, from, page) {
-  if (!carrier?.trailerPage || from !== carrier.trailerPage || page !== carrier.trailerList) return;
-  state.doneActions.add(`trailerEntered:${state.active.trailers ?? 0}`);
-  persistDoneActions();
+// or been left (Codex on PR #43). A driver page Progressive filled itself from Business Owner Info
+// counts the same way once continued (OK 2026-10-07: the list added that driver again).
+function unitArrival(carrier, from, page) {
+  for (const [unitPage, listPage, list, marker] of [[carrier?.driverPage, carrier?.driverList, 'drivers', 'driverEntered'], [carrier?.trailerPage, carrier?.trailerList, 'trailers', 'trailerEntered']]) {
+    if (!unitPage || from !== unitPage || page !== listPage) continue;
+    state.doneActions.add(`${marker}:${state.active[list] ?? 0}`);
+    persistDoneActions();
+  }
 }
 
-// Bookkeeping after a fill: the driver page marks its driver entered; a click that opens more
+// Bookkeeping after a fill: a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
 function afterFill(frames, { carrier, page }) {
-  // Filled, or already there (Progressive fills the owner's driver page from Business Owner Info,
-  // OK 2026-10-07: nothing to fill, and the driver list then added the same driver again).
-  if (carrier.driverPage && carrier.driverPage === page && frames.some((f) => f.filled?.length || f.kept?.length)) {
-    state.doneActions.add(`driverEntered:${state.active.drivers ?? 0}`);
-  }
   persistDoneActions();
   const clicked = frames.some((f) => (f.actions ?? []).length);
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);

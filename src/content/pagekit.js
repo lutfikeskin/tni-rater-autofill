@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 50 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 51 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1595,6 +1595,8 @@
         q: c.q ?? undefined,
         // The field's data-model name (fieldref): how a rule finds it (assign).
         ref: c.ref ?? undefined,
+        // Its row (Duck Creek "<page>_<row>": one per vehicle or trailer on Rates), numbers only.
+        row: c.row ?? undefined,
         kind: c.kind,
         type: c.cmp?.xtype ?? c.type,
         label: r(c.label),
@@ -1714,5 +1716,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 50, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 51, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

@@ -1095,16 +1095,23 @@ test('a continued step is remembered per vehicle on vehicle pages, per driver on
 
 // OK live run, 2026-10-07: Progressive had filled the owner's driver page itself (nothing to fill,
 // four answers kept), so the driver wasn't counted as entered and the driver list added it again.
-test('the driver page marks its driver entered when its answers were filled or already there', () => {
-  const progressive = { driverPage: 'AddDriver' };
-  const state = { active: { drivers: 0 }, doneActions: new Set(), doneSteps: new Set(), autoPaused: false };
-  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, persistDoneActions: () => {} };
-  vm.runInNewContext(extractFunction('stepScope') + extractFunction('afterFill'), context);
+test('a driver is entered once the driver list comes back from its page, filled or already there', async () => {
+  const progressive = { driverPage: 'AddDriver', driverList: 'DriverSummary' };
+  const state = { active: { drivers: 0 }, doneActions: new Set(), doneSteps: new Set(), autoPaused: false, intake: { record: { drivers: [{}, {}] } } };
+  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {} };
+  vm.runInNewContext(['stepScope', 'afterFill', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  // Codex on PR #43: answers on the page alone (one may have failed, or the page was left) don't count.
   context.afterFill([{ filled: [], kept: [{ label: 'Driver Last Name' }] }], { carrier: progressive, page: 'AddDriver' });
-  assert.ok(state.doneActions.has('driverEntered:0'));
-  state.active.drivers = 1;
-  context.afterFill([{ filled: [], kept: [] }], { carrier: progressive, page: 'AddDriver' });
-  assert.ok(!state.doneActions.has('driverEntered:1'), 'a driver page with nothing on it marks nothing');
+  assert.ok(!state.doneActions.has('driverEntered:0'));
+  context.unitArrival(progressive, 'AddDriver', 'DriverSummary');
+  assert.ok(state.doneActions.has('driverEntered:0'), 'continued: the list comes back from it');
+  await context.pickListItem(progressive, 'DriverSummary');
+  assert.equal(state.active.drivers, 1, 'the next driver');
+  // Add Driver opened for the next one and left: not entered.
+  state.doneActions.add('addDriver:1');
+  await context.pickListItem(progressive, 'DriverSummary');
+  assert.equal(state.active.drivers, 1);
+  assert.ok(!state.doneActions.has('driverEntered:1'));
 });
 
 // TN live run, 2026-10-07: the first intake trailer. Its pages are per trailer, its page marks it
@@ -1115,7 +1122,7 @@ test('trailers: their own page scope, entered once their page is filled, the nex
   const state = { active: { drivers: 0, vehicles: 0, trailers: 0 }, doneActions: new Set(['lookupVin:0', 'addTrailer:0']), doneSteps: new Set(), autoPaused: false, intake: { record } };
   let persisted = 0;
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, save: async () => {}, renderPickers: () => {}, persistDoneActions: () => { persisted++; } };
-  vm.runInNewContext(['stepScope', 'afterFill', 'pickListItem', 'trailerArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['stepScope', 'afterFill', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   assert.equal(context.stepScope('AddTrailer', carrier), 'AddTrailer|tr0|');
   assert.equal(context.stepScope('MostCommonTrailers', carrier), 'MostCommonTrailers|tr0|');
   // Codex on PR #43: Add Trailer opened isn't the trailer entered (an unsupported tile, left), nor
@@ -1123,9 +1130,9 @@ test('trailers: their own page scope, entered once their page is filled, the nex
   await context.pickListItem(carrier, 'VehicleSummary');
   assert.equal(state.active.trailers, 0, 'still the first trailer');
   context.afterFill([{ filled: [{ label: 'VIN' }], kept: [] }], { carrier, page: 'AddTrailer' });
-  context.trailerArrival(carrier, 'AddTrailer', 'MostCommonTrailers');
+  context.unitArrival(carrier, 'AddTrailer', 'MostCommonTrailers');
   assert.ok(!state.doneActions.has('trailerEntered:0'), 'filled, or gone back to the tiles: not entered');
-  context.trailerArrival(carrier, 'AddTrailer', 'VehicleSummary');
+  context.unitArrival(carrier, 'AddTrailer', 'VehicleSummary');
   assert.ok(state.doneActions.has('trailerEntered:0'));
   assert.ok(persisted > 0, 'kept for a panel reload');
   await context.pickListItem(carrier, 'VehicleSummary');
@@ -2314,7 +2321,7 @@ test('events name their view: the tab\'s order in the quote and the vehicle or d
   assert.equal(logged.at(-1).view, 't1');
   // Field changes and arrivals from the recorder carry it too.
   Object.assign(context, { samePage: (p) => p, $: () => ({ checked: false }), redactor: () => (s) => s, scheduleAutoFill: () => {},
-    fieldChangeEvent: () => ({ type: 'field_change' }) });
+    fieldChangeEvent: () => ({ type: 'field_change' }), unitArrival: () => {} });
   Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set(), filled: new Map(), labels: new Map() });
   vm.runInContext(extractFunction('onRecorderMessage'), context);
   context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: 'AddVehicle', changes: [{ key: 'x', before: '', after: 'Yes' }] }, { tab: { id: 917 } });

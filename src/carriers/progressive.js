@@ -298,7 +298,9 @@ export const progressive = {
     { id: 'addVehicle', page: 'VehicleSummary', text: '^add (a |another )?vehicle$|^add another$', opener: '^add$', unlessActions: ['lookupVin:vehicle'], scope: 'vehicle' },
     // Driver list: Add for each intake driver not entered yet (the side panel moves the active
     // driver, see driverList), then Continue.
-    { id: 'addDriver', page: 'DriverSummary', text: '^add (a |another )?driver$|^add another$', opener: '^add$', unlessActions: ['driverEntered'], scope: 'driver' },
+    // A driver counts once the list comes back from its page; Add Driver opened and left holds
+    // Continue with a note, like a trailer.
+    { id: 'addDriver', page: 'DriverSummary', text: '^add (a |another )?driver$|^add another$', opener: '^add$', unlessActions: ['driverEntered'], scope: 'driver', label: 'Driver', doneWhen: (r, a) => [`driverEntered:${a.drivers ?? 0}`], unfinished: 'Add Driver was opened, but this intake driver was never entered: add them (Add → Add Driver) before Continue.' },
     // Some states (IN, OH) show the business type as a box with a Search next to it, which opens
     // the business type list (BECAPopup).
     { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
