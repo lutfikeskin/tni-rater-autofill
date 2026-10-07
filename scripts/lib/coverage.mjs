@@ -40,7 +40,7 @@ const nameHere = (rule, page) => (rule.pageOnly ? onPage(rule, page) : !(page !=
 // select and its date box a text box. A choice is never a text box, a date or address never a
 // choice, and `control` names the kind when two kinds share a question's text.
 const KIND = { combo: 'select', date: 'text' };
-const CHOICE = new Set(['choice', 'pick-not', 'first-option', 'selected-option']);
+const CHOICE = new Set(['choice', 'pick-not', 'first-option', 'selected-option', 'bool']);
 const TYPED = new Set(['date', 'address-suggest']);
 const kindFits = (rule, f) => {
   const kind = KIND[f.kind] ?? f.kind;

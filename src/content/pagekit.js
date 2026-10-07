@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 54 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 55 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1337,8 +1337,14 @@
           const pair = pairs.find(({ step }) => step.path === a.nudge && step.value != null);
           if (pair && agreesWith(pair.step, pair.control)) {
             nudged.add(a.action);
-            if (pair.control.cmp) pair.control.cmp.fireEvent?.('select', pair.control.cmp, cmpValue(pair.control.cmp, pair.control.el));
-            else setNativeValue(pair.control.el, pair.control.el.value);
+            // ExtJS's select hands its listeners the picked record, as a real pick does (Codex on PR #43).
+            const { cmp } = pair.control;
+            if (cmp) {
+              const value = cmpValue(cmp, pair.control.el);
+              const rec = storeOptions(cmp).find((o) => o.value === value || o.text === oneLine(value))?.rec ?? null;
+              cmp.fireEvent?.('select', cmp, rec ?? value);
+            }
+            if (!cmp) setNativeValue(pair.control.el, pair.control.el.value);
             return true;
           }
         }
@@ -1732,5 +1738,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 54, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 55, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

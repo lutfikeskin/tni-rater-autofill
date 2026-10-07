@@ -23,6 +23,8 @@ test('coverage: Progressive questions by data-model name or text, AmWINS by id /
   // the question before them, as when filling.
   const boi = [{ caption: 'Street Address', kind: 'text' }, { caption: 'City', kind: 'text' }, { caption: 'Home Address', kind: 'text' }, { caption: 'City', kind: 'text' }];
   assert.deepEqual(boi.filter((f) => f.caption === 'City').map((f) => fieldStatus(f, progressive, 'BusinessOwnerInfo', boi).rule), ['Business city', 'Owner home city']);
+  // A yes/no question that became a text box is not covered (as when filling: left unfamiliar).
+  assert.equal(fieldStatus({ caption: 'Does the customer haul hazardous materials?', kind: 'text' }, { rules: [{ page: 'X', ask: 'Does the customer haul hazardous materials?', kind: 'bool', value: () => false }], useGenericRules: false }, 'X').status, 'none');
   // The trailer page carries the vehicle's data-model names: there they are the trailer's.
   assert.equal(fieldStatus({ ref: 'RiskInput.VIN', caption: 'VIN', kind: 'text' }, progressive, 'AddTrailer').rule, 'trailers[].vin');
   assert.equal(fieldStatus({ ref: 'RiskInput.VIN', caption: 'Vehicle Identification Number (VIN)', kind: 'text' }, progressive, 'AddVehicle').rule, 'vehicles[].vin');

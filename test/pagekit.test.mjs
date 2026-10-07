@@ -2341,6 +2341,17 @@ test('a button that shows only once the page took an answer: the answer is picke
   await h.kit.fill(plan, { maxRounds: 6 });
   assert.equal(picks, 1, 'picked again once');
   assert.equal(h.done?._clicked, true, 'then Done');
+  // On ExtJS the re-pick hands the select listeners the picked record, as a real pick does.
+  const x = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const list = addExtText(x, 'c', '216B', { caption: ' ', value: 'Other Consumer Goods' });
+  const records = ['', 'Other Consumer Goods'].map((label) => ({ label, get: () => label }));
+  Object.assign(list.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+  const got = [];
+  list.cmp.on('select', (cmp, rec) => { got.push(rec); if (rec?.label === 'Other Consumer Goods') { const done = addButton(x, 'Done with this coverage'); done.onclick = () => { done._clicked = true; x.done = done; }; } });
+  await x.kit.fill(plan, { maxRounds: 6 });
+  assert.equal(got.length, 1);
+  assert.equal(got[0], records[1], 'the record, not its value');
+  assert.equal(x.done?._clicked, true);
 });
 
 test('a question whose wording carries a date is not flagged as reworded when the date moves', async () => {
