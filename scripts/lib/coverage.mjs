@@ -33,13 +33,25 @@ const textIs = (rule, f) => {
 };
 const onPage = (rule, page) => !rule.page || page == null || [].concat(rule.page).includes(page);
 
+// The field kinds pagekit's assign() checks a known question against: a layout's combo is a
+// select and its date box a text box. A choice is never a text box, a date or address never a
+// choice, and `control` names the kind when two kinds share a question's text.
+const KIND = { combo: 'select', date: 'text' };
+const CHOICE = new Set(['choice', 'pick-not', 'first-option', 'selected-option']);
+const TYPED = new Set(['date', 'address-suggest']);
+const kindFits = (rule, f) => {
+  const kind = KIND[f.kind] ?? f.kind;
+  if (!kind) return true;
+  return (!rule.control || kind === rule.control) && !(CHOICE.has(rule.kind) && kind === 'text') && !(TYPED.has(rule.kind) && kind !== 'text');
+};
+
 // Like pagekit's assign(). A data-model name (`field`) claims its field on any page; a layout
 // recorded before names were kept (0.9.9) is judged by the rule's expected wording instead, as the
 // live page always carries the name. A question's text (`ask`, or `label` on its page) claims a
 // field no rule knows by name. A question id never claims anything (Progressive renumbers them).
 function claims(rule, f, page, named) {
-  if (rule.field) return f.ref ? f.ref === rule.field : (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f);
-  if ((rule.ask || rule.label) && rule.page) return onPage(rule, page) && !(f.ref && named.has(f.ref)) && textIs(rule, f);
+  if (rule.field) return (f.ref ? f.ref === rule.field : (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f)) && kindFits(rule, f);
+  if ((rule.ask || rule.label) && rule.page) return onPage(rule, page) && !(f.ref && named.has(f.ref)) && textIs(rule, f) && kindFits(rule, f);
   if (!onPage(rule, page)) return false;
   if (rule.selector) {
     const m = selectorMatch(rule.selector, f);

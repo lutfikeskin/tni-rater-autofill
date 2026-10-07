@@ -1165,8 +1165,9 @@ async function captureLayout(job, reason) {
     // Compared with the last layout logged for this page in this quote. Only the structure
     // counts: the questions, their choices and which are required. Answers are in the change
     // events; counting them would log a layout per answer. Yes, No, then Yes again on a
-    // question that shows a follow-up logs three layouts.
-    const shape = fields.map((f) => [f.q ?? f.label, f.label, !!f.required, f.options ?? [], !!f.optionsTruncated]);
+    // question that shows a follow-up logs three layouts. A field renamed under the same number
+    // (its data-model name) is a change too: that's the evidence of a carrier rename.
+    const shape = fields.map((f) => [f.q ?? f.label, f.ref, f.label, !!f.required, f.options ?? [], !!f.optionsTruncated]);
     const signature = await sha256Hex(JSON.stringify(shape));
     if (!jobCurrent(job) || superseded(job)) return;
     // Per quote tab too: each tab keeps its own quote state (refreshTab).

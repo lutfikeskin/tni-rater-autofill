@@ -1553,7 +1553,11 @@ test('a page layout is logged again when only its choices or required questions 
   await context.recordLayout('Vehicles');
   controls = [distance(['50 miles', '200 miles', 'Unlimited'], { optionsTruncated: true, required: true })];
   await context.recordLayout('Vehicles');
-  assert.equal(logged.length, 4, 'an unchanged layout once; a change of choices, cut or required again');
+  // Codex on PR #43: the same number under another data-model name is a carrier rename.
+  controls = [distance(['50 miles', '200 miles', 'Unlimited'], { optionsTruncated: true, required: true, ref: 'RiskInput.RadiusRenamed' })];
+  await context.recordLayout('Vehicles');
+  assert.equal(logged.length, 5, 'an unchanged layout once; a change of choices, cut, required or data-model name again');
+  logged.pop();
   assert.deepEqual(logged.map((e) => [e.fields[0].options.length, !!e.fields[0].required, !!e.fields[0].optionsTruncated]),
     [[2, false, false], [2, false, true], [3, false, true], [3, true, true]]);
 });

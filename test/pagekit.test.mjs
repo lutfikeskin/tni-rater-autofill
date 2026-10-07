@@ -1308,6 +1308,17 @@ test('standard business and home ZIP/City controls sharing an intake path remain
   assert.deepEqual(controls.map(({ input }) => input.value), ['21000', 'Example City', '21000', 'Example City']);
 });
 
+// Codex on PR #43: the business ZIP/City are found by their data-model names even when the Street
+// Address box isn't drawn (an address suggestion collapsed it); the anchor only tells texts apart.
+test('business ZIP/City found by name need no Street Address anchor', async () => {
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const business = [addExtText(h, 'P', '284', { caption: 'Zip Code', required: true }), addExtText(h, 'P', '286', { caption: 'City', required: true })];
+  const record = { applicant: {}, garaging: { street: '1 Example St', city: 'Example City', zip: '21000' }, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => ['284', '286'].includes(s.q)), {});
+  assert.equal(report.unknown.length, 0);
+  assert.deepEqual(business.map(({ input }) => input.value), ['21000', 'Example City']);
+});
+
 test('blank optional address detail and blank DOT do not stop standard business-page filling', async () => {
   for (const unit of [null, 'Suite 4']) {
     const h = harness({ search: '?pageName=BusinessOwnerInfo' });

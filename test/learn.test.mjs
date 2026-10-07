@@ -123,3 +123,23 @@ test('layouts: one question across the renumbering is one field; repeated texts 
   assert.equal(truckers[0].ref, 'AccountInput.SpecificTruckHaulContractType');
   assert.equal(fields.filter((f) => f.caption === 'City').length, 2);
 });
+
+// Codex on PR #43: a follow-up seen once on each side of the data-model names (0.9.9) and of the
+// renumbering still has its two layouts each way: one trigger, one condition.
+test('layouts: a condition counts its layouts from before and after names and numbers changed', () => {
+  const context = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: [] };
+  const layout = (t, fields) => ({ type: 'page_layout', t, session: t, carrier: 'progressive', page: 'MoreAboutBusiness', context, fields });
+  const hazmat = (q, ref, selected) => ({ q, ref, kind: 'radio', label: 'Does the customer haul hazardous materials?', options: ['Yes', 'No'], selected });
+  const hazClass = (q, ref) => ({ q, ref, kind: 'text', label: 'Hazardous material class' });
+  const fields = buildLayouts([
+    layout('2026-10-05T10:00:00Z', [hazmat('100', undefined, 'Yes'), hazClass('101')]),
+    layout('2026-10-05T11:00:00Z', [hazmat('100', undefined, 'No')]),
+    layout('2026-10-07T12:00:00Z', [hazmat('1A0', 'X.Hazmat', 'Yes'), hazClass('1A1', 'X.HazmatClass')]),
+    layout('2026-10-07T13:00:00Z', [hazmat('1A0', 'X.Hazmat', 'No')]),
+  ])[0].layout.pages.MoreAboutBusiness.fields;
+  assert.equal(fields.length, 2);
+  const follow = fields.find((f) => f.caption === 'Hazardous material class');
+  assert.equal(follow.condition, undefined, 'not "condition unknown"');
+  assert.deepEqual(follow.showWhen.is, ['Yes']);
+  assert.equal(follow.showWhen.q, '1A0', 'the trigger by its current number');
+});

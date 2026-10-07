@@ -16,6 +16,7 @@
 // replay page loads ExtJS from cdnjs) and Playwright's Chromium (npx playwright install chromium).
 // Reports go to reviews/e2e-<date>.md; the baseline is test/e2e-baseline.json.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -94,6 +95,18 @@ async function runLayout(layout) {
   }
 }
 
+// What each question of a page got, by its text, never its number (--renumber shifts numbers; an
+// unlabeled field is named after its element id, which holds the number, so that part is masked):
+// a short hash, so the baseline stays small.
+function unnumbered(s) { return String(s ?? '').replace(/\bf [a-z] [0-9a-f]{32}[0-9a-f]+ \d+ \d+\b/gi, 'field'); }
+function outcomes(r) {
+  return crypto.createHash('sha1').update(JSON.stringify([
+    ...r.filled.map((x) => `filled ${unnumbered(x.label)} = ${x.shown ?? ''}`),
+    ...r.noData.map((x) => `agent ${unnumbered(x)}`),
+    ...r.unmapped.map((x) => `no rule ${unnumbered(x)}`),
+  ].sort())).digest('hex').slice(0, 12);
+}
+
 // Per layout: totals, per-page numbers, and things that are wrong whatever the baseline says.
 function summarize(rows, status, errors) {
   const pages = {};
@@ -102,7 +115,7 @@ function summarize(rows, status, errors) {
   for (const e of errors) issues.push(`page error: ${e}`);
   for (const r of rows) {
     const continued = r.clicked.some((c) => /^(continue|ok,? start quote)/i.test(c));
-    pages[r.page] = { questions: r.questions, filled: r.filled.length, failed: r.failed, noData: r.noData.length, unmapped: r.unmapped.length, blockers: r.blockers?.length ?? 0, clicked: r.clicked };
+    pages[r.page] = { questions: r.questions, filled: r.filled.length, failed: r.failed, noData: r.noData.length, unmapped: r.unmapped.length, blockers: r.blockers?.length ?? 0, clicked: r.clicked, outcomes: outcomes(r) };
     // Continue with something still open on the page is the bug from the first PA quote.
     if (continued && (r.failed.length || r.unmapped.length)) issues.push(`${r.page}: clicked Continue with ${r.failed.length} failed / ${r.unmapped.length} unmapped question(s) open`);
   }
@@ -124,8 +137,9 @@ for (const [layout, now] of layouts.filter((l) => results[l]).map((l) => [l, res
     const core = (f) => f.replace(/\s*\([^)]*\)\s*$/, '');
     const continued = (x) => x.clicked.some((c) => /^(continue|ok,? start quote)/i.test(c));
     if (args.has('--renumber')) {
-      // Renumbered questions are the same questions: every outcome equals the recorded run's.
-      const shape = (x) => JSON.stringify([x.filled, x.failed.map(core).sort(), x.noData, x.unmapped, x.blockers ?? null, [...x.clicked].sort()]);
+      // Renumbered questions are the same questions: each gets the same outcome as in the recorded
+      // run (not just as many), and the helpers are clicked in the same order.
+      const shape = (x) => JSON.stringify([x.filled, x.failed.map(core).sort(), x.noData, x.unmapped, x.blockers ?? null, x.clicked, b.outcomes ? x.outcomes : null]);
       if (shape(p) !== shape(b)) regressions.push(`${layout} ${pageName}: renumbered run differs: ${shape(b)} → ${shape(p)}`);
       continue;
     }

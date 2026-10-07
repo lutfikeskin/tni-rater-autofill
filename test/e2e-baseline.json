@@ -18,7 +18,8 @@
     "blockers": 7,
     "clicked": [
      "Verify DOT"
-    ]
+    ],
+    "outcomes": "7ae9eac93b9d"
    },
    "MostCommonVehicles": {
     "questions": 0,
@@ -30,7 +31,8 @@
     "clicked": [
      "Cargo Van",
      "Continue ›"
-    ]
+    ],
+    "outcomes": "97d170e1550e"
    },
    "AddVehicle": {
     "questions": 12,
@@ -42,7 +44,8 @@
     "clicked": [
      "Lookup VIN",
      "Continue ›"
-    ]
+    ],
+    "outcomes": "2887d2056af3"
    },
    "AddDriver": {
     "questions": 4,
@@ -53,7 +56,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "9e59087e4283"
    },
    "MoreAboutBusiness": {
     "questions": 12,
@@ -64,7 +68,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "deec7690f52b"
    },
    "Filings": {
     "questions": 4,
@@ -75,7 +80,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8cb9fc52a134"
    },
    "CoveragesRates": {
     "questions": 9,
@@ -86,7 +92,8 @@
     "blockers": 2,
     "clicked": [
      "+"
-    ]
+    ],
+    "outcomes": "6cb48578b2fd"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -97,7 +104,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8a26f0eb5d53"
    },
    "PrintEmailFax": {
     "questions": 5,
@@ -109,7 +117,8 @@
     "clicked": [
      "Print/Send",
      "Continue ›"
-    ]
+    ],
+    "outcomes": "5b849e1cb1a2"
    }
   }
  },
@@ -129,7 +138,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "74d6526e0e11"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -138,7 +148,8 @@
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "0671612edb24"
    },
    "AddVehicle": {
     "questions": 11,
@@ -149,7 +160,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "2887d2056af3"
    },
    "AddDriver": {
     "questions": 5,
@@ -160,7 +172,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "42a30d6577f2"
    },
    "NoHit": {
     "questions": 19,
@@ -169,7 +182,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "67ccf06747d1"
    },
    "MoreAboutBusiness": {
     "questions": 12,
@@ -180,7 +194,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "deec7690f52b"
    },
    "CoveragesRates": {
     "questions": 22,
@@ -189,7 +204,8 @@
     "noData": 0,
     "unmapped": 5,
     "blockers": 4,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "85dfb2e8c79a"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -200,7 +216,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8a26f0eb5d53"
    }
   }
  },
@@ -220,7 +237,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "7e5e48d6b3f3"
    },
    "MostCommonVehicles": {
     "questions": 9,
@@ -229,7 +247,8 @@
     "noData": 4,
     "unmapped": 0,
     "blockers": 4,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "4a094155a244"
    },
    "AddVehicle": {
     "questions": 12,
@@ -238,7 +257,8 @@
     "noData": 3,
     "unmapped": 0,
     "blockers": 3,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "0a81e8102012"
    },
    "AddDriver": {
     "questions": 9,
@@ -249,7 +269,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "f5c51c5eb3de"
    },
    "NoHit": {
     "questions": 9,
@@ -258,7 +279,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "0e67d1eb210c"
    },
    "MoreAboutBusiness": {
     "questions": 13,
@@ -269,7 +291,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "5bacbcfe8c28"
    },
    "CoveragesRates": {
     "questions": 22,
@@ -278,7 +301,8 @@
     "noData": 0,
     "unmapped": 5,
     "blockers": 4,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "f0f338ef707a"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -289,7 +313,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8a26f0eb5d53"
    },
    "PrintEmailFax": {
     "questions": 6,
@@ -300,7 +325,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "5b849e1cb1a2"
    }
   }
  },
@@ -320,7 +346,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "529e8abe4dac"
    },
    "BECAPopup": {
     "questions": 25,
@@ -331,7 +358,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "7c3cf5eff484"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -340,7 +368,8 @@
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "0671612edb24"
    },
    "AddVehicle": {
     "questions": 9,
@@ -351,7 +380,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "2a8a738c11f7"
    },
    "AddDriver": {
     "questions": 4,
@@ -362,7 +392,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "f33eaee1edc5"
    },
    "MoreAboutBusiness": {
     "questions": 29,
@@ -371,7 +402,8 @@
     "noData": 0,
     "unmapped": 1,
     "blockers": 2,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "860dbefda6b6"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -382,7 +414,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "b66ea715d75c"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -393,7 +426,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8a26f0eb5d53"
    }
   }
  },
@@ -413,7 +447,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "74d6526e0e11"
    },
    "MostCommonVehicles": {
     "questions": 7,
@@ -422,7 +457,8 @@
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "e81cadf72fd8"
    },
    "AddVehicle": {
     "questions": 16,
@@ -433,7 +469,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "7187eea58c1c"
    },
    "AddDriver": {
     "questions": 5,
@@ -444,7 +481,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "42a30d6577f2"
    },
    "MoreAboutBusiness": {
     "questions": 9,
@@ -455,7 +493,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "2b1dbde1d123"
    },
    "CoveragesRates": {
     "questions": 15,
@@ -464,7 +503,8 @@
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "acdc56578089"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -475,7 +515,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8a26f0eb5d53"
    }
   }
  },
@@ -497,7 +538,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 3,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "2294483e42c7"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -506,7 +548,8 @@
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "d11adb4fff71"
    },
    "AddVehicle": {
     "questions": 11,
@@ -517,7 +560,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "444311c276c4"
    },
    "AddDriver": {
     "questions": 6,
@@ -528,7 +572,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "f12b5dd854de"
    },
    "MoreAboutBusiness": {
     "questions": 11,
@@ -539,7 +584,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "647229e737ad"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -550,7 +596,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "4a57f7aaa50e"
    },
    "VehicleSummary": {
     "questions": 20,
@@ -561,7 +608,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "ccdfdb712672"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -572,7 +620,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8a26f0eb5d53"
    }
   }
  },
@@ -595,7 +644,8 @@
     "noData": 0,
     "unmapped": 3,
     "blockers": 10,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "20d8af64a51c"
    },
    "AddVehicle": {
     "questions": 12,
@@ -606,7 +656,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "2887d2056af3"
    },
    "AddDriver": {
     "questions": 4,
@@ -617,7 +668,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "9e59087e4283"
    },
    "MoreAboutBusiness": {
     "questions": 12,
@@ -628,7 +680,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "deec7690f52b"
    },
    "CoveragesRates": {
     "questions": 15,
@@ -639,7 +692,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "7eb877d97e0f"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -650,7 +704,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8a26f0eb5d53"
    },
    "PrintEmailFax": {
     "questions": 6,
@@ -661,7 +716,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "5b849e1cb1a2"
    },
    "SaveQuote": {
     "questions": 8,
@@ -670,7 +726,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "a8cc202a4f17"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -679,7 +736,8 @@
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "0671612edb24"
    },
    "Filings": {
     "questions": 1,
@@ -690,7 +748,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "a3f08ffc2cd3"
    }
   }
  },
@@ -712,7 +771,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 3,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "54cdfa91aafe"
    },
    "BECAPopup": {
     "questions": 26,
@@ -724,7 +784,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 2,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "654381afd63a"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -733,7 +794,8 @@
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "0671612edb24"
    },
    "AddVehicle": {
     "questions": 7,
@@ -744,7 +806,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "943464bb1a7c"
    },
    "AddDriver": {
     "questions": 5,
@@ -755,7 +818,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8c360645d48a"
    },
    "MoreAboutBusiness": {
     "questions": 12,
@@ -766,7 +830,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "deec7690f52b"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -777,7 +842,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "a0426a8b009a"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -788,7 +854,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8a26f0eb5d53"
    },
    "PrintEmailFax": {
     "questions": 6,
@@ -799,7 +866,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "5b849e1cb1a2"
    }
   }
  },
@@ -819,7 +887,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "74d6526e0e11"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -828,7 +897,8 @@
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "0671612edb24"
    },
    "AddVehicle": {
     "questions": 10,
@@ -839,7 +909,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "fbb5556b4c70"
    },
    "AddDriver": {
     "questions": 5,
@@ -850,7 +921,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "42a30d6577f2"
    },
    "NoHit": {
     "questions": 9,
@@ -859,7 +931,8 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "0e67d1eb210c"
    },
    "MoreAboutBusiness": {
     "questions": 30,
@@ -868,7 +941,8 @@
     "noData": 0,
     "unmapped": 7,
     "blockers": 14,
-    "clicked": []
+    "clicked": [],
+    "outcomes": "9e49b7186c5d"
    },
    "CoveragesRates": {
     "questions": 25,
@@ -879,7 +953,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "164a2bf54188"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -890,7 +965,8 @@
     "blockers": 0,
     "clicked": [
      "Continue ›"
-    ]
+    ],
+    "outcomes": "8a26f0eb5d53"
    }
   }
  }

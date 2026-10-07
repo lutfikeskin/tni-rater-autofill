@@ -16,6 +16,9 @@ test('coverage: Progressive questions by data-model name or text, AmWINS by id /
   // Text claims only on the question's page: "Zip Code" on NoHit is NoHit's.
   assert.equal(fieldStatus({ caption: 'Zip Code' }, progressive, 'NoHit').rule, 'Owner home ZIP (NoHit)');
   assert.equal(fieldStatus({ q: 'ZZZZ', caption: 'A brand new Progressive question' }, progressive).status, 'none');
+  // Codex on PR #43: two kinds of field read "Business Type"; the kind decides, as when filling.
+  assert.equal(fieldStatus({ caption: 'Business Type', kind: 'combo' }, progressive, 'BusinessOwnerInfo').rule, 'Business type');
+  assert.equal(fieldStatus({ caption: 'Business Type', kind: 'text' }, progressive, 'BusinessOwnerInfo').status, 'ignored');
   assert.equal(fieldStatus({ id: 'ownerDob', caption: 'owner dob' }, amwins).status, 'filled');
   assert.equal(fieldStatus({ dataId: 'gender', caption: 'Gender', kind: 'combo' }, amwins).status, 'filled');
   assert.equal(fieldStatus({ id: 'agnecyName', caption: 'agnecy name' }, amwins).status, 'ignored');

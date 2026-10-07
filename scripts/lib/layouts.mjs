@@ -61,8 +61,10 @@ function layoutFieldKey(f, seen) {
 }
 
 // Fields kept under their text (recorded before data-model names) join the one named field of the
-// page with the same kind and text, when there is exactly one.
+// page with the same kind and text, when there is exactly one. Returns which text keys joined
+// which named field.
 function mergeUnnamed(fields) {
+  const merged = new Map();
   const named = [...fields].filter(([k]) => k.startsWith('ref:'));
   for (const [k, f] of [...fields]) {
     if (!k.startsWith('text:')) continue;
@@ -71,6 +73,24 @@ function mergeUnnamed(fields) {
     const [nk, n] = same[0];
     fields.set(nk, { ...n, opts: dedupe([...(n.opts ?? []), ...(f.opts ?? [])]), seen: n.seen + f.seen, required: n.required + f.required, mapped: n.mapped ?? f.mapped });
     fields.delete(k);
+    merged.set(k, nk);
+  }
+  return merged;
+}
+
+// The layouts of a page name one question the same way for the inference too: by its data-model
+// name when it has one, else by its latest number (recorded before names, or under two numbers
+// around Progressive's renumbering), so its answers on both sides count together.
+function sameIdentities(p, merged) {
+  for (const [k, f] of p.fields) if (k.startsWith('ref:') || k.startsWith('text:')) f.cid = fieldId(f);
+  for (const s of p.snapshots) {
+    s.fields = s.fields.map((f, i) => {
+      const k = merged.get(s.keys[i]) ?? s.keys[i];
+      const field = p.fields.get(k);
+      if (!field || (!k.startsWith('text:') && !k.startsWith('ref:'))) return f;
+      // Its latest number too: the replay finds a trigger by it.
+      return { ...f, ref: f.ref ?? field.ref, q: field.q ?? f.q };
+    });
   }
 }
 
@@ -93,13 +113,14 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
     // A one-address application's steps (AmWINS) are pages of their own.
     const name = e.step ? `${e.page} › ${e.step}` : e.page;
     const page = layout.pages.get(name) ?? { snapshots: [], fields: new Map(), buttons: [] };
+    // Our own mark tooltips got into early layouts as captions; they aren't questions.
     const fields = (e.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.label ?? ''));
-    page.snapshots.push({ fields, coverages: [...(e.context?.coverages ?? [])].sort().join('+'), noInference: (stepped.has(e.carrier) && !e.step) || !!entityPages.get(e.carrier)?.has(e.page) });
-    for (const b of e.buttons ?? []) if (!page.buttons.includes(b)) page.buttons.push(b);
     const seen = new Map();
-    for (const f of fields) {
-      // Our own mark tooltips got into early layouts as captions; they aren't questions.
-      const k = layoutFieldKey(f, seen);
+    const keys = fields.map((f) => layoutFieldKey(f, seen));
+    page.snapshots.push({ fields, keys, coverages: [...(e.context?.coverages ?? [])].sort().join('+'), noInference: (stepped.has(e.carrier) && !e.step) || !!entityPages.get(e.carrier)?.has(e.page) });
+    for (const b of e.buttons ?? []) if (!page.buttons.includes(b)) page.buttons.push(b);
+    for (const [i, f] of fields.entries()) {
+      const k = keys[i];
       const prev = page.fields.get(k);
       page.fields.set(k, {
         q: f.q ?? null,
@@ -129,7 +150,7 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
       context: l.context,
       generated: { from: l.from, to: l.to, quotes: l.sessions.size, by: 'scripts/build-layouts.mjs' },
       pages: Object.fromEntries([...l.pages].map(([name, p]) => {
-        mergeUnnamed(p.fields);
+        sameIdentities(p, mergeUnnamed(p.fields));
         // Per coverage request: a question that shows for some coverages only is not one answer's
         // follow-up across them (inferShowWhenByGroup).
         const groups = new Map();

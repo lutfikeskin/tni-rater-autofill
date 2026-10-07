@@ -404,7 +404,8 @@
       // `control`: the kind of field the question is, when its text is shared with another kind.
       let same = controls.filter((x) => isIt(s, x) && definite(s, x) && (!s.control || x.kind === s.control));
       if (same.length > 1 && same.some((x) => kindFits(s, x))) same = same.filter((x) => kindFits(s, x));
-      return s.askAfter ? afterAnchor(same, s.askAfter) : same;
+      // The anchor tells repeated texts apart; a data-model name is already the one field.
+      return s.askAfter && !s.field ? afterAnchor(same, s.askAfter) : same;
     };
     const found = new Map(steps.map((s) => [s, fieldsOf(s)]));
     // A label fallback can't tell rows of one question apart, nor a vehicle's question from
