@@ -606,8 +606,14 @@ test('trailers: Add Trailer once the vehicles are in, its tile, its page, and it
   const done = plan.find((s) => s.action === 'addTrailer:0');
   assert.deepEqual(done.doneWhen, ['trailerEntered:0']);
   assert.match(done.unfinished, /never entered/);
-  // No trailer ownership on the intake: owned.
+  // No trailer ownership on the intake: owned (TNI). One that is none of owned/financed/leased
+  // (Rented) is the agent's (Codex on PR #43).
   assert.equal(byQ(buildPlan({ ...record, trailerInfo: {} }, progressive, { trailers: 0 }), '2AD0').value, 'No');
+  assert.equal(byQ(buildPlan({ ...record, trailerInfo: { ownership: 'Owned' } }, progressive, { trailers: 0 }), '2AD0').value, 'No');
+  assert.equal(byQ(buildPlan({ ...record, trailerInfo: { ownership: 'Leased' } }, progressive, { trailers: 0 }), '2AD0').value, 'Yes - Lease');
+  const rented = byQ(buildPlan({ ...record, trailerInfo: { ownership: 'Rented' } }, progressive, { trailers: 0 }), '2AD0');
+  assert.equal(rented.value, null);
+  assert.match(rented.note, /Rented/);
   // Rates: the trailer's row by its year and make; the vehicle's by its own (a row each).
   assert.deepEqual([step('TR1FCD').value, step('TR1FF2').value, step('TR200F').value], ['$1,000 Deductible', 'Not selected', 'Not selected']);
   assert.deepEqual(step('TR1FF2').vehicleHint, ['2019', 'wilson']);

@@ -1115,13 +1115,17 @@ test('trailers: their own page scope, entered once their page is filled, the nex
   const state = { active: { drivers: 0, vehicles: 0, trailers: 0 }, doneActions: new Set(['lookupVin:0', 'addTrailer:0']), doneSteps: new Set(), autoPaused: false, intake: { record } };
   let persisted = 0;
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, save: async () => {}, renderPickers: () => {}, persistDoneActions: () => { persisted++; } };
-  vm.runInNewContext(['stepScope', 'afterFill', 'pickListItem'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['stepScope', 'afterFill', 'pickListItem', 'trailerArrival'].map(extractFunction).join('\n'), context);
   assert.equal(context.stepScope('AddTrailer', carrier), 'AddTrailer|tr0|');
   assert.equal(context.stepScope('MostCommonTrailers', carrier), 'MostCommonTrailers|tr0|');
-  // Codex on PR #43: Add Trailer opened isn't the trailer entered (an unsupported tile, left).
+  // Codex on PR #43: Add Trailer opened isn't the trailer entered (an unsupported tile, left), nor
+  // answers filled on its page (one may have failed): only the list coming back from it.
   await context.pickListItem(carrier, 'VehicleSummary');
   assert.equal(state.active.trailers, 0, 'still the first trailer');
   context.afterFill([{ filled: [{ label: 'VIN' }], kept: [] }], { carrier, page: 'AddTrailer' });
+  context.trailerArrival(carrier, 'AddTrailer', 'MostCommonTrailers');
+  assert.ok(!state.doneActions.has('trailerEntered:0'), 'filled, or gone back to the tiles: not entered');
+  context.trailerArrival(carrier, 'AddTrailer', 'VehicleSummary');
   assert.ok(state.doneActions.has('trailerEntered:0'));
   assert.ok(persisted > 0, 'kept for a panel reload');
   await context.pickListItem(carrier, 'VehicleSummary');

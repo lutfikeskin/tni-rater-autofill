@@ -926,6 +926,7 @@ function onRecorderMessage(msg, sender) {
         for (const id of [...state.doneActions]) if (id === a.id || id.startsWith(`${a.id}:`)) state.doneActions.delete(id);
         persistDoneActions();
       }
+      if (state.tab.carrier?.trailerPage) trailerArrival(state.tab.carrier, samePage(msg.from), samePage(msg.page));
     }
     // Setting "Fill each new page as soon as it opens": fill right away (the fill itself waits
     // for the page to settle first).
@@ -1562,6 +1563,15 @@ async function pickListItem(carrier, page) {
   }
 }
 
+// A trailer is entered once Progressive took its page: the list comes back from Add Trailer (its
+// Continue went through). Answers filled there alone don't count: the page may still have failed
+// or been left (Codex on PR #43).
+function trailerArrival(carrier, from, page) {
+  if (!carrier?.trailerPage || from !== carrier.trailerPage || page !== carrier.trailerList) return;
+  state.doneActions.add(`trailerEntered:${state.active.trailers ?? 0}`);
+  persistDoneActions();
+}
+
 // Bookkeeping after a fill: the driver page marks its driver entered; a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
@@ -1570,9 +1580,6 @@ function afterFill(frames, { carrier, page }) {
   // OK 2026-10-07: nothing to fill, and the driver list then added the same driver again).
   if (carrier.driverPage && carrier.driverPage === page && frames.some((f) => f.filled?.length || f.kept?.length)) {
     state.doneActions.add(`driverEntered:${state.active.drivers ?? 0}`);
-  }
-  if (carrier.trailerPage && carrier.trailerPage === page && frames.some((f) => f.filled?.length || f.kept?.length)) {
-    state.doneActions.add(`trailerEntered:${state.active.trailers ?? 0}`);
   }
   persistDoneActions();
   const clicked = frames.some((f) => (f.actions ?? []).length);

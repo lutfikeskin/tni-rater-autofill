@@ -88,11 +88,13 @@ const loanLease = (r) => {
 };
 
 // Trailers: the intake's trailer ownership (one answer for all of them); none given is owned
-// (TNI 2026-10-07).
+// (TNI 2026-10-07). An answer that is none of these (Rented) is the agent's.
 const trailerLoanLease = (r) => {
-  const own = r.trailerInfo?.ownership ?? '';
-  return /financ|loan/i.test(own) ? 'Yes - Loan' : /leas/i.test(own) ? 'Yes - Lease' : 'No';
+  const own = String(r.trailerInfo?.ownership ?? '').trim();
+  return /financ|loan/i.test(own) ? 'Yes - Loan' : /leas/i.test(own) ? 'Yes - Lease' : !own || /^owned?$/i.test(own) ? 'No' : null;
 };
+const trailerOwnershipNote = (r) => (trailerLoanLease(r) == null
+  ? `The intake's trailer ownership "${r.trailerInfo.ownership}" isn't owned, financed or leased: answer the loan / lease question yourself.` : null);
 const trailerValueNote = (r, a) => {
   const v = r.trailers?.[a.trailers ?? 0]?.value;
   return v != null && typeof v !== 'number' ? `The intake's trailer value "${v}" isn't a dollar amount: enter it yourself.` : null;
@@ -538,7 +540,7 @@ export const progressive = {
       { q: '2A2B', field: 'RiskInput.MakeCode', ask: 'Make', path: 'trailers[].make', kind: 'choice' },
       { q: '2A61', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', name: 'Trailer ZIP' },
       { q: '2A65', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this trailer travels for work', name: 'Trailer farthest one-way distance (as the vehicle)', kind: 'int', value: radiusMiles },
-      { q: '2AD0', field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from trailer ownership, standard: No)', kind: 'choice', value: trailerLoanLease },
+      { q: '2AD0', field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from trailer ownership, standard: No)', kind: 'choice', value: trailerLoanLease, note: trailerOwnershipNote },
       { q: '2AEE', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this trailer in an accident or loss?', name: 'Trailer comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
       { q: '2AFF', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard, unless the intake gives an equipment value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: '2AFC', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },
