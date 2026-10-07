@@ -43,6 +43,7 @@ export const TNI_RULES = `
 ## Drivers (AddDriver)
 - License state: the full state name. License number: letters and digits only, keeping a state prefix the intake writes ("IL - S123" is "ILS123").
 - Exclude this driver: No.
+- Defensive driver discount: No, unless the intake's description box mentions a defensive driving course (then the agent answers it).
 - Accidents, claims or violations in the past 3 years: from the intake's claims answer (its first line; later lines in the claims box sometimes answer other questions).
 
 ## More about the business (MoreAboutBusiness)
@@ -73,7 +74,7 @@ export const TNI_RULES = `
 
 ## Payment and printing
 - Order on the rates page (no GL requested): add cargo, open the bill plan / billing options, choose automatic payments from a checking account (keep the pre-selected plan), come back to rates, Recalculate, then Print, Email, Fax.
-- Print: "Insurance Quote (with all bill plans)" and Print; leave Email and Fax unticked.
+- Print: "Insurance Quote (with all bill plans)" and Print; leave Email and Fax unticked. Print/Send is the agent's click (Chrome opens the PDF only for it).
 
 # AmWINS Admitted Placement (Business Auto)
 - Start on the Commercial Lines dashboard: Auto, risk state = the garaging state, Open New Application.

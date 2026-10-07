@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 51 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 52 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1537,6 +1537,13 @@
   }
 
   // Re-marks one field (e.g. an AI choice the agent rejected). Returns whether it was found.
+  // Which of these (VINs) the page shows, as whole runs of letters and digits: the vehicle list's
+  // units on the quote. Only true/false goes back.
+  function listed(texts) {
+    const page = ` ${String(document.body?.innerText ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ')} `;
+    return (texts ?? []).map((t) => { const v = String(t ?? '').toUpperCase().replace(/[^A-Z0-9]/g, ''); return v.length >= 11 && page.includes(` ${v} `); });
+  }
+
   function markKey(key, label, status, note) {
     const same = collectControls().filter((c) => fieldKey(c) === key);
     const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
@@ -1716,5 +1723,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 51, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 52, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

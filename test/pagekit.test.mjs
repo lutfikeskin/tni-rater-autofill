@@ -898,7 +898,9 @@ test('selected Agent Fax Cover Page is preserved without stopping Print-page fil
   assert.equal(print.checked, true);
 });
 
-test('Print/Send works from the current Print page without remembered navigation, preserving fax cover', async () => {
+// TNI 2026-10-07: Chrome opens the quote PDF only after the agent's own click, so the Print page
+// is filled (document, Print, fax cover kept) and Print/Send is left to the agent.
+test('the Print page is filled and Print/Send is left to the agent, preserving fax cover', async () => {
   const h = harness({ search: '?pageName=PrintEmailFax' });
   const quote = makeInput({ id: `f_c${'A'.repeat(32)}32B0_1_1`, name: 'docs_32B0', type: 'radio', value: 'Insurance Quote (with all bill plans)', checked: true });
   const docs = makeInput({ id: 'doc-set', name: 'docs_32B0', type: 'radio', value: 'Document Set' });
@@ -912,13 +914,14 @@ test('Print/Send works from the current Print page without remembered navigation
   button.onclick = () => clicks++;
   const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
   const report = await h.kit.fill(buildPlan(record, progressive), { doneActions: [] });
-  assert.equal(clicks, 1);
+  assert.equal(clicks, 0, "the agent's click");
+  assert.equal(quote.checked, true);
+  assert.equal(print.checked, true);
   assert.equal(cover.checked, true);
   assert.equal(email.checked, false);
   assert.equal(fax.checked, false);
   assert.equal(report.unknown.length, 0);
-  assert.equal(report.documentPending, true);
-  assert.ok(report.actions.some((action) => action.id === 'printSend'));
+  assert.equal(report.actions.length, 0);
 });
 
 test('action prerequisites are conjunctive and unsafe Start Quote buttons never click', async () => {
@@ -1092,6 +1095,12 @@ test('a left-alone question whose wording changed is a check for the agent', asy
   addExtText(h2, 'c', '194', { value: '10/08/2026' });
   const same = await h2.kit.fill([{ id: 'start', q: '194', field: fieldOf('194'), ask: [liveIdentity('194').caption], path: 'progressive.q194', name: 'Policy start date', kind: 'text', ignore: true, value: null }], { maxRounds: 2 });
   assert.equal(same.checks.length, 0);
+});
+
+test('listed() says which VINs the page shows, as whole runs', () => {
+  const h = harness();
+  h.document.body.innerText = 'Vehicles on the quote:\nVehicle 1\n2013\nPETERBILT 388\n1XPWD40X1DD000001\nEdit\nRemove';
+  assert.deepEqual(Array.from(h.kit.listed(['1xpwd40x1dd000001', '1W1MAFZB0KA000002', '0X1DD000001', null])), [true, false, false, false]);
 });
 
 // PR #17 review: a click on Add Non-Trucking Liability that the page dropped must not count.

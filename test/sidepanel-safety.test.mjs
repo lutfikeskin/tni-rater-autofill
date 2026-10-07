@@ -1099,7 +1099,7 @@ test('a driver is entered once the driver list comes back from its page, filled 
   const progressive = { driverPage: 'AddDriver', driverList: 'DriverSummary' };
   const state = { active: { drivers: 0 }, doneActions: new Set(), doneSteps: new Set(), autoPaused: false, intake: { record: { drivers: [{}, {}] } } };
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {} };
-  vm.runInNewContext(['stepScope', 'afterFill', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['stepScope', 'afterFill', 'verifyListed', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   // Codex on PR #43: answers on the page alone (one may have failed, or the page was left) don't count.
   context.afterFill([{ filled: [], kept: [{ label: 'Driver Last Name' }] }], { carrier: progressive, page: 'AddDriver' });
   assert.ok(!state.doneActions.has('driverEntered:0'));
@@ -1122,7 +1122,7 @@ test('trailers: their own page scope, entered once their page is filled, the nex
   const state = { active: { drivers: 0, vehicles: 0, trailers: 0 }, doneActions: new Set(['lookupVin:0', 'addTrailer:0']), doneSteps: new Set(), autoPaused: false, intake: { record } };
   let persisted = 0;
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, save: async () => {}, renderPickers: () => {}, persistDoneActions: () => { persisted++; } };
-  vm.runInNewContext(['stepScope', 'afterFill', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['stepScope', 'afterFill', 'verifyListed', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   assert.equal(context.stepScope('AddTrailer', carrier), 'AddTrailer|tr0|');
   assert.equal(context.stepScope('MostCommonTrailers', carrier), 'MostCommonTrailers|tr0|');
   // Codex on PR #43: Add Trailer opened isn't the trailer entered (an unsupported tile, left), nor
@@ -1138,6 +1138,32 @@ test('trailers: their own page scope, entered once their page is filled, the nex
   await context.pickListItem(carrier, 'VehicleSummary');
   assert.equal(state.active.trailers, 1, 'the next trailer not entered');
   assert.equal(state.active.vehicles, 0, 'the vehicle stays');
+});
+
+// Codex on PR #43: coming back to the list (Back, the top menu) is no proof; the list showing the
+// trailer's VIN is. Progressive lists each unit on the quote with its VIN.
+test('a trailer is on the quote when the vehicle list shows its VIN', async () => {
+  const carrier = { trailerList: 'VehicleSummary', vehicleList: 'VehicleSummary', trailerPage: 'AddTrailer' };
+  const record = { vehicles: [{ vin: '1XPWD40X1DD000001' }], trailers: [{ vin: '1W1MAFZB0KA000002' }], drivers: [] };
+  const run = async (doneActions, shown) => {
+    const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 0 }, doneActions: new Set(doneActions) };
+    const asked = [];
+    const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
+      runKit: async (tabId, c, func, args) => { asked.push(args[0]); return [{ result: shown }]; } };
+    vm.runInNewContext(['verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+    await context.pickListItem(carrier, 'VehicleSummary');
+    return { done: state.doneActions, asked };
+  };
+  // Listed: entered, whatever the return looked like.
+  let r = await run(['lookupVin:0', 'addTrailer:0'], [true, true]);
+  assert.ok(r.done.has('trailerEntered:0'));
+  assert.deepEqual(JSON.parse(JSON.stringify(r.asked)), [['1XPWD40X1DD000001', '1W1MAFZB0KA000002']]);
+  // Back from Add Trailer (marked on the return), the list shows the truck's VIN but not the trailer's: not entered.
+  r = await run(['lookupVin:0', 'addTrailer:0', 'trailerEntered:0'], [true, false]);
+  assert.ok(!r.done.has('trailerEntered:0'));
+  // A list that shows no VINs at all proves nothing: the return decides.
+  r = await run(['lookupVin:0', 'addTrailer:0', 'trailerEntered:0'], [false, false]);
+  assert.ok(r.done.has('trailerEntered:0'));
 });
 
 // Codex on PR #43: a panel closed or reloaded mid-quote must not add a vehicle or trailer again.

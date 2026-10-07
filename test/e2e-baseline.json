@@ -114,10 +114,7 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": [
-     "Print/Send",
-     "Continue ›"
-    ],
+    "clicked": [],
     "outcomes": "5b849e1cb1a2"
    }
   }
@@ -323,9 +320,7 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
+    "clicked": [],
     "outcomes": "5b849e1cb1a2"
    }
   }
@@ -714,9 +709,7 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
+    "clicked": [],
     "outcomes": "5b849e1cb1a2"
    },
    "SaveQuote": {
@@ -864,9 +857,7 @@
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
+    "clicked": [],
     "outcomes": "5b849e1cb1a2"
    }
   }

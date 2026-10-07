@@ -112,6 +112,10 @@ const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').
 // none (TNI standard: "Trailer has no equipment").
 const trailerEquipment = (r) => (r.trailerInfo?.equipTrailer > 0 ? r.trailerInfo.equipTrailer : null);
 
+// TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
+// the driver took a course; then it's the agent's.
+const defensiveMention = (r) => String(r.claims?.notes ?? '').match(/[^\n.]*defensive[^\n.]*/i)?.[0].trim().slice(0, 80) ?? null;
+
 // Farthest one-way distance: "Unlimited" / long haul becomes 501 miles, which picks "More than
 // 500 miles". A trailer goes as far as the vehicle (TNI).
 const radiusMiles = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null);
@@ -353,10 +357,9 @@ export const progressive = {
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal.
     { id: 'print', page: 'CoveragesRates', heldBy: NTL_HOLD, text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], when: notNtl },
-    // This page may have been opened by the agent or restored after a panel reload. Its own
-    // document and delivery controls establish readiness; no in-memory navigation history is needed.
-    // Again on every return to the page (the agent went back, changed something, and reprints).
-    { id: 'printSend', page: 'PrintEmailFax', text: '^print ?/ ?send$', after: ['progressive.q32B0', 'progressive.q32CC'], verify: 'download', repeatOnReturn: true },
+    // Print/Send is the agent's (TNI 2026-10-07): Progressive opens the quote PDF in a new window
+    // from that click, and Chrome only lets a page open one right after the person's own click, so
+    // ours went through without a PDF. The Print page is filled; the panel asks for the click.
   ],
   // The page listing the quote's vehicles: the side panel works on the next intake vehicle not
   // added yet there, so Add Vehicle repeats until all are in, then Continue.
@@ -373,6 +376,8 @@ export const progressive = {
   driverPage: 'AddDriver',
   // Pages that need the agent whatever the intake says; the side panel says so at the top.
   agentPages: {
+    // Chrome opens the PDF only for the agent's own click (see the actions above).
+    PrintEmailFax: 'Click Print/Send yourself to get the quote PDF: Chrome only opens it after your own click. The document and Print are already chosen.',
     // TNI (2026-10-07): an SSN only when the client gave one; the usual fix is the owner's name.
     NoHit: "Progressive couldn't verify the business owner. Adjust the owner's name: removing the middle name and keeping only the first and last name often fixes it. Check the date of birth and home address too (an SSN only if the client gave one), then Continue.",
     CoveragesRates: (r) => (r.coverage?.ntl === true
@@ -388,8 +393,9 @@ export const progressive = {
   },
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is
   // clicked. Never on the finish/buy pages.
-  // Never on NoHit either: the agent adjusts the owner's details there (agentPages).
-  advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFaxConfirm', 'NoHit'] },
+  // Never on NoHit either: the agent adjusts the owner's details there (agentPages), nor on the
+  // Print page, whose next step is the agent's Print/Send.
+  advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFax', 'PrintEmailFaxConfirm', 'NoHit'] },
   rules: [
     ...SAFE_LABEL_RULES,
     // --- Named Insured and Business Overview (pageName=BusinessOwnerInfo) ---------------------
@@ -558,9 +564,10 @@ export const progressive = {
       { q: '28AC', field: 'DriverInput.LicenseStateDup', ask: 'Driver\'s License State', path: 'drivers[].licenseState' },
       { q: '28E6', field: 'DriverInput.HasCDL', ask: 'Does this driver have a Commercial Driver\'s License (CDL)?', path: 'drivers[].cdl', name: 'Has a CDL', kind: 'bool' },
       { q: '28B9', field: 'DriverInput.DriverLicenseNumber', ask: 'Driver’s License Number', path: 'drivers[].licenseNumber' },
-      // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; the agent changes it
-      // when the client has taken one. (299D: the id when it was first seen, after the renumbering.)
-      { q: '299D', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: () => false },
+      // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; a course the
+      // intake's description box mentions is the agent's. (299D: the id when it was first seen,
+      // after the renumbering.)
+      { q: '299D', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
       { q: '28C1', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (standard: No)', kind: 'bool', value: () => false },
       { q: '28F5', field: 'DriverInput.AnyAccidentsViolationsPastExpYears', label: '^has this driver had any accidents claims or violations in the past', path: 'claims.hasClaims', name: 'Accidents / claims / violations (3 yrs)', kind: 'bool' },
     ]),

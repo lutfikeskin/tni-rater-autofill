@@ -1546,6 +1546,7 @@ async function fillPage({ auto = false } = {}) {
 // list) and the driver list work the same way (a driver or trailer counts as entered once its
 // page was filled).
 async function pickListItem(carrier, page) {
+  await verifyListed(carrier, page);
   const lists = [
     [carrier?.vehicleList, 'vehicles', (i) => ['lookupVin', 'addVehicle'].some((a) => state.doneActions.has(`${a}:${i}`))],
     // A trailer only once its page was filled: Add Trailer opened and left (an unsupported tile)
@@ -1561,6 +1562,32 @@ async function pickListItem(carrier, page) {
     await save();
     renderPickers();
   }
+}
+
+// On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each
+// unit with its VIN), and not when the list shows the quote's vehicles by VIN but not this one
+// (Add Trailer left by Back or the top menu, Codex on PR #43). Without VINs to compare, the return
+// from its page decides (unitArrival).
+async function verifyListed(carrier, page) {
+  if (!carrier?.trailerList || page !== carrier.trailerList || !Number.isInteger(state.tab?.id)) return;
+  const record = state.intake?.record ?? {};
+  const vin = (u) => String(u?.vin ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const trailers = (record.trailers ?? []).map(vin);
+  if (!trailers.some((v) => v.length >= 11)) return;
+  const vehicles = (record.vehicles ?? []).map(vin);
+  let shown = null;
+  try {
+    const frames = await runKit(state.tab.id, carrier, (vins) => globalThis.__raterKit?.listed?.(vins) ?? null, [[...vehicles, ...trailers]]);
+    shown = frames.map((f) => f?.result).find(Array.isArray) ?? null;
+  } catch { return; }
+  if (!shown) return;
+  const showsVins = shown.slice(0, vehicles.length).some(Boolean);
+  trailers.forEach((v, i) => {
+    if (v.length < 11) return;
+    if (shown[vehicles.length + i]) state.doneActions.add(`trailerEntered:${i}`);
+    else if (showsVins) state.doneActions.delete(`trailerEntered:${i}`);
+  });
+  persistDoneActions();
 }
 
 // A driver or trailer is entered once the carrier took its page: its list comes back from it (its

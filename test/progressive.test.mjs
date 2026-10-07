@@ -521,7 +521,10 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   // Codex on PR #22: an earlier bill plan visit must not let Recalculate or Print run while the
   // new NTL questions are open. Until the section has been seen live, the whole page is the agent's.
   for (const id of ['billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} is the agent's`);
-  assert.ok(ids(record).includes('printSend'), 'the Print page the agent opens still works as before');
+  // Print/Send is always the agent's click (Chrome opens the PDF only for it); the panel says so.
+  assert.ok(!ids(record).includes('printSend'));
+  assert.match(progressive.agentPages.PrintEmailFax, /Click Print\/Send yourself/);
+  assert.ok(progressive.advance.exceptPages.includes('PrintEmailFax'), 'never continued past the Print page');
   assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print/);
   // GL without NTL is unchanged: no bill plan of ours, the liability check stays.
   const gl = baseRecord();
@@ -622,4 +625,15 @@ test('trailers: Add Trailer once the vehicles are in, its tile, its page, and it
   const none = buildPlan({ ...record, trailers: [] }, progressive, {});
   assert.ok(!none.some((s) => /^(addTrailer|trailerTile):/.test(s.action ?? '') || /^TR/.test(s.q ?? '')));
   assert.equal(none.find((s) => s.q === '1FF2').vehicleHint, null, 'one vehicle, no trailer: its row needs no name');
+});
+
+// TNI 2026-10-07: "Defensive driver ... default answer no, AI can check the Description box of the
+// intake for that". A course mentioned there is the agent's (Codex on PR #43: not a silent No).
+test('defensive driver discount: No, unless the description box mentions a course', () => {
+  const record = baseRecord();
+  assert.deepEqual([byQ(buildPlan(record, progressive, {}), '299D').value, byQ(buildPlan(record, progressive, {}), '299D').note], [false, null]);
+  record.claims = { ...record.claims, notes: 'No accidents. Driver completed a defensive driving course in 2025.' };
+  const step = byQ(buildPlan(record, progressive, {}), '299D');
+  assert.equal(step.value, null);
+  assert.match(step.note, /defensive driving course/);
 });
