@@ -1164,6 +1164,18 @@ test('an unfamiliar question that went away during the fill is not reported', as
   assert.equal(box.checked, true);
   assert.equal(report.unknown.length, 0);
   assert.ok(!report.blockers.some((b) => /^unfamiliar/.test(b)));
+  // Codex on PR #43: a field that looked renamed and then went away doesn't hold Continue either.
+  const r = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const odd = addExtText(r, 'c', '9998', { caption: 'Agent Code', ref: 'AgencyInfo.SomethingRenamed' });
+  const tick = makeInput({ id: 'tick', type: 'checkbox', ariaLabel: 'Tick me' });
+  tick.onclick = () => { odd.input.remove(); };
+  r.document.body.append(tick);
+  const renamed = await r.kit.fill([
+    { id: 'agent', q: '18F', field: 'AgencyInfo.AgencyCodeAgent', ask: ['Agent Code'], pages: ['BusinessOwnerInfo'], path: 'progressive.q18F', kind: 'text', ignore: true },
+    { id: 'tick', selector: '#tick', path: 'x.tick', kind: 'bool', value: true },
+  ], { maxRounds: 4 });
+  assert.equal(renamed.renamed.length, 0);
+  assert.equal(renamed.pageChanged, false);
 });
 
 // PR #17 review: a click on Add Non-Trucking Liability that the page dropped must not count.

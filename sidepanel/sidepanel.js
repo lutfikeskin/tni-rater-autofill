@@ -44,11 +44,17 @@ const agentKeysStore = inExtension && globalThis.chrome?.storage?.local
 let agentKeysQueue = Promise.resolve();
 // Buttons clicked and vehicles/drivers/trailers entered on a quote tab, so a panel closed or
 // reloaded mid-quote never adds a vehicle or trailer again (ids only, scoped like the keys above).
-const DONE_ACTIONS_KEY = 'doneActionsByTab';
+// One storage key per intake and tab: two panels filling two quote tabs never overwrite each
+// other's record (Codex on PR #43).
+const DONE_ACTIONS_PREFIX = 'doneActions:';
+const doneKey = (scope, tabId) => `${DONE_ACTIONS_PREFIX}${scope}:${tabId}`;
 const doneActionsStore = inExtension && globalThis.chrome?.storage?.local
-  ? { get: async () => (await chrome.storage.local.get(DONE_ACTIONS_KEY))[DONE_ACTIONS_KEY] ?? [],
-      set: (records) => chrome.storage.local.set({ [DONE_ACTIONS_KEY]: records }) }
-  : { get: async () => memory[DONE_ACTIONS_KEY] ?? [], set: async (records) => { memory[DONE_ACTIONS_KEY] = records; } };
+  ? { get: async (scope, tabId) => (await chrome.storage.local.get(doneKey(scope, tabId)))[doneKey(scope, tabId)] ?? [],
+      set: (scope, tabId, ids) => (ids.length ? chrome.storage.local.set({ [doneKey(scope, tabId)]: ids }) : chrome.storage.local.remove(doneKey(scope, tabId))),
+      clear: async () => chrome.storage.local.remove(Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX))) }
+  : { get: async (scope, tabId) => memory[doneKey(scope, tabId)] ?? [],
+      set: async (scope, tabId, ids) => { memory[doneKey(scope, tabId)] = ids; },
+      clear: async () => { for (const k of Object.keys(memory)) if (k.startsWith(DONE_ACTIONS_PREFIX)) delete memory[k]; } };
 let doneActionsQueue = Promise.resolve();
 
 const FNV_OFFSET = 1469598103934665603n;
@@ -370,7 +376,7 @@ async function restoreAgentKeys(tabId) {
 function clearAgentKeys() {
   const task = agentKeysQueue.then(() => agentKeysStore.set([]));
   agentKeysQueue = task.catch(() => {});
-  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set([])).catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.clear()).catch(() => {});
   return task;
 }
 
@@ -379,10 +385,7 @@ function persistDoneActions() {
   const tabId = state.tab?.id;
   if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
   const ids = [...state.doneActions].filter((id) => typeof id === 'string');
-  doneActionsQueue = doneActionsQueue.then(async () => {
-    const existing = await doneActionsStore.get();
-    await doneActionsStore.set([...existing.filter((x) => x.scope !== scope || x.tabId !== tabId), ...(ids.length ? [{ scope, tabId, ids }] : [])]);
-  }).catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set(scope, tabId, ids)).catch(() => {});
   return doneActionsQueue;
 }
 
@@ -392,13 +395,10 @@ const doneRestored = new Set();
 async function restoreDoneActions(tabId) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId) || doneRestored.has(`${scope}|${tabId}`)) return;
-  const records = await doneActionsStore.get();
+  const ids = await doneActionsStore.get(scope, tabId);
   if (state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) return;
   doneRestored.add(`${scope}|${tabId}`);
-  for (const x of records) {
-    if (x.scope !== scope || x.tabId !== tabId || !Array.isArray(x.ids)) continue;
-    for (const id of x.ids) if (typeof id === 'string' && id) state.doneActions.add(id);
-  }
+  for (const id of Array.isArray(ids) ? ids : []) if (typeof id === 'string' && id) state.doneActions.add(id);
 }
 
 // Durable decisions store display text separately from the exact live-value fingerprint.
@@ -1546,7 +1546,10 @@ async function fillPage({ auto = false } = {}) {
 // list) and the driver list work the same way (a driver or trailer counts as entered once its
 // page was filled).
 async function pickListItem(carrier, page) {
+  const tabId = state.tab?.id;
   await verifyListed(carrier, page);
+  // Another tab came to the front while the list was read: its own fill picks for it.
+  if (state.tab?.id !== tabId) return;
   const lists = [
     [carrier?.vehicleList, 'vehicles', (i) => ['lookupVin', 'addVehicle'].some((a) => state.doneActions.has(`${a}:${i}`))],
     // A trailer only once its page was filled: Add Trailer opened and left (an unsupported tile)
@@ -1577,11 +1580,12 @@ async function verifyListed(carrier, page) {
   if (!trailers.some((v) => v.length >= 11)) return;
   const vehicles = (record.vehicles ?? []).map(vin);
   let shown = null;
+  const tabId = state.tab.id;
   try {
-    const frames = await runKit(state.tab.id, carrier, (vins) => globalThis.__raterKit?.listed?.(vins) ?? null, [[...vehicles, ...trailers]]);
+    const frames = await runKit(tabId, carrier, (vins) => globalThis.__raterKit?.listed?.(vins) ?? null, [[...vehicles, ...trailers]]);
     shown = frames.map((f) => f?.result).find(Array.isArray) ?? null;
   } catch { return; }
-  if (!shown) return;
+  if (!shown || state.tab?.id !== tabId) return;
   const showsVins = shown.slice(0, vehicles.length).some(Boolean);
   trailers.forEach((v, i) => {
     if (v.length < 11) return;
@@ -1599,11 +1603,13 @@ async function verifyDrivers(carrier) {
   const names = (state.intake?.record?.drivers ?? []).map((d) => [d.first, d.last].filter(Boolean));
   if (!names.some((n) => n.length >= 2)) return;
   let shown = null;
+  const tabId = state.tab.id;
   try {
-    const frames = await runKit(state.tab.id, carrier, (items) => globalThis.__raterKit?.listed?.(items) ?? null, [names]);
+    const frames = await runKit(tabId, carrier, (items) => globalThis.__raterKit?.listed?.(items) ?? null, [names]);
     shown = frames.map((f) => f?.result).find(Array.isArray) ?? null;
   } catch { return; }
-  if (!shown) return;
+  // The agent switched tabs meanwhile: the answer is about the other tab's quote (Codex on PR #43).
+  if (!shown || state.tab?.id !== tabId) return;
   shown.forEach((on, i) => { if (on) state.doneActions.add(`driverEntered:${i}`); });
   persistDoneActions();
 }

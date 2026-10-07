@@ -1183,6 +1183,18 @@ test('a driver the driver list shows by name is entered', async () => {
   assert.ok(state.doneActions.has('driverEntered:0'));
 });
 
+// Codex on PR #43: the agent switched tabs while the list was read: the answer is the old tab's.
+test('a list read for one tab is not applied after the agent switched tabs', async () => {
+  const carrier = { trailerList: 'VehicleSummary', vehicleList: 'VehicleSummary', trailerPage: 'AddTrailer' };
+  const record = { vehicles: [{ vin: '1XPWD40X1DD000001' }], trailers: [{ vin: '1W1MAFZB0KA000002' }], drivers: [] };
+  const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 0 }, doneActions: new Set(['lookupVin:0']) };
+  const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
+    runKit: async () => { state.tab = { id: 4 }; return [{ result: [true, true] }]; } };
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+  await context.pickListItem(carrier, 'VehicleSummary');
+  assert.ok(!state.doneActions.has('trailerEntered:0'));
+});
+
 // Codex on PR #43: a panel closed or reloaded mid-quote must not add a vehicle or trailer again.
 test('done actions are kept per intake and tab, restored once after a reload', async () => {
   const memoryStore = {};
@@ -1191,7 +1203,7 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   const make = () => {
     const state = { tab, doneActions: new Set() };
     const context = { state, usage: { currentSession: () => session }, Promise, Set,
-      doneActionsStore: { get: async () => memoryStore.records ?? [], set: async (records) => { memoryStore.records = records; } }, doneActionsQueue: Promise.resolve() };
+      doneActionsStore: { get: async (scope, tabId) => memoryStore[`${scope}:${tabId}`] ?? [], set: async (scope, tabId, ids) => { memoryStore[`${scope}:${tabId}`] = ids; } }, doneActionsQueue: Promise.resolve() };
     vm.runInNewContext(`var doneActionsQueue = Promise.resolve();\n${SIDEPANEL.match(/const doneRestored = new Set\(\);/)[0]}\n` + ['persistDoneActions', 'restoreDoneActions'].map(extractFunction).join('\n'), context);
     return context;
   };
@@ -1208,6 +1220,15 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   const other = make();
   await other.restoreDoneActions(7);
   assert.equal(other.state.doneActions.size, 0, 'another intake starts clean');
+  // Codex on PR #43: another tab's record is its own key; writing one never drops the other.
+  session.intakeId = 'intake-a';
+  const otherTab = make();
+  otherTab.state.tab = { id: 8 };
+  otherTab.state.doneActions = new Set(['trailerEntered:0']);
+  await otherTab.persistDoneActions();
+  const back = make();
+  await back.restoreDoneActions(7);
+  assert.deepEqual([...back.state.doneActions].sort(), ['lookupVin:0', 'trailerEntered:0'], 'tab 7 kept');
 });
 
 test('a Luna request waiting for a follow-up fill belongs to its tab', async () => {
