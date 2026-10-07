@@ -19,6 +19,7 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/classic/theme-classic/resources/theme-classic-all.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/ext-all.js"></script>
   <script src="show-when.js"></script>
+  <script src="units.js"></script>
   <style>
     body { font: 13px system-ui, sans-serif; margin: 0; background: #fff; color: #111; }
     header { position: sticky; top: 0; z-index: 10; background: #f3f4f6; border-bottom: 1px solid #ddd; padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -67,8 +68,9 @@
     Ext.define('Replay.Text', { extend: 'Ext.form.field.Text', alias: 'widget.dctinputstringfield' });
     Ext.define('Replay.Check', { extend: 'Ext.form.field.Checkbox', alias: 'widget.dctcheckboxfield' });
 
-    // Per page: answers[q] = the component value (combo code / radio text / checkbox bool / text),
-    // texts[q] = what it shows. clicks: every button pressed, in order.
+    // Per page: answers[key] = the component value (combo code / radio text / checkbox bool / text),
+    // texts[key] = what it shows (key: the question id, with its row past the first). clicks: every
+    // button pressed, in order.
     window.replay = { byPage: {}, form: null, fields: [], page: null, clicks: [], started: null };
     const store = (page) => (window.replay.byPage[page] ??= { answers: {}, texts: {} });
 
@@ -79,11 +81,18 @@
       // Layout fields without a question id get a stable made-up one, so they still render.
       const recorded = f.q && /^[0-9A-F]+$/.test(f.q) ? f.q : `F${(1000 + i).toString(16).toUpperCase()}`;
       const q = SHIFT ? (parseInt(recorded, 16) + SHIFT).toString(16).toUpperCase() : recorded;
-      return { id: `f_a${GUID}${q}_8_1`, q };
+      // Its Duck Creek row (<page>_<row>; on Rates, one per vehicle and trailer) when the layout
+      // recorded one, else the first: the fill tells a unit's rows apart by it. A field named after
+      // a unit but recorded before rows, on a page whose units have rows, is drawn apart from them
+      // (9_1): which unit's it was isn't known, and in the first row it would rename that unit.
+      const row = /^\d+_\d+$/.test(f.row ?? '') ? f.row : window.replay.units?.apart.has(f) ? '9_1' : '8_1';
+      return { id: `f_a${GUID}${q}_${row}`, q, key: row === '8_1' ? q : `${q}_${row}` };
     }
     // Duck Creek's data-model name on the field's input (fieldref="RiskInput.VIN"), when recorded.
     const refAttr = (f) => (f.ref ? { inputAttrTpl: `fieldref="${Ext.String.htmlEncode(f.ref)}"` } : {});
     const optionsOf = (f) => (f.opts ?? []).filter((o) => o && !/^…/.test(o));
+    // A unit's row shows the name the replay gave that unit (units.js).
+    const captionOf = (f) => replayUnitCaption(f, window.replay.units, window.replay.page);
 
     function fieldConfig(f, i) {
       // Redacted captures are layouts, not lookup responses. The default replay scenario is
@@ -91,29 +100,29 @@
       // response options instead. Never ask the engine to accept "[client]" as a real identity.
       const record = window.replay.record;
       if (record && f.q === '22F') f = { ...f, opts: (f.opts ?? []).map(o => o.includes('[client]') ? record.applicant.name || record.applicant.owner1 : o) };
-      const { id, q } = idFor(f, i);
+      const { id, q, key } = idFor(f, i);
       const { answers, texts } = store(window.replay.page);
-      const common = { id, dctCaption: f.caption || '(no caption)', dctRequired: !!f.req, ...refAttr(f) };
-      const answer = (v, text) => { answers[q] = v; texts[q] = text ?? v; window.replay.roundTrip(); };
+      const common = { id, dctCaption: captionOf(f) || '(no caption)', dctRequired: !!f.req, ...refAttr(f) };
+      const answer = (v, text) => { answers[key] = v; texts[key] = text ?? v; window.replay.roundTrip(); };
       const opts = optionsOf(f);
       if (f.kind === 'radio' || f.kind === 'checkgroup') {
         const list = opts.length ? opts : ['Yes', 'No'];
         return { ...common, xtype: 'dctradiogroup', columns: 1, vertical: true,
-          items: list.map((o, j) => ({ xtype: 'dctradiofield', id: `${id}_${j}`, name: `string_${q}`, boxLabel: o, inputValue: o, checked: answers[q] === o, ...refAttr(f) })),
-          listeners: { change: (g, v) => answer(v[`string_${q}`]) } };
+          items: list.map((o, j) => ({ xtype: 'dctradiofield', id: `${id}_${j}`, name: `string_${key}`, boxLabel: o, inputValue: o, checked: answers[key] === o, ...refAttr(f) })),
+          listeners: { change: (g, v) => answer(v[`string_${key}`]) } };
       }
       if (f.kind === 'checkbox') {
-        return { ...common, xtype: 'dctcheckboxfield', name: `boolean_${q}`, boxLabel: f.caption, value: answers[q] === true,
+        return { ...common, xtype: 'dctcheckboxfield', name: `boolean_${key}`, boxLabel: captionOf(f), value: answers[key] === true,
           listeners: { change: (c, v) => answer(v, v ? 'checked' : 'unchecked') } };
       }
       if (f.kind === 'combo' && opts.length) {
         return { ...common, xtype: 'dctcombofield', queryMode: 'local', editable: true, forceSelection: true, anyMatch: true,
           store: { fields: ['code', 'text'], data: opts.map((t, j) => ({ code: `${q}-${j}`, text: t })) },
-          displayField: 'text', valueField: 'code', value: answers[q] ?? null,
-          listeners: { blur: (c) => { if ((answers[q] ?? null) !== c.getValue()) answer(c.getValue(), c.getRawValue()); } } };
+          displayField: 'text', valueField: 'code', value: answers[key] ?? null,
+          listeners: { blur: (c) => { if ((answers[key] ?? null) !== c.getValue()) answer(c.getValue(), c.getRawValue()); } } };
       }
-      return { ...common, xtype: 'dctinputstringfield', name: `string_${q}|`, maxLength: f.max, enforceMaxLength: !!f.max, value: answers[q] ?? '',
-        listeners: { blur: (c) => { if ((answers[q] ?? '') !== c.getValue()) answer(c.getValue()); } } };
+      return { ...common, xtype: 'dctinputstringfield', name: `string_${key}|`, maxLength: f.max, enforceMaxLength: !!f.max, value: answers[key] ?? '',
+        listeners: { blur: (c) => { if ((answers[key] ?? '') !== c.getValue()) answer(c.getValue()); } } };
     }
 
     // Answers the carrier pre-selects (layout field `default`), set the first time a page opens.
@@ -123,10 +132,10 @@
       s.defaulted = true;
       fields.forEach((f, i) => {
         if (f.default === undefined) return;
-        const { q } = idFor(f, i);
+        const { q, key } = idFor(f, i);
         const j = optionsOf(f).indexOf(f.default);
-        s.answers[q] = f.kind === 'combo' ? `${q}-${j}` : f.default;
-        s.texts[q] = f.default;
+        s.answers[key] = f.kind === 'combo' ? `${q}-${j}` : f.default;
+        s.texts[key] = f.default;
       });
     };
 
@@ -144,8 +153,8 @@
         // `showAfter`: the question only appears once that row's button was clicked (cargo after "+").
         // `showWhen`: only while its trigger has an answer it was seen showing with (show-when.js).
         items: r.fields.flatMap((f, i) => (f.showAfter && !r.clicks.some((c) => c.page === r.page && c.row === f.showAfter)
-          || !replayShows(f, r.fields, (t, j) => store(r.page).texts[idFor(t, j).q] ?? (t.kind === 'checkbox' ? 'unchecked' : undefined)) ? [] : [
-          { xtype: 'component', cls: 'caption', html: `${Ext.htmlEncode(f.caption || '(no caption)')}${f.showWhen ? `<span class="tag">follow-up: ${Ext.htmlEncode(f.showWhen.caption)} = ${Ext.htmlEncode(f.showWhen.is.join(' / '))}</span>` : f.cond ? '<span class="tag">follow-up</span>' : ''}` },
+          || !replayShows(f, r.fields, (t, j) => store(r.page).texts[idFor(t, j).key] ?? (t.kind === 'checkbox' ? 'unchecked' : undefined)) ? [] : [
+          { xtype: 'component', cls: 'caption', html: `${Ext.htmlEncode(captionOf(f) || '(no caption)')}${f.showWhen ? `<span class="tag">follow-up: ${Ext.htmlEncode(f.showWhen.caption)} = ${Ext.htmlEncode(f.showWhen.is.join(' / '))}</span>` : f.cond ? '<span class="tag">follow-up</span>' : ''}` },
           fieldConfig(f, i),
         ])),
       });
@@ -202,12 +211,14 @@
       // The quote's state is the layout's: Progressive quotes a client in their garaging state, and
       // some answers are a state's (Florida's PIP).
       if (layout?.context?.state) result.record.garaging = { ...result.record.garaging, state: layout.context.state };
-      return result.record;
+      // An intake chosen here is replayed as it is: its own vehicles must find their rows.
+      return file ? result.record : replayWithUnits(result.record, layout?.context, window.replay.units?.list);
     }
 
     async function load() {
       $('status').textContent = 'Loading…';
       layout = await (await fetch($('layout').value)).json();
+      window.replay.units = replayUnitRows(layout);
       window.replay.byPage = {};
       window.replay.clicks = [];
       $('page').replaceChildren(...Object.keys(layout.pages).map((p) => new Option(p, p)));
@@ -236,8 +247,8 @@
 
     function shownAnswers(page, texts) {
       const fields = layout?.pages?.[page]?.fields ?? [];
-      const textOf = (t, j) => texts[idFor(t, j).q] ?? (t.kind === 'checkbox' ? 'unchecked' : undefined);
-      const hidden = new Set(fields.map((f, i) => (replayShows(f, fields, textOf) ? null : idFor(f, i).q)).filter(Boolean));
+      const textOf = (t, j) => texts[idFor(t, j).key] ?? (t.kind === 'checkbox' ? 'unchecked' : undefined);
+      const hidden = new Set(fields.map((f, i) => (replayShows(f, fields, textOf) ? null : idFor(f, i).key)).filter(Boolean));
       return Object.fromEntries(Object.entries(texts).filter(([q]) => !hidden.has(q)));
     }
 

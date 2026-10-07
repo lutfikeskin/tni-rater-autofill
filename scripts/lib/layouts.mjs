@@ -49,12 +49,17 @@ function triggerIdentity(f, kind) {
 // (their text names the vehicle, not the question); else its element id, data-id, or kind and
 // caption. Two questions of a page reading the same (the business's and the owner's "City") are
 // told apart by the nearest question before them that every layout of the page shows once, so
-// one missing from a layout doesn't take the other's place.
+// one missing from a layout doesn't take the other's place. A data-model name some layout of the
+// page shows more than once is a question asked per vehicle or trailer (Progressive's Rates: a
+// row of the same questions for each): each row is its own field, by its Duck Creek row (`row`,
+// "<page>_<row>"), so rows line up across quotes by number (one vehicle's with the same row of a
+// quote with three). The decision is the page's, as for repeated texts.
 const VEHICLE_CAPTION = /^(19|20)\d{2}\s+\S/;
 const textOf = (f) => String(f.label ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 const byText = (f) => !f.ref && !!f.q && !!textOf(f) && !VEHICLE_CAPTION.test(textOf(f));
 function snapshotKeys(snapshots) {
   const repeated = new Set();
+  const perRow = new Set();
   for (const s of snapshots) {
     const seen = new Set();
     for (const f of s.fields.filter(byText)) {
@@ -62,7 +67,32 @@ function snapshotKeys(snapshots) {
       if (seen.has(k)) repeated.add(k);
       seen.add(k);
     }
+    const refs = new Set();
+    for (const f of s.fields.filter((x) => x.ref)) {
+      if (refs.has(f.ref)) perRow.add(f.ref);
+      refs.add(f.ref);
+    }
   }
+  // A per-row field recorded before rows has only its order among its name's fields in its layout
+  // (`ref:<name>#<n>`): it joins the row first seen in that order when that is one row, else it
+  // stays one field per name, as before rows.
+  const rowsAt = new Map();
+  const placed = new Set();
+  for (const s of snapshots) {
+    const nth = new Map();
+    for (const f of s.fields.filter((x) => perRow.has(x.ref))) {
+      nth.set(f.ref, (nth.get(f.ref) ?? 0) + 1);
+      const key = `ref:${f.ref}@${f.row}`;
+      if (!f.row || placed.has(key)) continue;
+      placed.add(key);
+      const order = `ref:${f.ref}#${nth.get(f.ref)}`;
+      rowsAt.set(order, (rowsAt.get(order) ?? new Set()).add(key));
+    }
+  }
+  const unrowed = (ref, n) => {
+    const keys = rowsAt.get(`ref:${ref}#${n}`);
+    return keys?.size === 1 ? [...keys][0] : `ref:${ref}`;
+  };
   const counts = snapshots.filter((s) => s.fields.length).map((s) => {
     const c = new Map();
     for (const f of s.fields) if (textOf(f)) c.set(textOf(f), (c.get(textOf(f)) ?? 0) + 1);
@@ -75,6 +105,7 @@ function snapshotKeys(snapshots) {
   const keys = snapshots.map((s) => {
     let anchor = '';
     const seen = new Map();
+    const nth = new Map();
     return s.fields.map((f) => {
       // Two after the same anchor (rows of one block): their order there.
       const group = `${f.kind}:${textOf(f)}@${anchor}`;
@@ -82,7 +113,8 @@ function snapshotKeys(snapshots) {
       const place = `${group}#${seen.get(group)}`;
       let key;
       if (f.ref) {
-        key = `ref:${f.ref}`;
+        if (perRow.has(f.ref)) nth.set(f.ref, (nth.get(f.ref) ?? 0) + 1);
+        key = !perRow.has(f.ref) ? `ref:${f.ref}` : f.row ? `ref:${f.ref}@${f.row}` : unrowed(f.ref, nth.get(f.ref));
         if (!placeOf.has(key)) placeOf.set(key, place);
       } else if (byText(f)) key = repeated.has(`${f.kind}:${textOf(f)}`) ? `text:${place}` : `text:${f.kind}:${textOf(f)}`;
       else key = f.q ?? (f.id ? `#${f.id}` : f.dataId ? `${f.dataId}:${f.label}` : `${f.kind}:${f.label}`);
@@ -102,6 +134,9 @@ function addField(fields, k, f) {
     id: f.id ?? prev?.id ?? undefined,
     dataId: f.dataId ?? prev?.dataId ?? undefined,
     name: f.name ?? prev?.name ?? undefined,
+    // Its Duck Creek row while every layout that recorded one agrees (null once two disagree): a
+    // per-row field's always does, and the replay draws the field in it.
+    row: !f.row ? prev?.row : prev?.row === undefined || prev.row === f.row ? f.row : null,
     kind: f.type === 'dctinputdatefield' ? 'date' : KIND[f.kind] ?? 'text',
     caption: f.label,
     opts: dedupe([...(prev?.opts ?? []), ...(f.options ?? [])]),
@@ -205,6 +240,7 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
             const trigger = when && captionOf(when.trigger);
             return {
               ...f,
+              row: f.row ?? undefined,
               opts: f.opts.length ? f.opts : undefined,
               req: f.required > 0 || undefined,
               // Required in some layouts only (after certain answers, like a follow-up).

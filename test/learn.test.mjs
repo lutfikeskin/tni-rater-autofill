@@ -173,3 +173,44 @@ test('layouts: a repeated text recorded before names joins the named field in it
   assert.deepEqual(fields.filter((f) => f.caption === 'City').map((f) => f.ref).sort(), ['Biz.City', 'Home.City']);
   assert.ok(fields.every((f) => !f.cond), 'each on both layouts');
 });
+
+// Progressive's Rates shows a row of the same questions for every vehicle and trailer, all with the
+// same data-model name: each row is a field of its own, by its Duck Creek row, and a quote with
+// one vehicle lines up with the first row of a quote with two and a trailer, also renumbered.
+test('layouts: rows of a question asked per vehicle or trailer stay apart, by their row', () => {
+  const context = { state: 'TN', businessClass: 'Freight Hauler', vehicleTypes: ['Semi Truck'], trailers: true, coverages: [] };
+  const layout = (t, fields) => ({ type: 'page_layout', t, session: t, carrier: 'progressive', page: 'CoveragesRates', context, fields });
+  const bipd = (q) => ({ q, ref: 'LineInput.RBIPDLimit', kind: 'select', label: 'Bodily Injury and Property Damage Liability', options: ['$1M CSL'], row: '8_1' });
+  const unit = (q, row, label, more = []) => [
+    { q, ref: 'ComprehensiveInput.Deductible', kind: 'select', label, options: ['$1,000 Deductible'], row },
+    { q: (parseInt(q, 16) + 0x1d).toString(16).toUpperCase(), ref: 'RiskInput.PAValueIndicator', kind: 'checkbox', label: `${/Wilson/.test(label) ? 'Trailer' : 'Vehicle'} has no equipment`, row },
+    ...more,
+  ];
+  const fields = buildLayouts([
+    layout('2026-10-08T10:00:00Z', [bipd('1DD7'), ...unit('200D', '8_1', '2013 PETERBILT 388')]),
+    layout('2026-10-08T11:00:00Z', [bipd('1DD7'), ...unit('200D', '8_1', '2016 FREIGHTLINER CASCADIA 125'), ...unit('200D', '8_2', '2018 KENWORTH T680'), ...unit('200D', '8_3', '2019 Wilson')]),
+    layout('2026-10-09T10:00:00Z', [bipd('1E20'), ...unit('2056', '8_1', '2013 PETERBILT 388'), ...unit('2056', '8_2', '2019 Wilson')]),
+  ])[0].layout.pages.CoveragesRates.fields;
+  assert.equal(fields.filter((f) => f.ref === 'LineInput.RBIPDLimit').length, 1, 'a question asked once is one field');
+  const comp = fields.filter((f) => f.ref === 'ComprehensiveInput.Deductible');
+  assert.deepEqual(comp.map((f) => [f.row, f.caption, !!f.cond]), [['8_1', '2013 PETERBILT 388', false], ['8_2', '2019 Wilson', true], ['8_3', '2019 Wilson', true]]);
+  assert.equal(comp[0].q, '2056', 'the row by its latest number');
+  assert.deepEqual(fields.filter((f) => f.ref === 'RiskInput.PAValueIndicator').map((f) => [f.row, f.caption]),
+    [['8_1', 'Vehicle has no equipment'], ['8_2', 'Trailer has no equipment'], ['8_3', 'Trailer has no equipment']]);
+});
+
+// Layouts recorded with data-model names but before rows (0.9.9 builds before PR #43's rows): a
+// row joins the field first seen in its place (its order among that name's fields); a page with
+// no rows recorded keeps one field per name, as before.
+test('layouts: per-vehicle rows recorded before rows join the row in their place', () => {
+  const context = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: [] };
+  const layout = (t, fields) => ({ type: 'page_layout', t, session: t, carrier: 'progressive', page: 'CoveragesRates', context, fields });
+  const comp = (label, row) => ({ q: '200D', ref: 'ComprehensiveInput.Deductible', kind: 'select', label, options: ['$1,000 Deductible'], row });
+  const before = [comp('2025 RAM PROMASTER 2500'), comp('2019 MERCEDES-BENZ SPRINTER')];
+  const fields = (events) => buildLayouts(events)[0].layout.pages.CoveragesRates.fields;
+  const joined = fields([layout('2026-10-07T12:00:00Z', before), layout('2026-10-08T10:00:00Z', [comp('2021 FORD TRANSIT', '8_1'), comp('2020 RAM PROMASTER 3500', '8_2')])]);
+  assert.deepEqual(joined.map((f) => [f.row, !!f.cond]), [['8_1', false], ['8_2', false]]);
+  const unrowed = fields([layout('2026-10-07T12:00:00Z', before)]);
+  assert.equal(unrowed.length, 1);
+  assert.equal(unrowed[0].row, undefined);
+});
