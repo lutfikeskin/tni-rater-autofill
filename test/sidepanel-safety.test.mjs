@@ -124,7 +124,7 @@ function harness() {
     },
     clearTimeout: (handle) => cleared.push(handle),
     renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {}, save: () => {},
-    ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {},
+    ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {}, restoreDoneActions: async () => {}, persistDoneActions: async () => {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
       scripting: {},
@@ -1074,7 +1074,7 @@ test('a continued step is remembered per vehicle on vehicle pages, per driver on
   const progressive = { vehicleList: 'VehicleSummary', driverList: 'DriverSummary', vehiclePages: ['MostCommonVehicles', 'AddVehicle'], driverPage: 'AddDriver' };
   const state = { active: { vehicles: 0, drivers: 0 }, doneSteps: new Set(), autoPaused: false, tab: { carrier: progressive } };
   const watched = [];
-  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: (...args) => watched.push(args) };
+  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: (...args) => watched.push(args), persistDoneActions: () => {} };
   vm.runInNewContext(extractFunction('stepScope') + extractFunction('afterFill'), context);
   const continued = (page, stepKey) => context.afterFill([{ advanced: 'Continue', signatureBefore: 'before', stepKey }], { carrier: progressive, page });
   continued('AddVehicle', 'Vehicle Information / Common Questions');
@@ -1098,7 +1098,7 @@ test('a continued step is remembered per vehicle on vehicle pages, per driver on
 test('the driver page marks its driver entered when its answers were filled or already there', () => {
   const progressive = { driverPage: 'AddDriver' };
   const state = { active: { drivers: 0 }, doneActions: new Set(), doneSteps: new Set(), autoPaused: false };
-  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {} };
+  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, persistDoneActions: () => {} };
   vm.runInNewContext(extractFunction('stepScope') + extractFunction('afterFill'), context);
   context.afterFill([{ filled: [], kept: [{ label: 'Driver Last Name' }] }], { carrier: progressive, page: 'AddDriver' });
   assert.ok(state.doneActions.has('driverEntered:0'));
@@ -1112,16 +1112,48 @@ test('the driver page marks its driver entered when its answers were filled or a
 test('trailers: their own page scope, entered once their page is filled, the next one picked on the list', async () => {
   const carrier = { vehicleList: 'VehicleSummary', vehiclePages: ['MostCommonVehicles', 'AddVehicle'], trailerList: 'VehicleSummary', trailerPages: ['MostCommonTrailers', 'AddTrailer'], trailerPage: 'AddTrailer', driverPage: 'AddDriver' };
   const record = { vehicles: [{}], trailers: [{}, {}], drivers: [{}] };
-  const state = { active: { drivers: 0, vehicles: 0, trailers: 0 }, doneActions: new Set(['lookupVin:0']), doneSteps: new Set(), autoPaused: false, intake: { record } };
-  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, save: async () => {}, renderPickers: () => {} };
+  const state = { active: { drivers: 0, vehicles: 0, trailers: 0 }, doneActions: new Set(['lookupVin:0', 'addTrailer:0']), doneSteps: new Set(), autoPaused: false, intake: { record } };
+  let persisted = 0;
+  const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, save: async () => {}, renderPickers: () => {}, persistDoneActions: () => { persisted++; } };
   vm.runInNewContext(['stepScope', 'afterFill', 'pickListItem'].map(extractFunction).join('\n'), context);
   assert.equal(context.stepScope('AddTrailer', carrier), 'AddTrailer|tr0|');
   assert.equal(context.stepScope('MostCommonTrailers', carrier), 'MostCommonTrailers|tr0|');
+  // Codex on PR #43: Add Trailer opened isn't the trailer entered (an unsupported tile, left).
+  await context.pickListItem(carrier, 'VehicleSummary');
+  assert.equal(state.active.trailers, 0, 'still the first trailer');
   context.afterFill([{ filled: [{ label: 'VIN' }], kept: [] }], { carrier, page: 'AddTrailer' });
   assert.ok(state.doneActions.has('trailerEntered:0'));
+  assert.ok(persisted > 0, 'kept for a panel reload');
   await context.pickListItem(carrier, 'VehicleSummary');
   assert.equal(state.active.trailers, 1, 'the next trailer not entered');
   assert.equal(state.active.vehicles, 0, 'the vehicle stays');
+});
+
+// Codex on PR #43: a panel closed or reloaded mid-quote must not add a vehicle or trailer again.
+test('done actions are kept per intake and tab, restored once after a reload', async () => {
+  const memoryStore = {};
+  const tab = { id: 7 };
+  const session = { intakeId: 'intake-a' };
+  const make = () => {
+    const state = { tab, doneActions: new Set() };
+    const context = { state, usage: { currentSession: () => session }, Promise, Set,
+      doneActionsStore: { get: async () => memoryStore.records ?? [], set: async (records) => { memoryStore.records = records; } }, doneActionsQueue: Promise.resolve() };
+    vm.runInNewContext(`var doneActionsQueue = Promise.resolve();\n${SIDEPANEL.match(/const doneRestored = new Set\(\);/)[0]}\n` + ['persistDoneActions', 'restoreDoneActions'].map(extractFunction).join('\n'), context);
+    return context;
+  };
+  const before = make();
+  before.state.doneActions = new Set(['lookupVin:0', 'trailerEntered:0']);
+  await before.persistDoneActions();
+  const after = make();
+  await after.restoreDoneActions(7);
+  assert.deepEqual([...after.state.doneActions].sort(), ['lookupVin:0', 'trailerEntered:0']);
+  after.state.doneActions.delete('lookupVin:0');
+  await after.restoreDoneActions(7);
+  assert.ok(!after.state.doneActions.has('lookupVin:0'), 'restored once: a later arrival keeps the panel\'s own set');
+  session.intakeId = 'intake-b';
+  const other = make();
+  await other.restoreDoneActions(7);
+  assert.equal(other.state.doneActions.size, 0, 'another intake starts clean');
 });
 
 test('a Luna request waiting for a follow-up fill belongs to its tab', async () => {

@@ -158,3 +158,18 @@ test('layouts: a repeated text keeps its identity when the earlier one is missin
   assert.equal(cities.length, 2);
   assert.deepEqual(cities.map((f) => [f.q, !!f.cond]).sort(), [['286', true], ['2B0', false]], "the owner's City is on both layouts; the business's on one");
 });
+
+// Codex on PR #43: the two "City" questions recorded before data-model names join their named
+// fields, each by its place (after its anchor), not left as two more fields.
+test('layouts: a repeated text recorded before names joins the named field in its place', () => {
+  const context = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: [] };
+  const layout = (t, fields) => ({ type: 'page_layout', t, session: t, carrier: 'progressive', page: 'BusinessOwnerInfo', context, fields });
+  const text = (q, label, ref) => ({ q, ref, kind: 'text', label });
+  const fields = buildLayouts([
+    layout('2026-10-05T10:00:00Z', [text('27E', 'Street Address'), text('286', 'City'), text('2A9', 'Home Address'), text('2B0', 'City')]),
+    layout('2026-10-08T10:00:00Z', [text('2B5', 'Street Address', 'Biz.Street'), text('2BD', 'City', 'Biz.City'), text('2E0', 'Home Address', 'Home.Street'), text('2E7', 'City', 'Home.City')]),
+  ])[0].layout.pages.BusinessOwnerInfo.fields;
+  assert.equal(fields.length, 4);
+  assert.deepEqual(fields.filter((f) => f.caption === 'City').map((f) => f.ref).sort(), ['Biz.City', 'Home.City']);
+  assert.ok(fields.every((f) => !f.cond), 'each on both layouts');
+});

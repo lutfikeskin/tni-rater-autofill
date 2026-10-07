@@ -92,8 +92,8 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     // An order number and a field key (an element id or name), nothing else in those places.
     if (out.seq !== undefined && !(Number.isSafeInteger(out.seq) && out.seq > 0)) delete out.seq;
     if (out.key != null && !(typeof out.key === 'string' && out.key.length <= 256)) delete out.key;
-    // Which tab and vehicle/driver (t1, t2:v0): an order number and an index, nothing else.
-    if (out.view !== undefined && !(typeof out.view === 'string' && /^t\d{1,3}(:[vd]\d{1,3})?$/.test(out.view))) delete out.view;
+    // Which tab and vehicle/driver/trailer (t1, t2:v0, t2:tr0): an order number and an index, nothing else.
+    if (out.view !== undefined && !(typeof out.view === 'string' && /^t\d{1,3}(:(?:v|d|tr)\d{1,3})?$/.test(out.view))) delete out.view;
     // Layouts: never keep option lists or picks naming agency staff (agent of record, producer codes).
     if (out.type === 'page_layout' && Array.isArray(out.fields)) {
       out.fields = out.fields.map((f) => (/agent|producer/i.test(f?.label ?? '') ? { ...f, options: undefined, selected: undefined } : f));

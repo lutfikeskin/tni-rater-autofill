@@ -69,25 +69,28 @@ function snapshotKeys(snapshots) {
     return c;
   });
   const anchors = new Set([...(counts[0]?.keys() ?? [])].filter((t) => counts.every((c) => c.get(t) === 1)));
-  return snapshots.map((s) => {
+  // Where each named field sits (its text after its anchor), so a repeated text recorded before
+  // names joins the named field in the same place.
+  const placeOf = new Map();
+  const keys = snapshots.map((s) => {
     let anchor = '';
     const seen = new Map();
     return s.fields.map((f) => {
+      // Two after the same anchor (rows of one block): their order there.
+      const group = `${f.kind}:${textOf(f)}@${anchor}`;
+      seen.set(group, (seen.get(group) ?? 0) + 1);
+      const place = `${group}#${seen.get(group)}`;
       let key;
-      if (f.ref) key = `ref:${f.ref}`;
-      else if (byText(f)) {
-        const k = `${f.kind}:${textOf(f)}`;
-        if (repeated.has(k)) {
-          // Two after the same anchor (rows of one block): their order there.
-          const group = `${k}@${anchor}`;
-          seen.set(group, (seen.get(group) ?? 0) + 1);
-          key = `text:${group}#${seen.get(group)}`;
-        } else key = `text:${k}`;
-      } else key = f.q ?? (f.id ? `#${f.id}` : f.dataId ? `${f.dataId}:${f.label}` : `${f.kind}:${f.label}`);
+      if (f.ref) {
+        key = `ref:${f.ref}`;
+        if (!placeOf.has(key)) placeOf.set(key, place);
+      } else if (byText(f)) key = repeated.has(`${f.kind}:${textOf(f)}`) ? `text:${place}` : `text:${f.kind}:${textOf(f)}`;
+      else key = f.q ?? (f.id ? `#${f.id}` : f.dataId ? `${f.dataId}:${f.label}` : `${f.kind}:${f.label}`);
       if (anchors.has(textOf(f))) anchor = textOf(f);
       return key;
     });
   });
+  return { keys, placeOf };
 }
 
 // One field of a page, merged over its layouts.
@@ -112,14 +115,15 @@ function addField(fields, k, f) {
 }
 
 // Fields kept under their text (recorded before data-model names) join the one named field of the
-// page with the same kind and text, when there is exactly one. Returns which text keys joined
-// which named field.
-function mergeUnnamed(fields) {
+// page with the same kind and text; a text two questions share joins the one in the same place
+// (after the same anchor). Returns which text keys joined which named field.
+function mergeUnnamed(fields, placeOf = new Map()) {
   const merged = new Map();
   const named = [...fields].filter(([k]) => k.startsWith('ref:'));
   for (const [k, f] of [...fields]) {
     if (!k.startsWith('text:')) continue;
-    const same = named.filter(([, n]) => n.kind === f.kind && String(n.caption ?? '').trim().toLowerCase() === String(f.caption ?? '').trim().toLowerCase());
+    let same = named.filter(([, n]) => n.kind === f.kind && String(n.caption ?? '').trim().toLowerCase() === String(f.caption ?? '').trim().toLowerCase());
+    if (same.length > 1 && k.includes('@')) same = same.filter(([nk]) => placeOf.get(nk) === k.slice('text:'.length));
     if (same.length !== 1) continue;
     const [nk, n] = same[0];
     fields.set(nk, { ...n, opts: dedupe([...(n.opts ?? []), ...(f.opts ?? [])]), seen: n.seen + f.seen, required: n.required + f.required, mapped: n.mapped ?? f.mapped });
@@ -181,13 +185,13 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
       pages: Object.fromEntries([...l.pages].map(([name, p]) => {
         // Keys once every layout of the page is in (a repeated text's anchor is a question all of
         // them show), then the fields merged in the order the layouts came.
-        const keys = snapshotKeys(p.snapshots);
+        const { keys, placeOf } = snapshotKeys(p.snapshots);
         p.fields = new Map();
         p.snapshots.forEach((snap, j) => {
           snap.keys = keys[j];
           snap.fields.forEach((f, i) => addField(p.fields, snap.keys[i], f));
         });
-        sameIdentities(p, mergeUnnamed(p.fields));
+        sameIdentities(p, mergeUnnamed(p.fields, placeOf));
         // Per coverage request: a question that shows for some coverages only is not one answer's
         // follow-up across them (inferShowWhenByGroup).
         const groups = new Map();

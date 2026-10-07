@@ -1068,6 +1068,14 @@ test('a helper\'s "do it yourself" note is not shown once what it adds is alread
     const report = await h.kit.fill([addTrailer], { maxRounds: 2, doneActions: done });
     assert.equal(report.noData.length, notes, done.join(' '));
   }
+  // Codex on PR #43: opened but never entered (the trailer page left): the agent finishes it.
+  const opened = { ...addTrailer, doneWhen: ['trailerEntered:0'], unfinished: 'Add Trailer was opened, but this trailer was never entered.' };
+  for (const [done, notes] of [[['lookupVin:0', 'addTrailer:0'], ['Add Trailer was opened, but this trailer was never entered.']], [['lookupVin:0', 'addTrailer:0', 'trailerEntered:0'], []]]) {
+    const h = harness();
+    addButton(h, 'Continue');
+    const report = await h.kit.fill([opened], { maxRounds: 2, doneActions: done });
+    assert.deepEqual(Array.from(report.noData, (x) => x.note), notes, done.join(' '));
+  }
 });
 
 // Codex on PR #43: a question we leave as the page has it, found by its data-model name, whose

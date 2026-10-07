@@ -106,6 +106,10 @@ const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
 const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').trim());
 
+// A trailer's attached equipment: the intake's amount when it gives one (not "N/A" or 0), else
+// none (TNI standard: "Trailer has no equipment").
+const trailerEquipment = (r) => (r.trailerInfo?.equipTrailer > 0 ? r.trailerInfo.equipTrailer : null);
+
 // Farthest one-way distance: "Unlimited" / long haul becomes 501 miles, which picks "More than
 // 500 miles". A trailer goes as far as the vehicle (TNI).
 const radiusMiles = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null);
@@ -303,7 +307,7 @@ export const progressive = {
     // trailer not entered yet (the side panel moves the active trailer, see trailerList), its tile,
     // then its Add Trailer page. When the button can't be found the agent is told, so Continue
     // never leaves an intake trailer out (TN 2026-10-07).
-    { id: 'addTrailer', page: 'VehicleSummary', text: '^add (a |another )?trailer$', opener: '^add$', unlessActions: ['trailerEntered:trailer'], afterActions: (r) => (r.vehicles ?? []).map((_, i) => `lookupVin:${i}`), scope: 'trailer', label: 'Trailer', missing: 'Add the intake\'s trailer yourself (Add → Add Trailer).', when: (r) => (r.trailers?.length ?? 0) > 0 },
+    { id: 'addTrailer', page: 'VehicleSummary', text: '^add (a |another )?trailer$', opener: '^add$', unlessActions: ['trailerEntered:trailer'], afterActions: (r) => (r.vehicles ?? []).map((_, i) => `lookupVin:${i}`), scope: 'trailer', label: 'Trailer', missing: 'Add the intake\'s trailer yourself (Add → Add Trailer).', doneWhen: (r, a) => [`trailerEntered:${a.trailers ?? 0}`], unfinished: 'Add Trailer was opened, but this intake trailer was never entered: add it (Add → Add Trailer) before Continue.', when: (r) => (r.trailers?.length ?? 0) > 0 },
     { id: 'trailerTile', page: 'MostCommonTrailers', text: trailerTile, unique: true, label: 'Trailer type', missing: trailerTileNote, scope: 'trailer', when: (r) => (r.trailers?.length ?? 0) > 0 },
     // Non-trucking liability, once the agent set it to Yes (a claims-box mention alone never
     // clicks it): the link under the liability coverage that opens the NTL section. First in this
@@ -526,7 +530,8 @@ export const progressive = {
     // --- Add trailer (AddTrailer) ------------------------------------------------------------
     // The active trailer's answers (TNI 2026-10-07): the intake's VIN, year, make and value, the
     // vehicle's distance, loan/lease from the trailer ownership, comprehensive/collision Yes and
-    // no equipment. No VIN lookup here. Found on this page only (the names are the vehicle's).
+    // no equipment (or the intake's equipment value). No VIN lookup here. Found on this page only
+    // (the names are the vehicle's).
     ...onPage('AddTrailer', [
       { q: '2A29', field: 'RiskInput.VIN', ask: 'VIN', path: 'trailers[].vin' },
       { q: '2A2A', field: 'RiskInput.Year', ask: 'Year', path: 'trailers[].year', kind: 'choice' },
@@ -535,8 +540,8 @@ export const progressive = {
       { q: '2A65', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this trailer travels for work', name: 'Trailer farthest one-way distance (as the vehicle)', kind: 'int', value: radiusMiles },
       { q: '2AD0', field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from trailer ownership, standard: No)', kind: 'choice', value: trailerLoanLease },
       { q: '2AEE', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this trailer in an accident or loss?', name: 'Trailer comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
-      { q: '2AFF', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard)', kind: 'bool', value: () => true },
-      { q: '2AFC', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (standard: no equipment)', ignore: true },
+      { q: '2AFF', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard, unless the intake gives an equipment value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
+      { q: '2AFC', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },
       { q: '2B04', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
     ]).map((rule) => ({ ...rule, pageOnly: true })),
 
@@ -613,7 +618,7 @@ export const progressive = {
       { q: 'TR1FD2', field: 'CollisionInput.Deductible', name: 'Trailer collision deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000 Deductible' },
       { q: 'TR1FF2', field: 'RentalInput.Limit', name: 'Trailer rental reimbursement (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
       { q: 'TR200F', field: 'FireAndTheftInput.Deductible', name: 'Trailer fire / theft (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
-      { q: 'TR2CE3', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard)', kind: 'bool', value: () => true },
+      { q: 'TR2CE3', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard, unless the intake gives an equipment value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: 'TR2CE8', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
     ]).map((rule) => ({ ...rule, scope: 'trailer', pageOnly: true })),
 

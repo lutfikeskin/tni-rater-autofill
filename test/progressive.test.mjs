@@ -598,6 +598,14 @@ test('trailers: Add Trailer once the vehicles are in, its tile, its page, and it
   assert.ok(['2A29', '2B04'].every((q) => step(q).pageOnly && step(q).pages.includes('AddTrailer')));
   assert.ok(step('2B20').notPages.includes('AddTrailer'), "the vehicle's VIN is never looked for on the trailer page");
   assert.ok(plan.find((s) => s.path === 'vehicles[0].vin' && s.re).notPages.includes('AddTrailer'));
+  // Codex on PR #43: an equipment value on the intake is entered, not "no equipment".
+  assert.deepEqual([step('2AFF').value, step('2AFC').ignore, step('TR2CE3').value], [true, true, true], 'none on the intake: no equipment');
+  const equipped = buildPlan({ ...record, trailerInfo: { ...record.trailerInfo, equipTrailer: 3500 } }, progressive, { trailers: 0 });
+  assert.deepEqual(['2AFF', '2AFC', 'TR2CE3'].map((q) => equipped.find((s) => s.q === q).value), [false, 3500, false]);
+  assert.equal(equipped.find((s) => s.q === '2AFC').ignore, false);
+  const done = plan.find((s) => s.action === 'addTrailer:0');
+  assert.deepEqual(done.doneWhen, ['trailerEntered:0']);
+  assert.match(done.unfinished, /never entered/);
   // No trailer ownership on the intake: owned.
   assert.equal(byQ(buildPlan({ ...record, trailerInfo: {} }, progressive, { trailers: 0 }), '2AD0').value, 'No');
   // Rates: the trailer's row by its year and make; the vehicle's by its own (a row each).

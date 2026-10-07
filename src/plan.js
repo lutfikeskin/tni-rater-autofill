@@ -55,6 +55,10 @@ function actionSteps(carrier, record, active) {
       afterAny: (resolve(a.afterAny) ?? []).map((p) => withIndex(p, active)),
       unless: (resolve(a.unless) ?? []).map((p) => withIndex(p, active)),
       unlessSelector: resolve(a.unlessSelector) ?? null,
+      // Clicked, but what it adds isn't in until one of these is done (a trailer entered): until
+      // then the page says `unfinished` (Continue waits).
+      doneWhen: resolve(a.doneWhen) ?? [],
+      unfinished: resolve(a.unfinished) ?? null,
       unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (/:driver$/.test(id) || (a.scope === 'driver' && !/:/.test(id))
         ? `${id.replace(/:driver$/, '')}:${active.drivers ?? 0}`
         : /:trailer$/.test(id) || (a.scope === 'trailer' && !/:/.test(id)) ? `${id.replace(/:trailer$/, '')}:${active.trailers ?? 0}`

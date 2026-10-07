@@ -42,6 +42,14 @@ const agentKeysStore = inExtension && globalThis.chrome?.storage?.local
       set: (records) => chrome.storage.local.set({ [AGENT_KEYS_KEY]: records }) }
   : { get: async () => memory[AGENT_KEYS_KEY] ?? [], set: async (records) => { memory[AGENT_KEYS_KEY] = records; } };
 let agentKeysQueue = Promise.resolve();
+// Buttons clicked and vehicles/drivers/trailers entered on a quote tab, so a panel closed or
+// reloaded mid-quote never adds a vehicle or trailer again (ids only, scoped like the keys above).
+const DONE_ACTIONS_KEY = 'doneActionsByTab';
+const doneActionsStore = inExtension && globalThis.chrome?.storage?.local
+  ? { get: async () => (await chrome.storage.local.get(DONE_ACTIONS_KEY))[DONE_ACTIONS_KEY] ?? [],
+      set: (records) => chrome.storage.local.set({ [DONE_ACTIONS_KEY]: records }) }
+  : { get: async () => memory[DONE_ACTIONS_KEY] ?? [], set: async (records) => { memory[DONE_ACTIONS_KEY] = records; } };
+let doneActionsQueue = Promise.resolve();
 
 const FNV_OFFSET = 1469598103934665603n;
 const FNV_PRIME = 1099511628211n;
@@ -362,7 +370,35 @@ async function restoreAgentKeys(tabId) {
 function clearAgentKeys() {
   const task = agentKeysQueue.then(() => agentKeysStore.set([]));
   agentKeysQueue = task.catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set([])).catch(() => {});
   return task;
+}
+
+function persistDoneActions() {
+  const scope = usage.currentSession()?.intakeId;
+  const tabId = state.tab?.id;
+  if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
+  const ids = [...state.doneActions].filter((id) => typeof id === 'string');
+  doneActionsQueue = doneActionsQueue.then(async () => {
+    const existing = await doneActionsStore.get();
+    await doneActionsStore.set([...existing.filter((x) => x.scope !== scope || x.tabId !== tabId), ...(ids.length ? [{ scope, tabId, ids }] : [])]);
+  }).catch(() => {});
+  return doneActionsQueue;
+}
+
+// Once per tab and intake while the panel is open (after a reload): later arrivals keep the
+// panel's own set, which may have dropped a button to run again (Print / Send on a return).
+const doneRestored = new Set();
+async function restoreDoneActions(tabId) {
+  const scope = usage.currentSession()?.intakeId;
+  if (!scope || !Number.isInteger(tabId) || doneRestored.has(`${scope}|${tabId}`)) return;
+  const records = await doneActionsStore.get();
+  if (state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) return;
+  doneRestored.add(`${scope}|${tabId}`);
+  for (const x of records) {
+    if (x.scope !== scope || x.tabId !== tabId || !Array.isArray(x.ids)) continue;
+    for (const id of x.ids) if (typeof id === 'string' && id) state.doneActions.add(id);
+  }
 }
 
 // Durable decisions store display text separately from the exact live-value fingerprint.
@@ -819,6 +855,7 @@ async function refreshTab() {
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false } : null;
   await restoreAgentKeys(state.tab?.id);
+  await restoreDoneActions(state.tab?.id);
   if (state.tab?.carrier && !state.filling) await retireAiOrigins({ tabId: state.tab.id, tabUrl: state.tab.url, intake: state.intake, carrier: state.tab.carrier });
   renderSite();
   ensureRecorder();
@@ -885,7 +922,9 @@ function onRecorderMessage(msg, sender) {
     // back and changes something, coming back to print means printing the new quote).
     if (msg.from && samePage(msg.from) !== samePage(msg.page)) {
       for (const a of state.tab.carrier?.actions ?? []) {
-        if (a.repeatOnReturn && [].concat(a.page ?? []).includes(samePage(msg.page))) state.doneActions.delete(a.id);
+        if (!a.repeatOnReturn || ![].concat(a.page ?? []).includes(samePage(msg.page))) continue;
+        for (const id of [...state.doneActions]) if (id === a.id || id.startsWith(`${a.id}:`)) state.doneActions.delete(id);
+        persistDoneActions();
       }
     }
     // Setting "Fill each new page as soon as it opens": fill right away (the fill itself waits
@@ -1316,6 +1355,7 @@ function rememberFill(frames) {
   }
   for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) state.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
+  persistDoneActions();
   for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
   for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
   // Kept from every fill: a searched combo's list differs from one fill to the next.
@@ -1507,7 +1547,9 @@ async function fillPage({ auto = false } = {}) {
 async function pickListItem(carrier, page) {
   const lists = [
     [carrier?.vehicleList, 'vehicles', (i) => ['lookupVin', 'addVehicle'].some((a) => state.doneActions.has(`${a}:${i}`))],
-    [carrier?.trailerList, 'trailers', (i) => ['trailerEntered', 'addTrailer'].some((a) => state.doneActions.has(`${a}:${i}`))],
+    // A trailer only once its page was filled: Add Trailer opened and left (an unsupported tile)
+    // doesn't count, and Vehicle Summary holds Continue for it (the action's `unfinished` note).
+    [carrier?.trailerList, 'trailers', (i) => state.doneActions.has(`trailerEntered:${i}`)],
     [carrier?.driverList, 'drivers', (i) => ['driverEntered', 'addDriver'].some((a) => state.doneActions.has(`${a}:${i}`))],
   ];
   for (const [listPage, list, done] of lists) {
@@ -1532,6 +1574,7 @@ function afterFill(frames, { carrier, page }) {
   if (carrier.trailerPage && carrier.trailerPage === page && frames.some((f) => f.filled?.length || f.kept?.length)) {
     state.doneActions.add(`trailerEntered:${state.active.trailers ?? 0}`);
   }
+  persistDoneActions();
   const clicked = frames.some((f) => (f.actions ?? []).length);
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
   if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 900);
