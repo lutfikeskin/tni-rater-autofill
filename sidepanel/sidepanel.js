@@ -1569,6 +1569,7 @@ async function pickListItem(carrier, page) {
 // (Add Trailer left by Back or the top menu, Codex on PR #43). Without VINs to compare, the return
 // from its page decides (unitArrival).
 async function verifyListed(carrier, page) {
+  if (carrier?.driverList && page === carrier.driverList) return verifyDrivers(carrier);
   if (!carrier?.trailerList || page !== carrier.trailerList || !Number.isInteger(state.tab?.id)) return;
   const record = state.intake?.record ?? {};
   const vin = (u) => String(u?.vin ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -1587,6 +1588,23 @@ async function verifyListed(carrier, page) {
     if (shown[vehicles.length + i]) state.doneActions.add(`trailerEntered:${i}`);
     else if (showsVins) state.doneActions.delete(`trailerEntered:${i}`);
   });
+  persistDoneActions();
+}
+
+// On the driver list, a driver it shows by name (first and last) is entered, also when the panel
+// was closed while the agent finished the driver's page (Codex on PR #43). A name not shown proves
+// nothing (the list may write it another way): the return from the driver page decides.
+async function verifyDrivers(carrier) {
+  if (!Number.isInteger(state.tab?.id)) return;
+  const names = (state.intake?.record?.drivers ?? []).map((d) => [d.first, d.last].filter(Boolean));
+  if (!names.some((n) => n.length >= 2)) return;
+  let shown = null;
+  try {
+    const frames = await runKit(state.tab.id, carrier, (items) => globalThis.__raterKit?.listed?.(items) ?? null, [names]);
+    shown = frames.map((f) => f?.result).find(Array.isArray) ?? null;
+  } catch { return; }
+  if (!shown) return;
+  shown.forEach((on, i) => { if (on) state.doneActions.add(`driverEntered:${i}`); });
   persistDoneActions();
 }
 

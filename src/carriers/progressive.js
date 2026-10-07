@@ -583,7 +583,7 @@ export const progressive = {
       { q: '1DB8', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
       // PIP shares its data-model name across states: other states' lists (TX $2,500–$25,000, MD
       // "Full PIP") are left as Progressive set them (TNI 2026-10-07: no standard there).
-      { q: '1E8D', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r) },
+      { q: '1E8D', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r), emptyNote: (r) => (isFlorida(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida only: choose it yourself.') },
       { q: '1DEE', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
       // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
       ...[['1DCA', { ask: 'Uninsured Motorist Bodily Injury' }], ['1DDE', { ask: 'Underinsured Motorist Bodily Injury' }], ['1DD8', { field: 'LineInput.UIMBILimit' }], ['1DBF', { field: 'LineInput.UMBILimit' }]]
@@ -647,8 +647,10 @@ export const progressive = {
       { q: '32C8', ask: 'Welcome Letter Closing Message', name: 'Welcome letter closing message (optional)', ignore: true },
       { q: '32CC', ask: 'Print', name: 'Print (standard)', kind: 'bool', value: () => true },
       { q: '32CE', ask: 'Agent Fax Cover Page', name: 'Agent Fax Cover Page (preserve portal selection)', ignore: true },
-      { q: '32D0', ask: 'Email', name: 'Email (leave unchecked)', ignore: true },
-      { q: '32DD', ask: 'Fax', name: 'Fax (leave unchecked)', ignore: true },
+      // Unticked when Progressive ticked them: the agent's Print/Send must only open the PDF, never
+      // send the quote (Codex on PR #43). A box the agent ticked is theirs (agent edits are kept).
+      { q: '32D0', ask: 'Email', name: 'Email (standard: unchecked)', kind: 'bool', value: () => false },
+      { q: '32DD', ask: 'Fax', name: 'Fax (standard: unchecked)', kind: 'bool', value: () => false },
     ]),
 
     // --- Save Quote (SaveQuote) ------------------------------------------------------------------

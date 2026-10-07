@@ -906,14 +906,15 @@ test('the Print page is filled and Print/Send is left to the agent, preserving f
   const docs = makeInput({ id: 'doc-set', name: 'docs_32B0', type: 'radio', value: 'Document Set' });
   const print = makeInput({ id: `f_c${'A'.repeat(32)}32CC_1_1`, ariaLabel: 'Print', type: 'checkbox', checked: true });
   const cover = makeInput({ id: `f_c${'A'.repeat(32)}32CE_1_1`, ariaLabel: 'Agent Fax Cover Page', type: 'checkbox', checked: true });
-  const email = makeInput({ id: `f_c${'A'.repeat(32)}32D0_1_1`, ariaLabel: 'Email', type: 'checkbox' });
+  // Progressive ticked Email (Codex on PR #43): the agent's Print/Send must not send the quote.
+  const email = makeInput({ id: `f_c${'A'.repeat(32)}32D0_1_1`, ariaLabel: 'Email', type: 'checkbox', checked: true });
   const fax = makeInput({ id: `f_c${'A'.repeat(32)}32DD_1_1`, ariaLabel: 'Fax', type: 'checkbox' });
   h.document.body.append(quote, docs, print, cover, email, fax);
   const button = addButton(h, 'Print/Send');
   let clicks = 0;
   button.onclick = () => clicks++;
   const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
-  const report = await h.kit.fill(buildPlan(record, progressive), { doneActions: [] });
+  const report = await h.kit.fill(buildPlan(record, progressive), { doneActions: [], replaceChoices: progressive.replaceChoices });
   assert.equal(clicks, 0, "the agent's click");
   assert.equal(quote.checked, true);
   assert.equal(print.checked, true);
@@ -1101,6 +1102,20 @@ test('listed() says which VINs the page shows, as whole runs', () => {
   const h = harness();
   h.document.body.innerText = 'Vehicles on the quote:\nVehicle 1\n2013\nPETERBILT 388\n1XPWD40X1DD000001\nEdit\nRemove';
   assert.deepEqual(Array.from(h.kit.listed(['1xpwd40x1dd000001', '1W1MAFZB0KA000002', '0X1DD000001', null])), [true, false, false, false]);
+  // Names: every word, whole.
+  h.document.body.innerText = 'Here are the drivers on the quote:\nJordan Avery Sample\nEdit';
+  assert.deepEqual(Array.from(h.kit.listed([['Jordan', 'Sample'], ['Jordan', 'Samples'], ['Jo', 'Sample']])), [true, false, false]);
+});
+
+// Codex on PR #43: a Yes / No question that became a text box is never typed "Yes" into.
+test('a yes/no answer is never typed into a text box with its question\'s wording', async () => {
+  const h = harness();
+  const box = makeInput({ id: 'hazmat', ariaLabel: 'Does the customer haul hazardous materials?' });
+  h.document.body.append(box);
+  const report = await h.kit.fill([{ id: 'hz', path: 'operations.hazmat', name: 'Hauls hazmat', kind: 'bool', ask: ['Does the customer haul hazardous materials?'], value: false }], { maxRounds: 2 });
+  assert.equal(box.value, '');
+  assert.equal(report.filled.length, 0);
+  assert.equal(report.unknown.length, 1, 'left for the agent as unfamiliar');
 });
 
 // PR #17 review: a click on Add Non-Trucking Liability that the page dropped must not count.

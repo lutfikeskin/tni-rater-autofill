@@ -160,7 +160,7 @@ function fieldSteps(rules, record, carrier, active) {
       // May fill its field while it isn't on screen (an earlier step's question added later).
       hidden: !!rule.hidden,
       // An ignored field the page fills itself (a lookup): flagged only if it stays empty.
-      emptyNote: rule.emptyNote ?? null,
+      emptyNote: typeof rule.emptyNote === 'function' ? rule.emptyNote(record, active) : rule.emptyNote ?? null,
       // A default the agent should confirm: filled, but marked yellow with this note.
       warn: typeof rule.warn === 'function' ? rule.warn(record, active) : rule.warn ?? null,
       summaryAfter: typeof rule.summaryAfter === 'function' ? rule.summaryAfter(record, active) : rule.summaryAfter ?? null,

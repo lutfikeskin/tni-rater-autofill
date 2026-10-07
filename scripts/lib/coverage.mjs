@@ -52,9 +52,17 @@ const kindFits = (rule, f) => {
 // recorded before names were kept (0.9.9) is judged by the rule's expected wording instead, as the
 // live page always carries the name. A question's text (`ask`, or `label` on its page) claims a
 // field no rule knows by name. A question id never claims anything (Progressive renumbers them).
-function claims(rule, f, page, named) {
-  if (rule.field) return (f.ref ? f.ref === rule.field && nameHere(rule, page) : (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f)) && kindFits(rule, f);
-  if ((rule.ask || rule.label) && rule.page) return onPage(rule, page) && !(f.ref && named.has(f.ref)) && textIs(rule, f) && kindFits(rule, f);
+// A rule whose text repeats on the page (`askAfter`) claims only the first field reading it after
+// its anchor question, as pagekit's afterAnchor does (needs the page's fields in order).
+function anchored(rule, f, fields) {
+  if (!rule.askAfter || !fields) return true;
+  const at = fields.findIndex((x) => squash(x.caption) === squash(rule.askAfter));
+  return at >= 0 && fields.slice(at + 1).find((x) => textIs(rule, x) && kindFits(rule, x)) === f;
+}
+
+function claims(rule, f, page, named, fields) {
+  if (rule.field) return (f.ref ? f.ref === rule.field && nameHere(rule, page) : (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f) && anchored(rule, f, fields)) && kindFits(rule, f);
+  if ((rule.ask || rule.label) && rule.page) return onPage(rule, page) && !(f.ref && named.has(f.ref)) && textIs(rule, f) && kindFits(rule, f) && anchored(rule, f, fields);
   if (!onPage(rule, page)) return false;
   if (rule.selector) {
     const m = selectorMatch(rule.selector, f);
@@ -70,8 +78,9 @@ function claims(rule, f, page, named) {
 }
 
 // What happens to a field: filled by a rule, left alone on purpose (ignore), left for the agent
-// on purpose (note), or unclaimed. `unsure` when only a DOM-only selector might match.
-export function fieldStatus(f, carrier, page = null) {
+// on purpose (note), or unclaimed. `unsure` when only a DOM-only selector might match. `fields`:
+// the page's fields in order, for questions told apart by the question before them (askAfter).
+export function fieldStatus(f, carrier, page = null, fields = null) {
   const all = [...(carrier.rules ?? []), ...(carrier.useGenericRules === false ? [] : GENERIC_RULES)];
   // Known questions (a name, a text on its page, an option or a selector) before label rules, as
   // the fill engine pairs them.
@@ -80,7 +89,7 @@ export function fieldStatus(f, carrier, page = null) {
   const named = new Set(rules.map((r) => r.field).filter(Boolean));
   let unsure = null;
   for (const rule of rules) {
-    const hit = claims(rule, f, page, named);
+    const hit = claims(rule, f, page, named, fields);
     if (hit === 'unknown') { unsure ??= rule; continue; }
     if (!hit) continue;
     const how = typeof rule.ignore === 'function' || rule.ignore ? 'ignored' : rule.note && !rule.value ? 'agent' : 'filled';
@@ -94,7 +103,7 @@ export function coverage(layout, carrier, { mockIds = null } = {}) {
   const totals = { fields: 0, filled: 0, ignored: 0, agent: 0, unsure: 0, none: 0, notInMock: 0 };
   for (const [page, p] of Object.entries(layout.pages ?? {})) {
     const rows = (p.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.caption ?? '')).map((f) => {
-      const s = fieldStatus(f, carrier, page);
+      const s = fieldStatus(f, carrier, page, p.fields ?? null);
       // The page's own id/data-id isn't in the mock: the carrier changed the page, or the mock
       // misses a conditional part of it.
       const notInMock = !!mockIds && !!(f.id || f.dataId) && !mockIds.has(f.id) && !mockIds.has(f.dataId);

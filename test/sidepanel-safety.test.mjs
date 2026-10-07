@@ -1099,7 +1099,7 @@ test('a driver is entered once the driver list comes back from its page, filled 
   const progressive = { driverPage: 'AddDriver', driverList: 'DriverSummary' };
   const state = { active: { drivers: 0 }, doneActions: new Set(), doneSteps: new Set(), autoPaused: false, intake: { record: { drivers: [{}, {}] } } };
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {} };
-  vm.runInNewContext(['stepScope', 'afterFill', 'verifyListed', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['stepScope', 'afterFill', 'verifyDrivers', 'verifyListed', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   // Codex on PR #43: answers on the page alone (one may have failed, or the page was left) don't count.
   context.afterFill([{ filled: [], kept: [{ label: 'Driver Last Name' }] }], { carrier: progressive, page: 'AddDriver' });
   assert.ok(!state.doneActions.has('driverEntered:0'));
@@ -1122,7 +1122,7 @@ test('trailers: their own page scope, entered once their page is filled, the nex
   const state = { active: { drivers: 0, vehicles: 0, trailers: 0 }, doneActions: new Set(['lookupVin:0', 'addTrailer:0']), doneSteps: new Set(), autoPaused: false, intake: { record } };
   let persisted = 0;
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, save: async () => {}, renderPickers: () => {}, persistDoneActions: () => { persisted++; } };
-  vm.runInNewContext(['stepScope', 'afterFill', 'verifyListed', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['stepScope', 'afterFill', 'verifyDrivers', 'verifyListed', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   assert.equal(context.stepScope('AddTrailer', carrier), 'AddTrailer|tr0|');
   assert.equal(context.stepScope('MostCommonTrailers', carrier), 'MostCommonTrailers|tr0|');
   // Codex on PR #43: Add Trailer opened isn't the trailer entered (an unsupported tile, left), nor
@@ -1150,7 +1150,7 @@ test('a trailer is on the quote when the vehicle list shows its VIN', async () =
     const asked = [];
     const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
       runKit: async (tabId, c, func, args) => { asked.push(args[0]); return [{ result: shown }]; } };
-    vm.runInNewContext(['verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+    vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
     await context.pickListItem(carrier, 'VehicleSummary');
     return { done: state.doneActions, asked };
   };
@@ -1164,6 +1164,23 @@ test('a trailer is on the quote when the vehicle list shows its VIN', async () =
   // A list that shows no VINs at all proves nothing: the return decides.
   r = await run(['lookupVin:0', 'addTrailer:0', 'trailerEntered:0'], [false, false]);
   assert.ok(r.done.has('trailerEntered:0'));
+});
+
+// Codex on PR #43: the panel closed while the agent finished a driver's page misses the return; the
+// driver list showing the driver's name counts.
+test('a driver the driver list shows by name is entered', async () => {
+  const carrier = { driverList: 'DriverSummary', driverPage: 'AddDriver' };
+  const record = { vehicles: [], trailers: [], drivers: [{ first: 'Jordan', last: 'Sample' }, { first: 'Casey', last: 'Example' }] };
+  const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 1 }, doneActions: new Set(['driverEntered:0', 'addDriver:1']) };
+  const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
+    runKit: async () => [{ result: [true, true] }] };
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+  await context.pickListItem(carrier, 'DriverSummary');
+  assert.ok(state.doneActions.has('driverEntered:1'), 'listed: entered');
+  // Not shown proves nothing (the list may write the name another way): markers stay.
+  context.runKit = async () => [{ result: [false, false] }];
+  await context.pickListItem(carrier, 'DriverSummary');
+  assert.ok(state.doneActions.has('driverEntered:0'));
 });
 
 // Codex on PR #43: a panel closed or reloaded mid-quote must not add a vehicle or trailer again.

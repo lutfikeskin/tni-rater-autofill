@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 52 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 53 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -357,7 +357,8 @@
   // reading the same ("Business Name" as a registered-name choice, or a box) is a step's.
   const TEXT_STEPS = new Set(['text', 'date', 'address-suggest']);
   const TYPED_STEPS = new Set(['date', 'address-suggest']);
-  const CHOICE_STEPS = new Set(['choice', 'pick-not', 'first-option', 'selected-option']);
+  // Yes / No too (Codex on PR #43): a question that became a text box is never typed "Yes" into.
+  const CHOICE_STEPS = new Set(['choice', 'pick-not', 'first-option', 'selected-option', 'bool']);
 
   // Pairs plan steps with page fields. A carrier's known question is found by what it is, never
   // by its question id: Progressive renumbered every question on 2026-10-07, and an id kept from
@@ -1537,11 +1538,16 @@
   }
 
   // Re-marks one field (e.g. an AI choice the agent rejected). Returns whether it was found.
-  // Which of these (VINs) the page shows, as whole runs of letters and digits: the vehicle list's
-  // units on the quote. Only true/false goes back.
-  function listed(texts) {
+  // Which of these the page shows: a VIN as a whole run of letters and digits (the vehicle list's
+  // units on the quote), or a name as all its words (the driver list). Only true/false goes back.
+  function listed(items) {
     const page = ` ${String(document.body?.innerText ?? '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ')} `;
-    return (texts ?? []).map((t) => { const v = String(t ?? '').toUpperCase().replace(/[^A-Z0-9]/g, ''); return v.length >= 11 && page.includes(` ${v} `); });
+    const word = (w) => String(w ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return (items ?? []).map((t) => {
+      if (Array.isArray(t)) { const words = t.map(word).filter((w) => w.length >= 2); return words.length >= 2 && words.every((w) => page.includes(` ${w} `)); }
+      const v = word(t);
+      return v.length >= 11 && page.includes(` ${v} `);
+    });
   }
 
   function markKey(key, label, status, note) {
@@ -1723,5 +1729,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 52, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 53, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

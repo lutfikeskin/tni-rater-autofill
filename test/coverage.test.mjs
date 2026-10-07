@@ -19,6 +19,10 @@ test('coverage: Progressive questions by data-model name or text, AmWINS by id /
   // Codex on PR #43: two kinds of field read "Business Type"; the kind decides, as when filling.
   assert.equal(fieldStatus({ caption: 'Business Type', kind: 'combo' }, progressive, 'BusinessOwnerInfo').rule, 'Business type');
   assert.equal(fieldStatus({ caption: 'Business Type', kind: 'text' }, progressive, 'BusinessOwnerInfo').status, 'ignored');
+  // Codex on PR #43: in a layout without data-model names, the two "City" boxes are told apart by
+  // the question before them, as when filling.
+  const boi = [{ caption: 'Street Address', kind: 'text' }, { caption: 'City', kind: 'text' }, { caption: 'Home Address', kind: 'text' }, { caption: 'City', kind: 'text' }];
+  assert.deepEqual(boi.filter((f) => f.caption === 'City').map((f) => fieldStatus(f, progressive, 'BusinessOwnerInfo', boi).rule), ['Business city', 'Owner home city']);
   // The trailer page carries the vehicle's data-model names: there they are the trailer's.
   assert.equal(fieldStatus({ ref: 'RiskInput.VIN', caption: 'VIN', kind: 'text' }, progressive, 'AddTrailer').rule, 'trailers[].vin');
   assert.equal(fieldStatus({ ref: 'RiskInput.VIN', caption: 'Vehicle Identification Number (VIN)', kind: 'text' }, progressive, 'AddVehicle').rule, 'vehicles[].vin');

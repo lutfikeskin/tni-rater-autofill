@@ -107,9 +107,11 @@ test('Progressive standard answers: USDOT belongs to the business, filings, MCS-
 
 test('Progressive preserves optional and server-owned controls', () => {
   const plan = buildPlan(baseRecord(), progressive, {});
-  for (const q of ['18F', '194', '1CC', '77', '2DB', '2DD', '2DF', '2B00', '1E7C', '3E96', '3E97', '3EA4', '32CE', '32D0', '32DD']) {
+  for (const q of ['18F', '194', '1CC', '77', '2DB', '2DD', '2DF', '2B00', '1E7C', '3E96', '3E97', '3EA4', '32CE']) {
     assert.equal(byQ(plan, q).ignore, true, `q${q} is preserved`);
   }
+  // Email and Fax are unticked (TNI), so the agent's Print/Send only opens the PDF (Codex on PR #43).
+  for (const q of ['32D0', '32DD']) assert.deepEqual([byQ(plan, q).ignore, byQ(plan, q).value], [false, false], q);
   for (const q of ['year', 'make', 'model']) {
     const step = plan.find((s) => s.path === `vehicles[0].${q}`);
     assert.equal(step.verifyOnly, true, `decoded vehicle ${q} is verified, not typed`);
@@ -400,7 +402,9 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   for (const state of ['TX', 'MD']) {
     const other = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {}), '1E8D');
     assert.deepEqual([other.value, other.ignore], [null, true], state);
+    assert.match(other.emptyNote, /Florida only/, `${state}: an empty PIP goes to the agent`);
   }
+  assert.equal(byQ(plan, '1E8D').emptyNote, null);
   record.applicant.dot = null;
   assert.equal(byQ(buildPlan(record, progressive, {}), '21E').ignore, true);
 });
