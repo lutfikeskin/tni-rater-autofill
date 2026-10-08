@@ -100,6 +100,9 @@ test('radius: long-haul phrases, miles, ranges and other units, with what each c
     ['100-500 miles', null, ['radius.range'], null, null],
     ['100 to 500', null, ['radius.range'], null, null],
     ['100–500', null, ['radius.range'], null, null],
+    ['100 miles to 500 miles', null, ['radius.range'], null, null],
+    ['100 miles - 500 miles', null, ['radius.range'], null, null],
+    ['100mi-500mi', null, ['radius.range'], null, null],
     ['250 km', null, ['radius.unit'], null, null],
     ['11 states', null, ['radius.not-miles'], null, null],
     ['0', null, ['radius.not-miles'], null, null],
@@ -128,6 +131,9 @@ test('parseRadius and isLongHaul', () => {
   assert.deepEqual(parseRadius('50-mile radius'), { miles: 50, kind: 'miles' });
   assert.deepEqual(parseRadius('250 kilometers'), { miles: null, kind: 'unit' });
   assert.deepEqual(parseRadius('5 hours'), { miles: null, kind: 'text' });
+  assert.deepEqual(parseRadius('100 miles / 500 miles'), { miles: null, kind: 'text' }, 'a second number is never dropped');
+  assert.deepEqual(parseRadius('50 mi.'), { miles: 50, kind: 'miles' });
+  assert.deepEqual(parseRadius('100 min'), { miles: null, kind: 'text' }, '"mi" only as a whole word');
   assert.deepEqual(parseRadius('N/A'), { miles: null, kind: 'missing' });
   for (const text of ['OTR', 'over the road', 'nationwide', 'National', 'anywhere', 'all 48', 'long-haul', 'longhaul', '48 contiguous states', '48 US states', 'contiguous 48', '48 state']) assert.ok(isLongHaul(text), text);
   assert.deepEqual(parseRadius('48 contiguous states'), { miles: null, kind: 'long-haul' }, 'never 48 miles');

@@ -25,21 +25,24 @@ const NOT_DISTANCE = /^(states?|hrs?|hours?|mins?|minutes?|days?|weeks?|counties
 
 /**
  * The intake's radius box, read as a number of miles. Phrases come before digits: "48 states" is
- * long haul, not 48 miles. A range ("100-500 miles"), a non-mile unit ("250 km") and text that
- * isn't a distance give no mileage, and the normalizer asks the agent for it.
+ * long haul, not 48 miles. A range ("100-500 miles", "100 miles to 500 miles", "100mi-500mi"), a
+ * non-mile unit ("250 km"), a mileage followed by another number, and text that isn't a distance
+ * give no mileage, and the normalizer asks the agent for it.
  * @returns {{ miles: number|null, kind: 'missing'|'long-haul'|'miles'|'range'|'unit'|'text' }}
  */
 export function parseRadius(v) {
   const s = clean(v);
   if (s == null) return { miles: null, kind: 'missing' };
   if (isLongHaul(s)) return { miles: null, kind: 'long-haul' };
-  const m = s.replace(/(\d),(?=\d{3}\b)/g, '$1')
-    .match(/^\D*?(\d+(?:\.\d+)?)\s*\+?\s*(?:(?:-|–|—|to|through|thru|and)\s*(\d+(?:\.\d+)?))?\s*([a-z]+)?/i);
+  const digits = s.replace(/(\d),(?=\d{3}\b)/g, '$1');
+  const m = digits.match(/^\D*?(\d+(?:\.\d+)?)\s*\+?\s*(?:(?:miles?|mi)\b\.?\s*)?(?:(?:-|–|—|to|through|thru|and)\s*(\d+(?:\.\d+)?))?\s*([a-z]+)?/i);
   if (!m) return { miles: null, kind: 'text' };
   const [, from, to, word] = m;
   if (word && KILOMETRES.test(word)) return { miles: null, kind: 'unit' };
   if (word && NOT_DISTANCE.test(word)) return { miles: null, kind: 'text' };
   if (to != null) return { miles: null, kind: 'range' };
+  // One mileage only when no other number is left over ("100 miles / 500 miles" is not 100).
+  if (/\d/.test(digits.slice(m.index + m[0].length))) return { miles: null, kind: 'text' };
   const miles = Math.round(Number(from));
   return miles > 0 ? { miles, kind: 'miles' } : { miles: null, kind: 'text' };
 }
