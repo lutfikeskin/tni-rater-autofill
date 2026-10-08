@@ -161,7 +161,13 @@
       const s = store(r.page);
       (s.lookups ??= new Set()).add(kind);
       if (kind === 'vin' && !r.fields.some((f) => f.decodedBy)) {
-        const v = r.record?.vehicles?.[0] ?? {};
+        // The vehicle whose VIN is on the page (the replay repeats Add Vehicle once per vehicle);
+        // a page with no VIN entered decodes the first. A VIN no intake vehicle has decodes nothing.
+        const id = (x) => String(x ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const at = r.fields.findIndex((f) => !f.decodedBy && (/(^|\.)vin$/i.test(f.ref ?? '') || /^vin\b/i.test(f.caption ?? '')));
+        const typed = at < 0 ? '' : id(s.texts[idFor(r.fields[at], at).key]);
+        const vehicles = r.record?.vehicles ?? [];
+        const v = (typed ? vehicles.find((x) => id(x.vin) === typed) : vehicles[0]) ?? {};
         r.fields = [...r.fields, ...[['Year', v.year], ['Make', v.make], ['Model', v.model]].map(([caption, value]) => ({ caption, kind: 'text', decodedBy: 'vin', decoded: value == null ? '' : String(value) }))];
       }
       r.roundTrip();
