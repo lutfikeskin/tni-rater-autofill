@@ -2534,9 +2534,31 @@ test('an agent edit while AI answers go in protects that question and stops the 
   assert.equal(commodity.value, 'cg', 'the answer already in stays in');
   assert.equal(radius.value, 'l', 'the agent\'s pick stays');
   assert.equal(notes.value, '', 'nothing after the edit goes in');
-  assert.equal(results.halted, true);
-  assert.deepEqual([...results.protectedKeys], [key('Radius')]);
+  // Codex review (2026-10-09): the protection rides on the items, which survive the trip to the panel.
+  const sent = JSON.parse(JSON.stringify(results));
+  assert.deepEqual(sent.map((r) => [r.key, r.protected === true]), [[key('Commodity category'), false], [key('Radius'), true], [key('Notes'), false]]);
   assert.notEqual(radius.getAttribute('data-rater-autofill'), 'failed', 'the agent\'s own answer is not marked as a failed AI answer');
+});
+
+test('a question the agent edits while AI answers go in, that was not among them, gets a protected item of its own', async () => {
+  const h = harness();
+  const pick = (id, label, options) => new SelectNode([{ text: 'Select one', value: '' }, ...options], { id, ariaLabel: label });
+  const commodity = pick('commodity', 'Commodity category', [{ text: 'Consumer Goods', value: 'cg' }, { text: 'Building Materials', value: 'bm' }]);
+  const radius = pick('radius', 'Radius', [{ text: 'Local', value: 'l' }, { text: 'Long haul', value: 'lh' }]);
+  h.document.body.append(commodity, radius);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const key = (label) => report.unknown.find((x) => x.label === label).key;
+  commodity.addEventListener('change', () => {
+    if (radius.value) return;
+    radius.dispatchEvent({ type: 'keydown', target: radius, isTrusted: true });
+    radius.value = 'l';
+    radius.dispatchEvent({ type: 'change', target: radius, isTrusted: true });
+  });
+  const results = JSON.parse(JSON.stringify(await h.kit.answer([{ key: key('Commodity category'), label: 'Commodity category', value: 'Consumer Goods' }])));
+  assert.deepEqual(results.map((r) => [r.key, r.label, r.ok, r.protected === true]),
+    [[key('Commodity category'), 'Commodity category', true, false], [key('Radius'), 'Radius', false, true]]);
+  assert.match(results[1].reason, /your answer stays/);
+  assert.equal(radius.value, 'l');
 });
 
 // Codex reproduction (2026-10-08, AmWINS Underwriting): "Default all answers to No" reset a Yes the

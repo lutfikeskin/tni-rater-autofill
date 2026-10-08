@@ -82,11 +82,17 @@
     return isControl(linked) ? linked : null;
   };
 
+  // The last trusted gesture, kept apart from lastTrusted (which a value event resets). While
+  // paused it decides whose a trusted input/change is: the extension's own .click() on a radio or
+  // checkbox fires trusted input/change too, with no gesture before it.
+  let lastGesture = -Infinity;
+  const GESTURE_TYPES = new Set(['pointerdown', 'keydown', 'paste', 'drop']);
   for (const type of ['pointerdown', 'mousedown', 'keydown', 'paste', 'drop']) {
     listen(type, (e) => {
       if (!e.isTrusted) return;
       lastTrusted = Date.now();
       lastTrustedControl = controlForEvent(e.target);
+      if (GESTURE_TYPES.has(type)) lastGesture = lastTrusted;
     });
   }
 
@@ -116,6 +122,9 @@
   // discrete controls still flush immediately so follow-up questions can be detected promptly.
   const trustedValue = (e) => {
     if (!isCurrent() || !e.isTrusted || !isControl(e.target)) return;
+    // While the kit puts answers in, a value event counts as the agent's only within 2 s of a
+    // trusted gesture (the rule of pagekit's guardEdits); otherwise it is the fill's own click.
+    if (paused && Date.now() - lastGesture > 2000) return;
     trustedPending.set(e.target, oneControlState(e.target));
     const discrete = isDiscreteControl(e.target);
     if (discrete) trustedImmediate.add(e.target);

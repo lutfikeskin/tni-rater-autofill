@@ -1563,8 +1563,10 @@
   // into their fields: [{ key, label, value, note }], `value` being one of the field's option
   // texts, 'checked'/'unchecked' for a checkbox, or text. Same apply-and-verify path as fill():
   // an answer counts only once the page has settled and still shows it. Returns one result per
-  // answer, in order; `protectedKeys` and `halted` ride on the array for callers in the page (the
-  // panel reads the items, and gets the agent's edit from the recorder when it resumes).
+  // answer, in order. An agent edit while they go in marks every item of that question
+  // `protected: true`, and a question the agent edited that was not among the answers gets an item
+  // of its own after them (`protected: true`, `ok: false`): the panel protects those keys, and a
+  // protected item means the apply halted. Only the items survive the trip to the panel.
   async function answer(answers, expectedSnapshots) {
     if (expectedSnapshots && !expectedSnapshots.includes(decisionSnapshot())) {
       return answers.map(a => ({ key: a.key, label: a.label, ok: false, reason: 'the page changed since the assistant evaluated it; request fresh suggestions' }));
@@ -1574,18 +1576,18 @@
       const same = collectControls().filter((c) => fieldKey(c) === key);
       return same.length > 1 ? same.find((c) => c.label === label) ?? null : same[0] ?? null;
     };
-    const results = Object.assign([], { protectedKeys: [], halted: false });
+    const results = [];
     // The agent at the page while the answers go in (the recorder is paused then, as during a
     // fill): their edit keeps its question, and the answers still to come are not put in (they
     // were chosen for the page as it was).
-    const edited = (key) => results.protectedKeys.includes(key);
-    const releaseEditGuard = guardEdits((key) => {
-      if (!edited(key)) results.protectedKeys.push(key);
-      results.halted = true;
+    const editedQuestions = new Map();
+    const edited = (key) => editedQuestions.has(key);
+    const releaseEditGuard = guardEdits((key, c) => {
+      if (!edited(key)) editedQuestions.set(key, c.label ?? null);
     });
     try {
     for (const a of answers) {
-      if (results.halted) { results.push({ key: a.key, label: a.label, ok: false, reason: EDIT_HALT_ANSWERS }); continue; }
+      if (editedQuestions.size) { results.push({ key: a.key, label: a.label, ok: false, reason: EDIT_HALT_ANSWERS }); continue; }
       const c = find(a.key, a.label);
       if (!c) { results.push({ key: a.key, label: a.label, ok: false, reason: 'the question is no longer on this page' }); continue; }
       if (a.expected) {
@@ -1617,6 +1619,10 @@
       }
       if (!result.ok && !edited(a.key)) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `AI answer not accepted: ${result.reason}`); }
       results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, reason: result.reason ?? null });
+    }
+    for (const r of results) if (edited(r.key)) r.protected = true;
+    for (const [key, label] of editedQuestions) {
+      if (!results.some((r) => r.key === key)) results.push({ key, label, ok: false, protected: true, reason: 'you changed this question yourself while the AI answers went in; your answer stays' });
     }
     return results;
     } finally {

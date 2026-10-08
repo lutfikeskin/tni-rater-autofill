@@ -734,6 +734,43 @@ test('approval expects the successful answer when a carrier redraw changes its v
   assert.equal(context.aiCurrentAnswerPresent([{ ...post[0], result: JSON.stringify(['Quote', [{ ...field, current: 'No' }]]) }], x), true);
 });
 
+// Codex review (2026-10-09): answer()'s protection did not survive executeScript, and a halt in one
+// frame did not stop the others. The items carry it now; frames go one at a time.
+test('an agent edit caught during an AI apply is protected, and stops the answers of the frames still to come', async () => {
+  const record = {}, intake = { record };
+  const xs = [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }].map(x => ({ ...x, controlKind: 'radio', choice: 'No', autoOk: true }));
+  const pre = [0, 1].map(i => ({ frameId: i, documentId: `doc-${i}`, result: JSON.stringify(['Quote', [{ key: xs[i].key, label: xs[i].label, current: '' }]]) }));
+  const answered = [];
+  // Frame 0 answers A; the agent edited C meanwhile. Frame 1 has nothing of A's.
+  const runKit = async (tabId, carrier, func, args = []) => {
+    if (!args.length) return pre;
+    answered.push(args[0].map(a => a.key).join(','));
+    return [{ frameId: 0, documentId: 'doc-0', result: [{ key: 'a', label: 'A', ok: true, shown: 'No' },
+      { key: 'c', label: 'C', ok: false, protected: true, reason: 'you changed this question yourself while the AI answers went in; your answer stays' }] },
+    { frameId: 1, documentId: 'doc-1', result: [{ key: 'a', label: 'A', ok: false, reason: 'the question is no longer on this page' }] }];
+  };
+  let persisted = 0;
+  const state = { filling: false, intake, active: {}, tab: { id: 1, url: 'https://example.test/quote' },
+    aiCache: new Map(xs.map((x, i) => [`${i}\n/quote`, x])), agentKeys: new Map(), filled: new Map() };
+  const ctx = { tabId: 1, page: '/quote', tabUrl: state.tab.url, intake, carrier: { practice: true },
+    contextKey: assistContextKey(record, state.active), snapshots: pre };
+  const context = { state, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+    runKit, tellRecorder: async () => {}, persistAiPending: async () => {}, persistAgentKeys: () => { persisted++; },
+    usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
+  vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
+    'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
+    'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent',
+    'applyAi'].map(extractFunction).join('\n') + LAYOUT_STUB, context);
+  const applied = await context.applyAi(xs, ctx, 'auto');
+  assert.equal(applied, true, JSON.stringify(xs.map(x => x.error)));
+  assert.deepEqual(answered, ['a'], 'frame 1\'s answer is not sent after the halt');
+  assert.equal(xs[0].done, 'auto');
+  assert.equal(xs[1].done, null);
+  assert.match(xs[1].error, /agent edit interrupted/);
+  assert.deepEqual([...state.agentKeys.get('/quote')].sort(), ['a', 'c'], 'the agent\'s edit is kept from a later fill');
+  assert.equal(persisted, 1);
+});
+
 const AI_ACTION_FUNCTIONS = [
   'canonicalSnapshotMetadata', 'canonicalSnapshotFrame',
   'canonicalSnapshots', 'snapshotFingerprint', 'snapshotsEqual', 'snapshotHashMatches',

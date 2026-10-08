@@ -2277,12 +2277,35 @@ async function applyAi(list, ctx, decision) {
     await persistAiPending();
     if (!isCurrent()) return false;
     dispatched = true;
-    const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots) => globalThis.__raterKit.answer(a, snapshots), [answers, ctx.snapshots.map(r => r.result)]);
-    const results = answerFrames.flatMap((frame) => (Array.isArray(frame.result) ? frame.result : [])
-      .filter(result => result && typeof result === 'object')
-      .map(result => ({ ...result, frameId: frame.frameId, documentId: frame.documentId })));
+    // One frame's answers at a time (each question is in exactly one frame): an agent edit caught
+    // in one frame (a protected item) stops the answers of the frames still to come, as answer()
+    // stops its own. With several frames, a frame's items count only for its own questions; the
+    // other frames answer "not on this page" or, their page changed by the earlier answers,
+    // "the page changed", and protected items count from any frame.
+    const byFrame = new Map();
+    list.forEach((x, i) => {
+      const frameId = aiSnapshotFieldMatches(current, x)[0].frame.frameId;
+      byFrame.set(frameId, [...(byFrame.get(frameId) ?? []), answers[i]]);
+    });
+    const results = [];
+    let halted = false;
+    for (const [frameId, group] of byFrame) {
+      if (halted) {
+        for (const a of group) results.push({ key: a.key, label: a.label, ok: false, reason: 'an agent edit interrupted applying the answers; review the page, then request fresh suggestions' });
+        continue;
+      }
+      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots) => globalThis.__raterKit.answer(a, snapshots), [group, ctx.snapshots.map(r => r.result)]);
+      const items = answerFrames.flatMap((frame) => (Array.isArray(frame.result) ? frame.result : [])
+        .filter(result => result && typeof result === 'object')
+        .map(result => ({ ...result, frameId: frame.frameId, documentId: frame.documentId })));
+      halted = items.some(r => r.protected);
+      results.push(...(byFrame.size > 1 ? items.filter(r => r.frameId === frameId || r.protected) : items));
+    }
     const sameContext = isCurrent();
     const keys = sameContext ? state.agentKeys.get(editScope(ctx.page)) ?? new Set() : null;
+    // The agent's own edits while the answers went in (also on a control the carrier redrew, which
+    // the recorder cannot match on resume): a later fill keeps them, as after a fill.
+    const protectedKeys = results.filter(r => r.protected).map(r => r.key);
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
       const ok = mine.find((r) => r.ok);
@@ -2305,7 +2328,11 @@ async function applyAi(list, ctx, decision) {
       }
       if (sameContext && !ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
     }
-    if (sameContext) state.agentKeys.set(editScope(ctx.page), keys);
+    if (sameContext) {
+      for (const key of protectedKeys) keys.add(key);
+      state.agentKeys.set(editScope(ctx.page), keys);
+      if (protectedKeys.length) persistAgentKeys();
+    }
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
     const after = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     for (const x of list) if (x.done) {
