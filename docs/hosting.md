@@ -43,7 +43,8 @@ Redeploy after a server change: `railway up --service usage-server` from the rep
 (`.railwayignore` keeps the upload to what the image needs).
 Deploy a server change that accepts new event fields before releasing the extension that sends
 them: an older server drops unknown fields (and refuses layouts over its size limit) rather than
-storing them. It refuses events from the local test page (`carrier: 'test'`, localhost), which are
+storing them. It keeps an event's `channel` (store, unpacked or source) and `commit` (a short
+commit, optionally `+dirty`) only in those shapes. It refuses events from the local test page (`carrier: 'test'`, localhost), which are
 no quote; the review scripts also skip the ones stored before. The server names what it dropped on
 the stored event (`dropped`: field names only, at most 20, `droppedMore` counts the rest), and
 `/v1/health` names its version (`server`, a hash of its `server/index.mjs`). `node scripts/server-check.mjs` compares that with this checkout, without

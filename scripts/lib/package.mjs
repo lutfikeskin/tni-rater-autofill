@@ -16,6 +16,18 @@ export function stampBuild(text, build) {
   return text.replace(PLACEHOLDER, `const BUILD = '${build}';`);
 }
 
+// Which copy logged an event and from which code (sidepanel/usage-log.js): the store zip or the
+// unpacked copy, and the commit it was packaged from (+dirty when packaged files had changes).
+// The repository's files running as they are say 'source' and no commit.
+export const PROVENANCE_FILE = 'sidepanel/usage-log.js';
+const PROVENANCE = "const PROVENANCE = { channel: 'source', commit: null };";
+export function stampProvenance(text, { channel, commit }) {
+  if (text.split(PROVENANCE).length !== 2) throw new Error(`expected one ${PROVENANCE}`);
+  if (!['store', 'unpacked'].includes(channel)) throw new Error(`unknown channel ${channel}`);
+  if (commit != null && !/^[0-9a-f]{7,12}(\+dirty)?$/.test(commit)) throw new Error(`not a commit: ${commit}`);
+  return text.replace(PROVENANCE, `const PROVENANCE = { channel: '${channel}', commit: ${commit ? `'${commit}'` : 'null'} };`);
+}
+
 // The unpacked copy (Load unpacked) gets a fixed extension ID through this public key, so its
 // settings (the agent's OpenAI key among them) survive removing and loading it again, from any
 // folder. Only the public half: Chrome needs nothing else for an unpacked extension. Never in the

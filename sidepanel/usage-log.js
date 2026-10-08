@@ -11,6 +11,9 @@ const local = hasChrome
   : { get: async (k) => memory[k], set: async (k, v) => { memory[k] = v; } };
 
 const version = hasChrome ? chrome.runtime.getManifest().version : 'dev';
+// Stamped by scripts/package.mjs: the store zip or the unpacked copy, and its commit. A version
+// number alone can't tell a development copy from the release (audit 2026-10-08).
+const PROVENANCE = { channel: 'source', commit: null };
 
 let session = null; // { id, intakeId } for the intake currently loaded
 let queue = Promise.resolve();
@@ -59,7 +62,7 @@ export function log(...events) {
     const list = (await local.get(LOG_KEY)) ?? [];
     let seq = (await local.get(SEQ_KEY)) ?? 0;
     for (const e of events) {
-      list.push({ id: crypto.randomUUID(), t, v: version, agent, session: sessionId, intakeId, seq: ++seq, ...e });
+      list.push({ id: crypto.randomUUID(), t, v: version, channel: PROVENANCE.channel, ...(PROVENANCE.commit ? { commit: PROVENANCE.commit } : {}), agent, session: sessionId, intakeId, seq: ++seq, ...e });
     }
     // Saved first: a failed write leaves a gap in the numbers, never a number used twice.
     await local.set(SEQ_KEY, seq);

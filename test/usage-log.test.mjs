@@ -78,6 +78,7 @@ test('an event keeps the quote it was logged in, even when the panel moves on be
     ['intake_loaded', b.id, 'intake-b'],
     ['intake_closed', b.id, 'intake-b'],
   ]);
+  assert.ok(events.every((e) => e.channel === 'source' && !('commit' in e)), 'which copy logged it: the repository, no commit');
   const seqs = events.map((e) => e.seq);
   assert.ok(seqs.every((n, i) => Number.isInteger(n) && n > 0 && (i === 0 || n === seqs[i - 1] + 1)), `numbered in order: ${seqs}`);
   assert.ok(a.keySalt && b.keySalt && a.keySalt !== b.keySalt, 'each quote has its own key salt');

@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { STAMPED, buildId, stampBuild, devManifest } from './lib/package.mjs';
+import { STAMPED, buildId, stampBuild, devManifest, PROVENANCE_FILE, stampProvenance } from './lib/package.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
@@ -25,11 +25,26 @@ for (const f of named) {
   if (!INCLUDE.some((p) => f === p || f.startsWith(`${p}/`))) throw new Error(`manifest names ${f}, which isn't packaged`);
 }
 
-const copy = (to) => {
+// The commit the packaged files come from, +dirty when they have changes git doesn't have; none
+// when git can't say (the package is still built).
+function packagedCommit() {
+  try {
+    const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const sha = git('rev-parse', '--short=10', 'HEAD');
+    return git('status', '--porcelain', '--', ...INCLUDE) ? `${sha}+dirty` : sha;
+  } catch {
+    return null;
+  }
+}
+const commit = packagedCommit();
+
+const copy = (to, channel) => {
   fs.rmSync(to, { recursive: true, force: true });
   for (const p of INCLUDE) fs.cpSync(path.join(root, p), path.join(to, p), { recursive: true, filter: (src) => !src.endsWith('.DS_Store') });
   const build = buildId(STAMPED.map((f) => fs.readFileSync(path.join(root, f), 'utf8')));
   for (const f of STAMPED) fs.writeFileSync(path.join(to, f), stampBuild(fs.readFileSync(path.join(to, f), 'utf8'), build));
+  // Which copy logs the usage events, from which commit.
+  fs.writeFileSync(path.join(to, PROVENANCE_FILE), stampProvenance(fs.readFileSync(path.join(to, PROVENANCE_FILE), 'utf8'), { channel, commit }));
 };
 
 // The store zip, from a staged copy: the files as they are, with the page scripts stamped.
@@ -37,12 +52,12 @@ const out = path.join(root, 'dist', `tni-rater-autofill-${manifest.version}.zip`
 const stage = path.join(root, 'dist', '.stage');
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.rmSync(out, { force: true });
-copy(stage);
+copy(stage, 'store');
 execFileSync('zip', ['-rq', '-X', out, ...INCLUDE, '-x', '*.DS_Store'], { cwd: stage, stdio: 'inherit' });
 fs.rmSync(stage, { recursive: true, force: true });
 // The unpacked copy (Load unpacked in chrome://extensions): the same, plus the fixed ID.
 const unpacked = path.join(root, 'dist', 'tni-rater-autofill');
-copy(unpacked);
+copy(unpacked, 'unpacked');
 fs.writeFileSync(path.join(unpacked, 'manifest.json'), `${JSON.stringify(devManifest(manifest), null, 2)}\n`);
 const kb = Math.round(fs.statSync(out).size / 1024);
 console.log(`${path.relative(root, out)}  (${kb} KB, version ${manifest.version})`);
