@@ -2139,7 +2139,7 @@ test('after an intake is loaded, only a tab opened since may give its first page
   await context.pending();
   await context.state.layoutChain;
   assert.deepEqual(logged.filter((e) => e.type === 'page_layout').map((e) => e.reason), ['arrived']);
-  assert.match(SIDEPANEL, /chrome\.tabs\.onCreated\.addListener\(\(tab\) => \{ if \(state\.layoutHold\) state\.layoutNewTabs\.add\(tab\.id\); \}\)/);
+  assert.match(SIDEPANEL, /chrome\.tabs\.onCreated\.addListener\(\(tab\) => \{ if \(state\.layoutHold\) state\.layoutNewTabs\.add\(tab\.id\); inheritQuoteState\(tab\); \}\)/);
 });
 
 test('after Luna\'s picks go in (with the recorder paused), the page\'s layout is asked for', () => {
@@ -2480,78 +2480,147 @@ test('a manual capture is numbered in its scenario, keeps a redacted note and sc
 // 2026-10-08 live run: a Florida intake, Utah picked on Progressive's home page; the intake was
 // then cleared and loaded again, and nothing said the quote was for another state until Progressive
 // refused the Florida ZIP on Add Vehicle. The panel warns as soon as they disagree.
-test('the panel warns when the quote state picked on the carrier page is not the intake\'s, across a reload', async () => {
-  const { quoteStatePick, stateMismatch } = await import('../src/quote-state.js');
+async function stateNoteHarness() {
+  const { quoteStatePick, stateCode, stateMismatch } = await import('../src/quote-state.js');
   const { progressive } = await import('../src/carriers/progressive.js');
   const { amwins } = await import('../src/carriers/amwins.js');
   const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
   const box = () => ({ hidden: true, children: [], replaceChildren(...next) { this.children = next; } });
-  const ui = { 'state-note': box() };
-  let session = { id: 's1', intakeId: 'fl-intake' };
+  const ui = { 'state-note': box(), 'auto-followups': { checked: false }, 'auto-pages': { checked: false }, 'auto-advance': { checked: false } };
+  const session = { current: { id: 's1', intakeId: 'fl-intake' } };
   const record = (st) => ({ applicant: { name: 'Synthetic Client LLC' }, garaging: { state: st } });
   const state = {
     intake: { record: record('FL') }, tab: { id: 7, url: 'https://www.foragentsonly.com/home/', carrier: progressive },
-    quoteStates: new Map(), filled: new Map(), labels: new Map(), choices: new Map(), agentKeys: new Map(),
+    quoteStates: new Map(), filled: new Map(), labels: new Map(), choices: new Map(), agentKeys: new Map(), doneActions: new Set(),
     viewTabs: new Map(), layoutReadyTabs: new Set(), layoutNewTabs: new Set(), visitedPages: new Set(), active: {},
+    intakeRevision: 0, layoutPending: null,
   };
   const logged = [];
+  const page = { shown: null };
   const context = {
-    state, URL, h: node, $: (id) => ui[id], quoteStatePick, stateMismatch,
-    usage: { log: (...e) => logged.push(...e), currentSession: () => session },
+    state, URL, h: node, $: (id) => ui[id], quoteStatePick, stateCode, stateMismatch, inExtension: false,
+    usage: { log: (...e) => logged.push(...e), currentSession: () => session.current },
     fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), redactor: () => (x) => x, redactionTerms: () => [],
-    scheduleLayout: () => {}, persistAgentKeys: () => {}, settleRejectedAi: async () => false, scheduleAutoFill: () => {}, syncAiBanner: () => {},
-    store: { set: async () => {} },
+    scheduleLayout: () => {}, persistAgentKeys: () => {}, persistDoneActions: () => {}, save: () => {}, settleRejectedAi: async () => false,
+    scheduleAutoFill: () => {}, syncAiBanner: () => {}, showStopPage: () => {}, fillEvents, store: { set: async () => {} },
+    unitArrival: () => {}, onQuotePage: () => false, fillPage: async () => {}, setTimeout: () => 0,
+    // The page's quote-state control as the page shows it (chrome.scripting in the extension).
+    readQuoteState: async () => page.shown,
   };
-  vm.runInNewContext(`${PAGE_HELPERS}\n${['onRecorderMessage', 'showStateNote', 'viewOf', 'saveViews', 'stepScope', 'editScope'].map(extractFunction).join('\n')}`, context);
-  const pick = (after, key = 'QuoteStateList', page = '/home/') =>
-    context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page, changes: [{ key, after, agent: true }] }, { tab: { id: 7 }, frameId: 0 });
+  vm.runInNewContext(`${PAGE_HELPERS}\n${['onRecorderMessage', 'showStateNote', 'noteQuoteState', 'inheritQuoteState', 'rememberFill', 'intakeEdited', 'viewOf', 'saveViews', 'stepScope', 'editScope'].map(extractFunction).join('\n')}`, context);
+  const pick = (after, key = 'QuoteStateList', at = '/home/', tabId = 7) =>
+    context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: at, changes: [{ key, after, agent: true }] }, { tab: { id: tabId }, frameId: 0 });
+  const arrive = async (at, from = null, tabId = 7) => {
+    context.onRecorderMessage({ ra: 'usage', event: 'page_view', page: at, from, fields: 6 }, { tab: { id: tabId }, frameId: 0 });
+    await new Promise((resolve) => setImmediate(resolve));
+  };
   const note = () => ui['state-note'];
-  const text = () => JSON.stringify(note().children);
-  const button = () => note().children[0].children.find((c) => c?.tag === 'button');
+  return {
+    context, state, ui, logged, page, session, record, progressive, amwins, pick, arrive, note,
+    text: () => JSON.stringify(note().children),
+    button: () => note().children[0].children.find((c) => c?.tag === 'button'),
+  };
+}
 
-  pick('Utah');
-  assert.equal(note().hidden, false);
-  assert.match(text(), /This Progressive quote is for Utah, the intake for Florida/);
-  assert.match(text(), /Utah was picked for this Progressive quote/);
-  assert.match(text(), /"role":"alert"/);
-  assert.doesNotMatch(text(), /Synthetic Client/);
+test('the panel warns when the quote state picked on the carrier page is not the intake\'s, across a reload', async () => {
+  const t = await stateNoteHarness();
+  t.pick('Utah');
+  assert.equal(t.note().hidden, false);
+  assert.match(t.text(), /This Progressive quote is for Utah, the intake for Florida/);
+  assert.match(t.text(), /Utah was picked for this Progressive quote/);
+  assert.match(t.text(), /"role":"alert"/);
+  assert.doesNotMatch(t.text(), /Synthetic Client/);
   // Cleared, then the same intake loaded again: the tab's quote is still Utah's.
-  state.intake = null;
-  context.showStateNote();
-  assert.equal(note().hidden, true);
-  state.intake = { record: record('FL') };
-  session = { id: 's2', intakeId: 'fl-intake' };
-  context.showStateNote();
-  assert.equal(note().hidden, false);
-  assert.match(text(), /started in Utah before this intake was loaded/);
+  t.state.intake = null;
+  t.context.showStateNote();
+  assert.equal(t.note().hidden, true);
+  t.state.intake = { record: t.record('FL') };
+  t.session.current = { id: 's2', intakeId: 'fl-intake' };
+  t.context.showStateNote();
+  assert.equal(t.note().hidden, false);
+  assert.match(t.text(), /started in Utah before this intake was loaded/);
   // "Utah is right": hidden for this intake, also when loaded again; another intake hears it.
-  button().props.onclick();
-  assert.equal(note().hidden, true);
-  session = { id: 's3', intakeId: 'fl-intake' };
-  context.showStateNote();
-  assert.equal(note().hidden, true);
-  session = { id: 's4', intakeId: 'other-fl-intake' };
-  context.showStateNote();
-  assert.equal(note().hidden, false);
+  t.button().props.onclick();
+  assert.equal(t.note().hidden, true);
+  t.session.current = { id: 's3', intakeId: 'fl-intake' };
+  t.context.showStateNote();
+  assert.equal(t.note().hidden, true);
+  t.session.current = { id: 's4', intakeId: 'other-fl-intake' };
+  t.context.showStateNote();
+  assert.equal(t.note().hidden, false);
   // The intake's state picked: no note; back to the placeholder: forgotten.
-  pick('Florida');
-  assert.equal(note().hidden, true);
-  assert.equal(state.quoteStates.get(7).code, 'FL');
-  pick('');
-  assert.equal(state.quoteStates.has(7), false);
+  t.pick('Florida');
+  assert.equal(t.note().hidden, true);
+  assert.equal(t.state.quoteStates.get(7).code, 'FL');
+  t.pick('');
+  assert.equal(t.state.quoteStates.has(7), false);
   // An intake without a state (an address it couldn't split): nothing to compare.
-  pick('Utah');
-  state.intake = { record: record(null) };
-  context.showStateNote();
-  assert.equal(note().hidden, true);
-  // AmWINS' risk state, filled from the intake or changed by the agent; another carrier forgets.
-  state.intake = { record: record('FL') };
-  state.tab = { id: 7, url: 'https://myagency.amwinsadmittedplacement.com/commerciallines', carrier: amwins };
-  context.showStateNote();
-  assert.equal(state.quoteStates.has(7), false, 'the tab moved to another carrier');
-  pick('Florida', 'riskState', '/commerciallines');
-  assert.equal(note().hidden, true);
-  pick('Virginia', 'riskState', '/commerciallines');
-  assert.match(text(), /This AmWINS quote is for Virginia, the intake for Florida/);
-  assert.equal(logged.filter((e) => e.type === 'field_change').length, 6, 'every change is still logged');
+  t.pick('Utah');
+  t.state.intake = { record: t.record(null) };
+  t.context.showStateNote();
+  assert.equal(t.note().hidden, true);
+  // AmWINS' risk state, changed by the agent; a tab that moves to another carrier forgets.
+  t.state.intake = { record: t.record('FL') };
+  t.state.tab = { id: 7, url: 'https://myagency.amwinsadmittedplacement.com/commerciallines', carrier: t.amwins };
+  t.context.showStateNote();
+  assert.equal(t.state.quoteStates.has(7), false, 'the tab moved to another carrier');
+  t.pick('Florida', 'riskState', '/commerciallines');
+  assert.equal(t.note().hidden, true);
+  t.pick('Virginia', 'riskState', '/commerciallines');
+  assert.match(t.text(), /This AmWINS quote is for Virginia, the intake for Florida/);
+  assert.equal(t.logged.filter((e) => e.type === 'field_change').length, 6, 'every change is still logged');
+});
+
+// Codex on PR #60, and the run's own tabs: Progressive opened the quote in a new tab (t2 → t3).
+test('the quote state comes from the page as it is, the fill, the tab the quote opened from; intake edits recheck it', async () => {
+  const t = await stateNoteHarness();
+  // Already Utah when the recorder sees the home page (restored, defaulted, picked before it attached).
+  t.page.shown = 'Utah';
+  await t.arrive('/home/');
+  assert.equal(t.state.quoteStates.get(7)?.code, 'UT');
+  assert.equal(t.note().hidden, false);
+  // Another page of the same tab isn't read; the home page with no state forgets it.
+  t.page.shown = 'Florida';
+  await t.arrive('BusinessOwnerInfo', '/home/');
+  assert.equal(t.state.quoteStates.get(7)?.code, 'UT');
+  // Read again unchanged: still the pick made before (its "before this intake" wording, its dismissal).
+  t.session.current = { id: 's2', intakeId: 'fl-intake' };
+  t.page.shown = 'Utah';
+  await t.arrive('/home/');
+  assert.match(t.text(), /before this intake was loaded/);
+  // The quote opens in a new tab from the home page: it inherits the pick.
+  t.context.inheritQuoteState({ id: 8, openerTabId: 7 });
+  t.context.inheritQuoteState({ id: 9, openerTabId: 99 });
+  t.state.tab = { id: 8, url: 'https://clpolicy.foragentsonly.com/Express/Default.aspx?pageName=BusinessOwnerInfo', carrier: t.progressive };
+  t.context.showStateNote();
+  assert.equal(t.note().hidden, false, 'the quote tab says it too');
+  assert.equal(t.state.quoteStates.has(9), false, 'a tab opened from elsewhere inherits nothing');
+  // The intake's garaging state edited to Utah: the note goes at once; back to Florida: it comes back.
+  t.state.intake.record.garaging.state = 'UT';
+  t.context.intakeEdited();
+  assert.equal(t.note().hidden, true);
+  t.state.intake.record.garaging.state = 'FL';
+  t.context.intakeEdited();
+  assert.equal(t.note().hidden, false);
+  t.page.shown = '';
+  t.state.tab = { id: 7, url: 'https://www.foragentsonly.com/home/', carrier: t.progressive };
+  await t.arrive('/home/');
+  assert.equal(t.state.quoteStates.has(7), false, 'the home page with no state: a new quote');
+  // AmWINS: the risk state the fill picked (the recorder is paused while filling).
+  t.state.tab = { id: 10, url: 'https://myagency.amwinsadmittedplacement.com/commerciallines', carrier: t.amwins };
+  t.page.shown = null;
+  t.context.rememberFill([{ filled: [{ key: 'riskState', path: 'amwins.riskState', shown: 'Virginia' }] }]);
+  assert.equal(t.state.quoteStates.get(10)?.code, 'VA');
+  assert.match(t.text(), /This AmWINS quote is for Virginia, the intake for Florida/);
+  t.context.rememberFill([{ filled: [{ key: 'mailingState', path: 'garaging.state', shown: 'Utah' }] }]);
+  assert.equal(t.state.quoteStates.get(10)?.code, 'VA', 'the mailing state is an address, not the quote');
+  // A pick made while the page is being read is newer than what the read returns.
+  t.state.tab = { id: 7, url: 'https://www.foragentsonly.com/home/', carrier: t.progressive };
+  let release;
+  t.context.readQuoteState = () => new Promise((resolve) => { release = resolve; });
+  t.context.onRecorderMessage({ ra: 'usage', event: 'page_view', page: '/home/', from: null, fields: 6 }, { tab: { id: 7 }, frameId: 0 });
+  t.pick('Florida');
+  release('Utah');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(t.state.quoteStates.get(7)?.code, 'FL');
 });

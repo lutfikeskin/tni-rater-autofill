@@ -6,7 +6,7 @@ import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex } from '../src/usage.js';
-import { quoteStatePick, stateMismatch } from '../src/quote-state.js';
+import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated } from '../src/ai/luna.js';
@@ -919,6 +919,14 @@ function onRecorderMessage(msg, sender) {
       }
       showStopPage();
     }
+    // The quote-state page as it is when the recorder sees it (a state the page restored or
+    // defaulted, or picked before the recorder attached): a change would never report it.
+    if (!sender.frameId && state.tab.carrier?.quoteState?.pages.includes(samePage(msg.page))) {
+      // A pick noted while the page was read (a change, a fill) is newer: the read doesn't replace it.
+      const tabId = sender.tab.id;
+      const known = state.quoteStates.get(tabId);
+      readQuoteState(tabId, state.tab.carrier).then((shown) => { if (shown != null && state.quoteStates.get(tabId) === known) noteQuoteState(tabId, carrier, stateCode(shown)); });
+    }
     // Even with no fields in the top frame: a form may be all in child frames, which don't report
     // arrivals themselves.
     scheduleLayout(layoutPage, 'arrived');
@@ -953,10 +961,7 @@ function onRecorderMessage(msg, sender) {
     // The quote's state, by whoever picked it: remembered for this tab, checked against the intake.
     for (const c of msg.changes) {
       const code = quoteStatePick(state.tab.carrier, samePage(msg.page), c);
-      if (code === undefined) continue;
-      if (code) state.quoteStates.set(sender.tab.id, { carrier, code, session: usage.currentSession()?.id ?? null, dismissed: null });
-      else state.quoteStates.delete(sender.tab.id);
-      showStateNote();
+      if (code !== undefined) noteQuoteState(sender.tab.id, carrier, code);
     }
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
@@ -1155,6 +1160,7 @@ function jobCurrent(job) {
 // one still waiting is asked again for the corrected intake.
 function intakeEdited() {
   state.intakeRevision++;
+  showStateNote();
   const pending = state.layoutPending;
   if (!pending) return;
   cancelLayouts();
@@ -1370,6 +1376,10 @@ function rememberFill(frames) {
   for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
   persistDoneActions();
   for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
+  // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
+  const quoteKey = state.tab?.carrier?.quoteState?.key;
+  const pickedState = quoteKey && frames.flatMap((f) => f.filled).find((x) => x.key === quoteKey);
+  if (pickedState) noteQuoteState(state.tab.id, state.tab.carrier.id, stateCode(pickedState.shown));
   for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
   // Kept from every fill: a searched combo's list differs from one fill to the next.
   for (const [key, options] of frames.flatMap((f) => f.choices ?? [])) {
@@ -1473,6 +1483,38 @@ function showStopPage() {
 // above both steps until the pick matches, the intake does, or the agent says the pick is right
 // (for this intake). Also when the pick came before this intake was loaded: the tab's quote
 // doesn't change with the intake. A tab that moves to another carrier forgets its pick.
+// A tab's quote state: a new pick replaces it (the same pick keeps when it was made and whether the
+// agent said it's right); no state forgets it.
+function noteQuoteState(tabId, carrier, code) {
+  const was = state.quoteStates.get(tabId);
+  const same = was && was.carrier === carrier && was.code === code;
+  if (code) state.quoteStates.set(tabId, same ? was : { carrier, code, session: usage.currentSession()?.id ?? null, dismissed: null });
+  else state.quoteStates.delete(tabId);
+  showStateNote();
+}
+
+// The quote-state control's pick on the page's top frame, by its field key: the option's text, ''
+// for no state, null when it isn't there (or the page can't be read).
+async function readQuoteState(tabId, carrier) {
+  const key = carrier?.quoteState?.key;
+  if (!inExtension || !key) return null;
+  try {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, args: [key], func: (k) => {
+      const el = [...document.querySelectorAll('select')].find((x) => globalThis.__raterFieldKey?.(x) === k);
+      const o = el?.selectedOptions?.[0];
+      return el ? (o && o.value !== '' ? o.text : '') : null;
+    } });
+    return res?.result ?? null;
+  } catch { return null; }
+}
+
+// Progressive opens the quote in a new tab from its home page: that tab's quote is the one picked
+// there.
+function inheritQuoteState(tab) {
+  const pick = state.quoteStates.get(tab?.openerTabId);
+  if (pick && Number.isInteger(tab.id) && !state.quoteStates.has(tab.id)) state.quoteStates.set(tab.id, { ...pick });
+}
+
 function showStateNote() {
   const box = $('state-note');
   const tabId = state.tab?.id;
@@ -2690,7 +2732,7 @@ function wire() {
   if (inExtension) {
     chrome.runtime.onMessage.addListener(onRecorderMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
-    chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); });
+    chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
     chrome.windows.onFocusChanged.addListener(refreshTab);
   }
