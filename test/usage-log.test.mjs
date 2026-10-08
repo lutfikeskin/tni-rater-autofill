@@ -235,3 +235,20 @@ test('an upload that hangs is given up: the status says so and the events stay q
   assert.match(usage.lastUpload().message, /didn't answer in time/);
   assert.ok(requests.every((r) => r.body), 'every upload request still carried its events');
 });
+
+// Codex on PR #65 (2c8eeb9): the timer stopped once the headers came, so a reply whose body never
+// arrived held the upload queue for good.
+test('a reply whose body never arrives is given up too, and the next upload still runs', async () => {
+  for (const status of [200, 500]) {
+    globalThis.fetch = async () => ({ ok: status === 200, status, statusText: 'x', json: () => new Promise(() => {}) });
+    await usage.saveSettings({ serverUrl: 'http://usage.test', serverToken: '' });
+    await usage.log({ type: 'page_view', page: 'T2' });
+    await usage.upload({ timeoutMs: 20 });
+    assert.equal(usage.lastUpload().state, 'error');
+    assert.match(usage.lastUpload().message, /didn't answer in time; the events stay here/);
+    assert.equal(await usage.count(), 1, 'the event stays queued');
+    const requests = fakeServer(stores);
+    await usage.upload();
+    assert.deepEqual([await usage.count(), requests.length, usage.lastUpload().state], [0, 1, 'ok'], 'the queue is not held');
+  }
+});

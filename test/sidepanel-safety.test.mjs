@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
-import { fillEvents, sha256Hex } from '../src/usage.js';
+import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
+import { amwins } from '../src/carriers/amwins.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
@@ -391,7 +392,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
-    fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }],
+    fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }], knownStep,
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events), currentSession: () => null },
     runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
     pickListItem: async () => {}, retireAiOrigins: async () => {},
@@ -1792,7 +1793,7 @@ test('with no fill at all, Yes, No, Yes on the page logs each change and the thr
   const { context, logged } = layoutHarness(() => controls);
   Object.assign(context, {
     samePage: (p) => p, redactor: () => (s) => s, scheduleAutoFill: () => {},
-    fieldChangeEvent: (c) => ({ type: 'field_change', q: c.q, from: c.before, to: c.after, by: 'page' }),
+    fieldChangeEvent: (c) => ({ type: 'field_change', q: c.q, from: c.before, to: c.after, by: 'page' }), knownStep,
   });
   Object.assign(context.state, { filled: new Map(), labels: new Map() });
   context.state.tab.url = 'Operations';
@@ -1904,7 +1905,7 @@ test('reasons belong to the capture they were given to', async () => {
 test('a change in a child frame schedules the layout of the quote page around it', async () => {
   const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
   const { context, logged } = layoutHarness(() => controls);
-  Object.assign(context, { samePage: (p) => p, redactor: () => (s) => s, scheduleAutoFill: () => {}, fieldChangeEvent: () => ({ type: 'field_change' }) });
+  Object.assign(context, { samePage: (p) => p, redactor: () => (s) => s, scheduleAutoFill: () => {}, fieldChangeEvent: () => ({ type: 'field_change' }), knownStep });
   Object.assign(context.state, { filled: new Map(), labels: new Map() });
   vm.runInContext(extractFunction('onRecorderMessage'), context);
   context.onRecorderMessage({ ra: 'usage', event: 'new_fields', page: '/widgets/address-frame', keys: ['x'] }, { tab: { id: 1 }, frameId: 3 });
@@ -2019,7 +2020,7 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
   const { context, logged } = layoutHarness(() => controls);
   Object.assign(context, { samePage: (p) => p, $: () => ({ checked: false }), redactor: () => (s) => s, scheduleAutoFill: () => {},
-    fieldChangeEvent: () => ({ type: 'field_change' }) });
+    fieldChangeEvent: () => ({ type: 'field_change' }), knownStep });
   Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set(), filled: new Map(), labels: new Map() });
   vm.runInContext(extractFunction('onRecorderMessage'), context);
   const sender = { tab: { id: 1 } };
@@ -2414,7 +2415,7 @@ test('events name their view: the tab\'s order in the quote and the vehicle or d
   assert.equal(logged.at(-1).view, 't1');
   // Field changes and arrivals from the recorder carry it too.
   Object.assign(context, { samePage: (p) => p, $: () => ({ checked: false }), redactor: () => (s) => s, scheduleAutoFill: () => {},
-    fieldChangeEvent: () => ({ type: 'field_change' }), unitArrival: () => {} });
+    fieldChangeEvent: () => ({ type: 'field_change' }), knownStep, unitArrival: () => {} });
   Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set(), filled: new Map(), labels: new Map() });
   vm.runInContext(extractFunction('onRecorderMessage'), context);
   context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: 'AddVehicle', changes: [{ key: 'x', before: '', after: 'Yes' }] }, { tab: { id: 917 } });
@@ -2509,7 +2510,7 @@ async function stateNoteHarness() {
   const context = {
     state, URL, h: node, $: (id) => ui[id], quoteStatePick, stateCode, stateMismatch, inExtension: false,
     usage: { log: (...e) => logged.push(...e), currentSession: () => session.current },
-    fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), redactor: () => (x) => x, redactionTerms: () => [],
+    fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), knownStep, redactor: () => (x) => x, redactionTerms: () => [],
     scheduleLayout: () => {}, persistAgentKeys: () => {}, persistDoneActions: () => {}, save: () => {}, settleRejectedAi: async () => false,
     scheduleAutoFill: () => {}, syncAiBanner: () => {}, showStopPage: () => {}, fillEvents, store: { set: async () => {} },
     unitArrival: () => {}, onQuotePage: () => false, fillPage: async () => {}, setTimeout: () => 0,
@@ -2664,7 +2665,7 @@ test('the quote state comes from the page as it is, the fill, the tab the quote 
 // and its results are checked against it before anything is remembered.
 
 // A fill that waits on the carrier while the panel moves on, as the Codex reproduction modelled it.
-function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: true }, rules = 'abcdef012345' } = {}) {
+function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: amwins.layoutSteps }, rules = 'abcdef012345' } = {}) {
   let release, markStarted;
   const started = new Promise((resolve) => { markStarted = resolve; });
   const pending = new Promise((resolve) => { release = resolve; });
@@ -2686,7 +2687,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: t
     buildPlan: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
     fillOptions: () => ({}), ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
     runKit: async () => { markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
-    fillEvents, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
+    fillEvents, knownStep, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
     renderReport: () => { seen.rendered++; }, renderSite() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
     viewOf: () => 't1', usage: { currentSession: () => ({ id: `session-${state.intake.id}`, intakeId: state.intake.id, keySalt: 'salt' }), log: (...events) => seen.logged.push(...events) },
     h: (tag, props, text) => ({ tag, text }), save: async () => {},
@@ -2760,8 +2761,8 @@ test('a fill that stays current is remembered for its tab, and its events share 
   const [fillRun, ...fields] = t.seen.logged;
   assert.equal(fillRun.type, 'fill_run');
   assert.match(fillRun.run, /^[0-9a-f-]{36}$/);
-  assert.deepEqual(JSON.parse(JSON.stringify([fillRun.rules, fillRun.settings, fillRun.step, fillRun.view, fillRun.overwrite, fillRun.auto])), ['abcdef012345', { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false }, 'Vehicles / [client]', 't1', false, false]);
-  assert.ok(fields.length && fields.every((e) => e.type === 'fill_field' && e.run === fillRun.run && e.step === 'Vehicles / [client]'), 'every field event shares the run and step');
+  assert.deepEqual(JSON.parse(JSON.stringify([fillRun.rules, fillRun.settings, fillRun.step, fillRun.view, fillRun.overwrite, fillRun.auto])), ['abcdef012345', { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false }, 'Vehicles', 't1', false, false]);
+  assert.ok(fields.length && fields.every((e) => e.type === 'fill_field' && e.run === fillRun.run && e.step === 'Vehicles'), 'every field event shares the run and step, as the step\'s own name');
   assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value/);
 });
 
@@ -2873,6 +2874,45 @@ test('loading another intake keeps the first intake\'s edit keys and helper reco
   assert.match(SIDEPANEL, /\$\('clear-client'\)\.addEventListener\('click', async \(\) => \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,600}usage\.restoreSession\(null\);[\s\S]{0,300}await clearAgentKeys\(scope\);/);
 });
 
+// Codex on PR #65 (2c8eeb9): Clear was done once the edit keys were gone, while the helper records'
+// removal could still be queued; the same PDF loaded right after got the cleared helper ids back.
+test('Clear is done only once the helper records are gone, and a restore waits for it', async () => {
+  let releaseClear;
+  const memory = { 'doneActions:A:7': ['addVehicle:0'] };
+  const context = {
+    Promise, Number, Array, Set, agentKeysQueue: Promise.resolve(), doneActionsQueue: Promise.resolve(),
+    agentKeysStore: { get: async () => [], set: async () => {} },
+    doneActionsStore: {
+      clear: (scope) => new Promise((resolve) => { releaseClear = () => { delete memory[`doneActions:${scope}:7`]; resolve(); }; }),
+      get: async (scope, tabId) => memory[`doneActions:${scope}:${tabId}`] ?? [],
+    },
+    usage: { currentSession: () => ({ intakeId: 'A' }) }, state: { tab: { id: 7 }, doneActions: new Set() },
+  };
+  vm.runInNewContext(`${SIDEPANEL.match(/const doneRestored = new Set\(\);/)[0]}\n${['clearAgentKeys', 'restoreDoneActions'].map(extractFunction).join('\n')}`, context);
+  let cleared = false;
+  const clear = context.clearAgentKeys('A').then(() => { cleared = true; });
+  const restore = context.restoreDoneActions(7);
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  assert.equal(cleared, false, 'still removing the helper records');
+  releaseClear();
+  await Promise.all([clear, restore]);
+  assert.equal(cleared, true);
+  assert.deepEqual([...context.state.doneActions], [], 'the cleared ids are not restored');
+});
+
+// Codex on PR #65 (2c8eeb9): listing helper records read the whole of extension storage, with the
+// usage queue (up to 20,000 events), on every PDF load.
+test('helper records are listed by key, without reading the stored values where Chrome can', async () => {
+  const context = { Object };
+  vm.runInNewContext(extractFunction('storedKeys'), context);
+  const values = { 'doneActions:A:7': ['x'], usageLog: new Array(3).fill({}) };
+  const modern = { getKeys: async () => Object.keys(values), get: async (k) => { if (k === null) throw new Error('read everything'); return {}; } };
+  assert.deepEqual(await context.storedKeys(modern), ['doneActions:A:7', 'usageLog']);
+  const older = { get: async (k) => (k === null ? values : {}) }; // Chrome before 130
+  assert.deepEqual(await context.storedKeys(older), ['doneActions:A:7', 'usageLog']);
+  assert.doesNotMatch(SIDEPANEL, /storage\.local\.get\(null\)/);
+});
+
 // Audit 2026-10-08, finding 5: a recorder paused by a fill the panel never finished (closed
 // mid-fill) stayed paused, blind until the page reloaded.
 test('a recorder already in the page is told to resume, unless a fill or AI apply is under way', async () => {
@@ -2936,14 +2976,20 @@ test('a problem report is uploaded as soon as it is logged', () => {
 // Contract 1 (audit 2026-10-08): a field change on a one-address application names its step.
 test('field changes carry the step the recorder read, only for one-address applications', () => {
   const logged = [];
-  const state = { intake: { record: {} }, tab: { id: 1, url: 'https://x.test/application/businessauto', carrier: { id: 'amwins', layoutSteps: true } }, filled: new Map(), labels: new Map(), choices: new Map(),
+  const state = { intake: { record: {} }, tab: { id: 1, url: 'https://x.test/application/businessauto', carrier: { id: 'amwins', layoutSteps: amwins.layoutSteps } }, filled: new Map(), labels: new Map(), choices: new Map(),
     agentKeys: new Map(), visitedPages: new Set(), autoPages: new Set(), layoutReadyTabs: new Set(), layoutNewTabs: new Set(), quoteStates: new Map() };
   const context = { state, URL, $: () => ({ checked: false }), usage: { log: (...e) => logged.push(...e), currentSession: () => ({ keySalt: 's' }) }, redactor: () => (s) => s, redactionTerms: () => [],
-    fieldChangeEvent: (c, ctx) => ({ type: 'field_change', key: c.key, step: ctx.step }), viewOf: () => 't1', scheduleLayout() {}, scheduleAutoFill() {}, quoteStatePick: () => undefined, persistAgentKeys() {}, settleRejectedAi: async () => false };
+    fieldChangeEvent: (c, ctx) => ({ type: 'field_change', key: c.key, step: ctx.step }), knownStep, viewOf: () => 't1', scheduleLayout() {}, scheduleAutoFill() {}, quoteStatePick: () => undefined, persistAgentKeys() {}, settleRejectedAi: async () => false };
   vm.runInNewContext(`${PAGE_HELPERS}\n${extractFunction('onRecorderMessage')}`, context);
-  const change = () => context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/application/businessauto', step: 'Vehicles', changes: [{ key: 'vin', before: '', after: 'x', agent: true }] }, { tab: { id: 1 }, frameId: 0 });
+  const change = (step = 'Vehicles ') => context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/application/businessauto', step, changes: [{ key: 'vin', before: '', after: 'x', agent: true }] }, { tab: { id: 1 }, frameId: 0 });
   change();
   assert.equal(logged.at(-1).step, 'Vehicles');
+  // Codex on PR #65 (2c8eeb9): only a known step name is sent. The tab may still show the previous
+  // client's quote, whose names the loaded intake's redaction doesn't know.
+  change('Draft Application Saved! / Coverages');
+  assert.equal(logged.at(-1).step, 'Coverages', 'a dialog heading beside the step: the step');
+  change('Jordan Avery Trucking LLC');
+  assert.equal(logged.at(-1).step, undefined, 'a heading that is no step name: nothing');
   state.tab.carrier = { id: 'progressive' };
   change();
   assert.equal(logged.at(-1).step, undefined, 'a carrier with page names: no step');

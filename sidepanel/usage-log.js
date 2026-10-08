@@ -126,12 +126,17 @@ const BATCH = 500;
 const BATCH_CHARS = 1_000_000;
 let uploadStatus = { state: 'idle' }; // idle | ok | error | off
 // A request that hangs (a proxy, a half-open connection) is given up after this long: the status
-// says so and the events stay queued for the next upload (audit 2026-10-08, finding 11).
+// says so and the events stay queued for the next upload (audit 2026-10-08, finding 11). The time
+// covers reading the reply too (`read`): a reply whose body stalls after its headers held the
+// queue (Codex on PR #65).
 export const UPLOAD_TIMEOUT_MS = 20_000;
-const timedFetch = (url, init, timeoutMs) => {
+const timedFetch = (url, init, timeoutMs, read = (res) => res) => {
   const control = new AbortController();
-  const timer = setTimeout(() => control.abort(), timeoutMs);
-  return fetch(url, { ...init, signal: control.signal }).finally(() => clearTimeout(timer));
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => { control.abort(); reject(Object.assign(new Error('timed out'), { name: 'AbortError' })); }, timeoutMs);
+  });
+  return Promise.race([fetch(url, { ...init, signal: control.signal }).then(read), timeout]).finally(() => clearTimeout(timer));
 };
 
 export const lastUpload = () => uploadStatus;
@@ -201,13 +206,13 @@ export function upload({ timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
       const list = (await local.get(LOG_KEY)) ?? [];
       const batch = nextBatch(list, max);
       if (!batch.length) break;
-      let res;
+      let res, body;
       try {
-        res = await timedFetch(new URL('/v1/events', serverUrl), {
+        ({ res, body } = await timedFetch(new URL('/v1/events', serverUrl), {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(serverToken ? { authorization: `Bearer ${serverToken}` } : {}) },
           body: JSON.stringify({ agent, version, events: batch }),
-        }, timeoutMs);
+        }, timeoutMs, async (r) => ({ res: r, body: r.status === 413 ? null : await r.json().catch(() => null) })));
       } catch (e) {
         // Given up or unreachable: the events stay here for the next upload.
         uploadStatus = { state: 'error', at: new Date().toISOString(), message: e?.name === 'AbortError' ? `${serverUrl} didn't answer in time; the events stay here` : `can't reach ${serverUrl}` };
@@ -222,11 +227,10 @@ export function upload({ timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
         continue;
       }
       if (!res.ok) {
-        const msg = await res.json().then((b) => b.error).catch(() => res.statusText);
+        const msg = body ? body.error : res.statusText;
         uploadStatus = { state: 'error', at: new Date().toISOString(), message: `server said ${res.status}: ${msg}` };
         return;
       }
-      const body = await res.json().catch(() => null);
       if (!receiptFor(body, batch.length)) {
         uploadStatus = { state: 'error', at: new Date().toISOString(), message: "the server's reply didn't confirm the upload; the events stay here" };
         return;

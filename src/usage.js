@@ -128,8 +128,8 @@ function isComboPick(change, choices) {
  * @param {{record, filled: Map, redact: Function, labels?: Map, choices?: Map, keySalt?: string, step?: string}} ctx
  *   filled: field key -> what autofill put there; labels: field key -> question text as the fill
  *   engine read it (more reliable than the recorder's guess); choices: field key -> Set of a combo's
- *   options as the fill engine saw them; keySalt: the session's (see fieldKeyOf); step: the visible
- *   step of a one-address application (AmWINS), as the recorder read its headings (see stepOf)
+ *   options as the fill engine saw them; keySalt: the session's (see fieldKeyOf); step: the
+ *   step of a one-address application (AmWINS) the recorder read, one of its names (see knownStep)
  */
 export function fieldChangeEvent(change, { record, filled, redact, labels, choices, keySalt, step }) {
   const ours = filled.get(change.key) ?? null;
@@ -168,9 +168,20 @@ export function fieldChangeEvent(change, { record, filled, redact, labels, choic
 
 // The step of a one-address application (AmWINS: Insured Info, Vehicles, …), whose steps share
 // the page's address: pagekit's `stepKey` (the visible headings) on fill events, the recorder's
-// reading of the same headings on field changes. Redacted like a label (a heading could name the
-// insured) and bounded; absent on carriers whose pages have names of their own (audit 2026-10-08).
+// reading of the same headings on field changes. Only a heading that is one of the carrier's own
+// step names (`layoutSteps`) is sent, as that name: a heading can name the insured, and the tab may
+// still show the previous client's quote, whose names the loaded intake's redaction doesn't know
+// (Codex on PR #65). Absent on carriers whose pages have names of their own (audit 2026-10-08).
 export const STEP_MAX = 120;
+export function knownStep(carrier, headings) {
+  const names = Array.isArray(carrier?.layoutSteps) ? carrier.layoutSteps : [];
+  for (const part of String(headings ?? '').split(' / ')) {
+    const hit = names.find((name) => name.toLowerCase() === oneLine(part).toLowerCase());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+// Bounded and redacted as well, though a known step name never needs it.
 const stepOf = (step, redact) => (step ? { step: redact(String(step)).slice(0, STEP_MAX) } : {});
 
 // The rule files whose text the `rules` fingerprint of a fill run covers (in this order), so a
@@ -186,7 +197,7 @@ export async function rulesHash(texts) {
 // Fill results, minus typed values (text boxes) and client names.
 //   run: one fill invocation's id, shared by its fill_run and fill_field events (and a fill_error);
 //   rules: the rule files' fingerprint (rulesHash); settings: the panel's filling switches in force
-//   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: see stepOf.
+//   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep).
 export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step }) {
   const all = (k) => frames.flatMap((f) => f[k] ?? []);
   const isChoice = (x) => x.controlKind && x.controlKind !== 'text';

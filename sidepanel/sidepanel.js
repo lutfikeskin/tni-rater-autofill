@@ -5,7 +5,7 @@ import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
-import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES } from '../src/usage.js';
+import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
@@ -50,11 +50,17 @@ let agentKeysQueue = Promise.resolve();
 const DONE_ACTIONS_PREFIX = 'doneActions:';
 const doneKey = (scope, tabId) => `${DONE_ACTIONS_PREFIX}${scope}:${tabId}`;
 // `clear(scope)`: one intake's records; `scopes()`: the intakes with records (pruneAgentRecords).
+// The keys in extension storage, without reading their values: the usage queue (up to 20,000
+// events) shares that storage, and every PDF load lists these records (Codex on PR #65). Chrome
+// has getKeys from 130; the manifest allows 116, where all of it is still read.
+async function storedKeys(local) {
+  return typeof local.getKeys === 'function' ? local.getKeys() : Object.keys(await local.get(null));
+}
 const doneActionsStore = inExtension && globalThis.chrome?.storage?.local
   ? { get: async (scope, tabId) => (await chrome.storage.local.get(doneKey(scope, tabId)))[doneKey(scope, tabId)] ?? [],
       set: (scope, tabId, ids) => (ids.length ? chrome.storage.local.set({ [doneKey(scope, tabId)]: ids }) : chrome.storage.local.remove(doneKey(scope, tabId))),
-      clear: async (scope) => chrome.storage.local.remove(Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith(scope ? `${DONE_ACTIONS_PREFIX}${scope}:` : DONE_ACTIONS_PREFIX))),
-      scopes: async () => Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX)).map((k) => k.slice(DONE_ACTIONS_PREFIX.length).replace(/:[^:]*$/, '')) }
+      clear: async (scope) => chrome.storage.local.remove((await storedKeys(chrome.storage.local)).filter((k) => k.startsWith(scope ? `${DONE_ACTIONS_PREFIX}${scope}:` : DONE_ACTIONS_PREFIX))),
+      scopes: async () => (await storedKeys(chrome.storage.local)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX)).map((k) => k.slice(DONE_ACTIONS_PREFIX.length).replace(/:[^:]*$/, '')) }
   : { get: async (scope, tabId) => memory[doneKey(scope, tabId)] ?? [],
       set: async (scope, tabId, ids) => { memory[doneKey(scope, tabId)] = ids; },
       clear: async (scope) => { for (const k of Object.keys(memory)) if (k.startsWith(scope ? `${DONE_ACTIONS_PREFIX}${scope}:` : DONE_ACTIONS_PREFIX)) delete memory[k]; },
@@ -399,7 +405,9 @@ function clearAgentKeys(scope) {
   const task = agentKeysQueue.then(async () => agentKeysStore.set((await agentKeysStore.get()).filter((x) => x.scope !== scope)));
   agentKeysQueue = task.catch(() => {});
   doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.clear(scope)).catch(() => {});
-  return task;
+  // Done once the helper records are gone too: the same PDF loaded again right after a Clear must
+  // not get the cleared intake's helper ids back (units taken as already added; Codex on PR #65).
+  return Promise.all([task, doneActionsQueue]);
 }
 
 // On loading an intake: its own records stay (a PDF dropped again is the same intake, and its
@@ -434,6 +442,7 @@ const doneRestored = new Set();
 async function restoreDoneActions(tabId) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId) || doneRestored.has(`${scope}|${tabId}`)) return;
+  await doneActionsQueue; // a Clear's removal still queued is done first
   const ids = await doneActionsStore.get(scope, tabId);
   if (state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) return;
   doneRestored.add(`${scope}|${tabId}`);
@@ -991,7 +1000,7 @@ function onRecorderMessage(msg, sender) {
   }
   if (msg.event === 'field_changes') {
     const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt,
-      step: state.tab.carrier?.layoutSteps ? msg.step : undefined };
+      step: knownStep(state.tab.carrier, msg.step) };
     const view = viewOf(sender.tab.id, samePage(msg.page));
     log(...msg.changes.map((c) => ({ carrier, page: msg.page, view, ...fieldChangeEvent(c, ctx) })));
     scheduleLayout(layoutPage, 'changed');
@@ -1135,8 +1144,9 @@ function noteStaleFill(ctx) {
   const note = h('p', { class: 'error' }, 'The intake changed while this page was being filled: the page may hold the earlier intake\'s answers. Check it, then Fill this page again.');
   if (ctx.auto === true) $('report').append(note); else $('report').replaceChildren(note);
 }
-// The step a one-address application (AmWINS) showed to the fill: the top frame's headings.
-function stepOfResults(carrier, results) { return carrier.layoutSteps ? results.find((r) => r.frameId === 0)?.result?.stepKey || undefined : undefined; }
+// The step a one-address application (AmWINS) showed to the fill: the top frame's headings, sent
+// only as one of the carrier's step names (knownStep).
+function stepOfResults(carrier, results) { return knownStep(carrier, results.find((r) => r.frameId === 0)?.result?.stepKey); }
 // The events of a fill, redacted with the intake it filled from.
 function logFill(ctx, frames, results, started) {
   if (ctx.carrier.practice) return;

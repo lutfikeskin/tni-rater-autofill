@@ -8,7 +8,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms } from '../src/plan.js';
-import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX } from '../src/usage.js';
+import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep } from '../src/usage.js';
 
 const bytes = new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url)));
 const raw = await readIntakeFields(pdfjs, bytes.slice());
@@ -202,6 +202,24 @@ test('fill events say which view (tab and vehicle) they were on', () => {
   const events = fillEvents([{ fields: 1, filled: [{ key: '2B9D@2', q: '2B9D', label: 'Farthest distance', controlKind: 'select', shown: '500 miles' }] }],
     { carrier: 'progressive', page: 'AddVehicle', view: 't1:v1', overwrite: false, ms: 1, redact });
   assert.deepEqual(events.map((e) => [e.type, e.view]), [['fill_run', 't1:v1'], ['fill_field', 't1:v1']]);
+});
+
+// Codex on PR #65 (2c8eeb9): a step heading could name the insured, and the tab may still show the
+// previous client's quote, which the loaded intake's redaction doesn't know: only the carrier's own
+// step names are sent.
+test('only a known step name is sent as the step', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  assert.deepEqual(amwins.layoutSteps, ['Insured Info', 'Drivers', 'Vehicles', 'Coverages', 'Underwriting']);
+  assert.equal(knownStep(amwins, 'Vehicles '), 'Vehicles');
+  assert.equal(knownStep(amwins, 'coverages'), 'Coverages');
+  assert.equal(knownStep(amwins, '  Draft Application Saved! / Insured  Info'), 'Insured Info', 'a dialog heading beside the step');
+  assert.equal(knownStep(amwins, 'Old Client Trucking LLC'), undefined);
+  assert.equal(knownStep(amwins, 'Vehicles for Old Client Trucking LLC'), undefined, 'a heading that only contains a step name');
+  assert.equal(knownStep(amwins, ''), undefined);
+  assert.equal(knownStep({ id: 'amwins', layoutSteps: true }, 'Vehicles'), undefined, 'no list of names: no step');
+  assert.equal(knownStep({ id: 'progressive' }, 'Vehicles'), undefined);
+  const change = fieldChangeEvent({ key: 'k', label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact, step: knownStep(amwins, 'Old Client Trucking LLC') });
+  assert.equal('step' in change, false);
 });
 
 // Audit 2026-10-08, finding 7: a fill's events can be joined by run and attributed to a rule version.
