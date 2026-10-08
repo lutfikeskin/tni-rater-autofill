@@ -194,6 +194,9 @@ export const amwins = {
   hosts: [/(^|\.)amwinsadmittedplacement\.com$/],
   // Where page layouts are taken as the agent works without a fill: the application only.
   layoutUrl: /\/application\/businessauto/i,
+  // Where fills run (also "Fill this page"): the start page, where the risk state is picked and the
+  // application opened, and the application. Never the portal's other pages (audit 2026-10-08).
+  autoFillUrl: /\/(commerciallines|application\/businessauto)/i,
   // One address for every step: a layout also names its step (the visible step heading).
   layoutSteps: true,
   // The rules below answer these sections row by row; a generic label rule never does. A row the
