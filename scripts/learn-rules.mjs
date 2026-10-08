@@ -68,7 +68,7 @@ const lines = [
   'Left to the agent, who let the page\'s own answer stand when leaving the page and never chose another. Weaker evidence: a default the agents kept, not proof it fits every client. Decide per question: map it from the intake, keep it with the agent (the note line below: known, no longer unfamiliar, still the agent\'s), or leave it as the page has it (`ignore`) only when it is not the client\'s decision.',
   '',
   ...pageAnswer.flatMap((s) => [
-    `- **${s.carrier} ${s.page}${s.field ? ` ${s.field}` : ''}** "${s.label}": left as "${s.answer}" in ${pct(s.share)} of ${s.answers} (${s.intakes} PDFs)`,
+    `- **${s.carrier} ${s.page}${s.field ? ` ${s.field}` : ''}** "${s.label}": left as "${s.answer}" in ${pct(s.share)} of ${s.answers} answers (${s.quotes} quotes, ${s.intakes} PDFs)`,
     `  \`${s.rule}\``,
   ]),
   '',

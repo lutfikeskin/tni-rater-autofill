@@ -384,7 +384,7 @@ test('learning: the page answer an agent left a page with counts, and suggests k
   // Known, so no longer unfamiliar, but still the agent's: a default proves nothing for a client.
   const suggested = rule(p.rule);
   assert.equal(suggested.ignore, undefined);
-  assert.match(suggested.note, /The page's answer "No" was left in 5 of 5 quotes \(5 intake PDFs\); confirm it for this client\./);
+  assert.match(suggested.note, /The page's answer "No" was left in 5 of 5 answers \(5 quotes, 5 intake PDFs\); confirm it for this client\./);
   const carrier = { id: 'progressive', rules: [suggested], useGenericRules: false };
   assert.equal(fieldStatus({ caption: 'Does the customer need a certificate of insurance?', kind: 'radio' }, carrier, 'MoreAboutBusiness').status, 'agent');
   const [step] = buildPlan({ applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} }, carrier, {}).filter((x) => x.kind !== 'action');
@@ -405,4 +405,35 @@ test('learning: no page answer from a page never left, from a stale layout, or f
 test('learning: questions without an id (AmWINS) get no page answers', () => {
   const events = Array.from({ length: 5 }, (_, i) => leftQuote(i, { carrier: 'amwins', q: null, page: '/application/businessauto' })).flat();
   for (const m of finalAnswers(events).values()) for (const a of m.values()) assert.equal(a.pageLeft, undefined);
+});
+
+// Codex on PR #51: what proves the page's answer stood when the agent left the page.
+test('learning: a page answer needs this tab\'s own visit, the agent\'s departure, and no AI choice', () => {
+  const base = leftQuote(0);
+  const value = (events) => byQ(finalAnswers(events).get('q0'), '3C4')?.value;
+  const withView = (events, view) => events.map((e) => (e.carrier ? { ...e, view } : e));
+  assert.equal(value(withView(base, 't1')), 'No', 'one tab: as before');
+  // Tab 2 drew the page last; tab 1 left it, without a layout of its own.
+  const twoTabs = withView(base, 't1').map((e) => (e.type === 'page_layout' ? { ...e, view: 't2' } : e));
+  assert.equal(value(twoTabs), undefined, "another tab's layout says nothing");
+  // The extension's fill clicked Continue.
+  const advanced = [...base.slice(0, 3), { id: 'run', t: at(3), session: 'q0', carrier: 'progressive', type: 'fill_run', page: 'MoreAboutBusiness', advanced: 'Continue' }, ...base.slice(3)];
+  assert.equal(value(advanced), undefined, 'not the agent leaving');
+  // An AI choice the agent accepted (the recorder is paused, so no change event).
+  const ai = [...base.slice(0, 3), { id: 'ai', t: at(3), session: 'q0', carrier: 'progressive', type: 'ai_decision', page: 'MoreAboutBusiness', q: '3C4', label: 'Does the customer need a certificate of insurance?', decision: 'accepted', choice: 'No' }, ...base.slice(3)];
+  assert.equal(value(ai), undefined, 'an AI answer, not the page default');
+  // Back on the page (no new layout: same questions), then left again: that visit is unknown.
+  const back = [...base,
+    { id: 'back', t: at(5), session: 'q0', carrier: 'progressive', type: 'page_view', page: 'MoreAboutBusiness', from: 'CoveragesRates' },
+    { id: 'out', t: at(6), session: 'q0', carrier: 'progressive', type: 'page_view', page: 'CoveragesRates', from: 'MoreAboutBusiness' }];
+  assert.equal(value(back), undefined, 'the earlier layout may not show what the page held later');
+  // A -Reload of the same page keeps its layout.
+  const reload = [...base.slice(0, 3), { id: 'rl', t: at(3), session: 'q0', carrier: 'progressive', type: 'page_view', page: 'MoreAboutBusiness-Reload', from: 'MoreAboutBusiness' }, ...base.slice(3)];
+  assert.equal(value(reload), 'No');
+});
+
+test('learning: a question a current rule maps gets no page-answer suggestion', () => {
+  const events = Array.from({ length: 5 }, (_, i) => leftQuote(i)).flat();
+  const mapped = [{ id: 'progressive', useGenericRules: false, rules: [{ page: 'MoreAboutBusiness', ask: 'Does the customer need a certificate of insurance?', kind: 'bool', value: () => false }] }];
+  assert.equal(learn(events, { carriers: mapped, minIntakes: 5 }).suggestions.pageAnswer.length, 0);
 });

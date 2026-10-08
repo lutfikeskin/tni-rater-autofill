@@ -83,7 +83,7 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
       else if (e.matchesIntake) a.matches = e.matchesIntake;
     }
   }
-  pageLeftAnswers(events, out, get);
+  pageLeftAnswers(events, out, get, ids);
   return out;
 }
 
@@ -93,17 +93,39 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
 // (`selected`), only where no fill or change gave the question an answer: events always win.
 // Questions with an id (Progressive) only; not one id drawn several times without rows (which
 // vehicle's isn't known), nor a page about one vehicle, driver or trailer whose layout doesn't say
-// which one.
-function pageLeftAnswers(events, out, get) {
+// which one. Within one quote tab (`view`): another tab's layout says nothing about this one's
+// departure. Not when the extension moved on (its fill clicked Continue: `advanced`), nor for a
+// question an AI choice answered (the recorder is paused then). A layout belongs to one visit:
+// coming back to the page (or failing to read it) drops it and the departure before, as the next
+// visit logs no layout when the page's questions are the same (Codex on PR #51).
+function pageLeftAnswers(events, out, get, ids) {
+  const tabOf = (e) => String(e.view ?? '').split(':')[0];
+  const page = (p) => String(p ?? '').replace(/-Reload$/, '');
   const lastLayout = new Map();
+  const lastFill = new Map();
   const left = new Map();
+  const aiChosen = new Set();
   for (const e of events) {
     if (!e.session || !e.carrier) continue;
-    if (e.type === 'page_layout' && !e.step) lastLayout.set(`${e.session}|${e.page}`, e);
-    if (e.type !== 'page_view' || !e.from) continue;
-    const from = String(e.from).replace(/-Reload$/, '');
-    const layout = lastLayout.get(`${e.session}|${from}`);
-    if (layout && from !== String(e.page ?? '').replace(/-Reload$/, '')) left.set(`${e.session}|${from}`, layout);
+    const at = (p) => `${e.session}|${tabOf(e)}|${page(p)}`;
+    if (e.type === 'page_layout' && !e.step) lastLayout.set(at(e.page), e);
+    if (e.type === 'layout_error') lastLayout.delete(at(e.page));
+    if (e.type === 'fill_run') lastFill.set(at(e.page), e);
+    if (e.type === 'ai_decision' && e.q && ['accepted', 'approved', 'auto'].includes(e.decision)) aiChosen.add(`${e.session}|${identify(e, ids).key}`);
+    if (e.type !== 'page_view') continue;
+    const arrived = page(e.page);
+    if (e.from && page(e.from) !== arrived) {
+      const layout = lastLayout.get(at(e.from));
+      const unit = String(layout?.view ?? '').split(':')[1] ?? '';
+      const byUs = !!lastFill.get(at(e.from))?.advanced;
+      if (layout && !byUs) left.set(`${at(e.from)}|${unit}`, layout);
+    }
+    // Arriving at a page (from another, or a new document): a visit whose layout is still to come.
+    if (!e.from || page(e.from) !== arrived) {
+      lastLayout.delete(at(arrived));
+      lastFill.delete(at(arrived));
+      for (const k of [...left.keys()]) if (k.startsWith(`${at(arrived)}|`)) left.delete(k);
+    }
   }
   for (const layout of left.values()) {
     const unit = String(layout.view ?? '').split(':')[1] ?? '';
@@ -114,7 +136,7 @@ function pageLeftAnswers(events, out, get) {
       if (!f.q || f.selected == null || repeated.has(f.q)) continue;
       const row = String(f.row ?? '').split('_')[1];
       const a = get({ ...layout, q: f.q, label: f.label, key: row && row !== '1' ? `${f.q}@${row}` : f.q });
-      if (!a || a.source) continue;
+      if (!a || a.source || aiChosen.has(`${layout.session}|${a.question}`)) continue;
       Object.assign(a, { source: 'page', pageLeft: true, value: f.selected, kind: a.kind ?? f.kind });
     }
   }
@@ -182,7 +204,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     // every quote and never changed to another: a candidate to leave as the page has it. A
     // default the agents kept, not proof it fits every client.
     const leftAsIs = obs.filter((o) => o.pageLeft);
-    if (obs.some((o) => o.leftToAgent) && intakesOf(choices) < minIntakes && intakesOf(leftAsIs) >= minIntakes) {
+    if (!isMapped && obs.some((o) => o.leftToAgent) && intakesOf(choices) < minIntakes && intakesOf(leftAsIs) >= minIntakes) {
       const counts = new Map();
       leftAsIs.forEach((o) => counts.set(o.value, (counts.get(o.value) ?? 0) + 1));
       const ranked = share(counts, leftAsIs.length);
@@ -190,7 +212,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
         suggestions.pageAnswer.push({ ...base, ...support(leftAsIs), answers: leftAsIs.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1),
           // Kept with the agent (a note), never left as the page has it: these are often the
           // client's decisions (a coverage limit, a payment plan), where a default proves nothing.
-          rule: `{ ${target({ ...first, field })}, name: ${quote(`${String(first.label ?? '').slice(0, 70)} (agent's; page default ${ranked[0].value})`)}, note: ${quote(`The page's answer "${ranked[0].value}" was left in ${counts.get(ranked[0].value)} of ${leftAsIs.length} quotes (${intakesOf(leftAsIs)} intake PDFs); confirm it for this client.`)} },` });
+          rule: `{ ${target({ ...first, field })}, name: ${quote(`${String(first.label ?? '').slice(0, 70)} (agent's; page default ${ranked[0].value})`)}, note: ${quote(`The page's answer "${ranked[0].value}" was left in ${counts.get(ranked[0].value)} of ${leftAsIs.length} answers (${quotesOf(leftAsIs)} quotes, ${intakesOf(leftAsIs)} intake PDFs); confirm it for this client.`)} },` });
         continue;
       }
     }
