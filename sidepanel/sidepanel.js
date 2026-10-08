@@ -1128,7 +1128,8 @@ function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = f
 function staleFill(ctx) { return state.intake !== ctx.intake || state.intakeRevision !== ctx.revision; }
 function noteStaleFill(ctx) {
   if (!ctx.carrier.practice) usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run, auto: ctx.auto, error: 'stale: intake changed during the fill' });
-  $('report').replaceChildren(h('p', { class: 'error' }, 'The intake changed while this page was being filled: the page may hold the earlier intake\'s answers. Check it, then Fill this page again.'));
+  const note = h('p', { class: 'error' }, 'The intake changed while this page was being filled: the page may hold the earlier intake\'s answers. Check it, then Fill this page again.');
+  if (ctx.auto === true) $('report').append(note); else $('report').replaceChildren(note);
 }
 // The step a one-address application (AmWINS) showed to the fill: the top frame's headings.
 function stepOfResults(carrier, results) { return carrier.layoutSteps ? results.find((r) => r.frameId === 0)?.result?.stepKey || undefined : undefined; }
@@ -1171,7 +1172,7 @@ async function autoFill(page) {
     // The list page may have picked the next vehicle or driver: the plan is for that one.
     ctx.active = { ...state.active };
     const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
-    const skip = [...(state.agentKeys.get(ctx.scope) ?? [])];
+    const skip = [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])];
     const options = fillOptions(carrier, { overwrite: false, skip, keepMarks: true });
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -1444,7 +1445,6 @@ async function layoutWhenQuiet(job, tries = 0) {
   await recordLayout(job.page, null, job);
 }
 
-// `tabId`, `carrier`: the fill's own tab (the agent may have gone to another one meanwhile).
 // The maps of the tab a fill was about: the panel's own while that tab is in front, else the
 // session kept for it (refreshTab), made when there is none, so the bookkeeping of a fill whose
 // results come back after the agent moved to another tab never lands on that other tab (audit
@@ -1705,7 +1705,6 @@ async function fillPage({ auto = false } = {}) {
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
-  const options = fillOptions(carrier, { overwrite });
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
   $('report').replaceChildren(h('p', { class: 'muted small center' }, 'Filling one answer at a time: the page checks each answer with its server. Keep this tab open.'));
@@ -1717,6 +1716,9 @@ async function fillPage({ auto = false } = {}) {
   await tellRecorder('pause');
   try {
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
+    // The agent's edits on this page as the fill's tab holds them (retiring AI picks may just
+    // have released some), never the tab in front.
+    const options = fillOptions(carrier, { overwrite, skip: [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])] });
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
