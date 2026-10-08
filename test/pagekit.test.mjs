@@ -1540,7 +1540,8 @@ test('blank optional address detail and blank DOT do not stop standard business-
     ], { id: `f_U${'A'.repeat(32)}1ED_1_1`, ariaLabel: 'Does the customer have a USDOT Number?', attrs: { fieldref: 'USDOTInput.Question' } });
     h.document.body.append(detail, street, dot, name, dotNumber);
     const record = {
-      applicant: { name: 'Example LLC', dot: null, mcDotWithin60Days: null, owner1: 'Test Owner' },
+      // The intake says no USDOT number is coming (a blank 60-day answer would leave the question to the agent).
+      applicant: { name: 'Example LLC', dot: null, mcDotWithin60Days: false, owner1: 'Test Owner' },
       garaging: { street: '1 Example St', city: 'Example City', zip: '21000', unit },
       operations: { businessClass: 'Expediter' },
       drivers: [], vehicles: [], trailers: [], priorInsurance: [],
@@ -2459,7 +2460,8 @@ test('a button that shows only once the page took an answer: the answer is picke
 });
 
 test('a question whose wording carries a date is not flagged as reworded when the date moves', async () => {
-  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+  // An expediter: outside the supported classes the standard No would be a check item (review mode).
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
   const plan = buildPlan(record, progressive).filter((s) => ['28F5', '299D'].includes(s.q));
   const h = harness({ search: '?pageName=AddDriver' });
   const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
@@ -2472,4 +2474,30 @@ test('a question whose wording carries a date is not flagged as reworded when th
   assert.equal(accidents.children.find((r) => r.checked)?.value, 'No');
   assert.equal(defensive.children.find((r) => r.checked)?.value, 'No', 'defensive driver discount: standard No');
   assert.equal(report.unknown.length, 0);
+});
+
+// Answer provenance (plan.js `source`): a standard answer is reported as such, so the panel can tag
+// it; in review mode (a business class the rules weren't written for) it is a check item that holds
+// Continue, and an intake answer is neither.
+test('the fill report says which answers are TNI standards; review mode makes them check items', async () => {
+  const fillBoth = async (businessClass) => {
+    const h = harness({ search: '?pageName=AddDriver' });
+    const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
+    h.document.body.append(yesNo('DriverInput.AnyAccidentsViolationsPastExpYears', 'Has this driver had any accidents, claims or violations in the past 3 years?'), yesNo('DriverInput.DefensiveDriverDiscount', 'Defensive Driver Discount'));
+    const record = { applicant: {}, garaging: {}, operations: { businessClass }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+    const plan = buildPlan(record, progressive).filter((s) => ['28F5', '299D'].includes(s.q));
+    const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+    // Report items carry the control's own q (none on these synthetic controls): name them by step.
+    const qOf = (x) => plan.find((s) => s.id === x.stepId)?.q;
+    for (const x of [...report.filled, ...report.checks]) x.q = qOf(x);
+    return report;
+  };
+  const ok = await fillBoth('Expediter');
+  assert.deepEqual([...ok.filled].map((x) => [x.q, x.standard]).sort(), [['28F5', false], ['299D', true]]);
+  assert.equal(ok.checks.length, 0);
+  const review = await fillBoth('Dump Truck');
+  assert.deepEqual([...review.filled].map((x) => [x.q, x.standard]).sort(), [['28F5', false], ['299D', true]], 'still filled');
+  assert.deepEqual([...review.checks].map((x) => x.q), ['299D'], 'the standard is a check item; the intake answer is not');
+  assert.match(review.checks[0].note, /^Review mode: the business class "Dump Truck" isn't validated for Progressive; confirm this standard answer\.$/);
+  assert.ok(review.blockers.some((b) => /^check: /.test(b)), 'Continue waits');
 });
