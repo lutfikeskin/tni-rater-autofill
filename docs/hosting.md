@@ -59,11 +59,19 @@ npm run push-logs -- some/export.json   # an agent's exported log, or an old loc
 
 ## Daily review
 
-`.github/workflows/daily-review.yml` runs every day at 06:00 UTC (and on demand: Actions → Daily
-review → Run workflow, optionally with a start date). It downloads the log, builds the review for
-the last day, keeps it as an artifact for 90 days, shows it as the run summary, and opens an issue
-labelled `daily-review` when agents reported problems, rule-coverage checks find uncovered questions,
-or the deployed usage server isn't the repository's (`scripts/server-check.mjs`, checked first and
-only on the default branch: redeploy it). When the download or the review fails (the server down),
-it opens an issue saying so, with what the server check found. The workflow does not implement or
-deploy corrections.
+`.github/workflows/daily-review.yml` runs every day at 06:00 UTC, which GitHub often starts hours
+late (and on demand: Actions → Daily review → Run workflow, optionally with a start date or time).
+It downloads the log and builds the review of the events the server received since the last
+successful run on the default branch began downloading (`scripts/daily-issue.mjs since`, from that
+run's steps; a day when there is none; a run that can't tell fails rather than guess), so an
+upload that arrives late is in the next review and none is in two. Runs go one at a time. It keeps the review as an
+artifact for 90 days and shows it as the run summary. When something is new, it comments on the
+open issue labelled `daily-review`, or opens one titled "Daily review" when none is open: problem
+reports, questions without a rule (or AmWINS fields the mock lacks) first seen in a layout of the
+period (one per question, whatever its row, number, product or step: `scripts/lib/daily.mjs`), a deployed usage server that isn't the
+repository's (`scripts/server-check.mjs`, checked first and only on the default branch: redeploy
+it), or a run that couldn't finish (the server down, a broken script; when the broken script is the
+one that comments, the workflow says so with `gh` alone). Nothing new: no comment.
+A long list is cut to fit a GitHub comment, pointing to the review. Closing the issue is how a
+reviewer says it's been read; the next new item opens another. The
+workflow does not implement or deploy corrections.

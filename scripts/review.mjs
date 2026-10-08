@@ -3,9 +3,12 @@
 // plus what the AI assistant did and the agents' problem reports, in one Markdown file.
 //
 //   npm run review                              # server-data, since the last review
-//   node scripts/review.mjs server-data [more logs...] [--since 2026-10-01] [--all] [--out file.md]
+//   node scripts/review.mjs server-data [more logs...] [--since 2026-10-01[T06:00]] [--all] [--out file.md] [--summary file.json]
 //
-// "Since" defaults to the date of the newest file in reviews/, so each review shows what's new.
+// "Since" defaults to the date of the newest file in reviews/, so each review shows what's new. It
+// is when the server received the events (when logged, for exported ones): one uploaded a day late
+// is in the next review, not lost between two. --summary writes what's new (problem reports,
+// questions without a rule) for the daily review's issue (scripts/daily-issue.mjs).
 // Rule suggestions and layouts always use all the data (they need many quotes).
 // Reports go to reviews/review-<date>.md (git-ignored, like generated layouts: review first).
 
@@ -16,11 +19,12 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadEvents } from './lib/events.mjs';
 import { loadLayouts, report as coverageReport } from './coverage.mjs';
+import { receivedAt, uncoveredQuestions } from './lib/daily.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : null; };
-const valued = new Set(['--since', '--out']);
+const valued = new Set(['--since', '--out', '--summary']);
 const inputs = args.filter((a, i) => !a.startsWith('--') && !valued.has(args[i - 1]));
 if (!inputs.length) inputs.push('server-data');
 for (const p of inputs) {
@@ -36,7 +40,9 @@ const since = args.includes('--all') ? null : opt('since') ?? previous ?? null;
 const out = opt('out') ?? path.join(reviewsDir, `review-${today}.md`);
 
 const all = loadEvents(inputs);
-const recent = since ? all.filter((e) => (e.t ?? '') >= since) : all;
+// Compared as full ISO times: gh's run times have no milliseconds, the server's receipts do.
+const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOString() : since;
+const recent = from ? all.filter((e) => receivedAt(e) >= from) : all;
 
 // The existing review scripts, on the period's events (summary) or all events (learn, layouts).
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
@@ -86,6 +92,9 @@ const aiRows = [...byQuestion.entries()]
   .sort((a, b) => (b.yes + b.no) - (a.yes + a.no));
 
 const problems = recent.filter((e) => e.type === 'problem_report');
+// Questions without a rule: different ones (a question per page, whatever its number, row or
+// product), and the ones first seen in this period.
+const uncovered = uncoveredQuestions(all, from);
 
 // --- Report -----------------------------------------------------------------------------------
 const lines = [];
@@ -100,7 +109,8 @@ p(`| Fields left for the agent (yellow/red/amber) | ${leftover} |`);
 p(`| Autofilled answers the agent changed | ${corrections} |`);
 p(`| AI requests | ${asks.length}${asks.length ? ` (${asks.filter((a) => a.error).length} errors, median ${median(asks.filter((a) => !a.error).map((a) => a.ms))} ms)` : ''} |`);
 p(`| AI suggestions acted on | ${decisions.length}: ${['accepted', 'approved', 'auto', 'dismissed', 'rejected', 'failed'].map((k) => `${k} ${decisions.filter((d) => d.decision === k).length}`).join(', ')} |`);
-p(`| Problem reports | ${problems.length} |`, '');
+p(`| Problem reports | ${problems.length} |`);
+p(`| Questions without a rule | ${uncovered.total} different, ${since ? `${uncovered.new.length} new in this period` : 'all data'} |`, '');
 
 p('## AI assistant', '');
 if (!asks.length && !decisions.length) p('No AI activity in this period (or the usage server was too old to accept AI events).', '');
@@ -159,6 +169,10 @@ else p(...problems.map((e) => `- ${e.t?.slice(0, 16).replace('T', ' ')} · ${e.a
 
 // Questions met on live pages that no rule claims (or, for AmWINS, that the mock lacks).
 const { markdown: coverageMd } = coverageReport(loadLayouts(inputs));
+if (since) {
+  p('## New questions without a rule', '', 'First seen on a live page in this period (never in a layout received before it, in any state or product).', '');
+  p(...(uncovered.new.length ? uncovered.new.map((q) => `- ${q.carrier} ${q.page}: ${q.ref ? `\`${q.ref}\` ` : ''}"${q.caption}"${q.kind ? ` (${q.kind})` : ''}`) : ['None.']), '');
+}
 p('## Rule coverage of live pages (all data)', '', 'Questions agents met that no rule claims are left to them as "unfamiliar": a missing TNI rule, or the carrier changed its page. "Not in the mock" means the AmWINS page has a field the mock lacks.', '', coverageMd || 'No layouts yet.', '');
 p('## Rule suggestions (all data)', '', learn, '');
 p('## Usage summary (this period)', '', '```', summary, '```', '');
@@ -168,6 +182,14 @@ p('## When questions show (all data)', '', 'Conditions seen in the layouts, answ
 
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, lines.join('\n'));
+if (opt('summary')) {
+  fs.writeFileSync(opt('summary'), JSON.stringify({
+    since,
+    problems: problems.map((e) => ({ t: e.t, receivedAt: e.receivedAt ?? null, agent: e.agent ?? null, page: e.page ?? null, text: e.text ?? '' })),
+    newQuestions: uncovered.new,
+    uncoveredTotal: uncovered.total,
+  }, null, 1));
+}
 console.log(`${path.relative(process.cwd(), out)}  (${since ? `since ${since}` : 'all data'}: ${quotes.size} quotes, ${decisions.length} AI decisions, ${problems.length} problem reports)`);
 
 function count(list) {

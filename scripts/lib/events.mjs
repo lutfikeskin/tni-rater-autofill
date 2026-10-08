@@ -38,7 +38,9 @@ export function loadEvents(paths) {
       for (const e of readFile(f)) {
         const ev = { ...e, page: e.page ? e.page.replace(/-Reload$/, '') : e.page };
         if (ev.page === 'blank') continue;
-        if (ev.id) byId.set(ev.id, ev); else noId.push(ev);
+        // The same event from the server and from an export: keep when the server received it.
+        const prev = ev.id ? byId.get(ev.id) : null;
+        if (ev.id) byId.set(ev.id, prev?.receivedAt && !ev.receivedAt ? { ...ev, receivedAt: prev.receivedAt } : ev); else noId.push(ev);
       }
     }
   }

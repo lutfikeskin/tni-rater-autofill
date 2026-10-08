@@ -1,0 +1,120 @@
+// The daily review's window and its issue (.github/workflows/daily-review.yml): what arrived since
+// the last run, which questions without a rule are new, and whether to say anything.
+
+import fs from 'node:fs';
+import { buildLayouts } from './layouts.mjs';
+import { coverage, idsInHtml } from './coverage.mjs';
+import { CARRIERS } from '../../src/carriers.js';
+
+// When the server received an event (events exported from a panel have no receipt: when logged).
+// A review of what arrived since the last one misses nothing uploaded late.
+export const receivedAt = (e) => e.receivedAt ?? e.t ?? '';
+
+// The run a review continues from: the last successful one on the default branch (`gh run list`).
+export const lastSuccess = (runs) => [...(runs ?? [])].filter((r) => r.conclusion === 'success').sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))).at(-1) ?? null;
+
+// Where a review starts: when that run began downloading the log (its steps, `gh run view --json
+// jobs`), as its download has every event received before then; a run can wait hours between being
+// created and running (Codex on PR #52). Without its steps, when it started; without a run, a day
+// ago. An event received while it downloaded shows twice at worst, never not at all.
+export const DOWNLOAD_STEP = 'Download the usage log';
+export function windowStart(run, steps = [], now = new Date()) {
+  if (!run) return new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
+  return steps.find((s) => s.name === DOWNLOAD_STEP)?.startedAt ?? run.startedAt ?? run.createdAt;
+}
+
+// One question of a carrier page, whatever its number, row, product or step: its data-model name,
+// else its element id or data-id (AmWINS), else its kind and text. A one-address application's step
+// (`page › step`) isn't part of it: layouts before 0.9.6 named none, and a step heading can carry
+// counts ("My Incomplete Submissions 3"). Rows recorded before names that are named after a vehicle
+// ("2016 FREIGHTLINER CASCADIA 125") don't say which question they are: one per page and kind.
+const VEHICLE = /^(19|20)\d{2}\s+\S/;
+const text = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+export function questionId(carrier, page, f) {
+  const base = String(page).split(' › ')[0];
+  if (f.ref) return `${carrier}|${base}|ref:${f.ref}`;
+  if (f.id) return `${carrier}|${base}|#${f.id}`;
+  if (f.dataId) return `${carrier}|${base}|data:${f.dataId}`;
+  return `${carrier}|${base}|${f.kind ?? ''}:${VEHICLE.test(text(f.caption)) ? '<vehicle row>' : text(f.caption)}`;
+}
+
+// The AmWINS mock's ids: a live field the mock lacks is drift, alerted on like a question without a
+// rule, as the coverage report does.
+const MOCK = new URL('../../test/fixtures/amwins/application.html', import.meta.url);
+let mockIds;
+const mockFor = (carrier) => (carrier === 'amwins' ? (mockIds ??= fs.existsSync(MOCK) ? idsInHtml(MOCK) : null) : null);
+
+// Questions met on live pages: every one, and the ones no rule claims or the mock lacks
+// (coverage.mjs), by questionId.
+function questions(events) {
+  const seen = new Set();
+  const uncovered = new Map();
+  for (const { layout } of buildLayouts(events)) {
+    // As the coverage report: not the test carrier's pages.
+    const carrier = CARRIERS.find((c) => c.id === layout.carrier && c.id !== 'test');
+    if (!carrier) continue;
+    for (const p of coverage(layout, carrier, { mockIds: mockFor(carrier.id) }).pages) {
+      for (const r of p.rows) {
+        const id = questionId(layout.carrier, p.page, r);
+        // By its text too: a question recorded before names (or ids) is the same one once they show.
+        const byText = questionId(layout.carrier, p.page, { kind: r.kind, caption: r.caption });
+        seen.add(id).add(byText);
+        if ((r.status === 'none' || r.notInMock) && !uncovered.has(id)) {
+          uncovered.set(id, { id, byText, carrier: layout.carrier, page: p.page, caption: r.caption ?? '', ref: r.ref ?? null, kind: r.kind ?? null, ...(r.status === 'none' ? {} : { notInMock: true }) });
+        }
+      }
+    }
+  }
+  // A question recorded by its text in one product and by its name or id in another is one.
+  for (const q of [...uncovered.values()].filter((x) => x.id !== x.byText)) uncovered.delete(q.byText);
+  return { seen, uncovered };
+}
+
+// Questions without a rule: how many different ones, and which first showed in a layout received
+// since `since` (never in one before, in any state or product).
+export function uncoveredQuestions(events, since) {
+  const now = questions(events);
+  const before = since ? questions(events.filter((e) => receivedAt(e) < since)).seen : new Set();
+  const known = (q) => before.has(q.id) || before.has(q.byText);
+  return { total: now.uncovered.size, new: [...now.uncovered.values()].filter((q) => !known(q)).map(({ id, byText, ...q }) => q) };
+}
+
+// What the run says on its issue: nothing when nothing is new and the server is the repository's;
+// else a comment on the open daily-review issue, or a new one when none is open.
+export function decide({ problems = [], newQuestions = [], server = 'same', failed = false }, openIssues = []) {
+  const something = failed || problems.length > 0 || newQuestions.length > 0 || !['same', 'skipped'].includes(server);
+  if (!something) return { kind: 'none' };
+  const open = [...openIssues].sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))).at(-1);
+  return open ? { kind: 'comment', number: open.number } : { kind: 'create', title: 'Daily review' };
+}
+
+// The comment: only what is new, with links to the run (its summary has the whole review).
+export function commentBody({ since, problems = [], newQuestions = [], uncoveredTotal = null, server = 'same', serverNote = '', failed = false, runUrl = '' }, today = new Date().toISOString().slice(0, 10)) {
+  const lines = [];
+  if (failed) {
+    lines.push(`## ${today}: the daily review could not run`, '', `See the run: ${runUrl}`, '');
+    if (serverNote) lines.push(serverNote, '');
+    return lines.join('\n');
+  }
+  lines.push(`## ${today}: ${problems.length} new problem report(s), ${newQuestions.length} new question(s) without a rule, usage server ${server}`, '');
+  lines.push(`Events received since ${since}. The whole review is in the run summary and its artifact: ${runUrl}`, '');
+  if (server !== 'same' && server !== 'skipped' && serverNote) lines.push(`**Usage server:** ${serverNote}`, '');
+  if (problems.length) {
+    lines.push('### Problem reports', '');
+    for (const p of problems.slice(0, MAX_PROBLEMS)) lines.push(`- ${String(p.t ?? '').slice(0, 16).replace('T', ' ')} · ${p.agent ?? '?'} · ${p.page ?? '?'}: ${String(p.text ?? '').trim().replace(/\s+/g, ' ').slice(0, 500)}`);
+    if (problems.length > MAX_PROBLEMS) lines.push(`- … and ${problems.length - MAX_PROBLEMS} more (in the review)`);
+    lines.push('');
+  }
+  if (newQuestions.length) {
+    lines.push(`### New questions without a rule${uncoveredTotal != null ? ` (${uncoveredTotal} different ones in all)` : ''}`, '');
+    for (const q of newQuestions.slice(0, 50)) lines.push(`- ${q.carrier} ${q.page}: ${q.ref ? `\`${q.ref}\` ` : ''}"${q.caption}"${q.kind ? ` (${q.kind})` : ''}${q.notInMock ? ' (has a rule; not in the AmWINS mock)' : ''}`);
+    if (newQuestions.length > 50) lines.push(`- … and ${newQuestions.length - 50} more (in the review)`);
+    lines.push('');
+  }
+  // GitHub refuses a comment over 65,536 characters: a window with many reports says the rest is in
+  // the review rather than failing to say anything (Codex on PR #52).
+  const body = lines.join('\n');
+  return body.length <= MAX_COMMENT ? body : `${body.slice(0, MAX_COMMENT)}\n\n… (cut here: the whole list is in the review: ${runUrl})`;
+}
+const MAX_PROBLEMS = 60;
+const MAX_COMMENT = 60_000;
