@@ -309,6 +309,29 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
   assert.equal(plan.find((x) => x.action === 'importVins').immediate, true);
 });
 
+// 2026-10-08 live run: AmWINS has no trailer section, and a trailer added as a vehicle row got the
+// truck's body type. TNI writes each trailer in the disclosure text instead, after the radius.
+test('AmWINS: each intake trailer is a line of the disclosure text, not a vehicle', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.operations.radius = 'Unlimited';
+  record.operations.radiusMiles = null;
+  record.coverage = { ...record.coverage, cargo: false };
+  record.priorInsurance = [{ type: 'Commercial Auto', carrier: 'PROGRESSIVE', limit: '$1M CSL', expiration: '12/01/2026' }];
+  record.trailers = [
+    { type: 'Dry Van', year: 2015, make: 'Great Dane', model: null, vin: '1GRAA0621FB700000', value: 25000 },
+    { type: 'Flatbed', year: null, make: null, model: null, vin: null, value: 12500 },
+  ];
+  const plan = buildPlan(record, amwins, {});
+  assert.equal(plan.find((x) => /^Disclosure/.test(x.name ?? '')).value, [
+    'More than 500 miles radius of operation',
+    'Trailer - 2015 Great Dane Dry Van - VIN 1GRAA0621FB700000 - $25K',
+    'Trailer - Flatbed - $12.5K',
+    'POP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026',
+  ].join('\n'));
+  assert.equal(plan.find((x) => x.selector === '#vehLookupVin').value.includes('1GRAA0621FB700000'), false, 'not looked up as a vehicle');
+});
+
 test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, underwriting defaults, Save & Continue, start page', async () => {
   const { amwins } = await import('../src/carriers/amwins.js');
   const record = baseRecord();
