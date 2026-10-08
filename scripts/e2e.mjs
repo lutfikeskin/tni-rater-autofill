@@ -7,14 +7,17 @@
 //   npm run e2e                 # all layouts; exits 1 on a regression
 //   npm run e2e -- --update     # accept the current results as the new baseline
 //   npm run e2e -- --headed     # watch it
-//   npm run e2e -- --fixtures   # only committed layouts (what CI runs: no usage logs there)
+//   npm run e2e -- --fixtures   # only committed layouts (no local captures or generated layouts)
 //   npm run e2e -- --renumber   # every question renumbered, as Progressive did on 2026-10-07: the
 //                               # results must equal the baseline (questions are found by name/text)
 //
+// A local check: CI runs only the unit tests and packaging (docs/testing.md, since 2026-10-05).
 // Layouts: test/bakeoff/course-*.json, captures/progressive/*.json and the per-state layouts
 // npm run layouts builds (captures/progressive/generated/, git-ignored). Needs internet (the
 // replay page loads ExtJS from cdnjs) and Playwright's Chromium (npx playwright install chromium).
-// Reports go to reviews/e2e-<date>.md; the baseline is test/e2e-baseline.json.
+// Reports go to reviews/e2e-<date>.md; the baseline is test/e2e-baseline.json. In every mode, each
+// page's outcomes (what each question got, by its text: a hash) must equal the baseline's, so a
+// rule change that alters an answer with the counts unchanged fails the run until --update.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -150,6 +153,9 @@ for (const [layout, now] of layouts.filter((l) => results[l]).map((l) => [l, res
     if (p.noData > b.noData) regressions.push(`${layout} ${pageName}: left for the agent ${b.noData} → ${p.noData}`);
     if (b.blockers != null && p.blockers > b.blockers) regressions.push(`${layout} ${pageName}: blockers ${b.blockers} → ${p.blockers}`);
     if (continued(b) && !continued(p)) regressions.push(`${layout} ${pageName}: Continue no longer clicked`);
+    // The same counts can hide another answer (a rule's value changed): what each question got must
+    // match too, in every mode, not only under --renumber (audit 2026-10-08, finding 15).
+    if (b.outcomes && p.outcomes !== b.outcomes) regressions.push(`${layout} ${pageName}: outcomes changed (${b.outcomes} → ${p.outcomes}): a question got another answer, or is now filled, left to the agent or without a rule; review the report and --update if intended`);
   }
 }
 
