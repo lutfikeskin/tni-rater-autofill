@@ -13,7 +13,7 @@ For each discovered question, record its target by a locator the carrier's own c
 ## Implement the adapter
 
 1. Add a module under [src/carriers](../src/carriers/), register it in [carriers.js](../src/carriers.js), and add required hosts to [manifest.json](../manifest.json).
-2. Map confirmed facts and approved scoped defaults. Decide explicitly whether generic fallbacks are suitable; Progressive disables them. See [intake and rules](intake-and-rules.md) if the scenario needs new facts or exceptions.
+2. Map confirmed facts and approved scoped defaults. Decide explicitly whether generic fallbacks are suitable; Progressive disables them, and AmWINS keeps them out of its repeating row sections (`rowSections`). See [intake and rules](intake-and-rules.md) if the scenario needs new facts or exceptions.
 3. Implement supported controls and helpers with prerequisites. Use `MAIN` only when page-owned widgets require it; enable batching only with evidence that per-answer server waits are unnecessary. Follow [browser filling](browser-filling.md) for execution changes.
 4. Give repeated drivers/vehicles distinct targets and verify entity identity after redraws, imports, or lookups. Preserve questions that need an agent's answer.
 5. Add the carrier's supported standards to [tni-rules.js](../src/ai/tni-rules.js) when AI assistance is in scope. AI availability does not make the carrier fully supported.

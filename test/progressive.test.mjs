@@ -330,6 +330,12 @@ test('AmWINS: each intake trailer is a line of the disclosure text, not a vehicl
     'POP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026',
   ].join('\n'));
   assert.equal(plan.find((x) => x.selector === '#vehLookupVin').value.includes('1GRAA0621FB700000'), false, 'not looked up as a vehicle');
+  // A trailer row added by hand anyway gets nothing from the generic rules: they are kept out of
+  // AmWINS' row sections (pagekit test "a generic label rule never answers inside a carrier row section").
+  const generic = plan.filter((x) => x.path === 'vehicles[0].type' || x.path === 'operations.radius');
+  assert.ok(generic.length >= 2 && generic.every((x) => x.notWithin?.includes('#vehiclesPanel')));
+  assert.ok(plan.filter((x) => /^amwins\.|^#|^Body type/.test(x.path ?? x.name)).every((x) => x.notWithin == null), 'AmWINS\' own rules answer their rows');
+  assert.ok(buildPlan(record, null, {}).every((x) => x.notWithin == null), 'no fence without a carrier\'s row sections');
 });
 
 test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, underwriting defaults, Save & Continue, start page', async () => {

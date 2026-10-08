@@ -192,6 +192,10 @@ export const amwins = {
   layoutUrl: /\/application\/businessauto/i,
   // One address for every step: a layout also names its step (the visible step heading).
   layoutSteps: true,
+  // The rules below answer these sections row by row; a generic label rule never does. A row the
+  // intake doesn't describe stays the agent's: on 2026-10-08 a trailer added by hand as a second
+  // vehicle got the first vehicle's body type from the generic "body type" rule.
+  rowSections: [DRIVER, VEHICLE, VEHICLE_COVERAGES],
   // No answer waits on the server (timing of the first three quotes: 0 of 294 answers sent a
   // request): fill a round of answers at a time.
   batch: true,

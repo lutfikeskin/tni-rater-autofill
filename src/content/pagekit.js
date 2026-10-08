@@ -453,10 +453,13 @@
     // A data-model name not on the page, while its expected wording is: the field was probably renamed.
     pairs.renamed = steps.filter((s) => s.field && worded(s) && onPage(s) && nameHere(s) && !found.get(s).length)
       .flatMap((s) => { const x = controls.find((y) => !used.has(y) && y.ref !== s.field && !claimed.has(y.ref) && textIs(s, y)); return x ? [{ step: s, control: x }] : []; });
+    // A label rule kept out of a carrier's row sections (`notWithin`): its rows are answered by
+    // their own rules, or stay the agent's.
+    const fenced = (s, x) => !!s.notWithin?.some((sel) => { try { return !!x.el?.closest(sel); } catch { return false; } });
     for (const field of ['text', 'hint']) {
       for (const s of steps) {
         if (!s.reC || known(s) || donePaths.has(s.path) || !onPage(s)) continue;
-        const c = controls.find((x) => !used.has(x) && !repeated.has(x.q) && !perVehicle.has(x) && x[field] && fits(s, x) && s.reC.test(x[field]) && !(s.exC && s.exC.test(x[field])));
+        const c = controls.find((x) => !used.has(x) && !repeated.has(x.q) && !perVehicle.has(x) && !fenced(s, x) && x[field] && fits(s, x) && s.reC.test(x[field]) && !(s.exC && s.exC.test(x[field])));
         if (c) take(s, c, field === 'text' ? 'label' : 'name');
       }
     }

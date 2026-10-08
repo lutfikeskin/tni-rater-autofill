@@ -465,6 +465,31 @@ test('a checkbox repeated per row under one name gets a key per row: an answer o
   assert.equal(h.context.__raterFieldKey(makeInput({ type: 'checkbox', name: 'accept', id: 'accept' })), 'accept');
 });
 
+// 2026-10-08 live AmWINS run: one intake vehicle and a trailer the agent added as a second vehicle
+// row. The carrier's body-type rule answered the first row; the generic "body type" label rule
+// then gave the second row the first vehicle's type. Inside a carrier's row sections, label rules
+// never answer: a row the intake doesn't describe stays the agent's.
+test('a generic label rule never answers inside a carrier row section', async () => {
+  const run = async (notWithin) => {
+    const h = harness();
+    const panel = new FakeNode('div', { id: 'vehiclesPanel' });
+    const rows = [0, 1].map((i) => makeInput({ id: `bodyType${i}`, ariaLabel: 'Body Type' }));
+    panel.append(...rows);
+    const outside = makeInput({ id: 'fleetType', ariaLabel: 'Vehicle Type' });
+    h.document.body.append(panel, outside);
+    const plan = [
+      { id: 'carrier', path: 'amwins.q76', selector: '#bodyType0', kind: 'text', value: 'Pickup Truck', name: 'Body type' },
+      { id: 'generic', path: 'vehicles[0].type', re: '(vehicle|body|truck) type', kind: 'text', value: 'Pickup Truck', name: 'Type', notWithin },
+    ];
+    const report = await h.kit.fill(plan, { maxRounds: 3 });
+    return { values: [...rows, outside].map((x) => x.value), report };
+  };
+  const before = await run(null);
+  assert.deepEqual(before.values, ['Pickup Truck', 'Pickup Truck', ''], 'without the fence: the second row gets the first vehicle\'s type');
+  const after = await run(['#vehiclesPanel']);
+  assert.deepEqual(after.values, ['Pickup Truck', '', 'Pickup Truck'], 'fenced: the row stays the agent\'s; outside the section the rule still answers');
+});
+
 test('an agent-confirmed missing-intake choice is resolved while prefilled values and explicit notes still require review', async () => {
   const plan = [{ id: 'years', path: 'applicant.yearsInBusiness', selector: '#yrsInBusiness', kind: 'choice', value: null, name: 'Years in business' }];
   const h = harness();
