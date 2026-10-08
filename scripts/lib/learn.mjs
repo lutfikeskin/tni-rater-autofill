@@ -15,6 +15,9 @@ import { fieldStatus } from './coverage.mjs';
 
 const CHOICE = new Set(['select', 'radio', 'checkbox', 'combo']);
 const textOf = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
+// Labels the recorder gives a page's own controls (AmWINS: the file button, a pager, a row's
+// Delete): no question, so no candidate (compared lower-cased, after textOf).
+const UI_CHROME = /^(browse|delete coverage|\d+ of \d+|select files?)$/;
 
 // Which question an event answers. A question with an id (Progressive's Duck Creek fields) by its
 // data-model name, or its text on its page: Progressive reassigns the ids (2026-10-07), so an id
@@ -23,9 +26,11 @@ const textOf = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 // field recorded before names joins the named field with its text), else from the event's text.
 // Its unit too: which vehicle, driver or trailer (`view`) and Rates row (`@<row>` in the key), so
 // one quote's vehicles stay apart (events before 0.9.9 carry neither). Other questions (AmWINS)
-// by their page and text, as before.
+// by their page and text, as before, and by their step when the event names one (a one-address
+// application's visible step, `step`, as built layouts name its pages: `<page> › <step>`), so two
+// steps' rows reading the same (Browse, a row's Delete) stay apart; events without it merge as before.
 function identify(e, ids) {
-  if (!e.q) return { key: `${e.carrier}|${e.page}|${e.label}`, unit: '' };
+  if (!e.q) return { key: `${e.carrier}|${e.page}${e.step ? ` › ${e.step}` : ''}|${e.label}`, unit: '' };
   // Its row from its own key (<q>@<row>, ref:<name>@<row>; none: the first row).
   const unit = `${String(e.view ?? '').split(':')[1] ?? ''}@${String(e.key ?? '').match(/@(\d+)$/)?.[1] ?? '1'}`;
   const named = String(e.key ?? '').match(/^ref:([^@]+)/);
@@ -55,7 +60,7 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
     out.set(e.session, perSession);
     const { key, unit, ref, layout } = identify(e, ids);
     const k = unit ? `${key}#${unit}` : key;
-    const a = perSession.get(k) ?? { question: key, q: e.q ?? null, ref: ref ?? null, layout: layout ?? null, page: e.page, label: e.label, carrier: e.carrier };
+    const a = perSession.get(k) ?? { question: key, q: e.q ?? null, ref: ref ?? null, layout: layout ?? null, page: e.page, ...(e.step ? { step: e.step } : {}), label: e.label, carrier: e.carrier };
     perSession.set(k, a);
     if (e.label && !a.label) a.label = e.label;
     return a;
@@ -210,8 +215,12 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     const first = { ...(obs.find((o) => o.label) ?? obs[0]), ...(caption ? { label: caption } : {}) };
     const named = obs.find((o) => o.ref ?? o.layout?.ref);
     const field = named ? named.ref ?? named.layout.ref : null;
+    // A question without an id (AmWINS) is known by its text alone: one with none, or one that is
+    // the page's own chrome (a file button, a pager, a row's Delete), is no question to suggest a
+    // rule for (the 2026-10-06 review listed "Browse" and "1 of 1").
+    if (!first.q && (!textOf(first.label) || UI_CHROME.test(textOf(first.label)))) continue;
     const isMapped = obs.some((o) => o.autofilled) || claimed({ ...first, ref: field });
-    const base = { carrier, q: first.q, field, page: first.page, label: first.label ?? '', intakes: intakesOf(obs), quotes: quotesOf(obs) };
+    const base = { carrier, q: first.q, field, page: first.page, ...(first.step ? { step: first.step } : {}), label: first.label ?? '', intakes: intakesOf(obs), quotes: quotesOf(obs) };
     // Answers someone gave (autofill, the agent, the page on an answer): not one the page held
     // when the agent left it (pageLeft), which is weaker evidence (pageAnswer below).
     const choices = obs.filter((o) => !o.pageLeft && o.value !== undefined && o.value !== null && o.value !== '' && CHOICE.has(o.kind ?? 'select'));

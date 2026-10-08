@@ -77,7 +77,12 @@ const fills = recent.filter((e) => e.type === 'fill_run');
 const sum = (list, k) => list.reduce((n, e) => n + (Number(e[k]) || 0), 0);
 const filled = sum(fills, 'filled');
 const leftover = sum(fills, 'unknown') + sum(fills, 'failed') + sum(fills, 'noData') + sum(fills, 'leftRequired');
-const corrections = recent.filter((e) => e.type === 'field_change' && e.by === 'agent' && e.autofilled).length;
+// An agent's change to an autofilled field counts as a correction only when the value differs
+// (`vsAutofill`: different, format, or cleared). Most such changes re-enter the same value (446 of
+// 502 in the data to 2026-10-08: a combo closed, a retyped value); those are counted apart.
+const agentChanges = recent.filter((e) => e.type === 'field_change' && e.by === 'agent' && e.autofilled);
+const corrections = agentChanges.filter((e) => ['different', 'format', 'cleared'].includes(e.vsAutofill)).length;
+const sameAsAutofill = agentChanges.filter((e) => e.vsAutofill === 'same').length;
 
 // --- AI assistant -----------------------------------------------------------------------------
 const asks = recent.filter((e) => e.type === 'ai_suggest');
@@ -120,7 +125,8 @@ p('| | |', '| --- | --- |');
 p(`| Quotes started | ${quotes.size}${Object.keys(states).length ? ` (${Object.entries(states).map(([s, n]) => `${s} ${n}`).join(', ')})` : ''} |`);
 p(`| Fields filled by the rules | ${filled} |`);
 p(`| Fields left for the agent (yellow/red/amber) | ${leftover} |`);
-p(`| Autofilled answers the agent changed | ${corrections} |`);
+p(`| Autofilled answers the agent corrected (a different, reformatted or cleared value) | ${corrections} |`);
+p(`| Autofilled answers the agent re-entered unchanged (same value; not corrections) | ${sameAsAutofill} |`);
 p(`| AI requests | ${asks.length}${asks.length ? ` (${asks.filter((a) => a.error).length} errors, median ${median(asks.filter((a) => !a.error).map((a) => a.ms))} ms)` : ''} |`);
 p(`| AI suggestions acted on | ${decisions.length}: ${['accepted', 'approved', 'auto', 'dismissed', 'rejected', 'failed'].map((k) => `${k} ${decisions.filter((d) => d.decision === k).length}`).join(', ')} |`);
 p(`| Problem reports | ${problems.length} |`);
