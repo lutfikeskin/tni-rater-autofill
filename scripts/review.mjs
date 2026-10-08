@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { loadEvents } from './lib/events.mjs';
+import { loadEvents, quoteSessions } from './lib/events.mjs';
 import { loadLayouts, report as coverageReport } from './coverage.mjs';
 import { receivedAt, uncoveredQuestions } from './lib/daily.mjs';
 
@@ -67,9 +67,11 @@ const captures = fs.existsSync(path.join(root, 'layouts')) ? run('captures.mjs',
 fs.rmSync(tmp, { recursive: true, force: true });
 
 // --- Numbers for the top of the report ------------------------------------------------------
-const quotes = new Set(recent.filter((e) => e.type === 'intake_loaded').map((e) => e.session));
+// Quotes: intakes loaded in this period that went to a carrier's page (whenever they did).
+const quoting = quoteSessions(all);
+const quotes = new Set(recent.filter((e) => e.type === 'intake_loaded' && quoting.has(e.session)).map((e) => e.session));
 const agents = [...new Set(recent.map((e) => e.agent).filter(Boolean))];
-const states = count(recent.filter((e) => e.type === 'intake_loaded').map((e) => e.state ?? '?'));
+const states = count(recent.filter((e) => e.type === 'intake_loaded' && quoting.has(e.session)).map((e) => e.state ?? '?'));
 const fills = recent.filter((e) => e.type === 'fill_run');
 const sum = (list, k) => list.reduce((n, e) => n + (Number(e[k]) || 0), 0);
 const filled = sum(fills, 'filled');
