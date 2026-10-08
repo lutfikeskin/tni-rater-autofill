@@ -97,6 +97,7 @@ const SOURCE = {
 // Not mapped on purpose, with the reason.
 const NOT_MAPPED = {
   progressive: {
+    'applicant.mc': 'Progressive asks for the USDOT number only; the MC number is never entered',
     'applicant.fein': 'Progressive asks the EIN on the finish flow, which is the agent\'s (AdditionalDetails is ignored)',
     'applicant.yearEstablished': 'Progressive does not ask when the business was established',
     'applicant.yearsInBusiness': 'Progressive does not ask the years in business',
@@ -107,10 +108,10 @@ const NOT_MAPPED = {
     'operations.eldBrand': 'Progressive asks only whether an ELD is required',
     'operations.needSr22': 'Progressive\'s commercial quote has no SR-22 question in the mapped flow',
     'operations.filingsWhich': 'on the Filings page Federal is ticked whenever filings are required; State is left as the page has it',
+    'operations.hazmat': 'Progressive asks whether a placard is required (operations.hazPlacard)',
     'operations.movingState': 'not asked by Progressive',
     'operations.licensePlate': 'not asked by Progressive',
     'drivers[].maritalStatus': 'Progressive\'s commercial driver page does not ask it',
-    'trailers[].model': 'Add Trailer asks VIN, year and make only',
     'trailerInfo.hitch': 'not asked by Progressive',
     'trailerInfo.interchange': 'trailer interchange is not mapped (no live quote has asked it)',
     'trailerInfo.interchangeLimit': 'trailer interchange is not mapped (no live quote has asked it)',
@@ -129,11 +130,8 @@ const NOT_MAPPED = {
     'operations.hazPlacard': 'AmWINS asks about transporting hazardous material (operations.hazmat)',
     'operations.movingState': 'not asked on the Business Auto application',
     'operations.licensePlate': 'not asked on the Business Auto application',
-    'drivers[].middle': 'read by the middle-name rule through its path',
     'drivers[].cdl': 'AmWINS has no CDL question; the license year is the agent\'s',
     'drivers[].cdlYear': 'AmWINS has no CDL question; the license year is the agent\'s',
-    'vehicles[].model': 'Import Data writes the model from the VIN; the row rule keeps the page\'s (trustPage)',
-    'trailers[].model': 'a trailer is a disclosure line: year, make, type, VIN and value',
     'trailerInfo.ownership': 'AmWINS has no trailer section (the trailer is a disclosure line)',
     'trailerInfo.hitch': 'AmWINS has no trailer section',
     'trailerInfo.interchange': 'AmWINS has no trailer section',
