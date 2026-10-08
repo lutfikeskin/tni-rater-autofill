@@ -2596,6 +2596,12 @@ test('the quote state comes from the page as it is, the fill, the tab the quote 
   t.context.showStateNote();
   assert.equal(t.note().hidden, false, 'the quote tab says it too');
   assert.equal(t.state.quoteStates.has(9), false, 'a tab opened from elsewhere inherits nothing');
+  // Codex on PR #60 (ed1e23e): with no intake the home page isn't watched, so its pick may be stale.
+  const loaded = t.state.intake;
+  t.state.intake = null;
+  t.context.inheritQuoteState({ id: 20, openerTabId: 7 });
+  assert.equal(t.state.quoteStates.has(20), false, 'no intake: nothing inherited');
+  t.state.intake = loaded;
   // The intake's garaging state edited to Utah: the note goes at once; back to Florida: it comes back.
   t.state.intake.record.garaging.state = 'UT';
   t.context.intakeEdited();

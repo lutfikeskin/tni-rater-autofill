@@ -11,12 +11,19 @@ import { STATES } from './util.js';
 
 const BY_NAME = Object.fromEntries(Object.entries(STATES).map(([code, name]) => [name.toLowerCase(), code]));
 
-// A state's two-letter code, from its code or its name ("FL", "Florida", "florida."); else null
-// (a placeholder such as "Select a state").
+// The carriers' own names for a state: AmWINS lists "Washington DC".
+const ALIASES = { 'washington dc': 'DC' };
+
+// A state's two-letter code, from its code or its name ("FL", "Florida", "florida.", Progressive's
+// "District of Columbia (DC)"); else null (a placeholder such as "Select a state").
 export function stateCode(value) {
-  const s = String(value ?? '').trim().replace(/\.$/, '').replace(/\s+/g, ' ');
+  const s = String(value ?? '').trim().replace(/\s+/g, ' ');
   if (!s) return null;
-  return STATES[s.toUpperCase()] ? s.toUpperCase() : BY_NAME[s.toLowerCase()] ?? null;
+  const tagged = s.match(/\(([A-Za-z]{2})\)$/)?.[1]?.toUpperCase();
+  if (tagged && STATES[tagged]) return tagged;
+  const plain = s.replace(/\./g, '').trim();
+  if (STATES[plain.toUpperCase()]) return plain.toUpperCase();
+  return BY_NAME[plain.toLowerCase()] ?? ALIASES[plain.toLowerCase()] ?? null;
 }
 
 // A recorded change of the carrier's quote-state control: the state picked (its code), null when

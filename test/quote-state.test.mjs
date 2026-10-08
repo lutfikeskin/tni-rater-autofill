@@ -11,6 +11,13 @@ test('quote state: the state picked on the carrier page, by code or name, agains
   assert.equal(stateCode(' new  york '), 'NY');
   assert.equal(stateCode('fl'), 'FL');
   assert.equal(stateCode('Select a state'), null);
+  // Codex on PR #60: the carriers' District of Columbia (AmWINS "Washington DC", Progressive
+  // "District of Columbia (DC)"); Washington alone is the state.
+  assert.equal(stateCode('Washington DC'), 'DC');
+  assert.equal(stateCode('Washington D.C.'), 'DC');
+  assert.equal(stateCode('District of Columbia (DC)'), 'DC');
+  assert.equal(stateCode('Washington'), 'WA');
+  assert.equal(stateCode('Florida (FL)'), 'FL');
   assert.equal(stateCode(''), null);
   // Progressive's home page and AmWINS' start page; no other page or control.
   assert.equal(quoteStatePick(progressive, '/home/', { key: 'QuoteStateList', after: 'Utah' }), 'UT');

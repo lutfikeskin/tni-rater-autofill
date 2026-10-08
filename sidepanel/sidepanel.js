@@ -1515,8 +1515,9 @@ async function readQuoteState(tabId, carrier) {
 }
 
 // Progressive opens the quote in a new tab from its home page: that tab's quote is the one picked
-// there.
+// there. Not while no intake is loaded: the tab isn't watched then, so its pick may be stale.
 function inheritQuoteState(tab) {
+  if (!state.intake) return;
   const pick = state.quoteStates.get(tab?.openerTabId);
   if (pick && Number.isInteger(tab.id) && !state.quoteStates.has(tab.id)) state.quoteStates.set(tab.id, { ...pick });
 }
