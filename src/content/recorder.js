@@ -319,12 +319,34 @@
     trustedImmediate.clear();
   }
 
+  // The pause ends (the fill or AI answer is done). What the agent changed themselves meanwhile is
+  // reported first, as theirs: a trusted value still on its control (a question the pause revealed
+  // included; a value a page script replaced since is the page's). The extension's own answers
+  // were logged by the panel as it gave them, so the rest becomes the new baseline unreported,
+  // and the questions they revealed are not announced as new (the fill answered them).
+  function resume() {
+    if (!isCurrent()) return;
+    paused = false;
+    if (trustedPending.size && pageKey() === page) {
+      const changes = [];
+      for (const [key, c] of snapshot()) {
+        if (!c.controls.some((el) => trustedPending.get(el) === oneControlState(el))) continue;
+        const before = prev.get(key)?.v ?? '';
+        if (before !== c.v) changes.push({ key, q: c.q, label: c.label, kind: c.kind, combo: c.combo, before, after: c.v, agent: true });
+      }
+      if (changes.length) send({ event: 'field_changes', page, changes });
+    }
+    trustedPending.clear();
+    trustedImmediate.clear();
+    rebaseline();
+  }
+
   const timer = setInterval(tick, TICK_MS);
 
   const onMessage = (msg) => {
     if (!isCurrent() || msg?.ra !== 'recorder') return;
     if (msg.cmd === 'pause') paused = true;
-    if (msg.cmd === 'resume') { rebaseline(); paused = false; }
+    if (msg.cmd === 'resume') resume();
   };
   chrome.runtime.onMessage.addListener(onMessage);
 
