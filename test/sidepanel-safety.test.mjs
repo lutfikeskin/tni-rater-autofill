@@ -1183,6 +1183,26 @@ test('a driver the driver list shows by name is entered', async () => {
   assert.ok(state.doneActions.has('driverEntered:0'));
 });
 
+// Codex on PR #43: one row with a name two intake drivers share would count for both, and the
+// second driver would never be added. Such a name (or one inside another's) proves nothing.
+test('a driver name another intake driver shares is not taken as entered', async () => {
+  const carrier = { driverList: 'DriverSummary', driverPage: 'AddDriver' };
+  const record = { vehicles: [], trailers: [], drivers: [
+    { first: 'Jordan', last: 'Sample' }, { first: 'Jordan', last: 'Sample' },
+    { first: 'Mary Ann', last: 'Lee' }, { first: 'Ann', last: 'Lee' }, { first: 'Casey', last: 'Example' },
+  ] };
+  const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 0 }, doneActions: new Set() };
+  const asked = [];
+  // Every name asked about is on the list (as the page's listed() would say for a shown row).
+  const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
+    runKit: async (tabId, c, func, args) => { asked.push(args[0]); return [{ result: args[0].map((n) => n.length >= 2) }]; } };
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+  await context.pickListItem(carrier, 'DriverSummary');
+  assert.deepEqual(JSON.parse(JSON.stringify(asked[0])), [[], [], ['Mary Ann', 'Lee'], [], ['Casey', 'Example']]);
+  assert.deepEqual([...state.doneActions].sort(), ['driverEntered:2', 'driverEntered:4']);
+  assert.equal(state.active.drivers, 0, 'the first Jordan Sample is still to add');
+});
+
 // Codex on PR #43: the agent switched tabs while the list was read: the answer is the old tab's.
 test('a list read for one tab is not applied after the agent switched tabs', async () => {
   const carrier = { trailerList: 'VehicleSummary', vehicleList: 'VehicleSummary', trailerPage: 'AddTrailer' };

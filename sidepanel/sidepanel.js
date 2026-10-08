@@ -1597,10 +1597,15 @@ async function verifyListed(carrier, page) {
 
 // On the driver list, a driver it shows by name (first and last) is entered, also when the panel
 // was closed while the agent finished the driver's page (Codex on PR #43). A name not shown proves
-// nothing (the list may write it another way): the return from the driver page decides.
+// nothing (the list may write it another way): the return from the driver page decides. Nor does
+// a name another intake driver's name holds (two John Smiths, Ann Lee and Mary Ann Lee): one row
+// would count for both, and the other driver would never be added (Codex on PR #43).
 async function verifyDrivers(carrier) {
   if (!Number.isInteger(state.tab?.id)) return;
-  const names = (state.intake?.record?.drivers ?? []).map((d) => [d.first, d.last].filter(Boolean));
+  const words = (d) => [d.first, d.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
+  const drivers = (state.intake?.record?.drivers ?? []).map(words);
+  const names = (state.intake?.record?.drivers ?? []).map((d, i) => drivers.some((other, j) => j !== i && drivers[i].every((w) => other.includes(w)))
+    ? [] : [d.first, d.last].filter(Boolean));
   if (!names.some((n) => n.length >= 2)) return;
   let shown = null;
   const tabId = state.tab.id;

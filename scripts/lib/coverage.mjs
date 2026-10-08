@@ -50,7 +50,7 @@ const kindFits = (rule, f) => {
 
 // Like pagekit's assign(). A data-model name (`field`) claims its field on any page; a layout
 // recorded before names were kept (0.9.9) is judged by the rule's expected wording instead, as the
-// live page always carries the name. A question's text (`ask`, or `label` on its page) claims a
+// live page always carries the name ('unnamed' when other fields of the page have names). A question's text (`ask`, or `label` on its page) claims a
 // field no rule knows by name. A question id never claims anything (Progressive renumbers them).
 // A rule whose text repeats on the page (`askAfter`) claims only the first field reading it after
 // its anchor question, as pagekit's afterAnchor does (needs the page's fields in order).
@@ -61,7 +61,13 @@ function anchored(rule, f, fields) {
 }
 
 function claims(rule, f, page, named, fields) {
-  if (rule.field) return (f.ref ? f.ref === rule.field && nameHere(rule, page) : (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f) && anchored(rule, f, fields)) && kindFits(rule, f);
+  if (rule.field) {
+    if (f.ref) return f.ref === rule.field && nameHere(rule, page) && kindFits(rule, f);
+    const byText = (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f) && anchored(rule, f, fields) && kindFits(rule, f);
+    // On a page recorded with names too, this field may have lost its name on the live page,
+    // where the rule (looked for by name) leaves it unfamiliar: can't tell (Codex on PR #43).
+    return byText && fields?.some((x) => x.ref) ? 'unnamed' : byText;
+  }
   if ((rule.ask || rule.label) && rule.page) return onPage(rule, page) && !(f.ref && named.has(f.ref)) && textIs(rule, f) && kindFits(rule, f) && anchored(rule, f, fields);
   if (!onPage(rule, page)) return false;
   if (rule.selector) {
@@ -91,6 +97,7 @@ export function fieldStatus(f, carrier, page = null, fields = null) {
   let unsure = null;
   for (const rule of rules) {
     const hit = claims(rule, f, page, named, fields);
+    if (hit === 'unnamed') return { status: 'unsure', rule: rule.name ?? rule.path, unnamed: true };
     if (hit === 'unknown') { unsure ??= rule; continue; }
     if (!hit) continue;
     const how = typeof rule.ignore === 'function' || rule.ignore ? 'ignored' : rule.note && !rule.value ? 'agent' : 'filled';

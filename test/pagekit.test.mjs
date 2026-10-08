@@ -566,6 +566,28 @@ test('TX refrigeration options fill from the intake without an AI review stop', 
   }
 });
 
+// Codex on PR #43: an edit an older build kept under a question id saved before a renumbering
+// names another question now, and the corrected one has a new number. While such a key is kept,
+// an answer already on the page is left as it is and flagged, never replaced.
+test('an edit kept under an old question id leaves answers on the page as they are', async () => {
+  for (const skip of [[], ['3C01']]) {
+    const h = harness({ search: '?pageName=CoveragesRates' });
+    const radios = ['Yes, match Motor Truck Cargo limits', 'No'].map((value, i) => makeInput({
+      id: i ? 'reefer-no' : `f_U${'A'.repeat(32)}9ABC_1_1`, name: 'string_9ABC', type: 'radio', value,
+    }));
+    const group = new FakeNode('div', { attrs: { role: 'radiogroup', 'aria-label': 'Does the customer require Refrigeration Breakdown coverage?' } });
+    group.append(...radios);
+    h.document.body.append(group);
+    radios[1].checked = true; // the agent's No, kept under the question's old number
+    const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: { reeferBreakdown: true }, claims: {} };
+    const report = await h.kit.fill(buildPlan(record, progressive).filter(s => s.q === '215C'), { replaceChoices: true, skip });
+    if (!skip.length) { assert.equal(radios[0].checked, true, 'without such a key, a pre-selected answer is replaced'); continue; }
+    assert.equal(radios[1].checked, true, 'the answer on the page is kept');
+    assert.equal(report.filled.length, 0);
+    assert.match(report.checks[0]?.note ?? '', /older version/);
+  }
+});
+
 test('Freight Hauler searches the remote business dropdown and verifies a collapsed General Freight summary', async () => {
   for (const offered of ['General Freight Hauler', 'General Freight Trucking']) {
     const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });

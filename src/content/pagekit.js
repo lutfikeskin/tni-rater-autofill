@@ -1008,6 +1008,12 @@
     // A field the agent edited, by its key, or by the question id an older build kept it under
     // (version 3) in a quote begun before this one: left alone rather than overwritten.
     const skippedField = (c) => skipKeys.has(fieldKey(c)) || skipped(globalThis.__raterFieldKey.legacyKey?.(c.el, { q: c.q }));
+    // Such a question id can't be tied to its question for certain: saved before a renumbering,
+    // it now belongs to another question, and the corrected one has a new number. While one is
+    // kept, no answer already on a Duck Creek field is replaced, so whichever field the agent
+    // corrected keeps their answer (Codex on PR #43).
+    const legacyEdits = skip.some((k) => /^[0-9A-F]+(?:@\d+)?$/.test(String(k)));
+    const mayHoldLegacyEdit = (c) => legacyEdits && c.q != null && hasValue(c);
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
@@ -1173,10 +1179,15 @@
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '') && !agreesWith(step, c);
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
         const differs = isChoice && replaceChoices && !agreesWith(step, c);
-        if (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c))) {
+        const legacyHold = mayHoldLegacyEdit(c) && !refill.has(step.id);
+        if (legacyHold || (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           report.kept.push(item);
+          if (legacyHold && !agreesWith(step, c)) {
+            const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
+            report.checks.push({ ...item, note, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note });
           // Still our default from an earlier fill: still the agent's to confirm.
-          if (step.warn && agreesWith(step, c)) {
+          } else if (step.warn && agreesWith(step, c)) {
             report.checks.push({ ...item, note: step.warn, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.warn });
           } else handled.set(step.id, { status: null });

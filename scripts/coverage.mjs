@@ -48,6 +48,8 @@ export function report(layouts) {
       `${t.fields} questions: ${t.filled} filled by rules, ${t.ignored} left alone on purpose, ${t.agent} the agent's, ${t.unsure} can't tell offline, **${t.none} with no rule**${mockIds ? `, ${t.notInMock} not in the mock` : ''}.`, '');
     const missing = r.pages.flatMap((p) => p.rows.filter((x) => x.status === 'none').map((x) => `- ${p.page}: ${x.q ? `q${x.q} ` : ''}${x.id ? `#${x.id} ` : x.dataId ? `[data-id=${x.dataId}] ` : ''}"${x.caption}"${x.req ? ' (required)' : ''}${x.cond ? ' (follow-up)' : ''}${x.opts?.length ? ` {${x.opts.slice(0, 6).join(' / ')}}` : ''}`));
     if (missing.length) lines.push('No rule:', ...missing, '');
+    const unnamed = r.pages.flatMap((p) => p.rows.filter((x) => x.unnamed).map((x) => `- ${p.page}: ${x.q ? `q${x.q} ` : ''}"${x.caption}" (${x.rule})`));
+    if (unnamed.length) lines.push('Recorded without a data-model name on a page whose other fields have one (the live rule looks for the name; a recording from before 0.9.9 can\'t be told apart):', ...unnamed, '');
     const drift = r.pages.flatMap((p) => p.rows.filter((x) => x.notInMock).map((x) => `- ${p.page}: ${x.id ? `#${x.id}` : `[data-id=${x.dataId}]`} "${x.caption}"`));
     if (drift.length) lines.push('Not in the mock (the site changed, or the mock lacks this part):', ...drift, '');
   }
