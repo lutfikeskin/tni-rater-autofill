@@ -1,7 +1,8 @@
 # Every morning: download the agents' usage log from the central server (Railway), build the
 # review (problem reports, AI decisions, speed, rule suggestions, page layouts) for the last day,
-# keep it as an artifact, and open an issue when agents reported problems or live pages show
-# questions no rule claims.
+# keep it as an artifact, and open an issue when agents reported problems, live pages show
+# questions no rule claims, or the deployed usage server isn't this repository's (it would drop
+# fields the extension sends).
 # Needs the repository secret RATER_ADMIN_TOKEN (the server's admin token).
 name: Daily review
 
@@ -40,6 +41,8 @@ jobs:
           echo "file=reviews/review-$(date -u +%F).md" >> "$GITHUB_OUTPUT"
           echo "since=$SINCE" >> "$GITHUB_OUTPUT"
           echo "problems=$(grep -o '[0-9]* problem reports' review.log | grep -o '^[0-9]*' || echo 0)" >> "$GITHUB_OUTPUT"
+          # The deployed server is this repository's (scripts/server-check.mjs); else it may drop fields.
+          echo "server=$(node scripts/server-check.mjs --md "reviews/review-$(date -u +%F).md" | sed -E 's/^server: ([a-z]+).*/\1/')" >> "$GITHUB_OUTPUT"
           # Questions met on live pages that no rule claims (a missing rule or a changed page).
           echo "norule=$(node scripts/coverage.mjs server-data --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).reduce((n,r)=>n+r.totals.none+r.totals.notInMock,0)))')" >> "$GITHUB_OUTPUT"
           head -c 60000 "reviews/review-$(date -u +%F).md" >> "$GITHUB_STEP_SUMMARY"
@@ -48,11 +51,11 @@ jobs:
           name: review-${{ steps.review.outputs.since }}
           path: ${{ steps.review.outputs.file }}
           retention-days: 90
-      - name: Open an issue for problem reports or uncovered questions
-        if: steps.review.outputs.problems != '0' || steps.review.outputs.norule != '0'
+      - name: Open an issue for problem reports, uncovered questions or a server to redeploy
+        if: steps.review.outputs.problems != '0' || steps.review.outputs.norule != '0' || steps.review.outputs.server != 'same'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           head -c 60000 "${{ steps.review.outputs.file }}" > body.md
-          gh issue create --title "Daily review since ${{ steps.review.outputs.since }}: ${{ steps.review.outputs.problems }} problem report(s), ${{ steps.review.outputs.norule }} question(s) without a rule" --body-file body.md --label daily-review || \
-          gh issue create --title "Daily review since ${{ steps.review.outputs.since }}: ${{ steps.review.outputs.problems }} problem report(s), ${{ steps.review.outputs.norule }} question(s) without a rule" --body-file body.md
+          gh issue create --title "Daily review since ${{ steps.review.outputs.since }}: ${{ steps.review.outputs.problems }} problem report(s), ${{ steps.review.outputs.norule }} question(s) without a rule, usage server ${{ steps.review.outputs.server }}" --body-file body.md --label daily-review || \
+          gh issue create --title "Daily review since ${{ steps.review.outputs.since }}: ${{ steps.review.outputs.problems }} problem report(s), ${{ steps.review.outputs.norule }} question(s) without a rule, usage server ${{ steps.review.outputs.server }}" --body-file body.md

@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createServer } from '../server/index.mjs';
+import crypto from 'node:crypto';
+import { createServer, SERVER_HASH } from '../server/index.mjs';
+import { checkServer } from '../scripts/lib/central.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
 const ev = (over = {}) => ({ id: crypto.randomUUID(), t: new Date().toISOString(), type: 'fill_run', carrier: 'progressive', page: 'AddVehicle', filled: 3, ...over });
@@ -42,7 +44,7 @@ test('keeps only known event types and fields', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {
     const r = await (await post({ events: [
-      ev({ type: 'field_change', q: '2B9D', kind: 'select', from: 'a', to: 'b', typedValue: '02/03/1988' }),
+      ev({ type: 'field_change', q: '2B9D', kind: 'select', from: 'a', to: 'b', typedValue: '02/03/1988', filled: undefined }),
       ev({ type: 'screenshot', image: 'x' }),
       ev({ id: 'x' }),
       ev({ type: 'page_layout', context: { state: 'MD' }, fields: [{ q: '396', label: 'Agent of Record', options: ['JANE DOE-1'] }, { q: '2B9D', label: 'Distance', options: ['50 miles'] }] }),
@@ -52,6 +54,7 @@ test('keeps only known event types and fields', async () => {
   });
   const [change, layout] = stored(dataDir);
   assert.equal(change.typedValue, undefined, 'unexpected fields are dropped');
+  assert.deepEqual(change.dropped, ['typedValue'], 'and named on the event, without their values');
   assert.equal(change.to, 'b');
   assert.equal(layout.fields[0].options, undefined, 'agency staff lists are dropped');
   assert.deepEqual(layout.fields[1].options, ['50 miles']);
@@ -167,8 +170,38 @@ test('layouts keep why they were taken, never a pick from a staff list; layout e
 test('a view is kept only as a tab order and a vehicle, driver or trailer number', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {
-    const r = await (await post({ events: ['t1', 't12:v0', 't2:d3', 't2:tr1', 'tab 917', 't1:Jordan', 7].map((view) => ev({ type: 'page_view', page: 'AddVehicle', view })) })).json();
+    const r = await (await post({ events: ['t1', 't12:v0', 't2:d3', 't2:tr1', 'tab 917', 't1:Jordan', 7].map((view) => ev({ type: 'page_view', page: 'AddVehicle', view, filled: undefined })) })).json();
     assert.equal(r.accepted, 7);
   });
-  assert.deepEqual(stored(dataDir).map((e) => e.view), ['t1', 't12:v0', 't2:d3', 't2:tr1', undefined, undefined, undefined]);
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((e) => e.view), ['t1', 't12:v0', 't2:d3', 't2:tr1', undefined, undefined, undefined]);
+  assert.deepEqual(rows.map((e) => e.dropped), [undefined, undefined, undefined, undefined, ['view'], ['view'], ['view']], 'a view it threw away is named');
+});
+
+// Audit 2026-10-08: an older server silently dropped fields the extension sent (pageChanged, how,
+// trailer views). What it drops is named on the event, and /v1/health says which version runs.
+test('dropped fields are named on the event (names only, bounded), and health names the server version', async () => {
+  const dataDir = tmp();
+  const many = Object.fromEntries(Array.from({ length: 25 }, (_, i) => [`extra${i}`, i]));
+  await withServer({ dataDir }, async ({ post, base }) => {
+    await post({ events: [ev({ seq: -1, ...many, 'Jordan Sample': 'x' })] });
+    const health = await (await fetch(`${base}/v1/health`)).json();
+    const file = fs.readFileSync(new URL('../server/index.mjs', import.meta.url));
+    assert.equal(health.server, crypto.createHash('sha256').update(file).digest('hex').slice(0, 12));
+    assert.equal(health.server, SERVER_HASH);
+  });
+  const [row] = stored(dataDir);
+  assert.equal(row.dropped.length, 20);
+  assert.equal(row.droppedMore, 7, '25 extras, the bad seq and a name that is no field name');
+  assert.ok(!row.dropped.includes('Jordan Sample'));
+  assert.equal(row.extra0, undefined);
+});
+
+test('the daily review tells whether the deployed server is this repository\'s', async () => {
+  const health = (body, ok = true) => async () => ({ ok, status: ok ? 200 : 502, json: async () => body });
+  assert.equal((await checkServer('http://x', SERVER_HASH, health({ ok: true, server: SERVER_HASH }))).status, 'same');
+  assert.deepEqual(await checkServer('http://x', SERVER_HASH, health({ ok: true, server: 'abc123abc123' })), { status: 'different', deployed: 'abc123abc123', local: SERVER_HASH });
+  assert.equal((await checkServer('http://x', SERVER_HASH, health({ ok: true, events: 5 }))).status, 'different', 'a server from before the check names no version');
+  assert.equal((await checkServer('http://x', SERVER_HASH, health({}, false))).status, 'unreachable');
+  assert.equal((await checkServer('http://x', SERVER_HASH, async () => { throw new Error('ECONNREFUSED'); })).status, 'unreachable');
 });

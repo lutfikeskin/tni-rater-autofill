@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { EVENT_FIELDS, COMMON } from '../server/index.mjs';
 import { CARRIERS } from '../src/carriers.js';
 import { DEFAULT_SERVER } from '../sidepanel/usage-log.js';
-import { fillEvents } from '../src/usage.js';
+import { fillEvents, fieldChangeEvent } from '../src/usage.js';
 import { findPii } from '../scripts/lib/privacy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -33,6 +33,21 @@ test('fill events carry only fields the server keeps (nothing silently dropped)'
     const keep = new Set([...COMMON, ...(EVENT_FIELDS[e.type] ?? [])]);
     const dropped = Object.keys(e).filter((k) => !keep.has(k) && e[k] !== undefined);
     assert.deepEqual(dropped, [], `${e.type}: the server drops ${dropped.join(', ')}`);
+  }
+});
+
+// Audit 2026-10-08: field changes too, text and choice alike.
+test('field change events carry only fields the server keeps', () => {
+  const ctx = { record: { drivers: [{ dob: '01/02/1980' }] }, filled: new Map([['k', { path: 'x', shown: 'a' }]]), redact: (s) => s, keySalt: 'salt' };
+  const changes = [
+    { key: 'k', q: '1', label: 'A', kind: 'text', before: 'a', after: '01/02/1980', agent: true },
+    { key: 'k', q: '1', label: 'A', kind: 'select', before: 'a', after: 'b', agent: false },
+  ];
+  for (const c of changes) {
+    const e = { carrier: 'progressive', page: 'P', view: 't1', ...fieldChangeEvent(c, ctx) };
+    const keep = new Set([...COMMON, ...EVENT_FIELDS[e.type]]);
+    const dropped = Object.keys(e).filter((k) => !keep.has(k) && e[k] !== undefined);
+    assert.deepEqual(dropped, [], `${c.kind}: the server drops ${dropped.join(', ')}`);
   }
 });
 
