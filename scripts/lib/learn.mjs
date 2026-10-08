@@ -94,15 +94,22 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
 // Questions with an id (Progressive) only; not one id drawn several times without rows (which
 // vehicle's isn't known), nor a page about one vehicle, driver or trailer whose layout doesn't say
 // which one. Within one quote tab (`view`): another tab's layout says nothing about this one's
-// departure. Not when the extension moved on (its fill clicked Continue: `advanced`), nor for a
-// question an AI choice answered (the recorder is paused then). A layout belongs to one visit:
-// coming back to the page (or failing to read it) drops it and the departure before, as the next
-// visit logs no layout when the page's questions are the same (Codex on PR #51).
+// departure. Not when the extension may have moved on: its fill clicked a button on the page
+// during that visit (Continue, `advanced`, or a helper that navigates, such as the bill plan, in
+// `clicked`); that fill is logged up to seconds after the move, so one logged within
+// EXTENSION_MOVE_MS after the departure counts too. Nor for a question an AI choice answered (the
+// recorder is paused then). A layout belongs to one visit: coming back to the page (or failing to
+// read it) drops it and the departure before, as the next visit logs no layout when the page's
+// questions are the same (Codex on PR #51).
+const EXTENSION_MOVE_MS = 30_000;
 function pageLeftAnswers(events, out, get, ids) {
   const tabOf = (e) => String(e.view ?? '').split(':')[0];
   const page = (p) => String(p ?? '').replace(/-Reload$/, '');
+  const clicks = events.filter((e) => e.type === 'fill_run' && e.session && (e.advanced || (e.clicked ?? []).length));
+  const byUs = (d) => clicks.some((r) => r.session === d.session && page(r.page) === d.page
+    && (!tabOf(r) || !d.tab || tabOf(r) === d.tab) && r.t >= d.start && Date.parse(r.t) <= Date.parse(d.end) + EXTENSION_MOVE_MS);
   const lastLayout = new Map();
-  const lastFill = new Map();
+  const arrivedAt = new Map();
   const left = new Map();
   const aiChosen = new Set();
   for (const e of events) {
@@ -110,24 +117,22 @@ function pageLeftAnswers(events, out, get, ids) {
     const at = (p) => `${e.session}|${tabOf(e)}|${page(p)}`;
     if (e.type === 'page_layout' && !e.step) lastLayout.set(at(e.page), e);
     if (e.type === 'layout_error') lastLayout.delete(at(e.page));
-    if (e.type === 'fill_run') lastFill.set(at(e.page), e);
     if (e.type === 'ai_decision' && e.q && ['accepted', 'approved', 'auto'].includes(e.decision)) aiChosen.add(`${e.session}|${identify(e, ids).key}`);
     if (e.type !== 'page_view') continue;
     const arrived = page(e.page);
     if (e.from && page(e.from) !== arrived) {
       const layout = lastLayout.get(at(e.from));
       const unit = String(layout?.view ?? '').split(':')[1] ?? '';
-      const byUs = !!lastFill.get(at(e.from))?.advanced;
-      if (layout && !byUs) left.set(`${at(e.from)}|${unit}`, layout);
+      if (layout) left.set(`${at(e.from)}|${unit}`, { layout, session: e.session, tab: tabOf(e), page: page(e.from), start: arrivedAt.get(at(e.from)) ?? '', end: e.t });
     }
     // Arriving at a page (from another, or a new document): a visit whose layout is still to come.
     if (!e.from || page(e.from) !== arrived) {
       lastLayout.delete(at(arrived));
-      lastFill.delete(at(arrived));
+      arrivedAt.set(at(arrived), e.t);
       for (const k of [...left.keys()]) if (k.startsWith(`${at(arrived)}|`)) left.delete(k);
     }
   }
-  for (const layout of left.values()) {
+  for (const { layout } of [...left.values()].filter((d) => !byUs(d))) {
     const unit = String(layout.view ?? '').split(':')[1] ?? '';
     if (ENTITY_PAGES.get(layout.carrier)?.has(layout.page) && !unit) continue;
     const fields = layout.fields ?? [];

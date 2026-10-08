@@ -437,3 +437,18 @@ test('learning: a question a current rule maps gets no page-answer suggestion', 
   const mapped = [{ id: 'progressive', useGenericRules: false, rules: [{ page: 'MoreAboutBusiness', ask: 'Does the customer need a certificate of insurance?', kind: 'bool', value: () => false }] }];
   assert.equal(learn(events, { carriers: mapped, minIntakes: 5 }).suggestions.pageAnswer.length, 0);
 });
+
+// Codex on PR #51: a helper that navigates (the bill plan) moves on too, and the fill that clicked is
+// often logged after the move (seconds later).
+test('learning: no page answer when the extension clicked on the page during that visit', () => {
+  const base = leftQuote(0);
+  const value = (events) => byQ(finalAnswers(events).get('q0'), '3C4')?.value;
+  const run = (n, extra) => ({ id: `run${n}`, t: at(n), session: 'q0', carrier: 'progressive', type: 'fill_run', page: 'MoreAboutBusiness', advanced: null, clicked: [], ...extra });
+  const arrive = { id: 'arr', t: at(0.5), session: 'q0', carrier: 'progressive', type: 'page_view', page: 'MoreAboutBusiness', from: 'Start' };
+  const visit = [base[0], arrive, ...base.slice(1)];
+  assert.equal(value(visit), 'No', 'the agent left');
+  assert.equal(value([...visit.slice(0, 4), run(3, { clicked: ['billPlan'] }), ...visit.slice(4)]), undefined, 'a helper that navigates');
+  assert.equal(value([...visit, run(10, { advanced: 'Continue' })]), undefined, 'Continue logged after the move');
+  assert.equal(value([...visit, run(200, { advanced: 'Continue' })]), 'No', 'a click well after the departure is another visit\'s');
+  assert.equal(value([base[0], run(0.2, { clicked: ['addVehicle'] }), arrive, ...base.slice(1)]), 'No', 'a click before this visit');
+});
