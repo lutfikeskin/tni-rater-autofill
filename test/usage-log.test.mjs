@@ -15,7 +15,8 @@ test('events an older server refused as unknown types are sent again to a newer 
   await usage.saveSettings({ serverUrl: 'http://usage.test' });
   await usage.log({ type: 'page_view', page: 'A' }, { type: 'ai_suggest', items: 2 });
   await usage.upload();
-  assert.equal(await usage.count(), 0, 'nothing left in the upload queue');
+  assert.deepEqual(await usage.counts(), { queued: 0, rejected: 1 }, 'nothing left in the upload queue; the refused event is kept aside');
+  assert.equal(await usage.count(), 1, 'and still counted as waiting on this computer');
   assert.deepEqual(bodies[0].events.map((e) => e.type), ['page_view', 'ai_suggest']);
 
   serverKnowsAi = true;
@@ -25,6 +26,7 @@ test('events an older server refused as unknown types are sent again to a newer 
   assert.equal(resent[0].rejectedBecause, undefined);
   await usage.upload();
   assert.equal(bodies.length, 2, 'accepted on the retry: not sent a third time');
+  assert.equal(await usage.count(), 0);
 });
 
 test('uploads go to the central server with the built-in token unless the agent set their own', async () => {
@@ -110,9 +112,27 @@ test('uploads are split to fit the server, and one event too large on its own is
   await usage.log({ type: 'page_view', page: 'huge' }, { type: 'page_view', page: 'after' });
   await usage.upload();
   assert.deepEqual(requests.map((r) => r.body.events.map((e) => e.page)), [['huge', 'after'], ['huge'], ['after']]);
-  assert.equal(await usage.count(), 0, 'the queue is not stuck behind it');
+  assert.deepEqual(await usage.counts(), { queued: 0, rejected: 1 }, 'the queue is not stuck behind it');
   await usage.upload();
   assert.equal(requests.length, 3, 'set aside, not sent again');
+});
+
+// Audit 2026-10-08: Clear emptied the upload queue but not the events set aside, which Export
+// kept writing; the shown count left them out.
+test('Clear deletes the events set aside too, and the count includes them', async () => {
+  await usage.clearLog();
+  assert.deepEqual(await usage.counts(), { queued: 0, rejected: 0 });
+  fakeServer((body) => ({ ok: true, status: 200, json: async () => ({ accepted: body.events.length - 1, duplicates: 0, rejected: [{ index: 0, error: 'event too large' }] }) }));
+  await usage.saveSettings({ serverUrl: 'http://usage.test' });
+  await usage.log({ type: 'page_view', page: 'A' }, { type: 'page_view', page: 'B' });
+  await usage.upload();
+  assert.deepEqual(await usage.counts(), { queued: 0, rejected: 1 });
+  assert.equal(await usage.count(), 1, 'what the panel shows and Export writes');
+  await usage.log({ type: 'page_view', page: 'C' });
+  assert.equal(await usage.count(), 2);
+  await usage.clearLog();
+  assert.deepEqual(await usage.counts(), { queued: 0, rejected: 0 });
+  assert.equal(await usage.count(), 0);
 });
 
 test('a reply that does not account for every event sent keeps them in the queue', async () => {
@@ -120,28 +140,28 @@ test('a reply that does not account for every event sent keeps them in the queue
   await usage.saveSettings({ serverUrl: 'http://usage.test' });
   await usage.log({ type: 'page_view', page: 'R1' }, { type: 'page_view', page: 'R2' });
   await usage.upload();
-  assert.equal(await usage.count(), 2);
+  assert.equal((await usage.counts()).queued, 2);
   assert.equal(usage.lastUpload().state, 'error');
 
   requests = fakeServer(() => ({ ok: true, status: 200, json: async () => ({ accepted: 1, duplicates: 0, rejected: [] }) }));
   await usage.upload();
-  assert.equal(await usage.count(), 2, 'one event unaccounted for');
+  assert.equal((await usage.counts()).queued, 2, 'one event unaccounted for');
 
   requests = fakeServer(() => ({ ok: true, status: 200, json: async () => ({ accepted: 1, duplicates: 0, rejected: [{ index: 7, error: 'x' }] }) }));
   await usage.upload();
-  assert.equal(await usage.count(), 2, 'a refusal for an event that was not sent');
+  assert.equal((await usage.counts()).queued, 2, 'a refusal for an event that was not sent');
 
   requests = fakeServer(() => ({ ok: true, status: 200, json: async () => ({ accepted: 0, duplicates: 0, rejected: [{ index: 0, error: 'x' }, { index: 0, error: 'x' }] }) }));
   await usage.upload();
-  assert.equal(await usage.count(), 2, 'the same event refused twice leaves the other unaccounted for');
+  assert.equal((await usage.counts()).queued, 2, 'the same event refused twice leaves the other unaccounted for');
 
   requests = fakeServer(() => ({ ok: true, status: 200, json: async () => ({ accepted: 3, duplicates: -1, rejected: [] }) }));
   await usage.upload();
-  assert.equal(await usage.count(), 2, 'negative counts');
+  assert.equal((await usage.counts()).queued, 2, 'negative counts');
 
   requests = fakeServer(stores);
   await usage.upload();
-  assert.equal(await usage.count(), 0);
+  assert.equal((await usage.counts()).queued, 0);
   assert.equal(requests.length, 1);
   assert.equal(usage.lastUpload().state, 'ok');
 });

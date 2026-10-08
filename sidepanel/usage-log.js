@@ -80,9 +80,16 @@ export function log(...events) {
   return queue;
 }
 
-export async function count() {
+// Events waiting on this computer: the upload queue, and the ones a server refused or that were
+// too large to send (kept aside for export). Export writes both and Clear deletes both, so the
+// panel's count and its "haven't been exported" check cover both (audit 2026-10-08).
+export async function counts() {
   await queue;
-  return ((await local.get(LOG_KEY)) ?? []).length;
+  return { queued: ((await local.get(LOG_KEY)) ?? []).length, rejected: ((await local.get(REJECTED_KEY)) ?? []).length };
+}
+export async function count() {
+  const { queued, rejected } = await counts();
+  return queued + rejected;
 }
 
 export async function exportLog() {
@@ -235,7 +242,12 @@ export function upload() {
   return queue;
 }
 
+// Deletes the upload queue and the events kept aside for export: what Export wrote (audit
+// 2026-10-08: Clear left the refused events, which Export kept including).
 export async function clearLog() {
   await queue;
-  await exclusive(() => local.set(LOG_KEY, []));
+  await exclusive(async () => {
+    await local.set(LOG_KEY, []);
+    await local.set(REJECTED_KEY, []);
+  });
 }
