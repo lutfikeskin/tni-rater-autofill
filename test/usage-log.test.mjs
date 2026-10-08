@@ -182,3 +182,28 @@ test('side panels in two windows share the stored log without losing events or r
     if (addedLocks) delete globalThis.navigator.locks;
   }
 });
+
+// Audit 2026-10-08: a write that failed (storage full) lost the events with only a console line.
+test('events that could not be saved on this computer are reported, until a save works again', async () => {
+  const data = {};
+  let full = true;
+  globalThis.chrome = {
+    storage: { local: {
+      get: async (key) => ({ [key]: structuredClone(data[key]) }),
+      set: async (items) => { if (full && 'usageLog' in items) throw new Error('QUOTA_BYTES quota exceeded'); Object.assign(data, structuredClone(items)); },
+    } },
+    runtime: { getManifest: () => ({ version: 'test' }) },
+  };
+  try {
+    const log = await import('../sidepanel/usage-log.js?storage=full');
+    assert.equal(log.lastSave().state, 'ok');
+    await log.log({ type: 'page_view', page: 'A' });
+    assert.deepEqual([log.lastSave().state, log.lastSave().message], ['error', 'QUOTA_BYTES quota exceeded']);
+    full = false;
+    await log.log({ type: 'page_view', page: 'B' });
+    assert.equal(log.lastSave().state, 'ok');
+    assert.deepEqual(data.usageLog.map((e) => e.page), ['B']);
+  } finally {
+    delete globalThis.chrome;
+  }
+});

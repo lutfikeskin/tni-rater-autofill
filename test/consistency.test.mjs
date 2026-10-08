@@ -51,6 +51,12 @@ test('field change events carry only fields the server keeps', () => {
   }
 });
 
+// The store's Privacy practices tab asks why for each permission (docs/chrome-web-store.md has the text).
+test('every permission the manifest asks for has its justification in the store guide', () => {
+  const guide = read('docs/chrome-web-store.md');
+  for (const p of JSON.parse(read('manifest.json')).permissions) assert.ok(guide.includes(`- \`${p}\`:`), `docs/chrome-web-store.md: say why the extension needs ${p}`);
+});
+
 test('the manifest allows every carrier site and the usage server', () => {
   const manifest = JSON.parse(read('manifest.json'));
   const hosts = manifest.host_permissions.map((h) => new URL(h.replace('*.', 'x.').replace(/\/\*$/, '/')).hostname.replace(/^x\./, ''));

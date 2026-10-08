@@ -17,6 +17,10 @@ const PROVENANCE = { channel: 'source', commit: null };
 
 let session = null; // { id, intakeId } for the intake currently loaded
 let queue = Promise.resolve();
+// Whether the last events could be saved on this computer (ok | error): a write that fails, such
+// as storage full, loses them, and the panel says so instead of only the console (audit 2026-10-08).
+let saveStatus = { state: 'ok' };
+export const lastSave = () => saveStatus;
 
 // keySalt stays on this computer (never in an event): it keeps redacted field keys apart
 // without identifying anyone (fieldChangeEvent in src/usage.js).
@@ -68,7 +72,11 @@ export function log(...events) {
     await local.set(SEQ_KEY, seq);
     // Oldest events go first if nobody has exported in a long time.
     await local.set(LOG_KEY, list.length > MAX_EVENTS ? list.slice(-MAX_EVENTS) : list);
-  })).catch((e) => console.error('usage log:', e));
+    saveStatus = { state: 'ok' };
+  })).catch((e) => {
+    saveStatus = { state: 'error', at: new Date().toISOString(), message: String(e?.message ?? e).slice(0, 160) };
+    console.error('usage log:', e);
+  });
   return queue;
 }
 

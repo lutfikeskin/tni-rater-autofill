@@ -2527,9 +2527,13 @@ async function renderHealth({ n, agent, serverUrl, up }) {
     ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: `They're turned on, but no ${PROVIDERS[ai.provider].keyLabel} is set.`, button: 'Add key', go: () => openSettings('ai-openai-key') },
     up.state === 'off' && { title: 'Usage log has no server', text: 'Nothing is recorded centrally (Export log only).', button: 'Set up', go: () => openSettings('server-url') },
   ].filter(Boolean);
-  const info = up.state === 'error'
-    ? { title: "Usage log can't upload right now", text: `Nothing for you to do. ${n ? `${n.toLocaleString()} event${n === 1 ? ' is' : 's are'} saved on this computer and` : 'What happens is saved on this computer and'} sent when the server is back.` }
-    : null;
+  // Events that can't even be saved here are lost: that comes first.
+  const saved = usage.lastSave();
+  const info = saved.state === 'error'
+    ? { title: "Usage log can't be saved on this computer", text: `What you do now isn't recorded (${saved.message}). Use Export log in settings (Advanced), then tell TNI.` }
+    : up.state === 'error'
+      ? { title: "Usage log can't upload right now", text: `Nothing for you to do. ${n ? `${n.toLocaleString()} event${n === 1 ? ' is' : 's are'} saved on this computer and` : 'What happens is saved on this computer and'} sent when the server is back.` }
+      : null;
   const cards = () => [
     setup.length ? h('div', { class: 'setup' },
       h('div', { class: 'setup-head' }, `Finish setting up (${setup.length})`),
