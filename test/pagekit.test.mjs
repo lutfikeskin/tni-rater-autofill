@@ -12,6 +12,49 @@ const PAGEKIT = fs.readFileSync(new URL('../src/content/pagekit.js', import.meta
 const FIELD_KEY = fs.readFileSync(new URL('../src/content/field-key.js', import.meta.url), 'utf8');
 const RECORDER = fs.readFileSync(new URL('../src/content/recorder.js', import.meta.url), 'utf8');
 
+// A virtual clock for the fill engine's waits (sleep, settle, the retry loops that read Date.now()).
+// Whenever the event loop would otherwise sit idle (every promise continuation has run and only
+// timers remain), it moves to the earliest due timer and fires that one; the next fires on the next
+// idle turn, so continuations interleave as they do with real timers, and each polling loop sees
+// as many ticks as in real time. A 6 s settle takes microseconds; this file took 150 s on real
+// timers (audit 2026-10-08, finding 15). The engine's context gets this clock's setTimeout,
+// clearTimeout and Date; the timers this file's own tests set (a list that loads late, a page that
+// clears a value) are on the same clock, so their order against the engine's waits is kept.
+function virtualClock() {
+  let now = Date.now();
+  let seq = 0;
+  let armed = null;
+  const timers = new Map();
+  const fire = () => {
+    armed = null;
+    let next = null;
+    for (const t of timers.values()) if (!next || t.due < next.due || (t.due === next.due && t.seq < next.seq)) next = t;
+    if (!next) return;
+    timers.delete(next.seq);
+    if (next.due > now) now = next.due;
+    arm();
+    next.fn(...next.args);
+  };
+  const arm = () => { if (!armed && timers.size) armed = setImmediate(fire); };
+  class VirtualDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return now; }
+  }
+  return {
+    Date: VirtualDate,
+    setTimeout(fn, ms = 0, ...args) {
+      const id = ++seq;
+      timers.set(id, { seq: id, due: now + Math.max(0, Number(ms) || 0), fn, args });
+      arm();
+      return id;
+    },
+    clearTimeout(id) { timers.delete(id); },
+  };
+}
+const clock = virtualClock();
+// This module's own timers run on the clock too (shadows the globals for the whole file).
+const { setTimeout, clearTimeout } = clock;
+
 function attrSelector(node, selector) {
   const attrs = [...selector.matchAll(/\[\s*([^\]=~*^$|\s]+)(?:\s*([~*^$|]?=)\s*["']?([^\]"']*)["']?)?\s*\]/g)];
   return attrs.every(([, name, op, raw]) => {
@@ -313,8 +356,10 @@ function harness({ ext = false, pathname = '/rater', search = '' } = {}) {
     HTMLInputElement: InputNode,
     HTMLTextAreaElement: TextareaNode,
     HTMLSelectElement: SelectNode,
-    setTimeout,
-    clearTimeout,
+    // The engine waits on the virtual clock (see virtualClock): its sleep() and every Date.now() loop.
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    Date: clock.Date,
   };
   context.window = context;
   context.top = context;
