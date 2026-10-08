@@ -97,7 +97,9 @@ export function parseAddress(raw) {
   const s = clean(raw);
   if (s == null) return null;
   const out = { street: s, unit: null, city: null, state: null, zip: null, confident: false };
-  const m = s.match(/^(.*?)[,\s]+([A-Za-z]{2})\.?[,\s]+(\d{5})(?:-?(\d{4}))?\s*$/);
+  // What follows the ZIP: a comma or period ("…, MN 55447,"), or the country ("…, MN 55447, USA").
+  const body = s.replace(/[\s,.;]+(?:(?:USA|U\.S\.A\.?|US|U\.S\.?|United States(?: of America)?)[\s,.;]*)?$/i, '');
+  const m = body.match(/^(.*?)[,\s]+([A-Za-z]{2})\.?[,\s]+(\d{5})(?:-?(\d{4}))?\s*$/);
   if (!m || !STATES[m[2].toUpperCase()]) return out;
   out.state = m[2].toUpperCase();
   out.zip = m[4] ? `${m[3]}-${m[4]}` : m[3];
