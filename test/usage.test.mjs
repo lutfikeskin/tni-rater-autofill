@@ -8,7 +8,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms } from '../src/plan.js';
-import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
+import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX } from '../src/usage.js';
 
 const bytes = new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url)));
 const raw = await readIntakeFields(pdfjs, bytes.slice());
@@ -202,4 +202,33 @@ test('fill events say which view (tab and vehicle) they were on', () => {
   const events = fillEvents([{ fields: 1, filled: [{ key: '2B9D@2', q: '2B9D', label: 'Farthest distance', controlKind: 'select', shown: '500 miles' }] }],
     { carrier: 'progressive', page: 'AddVehicle', view: 't1:v1', overwrite: false, ms: 1, redact });
   assert.deepEqual(events.map((e) => [e.type, e.view]), [['fill_run', 't1:v1'], ['fill_field', 't1:v1']]);
+});
+
+// Audit 2026-10-08, finding 7: a fill's events can be joined by run and attributed to a rule version.
+test('fill events carry their run, the rules fingerprint, the settings in force and the step', async () => {
+  const frames = [{ fields: 2, filled: [{ key: 'vin', label: 'VIN', controlKind: 'text', shown: '1FTBR3X87MKA12345' }], failed: [{ key: 'x', label: 'Radius', controlKind: 'select', reason: 'no option' }], stepKey: 'Vehicles' }];
+  const settings = { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false };
+  const events = fillEvents(frames, { carrier: 'amwins', page: '/application/businessauto', overwrite: false, ms: 1, redact,
+    run: 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', rules: 'f00dbeefcafe', settings, step: 'Vehicles / Jordan Avery' });
+  assert.equal(events[0].type, 'fill_run');
+  assert.deepEqual([events[0].run, events[0].rules, events[0].settings, events[0].step], ['e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', 'f00dbeefcafe', settings, 'Vehicles / [client]']);
+  assert.ok(events.slice(1).every((e) => e.run === events[0].run && e.step === 'Vehicles / [client]'), 'every field event shares the run and step');
+  assert.ok(events.slice(1).every((e) => !('rules' in e) && !('settings' in e)), 'rules and settings only on the run');
+  events.forEach(assertNoClientData);
+  // A carrier whose pages have names carries no step; nothing is sent as null.
+  const plain = fillEvents(frames, { carrier: 'progressive', page: 'AddVehicle', overwrite: false, ms: 1, redact });
+  assert.ok(plain.every((e) => !('run' in e) && !('rules' in e) && !('settings' in e) && !('step' in e)));
+  // A long step heading is cut.
+  const long = fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 1, redact, step: 'x'.repeat(300) });
+  assert.equal(long[0].step.length, STEP_MAX);
+  // Field changes name their step the same way, redacted.
+  const change = fieldChangeEvent({ key: 'k', label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact, step: 'Drivers / Jordan Avery' });
+  assert.equal(change.step, 'Drivers / [client]');
+  assert.equal('step' in fieldChangeEvent({ key: 'k', label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact }), false);
+  // The rules fingerprint: the first 12 hex of SHA-256 over the rule files' text, in their order.
+  const texts = RULE_FILES.map((f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'));
+  const hash = await rulesHash(texts);
+  assert.match(hash, /^[0-9a-f]{12}$/);
+  assert.equal(hash, (await sha256Hex(texts.join('\n'))).slice(0, 12));
+  assert.notEqual(await rulesHash([...texts.slice(0, -1), `${texts.at(-1)}\n// changed`]), hash, 'a rule change changes it');
 });
