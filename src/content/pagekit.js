@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 58 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 60 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -379,6 +379,12 @@
     const used = new Set();
     const donePaths = new Set();
     const pairs = [];
+    // Steps with a witness whose unit's row isn't among the rows on the page (none or several
+    // read as the unit): left for the agent, named by unit (pairs.unwitnessed).
+    const unwitnessed = [];
+    // The rows a witness step chooses among: known questions, never unfamiliar ones, also while
+    // no unit's row is among them yet (the rows before an import) (pairs.witnessed).
+    const witnessed = new Set();
     const page = currentPage();
     const steps = plan.map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
     const take = (s, c, how, reworded = false) => { used.add(c); donePaths.add(s.path); pairs.push({ step: s, control: c, how, reworded }); };
@@ -444,7 +450,18 @@
         c = s.each ? free[0] ?? null : free.length > 1 ? null : free[0] ?? null;
       } else if (onPage(s)) {
         how = 'selector';
-        if (s.selector) c = controls.find((x) => !used.has(x) && (safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector))));
+        if (s.selector) {
+          const all = controls.filter((x) => safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector)));
+          const matching = all.filter((x) => !used.has(x));
+          // A repeated question's rows (AmWINS' vehicle rows): the step's unit's row is the one
+          // whose witness (its VIN) reads as the unit's, never the row at the unit's position.
+          // No such row, or two, while rows are there: the unit is the agent's (unwitnessed).
+          if (s.witness) {
+            c = witnessRow(matching, s.witness);
+            if (!c && all.length) unwitnessed.push(s);
+            for (const x of all) witnessed.add(x);
+          } else c = matching[0] ?? null;
+        }
         // A dropdown with no usable label, known by one of its options ("NO PRIOR").
         if (!c && s.withOption) { how = 'option'; c = controls.find((x) => !used.has(x) && optionsOf(x).some((o) => squash(o.text) === squash(s.withOption))); }
       }
@@ -463,7 +480,36 @@
         if (c) take(s, c, field === 'text' ? 'label' : 'name');
       }
     }
+    pairs.unwitnessed = unwitnessed;
+    pairs.witnessed = witnessed;
     return pairs;
+  }
+
+  // Letters and digits only, uppercase: how a witness value (a VIN) compares with the page's.
+  const idText = (v) => String(v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // The unit a witness path names ("vehicles[1].vin": vehicle 2), and what the witness is (VIN).
+  const unitName = (path) => { const m = String(path ?? '').match(/^(\w+?)s?\[(\d+)\]/); return m ? `${m[1]} ${Number(m[2]) + 1}` : 'this unit'; };
+  const witnessName = (w) => { const k = String(w.path ?? '').split('.').pop() ?? ''; return k.length <= 3 ? k.toUpperCase() : humanize(k); };
+
+  // Of the rows of a repeated question (one control each), the one whose row holds the step's
+  // witness: a control matching `witness.selector` (AmWINS' [data-id="vin"]) reading as
+  // `witness.value`. A control's row is its nearest ancestor holding a witness control, which
+  // must be the only one there (higher up is the whole panel). No row reading as the unit (the
+  // import hasn't landed, or rejected its VIN; the intake has no VIN for it), or two (two rows
+  // with one VIN), is no row: the unit stays the agent's.
+  function witnessRow(candidates, witness) {
+    const want = idText(witness.value);
+    if (!want) return null;
+    const rows = candidates.filter((x) => {
+      for (let p = x.el; p && p !== document; p = p.parentElement) {
+        let found;
+        try { found = [...p.querySelectorAll(witness.selector)]; } catch { return false; }
+        if (!found.length) continue;
+        return found.length === 1 && idText(found[0].value) === want;
+      }
+      return false;
+    });
+    return rows.length === 1 ? rows[0] : null;
   }
 
   // The one row naming this vehicle best: at least two of its year, make and model as whole
@@ -1085,7 +1131,8 @@
       const renamed = new Map(allPairs.renamed.map((r) => [r.control, r.step]));
       for (const [c, step] of renamed) flag(report.renamed, { label: c.label, key: fieldKey(c), name: step.name, field: step.field, now: c.ref ?? null });
       for (const c of controls) {
-        if (mapped.has(c) || skippedField(c)) continue;
+        // A row a witness step chooses among is a known question (its unit is named instead).
+        if (mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c)) continue;
         flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, ref: c.ref ?? null, controlKind: c.kind, required: c.required, ...describe(c) });
         mark(c, 'needs', renamed.has(c) ? `Looks like "${renamed.get(c).name}", but the carrier renamed this field: left for you.` : 'Unfamiliar question — left for you.');
       }
@@ -1305,13 +1352,35 @@
         const summaryAgrees = cargoSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
         accepted = !expanded && (retained || summaryAgrees);
       }
+      // `revealed`: the click showed its result: a question appeared, or an answer changed, since
+      // the snapshot taken as the button was clicked (a lookup's decoded values, the rows an
+      // import redraws, the registered names a USDOT check offers). A redraw of the same
+      // questions with the same answers is no result.
+      if (a.verify === 'revealed') {
+        const before = a.before ?? new Map();
+        accepted = [...controlSnapshot(collectControls())].some(([k, v]) => !before.has(k) || before.get(k) !== v);
+      }
+      // `{ appears }`: more of these on the page than before the click (any, when there were none).
+      if (a.verify?.appears) accepted = deepQueryAll(document, a.verify.appears).length > (a.before ?? 0);
       if (!accepted) {
         clicked.delete(a.action);
         report.invalidatedActions.push(a.action);
         report.actions = report.actions.filter((x) => x.id !== a.action);
         report.blocked.push({ id: a.action, why: 'result not verified yet' });
+        // A click whose result never showed is tried again, twice at most in one fill (the
+        // button is due again, being unclicked); then it stays the agent's, and they're told.
+        if (a.verify === 'revealed' || a.verify?.appears) {
+          if (retryOnce(`action:${a.action}`)) return true;
+          report.noData.push({ label: a.label ?? a.baseAction ?? a.action, path: a.path, name: a.name, key: null, q: null, controlKind: null,
+            note: 'Clicked three times, but the page never showed its result: do it yourself, then fill again.' });
+        }
       }
       return accepted;
+    }
+
+    // What the page's questions show, by question: the snapshot a `revealed` check compares with.
+    function controlSnapshot(controls) {
+      return new Map(controls.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
     }
 
     // A helper the agent must otherwise do by hand is open while the helpers it follows have run
@@ -1403,7 +1472,10 @@
         }
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: oneLine(button.value || button.textContent).slice(0, 60) });
-        pendingAction = a;
+        // What the page shows as the button is clicked (the round's controls are older: answers
+        // have landed since): what a `revealed` / `appears` check compares with afterwards.
+        pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
+          : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length } : a;
         button.click();
         return true;
       }
@@ -1415,7 +1487,16 @@
     const stillHere = !report.navigatedTo && currentPage() === startPage;
     // Answers still waiting for another try when the fill ended are left for the agent, and so is
     // a field the page should have filled itself (emptyNote) but didn't.
-    for (const { step, control } of stillHere ? assign(collectControls(), plan) : []) {
+    const finalPairs = stillHere ? assign(collectControls(), plan) : [];
+    // A unit whose row the page's rows don't show (its VIN on none of them, or on two): its
+    // answers stay the agent's, once per unit, naming it and not its VIN.
+    for (const step of finalPairs.unwitnessed ?? []) {
+      const unit = unitName(step.witness.path);
+      if (report.noData.some((x) => x.unit === unit)) continue;
+      const why = step.witness.value == null ? `the intake has no ${witnessName(step.witness)} for ${unit}` : `the row for ${unit} (its ${witnessName(step.witness)}) wasn't found`;
+      report.noData.push({ label: unit.replace(/^\w/, (ch) => ch.toUpperCase()), path: step.witness.path, name: unit, unit, key: null, q: null, controlKind: null, note: `${why}; check the rows and answer its questions yourself.` });
+    }
+    for (const { step, control } of finalPairs) {
       if (step.emptyNote && !hasValue(control) && !skippedField(control)) {
         report.noData.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, note: step.emptyNote, ...describe(control) });
         handled.set(step.id, { status: 'needs', note: step.emptyNote });
@@ -1765,5 +1846,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 58, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 60, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

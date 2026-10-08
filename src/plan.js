@@ -184,6 +184,10 @@ function fieldSteps(rules, record, carrier, active) {
       search: typeof rule.search === 'function' ? rule.search(record, active) : rule.search ?? null,
       withOption: typeof rule.withOption === 'function' ? rule.withOption(record, active) : rule.withOption ?? null,
       value: value === undefined || value === '' ? null : value,
+      // Which row of a repeated question is this unit's: the one holding a control matching
+      // `selector` that reads as the unit's `value` (AmWINS' vehicle rows by their VIN). The path
+      // is resolved for the unit so the page kit can name it ("vehicle 2"); never its position.
+      witness: rule.witness ? { selector: rule.witness.selector, path: withIndex(rule.witness.path, active), value: get(record, withIndex(rule.witness.path, active)) ?? null } : null,
     };
   });
 }
