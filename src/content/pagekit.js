@@ -1072,6 +1072,8 @@
     // panel re-rendering), or didn't keep the first time: given again, at most twice each.
     const retries = new Map();
     const refill = new Set();
+    // Helpers whose result never showed after their tries this fill: the agent's, not clicked again.
+    const exhausted = new Set();
     // A lookup box its helper has already used (the VIN list Import Data empties) isn't given again.
     const immediateAfter = new Set(actions.filter((a) => a.immediate).flatMap((a) => a.after));
     hiddenOk = plan.filter((s) => s.hidden && s.selector).map((s) => s.selector);
@@ -1371,8 +1373,12 @@
         // button is due again, being unclicked); then it stays the agent's, and they're told.
         if (a.verify === 'revealed' || a.verify?.appears) {
           if (retryOnce(`action:${a.action}`)) return true;
+          // Left to the agent for the rest of this fill (not clicked again), and the page's other
+          // questions still fill around it.
+          exhausted.add(a.action);
           report.noData.push({ label: a.label ?? a.baseAction ?? a.action, path: a.path, name: a.name, key: null, q: null, controlKind: null,
             note: 'Clicked three times, but the page never showed its result: do it yourself, then fill again.' });
+          return true;
         }
       }
       return accepted;
@@ -1401,7 +1407,7 @@
         // A link verified by its going away that is back on its page (NTL removed by hand, then
         // asked for again) is due again.
         if (clicked.has(a.action) && a.verify === 'gone' && (!a.pages.length || a.pages.includes(currentPage())) && findButton(a)) clicked.delete(a.action);
-        if (clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;
+        if (clicked.has(a.action) || exhausted.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;
         // A blank repeater row is already sufficient: do not add a duplicate merely because
         // its fields have not been filled yet (or the agent went back to this step).
         if (a.unlessSelector && deepQueryAll(document, a.unlessSelector).length) { clicked.add(a.action); continue; }

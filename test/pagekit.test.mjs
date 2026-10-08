@@ -2569,10 +2569,12 @@ test('verify revealed: a question appearing or an answer changing counts; a redr
   button.onclick = () => { weight.value = '14500'; };
   report = await h.kit.fill([revealAction('revealed')], { maxRounds: 4 });
   assert.deepEqual(Array.from(report.actions, (a) => a.id), ['lookupVin:0']);
-  // The same questions redrawn with the same answers: no result. Three clicks, then the agent's.
+  // The same questions redrawn with the same answers: no result. Three clicks, then the agent's,
+  // and the page's other questions still fill around it.
   h = harness();
   vin = makeInput({ id: 'vin', ariaLabel: 'VIN', value: VINS[0] });
-  h.document.body.append(vin);
+  const zip = makeInput({ id: 'zip', ariaLabel: 'Zip code where the vehicle is located' });
+  h.document.body.append(vin, zip);
   button = addButton(h, 'Lookup VIN');
   button.onclick = () => {
     button._clicks = (button._clicks ?? 0) + 1;
@@ -2580,9 +2582,11 @@ test('verify revealed: a question appearing or an answer changing counts; a redr
     h.document.body.replaceChild(fresh, vin);
     vin = fresh;
   };
-  report = await h.kit.fill([revealAction('revealed')], { maxRounds: 8 });
+  report = await h.kit.fill([revealAction('revealed'), { id: 'zip', selector: '#zip', path: 'garaging.zip', kind: 'text', value: '21000', name: 'ZIP' }], { maxRounds: 8 });
   assert.equal(button._clicks, 3, 'clicked, and tried twice more');
   assert.equal(report.actions.length, 0);
+  assert.equal(zip.value, '21000', 'the rest of the page fills around the helper left to the agent');
+  assert.equal(report.filled.length, 1);
   assert.ok(report.blockers.includes('button: lookupVin:0'), report.blockers.join(' | '));
   assert.deepEqual(Array.from(report.noData, (x) => [x.label, x.note]), [['lookupVin', 'Clicked three times, but the page never showed its result: do it yourself, then fill again.']]);
   assert.ok(report.invalidatedActions.includes('lookupVin:0'));
