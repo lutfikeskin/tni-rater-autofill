@@ -207,3 +207,28 @@ test('events that could not be saved on this computer are reported, until a save
     delete globalThis.chrome;
   }
 });
+
+// Audit 2026-10-08, finding 11: an upload that hangs (a proxy, a half-open connection) kept the
+// queue waiting on it; now it is given up and the events stay for the next upload.
+test('an upload that hangs is given up: the status says so and the events stay queued', async () => {
+  let aborted = 0;
+  globalThis.fetch = (url, init) => new Promise((_, reject) => {
+    init.signal.addEventListener('abort', () => { aborted++; reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })); });
+  });
+  await usage.saveSettings({ serverUrl: 'http://usage.test', serverToken: '' });
+  await usage.log({ type: 'page_view', page: 'T1' });
+  await usage.upload({ timeoutMs: 20 });
+  assert.equal(aborted, 1);
+  assert.equal(await usage.count(), 1, 'the event stays queued');
+  assert.equal(usage.lastUpload().state, 'error');
+  assert.match(usage.lastUpload().message, /didn't answer in time; the events stay here/);
+  assert.equal(usage.UPLOAD_TIMEOUT_MS, 20_000);
+  // The health check (nothing queued) is given up the same way.
+  const requests = fakeServer(stores);
+  await usage.upload();
+  assert.deepEqual([await usage.count(), requests.length, usage.lastUpload().state], [0, 1, 'ok']);
+  globalThis.fetch = (url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+  await usage.upload({ timeoutMs: 20 });
+  assert.match(usage.lastUpload().message, /didn't answer in time/);
+  assert.ok(requests.every((r) => r.body), 'every upload request still carried its events');
+});

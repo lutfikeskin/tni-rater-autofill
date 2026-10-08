@@ -123,6 +123,14 @@ const BATCH = 500;
 // of UTF-8. Page layouts can be tens of KB each.
 const BATCH_CHARS = 1_000_000;
 let uploadStatus = { state: 'idle' }; // idle | ok | error | off
+// A request that hangs (a proxy, a half-open connection) is given up after this long: the status
+// says so and the events stay queued for the next upload (audit 2026-10-08, finding 11).
+export const UPLOAD_TIMEOUT_MS = 20_000;
+const timedFetch = (url, init, timeoutMs) => {
+  const control = new AbortController();
+  const timer = setTimeout(() => control.abort(), timeoutMs);
+  return fetch(url, { ...init, signal: control.signal }).finally(() => clearTimeout(timer));
+};
 
 export const lastUpload = () => uploadStatus;
 
@@ -155,7 +163,8 @@ async function park(events) {
 
 // Sends pending events in batches. Events leave this computer's list only after the server has
 // stored them (or already had them), so a server outage loses nothing.
-export function upload() {
+// `timeoutMs`: per request (tests shorten it).
+export function upload({ timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
   queue = queue.then(() => exclusive(async () => {
     const { agent = null } = await settings();
     const { serverUrl, serverToken } = await serverConfig();
@@ -175,10 +184,10 @@ export function upload() {
     // panel before a quote's events start piling up on this computer.
     if (!((await local.get(LOG_KEY)) ?? []).length) {
       try {
-        const res = await fetch(new URL('/v1/health', serverUrl), { headers: serverToken ? { authorization: `Bearer ${serverToken}` } : {} });
+        const res = await timedFetch(new URL('/v1/health', serverUrl), { headers: serverToken ? { authorization: `Bearer ${serverToken}` } : {} }, timeoutMs);
         uploadStatus = res.ok ? { state: 'ok', at: new Date().toISOString(), sent: 0 } : { state: 'error', at: new Date().toISOString(), message: `server said ${res.status}` };
-      } catch {
-        uploadStatus = { state: 'error', at: new Date().toISOString(), message: `can't reach ${serverUrl}` };
+      } catch (e) {
+        uploadStatus = { state: 'error', at: new Date().toISOString(), message: e?.name === 'AbortError' ? `${serverUrl} didn't answer in time` : `can't reach ${serverUrl}` };
       }
       return;
     }
@@ -192,13 +201,14 @@ export function upload() {
       if (!batch.length) break;
       let res;
       try {
-        res = await fetch(new URL('/v1/events', serverUrl), {
+        res = await timedFetch(new URL('/v1/events', serverUrl), {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(serverToken ? { authorization: `Bearer ${serverToken}` } : {}) },
           body: JSON.stringify({ agent, version, events: batch }),
-        });
-      } catch {
-        uploadStatus = { state: 'error', at: new Date().toISOString(), message: `can't reach ${serverUrl}` };
+        }, timeoutMs);
+      } catch (e) {
+        // Given up or unreachable: the events stay here for the next upload.
+        uploadStatus = { state: 'error', at: new Date().toISOString(), message: e?.name === 'AbortError' ? `${serverUrl} didn't answer in time; the events stay here` : `can't reach ${serverUrl}` };
         return;
       }
       // Too large for this server (or a proxy in front of it): send fewer at a time. One event
