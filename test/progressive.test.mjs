@@ -702,3 +702,35 @@ test('FL / UT / SC questions of 2026-10-07', () => {
   const tr = buildPlan(trailer, progressive, { trailers: 0 }).find((s) => s.q === 'TR2CE0');
   assert.deepEqual([tr.value, tr.ignore, tr.pageOnly], [3500, false, true]);
 });
+
+test('AmWINS vehicle rows are found by their VIN (witness), not their position; drivers and coverages keep theirs', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.vehicles.push({ type: 'Box Truck', year: 2019, make: 'ISUZU', model: 'NPR', vin: '54DC4W1B5KS800001', value: 45000 });
+  const plan = buildPlan(record, amwins, {});
+  const bodies = plan.filter((s) => /^Body type/.test(s.name));
+  assert.deepEqual(bodies.map((s) => s.selector), Array(2).fill('#vehiclesPanel .app-rp-section [data-id="bodyType"]'), 'no row index in the selector');
+  assert.deepEqual(bodies.map((s) => s.witness), [
+    { selector: '[data-id="vin"]', path: 'vehicles[0].vin', value: '1FTBR3X87MKA12345' },
+    { selector: '[data-id="vin"]', path: 'vehicles[1].vin', value: '54DC4W1B5KS800001' },
+  ]);
+  const vins = plan.filter((s) => s.path.endsWith('.vin') && s.selector?.includes('vehiclesPanel'));
+  assert.equal(vins.length, 2);
+  assert.ok(vins.every((s) => s.trustPage && s.witness?.value === s.value), 'the VIN rule keeps the page\'s VIN on its matched row');
+  const value = plan.find((s) => s.path === 'vehicles[1].value');
+  assert.equal(value.selector, '#vehiclesPanel .app-rp-section [data-id="costNew"]');
+  assert.equal(value.witness.value, '54DC4W1B5KS800001');
+  // The import is done once the rows changed. Rules without a witness have none.
+  assert.equal(plan.find((s) => s.baseAction === 'importVinRecords').verify, 'revealed');
+  assert.equal(plan.find((s) => s.selector === '#driversPanel [data-id="firstName"]').witness, null);
+  assert.equal(plan.find((s) => /^Exclude Medical/.test(s.name)).witness, null);
+  record.vehicles.pop();
+  const one = buildPlan(record, amwins, {}).find((s) => /^Body type/.test(s.name));
+  assert.equal(one.selector, '#vehiclesPanel [data-id="bodyType"]');
+  assert.equal(one.witness.value, '1FTBR3X87MKA12345', 'one vehicle: still its VIN\'s row');
+  // Progressive's lookups are done once the page shows their result; its rules have no witness.
+  const p = buildPlan(record, progressive, {});
+  assert.equal(p.find((s) => s.baseAction === 'lookupVin').verify, 'revealed');
+  assert.equal(p.find((s) => s.baseAction === 'verifyDot').verify, 'revealed');
+  assert.ok(p.filter((s) => s.kind !== 'action').every((s) => s.witness === null));
+});

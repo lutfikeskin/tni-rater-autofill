@@ -218,7 +218,9 @@ export const amwins = {
     { id: 'openApplication', page: START_PAGES, text: '^open new application$', after: ['amwins.riskState'] },
     { id: 'importVins', text: '^import data$', after: ['amwins.vinList'], immediate: true },
     // Import Data only shows a preview: this adds the vehicles (and redraws their rows).
-    { id: 'importVinRecords', text: '^import valid records$', afterActions: ['importVins'], immediate: true },
+    // Done only once the rows changed (the VIN and decoded values drawn into them, the list
+    // emptied): a click the page didn't take is tried again, then left to the agent.
+    { id: 'importVinRecords', text: '^import valid records$', afterActions: ['importVins'], immediate: true, verify: 'revealed' },
     // Underwriting: answers every General Information question No in one go (before the rules
     // below answer them one at a time; "other topics" is set back to Yes afterwards).
     { id: 'defaultNo', text: '^default all answers to\\W*no\\W*$', immediate: true },
@@ -312,8 +314,9 @@ export const amwins = {
     { name: 'File upload (not used)', label: '^select files?', ignore: true },
     { selector: '#vehLookupVin', path: 'amwins.vinList', name: 'VINs to look up (one per line)', value: (r) => r.vehicles.map((v) => v.vin).filter(Boolean).join('\n') || null },
     { selector: dataId('locationNumber', VEHICLE), name: 'Vehicle location (the first, the insured)', kind: 'first-option', value: () => 'first option' },
-    // VIN, year, make, model come from Import Data (its wording wins); typed only when it found
-    // nothing.
+    // VIN, year, make, model come from Import Data (its wording wins). Each row below is found by
+    // its VIN (the witness set at the end of this list), so a vehicle the import didn't add has
+    // no row and stays the agent's: nothing is typed into a blank row.
     { selector: dataId('vin', VEHICLE), path: 'vehicles[].vin', trustPage: true },
     { selector: dataId('year', VEHICLE), path: 'vehicles[].year', trustPage: true },
     { selector: dataId('make', VEHICLE), path: 'vehicles[].make', trustPage: true },
@@ -370,6 +373,15 @@ export const amwins = {
     const list = panel === DRIVER ? 'drivers' : 'vehicles';
     const selector = rule.selector === '#marketValue' ? `${VEHICLE} [data-id="costNew"]`
       : rule.label === '^permanently attached equipment' ? `${VEHICLE} [data-id="permanentlyAttachedEquipment"] input[type="radio"]` : rule.selector;
+    // A vehicle's row is the one showing its VIN (the witness), whatever its position: Import
+    // Valid Records draws the rows in its own order, and a VIN it rejected has no row (that
+    // vehicle's answers stay the agent's). Until the import lands the rows show no VIN, so
+    // nothing is typed into a row before it. Drivers and the coverage rows have no VIN: theirs
+    // are still the row at the unit's position.
+    if (panel === VEHICLE) {
+      return { ...rule, repeat: list, witness: { selector: '[data-id="vin"]', path: 'vehicles[].vin' },
+        repeatSelector: (r) => (r[list].length > 1 ? selector.replace(panel, `${panel} .app-rp-section`) : rule.selector || selector) };
+    }
     return { ...rule, repeat: list, repeatSelector: (r, a) => r[list].length > 1
       ? selector.replace(panel, `${panel} > .app-rp-section[data-id="${a[list]}"]`) : rule.selector || selector };
   }),
