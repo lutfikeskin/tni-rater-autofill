@@ -490,6 +490,11 @@ test('an owner whose surname has two words is found in the driver list', () => {
   assert.ok(other.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a different person still warns');
   const sharedWord = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO' }, { today: new Date('2026-09-30') });
   assert.ok(sharedWord.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a surname word with another first name still warns');
+  // Audit 2026-10-08: a one-word surname alone linked another person ("Alice Sample" to "Bob Sample").
+  const family = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO', drv_first_1: 'BOB', drv_last_1: 'EXAMPLO' }, { today: new Date('2026-09-30') });
+  assert.ok(family.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'the same one-word surname with another first name is another person');
+  const same = normalizeIntake({ ...people, owner_name_1: 'BOB EXAMPLO', drv_first_1: 'BOB', drv_last_1: 'EXAMPLO' }, { today: new Date('2026-09-30') });
+  assert.ok(!same.warnings.some((w) => w.code === 'drivers.owner-not-listed'));
 });
 
 // PR #17 review: a mention ("no bobtail") must never become NTL coverage. The agent sets it.
