@@ -129,7 +129,8 @@ test('parseRadius and isLongHaul', () => {
   assert.deepEqual(parseRadius('250 kilometers'), { miles: null, kind: 'unit' });
   assert.deepEqual(parseRadius('5 hours'), { miles: null, kind: 'text' });
   assert.deepEqual(parseRadius('N/A'), { miles: null, kind: 'missing' });
-  for (const text of ['OTR', 'over the road', 'nationwide', 'National', 'anywhere', 'all 48', 'long-haul', 'longhaul']) assert.ok(isLongHaul(text), text);
+  for (const text of ['OTR', 'over the road', 'nationwide', 'National', 'anywhere', 'all 48', 'long-haul', 'longhaul', '48 contiguous states', '48 US states', 'contiguous 48', '48 state']) assert.ok(isLongHaul(text), text);
+  assert.deepEqual(parseRadius('48 contiguous states'), { miles: null, kind: 'long-haul' }, 'never 48 miles');
   for (const text of ['48', '48 miles', 'company', 'longer trips', '', null, 'Regional']) assert.ok(!isLongHaul(text), String(text));
 });
 

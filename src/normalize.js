@@ -15,7 +15,7 @@ const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
 // Radius answers that mean the widest band (the carrier rules map them to "more than 500 miles"):
 // unlimited, long haul, nationwide, OTR, "48 states" / "lower 48", anywhere. Whole words only: a
 // bare "48" is 48 miles, and "any" must not be found inside "company".
-export const LONG_HAUL = /\b(unlimited|long(?:[\s-]*(?:haul|distance))?|nation(?:al|wide)?|otr|over[\s-]*the[\s-]*road|(?:lower|all|continental)[\s-]*48|48[\s-]*states?|any(?:where)?)\b/i;
+export const LONG_HAUL = /\b(unlimited|long(?:[\s-]*(?:haul|distance))?|nation(?:al|wide)?|otr|over[\s-]*the[\s-]*road|(?:lower|all|continental|contiguous)[\s-]*48|48(?:[\s-]+[a-z.]+)?[\s-]*states?|any(?:where)?)\b/i;
 export const isLongHaul = (text) => LONG_HAUL.test(String(text ?? ''));
 
 // Kilometres (any spelling) are the one unit worth converting for the agent; the rest are not
