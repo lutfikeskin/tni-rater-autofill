@@ -30,9 +30,13 @@ function identify(e, ids) {
   const unit = `${String(e.view ?? '').split(':')[1] ?? ''}@${String(e.key ?? '').match(/@(\d+)$/)?.[1] ?? '1'}`;
   const named = String(e.key ?? '').match(/^ref:([^@]+)/);
   if (named) return { key: `${e.carrier}|${e.page}|ref:${named[1]}`, unit, ref: named[1], layout: ids.byField.get(`${e.session}|${e.page}|${e.q}`) };
-  const found = ids.byField.get(`${e.session}|${e.page}|${e.q}`) ?? ids.byCaption.get(`${e.carrier}|${e.page}|${textOf(e.label)}`);
+  const caption = `${e.carrier}|${e.page}|${textOf(e.label)}`;
+  const found = ids.byField.get(`${e.session}|${e.page}|${e.q}`) ?? ids.byCaption.get(caption);
   if (found) return { key: `${e.carrier}|${e.page}|${found.id}`, unit, ref: found.ref, layout: found };
-  return { key: `${e.carrier}|${e.page}|${textOf(e.label) ? `text:${textOf(e.label)}` : `q:${e.q}`}`, unit };
+  // A text two questions of the page share (byCaption knows it, but as no one question) can't name
+  // either: its id, which Progressive may renumber, rather than one question for both (Codex on PR #56).
+  const shared = ids.byCaption.has(caption);
+  return { key: `${e.carrier}|${e.page}|${textOf(e.label) && !shared ? `text:${textOf(e.label)}` : `q:${e.q}`}`, unit };
 }
 
 // Which question an event is about, as the learner groups them (by data-model name or text, never

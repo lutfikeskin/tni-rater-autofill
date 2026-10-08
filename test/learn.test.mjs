@@ -495,3 +495,21 @@ test('the review names two questions reading the same apart', async () => {
   assert.match(md, /progressive BusinessOwnerInfo "City" `PrimaryBusinessAddressInput\.City`/);
   assert.match(md, /progressive BusinessOwnerInfo "City" `BusinessOwnerHomeAddressInput\.City`/);
 });
+
+// Codex on PR #56: two controls reading the same at once (Rates' cargo section and cargo row) stay two
+// questions, even when only one has a data-model name; and a text two questions share names neither.
+test('identity: controls drawn together stay apart; a shared text falls back to the id', () => {
+  const layout = (session, fields) => ({ id: `l${session}`, t: at(1), session, carrier: 'progressive', type: 'page_layout', page: 'CoveragesRates', context: {}, fields });
+  const cargo = { kind: 'select', label: 'Motor Trucking Cargo', options: ['$100K'] };
+  const events = [layout('a', [{ ...cargo, q: '216F', ref: 'CargoInput.Section' }, { ...cargo, q: '2150' }])];
+  const key = questionOf(events);
+  const section = key({ session: 'a', carrier: 'progressive', page: 'CoveragesRates', q: '216F', label: 'Motor Trucking Cargo', key: 'ref:CargoInput.Section' });
+  const row = key({ session: 'a', carrier: 'progressive', page: 'CoveragesRates', q: '2150', label: 'Motor Trucking Cargo', key: '2150' });
+  assert.notEqual(section, row);
+  // An AI decision in a quote without a layout of the page: the text names two questions there.
+  const two = [layout('b', [{ ...cargo, q: '216F', ref: 'CargoInput.Section' }, { ...cargo, q: '2150', ref: 'CargoInput.Row' }])];
+  const ai = (q) => questionOf(two)({ session: 'no-layout', carrier: 'progressive', page: 'CoveragesRates', q, label: 'Motor Trucking Cargo', type: 'ai_decision' });
+  assert.notEqual(ai('216F'), ai('2150'), 'not one question for both');
+  assert.equal(questionOf(two)({ session: 'no-layout', carrier: 'progressive', page: 'CoveragesRates', q: '3AA', label: 'A text only one question reads', type: 'ai_decision' }),
+    'progressive|CoveragesRates|text:a text only one question reads', 'a text no other question shares: still by its text');
+});
