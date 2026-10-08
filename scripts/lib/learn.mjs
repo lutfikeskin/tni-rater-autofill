@@ -25,12 +25,13 @@ const textOf = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 // by their page and text, as before.
 function identify(e, ids) {
   if (!e.q) return { key: `${e.carrier}|${e.page}|${e.label}`, unit: '' };
-  const view = String(e.view ?? '').split(':')[1] ?? '';
-  const named = String(e.key ?? '').match(/^ref:([^@]+)(?:@(\d+))?$/);
-  if (named) return { key: `${e.carrier}|${e.page}|ref:${named[1]}`, unit: `${view}@${named[2] ?? '1'}`, ref: named[1] };
+  // Its row from its own key (<q>@<row>, ref:<name>@<row>; none: the first row).
+  const unit = `${String(e.view ?? '').split(':')[1] ?? ''}@${String(e.key ?? '').match(/@(\d+)$/)?.[1] ?? '1'}`;
+  const named = String(e.key ?? '').match(/^ref:([^@]+)/);
+  if (named) return { key: `${e.carrier}|${e.page}|ref:${named[1]}`, unit, ref: named[1], layout: ids.byField.get(`${e.session}|${e.page}|${e.q}`) };
   const found = ids.byField.get(`${e.session}|${e.page}|${e.q}`) ?? ids.byCaption.get(`${e.carrier}|${e.page}|${textOf(e.label)}`);
-  if (found) return { key: `${e.carrier}|${e.page}|${found.id}`, unit: `${view}@${found.row?.split('_')[1] ?? '1'}`, ref: found.ref, layout: found };
-  return { key: `${e.carrier}|${e.page}|${textOf(e.label) ? `text:${textOf(e.label)}` : `q:${e.q}`}`, unit: `${view}@1` };
+  if (found) return { key: `${e.carrier}|${e.page}|${found.id}`, unit, ref: found.ref, layout: found };
+  return { key: `${e.carrier}|${e.page}|${textOf(e.label) ? `text:${textOf(e.label)}` : `q:${e.q}`}`, unit };
 }
 
 // session -> answer key (question, then unit) -> { value, source, corrected, matches, label, page, q, kind }
@@ -63,7 +64,11 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
       if (!a) continue;
       a.kind = e.kind;
       if (e.by === 'agent') {
-        if (a.autofilled && e.vsAutofill === 'different') {
+        // The panel knew the field was autofilled (`autofilled`, by its key), also when the fill was
+        // on another page that shows the same question (Progressive's UM/UIM on More About Business
+        // and on Rates): the agent changed our answer.
+        if ((a.autofilled || e.autofilled) && e.vsAutofill === 'different') {
+          a.autofilled = true;
           a.corrected = true;
           a.correction = e.kind === 'text' ? 'typed a different value' : `"${a.filledValue ?? e.from}" → "${e.to}"`;
         }
@@ -113,10 +118,13 @@ export function learn(events, { carriers = [], minQuotes = 5, threshold = 0.9 } 
   const quotesOf = (list) => new Set(list.map((o) => o.session)).size;
   for (const [key, obs] of byQuestion) {
     const [carrier] = key.split('|');
-    const first = obs.find((o) => o.label) ?? obs[0];
-    const isMapped = obs.some((o) => o.autofilled) || claimed(first);
+    // The question's wording as the page draws it (a layout's caption) over an event's, which can
+    // be the recorder's guess at the text before the field.
+    const caption = obs.find((o) => o.layout?.caption)?.layout.caption;
+    const first = { ...(obs.find((o) => o.label) ?? obs[0]), ...(caption ? { label: caption } : {}) };
     const named = obs.find((o) => o.ref ?? o.layout?.ref);
     const field = named ? named.ref ?? named.layout.ref : null;
+    const isMapped = obs.some((o) => o.autofilled) || claimed({ ...first, ref: field });
     const base = { carrier, q: first.q, field, page: first.page, label: first.label ?? '', quotes: quotesOf(obs) };
     const choices = obs.filter((o) => o.value !== undefined && o.value !== null && o.value !== '' && CHOICE.has(o.kind ?? 'select'));
 

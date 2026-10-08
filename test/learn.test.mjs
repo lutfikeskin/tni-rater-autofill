@@ -272,3 +272,46 @@ test('learning: two questions reading the same stay apart, and so do one quote\'
   const { suggestions } = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minQuotes: 5 });
   assert.deepEqual(suggestions.standard.map((x) => x.answer).sort(), ['Business city', 'Home city'], 'each City its own; the vehicles disagree');
 });
+
+// Fable on this change: before names, Rates drew one id once per vehicle; each row is that
+// question's, in its own unit, whatever the quote's vehicle count.
+test('learning: Rates rows recorded before names are one question, each vehicle its own answer', () => {
+  const events = [];
+  const row = (q, r) => ({ q, kind: 'select', label: 'Comprehensive deductible', row: null, options: ['$500', '$1,000'], _r: r });
+  for (const [s, rows] of [['three', 3], ['one', 1]]) {
+    events.push({ id: `l${s}`, t: at(rows), session: s, carrier: 'progressive', type: 'page_layout', page: 'CoveragesRates', context: {},
+      fields: [{ q: '1D97', kind: 'select', label: 'Bodily Injury and Property Damage Liability', options: ['$1M'] }, ...Array.from({ length: rows }, (_, r) => row('1FF2', r))] });
+    for (let r = 1; r <= rows; r++) {
+      events.push({ id: `c${s}${r}`, t: at(10 + r), session: s, carrier: 'progressive', type: 'field_change', page: 'CoveragesRates', q: '1FF2',
+        key: r === 1 ? '1FF2' : `1FF2@${r}`, label: 'Comprehensive deductible', kind: 'select', by: 'agent', to: r === 2 ? '$500' : '$1,000' });
+    }
+  }
+  const answers = finalAnswers(events);
+  const rowsOf = (s) => [...answers.get(s).values()].filter((a) => a.q === '1FF2');
+  assert.equal(new Set([...rowsOf('three'), ...rowsOf('one')].map((a) => a.question)).size, 1, 'one question in both quotes');
+  assert.deepEqual(rowsOf('three').map((a) => a.value), ['$1,000', '$500', '$1,000'], 'each vehicle its own answer');
+});
+
+test('learning: a suggested rule takes the question as the page words it, not the recorder\'s guess', () => {
+  const events = [];
+  for (let i = 0; i < 5; i++) {
+    events.push({ id: `l${i}`, t: at(i * 10), session: `w${i}`, carrier: 'progressive', type: 'page_layout', page: 'MoreAboutBusiness', context: {},
+      fields: [{ q: '3A1', kind: 'radio', label: 'Does the customer pull double trailers?', options: ['Yes', 'No'] }] });
+    events.push({ id: `c${i}`, t: at(i * 10 + 1), session: `w${i}`, carrier: 'progressive', type: 'field_change', page: 'MoreAboutBusiness', q: '3A1',
+      label: 'Yes No', kind: 'radio', by: 'agent', to: 'No' });
+  }
+  const [std] = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minQuotes: 5 }).suggestions.standard;
+  assert.equal(std.label, 'Does the customer pull double trailers?');
+  assert.equal(rule(std.rule).ask, 'Does the customer pull double trailers?');
+});
+
+// Real data 2026-10-08: UIM filled on More About Business, corrected on Rates (the same question).
+test('learning: a correction counts when the fill was on another page showing the question', () => {
+  const events = [
+    { id: 'f', t: at(1), session: 'x', carrier: 'progressive', type: 'fill_field', page: 'MoreAboutBusiness', q: '1DD8', label: 'Underinsured Motorist Bodily Injury', controlKind: 'select', result: 'filled', path: 'coverage.uimbi', shown: '$1M' },
+    { id: 'c', t: at(2), session: 'x', carrier: 'progressive', type: 'field_change', page: 'CoveragesRates', q: '1DD8', key: 'ref:LineInput.UIMBILimit', label: 'Underinsured Motorist Bodily Injury', kind: 'select', by: 'agent', autofilled: 'coverage.uimbi', vsAutofill: 'different', from: '$1M', to: '$500K' },
+  ];
+  const rates = [...finalAnswers(events).get('x').values()].find((a) => a.page === 'CoveragesRates');
+  assert.equal(rates.corrected, true);
+  assert.equal(rates.autofilled, true);
+});

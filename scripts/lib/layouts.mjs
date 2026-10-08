@@ -185,15 +185,14 @@ function sameIdentities(p, merged) {
 }
 
 // A question's identity without its row or its order among its name's rows: `ref:<name>` (or a
-// text key, kept whole: it tells the business's and the owner's "City" apart), and its row.
+// text key, kept whole: it tells the business's and the owner's "City" apart).
 const baseId = (k) => (String(k).startsWith('ref:') ? String(k).replace(/[@#].*$/, '') : String(k));
-const rowOf = (k) => String(k).match(/^ref:[^@#]+@(\d+_\d+)$/)?.[1] ?? null;
 
 // Which question each recorded field of a quote was, across Progressive's renumbering (2026-10-07)
 // and across products, for the learner: the same keys and joins as buildLayouts (snapshotKeys,
 // mergeUnnamed), with every layout of a page together. A field recorded before names joins the
 // named field with its text (in its place, when the text repeats).
-//   byField:   `<session>|<page>|<q>` -> { id, row, ref, caption, kind }; id is a data-model name
+//   byField:   `<session>|<page>|<q>` -> { id, ref, caption, kind }; id is a data-model name
 //              (ref:<name>) or the question's text on its page (text:…), a number only when it has
 //              neither (no text: a bare number)
 //   byCaption: `<carrier>|<page>|<text>` -> the one question a text names on the page, else null
@@ -217,12 +216,20 @@ export function fieldIdentities(events) {
     const merged = mergeUnnamed(fields, placeOf);
     const identity = (k) => {
       const field = fields.get(k);
-      return field && { id: baseId(k), row: rowOf(k) ?? field.row ?? null, ref: field.ref ?? null, caption: field.caption ?? null, kind: field.kind };
+      return field && { id: baseId(k), ref: field.ref ?? null, caption: field.caption ?? null, kind: field.kind };
     };
-    p.snapshots.forEach((s, j) => s.fields.forEach((f, i) => {
-      const found = f.q && identity(merged.get(keys[j][i]) ?? keys[j][i]);
-      if (found) byField.set(`${s.session}|${p.page}|${f.q}`, found);
-    }));
+    // One id drawn once per vehicle (Rates rows recorded before names: their order among the
+    // rows, `…#2`) is that question's: its first row's identity, so a quote with three vehicles and
+    // one with one name it the same. Which row an answer is in comes from the answer's own key.
+    p.snapshots.forEach((s, j) => {
+      const seen = new Set();
+      s.fields.forEach((f, i) => {
+        if (!f.q || seen.has(f.q)) return;
+        seen.add(f.q);
+        const found = identity(merged.get(keys[j][i]) ?? keys[j][i]);
+        if (found) byField.set(`${s.session}|${p.page}|${f.q}`, found);
+      });
+    });
     const captions = new Map();
     for (const k of fields.keys()) {
       const text = textOf({ label: fields.get(k).caption });
@@ -230,7 +237,7 @@ export function fieldIdentities(events) {
     }
     for (const [text, ks] of captions) {
       const key = `${p.carrier}|${p.page}|${text}`;
-      byCaption.set(key, new Set(ks.map(baseId)).size === 1 && !byCaption.has(key) ? { ...identity(ks[0]), row: null } : null);
+      byCaption.set(key, new Set(ks.map(baseId)).size === 1 && !byCaption.has(key) ? identity(ks[0]) : null);
     }
   }
   return { byField, byCaption };
