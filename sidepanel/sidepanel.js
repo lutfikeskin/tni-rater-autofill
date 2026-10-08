@@ -1,6 +1,6 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseEdit, ntlMention, ntlCheckMessage } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
@@ -757,6 +757,15 @@ function fieldRow(path, label, kind, flagged, layout = 'row') {
     const before = get(state.intake.record, path);
     const after = parseEdit(kind, input.value);
     set(state.intake.record, path, after);
+    // A value derived from this one (radius → miles, year established → years in business)
+    // follows the edit; its row in the client details shows the new value without a re-render.
+    for (const derived of rederive(state.intake.record, path)) {
+      const row = document.getElementById(`f-${derived.replace(/[^\w]/g, '_')}`);
+      if (!row) continue;
+      const value = get(state.intake.record, derived);
+      row.value = value ?? '';
+      row.closest('.field')?.classList.toggle('empty', value == null);
+    }
     intakeEdited();
     // Log that the agent corrected the intake here (and whether it was flagged), not the value.
     const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
