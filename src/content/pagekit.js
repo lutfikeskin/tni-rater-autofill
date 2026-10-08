@@ -1147,7 +1147,7 @@
       for (const { step: planned, control: c, how, reworded } of pairs) {
         // A known field whose question reads differently now: answered, and the agent checks it.
         const step = reworded ? { ...planned, warn: [planned.warn, `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check the answer.`].filter(Boolean).join(' ') } : planned;
-        const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how };
+        const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how, standard: !!step.standard };
         // A question left as the page has it whose wording changed: what the page has may not fit
         // any more, so the agent checks it (Continue waits).
         const leftAlone = step.verifyOnly || step.ignore;
