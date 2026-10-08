@@ -70,9 +70,9 @@ upload that arrives late is in the next review and none is in two. Runs go one a
 artifact for 90 days and shows it as the run summary. When something is new, it comments on the
 open issue labelled `daily-review`, or opens one titled "Daily review" when none is open: problem
 reports, questions without a rule (or AmWINS fields the mock lacks) first seen in a layout of the
-period (one per question, whatever its row, number, product or step: `scripts/lib/daily.mjs`), a deployed usage server that isn't the
-repository's (`scripts/server-check.mjs`, checked first and only on the default branch: redeploy
-it), or a run that couldn't finish (the server down, a broken script; when the broken script is the
+period (one per question, whatever its row, number, product or step: `scripts/lib/daily.mjs`), a
+deployed usage server that isn't the repository's (`scripts/server-check.mjs`, checked first and
+only on the default branch: redeploy it), or a run that couldn't finish (the server down, a broken script; when the broken script is the
 one that comments, the workflow says so with `gh` alone). Nothing new: no comment.
 A long list is cut to fit a GitHub comment, pointing to the review. Closing the issue is how a
 reviewer says it's been read; the next new item opens another. The

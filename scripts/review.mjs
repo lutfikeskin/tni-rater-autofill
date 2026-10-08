@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 import { loadEvents, quoteSessions } from './lib/events.mjs';
 import { loadLayouts, report as coverageReport } from './coverage.mjs';
 import { receivedAt, uncoveredQuestions } from './lib/daily.mjs';
+import { questionOf } from './lib/learn.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -81,10 +82,21 @@ const corrections = recent.filter((e) => e.type === 'field_change' && e.by === '
 // --- AI assistant -----------------------------------------------------------------------------
 const asks = recent.filter((e) => e.type === 'ai_suggest');
 const decisions = recent.filter((e) => e.type === 'ai_decision');
+// One row per question, whatever its number (Progressive renumbered them on 2026-10-07), named
+// by its page and text.
+const questionKey = questionOf(all);
+// What tells two questions reading the same apart (the business's and the owner's "City"): its
+// data-model name, else where it stands (after which question, or its order there), never its number.
+const which = (key) => {
+  const id = String(key).split('|').slice(2).join('|');
+  if (id.startsWith('ref:')) return ` \`${id.slice(4)}\``;
+  const at = id.match(/@([^#]*)#(\d+)$/);
+  return at ? (at[1] ? ` (after "${at[1]}")` : ` (#${at[2]})`) : '';
+};
 const byQuestion = new Map();
 for (const d of decisions) {
-  const key = `${d.page ?? '?'} ${d.q ? `q${d.q}` : ''} "${d.label ?? ''}"`;
-  const row = byQuestion.get(key) ?? { accepted: 0, dismissed: 0, auto: 0, approved: 0, rejected: 0, failed: 0, choices: new Map() };
+  const key = questionKey(d);
+  const row = byQuestion.get(key) ?? { name: `${d.page ?? '?'} "${d.label ?? ''}"${which(key)}`, accepted: 0, dismissed: 0, auto: 0, approved: 0, rejected: 0, failed: 0, choices: new Map() };
   row[d.decision] = (row[d.decision] ?? 0) + 1;
   if (d.choice && d.decision !== 'dismissed' && d.decision !== 'rejected') row.choices.set(d.choice, (row.choices.get(d.choice) ?? 0) + 1);
   byQuestion.set(key, row);
@@ -127,7 +139,7 @@ else {
     p('| Question | Agreed | Disagreed | Auto | Failed | AI chose |', '| --- | --- | --- | --- | --- | --- |');
     for (const r of aiRows) {
       const chose = [...r.choices.entries()].sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c} ×${n}`).join('; ');
-      p(`| ${r.key.replace(/\|/g, '/')} | ${r.yes} | ${r.no} | ${r.auto} | ${r.failed} | ${chose.replace(/\|/g, '/')} |`);
+      p(`| ${r.name.replace(/\|/g, '/')} | ${r.yes} | ${r.no} | ${r.auto} | ${r.failed} | ${chose.replace(/\|/g, '/')} |`);
     }
     p('');
   }
@@ -140,8 +152,8 @@ if (!timed.length) p('No timing yet (recorded from version 0.3.5 on).', '');
 else {
   const byQ = new Map();
   for (const e of timed) {
-    const key = `${e.carrier} ${e.page} ${e.q ? `q${e.q}` : ''} "${e.label ?? ''}"`;
-    const row = byQ.get(key) ?? { page: e.page, n: 0, ms: [], settle: [], ajax: 0, effects: 0, revealed: 0, removed: 0, changed: 0 };
+    const key = questionKey(e);
+    const row = byQ.get(key) ?? { name: `${e.carrier} ${e.page} "${e.label ?? ''}"${which(key)}`, page: e.page, n: 0, ms: [], settle: [], ajax: 0, effects: 0, revealed: 0, removed: 0, changed: 0 };
     row.n++; row.ms.push(e.timing.ms); row.settle.push(e.timing.settleMs);
     if (e.timing.ajax > 0) row.ajax++;
     if (e.timing.revealed || e.timing.removed || e.timing.changed) row.effects++;
@@ -161,7 +173,7 @@ else {
   for (const [page, x] of [...pages.entries()].sort((a, b) => b[1].ms - a[1].ms)) p(`| ${page} | ${x.answers} | ${(x.ms / 1000).toFixed(1)} s | ${x.free} | ${(x.freeMs / 1000).toFixed(1)} s |`);
   p('', 'Per question (slowest first). Independent = never revealed, removed or changed another question in any quote so far.', '');
   p('| Question | Seen | Median ms | Server request | Independent | Side effects (revealed/removed/changed) |', '| --- | --- | --- | --- | --- | --- |');
-  for (const r of rows.sort((a, b) => b.med - a.med)) p(`| ${r.key.replace(/\|/g, '/')} | ${r.n} | ${r.med} | ${r.ajax}/${r.n} | ${r.effects ? 'no' : 'yes'} | ${r.effects ? `${r.revealed}/${r.removed}/${r.changed}` : '—'} |`);
+  for (const r of rows.sort((a, b) => b.med - a.med)) p(`| ${r.name.replace(/\|/g, '/')} | ${r.n} | ${r.med} | ${r.ajax}/${r.n} | ${r.effects ? 'no' : 'yes'} | ${r.effects ? `${r.revealed}/${r.removed}/${r.changed}` : '—'} |`);
   p('');
 }
 

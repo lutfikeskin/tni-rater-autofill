@@ -151,13 +151,16 @@ function addField(fields, k, f) {
 
 // Fields kept under their text (recorded before data-model names) join the one named field of the
 // page with the same kind and text; a text two questions share joins the one in the same place
-// (after the same anchor). Returns which text keys joined which named field.
-function mergeUnnamed(fields, placeOf = new Map()) {
+// (after the same anchor). Never a field drawn beside it in one layout: two controls reading the
+// same at once (Rates' cargo section and cargo row) are two questions (Codex on PR #56). `keys`:
+// each layout's field keys. Returns which text keys joined which named field.
+function mergeUnnamed(fields, placeOf = new Map(), keys = []) {
   const merged = new Map();
   const named = [...fields].filter(([k]) => k.startsWith('ref:'));
+  const together = (a, b) => keys.some((ks) => ks.includes(a) && ks.includes(b));
   for (const [k, f] of [...fields]) {
     if (!k.startsWith('text:')) continue;
-    let same = named.filter(([, n]) => n.kind === f.kind && String(n.caption ?? '').trim().toLowerCase() === String(f.caption ?? '').trim().toLowerCase());
+    let same = named.filter(([nk, n]) => n.kind === f.kind && String(n.caption ?? '').trim().toLowerCase() === String(f.caption ?? '').trim().toLowerCase() && !together(k, nk));
     if (same.length > 1 && k.includes('@')) same = same.filter(([nk]) => placeOf.get(nk) === k.slice('text:'.length));
     if (same.length !== 1) continue;
     const [nk, n] = same[0];
@@ -213,7 +216,7 @@ export function fieldIdentities(events) {
     const { keys, placeOf } = snapshotKeys(p.snapshots);
     const fields = new Map();
     p.snapshots.forEach((s, j) => s.fields.forEach((f, i) => addField(fields, keys[j][i], f)));
-    const merged = mergeUnnamed(fields, placeOf);
+    const merged = mergeUnnamed(fields, placeOf, keys);
     const identity = (k) => {
       const field = fields.get(k);
       return field && { id: baseId(k), ref: field.ref ?? null, caption: field.caption ?? null, kind: field.kind };
@@ -285,7 +288,7 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
           snap.keys = keys[j];
           snap.fields.forEach((f, i) => addField(p.fields, snap.keys[i], f));
         });
-        sameIdentities(p, mergeUnnamed(p.fields, placeOf));
+        sameIdentities(p, mergeUnnamed(p.fields, placeOf, keys));
         // Per coverage request: a question that shows for some coverages only is not one answer's
         // follow-up across them (inferShowWhenByGroup).
         const groups = new Map();

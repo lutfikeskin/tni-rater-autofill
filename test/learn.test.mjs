@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadEvents, quoteSessions } from '../scripts/lib/events.mjs';
-import { learn, finalAnswers } from '../scripts/lib/learn.mjs';
+import { learn, finalAnswers, questionOf } from '../scripts/lib/learn.mjs';
 import { fieldStatus } from '../scripts/lib/coverage.mjs';
 import { buildPlan } from '../src/plan.js';
 import { buildLayouts, layoutKey } from '../scripts/lib/layouts.mjs';
@@ -470,4 +470,46 @@ test('events: a test-page quote goes whole, a mixed one keeps its carrier work, 
   const loaded = loadEvents([dir]);
   assert.deepEqual(loaded.map((x) => x.id).sort(), ['i1', 'i2', 'm1', 'm3']);
   assert.deepEqual([...quoteSessions(loaded)], ['mixed'], 'an intake never taken to a carrier is loaded, but no quote');
+});
+
+// The review's Speed and AI tables split a question at Progressive's renumbering (91 of 304 rows).
+test('the review names one question once, whatever its number', () => {
+  const layout = (session, q, ref) => ({ id: `l${session}`, t: at(1), session, carrier: 'progressive', type: 'page_layout', page: 'AddVehicle', context: {}, fields: [{ q, ref, kind: 'radio', label: 'Is this vehicle used for hire?' }] });
+  const fill = (session, q, key) => ({ id: `f${session}`, t: at(2), session, carrier: 'progressive', type: 'fill_field', page: 'AddVehicle', q, key, label: 'Is this vehicle used for hire?', result: 'filled' });
+  const events = [layout('old', '2C1A', null), fill('old', '2C1A', '2C1A'), layout('new', '3F07', 'RiskInput.ForHire'), fill('new', '3F07', 'ref:RiskInput.ForHire')];
+  const key = questionOf(events);
+  assert.equal(key(events[1]), key(events[3]));
+  assert.equal(key({ carrier: 'amwins', page: '/application/businessauto', label: 'Gender' }), 'amwins|/application/businessauto|Gender', 'without an id: page and text, as before');
+});
+
+// Codex on PR #56: two questions reading the same are two rows, each named by what tells them apart.
+test('the review names two questions reading the same apart', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
+  fs.mkdirSync(path.join(dir, 'events'));
+  const row = (id, key) => ({ id, t: at(1), session: 's', carrier: 'progressive', type: 'fill_field', page: 'BusinessOwnerInfo', q: id, key, label: 'City', result: 'filled', timing: { ms: 10, settleMs: 0, ajax: 0, revealed: 0, removed: 0, changed: 0 } });
+  fs.writeFileSync(path.join(dir, 'events', '2026-10-05.jsonl'), [row('284', 'ref:PrimaryBusinessAddressInput.City'), row('2B0', 'ref:BusinessOwnerHomeAddressInput.City')].map((e) => JSON.stringify(e)).join('\n'));
+  const out = path.join(dir, 'review.md');
+  execFileSync(process.execPath, [new URL('../scripts/review.mjs', import.meta.url).pathname, dir, '--all', '--out', out], { stdio: 'ignore' });
+  const md = fs.readFileSync(out, 'utf8');
+  assert.match(md, /progressive BusinessOwnerInfo "City" `PrimaryBusinessAddressInput\.City`/);
+  assert.match(md, /progressive BusinessOwnerInfo "City" `BusinessOwnerHomeAddressInput\.City`/);
+});
+
+// Codex on PR #56: two controls reading the same at once (Rates' cargo section and cargo row) stay two
+// questions, even when only one has a data-model name; and a text two questions share names neither.
+test('identity: controls drawn together stay apart; a shared text falls back to the id', () => {
+  const layout = (session, fields) => ({ id: `l${session}`, t: at(1), session, carrier: 'progressive', type: 'page_layout', page: 'CoveragesRates', context: {}, fields });
+  const cargo = { kind: 'select', label: 'Motor Trucking Cargo', options: ['$100K'] };
+  const events = [layout('a', [{ ...cargo, q: '216F', ref: 'CargoInput.Section' }, { ...cargo, q: '2150' }])];
+  const key = questionOf(events);
+  const section = key({ session: 'a', carrier: 'progressive', page: 'CoveragesRates', q: '216F', label: 'Motor Trucking Cargo', key: 'ref:CargoInput.Section' });
+  const row = key({ session: 'a', carrier: 'progressive', page: 'CoveragesRates', q: '2150', label: 'Motor Trucking Cargo', key: '2150' });
+  assert.notEqual(section, row);
+  // An AI decision in a quote without a layout of the page: the text names two questions there.
+  const two = [layout('b', [{ ...cargo, q: '216F', ref: 'CargoInput.Section' }, { ...cargo, q: '2150', ref: 'CargoInput.Row' }])];
+  const ai = (q) => questionOf(two)({ session: 'no-layout', carrier: 'progressive', page: 'CoveragesRates', q, label: 'Motor Trucking Cargo', type: 'ai_decision' });
+  assert.notEqual(ai('216F'), ai('2150'), 'not one question for both');
+  assert.equal(questionOf(two)({ session: 'no-layout', carrier: 'progressive', page: 'CoveragesRates', q: '3AA', label: 'A text only one question reads', type: 'ai_decision' }),
+    'progressive|CoveragesRates|text:a text only one question reads', 'a text no other question shares: still by its text');
 });
