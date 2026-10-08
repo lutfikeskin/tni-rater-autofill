@@ -6,6 +6,7 @@ import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex } from '../src/usage.js';
+import { quoteStatePick, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated } from '../src/ai/luna.js';
@@ -181,6 +182,9 @@ const state = {
   intake: null, // { record, warnings, stats, fileName, done: number[] }
   active: { drivers: 0, vehicles: 0, trailers: 0 },
   tab: null, // { id, url, carrier }
+  // The state each tab's quote was picked for on the carrier's page (tab id -> { carrier, code,
+  // session, dismissed }): kept when the intake is cleared or replaced, as the tab's quote is.
+  quoteStates: new Map(),
   // What autofill put in each field on the current tab (field key -> { path, shown }), so the
   // usage log can tell the agent's corrections apart from agreement.
   filled: new Map(),
@@ -946,6 +950,14 @@ function onRecorderMessage(msg, sender) {
     const view = viewOf(sender.tab.id, samePage(msg.page));
     log(...msg.changes.map((c) => ({ carrier, page: msg.page, view, ...fieldChangeEvent(c, ctx) })));
     scheduleLayout(layoutPage, 'changed');
+    // The quote's state, by whoever picked it: remembered for this tab, checked against the intake.
+    for (const c of msg.changes) {
+      const code = quoteStatePick(state.tab.carrier, samePage(msg.page), c);
+      if (code === undefined) continue;
+      if (code) state.quoteStates.set(sender.tab.id, { carrier, code, session: usage.currentSession()?.id ?? null, dismissed: null });
+      else state.quoteStates.delete(sender.tab.id);
+      showStateNote();
+    }
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
@@ -1432,6 +1444,7 @@ function renderSite() {
         ? "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page."
         : 'Open a Progressive, GEICO or AmWINS quote page to fill it.';
   showStopPage();
+  showStateNote();
 }
 
 // Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client
@@ -1454,6 +1467,31 @@ function showStopPage() {
     h('b', {}, ours ? `${carrier.name} stopped this quote` : `${carrier.name} stop page`),
     h('p', {}, ours ? note : `This tab was already on ${carrier.name}'s stop page before this client was loaded, so it may be another client's quote. Open or start this client's quote.`),
     h('p', { class: 'small' }, 'Nothing on this page is filled or clicked.')));
+}
+
+// The tab's quote is for another state than the intake's garaging state (src/quote-state.js): said
+// above both steps until the pick matches, the intake does, or the agent says the pick is right
+// (for this intake). Also when the pick came before this intake was loaded: the tab's quote
+// doesn't change with the intake. A tab that moves to another carrier forgets its pick.
+function showStateNote() {
+  const box = $('state-note');
+  const tabId = state.tab?.id;
+  let pick = state.quoteStates.get(tabId);
+  if (pick && state.tab?.carrier && pick.carrier !== state.tab.carrier.id) { state.quoteStates.delete(tabId); pick = null; }
+  const intakeId = usage.currentSession()?.intakeId ?? null;
+  const off = !pick || !state.intake || pick.carrier !== state.tab?.carrier?.id || pick.dismissed === `${intakeId}|${pick.code}`;
+  const differs = off ? null : stateMismatch(pick.code, state.intake.record);
+  box.hidden = !differs;
+  if (!differs) { box.replaceChildren(); return; }
+  const name = state.tab.carrier.name;
+  const before = pick.session !== (usage.currentSession()?.id ?? null);
+  box.replaceChildren(h('div', { class: 'agent-page stop-page', role: 'alert' },
+    h('b', {}, `This ${name} quote is for ${differs.picked}, the intake for ${differs.intake}`),
+    h('p', {}, before
+      ? `This tab's ${name} quote was started in ${differs.picked} before this intake was loaded; the intake's garaging state is ${differs.intake}.`
+      : `${differs.picked} was picked for this ${name} quote; the intake's garaging state is ${differs.intake}.`),
+    h('p', { class: 'small' }, `A ${differs.picked} quote won't take ${differs.intake} ZIP codes or rules. Start the quote in ${differs.intake}, or check the intake's address.`),
+    h('button', { type: 'button', class: 'link small', onclick: () => { pick.dismissed = `${intakeId}|${pick.code}`; showStateNote(); } }, `${differs.picked} is right for this client`)));
 }
 
 // A tab may still show the previous client's quote after an intake is loaded (or the panel

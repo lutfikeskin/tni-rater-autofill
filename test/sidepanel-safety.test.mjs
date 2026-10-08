@@ -1661,6 +1661,8 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
   const context = {
     state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0, layoutGeneration: 0, layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), layoutLatest: null, viewTabs: new Map(),
       lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set() },
+    // These carriers declare no quote-state control (the state warning has its own test).
+    quoteStatePick: () => undefined, showStateNote: () => {},
     sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
     busy: false, runs: [],
     runKit: async (tabId, carrier, func) => {
@@ -2473,4 +2475,83 @@ test('a manual capture is numbered in its scenario, keeps a redacted note and sc
   assert.equal(downloads.length, 3);
   assert.match(SIDEPANEL, /chrome\.commands\?\.onCommand\.addListener\(\(command\) => \{ if \(command === 'capture-page'\) captureFromShortcut\(\); \}\)/);
   assert.match(extractFunction('captureFromShortcut'), /mine\.id !== focused\.id\) return;/, 'only the focused window\'s panel captures');
+});
+
+// 2026-10-08 live run: a Florida intake, Utah picked on Progressive's home page; the intake was
+// then cleared and loaded again, and nothing said the quote was for another state until Progressive
+// refused the Florida ZIP on Add Vehicle. The panel warns as soon as they disagree.
+test('the panel warns when the quote state picked on the carrier page is not the intake\'s, across a reload', async () => {
+  const { quoteStatePick, stateMismatch } = await import('../src/quote-state.js');
+  const { progressive } = await import('../src/carriers/progressive.js');
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
+  const box = () => ({ hidden: true, children: [], replaceChildren(...next) { this.children = next; } });
+  const ui = { 'state-note': box() };
+  let session = { id: 's1', intakeId: 'fl-intake' };
+  const record = (st) => ({ applicant: { name: 'Synthetic Client LLC' }, garaging: { state: st } });
+  const state = {
+    intake: { record: record('FL') }, tab: { id: 7, url: 'https://www.foragentsonly.com/home/', carrier: progressive },
+    quoteStates: new Map(), filled: new Map(), labels: new Map(), choices: new Map(), agentKeys: new Map(),
+    viewTabs: new Map(), layoutReadyTabs: new Set(), layoutNewTabs: new Set(), visitedPages: new Set(), active: {},
+  };
+  const logged = [];
+  const context = {
+    state, URL, h: node, $: (id) => ui[id], quoteStatePick, stateMismatch,
+    usage: { log: (...e) => logged.push(...e), currentSession: () => session },
+    fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), redactor: () => (x) => x, redactionTerms: () => [],
+    scheduleLayout: () => {}, persistAgentKeys: () => {}, settleRejectedAi: async () => false, scheduleAutoFill: () => {}, syncAiBanner: () => {},
+    store: { set: async () => {} },
+  };
+  vm.runInNewContext(`${PAGE_HELPERS}\n${['onRecorderMessage', 'showStateNote', 'viewOf', 'saveViews', 'stepScope', 'editScope'].map(extractFunction).join('\n')}`, context);
+  const pick = (after, key = 'QuoteStateList', page = '/home/') =>
+    context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page, changes: [{ key, after, agent: true }] }, { tab: { id: 7 }, frameId: 0 });
+  const note = () => ui['state-note'];
+  const text = () => JSON.stringify(note().children);
+  const button = () => note().children[0].children.find((c) => c?.tag === 'button');
+
+  pick('Utah');
+  assert.equal(note().hidden, false);
+  assert.match(text(), /This Progressive quote is for Utah, the intake for Florida/);
+  assert.match(text(), /Utah was picked for this Progressive quote/);
+  assert.match(text(), /"role":"alert"/);
+  assert.doesNotMatch(text(), /Synthetic Client/);
+  // Cleared, then the same intake loaded again: the tab's quote is still Utah's.
+  state.intake = null;
+  context.showStateNote();
+  assert.equal(note().hidden, true);
+  state.intake = { record: record('FL') };
+  session = { id: 's2', intakeId: 'fl-intake' };
+  context.showStateNote();
+  assert.equal(note().hidden, false);
+  assert.match(text(), /started in Utah before this intake was loaded/);
+  // "Utah is right": hidden for this intake, also when loaded again; another intake hears it.
+  button().props.onclick();
+  assert.equal(note().hidden, true);
+  session = { id: 's3', intakeId: 'fl-intake' };
+  context.showStateNote();
+  assert.equal(note().hidden, true);
+  session = { id: 's4', intakeId: 'other-fl-intake' };
+  context.showStateNote();
+  assert.equal(note().hidden, false);
+  // The intake's state picked: no note; back to the placeholder: forgotten.
+  pick('Florida');
+  assert.equal(note().hidden, true);
+  assert.equal(state.quoteStates.get(7).code, 'FL');
+  pick('');
+  assert.equal(state.quoteStates.has(7), false);
+  // An intake without a state (an address it couldn't split): nothing to compare.
+  pick('Utah');
+  state.intake = { record: record(null) };
+  context.showStateNote();
+  assert.equal(note().hidden, true);
+  // AmWINS' risk state, filled from the intake or changed by the agent; another carrier forgets.
+  state.intake = { record: record('FL') };
+  state.tab = { id: 7, url: 'https://myagency.amwinsadmittedplacement.com/commerciallines', carrier: amwins };
+  context.showStateNote();
+  assert.equal(state.quoteStates.has(7), false, 'the tab moved to another carrier');
+  pick('Florida', 'riskState', '/commerciallines');
+  assert.equal(note().hidden, true);
+  pick('Virginia', 'riskState', '/commerciallines');
+  assert.match(text(), /This AmWINS quote is for Virginia, the intake for Florida/);
+  assert.equal(logged.filter((e) => e.type === 'field_change').length, 6, 'every change is still logged');
 });

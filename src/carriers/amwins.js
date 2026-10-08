@@ -184,6 +184,9 @@ export const amwins = {
   layoutUrl: /\/application\/businessauto/i,
   // One address for every step: a layout also names its step (the visible step heading).
   layoutSteps: true,
+  // The risk state on the start page (filled from the intake): the panel warns when the one picked
+  // isn't the intake's garaging state, e.g. an agent's change (src/quote-state.js).
+  quoteState: { pages: START_PAGES, key: 'riskState' },
   // No answer waits on the server (timing of the first three quotes: 0 of 294 answers sent a
   // request): fill a round of answers at a time.
   batch: true,

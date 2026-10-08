@@ -289,6 +289,9 @@ export const progressive = {
   world: 'MAIN',
   // Only the quote flow is filled automatically (not the home or quote-search pages).
   autoFillUrl: /\/Express\/Default\.aspx/i,
+  // The quote's state is picked on the home page (never filled there): the panel warns when it
+  // isn't the intake's garaging state (src/quote-state.js).
+  quoteState: { pages: ['/home/'], key: 'QuoteStateList' },
   // Live Progressive questions are mapped explicitly below. Generic label fallbacks can
   // turn an unvalidated field (especially optional contact or GL fields) into an assertion.
   useGenericRules: false,
