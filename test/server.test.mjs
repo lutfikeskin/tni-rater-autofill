@@ -178,6 +178,17 @@ test('a view is kept only as a tab order and a vehicle, driver or trailer number
   assert.deepEqual(rows.map((e) => e.dropped), [undefined, undefined, undefined, undefined, ['view'], ['view'], ['view']], 'a view it threw away is named');
 });
 
+// Audit 2026-10-08: 453 events from the local test page sat among agents' events.
+test('events from the local test page are refused, with why', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [ev({ carrier: 'test' }), ev(), ev({ type: 'intake_loaded', carrier: undefined, filled: undefined })] })).json();
+    assert.deepEqual([r.accepted, r.duplicates], [2, 0]);
+    assert.deepEqual(r.rejected, [{ index: 0, error: 'events from the local test page are not collected' }]);
+  });
+  assert.deepEqual(stored(dataDir).map((e) => e.carrier ?? null), ['progressive', null]);
+});
+
 // Audit 2026-10-08: an older server silently dropped fields the extension sent (pageChanged, how,
 // trailer views). What it drops is named on the event, and /v1/health says which version runs.
 test('dropped fields are named on the event (names only, bounded), and health names the server version', async () => {

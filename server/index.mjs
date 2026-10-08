@@ -92,6 +92,9 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     if (!e || typeof e !== 'object' || Array.isArray(e)) return { error: 'event is not an object' };
     const keep = EVENT_FIELDS[e.type];
     if (!keep) return { error: `unknown event type "${String(e.type).slice(0, 40)}"` };
+    // The local test page (src/carriers.js `test`, localhost) is never a quote: refused, as before
+    // a reviewer has to tell its fills from agents' (audit 2026-10-08: 453 such events).
+    if (e.carrier === 'test') return { error: 'events from the local test page are not collected' };
     if (typeof e.id !== 'string' || !/^[\w-]{8,64}$/.test(e.id)) return { error: 'event id missing or invalid' };
     if (typeof e.t !== 'string' || Number.isNaN(Date.parse(e.t))) return { error: 'event time missing or invalid' };
     if (JSON.stringify(e).length > (e.type === 'page_layout' ? MAX_LAYOUT_BYTES : MAX_EVENT_BYTES)) return { error: 'event too large' };

@@ -98,9 +98,12 @@ test('events load from server folders and exports, without duplicates', () => {
   fs.writeFileSync(path.join(dir, 'events', '2026-10-05.jsonl'), events.map((e) => JSON.stringify(e)).join('\n'));
   const exportFile = path.join(dir, 'export.json');
   fs.writeFileSync(exportFile, JSON.stringify({ kind: 'usage-log', agent: 'AYAZ', events: events.slice(0, 3).map((e) => ({ ...e, agent: null, page: e.page ? `${e.page}-Reload` : e.page })) }));
+  // The local test page's events, stored before the server refused them: left out.
+  fs.writeFileSync(path.join(dir, 'events', '2026-10-02.jsonl'), JSON.stringify({ id: 'local-test', t: '2026-10-02T15:00:00Z', session: 'x', carrier: 'test', type: 'fill_run' }));
   const loaded = loadEvents([dir, exportFile]);
   assert.equal(loaded.length, events.length);
   assert.ok(loaded.every((e) => !String(e.page ?? '').endsWith('-Reload')));
+  assert.ok(!loaded.some((e) => e.carrier === 'test'));
 });
 
 test('the steps of a one-address application are pages of their own in built layouts', () => {
