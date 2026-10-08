@@ -86,7 +86,7 @@ Events wait in `chrome.storage.local` on the agent's computer and are uploaded e
 npm run server
 ```
 
-Plain Node, no dependencies. It listens on `127.0.0.1:8787` and appends events to `server-data/events/YYYY-MM-DD.jsonl`, one file per day. It accepts only known event types and fields, drops agency staff lists from layouts, and ignores duplicates, so retried uploads are safe. Settings: `PORT`, `HOST`, `DATA_DIR`, `RATER_TOKEN`. Before running it anywhere other than this computer, set `RATER_TOKEN` (the extension sends it as a Bearer token), put it behind HTTPS, and add the server's address to `host_permissions` in `manifest.json`.
+Plain Node, no dependencies. It listens on `127.0.0.1:8787` and appends events to `server-data/events/YYYY-MM-DD.jsonl`, one file per day. It accepts only known event types and fields, drops agency staff lists from layouts, and ignores duplicates, so retried uploads are safe. Settings: `PORT`, `HOST`, `DATA_DIR`, `RATER_TOKEN`. On this computer (loopback) it needs no token. With `HOST` set to anything else it refuses to start until `RATER_TOKEN` is set (the extension sends it as a Bearer token); also put it behind HTTPS and add the server's address to `host_permissions` in `manifest.json`. `/v1/health` tells anyone the server's version; the event count needs the admin token ([hosting](docs/hosting.md)).
 
 ### Weekly review
 

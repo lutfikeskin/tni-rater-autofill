@@ -5,7 +5,7 @@
 //   PORT=8787 HOST=0.0.0.0 DATA_DIR=/srv/rater RATER_TOKEN=secret node server/index.mjs
 //
 // POST /v1/events   { agent, version, events: [...] }  -> { accepted, duplicates }
-// GET  /v1/health                                       -> { ok, events, server }
+// GET  /v1/health                                       -> { ok, server } (+ events with the admin token)
 // GET  /v1/days      (admin token)                      -> { days: [{ day, bytes }] }
 // GET  /v1/export?since=YYYY-MM-DD[&until=YYYY-MM-DD] (admin token) -> the days' JSONL, in order
 //
@@ -19,10 +19,13 @@
 // from one an older server threw away. /v1/health names this file's version (`server`, a hash of
 // it), so the daily review sees when the deployed server isn't the one in the repository.
 //
-// Listens on 127.0.0.1 unless HOST says otherwise. When exposed beyond this computer, set
-// RATER_TOKEN and put it behind HTTPS (Railway does: see docs/hosting.md). RATER_TOKEN is the
-// upload token the extension ships with; reading the logs back needs RATER_ADMIN_TOKEN, which
-// only TNI (and the daily review job) has. Without RATER_ADMIN_TOKEN the export is switched off.
+// Listens on 127.0.0.1 unless HOST says otherwise. Without RATER_TOKEN every upload is accepted,
+// which is fine on this computer only: bound to any other address the server refuses to start
+// (audit 2026-10-08: an unset variable made the deployment an open write endpoint). When exposed
+// beyond this computer, set RATER_TOKEN and put it behind HTTPS (Railway does: see
+// docs/hosting.md). RATER_TOKEN is the upload token the extension ships with; reading the logs
+// back needs RATER_ADMIN_TOKEN, which only TNI (and the daily review job) has. Without
+// RATER_ADMIN_TOKEN the export is switched off. PORT=0 takes a free port (the startup line names it).
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -40,6 +43,15 @@ export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fi
 // Names of dropped fields kept on an event: field-like names only, at most this many.
 const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
 const MAX_DROPPED = 20;
+
+// Addresses only this computer can reach: the one place an upload needs no token.
+const LOOPBACK = /^(127(\.\d{1,3}){3}|localhost|::1|\[::1\]|::ffff:127(\.\d{1,3}){3})$/i;
+// Why the server must not start with this host and token: null when it may. Fail closed: a
+// deployment that lost its RATER_TOKEN variable stops, rather than taking anyone's events.
+export function startupError({ host, token }) {
+  if (token || LOOPBACK.test(String(host))) return null;
+  return `RATER_TOKEN is not set and HOST=${host} is not loopback: refusing to start an open upload endpoint. Set RATER_TOKEN (docs/hosting.md), or bind HOST to 127.0.0.1 for local use.`;
+}
 
 // Event type -> fields kept. Anything else in an event is dropped.
 export const COMMON = ['id', 't', 'v', 'channel', 'commit', 'agent', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page', 'view'];
@@ -84,6 +96,8 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     const want = Buffer.from(secret);
     return given.length === want.length && crypto.timingSafeEqual(given, want);
   };
+  // No token configured: every upload is taken. The CLI allows that on loopback only (startupError);
+  // a caller of createServer (tests, the e2e harness) binds 127.0.0.1 itself.
   const authorized = (req) => !token || matches(req, token);
   const isAdmin = (req) => !!adminToken && matches(req, adminToken);
   const dayFiles = () => fs.readdirSync(eventsDir).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort();
@@ -178,7 +192,11 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
       res.end(fs.readFileSync(new URL('./privacy.html', import.meta.url)));
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/v1/health') return done(200, { ok: true, events: seen.size, server: SERVER_HASH });
+    // What the daily server check reads (scripts/lib/central.mjs: `server`) and the panel's "is it
+    // there" probe need, for anyone; how many events are stored, for TNI only.
+    if (req.method === 'GET' && url.pathname === '/v1/health') {
+      return done(200, { ok: true, server: SERVER_HASH, ...(isAdmin(req) ? { events: seen.size } : {}) });
+    }
     if (req.method === 'GET' && (url.pathname === '/v1/days' || url.pathname === '/v1/export')) {
       if (!isAdmin(req)) return done(401, { error: 'admin token required' });
       if (url.pathname === '/v1/days') {
@@ -235,12 +253,18 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const port = Number(process.env.PORT) || 8787;
+  const port = process.env.PORT === '0' ? 0 : Number(process.env.PORT) || 8787;
   const host = process.env.HOST || '127.0.0.1';
+  const token = process.env.RATER_TOKEN || '';
+  const problem = startupError({ host, token });
+  if (problem) {
+    console.error(problem);
+    process.exit(1);
+  }
   const dataDir = path.resolve(process.env.DATA_DIR || 'server-data');
-  const server = createServer({ dataDir, token: process.env.RATER_TOKEN || '', adminToken: process.env.RATER_ADMIN_TOKEN || '' });
+  const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '' });
   server.listen(port, host, () => {
-    console.log(`rater usage server on http://${host}:${port}  data: ${dataDir}${process.env.RATER_TOKEN ? '  (token required)' : ''}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}`);
+    console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}`);
   });
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => server.close(() => process.exit(0)));
 }

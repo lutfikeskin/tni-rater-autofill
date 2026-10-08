@@ -29,7 +29,7 @@ within hours of approval.
 | Service | `usage-server`, built from `server/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`) |
 | URL | https://usage-server-production.up.railway.app (`/v1/health`) |
 | Storage | volume `usage-data` mounted at `/data` (one JSONL file per day received) |
-| Variables | `RATER_TOKEN` (upload token, also built into the extension), `RATER_ADMIN_TOKEN` (reading the logs), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
+| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
 
 The extension sends to this server by default (`sidepanel/usage-log.js`, `DEFAULT_SERVER` /
 `DEFAULT_TOKEN`); an agent's own Server setting (a local test server) overrides it, and a blank
@@ -41,6 +41,23 @@ and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
 
 Redeploy after a server change: `railway up --service usage-server` from the repository root
 (`.railwayignore` keeps the upload to what the image needs).
+
+Before deploying, confirm `RATER_TOKEN` is set in the service's Variables. The server fails closed:
+bound to anything but loopback (`127.0.0.1`, `localhost`, `::1`) without `RATER_TOKEN`, it exits
+with `RATER_TOKEN is not set and HOST=0.0.0.0 is not loopback: refusing to start an open upload
+endpoint` instead of taking anyone's uploads (audit 2026-10-08: an unset variable made the
+deployment an open write endpoint). On Railway that is a failed deployment in the deploy logs, and
+the previous one keeps serving. `npm run server` on this computer still needs no token.
+`/v1/health` answers `{ ok, server }` to anyone (what the daily server check and the panel's
+"is it there" probe read); `events`, how many are stored, only comes with the admin token.
+
+The container runs as root, the image's default. Running it as the image's `node` user is the
+intended hardening, held until the volume's ownership is verified: Railway mounts `/data`
+root-owned, and a non-root process that can't write there would answer every upload with 500
+("could not store events") rather than fail safe. Before adding `USER node` to
+`server/Dockerfile`, check `ls -ld /data` and a test write as `node` in the running container
+(or add an entrypoint that chowns `/data` first), then redeploy and confirm `/v1/events` still
+stores an event.
 Deploy a server change that accepts new event fields before releasing the extension that sends
 them: an older server drops unknown fields (and refuses layouts over its size limit) rather than
 storing them. It keeps an event's `channel` (store, unpacked or source) and `commit` (a short
