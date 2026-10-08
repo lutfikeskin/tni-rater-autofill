@@ -91,8 +91,12 @@ const moneyK = (n) => (n >= 1e6 ? `$${n / 1e6}M` : n >= 1e3 ? `$${n / 1e3}K` : `
 //   POP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026
 // AmWINS has no trailer section, so each intake trailer is a line here, in TNI's format
 // (2026-10-08): year, make and type, its VIN and its value; a part the intake lacks is left out.
+// So is a year or value the intake couldn't read ("about 25k" stays text, flagged on Check intake):
+// never typed into the answer as it is.
+const number = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 const trailerLine = (t) => {
-  const parts = [[t.year, t.make, t.type].filter(Boolean).join(' '), t.vin ? `VIN ${t.vin}` : null, t.value ? moneyK(t.value) : null].filter(Boolean);
+  const value = number(t.value);
+  const parts = [[number(t.year), t.make, t.type].filter(Boolean).join(' '), t.vin ? `VIN ${t.vin}` : null, value ? moneyK(value) : null].filter(Boolean);
   return parts.length ? ['Trailer', ...parts].join(' - ') : null;
 };
 const disclosure = (r) => {

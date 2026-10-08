@@ -321,12 +321,15 @@ test('AmWINS: each intake trailer is a line of the disclosure text, not a vehicl
   record.trailers = [
     { type: 'Dry Van', year: 2015, make: 'Great Dane', model: null, vin: '1GRAA0621FB700000', value: 25000 },
     { type: 'Flatbed', year: null, make: null, model: null, vin: null, value: 12500 },
+    // Codex on PR #58: a year or value the intake couldn't read stays text (flagged on Check intake).
+    { type: 'Reefer', year: '20015', make: 'UTILITY', model: null, vin: null, value: 'about 25k' },
   ];
   const plan = buildPlan(record, amwins, {});
   assert.equal(plan.find((x) => /^Disclosure/.test(x.name ?? '')).value, [
     'More than 500 miles radius of operation',
     'Trailer - 2015 Great Dane Dry Van - VIN 1GRAA0621FB700000 - $25K',
     'Trailer - Flatbed - $12.5K',
+    'Trailer - UTILITY Reefer',
     'POP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026',
   ].join('\n'));
   assert.equal(plan.find((x) => x.selector === '#vehLookupVin').value.includes('1GRAA0621FB700000'), false, 'not looked up as a vehicle');
