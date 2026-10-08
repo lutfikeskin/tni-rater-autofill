@@ -184,6 +184,65 @@ function sameIdentities(p, merged) {
   }
 }
 
+// A question's identity without its row or its order among its name's rows: `ref:<name>` (or a
+// text key, kept whole: it tells the business's and the owner's "City" apart).
+const baseId = (k) => (String(k).startsWith('ref:') ? String(k).replace(/[@#].*$/, '') : String(k));
+
+// Which question each recorded field of a quote was, across Progressive's renumbering (2026-10-07)
+// and across products, for the learner: the same keys and joins as buildLayouts (snapshotKeys,
+// mergeUnnamed), with every layout of a page together. A field recorded before names joins the
+// named field with its text (in its place, when the text repeats).
+//   byField:   `<session>|<page>|<q>` -> { id, ref, caption, kind }; id is a data-model name
+//              (ref:<name>) or the question's text on its page (text:…), a number only when it has
+//              neither (no text: a bare number)
+//   byCaption: `<carrier>|<page>|<text>` -> the one question a text names on the page, else null
+export function fieldIdentities(events) {
+  const pages = new Map();
+  for (const e of events) {
+    if (e.type !== 'page_layout' || !e.carrier || !e.page || !e.session) continue;
+    if (e.carrier === 'progressive' && e.page.startsWith('/')) continue;
+    const name = e.step ? `${e.page} › ${e.step}` : e.page;
+    const p = pages.get(`${e.carrier}|${name}`) ?? { carrier: e.carrier, page: e.page, snapshots: [] };
+    const fields = (e.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.label ?? ''));
+    if (fields.length) p.snapshots.push({ session: e.session, fields });
+    pages.set(`${e.carrier}|${name}`, p);
+  }
+  const byField = new Map();
+  const byCaption = new Map();
+  for (const p of pages.values()) {
+    const { keys, placeOf } = snapshotKeys(p.snapshots);
+    const fields = new Map();
+    p.snapshots.forEach((s, j) => s.fields.forEach((f, i) => addField(fields, keys[j][i], f)));
+    const merged = mergeUnnamed(fields, placeOf);
+    const identity = (k) => {
+      const field = fields.get(k);
+      return field && { id: baseId(k), ref: field.ref ?? null, caption: field.caption ?? null, kind: field.kind };
+    };
+    // One id drawn once per vehicle (Rates rows recorded before names: their order among the
+    // rows, `…#2`) is that question's: its first row's identity, so a quote with three vehicles and
+    // one with one name it the same. Which row an answer is in comes from the answer's own key.
+    p.snapshots.forEach((s, j) => {
+      const seen = new Set();
+      s.fields.forEach((f, i) => {
+        if (!f.q || seen.has(f.q)) return;
+        seen.add(f.q);
+        const found = identity(merged.get(keys[j][i]) ?? keys[j][i]);
+        if (found) byField.set(`${s.session}|${p.page}|${f.q}`, found);
+      });
+    });
+    const captions = new Map();
+    for (const k of fields.keys()) {
+      const text = textOf({ label: fields.get(k).caption });
+      if (text) captions.set(text, [...(captions.get(text) ?? []), k]);
+    }
+    for (const [text, ks] of captions) {
+      const key = `${p.carrier}|${p.page}|${text}`;
+      byCaption.set(key, new Set(ks.map(baseId)).size === 1 && !byCaption.has(key) ? identity(ks[0]) : null);
+    }
+  }
+  return { byField, byCaption };
+}
+
 export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_PAGES } = {}) {
   const layouts = new Map();
   for (const e of events) {
