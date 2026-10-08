@@ -36,6 +36,8 @@ the store refuses a version it already has.
    - `sidePanel`: "The extension's interface is a side panel next to the carrier's quote page."
    - `scripting`: "Fills and highlights form fields on the carrier quote page the agent is viewing."
    - `storage`: "Keeps the loaded intake for the session and the agent's settings."
+   - `unlimitedStorage`: "Keeps the usage log on the agent's computer while TNI's usage server
+     can't be reached, so what happened isn't lost before it's uploaded (no client details)."
    - Host permissions: "foragentsonly.com / progressive.com / amwinsadmittedplacement.com /
      geico.com: the carrier quote pages it fills. api.openai.com: Luna suggestions for unresolved
      choice questions, with the agent's own OpenAI key.

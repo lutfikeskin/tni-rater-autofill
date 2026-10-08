@@ -13,7 +13,8 @@
   "permissions": [
     "sidePanel",
     "scripting",
-    "storage"
+    "storage",
+    "unlimitedStorage"
   ],
   "host_permissions": [
     "https://*.foragentsonly.com/*",
