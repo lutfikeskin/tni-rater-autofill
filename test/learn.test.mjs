@@ -481,3 +481,17 @@ test('the review names one question once, whatever its number', () => {
   assert.equal(key(events[1]), key(events[3]));
   assert.equal(key({ carrier: 'amwins', page: '/application/businessauto', label: 'Gender' }), 'amwins|/application/businessauto|Gender', 'without an id: page and text, as before');
 });
+
+// Codex on PR #56: two questions reading the same are two rows, each named by what tells them apart.
+test('the review names two questions reading the same apart', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
+  fs.mkdirSync(path.join(dir, 'events'));
+  const row = (id, key) => ({ id, t: at(1), session: 's', carrier: 'progressive', type: 'fill_field', page: 'BusinessOwnerInfo', q: id, key, label: 'City', result: 'filled', timing: { ms: 10, settleMs: 0, ajax: 0, revealed: 0, removed: 0, changed: 0 } });
+  fs.writeFileSync(path.join(dir, 'events', '2026-10-05.jsonl'), [row('284', 'ref:PrimaryBusinessAddressInput.City'), row('2B0', 'ref:BusinessOwnerHomeAddressInput.City')].map((e) => JSON.stringify(e)).join('\n'));
+  const out = path.join(dir, 'review.md');
+  execFileSync(process.execPath, [new URL('../scripts/review.mjs', import.meta.url).pathname, dir, '--all', '--out', out], { stdio: 'ignore' });
+  const md = fs.readFileSync(out, 'utf8');
+  assert.match(md, /progressive BusinessOwnerInfo "City" `PrimaryBusinessAddressInput\.City`/);
+  assert.match(md, /progressive BusinessOwnerInfo "City" `BusinessOwnerHomeAddressInput\.City`/);
+});
