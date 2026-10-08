@@ -864,8 +864,9 @@ async function refreshTab() {
   renderSite();
   ensureRecorder();
   // A recorder already in the page (the panel was closed or reloaded, or another tab was in
-  // front) doesn't announce the page again: ask for its layout here.
+  // front) doesn't announce the page again: ask for its layout, and its quote state, here.
   scheduleLayout(pageOf(state.tab?.url), 'arrived');
+  if (state.tab?.carrier?.quoteState) seedQuoteState(state.tab.id, state.tab.carrier, pageOf(state.tab.url));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -919,14 +920,7 @@ function onRecorderMessage(msg, sender) {
       }
       showStopPage();
     }
-    // The quote-state page as it is when the recorder sees it (a state the page restored or
-    // defaulted, or picked before the recorder attached): a change would never report it.
-    if (!sender.frameId && state.tab.carrier?.quoteState?.pages.includes(samePage(msg.page))) {
-      // A pick noted while the page was read (a change, a fill) is newer: the read doesn't replace it.
-      const tabId = sender.tab.id;
-      const known = state.quoteStates.get(tabId);
-      readQuoteState(tabId, state.tab.carrier).then((shown) => { if (shown != null && state.quoteStates.get(tabId) === known) noteQuoteState(tabId, carrier, stateCode(shown)); });
-    }
+    if (!sender.frameId && state.tab.carrier?.quoteState) seedQuoteState(sender.tab.id, state.tab.carrier, samePage(msg.page));
     // Even with no fields in the top frame: a form may be all in child frames, which don't report
     // arrivals themselves.
     scheduleLayout(layoutPage, 'arrived');
@@ -1093,7 +1087,7 @@ async function autoFill(page) {
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
-    rememberFill(frames);
+    rememberFill(frames, { tabId, carrier });
     followUp = afterFill(frames, { carrier, page });
     const hasWarnings = frames.some((f) => f.unknown?.length);
     // The fill whose helper this follows up held Luna back for it.
@@ -1357,7 +1351,8 @@ async function layoutWhenQuiet(job, tries = 0) {
   await recordLayout(job.page, null, job);
 }
 
-function rememberFill(frames) {
+// `tabId`, `carrier`: the fill's own tab (the agent may have gone to another one meanwhile).
+function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carrier } = {}) {
   const page = pageOf(state.tab?.url);
   if (state.intake && !state.intake.ntlAdded && frames.some((f) => (f.actions ?? []).some((a) => a.id === 'addNtl'))) {
     state.intake.ntlAdded = true;
@@ -1377,9 +1372,9 @@ function rememberFill(frames) {
   persistDoneActions();
   for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
   // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
-  const quoteKey = state.tab?.carrier?.quoteState?.key;
+  const quoteKey = carrier?.quoteState?.key;
   const pickedState = quoteKey && frames.flatMap((f) => f.filled).find((x) => x.key === quoteKey);
-  if (pickedState) noteQuoteState(state.tab.id, state.tab.carrier.id, stateCode(pickedState.shown));
+  if (pickedState) noteQuoteState(tabId, carrier.id, stateCode(pickedState.shown));
   for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
   // Kept from every fill: a searched combo's list differs from one fill to the next.
   for (const [key, options] of frames.flatMap((f) => f.choices ?? [])) {
@@ -1493,6 +1488,17 @@ function noteQuoteState(tabId, carrier, code) {
   showStateNote();
 }
 
+// The quote-state page's pick as it is (a state the page restored or defaulted, or picked before
+// the recorder attached): a change would never report it. Read when the recorder announces the
+// page, and when the panel finds the tab on it (a recorder already in the page, after the panel
+// was closed or reloaded, doesn't announce it again). A pick noted while the page is read (a
+// change, a fill) is newer: the read doesn't replace it.
+function seedQuoteState(tabId, carrier, page) {
+  if (!state.intake || !carrier?.quoteState?.pages.includes(page)) return;
+  const known = state.quoteStates.get(tabId);
+  readQuoteState(tabId, carrier).then((shown) => { if (shown != null && state.quoteStates.get(tabId) === known) noteQuoteState(tabId, carrier.id, stateCode(shown)); });
+}
+
 // The quote-state control's pick on the page's top frame, by its field key: the option's text, ''
 // for no state, null when it isn't there (or the page can't be read).
 async function readQuoteState(tabId, carrier) {
@@ -1596,7 +1602,7 @@ async function fillPage({ auto = false } = {}) {
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
-    rememberFill(frames);
+    rememberFill(frames, { tabId, carrier });
     state.autoPages.add(page);
     followUp = afterFill(frames, { carrier, page });
     recordLayout(page);

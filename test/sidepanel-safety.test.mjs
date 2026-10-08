@@ -125,6 +125,7 @@ function harness() {
     clearTimeout: (handle) => cleared.push(handle),
     renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {}, save: () => {},
     ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {}, restoreDoneActions: async () => {}, persistDoneActions: async () => {},
+    seedQuoteState: () => {}, noteQuoteState: () => {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
       scripting: {},
@@ -2507,7 +2508,7 @@ async function stateNoteHarness() {
     // The page's quote-state control as the page shows it (chrome.scripting in the extension).
     readQuoteState: async () => page.shown,
   };
-  vm.runInNewContext(`${PAGE_HELPERS}\n${['onRecorderMessage', 'showStateNote', 'noteQuoteState', 'inheritQuoteState', 'rememberFill', 'intakeEdited', 'viewOf', 'saveViews', 'stepScope', 'editScope'].map(extractFunction).join('\n')}`, context);
+  vm.runInNewContext(`${PAGE_HELPERS}\n${['onRecorderMessage', 'showStateNote', 'noteQuoteState', 'seedQuoteState', 'inheritQuoteState', 'rememberFill', 'intakeEdited', 'viewOf', 'saveViews', 'stepScope', 'editScope'].map(extractFunction).join('\n')}`, context);
   const pick = (after, key = 'QuoteStateList', at = '/home/', tabId = 7) =>
     context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: at, changes: [{ key, after, agent: true }] }, { tab: { id: tabId }, frameId: 0 });
   const arrive = async (at, from = null, tabId = 7) => {
@@ -2623,4 +2624,23 @@ test('the quote state comes from the page as it is, the fill, the tab the quote 
   release('Utah');
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(t.state.quoteStates.get(7)?.code, 'FL');
+  // Codex on PR #60 (ef5d7d1): the panel reopened on the home page, its recorder still there and
+  // silent: the tab's page is read when the panel finds the tab.
+  assert.match(extractFunction('refreshTab'), /seedQuoteState\(state\.tab\.id, state\.tab\.carrier, pageOf\(state\.tab\.url\)\)/);
+  t.state.quoteStates.clear();
+  t.context.readQuoteState = async () => 'Utah';
+  t.context.seedQuoteState(7, t.progressive, '/home/');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(t.state.quoteStates.get(7)?.code, 'UT');
+  t.state.intake = null;
+  t.context.seedQuoteState(8, t.progressive, '/home/');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(t.state.quoteStates.has(8), false, 'no intake: the tab isn\'t watched');
+  t.state.intake = { record: t.record('FL') };
+  // A fill's risk state goes to the fill's tab, also when the agent is on another tab by then.
+  t.state.tab = { id: 11, url: 'https://myagency.amwinsadmittedplacement.com/commerciallines', carrier: t.amwins };
+  t.context.rememberFill([{ filled: [{ key: 'riskState', path: 'amwins.riskState', shown: 'Ohio' }] }], { tabId: 12, carrier: t.amwins });
+  assert.equal(t.state.quoteStates.get(12)?.code, 'OH');
+  assert.equal(t.state.quoteStates.has(11), false);
+  assert.match(SIDEPANEL, /rememberFill\(frames, \{ tabId, carrier \}\);[\s\S]*rememberFill\(frames, \{ tabId, carrier \}\);/, 'both fills say whose tab');
 });
