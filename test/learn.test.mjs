@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { loadEvents } from '../scripts/lib/events.mjs';
+import { loadEvents, quoteSessions } from '../scripts/lib/events.mjs';
 import { learn, finalAnswers } from '../scripts/lib/learn.mjs';
 import { fieldStatus } from '../scripts/lib/coverage.mjs';
 import { buildPlan } from '../src/plan.js';
@@ -98,9 +98,12 @@ test('events load from server folders and exports, without duplicates', () => {
   fs.writeFileSync(path.join(dir, 'events', '2026-10-05.jsonl'), events.map((e) => JSON.stringify(e)).join('\n'));
   const exportFile = path.join(dir, 'export.json');
   fs.writeFileSync(exportFile, JSON.stringify({ kind: 'usage-log', agent: 'AYAZ', events: events.slice(0, 3).map((e) => ({ ...e, agent: null, page: e.page ? `${e.page}-Reload` : e.page })) }));
+  // The local test page's events, stored before the server refused them: left out.
+  fs.writeFileSync(path.join(dir, 'events', '2026-10-02.jsonl'), JSON.stringify({ id: 'local-test', t: '2026-10-02T15:00:00Z', session: 'x', carrier: 'test', type: 'fill_run' }));
   const loaded = loadEvents([dir, exportFile]);
   assert.equal(loaded.length, events.length);
   assert.ok(loaded.every((e) => !String(e.page ?? '').endsWith('-Reload')));
+  assert.ok(!loaded.some((e) => e.carrier === 'test'));
 });
 
 test('the steps of a one-address application are pages of their own in built layouts', () => {
@@ -451,4 +454,20 @@ test('learning: no page answer when the extension clicked on the page during tha
   assert.equal(value([...visit, run(10, { advanced: 'Continue' })]), undefined, 'Continue logged after the move');
   assert.equal(value([...visit, run(200, { advanced: 'Continue' })]), 'No', 'a click well after the departure is another visit\'s');
   assert.equal(value([base[0], run(0.2, { clicked: ['addVehicle'] }), arrive, ...base.slice(1)]), 'No', 'a click before this visit');
+});
+
+// Codex on PR #53: a quote on the local test page logs its intake without a carrier; the whole quote
+// goes, unless it also worked on a carrier. A PDF never taken to a carrier is no quote.
+test('events: a test-page quote goes whole, a mixed one keeps its carrier work, an intake alone is no quote', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-test-sessions-'));
+  fs.mkdirSync(path.join(dir, 'events'));
+  const e = (id, session, type, carrier) => JSON.stringify({ id, t: `2026-10-02T15:00:0${id.length % 10}Z`, session, type, ...(carrier ? { carrier } : {}) });
+  fs.writeFileSync(path.join(dir, 'events', '2026-10-02.jsonl'), [
+    e('t1', 'test-only', 'intake_loaded'), e('t2', 'test-only', 'warning_checked'), e('t3', 'test-only', 'fill_run', 'test'),
+    e('m1', 'mixed', 'intake_loaded'), e('m2', 'mixed', 'fill_run', 'test'), e('m3', 'mixed', 'fill_run', 'progressive'),
+    e('i1', 'intake-only', 'intake_loaded'), e('i2', 'intake-only', 'intake_edit'),
+  ].join('\n'));
+  const loaded = loadEvents([dir]);
+  assert.deepEqual(loaded.map((x) => x.id).sort(), ['i1', 'i2', 'm1', 'm3']);
+  assert.deepEqual([...quoteSessions(loaded)], ['mixed'], 'an intake never taken to a carrier is loaded, but no quote');
 });

@@ -44,7 +44,25 @@ export function loadEvents(paths) {
       }
     }
   }
-  return [...byId.values(), ...noId].sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+  // The local test page (stored before the server refused it) is no agent's work: its events, and a
+  // quote that only ever filled it whole (its intake events have no carrier). A quote that also
+  // worked on a carrier keeps everything else.
+  const all = [...byId.values(), ...noId];
+  const onTest = new Set(all.filter((e) => e.carrier === 'test' && e.session).map((e) => e.session));
+  const onCarrier = new Set(all.filter((e) => isCarrierEvent(e) && e.session).map((e) => e.session));
+  return all.filter((e) => e.carrier !== 'test' && !(onTest.has(e.session) && !onCarrier.has(e.session)))
+    .sort((a, b) => Date.parse(a.t) - Date.parse(b.t));
+}
+
+// An event on a real carrier's page (not the local test page).
+export const isCarrierEvent = (e) => !!e.carrier && e.carrier !== 'test';
+
+// The quotes: intakes loaded in a session that worked on a carrier's page. A PDF loaded and never
+// taken to a carrier (a sample retried, a test-page session whose test events the server refused)
+// is no quote. `events`: all of them, so a quote whose fills come later still counts.
+export function quoteSessions(events) {
+  const onCarrier = new Set(events.filter((e) => isCarrierEvent(e) && e.session).map((e) => e.session));
+  return new Set(events.filter((e) => e.type === 'intake_loaded' && onCarrier.has(e.session)).map((e) => e.session));
 }
 
 // session id -> intake_loaded event (state, business class, vehicle types, …)
