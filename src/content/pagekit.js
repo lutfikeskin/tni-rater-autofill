@@ -992,14 +992,42 @@
 
   // The recorder is paused while the kit puts answers in (a fill, an AI apply), so a real edit by
   // the agent has to be caught here: a trusted input/change within 2 s of a trusted gesture (a
-  // click, a key, a paste, a drop) on a question of the page gives that question's key and
-  // control to `onEdit`. Returns the function that takes the listeners off again.
+  // click, a key, a paste, a drop) on that same control, on a question of the page, gives that
+  // question's key and control to `onEdit`. The gesture must be on the control because the kit's
+  // own click on a radio or checkbox fires trusted input/change too: an agent click elsewhere
+  // just before it is not an edit of that question. On the control means its target is the
+  // control, a radio of its group (arrow keys move the pick), its label (label[for] or a wrapping
+  // label; for a radio, the label of any radio in its group), inside its ExtJS trigger wrap, or an
+  // element holding no other control than it (or its radio group). Returns the function that
+  // takes the listeners off again.
   function guardEdits(onEdit) {
     let lastGesture = -Infinity;
+    let gestureTarget = null;
     const gestureTypes = ['pointerdown', 'keydown', 'paste', 'drop'];
-    const trackGesture = (event) => { if (event.isTrusted) lastGesture = Date.now(); };
+    const trackGesture = (event) => {
+      if (!event.isTrusted) return;
+      lastGesture = Date.now();
+      gestureTarget = event.target ?? null;
+    };
+    const sameGroup = (a, b) => a === b || (!!a && !!b && a.type === 'radio' && b.type === 'radio'
+      && !!a.name && a.name === b.name && (a.form ?? null) === (b.form ?? null));
+    const gestureOn = (el) => {
+      const target = gestureTarget;
+      if (!target || !el) return false;
+      if (sameGroup(target, el)) return true;
+      const label = target.closest?.('label');
+      if (label) {
+        const forId = label.htmlFor || label.getAttribute?.('for');
+        const linked = label.control ?? (forId ? document.getElementById(forId) : null)
+          ?? label.querySelector?.('input, select, textarea');
+        if (sameGroup(linked, el)) return true;
+      }
+      if (target.closest?.('.x-form-trigger-wrap')?.contains?.(el)) return true;
+      if (target === document.body || target === document.documentElement || !target.contains?.(el)) return false;
+      return [...(target.querySelectorAll?.('input, select, textarea') ?? [])].every((x) => sameGroup(x, el));
+    };
     const protectEdit = (event) => {
-      if (!event.isTrusted || Date.now() - lastGesture > 2000) return;
+      if (!event.isTrusted || Date.now() - lastGesture > 2000 || !gestureOn(event.target)) return;
       const c = collectControls().find((x) => x.el === event.target || x.radios?.includes(event.target));
       if (c) onEdit(fieldKey(c), c);
     };

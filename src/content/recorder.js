@@ -85,16 +85,45 @@
   // The last trusted gesture, kept apart from lastTrusted (which a value event resets). While
   // paused it decides whose a trusted input/change is: the extension's own .click() on a radio or
   // checkbox fires trusted input/change too, with no gesture before it.
+  // It must also be on that control: an agent edit on one field starts a follow-up fill, and the
+  // fill's click on another radio within the 2 s is not the agent's.
   let lastGesture = -Infinity;
+  let lastGestureTarget = null;
+  let lastGestureControl = null;
   const GESTURE_TYPES = new Set(['pointerdown', 'keydown', 'paste', 'drop']);
   for (const type of ['pointerdown', 'mousedown', 'keydown', 'paste', 'drop']) {
     listen(type, (e) => {
       if (!e.isTrusted) return;
       lastTrusted = Date.now();
       lastTrustedControl = controlForEvent(e.target);
-      if (GESTURE_TYPES.has(type)) lastGesture = lastTrusted;
+      if (GESTURE_TYPES.has(type)) {
+        lastGesture = lastTrusted;
+        lastGestureTarget = e.target ?? null;
+        // Mapped now: an ExtJS option pick resolves through the focused combo, valid only now.
+        lastGestureControl = lastTrustedControl;
+      }
     });
   }
+
+  // Is the last gesture on this control? Its target is the control, a radio of its group (arrow
+  // keys move the pick), its label (label[for] or a wrapping label; for a radio, the label of any
+  // radio in its group), or an element holding no other control than it (or its radio group).
+  const sameGroup = (a, b) => a === b || (!!a && !!b && a.type === 'radio' && b.type === 'radio'
+    && !!a.name && a.name === b.name && (a.form ?? null) === (b.form ?? null));
+  const gestureOn = (el) => {
+    const target = lastGestureTarget;
+    if (!target) return false;
+    if (sameGroup(target, el) || sameGroup(lastGestureControl, el)) return true;
+    const label = target.closest?.('label');
+    if (label) {
+      const forId = label.htmlFor || label.getAttribute?.('for');
+      const linked = label.control ?? (forId ? document.getElementById?.(forId) : null)
+        ?? label.querySelector?.('input, select, textarea');
+      if (sameGroup(linked, el)) return true;
+    }
+    if (target === document.body || target === document.documentElement || !target.contains?.(el)) return false;
+    return [...(target.querySelectorAll?.('input, select, textarea') ?? [])].every((x) => sameGroup(x, el));
+  };
 
   const oneControlState = (el) => {
     if (!isControl(el)) return null;
@@ -123,8 +152,9 @@
   const trustedValue = (e) => {
     if (!isCurrent() || !e.isTrusted || !isControl(e.target)) return;
     // While the kit puts answers in, a value event counts as the agent's only within 2 s of a
-    // trusted gesture (the rule of pagekit's guardEdits); otherwise it is the fill's own click.
-    if (paused && Date.now() - lastGesture > 2000) return;
+    // trusted gesture on that control (the rule of pagekit's guardEdits); otherwise it is the
+    // fill's own click.
+    if (paused && (Date.now() - lastGesture > 2000 || !gestureOn(e.target))) return;
     trustedPending.set(e.target, oneControlState(e.target));
     const discrete = isDiscreteControl(e.target);
     if (discrete) trustedImmediate.add(e.target);

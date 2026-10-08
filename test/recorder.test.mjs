@@ -43,6 +43,7 @@ class Document {
   }
 
   querySelectorAll() { return [...this.body.controls]; }
+  getElementById(id) { return this.body.controls.find((c) => c.id === id) ?? null; }
   createTreeWalker() { return { currentNode: null, previousNode: () => false }; }
 }
 
@@ -475,4 +476,45 @@ test('while paused, a trusted change with no gesture before it is the fill\'s ow
   await Promise.resolve();
   h.message({ ra: 'recorder', cmd: 'resume' });
   assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after, c.agent]), [['field:yrsInBusiness', '', '3', true]]);
+});
+
+// Codex review on b62188f: an agent edit on one field starts a follow-up fill about 600 ms later;
+// the fill's click on another radio within the 2 s is not the agent's, the gesture was elsewhere.
+test('while paused, a trusted change counts only when the last gesture was on that control or its label', async () => {
+  const h = harness();
+  const years = select({ id: 'yrsInBusiness' });
+  const hazmatYes = new Control('input', { id: 'hazmatYes', name: 'hazmat', type: 'radio', value: 'Yes' });
+  const hazmatNo = new Control('input', { id: 'hazmatNo', name: 'hazmat', type: 'radio', value: 'No' });
+  hazmatYes.checked = false;
+  hazmatNo.checked = false;
+  h.append(years, hazmatYes, hazmatNo);
+  h.context.__raterRecorder.rebaseline();
+  // The agent picks the years; that change is reported at once, as theirs.
+  h.emit('pointerdown', years, true);
+  years.value = '3';
+  h.emit('change', years, true);
+  await Promise.resolve();
+  assert.deepEqual(changes(h).map((c) => [c.key, c.after, c.agent]), [['field:yrsInBusiness', '3', true]]);
+  // The follow-up fill starts and clicks the hazmat radio, which fires trusted input/change.
+  h.advance(600);
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  h.advance(200);
+  hazmatNo.checked = true;
+  h.emit('input', hazmatNo, true);
+  h.emit('change', hazmatNo, true);
+  await Promise.resolve();
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  assert.equal(changes(h).length, 1, 'the fill\'s radio click is not reported as the agent\'s');
+  // A gesture on the label of a radio in the group, then a change on the radio: the agent's.
+  const label = { tagName: 'LABEL', htmlFor: 'hazmatYes', getAttribute: () => null, closest() { return this; } };
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  h.advance(300);
+  h.emit('pointerdown', label, true);
+  hazmatNo.checked = false;
+  hazmatYes.checked = true;
+  h.emit('input', hazmatYes, true);
+  h.emit('change', hazmatYes, true);
+  await Promise.resolve();
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  assert.deepEqual(changes(h).slice(1).map((c) => [c.key, c.before, c.after, c.agent]), [['field:hazmat', 'No', 'Yes', true]]);
 });

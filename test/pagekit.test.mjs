@@ -1400,6 +1400,36 @@ test('trusted agent gesture plus input protects the edit and reports no filled a
   assert.equal(report.filled.length, 0);
 });
 
+// Codex review on b62188f: the kit's own click on a radio or checkbox fires trusted input/change
+// in Chromium. An agent gesture elsewhere just before it is not an edit of that question.
+test('during a fill, a trusted change counts as an agent edit only when the gesture was on that control or its label', async () => {
+  const run = async (gesture) => {
+    const h = harness();
+    const notes = makeInput({ id: 'notes', ariaLabel: 'Notes' });
+    const box = makeInput({ id: 'cb', type: 'checkbox', ariaLabel: 'Hauls hazmat' });
+    const label = new FakeNode('label', { textContent: 'Hauls hazmat', attrs: { for: 'cb' } });
+    h.document.body.append(notes, label, box);
+    box.addEventListener('click', () => {
+      gesture({ notes, label, box }).dispatchEvent({ type: 'pointerdown', isTrusted: true });
+      box.dispatchEvent({ type: 'change', target: box, isTrusted: true });
+    });
+    const report = await h.kit.fill([
+      { id: 'cb-step', selector: '#cb', path: 'hazmat', kind: 'checkbox', value: true },
+      { id: 'notes-step', selector: '#notes', path: 'notes', kind: 'text', value: 'from the intake' },
+    ], { maxRounds: 4 });
+    return { report, box, notes };
+  };
+  const elsewhere = await run(({ notes }) => notes);
+  assert.equal(elsewhere.report.halted, false, 'a gesture on another field does not halt the fill');
+  assert.deepEqual([...elsewhere.report.protectedKeys], []);
+  assert.equal(elsewhere.box.checked, true);
+  assert.equal(elsewhere.notes.value, 'from the intake');
+  const onLabel = await run(({ label }) => label);
+  assert.equal(onLabel.report.halted, true, 'a gesture on the checkbox\'s label then a change on it is the agent\'s');
+  assert.equal([...onLabel.report.protectedKeys].length, 1);
+  assert.equal(onLabel.notes.value, '');
+});
+
 test('portal-invalid retained answers are flagged and keep helpers waiting', async () => {
   const h = harness();
   const invalid = makeInput({ id: 'invalid', ariaLabel: 'Retained portal answer', value: 'retained', attrs: { 'aria-invalid': 'true' } });
