@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { loadEvents } from '../scripts/lib/events.mjs';
 import { learn, finalAnswers } from '../scripts/lib/learn.mjs';
+import { fieldStatus } from '../scripts/lib/coverage.mjs';
 import { buildLayouts, layoutKey } from '../scripts/lib/layouts.mjs';
 import { CARRIERS } from '../src/carriers.js';
 
@@ -36,15 +37,18 @@ function week(n, { state = (i) => (i % 2 ? 'MD' : 'VA') } = {}) {
   return events;
 }
 
+// A quote's answer to the question with this id (keys are names and texts, not ids).
+const byQ = (perSession, q) => [...perSession.values()].find((a) => a.q === q);
+
 test('final answers track who answered each question', () => {
   const answers = finalAnswers(week(1));
   const s0 = answers.get('s0');
-  assert.equal(s0.get('progressive|q9A01').value, 'No');
-  assert.equal(s0.get('progressive|q9A01').source, 'agent');
-  const dist = s0.get('progressive|q2B9D');
+  assert.equal(byQ(s0, '9A01').value, 'No');
+  assert.equal(byQ(s0, '9A01').source, 'agent');
+  const dist = byQ(s0, '2B9D');
   assert.equal(dist.corrected, true);
   assert.equal(dist.correction, '"More than 500 miles" → "500 miles"');
-  assert.equal(s0.get('progressive|q2C05').source, 'autofill');
+  assert.equal(byQ(s0, '2C05').source, 'autofill');
 });
 
 test('learning suggests standard answers, per-state answers, mappings and reviews', () => {
@@ -53,11 +57,13 @@ test('learning suggests standard answers, per-state answers, mappings and review
   const std = suggestions.standard.find((s) => s.q === '9A01');
   assert.equal(std.answer, 'No');
   assert.equal(std.share, 1);
-  assert.match(std.rule, /q: '9A01'.*kind: 'bool', value: \(\) => false/);
+  assert.match(std.rule, /^\{ page: 'CoveragesRates', ask: 'Trailer interchange\?'.*kind: 'bool', value: \(\) => false/);
+  assert.doesNotMatch(std.rule, /q: /, 'never by the question id');
   const byState = suggestions.byState.find((s) => s.q === '9A02');
   assert.deepEqual(byState.perState.map((p) => `${p.state}:${p.value}`).sort(), ['MD:Zone 1', 'VA:Zone 7']);
   const map = suggestions.mapping.find((s) => s.q === '9A03');
   assert.equal(map.path, 'garaging.city');
+  assert.equal(map.rule, "{ page: 'AddVehicle', ask: 'Garaging county', path: 'garaging.city' },");
   const review = suggestions.review.find((s) => s.q === '2B9D');
   assert.equal(review.corrected, 6);
   assert.equal(review.filled, 10);
@@ -213,4 +219,56 @@ test('layouts: per-vehicle rows recorded before rows join the row in their place
   const unrowed = fields([layout('2026-10-07T12:00:00Z', before)]);
   assert.equal(unrowed.length, 1);
   assert.equal(unrowed[0].row, undefined);
+});
+
+// Audit 2026-10-08: the learner grouped Progressive questions by their id, which Progressive
+// reassigned on 2026-10-07; its rules named the id, which the fill engine no longer finds.
+const rule = (text) => new Function(`return ${text.replace(/,$/, '')}`)();
+const at = (i) => new Date(Date.parse('2026-10-05T12:00:00Z') + i * 1000).toISOString();
+
+test('learning: one question across the renumbering is one question, and its rule is found by its name', () => {
+  const events = [];
+  for (let i = 0; i < 6; i++) {
+    const s = `r${i}`;
+    const before = i < 3;
+    // Before names: id 100; after the renumbering: id 2F0, with its data-model name.
+    const q = before ? '100' : '2F0';
+    events.push({ id: `l${i}`, t: at(i * 10), session: s, carrier: 'progressive', type: 'page_layout', page: 'MoreAboutBusiness', context: {},
+      fields: [{ q, ref: before ? null : 'RiskInput.HazmatIndicator', kind: 'radio', label: 'Does the customer haul hazardous materials?', options: ['Yes', 'No'] }] });
+    events.push({ id: `c${i}`, t: at(i * 10 + 1), session: s, carrier: 'progressive', type: 'field_change', page: 'MoreAboutBusiness', q,
+      key: before ? q : 'ref:RiskInput.HazmatIndicator', label: 'Does the customer haul hazardous materials?', kind: 'radio', by: 'agent', to: 'No' });
+  }
+  const { suggestions } = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minQuotes: 5 });
+  assert.equal(suggestions.standard.length, 1);
+  const [std] = suggestions.standard;
+  assert.equal(std.quotes, 6, 'the quotes on both sides of the renumbering count together');
+  assert.equal(std.field, 'RiskInput.HazmatIndicator');
+  const suggested = rule(std.rule);
+  assert.equal(suggested.field, 'RiskInput.HazmatIndicator');
+  assert.equal(suggested.q, undefined);
+  // The suggested rule claims the field, as the fill engine would pair them.
+  const carrier = { id: 'progressive', rules: [suggested], useGenericRules: false };
+  assert.equal(fieldStatus({ ref: 'RiskInput.HazmatIndicator', caption: 'Does the customer haul hazardous materials?', kind: 'radio' }, carrier, 'MoreAboutBusiness').status, 'filled');
+  // With that rule in place, it's mapped: not suggested again.
+  assert.equal(learn(events, { carriers: [carrier], minQuotes: 5 }).suggestions.standard.length, 0);
+});
+
+test('learning: two questions reading the same stay apart, and so do one quote\'s vehicles', () => {
+  const events = [];
+  const boi = [{ q: '27E', kind: 'text', label: 'Street Address' }, { q: '280', kind: 'radio', label: 'City' }, { q: '2A9', kind: 'text', label: 'Home Address' }, { q: '2B0', kind: 'radio', label: 'City' }];
+  for (let i = 0; i < 5; i++) {
+    const s = `c${i}`;
+    events.push({ id: `l${i}`, t: at(i * 10), session: s, carrier: 'progressive', type: 'page_layout', page: 'BusinessOwnerInfo', context: {}, fields: boi });
+    events.push({ id: `a${i}`, t: at(i * 10 + 1), session: s, carrier: 'progressive', type: 'field_change', page: 'BusinessOwnerInfo', q: '280', label: 'City', kind: 'radio', by: 'agent', to: 'Business city' });
+    events.push({ id: `b${i}`, t: at(i * 10 + 2), session: s, carrier: 'progressive', type: 'field_change', page: 'BusinessOwnerInfo', q: '2B0', label: 'City', kind: 'radio', by: 'agent', to: 'Home city' });
+    // Two vehicles of the quote, each its own answer.
+    for (const [v, to] of [['t1:v0', 'Yes'], ['t1:v1', 'No']]) {
+      events.push({ id: `v${i}${v}`, t: at(i * 10 + 3), session: s, carrier: 'progressive', type: 'field_change', page: 'AddVehicle', q: '3C0', key: 'ref:RiskInput.Refrigerated', view: v, label: 'Refrigerated?', kind: 'radio', by: 'agent', to });
+    }
+  }
+  const s0 = finalAnswers(events).get('c0');
+  assert.deepEqual([byQ(s0, '280').value, byQ(s0, '2B0').value], ['Business city', 'Home city']);
+  assert.deepEqual([...s0.values()].filter((a) => a.ref === 'RiskInput.Refrigerated').map((a) => a.value), ['Yes', 'No']);
+  const { suggestions } = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minQuotes: 5 });
+  assert.deepEqual(suggestions.standard.map((x) => x.answer).sort(), ['Business city', 'Home city'], 'each City its own; the vehicles disagree');
 });
