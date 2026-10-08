@@ -42,7 +42,7 @@ const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
 const MAX_DROPPED = 20;
 
 // Event type -> fields kept. Anything else in an event is dropped.
-export const COMMON = ['id', 't', 'v', 'agent', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page', 'view'];
+export const COMMON = ['id', 't', 'v', 'channel', 'commit', 'agent', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page', 'view'];
 export const EVENT_FIELDS = {
   intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings'],
   intake_closed: ['reason'],
@@ -111,6 +111,9 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     if (out.key != null && !(typeof out.key === 'string' && out.key.length <= 256)) drop('key');
     // Which tab and vehicle/driver/trailer (t1, t2:v0, t2:tr0): an order number and an index, nothing else.
     if (out.view !== undefined && !(typeof out.view === 'string' && /^t\d{1,3}(:(?:v|d|tr)\d{1,3})?$/.test(out.view))) drop('view');
+    // Which copy and commit logged it (scripts/package.mjs): those values, nothing else in their place.
+    if (out.channel !== undefined && !['store', 'unpacked', 'source'].includes(out.channel)) drop('channel');
+    if (out.commit !== undefined && !(typeof out.commit === 'string' && /^[0-9a-f]{7,12}(\+dirty)?$/.test(out.commit))) drop('commit');
     // Their names only, never their values; anything that doesn't look like a field name is counted.
     if (dropped.length || before.length || beforeMore) {
       const valid = dropped.filter((k) => DROPPED_NAME.test(k));

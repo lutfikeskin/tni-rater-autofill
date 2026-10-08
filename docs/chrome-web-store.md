@@ -59,7 +59,9 @@ pin the extension → click it to open the side panel. Then, once each:
 
 ## 5. Updates
 
-Raise the version, `npm run package`, upload the new zip on the item's **Package** tab, submit.
+Raise the version, `npm run package` from a clean, committed tree (the usage events name the
+commit they were packaged from, `+dirty` otherwise), upload the new zip on the item's **Package**
+tab, submit.
 Chrome updates installed copies by itself within a few hours of approval.
 
 ## API keys for the pilot

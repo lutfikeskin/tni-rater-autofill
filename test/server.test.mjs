@@ -178,6 +178,17 @@ test('a view is kept only as a tab order and a vehicle, driver or trailer number
   assert.deepEqual(rows.map((e) => e.dropped), [undefined, undefined, undefined, undefined, ['view'], ['view'], ['view']], 'a view it threw away is named');
 });
 
+// Audit 2026-10-08: which copy and commit logged an event; only those values.
+test('an event keeps the copy and commit that logged it, and nothing else in their place', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [ev({ channel: 'store', commit: '7a5cdb5244' }), ev({ channel: 'unpacked', commit: '7a5cdb5244+dirty' }), ev({ channel: 'beta', commit: 'Jordan Sample' })] });
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((e) => [e.channel, e.commit]), [['store', '7a5cdb5244'], ['unpacked', '7a5cdb5244+dirty'], [undefined, undefined]]);
+  assert.deepEqual(rows[2].dropped, ['channel', 'commit'], 'thrown away and named');
+});
+
 // Audit 2026-10-08: 453 events from the local test page sat among agents' events.
 test('events from the local test page are refused, with why', async () => {
   const dataDir = tmp();
