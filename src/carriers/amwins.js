@@ -87,7 +87,18 @@ const moneyK = (n) => (n >= 1e6 ? `$${n / 1e6}M` : n >= 1e3 ? `$${n / 1e3}K` : `
 // "Any other topics to disclose" text, from the intake, one line per item:
 //   Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods
 //   More than 500 miles radius of operation
+//   Trailer - 2015 Great Dane Dry Van - VIN 1GRAA0621FB700000 - $25K
 //   POP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026
+// AmWINS has no trailer section, so each intake trailer is a line here, in TNI's format
+// (2026-10-08): year, make and type, its VIN and its value; a part the intake lacks is left out.
+// So is a year or value the intake couldn't read ("about 25k" stays text, flagged on Check intake):
+// never typed into the answer as it is.
+const number = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+const trailerLine = (t) => {
+  const value = number(t.value);
+  const parts = [[number(t.year), t.make, t.type].filter(Boolean).join(' '), t.vin ? `VIN ${t.vin}` : null, value ? moneyK(value) : null].filter(Boolean);
+  return parts.length ? ['Trailer', ...parts].join(' - ') : null;
+};
 const disclosure = (r) => {
   const c = r.coverage;
   const lines = [];
@@ -97,6 +108,7 @@ const disclosure = (r) => {
   }
   const miles = radius(r);
   if (miles) lines.push(miles > 500 ? 'More than 500 miles radius of operation' : `${miles} miles radius of operation`);
+  for (const t of r.trailers ?? []) { const line = trailerLine(t); if (line) lines.push(line); }
   const p = r.priorInsurance?.[0];
   if (p?.carrier) {
     const kind = /commercial/i.test(p.type ?? '') ? 'Commercial' : /personal/i.test(p.type ?? '') ? 'Personal' : p.type;
@@ -184,6 +196,10 @@ export const amwins = {
   layoutUrl: /\/application\/businessauto/i,
   // One address for every step: a layout also names its step (the visible step heading).
   layoutSteps: true,
+  // The rules below answer these sections row by row; a generic label rule never does. A row the
+  // intake doesn't describe stays the agent's: on 2026-10-08 a trailer added by hand as a second
+  // vehicle got the first vehicle's body type from the generic "body type" rule.
+  rowSections: [DRIVER, VEHICLE, VEHICLE_COVERAGES],
   // The risk state on the start page (filled from the intake): the panel warns when the one picked
   // isn't the intake's garaging state, e.g. an agent's change (src/quote-state.js).
   quoteState: { pages: START_PAGES, key: 'riskState' },

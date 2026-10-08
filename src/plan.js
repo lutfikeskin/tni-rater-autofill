@@ -11,7 +11,11 @@ import { get, listOf } from './util.js';
  * @param {{drivers?: number, vehicles?: number, trailers?: number}} active  which driver/vehicle/trailer this page is about
  */
 export function buildPlan(record, carrier, active = {}) {
-  const rules = [...(carrier?.rules ?? []), ...(carrier?.useGenericRules === false ? [] : GENERIC_RULES)];
+  // A carrier's `rowSections`: repeating sections its own rules answer row by row, where a generic
+  // label rule never answers (a row the intake doesn't describe stays the agent's).
+  const generic = carrier?.useGenericRules === false ? [] : carrier?.rowSections?.length
+    ? GENERIC_RULES.map((rule) => ({ ...rule, notWithin: carrier.rowSections })) : GENERIC_RULES;
+  const rules = [...(carrier?.rules ?? []), ...generic];
   return [...fieldSteps(rules, record, carrier, active), ...actionSteps(carrier, record, active)];
 }
 
@@ -152,6 +156,8 @@ function fieldSteps(rules, record, carrier, active) {
       selector: rule.repeatSelector ? rule.repeatSelector(record, active) : rule.selector ?? null,
       re: rule.label ?? null,
       ex: rule.not ?? null,
+      // A label rule that never answers a field inside these (the carrier's `rowSections`).
+      notWithin: rule.notWithin ?? null,
       note,
       ignore,
       verifyOnly: !!rule.verifyOnly,

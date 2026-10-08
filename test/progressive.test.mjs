@@ -309,6 +309,38 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
   assert.equal(plan.find((x) => x.action === 'importVins').immediate, true);
 });
 
+// 2026-10-08 live run: AmWINS has no trailer section, and a trailer added as a vehicle row got the
+// truck's body type. TNI writes each trailer in the disclosure text instead, after the radius.
+test('AmWINS: each intake trailer is a line of the disclosure text, not a vehicle', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const record = baseRecord();
+  record.operations.radius = 'Unlimited';
+  record.operations.radiusMiles = null;
+  record.coverage = { ...record.coverage, cargo: false };
+  record.priorInsurance = [{ type: 'Commercial Auto', carrier: 'PROGRESSIVE', limit: '$1M CSL', expiration: '12/01/2026' }];
+  record.trailers = [
+    { type: 'Dry Van', year: 2015, make: 'Great Dane', model: null, vin: '1GRAA0621FB700000', value: 25000 },
+    { type: 'Flatbed', year: null, make: null, model: null, vin: null, value: 12500 },
+    // Codex on PR #58: a year or value the intake couldn't read stays text (flagged on Check intake).
+    { type: 'Reefer', year: '20015', make: 'UTILITY', model: null, vin: null, value: 'about 25k' },
+  ];
+  const plan = buildPlan(record, amwins, {});
+  assert.equal(plan.find((x) => /^Disclosure/.test(x.name ?? '')).value, [
+    'More than 500 miles radius of operation',
+    'Trailer - 2015 Great Dane Dry Van - VIN 1GRAA0621FB700000 - $25K',
+    'Trailer - Flatbed - $12.5K',
+    'Trailer - UTILITY Reefer',
+    'POP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026',
+  ].join('\n'));
+  assert.equal(plan.find((x) => x.selector === '#vehLookupVin').value.includes('1GRAA0621FB700000'), false, 'not looked up as a vehicle');
+  // A trailer row added by hand anyway gets nothing from the generic rules: they are kept out of
+  // AmWINS' row sections (pagekit test "a generic label rule never answers inside a carrier row section").
+  const generic = plan.filter((x) => x.path === 'vehicles[0].type' || x.path === 'operations.radius');
+  assert.ok(generic.length >= 2 && generic.every((x) => x.notWithin?.includes('#vehiclesPanel')));
+  assert.ok(plan.filter((x) => /^amwins\.|^#|^Body type/.test(x.path ?? x.name)).every((x) => x.notWithin == null), 'AmWINS\' own rules answer their rows');
+  assert.ok(buildPlan(record, null, {}).every((x) => x.notWithin == null), 'no fence without a carrier\'s row sections');
+});
+
 test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, underwriting defaults, Save & Continue, start page', async () => {
   const { amwins } = await import('../src/carriers/amwins.js');
   const record = baseRecord();
