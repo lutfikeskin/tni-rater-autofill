@@ -2546,6 +2546,26 @@ test('two rows with one VIN, or rows without VINs (before the import), give that
   assert.equal(report.noData.length, 0);
 });
 
+test('a row showing a VIN the intake doesn\'t have: left as it is, one check naming its place, Continue held', async () => {
+  const h = harness();
+  const extra = '1FTBR3X87MKA00099';
+  const rows = vehicleRows(h, [VINS[0], VINS[1], VINS[2], extra]);
+  const report = await h.kit.fill(witnessPlan(), { maxRounds: 8 });
+  assert.deepEqual(rows.map((r) => r.body.value), ['Box Truck', 'Cargo Van', 'Pickup Truck', ''], 'the extra row is never answered');
+  assert.equal(rows[3].vin.value, extra, 'nor changed');
+  assert.equal(report.unknown.length, 0, 'its questions are known ones, not unfamiliar');
+  assert.equal(report.noData.length, 0);
+  assert.deepEqual(Array.from(report.checks, (x) => x.label), ['Vehicle row 4 on the page']);
+  assert.ok(!JSON.stringify(report.checks).includes('00099'), 'no client value in the check');
+  assert.ok(report.blockers.includes('check: Vehicle row 4 on the page'), report.blockers.join(' | '));
+  // A blank row next to the imported ones (not imported yet) is no vehicle: nothing to check.
+  const h2 = harness();
+  vehicleRows(h2, [VINS[0], VINS[1], VINS[2], '']);
+  const plain = await h2.kit.fill(witnessPlan(), { maxRounds: 8 });
+  assert.equal(plain.checks.length, 0);
+  assert.equal(plain.blockers.length, 0, plain.blockers.join(' | '));
+});
+
 // A helper verified by what it shows: `revealed` (a question appeared or an answer changed since
 // the click) and `{ appears }` (more of a selector than before). Nothing shown: unclicked and
 // tried again, twice; then the agent is told to do it.

@@ -385,8 +385,13 @@
     // The rows a witness step chooses among: known questions, never unfamiliar ones, also while
     // no unit's row is among them yet (the rows before an import) (pairs.witnessed).
     const witnessed = new Set();
+    // Rows showing a witness (a VIN) no intake unit has: a vehicle on the quote the intake doesn't
+    // list. Never answered or changed; each row is a check for the agent (pairs.extraRows).
+    const extraRows = new Map();
     const page = currentPage();
     const steps = plan.map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
+    // Every witness value an intake unit claims (its VIN): a row reading as none of them isn't ours.
+    const wanted = new Set(steps.filter((s) => s.witness).map((s) => idText(s.witness.value)).filter(Boolean));
     const take = (s, c, how, reworded = false) => { used.add(c); donePaths.add(s.path); pairs.push({ step: s, control: c, how, reworded }); };
     const fits = (s, c) => !(c.kind === 'checkbox' && s.kind !== 'bool');
     const known = (s) => !!(s.field || s.ask?.length || (s.reC && s.pages?.length));
@@ -459,7 +464,11 @@
           if (s.witness) {
             c = witnessRow(matching, s.witness);
             if (!c && all.length) unwitnessed.push(s);
-            for (const x of all) witnessed.add(x);
+            for (const x of all) {
+              witnessed.add(x);
+              const w = rowWitnessOf(x, s.witness);
+              if (w?.value && !wanted.has(w.value) && !extraRows.has(w.el)) extraRows.set(w.el, s.witness);
+            }
           } else c = matching[0] ?? null;
         }
         // A dropdown with no usable label, known by one of its options ("NO PRIOR").
@@ -482,6 +491,9 @@
     }
     pairs.unwitnessed = unwitnessed;
     pairs.witnessed = witnessed;
+    // Numbered by their place among the page's rows (by their witness controls), never by value.
+    const rowWitnesses = [...new Set(controls.flatMap((x) => [...extraRows.values()].some((w) => safeMatches(x.el, w.selector)) ? [x.el] : []))];
+    pairs.extraRows = [...extraRows].map(([el, witness]) => ({ witness, position: rowWitnesses.indexOf(el) + 1 }));
     return pairs;
   }
 
@@ -500,16 +512,20 @@
   function witnessRow(candidates, witness) {
     const want = idText(witness.value);
     if (!want) return null;
-    const rows = candidates.filter((x) => {
-      for (let p = x.el; p && p !== document; p = p.parentElement) {
-        let found;
-        try { found = [...p.querySelectorAll(witness.selector)]; } catch { return false; }
-        if (!found.length) continue;
-        return found.length === 1 && idText(found[0].value) === want;
-      }
-      return false;
-    });
+    const rows = candidates.filter((x) => rowWitnessOf(x, witness)?.value === want);
     return rows.length === 1 ? rows[0] : null;
+  }
+
+  // A control's row's witness control and what it reads (letters and digits), or null when the
+  // nearest ancestor holding a witness control holds two (the whole panel) or there is none.
+  function rowWitnessOf(x, witness) {
+    for (let p = x.el; p && p !== document; p = p.parentElement) {
+      let found;
+      try { found = [...p.querySelectorAll(witness.selector)]; } catch { return null; }
+      if (!found.length) continue;
+      return found.length === 1 ? { el: found[0], value: idText(found[0].value) } : null;
+    }
+    return null;
   }
 
   // The one row naming this vehicle best: at least two of its year, make and model as whole
@@ -1501,6 +1517,15 @@
       if (report.noData.some((x) => x.unit === unit)) continue;
       const why = step.witness.value == null ? `the intake has no ${witnessName(step.witness)} for ${unit}` : `the row for ${unit} (its ${witnessName(step.witness)}) wasn't found`;
       report.noData.push({ label: unit.replace(/^\w/, (ch) => ch.toUpperCase()), path: step.witness.path, name: unit, unit, key: null, q: null, controlKind: null, note: `${why}; check the rows and answer its questions yourself.` });
+    }
+    // A row showing a VIN no intake vehicle has: an unintended vehicle may be on the quote. Left
+    // as it is (never removed or answered); Continue waits for the agent. Named by its place only.
+    for (const { witness, position } of finalPairs.extraRows ?? []) {
+      const kind = String(witness.path ?? '').match(/^(\w+?)s?\[/)?.[1] ?? 'unit';
+      const label = `${kind.replace(/^\w/, (ch) => ch.toUpperCase())} row ${position || '?'} on the page`;
+      if (report.checks.some((x) => x.label === label)) continue;
+      report.checks.push({ label, path: null, name: label, key: null, q: null, controlKind: null,
+        note: `Its ${witnessName(witness)} matches no ${kind} on the intake. Remove it, or keep it if it belongs on this quote, before continuing.` });
     }
     for (const { step, control } of finalPairs) {
       if (step.emptyNote && !hasValue(control) && !skippedField(control)) {
