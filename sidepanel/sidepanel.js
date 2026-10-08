@@ -5,7 +5,7 @@ import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
-import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex } from '../src/usage.js';
+import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
@@ -49,14 +49,27 @@ let agentKeysQueue = Promise.resolve();
 // other's record (Codex on PR #43).
 const DONE_ACTIONS_PREFIX = 'doneActions:';
 const doneKey = (scope, tabId) => `${DONE_ACTIONS_PREFIX}${scope}:${tabId}`;
+// `clear(scope)`: one intake's records; `scopes()`: the intakes with records (pruneAgentRecords).
 const doneActionsStore = inExtension && globalThis.chrome?.storage?.local
   ? { get: async (scope, tabId) => (await chrome.storage.local.get(doneKey(scope, tabId)))[doneKey(scope, tabId)] ?? [],
       set: (scope, tabId, ids) => (ids.length ? chrome.storage.local.set({ [doneKey(scope, tabId)]: ids }) : chrome.storage.local.remove(doneKey(scope, tabId))),
-      clear: async () => chrome.storage.local.remove(Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX))) }
+      clear: async (scope) => chrome.storage.local.remove(Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith(scope ? `${DONE_ACTIONS_PREFIX}${scope}:` : DONE_ACTIONS_PREFIX))),
+      scopes: async () => Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX)).map((k) => k.slice(DONE_ACTIONS_PREFIX.length).replace(/:[^:]*$/, '')) }
   : { get: async (scope, tabId) => memory[doneKey(scope, tabId)] ?? [],
       set: async (scope, tabId, ids) => { memory[doneKey(scope, tabId)] = ids; },
-      clear: async () => { for (const k of Object.keys(memory)) if (k.startsWith(DONE_ACTIONS_PREFIX)) delete memory[k]; } };
+      clear: async (scope) => { for (const k of Object.keys(memory)) if (k.startsWith(scope ? `${DONE_ACTIONS_PREFIX}${scope}:` : DONE_ACTIONS_PREFIX)) delete memory[k]; },
+      scopes: async () => Object.keys(memory).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX)).map((k) => k.slice(DONE_ACTIONS_PREFIX.length).replace(/:[^:]*$/, '')) };
 let doneActionsQueue = Promise.resolve();
+// When each intake (by fingerprint) was last loaded: the age of its edit keys and helper records,
+// which have no time of their own, so pruneAgentRecords can let old intakes' records go.
+const INTAKES_SEEN_KEY = 'intakesSeen';
+const intakesSeenStore = inExtension && globalThis.chrome?.storage?.local
+  ? { get: async () => (await chrome.storage.local.get(INTAKES_SEEN_KEY))[INTAKES_SEEN_KEY] ?? {},
+      set: (v) => chrome.storage.local.set({ [INTAKES_SEEN_KEY]: v }) }
+  : { get: async () => memory[INTAKES_SEEN_KEY] ?? {}, set: async (v) => { memory[INTAKES_SEEN_KEY] = v; } };
+// Records of intakes other than the loaded one are kept for this many intakes, and this long.
+const KEEP_INTAKES = 20;
+const KEEP_INTAKE_DAYS = 30;
 
 const FNV_OFFSET = 1469598103934665603n;
 const FNV_PRIME = 1099511628211n;
@@ -350,11 +363,12 @@ function discardAiSuggestions() {
   }
 }
 
-function persistAgentKeys() {
+// `tabId`, `agentKeys`: a fill's own tab and its maps, when its results come back after the
+// agent moved to another tab (rememberFill); by default the tab in front.
+function persistAgentKeys(tabId = state.tab?.id, agentKeys = state.agentKeys) {
   const scope = usage.currentSession()?.intakeId;
-  const tabId = state.tab?.id;
   if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
-  const records = [...state.agentKeys].filter(([, keys]) => keys.size)
+  const records = [...agentKeys].filter(([, keys]) => keys.size)
     .map(([page, keys]) => ({ scope, tabId, page, keys: [...keys] }));
   const task = agentKeysQueue.then(async () => {
     const existing = await agentKeysStore.get();
@@ -377,18 +391,39 @@ async function restoreAgentKeys(tabId) {
   }
 }
 
-function clearAgentKeys() {
-  const task = agentKeysQueue.then(() => agentKeysStore.set([]));
+// Forgets one intake's edit keys and helper records on every tab (Clear). Until the 2026-10-08
+// audit this wiped every intake's: coming back to a client whose quote was still open then added
+// its vehicles again and refilled what the agent had corrected. Nothing without a scope.
+function clearAgentKeys(scope) {
+  if (!scope) return Promise.resolve();
+  const task = agentKeysQueue.then(async () => agentKeysStore.set((await agentKeysStore.get()).filter((x) => x.scope !== scope)));
   agentKeysQueue = task.catch(() => {});
-  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.clear()).catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.clear(scope)).catch(() => {});
   return task;
 }
 
-function persistDoneActions() {
+// On loading an intake: its own records stay (a PDF dropped again is the same intake, and its
+// quote tabs may still be open), and so do other intakes' until there are more than KEEP_INTAKES
+// of them or one hasn't been loaded for KEEP_INTAKE_DAYS; a record from before intakes were
+// stamped counts from now. Returns the intakes whose records were let go.
+async function pruneAgentRecords(current, now = Date.now()) {
+  if (!current) return [];
+  const seen = await intakesSeenStore.get();
+  seen[current] = new Date(now).toISOString();
+  const [keys, doneScopes] = await Promise.all([agentKeysStore.get(), doneActionsStore.scopes()]);
+  for (const scope of new Set([...keys.map((x) => x.scope), ...doneScopes])) if (scope && !seen[scope]) seen[scope] = seen[current];
+  const others = Object.keys(seen).filter((scope) => scope !== current).sort((a, b) => Date.parse(seen[b]) - Date.parse(seen[a]));
+  const gone = others.filter((scope, i) => i >= KEEP_INTAKES - 1 || now - Date.parse(seen[scope]) > KEEP_INTAKE_DAYS * 86_400_000);
+  for (const scope of gone) delete seen[scope];
+  await intakesSeenStore.set(seen);
+  await Promise.all(gone.map((scope) => clearAgentKeys(scope)));
+  return gone;
+}
+
+function persistDoneActions(tabId = state.tab?.id, doneActions = state.doneActions) {
   const scope = usage.currentSession()?.intakeId;
-  const tabId = state.tab?.id;
   if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
-  const ids = [...state.doneActions].filter((id) => typeof id === 'string');
+  const ids = [...doneActions].filter((id) => typeof id === 'string');
   doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set(scope, tabId, ids)).catch(() => {});
   return doneActionsQueue;
 }
@@ -568,7 +603,10 @@ async function loadFile(file) {
   await store.set('session', usage.startSession(summary.intakeId));
   await persistAiPending();
   await restoreAiPending();
-  await clearAgentKeys();
+  // This intake's edit keys and helper records (also a PDF dropped again) are restored per tab by
+  // refreshTab; the panel's own sets were reset above, so they may be restored again.
+  doneRestored.clear();
+  await pruneAgentRecords(summary.intakeId);
   usage.log({ type: 'intake_loaded', ...summary });
   uploadNow();
   await save();
@@ -885,11 +923,15 @@ const pageOf = (url) => {
 
 // Watch the rater tab while an intake is loaded. Only carrier pages; never other sites. Practice
 // pages get it too (follow-up fills need it) but nothing from them goes in the usage log.
+// A recorder already in the page is reused, and may still be paused by a fill the panel never
+// finished (closed mid-fill): it is told to resume, unless a fill or AI apply is under way here.
 async function ensureRecorder() {
   if (!inExtension || !state.intake || !state.tab?.carrier) return;
+  const tabId = state.tab.id;
   try {
-    await chrome.scripting.executeScript({ target: { tabId: state.tab.id, allFrames: true }, files: ['src/content/field-key.js', 'src/content/recorder.js'] });
-  } catch { /* page not ready or not allowed; tried again on the next tab update */ }
+    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['src/content/field-key.js', 'src/content/recorder.js'] });
+  } catch { return; /* page not ready or not allowed; tried again on the next tab update */ }
+  if (!state.filling) await tellRecorder('resume', tabId);
 }
 
 function tellRecorder(cmd, tabId = state.tab?.id) {
@@ -948,7 +990,8 @@ function onRecorderMessage(msg, sender) {
     return;
   }
   if (msg.event === 'field_changes') {
-    const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt };
+    const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt,
+      step: state.tab.carrier?.layoutSteps ? msg.step : undefined };
     const view = viewOf(sender.tab.id, samePage(msg.page));
     log(...msg.changes.map((c) => ({ carrier, page: msg.page, view, ...fieldChangeEvent(c, ctx) })));
     scheduleLayout(layoutPage, 'changed');
@@ -1057,6 +1100,49 @@ const fillOptions = (carrier, extra = {}) => ({
   ...extra,
 });
 
+// Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
+// from the extension's own package when the panel starts, on every fill_run. Null outside the
+// extension or until it's read; then the run just carries none.
+let rulesVersion = null;
+if (inExtension) {
+  Promise.all(RULE_FILES.map((f) => fetch(chrome.runtime.getURL(f)).then((r) => r.text()))).then(rulesHash)
+    .then((hash) => { rulesVersion = hash; }).catch(() => {});
+}
+
+// What a fill is about, taken before it waits on anything (audit 2026-10-08, finding 5): its own
+// id (`run`, shared by its events), the tab, carrier and page it fills, the intake and revision it
+// fills from, the view and edit scope for its tab, and the panel's switches. The intake may be
+// replaced or corrected while the carrier works; the results then belong to this context, not to
+// the panel's current state (staleFill), and its bookkeeping goes to this tab (rememberFill).
+function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = false }) {
+  return {
+    run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite,
+    intake: state.intake, revision: state.intakeRevision,
+    view: viewOf(tabId, page, carrier), scope: editScope(page, carrier), active: { ...state.active },
+    settings: { autoAdvance: !!$('auto-advance').checked, autoFollowUps: !!$('auto-followups').checked, autoPages: !!$('auto-pages').checked, overwrite: !!$('overwrite').checked },
+  };
+}
+// The intake was replaced or corrected while the page was being filled: the answers on the page
+// are the earlier intake's, and nothing from this fill may be remembered, logged or shown as the
+// current intake's.
+function staleFill(ctx) { return state.intake !== ctx.intake || state.intakeRevision !== ctx.revision; }
+function noteStaleFill(ctx) {
+  if (!ctx.carrier.practice) usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run, auto: ctx.auto, error: 'stale: intake changed during the fill' });
+  $('report').replaceChildren(h('p', { class: 'error' }, 'The intake changed while this page was being filled: the page may hold the earlier intake\'s answers. Check it, then Fill this page again.'));
+}
+// The step a one-address application (AmWINS) showed to the fill: the top frame's headings.
+function stepOfResults(carrier, results) { return carrier.layoutSteps ? results.find((r) => r.frameId === 0)?.result?.stepKey || undefined : undefined; }
+// The events of a fill, redacted with the intake it filled from.
+function logFill(ctx, frames, results, started) {
+  if (ctx.carrier.practice) return;
+  usage.log(...fillEvents(frames, {
+    carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
+    redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
+    run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results),
+  }));
+}
+function fillErrorText(ctx, e) { return redactor(redactionTerms(ctx.intake.record))(String(e?.message ?? e)).slice(0, 200); }
+
 function scheduleAutoFill(page) {
   if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || state.tab?.carrier?.stopPages?.[page]) return;
   if (state.filling) { state.autoPending = true; return; }
@@ -1069,9 +1155,11 @@ async function autoFill(page) {
   if (state.autoPaused || state.filling || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   if (state.tab.carrier.stopPages?.[page]) return;
   const { id: tabId, carrier } = state.tab;
-  // Before any waiting: the agent may pick another vehicle or tab while the carrier works.
-  const view = viewOf(tabId, page, carrier);
+  // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
+  // the carrier works (fillContext; the view is taken there).
+  const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto: true });
   await pickListItem(carrier, page);
+  if (staleFill(ctx) || state.tab?.id !== tabId) return;
   state.filling = true;
   state.autoPending = false;
   const started = Date.now();
@@ -1079,22 +1167,26 @@ async function autoFill(page) {
   let followUp = false;
   await tellRecorder('pause');
   try {
-    await retireAiOrigins({ tabId, tabUrl: state.tab.url, intake: state.intake, carrier });
-    const plan = buildPlan(state.intake.record, carrier, state.active);
-    const skip = [...(state.agentKeys.get(editScope(page)) ?? [])];
-    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite: false, skip, keepMarks: true })]);
+    await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
+    // The list page may have picked the next vehicle or driver: the plan is for that one.
+    ctx.active = { ...state.active };
+    const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
+    const skip = [...(state.agentKeys.get(ctx.scope) ?? [])];
+    const options = fillOptions(carrier, { overwrite: false, skip, keepMarks: true });
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
+    if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
-    rememberFill(frames, { tabId, carrier });
-    followUp = afterFill(frames, { carrier, page });
+    rememberFill(frames, ctx);
+    followUp = afterFill(frames, ctx);
     const hasWarnings = frames.some((f) => f.unknown?.length);
     // The fill whose helper this follows up held Luna back for it.
     if (state.autoPaused || hasWarnings || state.assistPage === page) { renderReport(frames); assistFrames = frames; }
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings) {
-      if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, view, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }));
+      logFill(ctx, frames, results, started);
       if (n) {
         const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
         $('report').append(note);
@@ -1104,7 +1196,8 @@ async function autoFill(page) {
   } catch (e) {
     state.autoPaused = true;
     $('report').append(h('p', { class: 'error' }, 'Automatic filling paused after an error. Review the page, then click Fill this page to retry.'));
-    usage.log({ type: 'fill_error', carrier: carrier.id, page, auto: true, error: String(e.message).slice(0, 200) });
+    // The message may quote the page, so it's redacted like a problem report (audit 2026-10-08).
+    if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, run: ctx.run, auto: true, error: fillErrorText(ctx, e) });
   } finally {
     await tellRecorder('resume');
     state.filling = false;
@@ -1352,35 +1445,54 @@ async function layoutWhenQuiet(job, tries = 0) {
 }
 
 // `tabId`, `carrier`: the fill's own tab (the agent may have gone to another one meanwhile).
-function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carrier } = {}) {
-  const page = pageOf(state.tab?.url);
+// The maps of the tab a fill was about: the panel's own while that tab is in front, else the
+// session kept for it (refreshTab), made when there is none, so the bookkeeping of a fill whose
+// results come back after the agent moved to another tab never lands on that other tab (audit
+// 2026-10-08, finding 5).
+function tabMaps(tabId) {
+  if (!Number.isInteger(tabId) || state.tab?.id === tabId) return state;
+  let saved = state.tabSessions.get(tabId);
+  if (!saved) {
+    saved = { filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false,
+      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(), assistPage: null, active: { ...state.active } };
+    state.tabSessions.set(tabId, saved);
+  }
+  return saved;
+}
+
+// Bookkeeping of a fill's results, for the tab, carrier and page the fill was about (fillContext;
+// `scope`: the page's edit scope as the fill saw it, `editScope`), never the tab in front now.
+function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carrier, page = pageOf(state.tab?.url), scope = editScope(page, carrier) } = {}) {
+  const maps = tabMaps(tabId);
   if (state.intake && !state.intake.ntlAdded && frames.some((f) => (f.actions ?? []).some((a) => a.id === 'addNtl'))) {
     state.intake.ntlAdded = true;
     save();
   }
-  const keys = state.agentKeys.get(editScope(page)) ?? new Set();
+  const keys = maps.agentKeys.get(scope) ?? new Set();
   for (const key of frames.flatMap((f) => f.protectedKeys ?? [])) keys.add(key);
-  state.agentKeys.set(editScope(page), keys);
-  persistAgentKeys();
+  maps.agentKeys.set(scope, keys);
+  persistAgentKeys(tabId, maps.agentKeys);
   if (frames.some((f) => f.halted)) {
-    state.autoPaused = true;
-    state.autoPending = false;
-    clearTimeout(state.autoTimer);
+    maps.autoPaused = true;
+    if (maps === state) {
+      state.autoPending = false;
+      clearTimeout(state.autoTimer);
+    }
   }
-  for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) state.doneActions.delete(id);
-  for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
-  persistDoneActions();
-  for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
+  for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) maps.doneActions.delete(id);
+  for (const a of frames.flatMap((f) => f.actions ?? [])) maps.doneActions.add(a.id);
+  persistDoneActions(tabId, maps.doneActions);
+  for (const x of frames.flatMap((f) => f.filled)) maps.filled.set(x.key, { path: x.path, shown: x.shown });
   // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
   const quoteKey = carrier?.quoteState?.key;
   const pickedState = quoteKey && frames.flatMap((f) => f.filled).find((x) => x.key === quoteKey);
   if (pickedState) noteQuoteState(tabId, carrier.id, stateCode(pickedState.shown));
-  for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
+  for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) maps.labels.set(key, label);
   // Kept from every fill: a searched combo's list differs from one fill to the next.
   for (const [key, options] of frames.flatMap((f) => f.choices ?? [])) {
-    const seen = state.choices.get(key) ?? new Set();
+    const seen = maps.choices.get(key) ?? new Set();
     for (const o of options) seen.add(o);
-    state.choices.set(key, seen);
+    maps.choices.set(key, seen);
   }
 }
 
@@ -1444,6 +1556,7 @@ function renderSite() {
     ? 'Filling works when this runs as the Chrome extension.'
     : stopped ? 'Nothing on this page is filled or clicked.'
     : carrier && state.tab.background ? 'Working on the quote tab in the background. Fill this page fills that tab; go back to it to review.'
+    : carrier && $('auto-advance').checked && carrier.advance ? 'Nothing is submitted or bound. Continue is clicked for you once nothing on a page is left for you; review each page\'s report.'
     : carrier ? 'Nothing is submitted. Review the page, then click Next yourself.'
       : noAccess
         ? "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page."
@@ -1583,11 +1696,16 @@ async function fillPage({ auto = false } = {}) {
   clearTimeout(state.autoTimer);
   const { id: tabId, carrier } = state.tab;
   const page = pageOf(state.tab.url);
-  // Before any waiting: the agent may pick another vehicle or tab while the carrier works.
-  const view = viewOf(tabId, page, carrier);
-  await pickListItem(carrier, page);
-  const plan = buildPlan(state.intake.record, carrier, state.active);
   const overwrite = auto ? false : $('overwrite').checked;
+  // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
+  // the carrier works (fillContext; the view is taken there).
+  const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite });
+  await pickListItem(carrier, page);
+  if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); return; }
+  // The list page may have picked the next vehicle or driver: the plan is for that one.
+  ctx.active = { ...state.active };
+  const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
+  const options = fillOptions(carrier, { overwrite });
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
   $('report').replaceChildren(h('p', { class: 'muted small center' }, 'Filling one answer at a time: the page checks each answer with its server. Keep this tab open.'));
@@ -1598,24 +1716,24 @@ async function fillPage({ auto = false } = {}) {
   await ensureRecorder();
   await tellRecorder('pause');
   try {
-    await retireAiOrigins({ tabId, tabUrl: state.tab.url, intake: state.intake, carrier });
-    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, fillOptions(carrier, { overwrite })]);
+    await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
+    const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
+    // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
+    if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
-    rememberFill(frames, { tabId, carrier });
+    rememberFill(frames, ctx);
     state.autoPages.add(page);
-    followUp = afterFill(frames, { carrier, page });
+    followUp = afterFill(frames, ctx);
     recordLayout(page);
-    if (!carrier.practice) usage.log(...fillEvents(frames, {
-      carrier: carrier.id, page, view, overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
-      keySalt: usage.currentSession()?.keySalt,
-    }));
+    logFill(ctx, frames, results, started);
     renderReport(frames);
     assistFrames = frames;
   } catch (e) {
     state.autoPaused = true;
-    usage.log({ type: 'fill_error', carrier: carrier.id, page: pageOf(state.tab.url), error: String(e.message).slice(0, 200) });
+    // The message may quote the page, so it's redacted like a problem report (audit 2026-10-08).
+    if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, run: ctx.run, auto, error: fillErrorText(ctx, e) });
     $('report').replaceChildren(h('p', { class: 'error' }, `Couldn't fill this page: ${e.message}`));
   } finally {
     await tellRecorder('resume');
@@ -1721,7 +1839,7 @@ function unitArrival(carrier, from, page) {
 // Bookkeeping after a fill: a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
-function afterFill(frames, { carrier, page }) {
+function afterFill(frames, { carrier, page, run = null }) {
   persistDoneActions();
   const clicked = frames.some((f) => (f.actions ?? []).length);
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
@@ -1730,7 +1848,7 @@ function afterFill(frames, { carrier, page }) {
   if (advanced) {
     const doneKey = advanced.stepKey ? stepScope(page, carrier) + advanced.stepKey : null;
     if (doneKey) state.doneSteps.add(doneKey);
-    watchNextStep(carrier, page, advanced.signatureBefore, doneKey);
+    watchNextStep(carrier, page, advanced.signatureBefore, doneKey, run);
   }
   return clicked && !moved && !state.autoPaused && $('auto-followups').checked;
 }
@@ -1757,8 +1875,10 @@ function assistAfterFill(frames, ctx, followUp) {
 // fills the old step again, so Continue can't be clicked twice.
 // A Continue that didn't take (the page neither moved nor changed for about 6 s, and isn't
 // loading) is tried once more: Progressive's Change Payment Plan lost one while it redrew.
-// `doneKey`: the continued step's entry in state.doneSteps (see stepScope).
-async function watchNextStep(carrier, page, before, doneKey = null) {
+// When the second click doesn't take either, automatic filling pauses and the agent is told
+// (audit 2026-10-08, finding 6): until then the lost Continue went unreported.
+// `doneKey`: the continued step's entry in state.doneSteps (see stepScope); `run`: the fill's.
+async function watchNextStep(carrier, page, before, doneKey = null, run = null) {
   const tabId = state.tab?.id;
   if (!$('auto-followups').checked && !$('auto-pages').checked) return;
   let last = null;
@@ -1782,6 +1902,12 @@ async function watchNextStep(carrier, page, before, doneKey = null) {
       state.advanceRetried.add(doneKey);
       state.doneSteps.delete(doneKey);
       fillPage({ auto: 'page' });
+      return;
+    }
+    if (unchanged >= 20 && doneKey && !state.filling && state.advanceRetried.has(doneKey)) {
+      state.autoPaused = true;
+      $('report').append(h('p', { class: 'error' }, 'Continue didn\'t take: click it yourself, then Fill this page again if needed.'));
+      if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, ...(run ? { run } : {}), auto: 'page', error: 'continue did not take' });
       return;
     }
     last = now;
@@ -2646,7 +2772,7 @@ async function uploadNow() {
 function wireUsage() {
   $('auto-followups').addEventListener('change', (e) => usage.saveSettings({ autoFollowUps: e.target.checked }));
   $('auto-pages').addEventListener('change', (e) => usage.saveSettings({ autoPages: e.target.checked }));
-  $('auto-advance').addEventListener('change', (e) => usage.saveSettings({ autoAdvance: e.target.checked }));
+  $('auto-advance').addEventListener('change', (e) => { usage.saveSettings({ autoAdvance: e.target.checked }); renderSite(); });
   $('server-url').addEventListener('change', async (e) => {
     const v = e.target.value.trim();
     // Blank means "no server" (export only); anything else must be an http(s) URL.
@@ -2689,6 +2815,8 @@ function wireUsage() {
     $('problem-text').value = '';
     $('problem-form').hidden = true;
     $('usage-note').textContent = 'Thanks — saved with the usage log.';
+    // Sent now rather than on the minute: the panel is often closed right after (audit 2026-10-08).
+    uploadNow();
   });
   setInterval(renderUsage, 5000);
 }
@@ -2715,6 +2843,7 @@ function wire() {
     t.addEventListener('dragover', () => { if (!state.intake) $('load-error').hidden = true; });
   }
   $('clear-client').addEventListener('click', async () => {
+    const scope = usage.currentSession()?.intakeId;
     usage.log({ type: 'intake_closed', reason: 'cleared' });
     cancelLayouts();
     holdLayouts();
@@ -2724,7 +2853,7 @@ function wire() {
     await store.remove('intake');
     await store.remove('session');
     await persistAiPending();
-    await clearAgentKeys();
+    await clearAgentKeys(scope);
     $('report').replaceChildren();
     render();
   });

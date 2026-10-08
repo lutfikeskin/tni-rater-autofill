@@ -213,6 +213,14 @@
   // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
   const pageKey = () => (new URLSearchParams(location.search).get('pageName') || (location.pathname + ((location.hash ?? '').startsWith('#/') ? location.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
   const isTop = window === window.top;
+  // The step of a one-address application (AmWINS), as pagekit's stepKey reads it: the visible
+  // h1-h3 headings. Sent with each batch of changes, so the panel can name the step a change was on
+  // (its steps share the page's address); the panel keeps it only for such carriers, redacted.
+  const stepKey = () => {
+    const headings = [...(document.querySelectorAll?.('h1, h2, h3') ?? [])].filter((el) => /^H[1-3]$/.test(el.tagName ?? '')
+      && el.getClientRects?.().length && globalThis.getComputedStyle?.(el)?.visibility !== 'hidden');
+    return headings.map((el) => oneLine(el.textContent)).filter(Boolean).slice(0, 4).join(' / ') || undefined;
+  };
 
   let paused = false;
   let page = pageKey();
@@ -263,7 +271,7 @@
       .filter(([key, c]) => !prev.has(key) && (!immediateOnly || !c.controls.some((el) => deferred.has(el))))
       .map(([key]) => key);
     for (const [key, c] of cur) if (!c.controls.some((el) => deferred.has(el))) prev.set(key, c);
-    if (changes.length) send({ event: 'field_changes', page, changes });
+    if (changes.length) send({ event: 'field_changes', page, step: stepKey(), changes });
     if (appeared.length) send({ event: 'new_fields', page, keys: appeared });
     for (const el of pending) {
       trustedPending.delete(el);
@@ -285,7 +293,7 @@
     const appeared = [...cur.keys()].filter((k) => !prev.has(k));
     const removed = [...prev.keys()].filter((k) => !cur.has(k));
     prev = cur;
-    if (changes.length) send({ event: 'field_changes', page, changes });
+    if (changes.length) send({ event: 'field_changes', page, step: stepKey(), changes });
     // A trusted value event is valid for one snapshot only. This also drops controls that were
     // replaced by a redraw before the poll, keeping an old element from authorizing later edits.
     trustedPending.clear();
