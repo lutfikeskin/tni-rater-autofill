@@ -71,8 +71,8 @@ What's recorded (`src/usage.js`, `src/content/recorder.js`):
 | --- | --- |
 | `intake_loaded` | intake fingerprint (SHA-256 of the PDF), form version, state, business class, vehicle types, driver/vehicle/trailer counts, requested coverages, warning codes |
 | `warning_checked`, `intake_edit` | which warning (code) the agent checked off; which intake field they corrected in the panel (added/changed/cleared) |
-| `fill_run`, `fill_field` | per fill: carrier, page, what was filled/kept/failed and why; chosen dropdown/radio options (not typed text) |
-| `field_change` | a field that changed on the rater page, by the agent or by the page: for dropdowns/radios the from/to option; for text boxes only whether it matches what autofill typed (same / format / different) and which intake field the new value equals, e.g. `drivers[0].dob`, worked out on the agent's computer |
+| `fill_run`, `fill_field`, `fill_error` | per fill: carrier, page, what was filled/kept/failed and why; chosen dropdown/radio options (not typed text); the fill's run id, the rule files' fingerprint and the filling switches in force; on AmWINS the step's heading. A fill that failed, whose intake changed meanwhile, or whose Continue didn't take: the reason, client names redacted |
+| `field_change` | a field that changed on the rater page, by the agent or by the page: for dropdowns/radios the from/to option; for text boxes only whether it matches what autofill typed (same / format / different) and which intake field the new value equals, e.g. `drivers[0].dob`, worked out on the agent's computer; on AmWINS the step's heading |
 | `page_view` | carrier page switches (for time per page) |
 | `problem_report` | the agent's note from "Report a problem on this page" (client names redacted) |
 

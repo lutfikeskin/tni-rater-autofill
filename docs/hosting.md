@@ -43,7 +43,12 @@ Redeploy after a server change: `railway up --service usage-server` from the rep
 (`.railwayignore` keeps the upload to what the image needs).
 Deploy a server change that accepts new event fields before releasing the extension that sends
 them: an older server drops unknown fields (and refuses layouts over its size limit) rather than
-storing them. It keeps an event's `channel` (store, unpacked or source) and `commit` (a short
+storing them. The run-identity fields (`run`, `rules`, `settings`, `step` on fill and field-change
+events, [learning](learning.md)) are such a change: deploy the server that keeps them before the
+extension that sends them, or every fill run until then is stored with those names in `dropped`.
+That server also refuses an event whose run id, rules hash, settings object or step is malformed
+(per event, in the reply's `rejected`), and no longer lists the AI fields `probability`,
+`support`, `evidenceProbability`, `confidence` and `cached`, which no extension emitted. It keeps an event's `channel` (store, unpacked or source) and `commit` (a short
 commit, optionally `+dirty`) only in those shapes. It refuses events from the local test page (`carrier: 'test'`, localhost), which are
 no quote; the review scripts also skip the ones stored before. The server names what it dropped on
 the stored event (`dropped`: field names only, at most 20, `droppedMore` counts the rest), and
