@@ -13,7 +13,7 @@
 
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { windowStart, decide, commentBody } from './lib/daily.mjs';
+import { lastSuccess, windowStart, decide, commentBody } from './lib/daily.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : null; };
@@ -21,14 +21,16 @@ const gh = (...a) => execFileSync('gh', a, { encoding: 'utf8' });
 const LABEL = 'daily-review';
 
 if (args[0] === 'since') {
-  let runs = [];
+  let run = null;
+  let steps = [];
   try {
     const branch = process.env.DEFAULT_BRANCH || 'main';
-    runs = JSON.parse(gh('run', 'list', '--workflow', 'daily-review.yml', '--branch', branch, '--status', 'success', '--limit', '5', '--json', 'createdAt,conclusion'));
+    run = lastSuccess(JSON.parse(gh('run', 'list', '--workflow', 'daily-review.yml', '--branch', branch, '--status', 'success', '--limit', '5', '--json', 'databaseId,createdAt,startedAt,conclusion')));
+    if (run) steps = JSON.parse(gh('run', 'view', String(run.databaseId), '--json', 'jobs')).jobs.flatMap((j) => j.steps ?? []);
   } catch (e) {
-    console.error(`no earlier runs (${String(e.message).split('\n')[0]}): a day ago`);
+    console.error(`couldn't read the last run (${String(e.message).split('\n')[0]}): ${run ? 'from when it started' : 'a day ago'}`);
   }
-  console.log(windowStart(runs));
+  console.log(windowStart(run, steps));
 } else if (args[0] === 'post') {
   const failed = args.includes('--failed');
   const file = opt('summary');

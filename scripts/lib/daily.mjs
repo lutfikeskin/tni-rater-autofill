@@ -1,20 +1,26 @@
 // The daily review's window and its issue (.github/workflows/daily-review.yml): what arrived since
 // the last run, which questions without a rule are new, and whether to say anything.
 
+import fs from 'node:fs';
 import { buildLayouts } from './layouts.mjs';
-import { coverage } from './coverage.mjs';
+import { coverage, idsInHtml } from './coverage.mjs';
 import { CARRIERS } from '../../src/carriers.js';
 
 // When the server received an event (events exported from a panel have no receipt: when logged).
 // A review of what arrived since the last one misses nothing uploaded late.
 export const receivedAt = (e) => e.receivedAt ?? e.t ?? '';
 
-// Where a review starts: the last successful run on the default branch (`gh run list` rows), else
-// a day ago. Its events were downloaded after it started, so one received meanwhile shows twice at
-// worst, never not at all.
-export function windowStart(runs, now = new Date()) {
-  const last = (runs ?? []).filter((r) => r.conclusion === 'success' && r.createdAt).map((r) => r.createdAt).sort().at(-1);
-  return last ?? new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
+// The run a review continues from: the last successful one on the default branch (`gh run list`).
+export const lastSuccess = (runs) => [...(runs ?? [])].filter((r) => r.conclusion === 'success').sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt))).at(-1) ?? null;
+
+// Where a review starts: when that run began downloading the log (its steps, `gh run view --json
+// jobs`), as its download has every event received before then; a run can wait hours between being
+// created and running (Codex on PR #52). Without its steps, when it started; without a run, a day
+// ago. An event received while it downloaded shows twice at worst, never not at all.
+export const DOWNLOAD_STEP = 'Download the usage log';
+export function windowStart(run, steps = [], now = new Date()) {
+  if (!run) return new Date(now.getTime() - 24 * 3600 * 1000).toISOString();
+  return steps.find((s) => s.name === DOWNLOAD_STEP)?.startedAt ?? run.startedAt ?? run.createdAt;
 }
 
 // One question of a carrier page, whatever its number, row or product: its data-model name, else
@@ -27,7 +33,14 @@ export function questionId(carrier, page, f) {
   return `${carrier}|${page}|${f.kind ?? ''}:${VEHICLE.test(text(f.caption)) ? '<vehicle row>' : text(f.caption)}`;
 }
 
-// Questions met on live pages: every one, and the ones no rule claims (coverage.mjs), by questionId.
+// The AmWINS mock's ids: a live field the mock lacks is drift, alerted on like a question without a
+// rule, as the coverage report does.
+const MOCK = new URL('../../test/fixtures/amwins/application.html', import.meta.url);
+let mockIds;
+const mockFor = (carrier) => (carrier === 'amwins' ? (mockIds ??= fs.existsSync(MOCK) ? idsInHtml(MOCK) : null) : null);
+
+// Questions met on live pages: every one, and the ones no rule claims or the mock lacks
+// (coverage.mjs), by questionId.
 function questions(events) {
   const seen = new Set();
   const uncovered = new Map();
@@ -35,12 +48,12 @@ function questions(events) {
     // As the coverage report: not the test carrier's pages.
     const carrier = CARRIERS.find((c) => c.id === layout.carrier && c.id !== 'test');
     if (!carrier) continue;
-    for (const p of coverage(layout, carrier).pages) {
+    for (const p of coverage(layout, carrier, { mockIds: mockFor(carrier.id) }).pages) {
       for (const r of p.rows) {
         const id = questionId(layout.carrier, p.page, r);
         // By its text too: a question recorded before names is the same one once its name shows.
         seen.add(id).add(questionId(layout.carrier, p.page, { ...r, ref: null }));
-        if (r.status === 'none' && !uncovered.has(id)) uncovered.set(id, { carrier: layout.carrier, page: p.page, caption: r.caption ?? '', ref: r.ref ?? null, kind: r.kind ?? null });
+        if ((r.status === 'none' || r.notInMock) && !uncovered.has(id)) uncovered.set(id, { carrier: layout.carrier, page: p.page, caption: r.caption ?? '', ref: r.ref ?? null, kind: r.kind ?? null, ...(r.status === 'none' ? {} : { notInMock: true }) });
       }
     }
   }
@@ -80,14 +93,20 @@ export function commentBody({ since, problems = [], newQuestions = [], uncovered
   if (server !== 'same' && server !== 'skipped' && serverNote) lines.push(`**Usage server:** ${serverNote}`, '');
   if (problems.length) {
     lines.push('### Problem reports', '');
-    for (const p of problems) lines.push(`- ${String(p.t ?? '').slice(0, 16).replace('T', ' ')} · ${p.agent ?? '?'} · ${p.page ?? '?'}: ${String(p.text ?? '').trim().replace(/\s+/g, ' ').slice(0, 500)}`);
+    for (const p of problems.slice(0, MAX_PROBLEMS)) lines.push(`- ${String(p.t ?? '').slice(0, 16).replace('T', ' ')} · ${p.agent ?? '?'} · ${p.page ?? '?'}: ${String(p.text ?? '').trim().replace(/\s+/g, ' ').slice(0, 500)}`);
+    if (problems.length > MAX_PROBLEMS) lines.push(`- … and ${problems.length - MAX_PROBLEMS} more (in the review)`);
     lines.push('');
   }
   if (newQuestions.length) {
     lines.push(`### New questions without a rule${uncoveredTotal != null ? ` (${uncoveredTotal} different ones in all)` : ''}`, '');
-    for (const q of newQuestions.slice(0, 50)) lines.push(`- ${q.carrier} ${q.page}: ${q.ref ? `\`${q.ref}\` ` : ''}"${q.caption}"${q.kind ? ` (${q.kind})` : ''}`);
+    for (const q of newQuestions.slice(0, 50)) lines.push(`- ${q.carrier} ${q.page}: ${q.ref ? `\`${q.ref}\` ` : ''}"${q.caption}"${q.kind ? ` (${q.kind})` : ''}${q.notInMock ? ' (has a rule; not in the AmWINS mock)' : ''}`);
     if (newQuestions.length > 50) lines.push(`- … and ${newQuestions.length - 50} more (in the review)`);
     lines.push('');
   }
-  return lines.join('\n');
+  // GitHub refuses a comment over 65,536 characters: a window with many reports says the rest is in
+  // the review rather than failing to say anything (Codex on PR #52).
+  const body = lines.join('\n');
+  return body.length <= MAX_COMMENT ? body : `${body.slice(0, MAX_COMMENT)}\n\n… (cut here: the whole list is in the review: ${runUrl})`;
 }
+const MAX_PROBLEMS = 60;
+const MAX_COMMENT = 60_000;

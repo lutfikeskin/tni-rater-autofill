@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { windowStart, questionId, uncoveredQuestions, decide, commentBody, receivedAt } from '../scripts/lib/daily.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { windowStart, lastSuccess, DOWNLOAD_STEP, questionId, uncoveredQuestions, decide, commentBody, receivedAt } from '../scripts/lib/daily.mjs';
+import { loadEvents } from '../scripts/lib/events.mjs';
 
 // Audit 2026-10-08: the daily review read events by when they were logged, from yesterday: 17 of 95
 // problem reports arrived late and were in no review. It now reads what arrived since the last run.
@@ -10,8 +14,15 @@ test('daily: the window starts at the last successful run, else a day ago; event
     { createdAt: '2026-10-08T06:30:00Z', conclusion: 'failure' },
     { createdAt: '2026-10-07T06:20:00Z', conclusion: 'success' },
   ];
-  assert.equal(windowStart(runs), '2026-10-07T06:20:00Z');
-  assert.equal(windowStart([], new Date('2026-10-08T06:00:00Z')), '2026-10-07T06:00:00.000Z');
+  const last = lastSuccess(runs);
+  assert.equal(last.createdAt, '2026-10-07T06:20:00Z');
+  // Codex on PR #52: from when that run began downloading (it may have waited hours after being created).
+  const steps = [{ name: 'Check the usage server', startedAt: '2026-10-07T09:40:00Z' }, { name: DOWNLOAD_STEP, startedAt: '2026-10-07T09:40:02Z' }];
+  assert.equal(windowStart({ ...last, startedAt: '2026-10-07T09:39:50Z' }, steps), '2026-10-07T09:40:02Z');
+  assert.equal(windowStart({ ...last, startedAt: '2026-10-07T09:39:50Z' }, []), '2026-10-07T09:39:50Z', 'without its steps: when it started');
+  assert.equal(windowStart(null, [], new Date('2026-10-08T06:00:00Z')), '2026-10-07T06:00:00.000Z', 'no run: a day ago');
+  const workflow = fs.readFileSync(new URL('../.github/workflows/daily-review.yml', import.meta.url), 'utf8');
+  assert.ok(workflow.includes(`- name: ${DOWNLOAD_STEP}`), 'the workflow still names its download step so');
   assert.equal(receivedAt({ t: '2026-10-05T10:00:00Z', receivedAt: '2026-10-07T09:00:00Z' }), '2026-10-07T09:00:00Z', 'a late upload is in the review it arrived for');
   assert.equal(receivedAt({ t: '2026-10-05T10:00:00Z' }), '2026-10-05T10:00:00Z', 'an exported event: when it was logged');
 });
@@ -60,4 +71,26 @@ test('daily: the comment lists the new items and links the run', () => {
   assert.match(body, /56 different ones in all/);
   assert.match(body, /https:\/\/run/);
   assert.match(commentBody({ failed: true, runUrl: 'https://run', serverNote: 'The usage server could not be checked (ECONNREFUSED).' }, '2026-10-08'), /could not run[\s\S]*https:\/\/run[\s\S]*ECONNREFUSED/);
+});
+
+// Codex on PR #52: AmWINS fields the mock lacks still alert; a long window's comment fits GitHub; an
+// event read from the server and from an export keeps when the server received it.
+test('daily: AmWINS drift alerts, the comment stays under GitHub\'s limit, receipts survive a merge', () => {
+  const amwins = (id, receivedAt, fields) => ({ id, t: receivedAt, receivedAt, session: id, carrier: 'amwins', type: 'page_layout', page: '/application/businessauto', step: 'Drivers', context: { state: 'NJ' }, fields });
+  // A field whose label a rule claims, with an id the committed mock doesn't have.
+  const drift = { id: 'brandNewDriverField', kind: 'text', label: 'Owner Date of Birth' };
+  const u = uncoveredQuestions([amwins('x', '2026-10-08T10:00:00Z', [drift])], '2026-10-08T00:00:00Z');
+  assert.equal(u.new.length, 1);
+  assert.equal(u.new[0].notInMock, true);
+  assert.match(commentBody({ since: 's', newQuestions: u.new, server: 'same', runUrl: 'u' }), /has a rule; not in the AmWINS mock/);
+  const many = Array.from({ length: 200 }, (_, i) => ({ t: '2026-10-08T10:00:00Z', agent: 'AY', page: 'P', text: 'x'.repeat(1000) + i }));
+  const body = commentBody({ since: 's', problems: many, server: 'same', runUrl: 'https://run' });
+  assert.ok(body.length <= 61_000, `${body.length} characters`);
+  assert.match(body, /and 140 more \(in the review\)/);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-daily-'));
+  fs.mkdirSync(path.join(dir, 'events'));
+  fs.writeFileSync(path.join(dir, 'events', '2026-10-08.jsonl'), JSON.stringify({ id: 'e1', t: '2026-10-05T10:00:00Z', receivedAt: '2026-10-08T09:00:00Z', type: 'problem_report' }) + '\n');
+  fs.writeFileSync(path.join(dir, 'export.json'), JSON.stringify({ kind: 'usage-log', events: [{ id: 'e1', t: '2026-10-05T10:00:00Z', type: 'problem_report' }] }));
+  const [e] = loadEvents([path.join(dir, 'events'), path.join(dir, 'export.json')]);
+  assert.equal(e.receivedAt, '2026-10-08T09:00:00Z');
 });
