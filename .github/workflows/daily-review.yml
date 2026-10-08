@@ -1,8 +1,9 @@
 # Every morning: download the agents' usage log from the central server (Railway), build the
-# review (problem reports, AI decisions, speed, rule suggestions, page layouts) for the last day,
-# keep it as an artifact, and open an issue when agents reported problems, live pages show
-# questions no rule claims, or the deployed usage server isn't this repository's (it would drop
-# fields the extension sends).
+# review (problem reports, AI decisions, speed, rule suggestions, page layouts) of what arrived
+# since the last successful run, keep it as an artifact, and comment on the open daily-review
+# issue (or open one) when something is new: problem reports, questions without a rule first
+# seen, a deployed usage server that isn't this repository's (it would drop fields the extension
+# sends), or a run that failed. The decisions are in scripts/daily-issue.mjs and scripts/lib/daily.mjs.
 # Needs the repository secret RATER_ADMIN_TOKEN (the server's admin token).
 name: Daily review
 
@@ -12,17 +13,22 @@ on:
   workflow_dispatch:
     inputs:
       since:
-        description: 'Review events since (YYYY-MM-DD); blank = yesterday'
+        description: 'Review events received since (YYYY-MM-DD or an ISO time); blank = since the last successful run'
         required: false
 
 permissions:
   contents: read
   issues: write
+  actions: read   # gh run list: where the last successful run started
 
 jobs:
   review:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,51 +39,46 @@ jobs:
       - name: Check the usage server
         id: server
         run: |
-          if [ "$GITHUB_REF_NAME" = "${{ github.event.repository.default_branch }}" ]; then
+          if [ "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH" ]; then
             node scripts/server-check.mjs --md server-check.md | tee server-check.log
           else
             echo "server: skipped · run on $GITHUB_REF_NAME, not the default branch" | tee server-check.log
           fi
           echo "status=$(sed -E 's/^server: ([a-z]+).*/\1/' server-check.log)" >> "$GITHUB_OUTPUT"
+          echo "note=$(sed -E 's/^server: [a-z]+ · //' server-check.log)" >> "$GITHUB_OUTPUT"
       - name: Download the usage log
         env:
           RATER_ADMIN_TOKEN: ${{ secrets.RATER_ADMIN_TOKEN }}
         run: npm run pull
       - name: Build the review
         id: review
+        env:
+          SINCE_INPUT: ${{ github.event.inputs.since }}
         run: |
-          SINCE="${{ github.event.inputs.since }}"
-          [ -n "$SINCE" ] || SINCE=$(date -u -d yesterday +%F)
-          node scripts/review.mjs server-data --since "$SINCE" --out "reviews/review-$(date -u +%F).md" | tee review.log
-          echo "file=reviews/review-$(date -u +%F).md" >> "$GITHUB_OUTPUT"
-          echo "since=$SINCE" >> "$GITHUB_OUTPUT"
-          echo "problems=$(grep -o '[0-9]* problem reports' review.log | grep -o '^[0-9]*' || echo 0)" >> "$GITHUB_OUTPUT"
+          SINCE="$SINCE_INPUT"
+          [ -n "$SINCE" ] || SINCE=$(node scripts/daily-issue.mjs since)
+          FILE="reviews/review-$(date -u +%F).md"
+          node scripts/review.mjs server-data --since "$SINCE" --out "$FILE" --summary review-summary.json | tee review.log
           # Whether the deployed server is this repository's (the first step): else it may drop fields.
-          if [ -f server-check.md ]; then cat server-check.md >> "reviews/review-$(date -u +%F).md"; fi
-          # Questions met on live pages that no rule claims (a missing rule or a changed page).
-          echo "norule=$(node scripts/coverage.mjs server-data --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.parse(s).reduce((n,r)=>n+r.totals.none+r.totals.notInMock,0)))')" >> "$GITHUB_OUTPUT"
-          head -c 60000 "reviews/review-$(date -u +%F).md" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f server-check.md ]; then cat server-check.md >> "$FILE"; fi
+          echo "file=$FILE" >> "$GITHUB_OUTPUT"
+          echo "day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+          head -c 60000 "$FILE" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
-          name: review-${{ steps.review.outputs.since }}
+          name: review-${{ steps.review.outputs.day }}
           path: ${{ steps.review.outputs.file }}
           retention-days: 90
-      - name: Open an issue for problem reports, uncovered questions or a server to redeploy
-        if: steps.review.outputs.problems != '0' || steps.review.outputs.norule != '0' || (steps.server.outputs.status != 'same' && steps.server.outputs.status != 'skipped')
+      - name: Comment on the daily review issue when something is new
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          head -c 60000 "${{ steps.review.outputs.file }}" > body.md
-          gh issue create --title "Daily review since ${{ steps.review.outputs.since }}: ${{ steps.review.outputs.problems }} problem report(s), ${{ steps.review.outputs.norule }} question(s) without a rule, usage server ${{ steps.server.outputs.status }}" --body-file body.md --label daily-review || \
-          gh issue create --title "Daily review since ${{ steps.review.outputs.since }}: ${{ steps.review.outputs.problems }} problem report(s), ${{ steps.review.outputs.norule }} question(s) without a rule, usage server ${{ steps.server.outputs.status }}" --body-file body.md
-      # The download or the review failed (the usage server down, a broken script): say so, with
-      # what the server check found.
-      - name: Open an issue when the review could not run
+          SERVER_STATUS: ${{ steps.server.outputs.status }}
+          SERVER_NOTE: ${{ steps.server.outputs.note }}
+        run: node scripts/daily-issue.mjs post --summary review-summary.json --server "$SERVER_STATUS" --server-note "$SERVER_NOTE" --run-url "$RUN_URL"
+      # The download or the review failed (the usage server down, a broken script): say so on the
+      # same issue, with what the server check found.
+      - name: Say the review could not run
         if: failure()
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "The daily review could not run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" > failed.md
-          if [ -f server-check.log ]; then echo >> failed.md; cat server-check.log >> failed.md; fi
-          gh issue create --title "Daily review could not run ($(date -u +%F)): usage server ${{ steps.server.outputs.status || 'not checked' }}" --body-file failed.md --label daily-review || \
-          gh issue create --title "Daily review could not run ($(date -u +%F)): usage server ${{ steps.server.outputs.status || 'not checked' }}" --body-file failed.md
+          SERVER_STATUS: ${{ steps.server.outputs.status || 'not checked' }}
+          SERVER_NOTE: ${{ steps.server.outputs.note }}
+        run: node scripts/daily-issue.mjs post --failed --server "$SERVER_STATUS" --server-note "$SERVER_NOTE" --run-url "$RUN_URL"

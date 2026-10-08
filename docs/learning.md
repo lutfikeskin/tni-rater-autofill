@@ -44,7 +44,7 @@ Layout grouping uses carrier, state, business class, vehicle-type set, and trail
 
 ## Reviewing and improving the mechanism
 
-Use `npm run pull` when current central logs are needed, then `npm run review` for the combined report. `npm run learn`, `npm run layouts`, `npm run transitions`, `npm run captures` and `npm run coverage` inspect individual parts. The configured daily workflow pulls logs, produces reports, and can open issues; it does not implement or deploy fixes.
+Use `npm run pull` when current central logs are needed, then `npm run review` for the combined report. `npm run learn`, `npm run layouts`, `npm run transitions`, `npm run captures` and `npm run coverage` inspect individual parts. The configured daily workflow pulls logs, reviews what arrived since its last run, and comments on its `daily-review` issue when something is new ([hosting](hosting.md)); it does not implement or deploy fixes.
 
 For each candidate, determine whether it needs an intake correction, mapping, scoped exception, browser fix, or confirmed agency decision. Follow [corrections](corrections.md) for that change. Do not promote a majority answer over a legitimate minority exception.
 
