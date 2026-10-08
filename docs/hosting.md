@@ -43,7 +43,10 @@ Redeploy after a server change: `railway up --service usage-server` from the rep
 (`.railwayignore` keeps the upload to what the image needs).
 Deploy a server change that accepts new event fields before releasing the extension that sends
 them: an older server drops unknown fields (and refuses layouts over its size limit) rather than
-storing them.
+storing them. The server names what it dropped on the stored event (`dropped`: field names only,
+at most 20, `droppedMore` counts the rest), and `/v1/health` names its version (`server`, a hash of
+its `server/index.mjs`). `node scripts/server-check.mjs` compares that with this checkout, without
+sending any event: after a deploy it should say `same`.
 
 ## Logs on your computer
 
@@ -59,4 +62,8 @@ npm run push-logs -- some/export.json   # an agent's exported log, or an old loc
 `.github/workflows/daily-review.yml` runs every day at 06:00 UTC (and on demand: Actions → Daily
 review → Run workflow, optionally with a start date). It downloads the log, builds the review for
 the last day, keeps it as an artifact for 90 days, shows it as the run summary, and opens an issue
-labelled `daily-review` when agents reported problems or rule-coverage checks find uncovered questions. The workflow does not implement or deploy corrections.
+labelled `daily-review` when agents reported problems, rule-coverage checks find uncovered questions,
+or the deployed usage server isn't the repository's (`scripts/server-check.mjs`, checked first and
+only on the default branch: redeploy it). When the download or the review fails (the server down),
+it opens an issue saying so, with what the server check found. The workflow does not implement or
+deploy corrections.

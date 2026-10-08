@@ -5,7 +5,7 @@
 //   PORT=8787 HOST=0.0.0.0 DATA_DIR=/srv/rater RATER_TOKEN=secret node server/index.mjs
 //
 // POST /v1/events   { agent, version, events: [...] }  -> { accepted, duplicates }
-// GET  /v1/health                                       -> { ok, events }
+// GET  /v1/health                                       -> { ok, events, server }
 // GET  /v1/days      (admin token)                      -> { days: [{ day, bytes }] }
 // GET  /v1/export?since=YYYY-MM-DD[&until=YYYY-MM-DD] (admin token) -> the days' JSONL, in order
 //
@@ -14,7 +14,10 @@
 // id, so an extension retrying an upload never creates duplicates.
 //
 // The extension never sends client data (see src/usage.js); as a second line of defence the
-// server only accepts known event types and drops fields it doesn't expect.
+// server only accepts known event types and drops fields it doesn't expect. What it drops is
+// named on the stored event (`dropped`), so a review can tell a field the extension never sent
+// from one an older server threw away. /v1/health names this file's version (`server`, a hash of
+// it), so the daily review sees when the deployed server isn't the one in the repository.
 //
 // Listens on 127.0.0.1 unless HOST says otherwise. When exposed beyond this computer, set
 // RATER_TOKEN and put it behind HTTPS (Railway does: see docs/hosting.md). RATER_TOKEN is the
@@ -32,6 +35,11 @@ const MAX_EVENTS_PER_REQUEST = 2000;
 const MAX_EVENT_BYTES = 32 * 1024;
 // A page's layout lists every question and its choices (up to 250 per question).
 const MAX_LAYOUT_BYTES = 128 * 1024;
+// Which version of this file is running: the daily review compares it with the repository's.
+export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fileURLToPath(import.meta.url))).digest('hex').slice(0, 12);
+// Names of dropped fields kept on an event: field-like names only, at most this many.
+const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
+const MAX_DROPPED = 20;
 
 // Event type -> fields kept. Anything else in an event is dropped.
 export const COMMON = ['id', 't', 'v', 'agent', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page', 'view'];
@@ -88,12 +96,26 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     if (typeof e.t !== 'string' || Number.isNaN(Date.parse(e.t))) return { error: 'event time missing or invalid' };
     if (JSON.stringify(e).length > (e.type === 'page_layout' ? MAX_LAYOUT_BYTES : MAX_EVENT_BYTES)) return { error: 'event too large' };
     const out = {};
-    for (const k of [...COMMON, ...keep]) if (e[k] !== undefined) out[k] = e[k];
+    const allowed = new Set([...COMMON, ...keep]);
+    for (const k of allowed) if (e[k] !== undefined) out[k] = e[k];
+    // A re-upload of stored events (npm run push-logs) keeps what an earlier server dropped.
+    const before = Array.isArray(e.dropped) ? e.dropped.filter((k) => typeof k === 'string' && DROPPED_NAME.test(k)) : [];
+    const beforeMore = Number.isSafeInteger(e.droppedMore) && e.droppedMore > 0 ? e.droppedMore : 0;
+    const dropped = Object.keys(e).filter((k) => !allowed.has(k) && k !== 'dropped' && k !== 'droppedMore' && e[k] !== undefined);
+    const drop = (k) => { delete out[k]; dropped.push(k); };
     // An order number and a field key (an element id or name), nothing else in those places.
-    if (out.seq !== undefined && !(Number.isSafeInteger(out.seq) && out.seq > 0)) delete out.seq;
-    if (out.key != null && !(typeof out.key === 'string' && out.key.length <= 256)) delete out.key;
+    if (out.seq !== undefined && !(Number.isSafeInteger(out.seq) && out.seq > 0)) drop('seq');
+    if (out.key != null && !(typeof out.key === 'string' && out.key.length <= 256)) drop('key');
     // Which tab and vehicle/driver/trailer (t1, t2:v0, t2:tr0): an order number and an index, nothing else.
-    if (out.view !== undefined && !(typeof out.view === 'string' && /^t\d{1,3}(:(?:v|d|tr)\d{1,3})?$/.test(out.view))) delete out.view;
+    if (out.view !== undefined && !(typeof out.view === 'string' && /^t\d{1,3}(:(?:v|d|tr)\d{1,3})?$/.test(out.view))) drop('view');
+    // Their names only, never their values; anything that doesn't look like a field name is counted.
+    if (dropped.length || before.length || beforeMore) {
+      const valid = dropped.filter((k) => DROPPED_NAME.test(k));
+      const names = [...new Set([...before, ...valid])];
+      out.dropped = names.slice(0, MAX_DROPPED);
+      const more = beforeMore + (dropped.length - valid.length) + (names.length - out.dropped.length);
+      if (more) out.droppedMore = more;
+    }
     // Layouts: never keep option lists or picks naming agency staff (agent of record, producer codes).
     if (out.type === 'page_layout' && Array.isArray(out.fields)) {
       out.fields = out.fields.map((f) => (/agent|producer/i.test(f?.label ?? '') ? { ...f, options: undefined, selected: undefined } : f));
@@ -150,7 +172,7 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
       res.end(fs.readFileSync(new URL('./privacy.html', import.meta.url)));
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/v1/health') return done(200, { ok: true, events: seen.size });
+    if (req.method === 'GET' && url.pathname === '/v1/health') return done(200, { ok: true, events: seen.size, server: SERVER_HASH });
     if (req.method === 'GET' && (url.pathname === '/v1/days' || url.pathname === '/v1/export')) {
       if (!isAdmin(req)) return done(401, { error: 'admin token required' });
       if (url.pathname === '/v1/days') {
