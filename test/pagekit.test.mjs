@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { buildPlan } from '../src/plan.js';
+import { collectItems } from '../src/ai/common.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
 
@@ -2500,4 +2501,22 @@ test('the fill report says which answers are TNI standards; review mode makes th
   assert.deepEqual([...review.checks].map((x) => x.q), ['299D'], 'the standard is a check item; the intake answer is not');
   assert.match(review.checks[0].note, /^Review mode: the business class "Dump Truck" isn't validated for Progressive; confirm this standard answer\.$/);
   assert.ok(review.blockers.some((b) => /^check: /.test(b)), 'Continue waits');
+});
+
+// Codex on c31942e: a fact the intake doesn't give reaches the report as the agent's (manualOnly),
+// so the AI assistant leaves it (ai/common.js collectItems).
+test('a fact step is reported manualOnly and kept from the AI', async () => {
+  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
+  h.document.body.append(yesNo('MoreBusinessInput.HasContinuousCoverage', 'Has the customer had continuous coverage?'));
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => s.q === '83');
+  assert.equal(plan.length, 1);
+  const report = await h.kit.fill(plan, { maxRounds: 2 });
+  assert.equal(report.filled.length, 0);
+  assert.equal(report.noData.length, 1);
+  assert.equal(report.noData[0].manualOnly, true);
+  const ai = collectItems([report]);
+  assert.deepEqual(ai.items, [], 'never sent to the AI');
+  assert.equal(ai.blocked.length, 1);
 });

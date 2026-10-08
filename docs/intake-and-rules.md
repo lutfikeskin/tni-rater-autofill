@@ -27,8 +27,10 @@ Every carrier rule with a `value` declares where its answer comes from ([test/pr
 | `intake` | A record path, no computed value | Filled from the intake |
 | `derived` | Computed from intake facts, with the evidence in the rule | Filled; may carry its own `warn` or `note` (a missing fact gives a note, never a guess) |
 | `standard` | A TNI coverage or workflow standard | Filled and marked `standard: true`; the panel's fill report tags it "standard" |
-| `fact` | A client fact the intake doesn't supply (gender, year licensed, continuous coverage, other business coverages, loss runs, …) | Never filled: `value: null` and the rule's `note` (else "<name> isn't on the intake: answer it yourself") |
+| `fact` | A client fact the intake doesn't supply (gender, year licensed, continuous coverage, other business coverages, loss runs, …) | Never filled: `value: null`, `manualOnly: true` (the AI assistant leaves it) and the rule's `note` (else "<name> isn't on the intake: answer it yourself") |
 | `attestation` | Something the agent must assert (the USDOT number belongs to the business, it was obtained within 60 days) | Never filled, as `fact` |
+
+A rule marked `clientFact` (AmWINS marital status, year established, entity type, vehicles leased / not owned, additional interest, convictions, attached equipment; Progressive has a USDOT number and vehicle / trailer loan / lease) answers from the intake when it can; when it can't (no value, or a note), its step is `manualOnly` too, so the AI assistant never suggests or picks it.
 
 Review mode: a carrier lists the business classes its rules were written for (`supportedClasses`; Progressive and AmWINS: expediter, freight hauler, general freight, the last also matched on what they haul). `supportedClass(record, carrier)` is false for any other class and for a missing one; then every `standard` step gets the `warn` "Review mode: the business class "…" isn't validated for <carrier>; confirm this standard answer.", so it is filled but becomes a check item that holds Continue, and the panel shows a review-mode banner above the fill button. Intake and derived answers are unaffected.
 

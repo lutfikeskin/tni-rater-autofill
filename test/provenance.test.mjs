@@ -68,6 +68,9 @@ test('facts and attestations are never filled; standards are marked', () => {
       for (const active of [{}, { vehicles: 0, drivers: 0, trailers: 0 }]) {
         for (const step of field(buildPlan(record, carrier, active))) {
           if (AGENT_SOURCES.includes(step.source)) { facts++; agentsNote(step); assert.equal(step.standard, false); }
+          // Codex on c31942e: the agent's, never the AI's (pagekit report -> collectItems).
+          if (AGENT_SOURCES.includes(step.source)) assert.equal(step.manualOnly, true, `${carrier.id} ${step.name}: manualOnly`);
+          else if (step.manualOnly) assert.equal(step.value, null, `${carrier.id} ${step.name}: manualOnly only while unanswered`);
           assert.equal(step.standard, step.source === 'standard', `${carrier.id} ${step.name}: standard iff source standard`);
           if (step.standard) standards++;
           if (!step.path?.startsWith(`${carrier.id}.`) && !step.source && step.value != null && !step.selector) assert.fail(`${carrier.id} ${step.name}: a filled step without a source`);
@@ -179,6 +182,30 @@ test('every intake field is consumed by each carrier, or its absence is explaine
 });
 
 // --- Counter-examples: the intake wins over a default, and a missing fact is the agent's ----------
+
+// Codex on c31942e: a client fact the intake leaves unanswered is manualOnly (the AI assistant
+// leaves it); answered, it's filled from the intake as before.
+test('a client fact the intake does not answer is manualOnly; answered, it is filled', () => {
+  const blank = with_({ 'drivers.0.maritalStatus': null, 'applicant.yearEstablished': null, 'operations.vehicleOwnership': null, 'trailerInfo.ownership': null, 'applicant.dot': null, 'applicant.mcDotWithin60Days': null, 'claims.hasClaims': null });
+  const a = buildPlan(blank, amwins, { drivers: 0, vehicles: 0 });
+  const p = buildPlan(blank, progressive, { drivers: 0, vehicles: 0, trailers: 0 });
+  const unanswered = [named(a, /^Marital status/), bySel(a, '#yearBusinessEstablished'), named(a, /^Vehicles leased/), named(a, /^Vehicles not owned/),
+    named(a, /^Additional interest/), named(a, /convictions/i), byQ(p, '2CA7'), byQ(p, '2AD0'), byQ(p, '1ED')];
+  for (const step of unanswered) {
+    assert.ok(step, 'step present');
+    assert.equal(step.value, null, step.name);
+    assert.equal(step.manualOnly, true, step.name);
+  }
+  const full = expediter();
+  const fa = buildPlan(full, amwins, { drivers: 0, vehicles: 0 });
+  const fp = buildPlan(full, progressive, { drivers: 0, vehicles: 0, trailers: 0 });
+  for (const step of [named(fa, /^Marital status/), bySel(fa, '#yearBusinessEstablished'), named(fa, /^Vehicles leased/), named(fa, /convictions/i), byQ(fp, '2CA7'), byQ(fp, '1ED')]) {
+    assert.notEqual(step.value, null, step.name);
+    assert.equal(step.manualOnly, false, step.name);
+  }
+  // A standard or intake answer is never manualOnly.
+  assert.equal(named(fa, /^Waiver type/).manualOnly, false);
+});
 
 test('a leased vehicle: AmWINS leased and not-owned Yes, Progressive loan/lease "Yes - Lease"', () => {
   const r = with_({ 'operations.vehicleOwnership': 'Leased' });

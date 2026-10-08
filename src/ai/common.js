@@ -56,7 +56,9 @@ export function collectItems(frames) {
         current: x.current ?? null, options, applyable: CHOICE_KINDS.has(x.controlKind) && options.length > 0,
         reviewOnly: x.reviewOnly === true, manualOnly: x.manualOnly === true,
         fieldType: x.fieldType ?? x.valueType ?? x.semanticType ?? null };
-      const why = x.reviewOnly ? 'lookup identity mismatch requires agent review' : neverReason(item)
+      // A client fact or attestation the rules leave to the agent (plan.js manualOnly): never the AI's.
+      const why = x.reviewOnly ? 'lookup identity mismatch requires agent review'
+        : x.manualOnly === true ? 'TNI leaves this client fact to the agent' : neverReason(item)
         || (!item.applyable ? 'The assistant needs visible choices; enter this answer on the page' : null)
         || (options.length > MAX_OPTIONS ? 'too many choices; narrow the list on the page first' : null);
       if (why) blocked.push({ ...item, why });

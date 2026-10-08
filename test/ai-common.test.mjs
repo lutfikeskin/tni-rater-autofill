@@ -94,6 +94,19 @@ test('collectItems sends only bounded choices and blocks unsafe or unsupported f
   assert.equal(neverReason({ section: 'Business', label: 'Has a USDOT number?', controlKind: 'radio' }), null);
 });
 
+// Codex on c31942e: a client fact or attestation the rules leave to the agent (plan.js manualOnly,
+// carried on the pagekit report item) is never sent to the AI, even as a bounded choice.
+test('collectItems keeps manualOnly client facts away from the AI', () => {
+  const { items, blocked } = collectItems([{ noData: [
+    { key: 'gender', label: 'Gender', controlKind: 'select', options: ['MALE', 'FEMALE'], current: '', manualOnly: true, note: "Gender isn't on the intake: answer it yourself." },
+    { key: 'continuous', label: 'Has the customer had continuous coverage?', controlKind: 'radio', options: ['Yes', 'No'], current: '', manualOnly: true },
+    { key: 'haz', label: 'Hazardous materials requiring placards?', controlKind: 'radio', options: ['Yes', 'No'], current: '' },
+  ] }]);
+  assert.deepEqual(items.map(x => x.key), ['haz']);
+  assert.deepEqual(blocked.map(x => x.key), ['gender', 'continuous']);
+  assert.ok(blocked.every(x => /agent/.test(x.why)));
+});
+
 test('scoped intake strips identifiers, keeps explicit No, and includes only carrier rules', () => {
   const facts = scopedIntake(record, context.active);
   assert.equal(facts.coverage.reeferBreakdown, false);

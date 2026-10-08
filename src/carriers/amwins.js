@@ -65,6 +65,8 @@ const entityTypeNote = (r) => (entityType(r) == null
   ? `The company name "${r.applicant.name}" has no LLC / Inc / Corp suffix, so its entity type isn't known: answer it yourself.` : null);
 
 // Facts the intake doesn't supply are the agent's (plan.js: `source: 'fact'` is never filled).
+// `clientFact` marks a client fact the intake may answer: when it doesn't, the agent's too (the AI
+// assistant leaves it).
 const fact = (name, note) => ({ name, source: 'fact', note });
 
 // The intake's vehicle ownership (one answer for all the vehicles): leased means the vehicles are
@@ -282,10 +284,10 @@ export const amwins = {
     { selector: '#mailingState', path: 'garaging.state', replace: true },
     { selector: '#mailingZip', path: 'garaging.zip' },
     { selector: '#businessPhone', name: 'Business phone', source: 'derived', value: (r) => digits(r.applicant.phone) },
-    { selector: '#entityType', name: 'Entity type (from the company name)', kind: 'choice', source: 'derived', value: entityType, note: entityTypeNote },
+    { selector: '#entityType', name: 'Entity type (from the company name)', kind: 'choice', source: 'derived', clientFact: true, value: entityType, note: entityTypeNote },
     { selector: '#yrsInBusiness', name: 'Years in business', kind: 'choice', source: 'derived', value: yearsInBusiness },
     // From the intake; blank there is the agent's (2026-10-09; until then this year was filled in).
-    { selector: '#yearBusinessEstablished', name: 'Year established', path: 'applicant.yearEstablished' },
+    { selector: '#yearBusinessEstablished', name: 'Year established', path: 'applicant.yearEstablished', clientFact: true },
     { name: 'Non-profit (standard: No)', label: '^is non profit$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Single contact (standard: Yes)', label: '^is single contact$', kind: 'bool', source: 'standard', value: () => true },
     { name: 'Garage address same as mailing (standard)', label: '^same as mailing address', kind: 'bool', source: 'standard', value: () => true },
@@ -298,7 +300,7 @@ export const amwins = {
     { selector: '#retailOrServiceOperationPert', name: 'Retail / service operations % (standard: 0)', source: 'standard', value: () => '0' },
     { selector: '#classCodeAndDescription', name: 'Classification (484122 for expediters / general freight)', kind: 'search-select', source: 'derived', search: classSearch, value: classChoice, note: freightNote('The classification') },
     { selector: '#operationDescription', name: 'Description of operations (for hire, for expediters / general freight)', source: 'derived', value: operationsDescription, note: freightNote('The description of operations') },
-    { name: 'Additional interest (from the vehicle ownership)', label: '^has additional interest$', kind: 'bool', source: 'derived', value: additionalInterest, note: additionalInterestNote },
+    { name: 'Additional interest (from the vehicle ownership)', label: '^has additional interest$', kind: 'bool', source: 'derived', clientFact: true, value: additionalInterest, note: additionalInterestNote },
     { selector: '#waiverType', name: 'Waiver type (standard: NONE)', kind: 'choice', source: 'standard', value: () => 'NONE' },
     // Filing counts: skipped (TNI).
     ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map((selector) => ({ selector, name: 'Filing count (skipped)', ignore: true })),
@@ -342,7 +344,7 @@ export const amwins = {
     // MALE and birth year + 17 were filled in). Marital status from the intake; none there is the
     // agent's too (until then MARRIED, flagged to confirm).
     { selector: dataId('gender', DRIVER), kind: 'choice', ...fact('Gender') },
-    { selector: dataId('martialStatus', DRIVER), name: 'Marital status', kind: 'choice', path: 'drivers[].maritalStatus' },
+    { selector: dataId('martialStatus', DRIVER), name: 'Marital status', kind: 'choice', path: 'drivers[].maritalStatus', clientFact: true },
     { selector: dataId('licenseYear', DRIVER), ...fact('Year licensed') },
 
     // --- Vehicles --------------------------------------------------------------------------------
@@ -362,7 +364,7 @@ export const amwins = {
     { selector: '#marketValue', path: 'vehicles[].value', name: 'Vehicle value', note: vehicleValueNote },
     { selector: dataId('usageType', VEHICLE), name: 'Usage type (For hire, for expediters / general freight)', kind: 'choice', source: 'derived', value: (r) => (isFreight(r) ? 'FOR HIRE' : null), note: freightNote('The usage type') },
     { selector: dataId('radius', VEHICLE), name: 'Radius', kind: 'int', source: 'derived', value: radius },
-    { name: 'Permanently attached equipment (No unless the intake gives a value)', label: '^permanently attached equipment', kind: 'bool', source: 'derived', value: equipment, note: equipmentNote },
+    { name: 'Permanently attached equipment (No unless the intake gives a value)', label: '^permanently attached equipment', kind: 'bool', source: 'derived', clientFact: true, value: equipment, note: equipmentNote },
 
     // --- Coverages -------------------------------------------------------------------------------
     { name: 'CSL liability limit', label: '^csl liability limit$', path: 'coverage.autoLiabLimit' },
@@ -388,11 +390,11 @@ export const amwins = {
     // --- Underwriting questions --------------------------------------------------------------------
     // From the intake's vehicle ownership (2026-10-09; until then always No): leased vehicles are
     // leased and not owned.
-    { name: 'Vehicles not owned (from the vehicle ownership)', label: '^any vehicle not owned$', kind: 'bool', source: 'derived', value: leased, note: ownershipNote('whether any vehicle is not owned') },
-    { name: 'Vehicles leased (from the vehicle ownership)', label: '^vehicle leased$', kind: 'bool', source: 'derived', value: leased, note: ownershipNote('whether the vehicles are leased') },
+    { name: 'Vehicles not owned (from the vehicle ownership)', label: '^any vehicle not owned$', kind: 'bool', source: 'derived', clientFact: true, value: leased, note: ownershipNote('whether any vehicle is not owned') },
+    { name: 'Vehicles leased (from the vehicle ownership)', label: '^vehicle leased$', kind: 'bool', source: 'derived', clientFact: true, value: leased, note: ownershipNote('whether the vehicles are leased') },
     { name: 'MVR verification (standard: No)', label: '^mvr verification$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Owned unscheduled vehicles (standard: No)', label: '^owned unscheduled vehicle$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'Convictions / moving violations (No when the intake reports none)', label: '^convictions moving violations$', kind: 'bool', source: 'derived', value: convictions, note: convictionsNote },
+    { name: 'Convictions / moving violations (No when the intake reports none)', label: '^convictions moving violations$', kind: 'bool', source: 'derived', clientFact: true, value: convictions, note: convictionsNote },
     { name: 'Hazardous material', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat' },
     ...UNDERWRITING_NO.map((q) => ({ name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
     // Yes again after "Default all answers to No".

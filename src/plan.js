@@ -11,7 +11,9 @@ import { get, listOf } from './util.js';
 //   standard     a TNI coverage or workflow standard; the step is marked `standard`
 //   fact         a client fact the intake doesn't supply: never filled, left to the agent with a note
 //   attestation  something the agent must assert: never filled, left to the agent with a note
-// Every rule with a `value` declares one (test/provenance.test.mjs).
+// Every rule with a `value` declares one (test/provenance.test.mjs). Fact and attestation steps are
+// `manualOnly`: the AI assistant never suggests or picks them. So is a `clientFact` rule's step
+// (marital status, vehicle ownership, …) whenever the intake leaves it without an answer.
 export const SOURCES = ['intake', 'derived', 'standard', 'fact', 'attestation'];
 export const AGENT_SOURCES = ['fact', 'attestation'];
 
@@ -160,6 +162,8 @@ function fieldSteps(rules, record, carrier, active) {
       }
     }
     const ignore = typeof rule.ignore === 'function' ? !!rule.ignore(record, active) : !!rule.ignore;
+    // The agent's, never the AI's: a fact or attestation, or a client fact the intake didn't answer.
+    const manualOnly = agents || (!!rule.clientFact && (value === null || value === undefined || value === ''));
     const scope = typeof rule.scope === 'function' ? rule.scope(record, active) : rule.scope ?? null;
     const scopeIndex = typeof rule.scopeIndex === 'function' ? rule.scopeIndex(record, active) : rule.scopeIndex;
     // Per-vehicle questions repeat once per vehicle, labelled "2021 MERCEDES-BENZ SPRINTER" (a
@@ -176,6 +180,8 @@ function fieldSteps(rules, record, carrier, active) {
       // A TNI standard, not an intake fact: the panel tags it, and in review mode (an unvalidated
       // business class) it is a check item.
       standard,
+      // The agent's to answer: the report says so and the AI assistant leaves it (ai/common.js).
+      manualOnly,
       // The carrier's question id when the rule was written: only the rule's name (its path), never
       // how its field is found (Progressive renumbers questions). These find it (pagekit assign):
       q: rule.q ?? null,

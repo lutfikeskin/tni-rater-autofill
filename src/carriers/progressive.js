@@ -26,6 +26,8 @@
 // `derived` from intake facts, a TNI `standard` (coverage and workflow choices, the agent's own on
 // live quotes, marked "standard" in the panel and check items in review mode), or a `fact` /
 // `attestation` the intake doesn't supply, which is never filled and left to the agent with a note.
+// A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
+// doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver } from '../util.js';
 import { ntlMention } from '../normalize.js';
@@ -436,7 +438,7 @@ export const progressive = {
       { q: '194', field: 'PolicyInput.EffectiveDate', ask: 'When should this Progressive Commercial Auto policy start?', name: 'Policy start date (preserve prefilled value)', ignore: true },
       { q: '198', source: 'derived', field: 'AccountInput.PGRInsuredIndicator', ask: 'Is the customer currently insured with Progressive Commercial Auto?', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive },
       { q: '1CC', field: 'Warehouse.QuoteVendorCode', ask: 'Quote Vendor Code', optional: true, name: 'Quote vendor code (optional)', ignore: true },
-      { q: '1ED', source: 'derived', field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: hasUsdotNote },
+      { q: '1ED', source: 'derived', clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: hasUsdotNote },
       { q: '1F3', field: 'USDOTInput.NumberCollection', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !r.applicant.dot },
       // Shown when Verify USDOT finds no record for the number (a brand-new USDOT). When the client
       // got it isn't on the intake: the agent's (2026-10-09; TNI's 2026-10-01 Yes was an assertion).
@@ -568,7 +570,7 @@ export const progressive = {
       { q: '2C1A', source: 'derived', field: 'BCBTUVehQuestions.V03GoodsHaulIndicator', ask: 'Is this vehicle used to haul goods on a For-Hire basis?', name: 'Hauls for hire (expediters and freight haulers)', kind: 'bool', value: forHire, note: forHireNote },
       // Loan / lease: from the intake's vehicle ownership (also read from the claims-box notes);
       // none given is the agent's.
-      { q: '2CA7', source: 'derived', field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this vehicle?', name: 'Loan / lease (from the vehicle ownership)', kind: 'choice', value: loanLease, note: loanLeaseNote },
+      { q: '2CA7', source: 'derived', clientFact: true, field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this vehicle?', name: 'Loan / lease (from the vehicle ownership)', kind: 'choice', value: loanLease, note: loanLeaseNote },
       // NJ: who the vehicle is registered to. Not on the intake: the agent's (2026-10-09).
       { q: '2C97', source: 'fact', ask: 'Vehicle Registrant?', name: 'Vehicle registrant', kind: 'choice', note: 'Who the vehicle is registered to isn\'t on the intake: answer it yourself.' },
       // NJ safety equipment boxes: the VIN lookup ticks what the vehicle has; left as Progressive set them.
@@ -597,7 +599,7 @@ export const progressive = {
       { q: '2A2B', field: 'RiskInput.MakeCode', ask: 'Make', path: 'trailers[].make', kind: 'choice' },
       { q: '2A61', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', name: 'Trailer ZIP' },
       { q: '2A65', source: 'derived', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this trailer travels for work', name: 'Trailer farthest one-way distance (as the vehicle)', kind: 'int', value: radiusMiles },
-      { q: '2AD0', source: 'derived', field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from the trailer ownership)', kind: 'choice', value: trailerLoanLease, note: trailerOwnershipNote },
+      { q: '2AD0', source: 'derived', clientFact: true, field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from the trailer ownership)', kind: 'choice', value: trailerLoanLease, note: trailerOwnershipNote },
       { q: '2AEE', source: 'standard', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this trailer in an accident or loss?', name: 'Trailer comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
       { q: '2AFF', source: 'derived', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard, unless the intake gives an equipment value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: '2AFC', source: 'derived', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },

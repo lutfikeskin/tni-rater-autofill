@@ -1370,7 +1370,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) state.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
   persistDoneActions();
-  for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
+  for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown, standard: !!x.standard });
   // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
   const quoteKey = carrier?.quoteState?.key;
   const pickedState = quoteKey && frames.flatMap((f) => f.filled).find((x) => x.key === quoteKey);
@@ -1859,12 +1859,13 @@ function renderReport(frames) {
   // Answers an earlier pass on this page filled (a follow-up pass, after the VIN lookup or a
   // redraw, finds them already there): still ours, shown as filled.
   const earlier = kept.filter((x) => !x.differs && state.filled?.get?.(x.key));
-  // A TNI standard (not an intake fact) is tagged, so the agent can tell them apart (plan.js source).
+  // A TNI standard (not an intake fact) is tagged, so the agent can tell them apart (plan.js source),
+  // also when an earlier pass filled it or the page already had it.
   const doneRows = [
     ...filled.map((x) => [x.label || x.name, x.shown ?? '', !!x.standard]),
-    ...earlier.map((x) => [x.label || x.name, state.filled.get(x.key).shown || 'filled']),
+    ...earlier.map((x) => [x.label || x.name, state.filled.get(x.key).shown || 'filled', !!(x.standard || state.filled.get(x.key).standard)]),
     ...all('actions').map((x) => ['Clicked', x.text || x.id]),
-    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => [x.label || x.name, 'left as the page had it']),
+    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => [x.label || x.name, 'left as the page had it', !!x.standard]),
     ...all('skipped').map((x) => [x.label, 'ignored']),
   ];
   // The carrier probably changed this page (pagekit: a known field renamed, or most questions
