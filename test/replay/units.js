@@ -9,12 +9,13 @@ const replayRow = (row) => /^\d+_\d+$/.test(row ?? '');
 
 // The units (vehicles, then trailers) a page shows a row of questions for: one per recorded row, in
 // row order; on a page without rows (layouts recorded before them), one per name. The page with the
-// most of them counts. A row is named by the first name the layout shows for it. Fields named after
+// most of them counts, and of two with as many the one with rows (Rates): a page without them may
+// hold another quote's names in a merged layout. A row is named by the first name the layout shows for it. Fields named after
 // a unit but recorded before rows, on a page whose units have rows, are `apart`: which unit's they
 // were isn't known.
 globalThis.replayUnitRows = function replayUnitRows(layout) {
   const rowNumber = (row) => row.split('_').map(Number);
-  let best = { page: null, names: new Map(), apart: new Set() };
+  let best = { page: null, names: new Map(), apart: new Set(), rowed: false };
   for (const [page, p] of Object.entries(layout?.pages ?? {})) {
     const units = (p.fields ?? []).filter((f) => REPLAY_UNIT_CAPTION.test(replayCaption(f.caption)));
     const rowed = units.filter((f) => replayRow(f.row));
@@ -23,14 +24,22 @@ globalThis.replayUnitRows = function replayUnitRows(layout) {
       const unit = rowed.length ? f.row : replayCaption(f.caption);
       if (!names.has(unit)) names.set(unit, replayCaption(f.caption));
     }
-    if (names.size <= best.names.size) continue;
+    if (names.size < best.names.size || (names.size === best.names.size && (best.rowed || !rowed.length))) continue;
     best = {
       page,
+      rowed: rowed.length > 0,
       names: rowed.length ? new Map([...names].sort(([a], [b]) => rowNumber(a)[0] - rowNumber(b)[0] || rowNumber(a)[1] - rowNumber(b)[1])) : names,
       apart: new Set(rowed.length ? units.filter((f) => !rowed.includes(f)) : []),
     };
   }
   return { ...best, list: [...best.names.values()] };
+};
+
+// The key a field's answer is kept under: its question id, with its row past the first
+// (<page>_<row>, any page's first row ending in _1), as scripts/bakeoff-score.mjs and the answer keys
+// look first rows up. A field drawn apart from the unit rows keeps its row: it may share the id.
+globalThis.replayAnswerKey = function replayAnswerKey(q, row, apart = false) {
+  return !apart && /_1$/.test(row) ? q : `${q}_${row}`;
 };
 
 // A row shows one name, as on the live page: its unit's (above), also where a layout merging

@@ -63,3 +63,31 @@ test('the replay gives the sample intake as many vehicles and trailers as the la
   // A trailer with no rows to name it keeps the made-up one's name.
   assert.deepEqual(withUnits(sample, { vehicles: 1, trailers: true }, []).trailers.map((t) => t.make), ['WABASH']);
 });
+
+// Codex on PR #45: of two pages naming as many units, the one with rows (Rates) names them; a
+// page without rows may hold another quote's vehicles in a merged layout.
+test('the replay names units after the page with rows when two pages name as many', () => {
+  const units = unitRows({ pages: {
+    VehicleSummary: { fields: [{ kind: 'text', caption: '2018 KENWORTH T680' }, { kind: 'text', caption: '2020 VOLVO VNL' }] },
+    CoveragesRates: { fields: [
+      row('ComprehensiveInput.Deductible', '2013 PETERBILT 388', '8_1'),
+      row('ComprehensiveInput.Deductible', '2016 FREIGHTLINER CASCADIA 125', '8_2'),
+    ] },
+  } });
+  assert.equal(units.page, 'CoveragesRates');
+  assert.deepEqual([...units.list], ['2013 PETERBILT 388', '2016 FREIGHTLINER CASCADIA 125']);
+  // Two pages without rows: the first, as before.
+  const before = unitRows({ pages: { A: { fields: [{ caption: '2018 KENWORTH T680' }] }, B: { fields: [{ caption: '2020 VOLVO VNL' }] } } });
+  assert.equal(before.page, 'A');
+});
+
+// Codex on PR #45: a first row on any page (4_1, not only Rates' 8_1) is answered under the plain
+// question id, as the scorer and answer keys look it up; rows past the first keep their row.
+test('the replay keeps a first row\'s answer under its question id', () => {
+  assert.equal(context.replayAnswerKey('267', '4_1'), '267');
+  assert.equal(context.replayAnswerKey('1FF2', '8_1'), '1FF2');
+  assert.equal(context.replayAnswerKey('1FF2', '8_2'), '1FF2_8_2');
+  assert.equal(context.replayAnswerKey('1FF2', '8_10'), '1FF2_8_10');
+  // Drawn apart from the unit rows (recorded before rows): it may share the id with a row's field.
+  assert.equal(context.replayAnswerKey('1FCD', '9_1', true), '1FCD_9_1');
+});

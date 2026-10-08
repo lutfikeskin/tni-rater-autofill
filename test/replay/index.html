@@ -85,8 +85,9 @@
       // recorded one, else the first: the fill tells a unit's rows apart by it. A field named after
       // a unit but recorded before rows, on a page whose units have rows, is drawn apart from them
       // (9_1): which unit's it was isn't known, and in the first row it would rename that unit.
-      const row = /^\d+_\d+$/.test(f.row ?? '') ? f.row : window.replay.units?.apart.has(f) ? '9_1' : '8_1';
-      return { id: `f_a${GUID}${q}_${row}`, q, key: row === '8_1' ? q : `${q}_${row}` };
+      const apart = !/^\d+_\d+$/.test(f.row ?? '') && !!window.replay.units?.apart.has(f);
+      const row = /^\d+_\d+$/.test(f.row ?? '') ? f.row : apart ? '9_1' : '8_1';
+      return { id: `f_a${GUID}${q}_${row}`, q, key: replayAnswerKey(q, row, apart) };
     }
     // Duck Creek's data-model name on the field's input (fieldref="RiskInput.VIN"), when recorded.
     const refAttr = (f) => (f.ref ? { inputAttrTpl: `fieldref="${Ext.String.htmlEncode(f.ref)}"` } : {});
@@ -211,8 +212,11 @@
       // The quote's state is the layout's: Progressive quotes a client in their garaging state, and
       // some answers are a state's (Florida's PIP).
       if (layout?.context?.state) result.record.garaging = { ...result.record.garaging, state: layout.context.state };
-      // An intake chosen here is replayed as it is: its own vehicles must find their rows.
-      return file ? result.record : replayWithUnits(result.record, layout?.context, window.replay.units?.list);
+      // An intake chosen here is replayed with its own vehicles, which must find their rows: as many
+      // as the layout's quote had (the rest match no row). The sample takes the layout's units.
+      if (!file) return replayWithUnits(result.record, layout?.context, window.replay.units?.list);
+      const count = layout?.context?.vehicles;
+      return Number.isInteger(count) && count > 0 && count < (result.record.vehicles?.length ?? 0) ? { ...result.record, vehicles: result.record.vehicles.slice(0, count) } : result.record;
     }
 
     async function load() {
@@ -281,10 +285,6 @@
     const done = { actions: new Set(), pages: new Set() };
     async function fillPage(record) {
       const carrier = CARRIERS.find((c) => c.id === layout.carrier) ?? null;
-      // A layout is one captured quote: replay it with as many intake vehicles as that quote had,
-      // or its per-vehicle rows (named after the captured vehicle) match none of the intake's.
-      const count = layout.context?.vehicles;
-      if (Number.isInteger(count) && count > 0 && count < (record.vehicles?.length ?? 0)) record = { ...record, vehicles: record.vehicles.slice(0, count) };
       const plan = buildPlan(record, carrier, {});
       const before = window.__raterKit.capture(plan, []).controls;
       const r = await window.__raterKit.fill(plan, {
