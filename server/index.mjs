@@ -98,7 +98,10 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     const out = {};
     const allowed = new Set([...COMMON, ...keep]);
     for (const k of allowed) if (e[k] !== undefined) out[k] = e[k];
-    const dropped = Object.keys(e).filter((k) => !allowed.has(k) && e[k] !== undefined);
+    // A re-upload of stored events (npm run push-logs) keeps what an earlier server dropped.
+    const before = Array.isArray(e.dropped) ? e.dropped.filter((k) => typeof k === 'string' && DROPPED_NAME.test(k)) : [];
+    const beforeMore = Number.isSafeInteger(e.droppedMore) && e.droppedMore > 0 ? e.droppedMore : 0;
+    const dropped = Object.keys(e).filter((k) => !allowed.has(k) && k !== 'dropped' && k !== 'droppedMore' && e[k] !== undefined);
     const drop = (k) => { delete out[k]; dropped.push(k); };
     // An order number and a field key (an element id or name), nothing else in those places.
     if (out.seq !== undefined && !(Number.isSafeInteger(out.seq) && out.seq > 0)) drop('seq');
@@ -106,10 +109,11 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     // Which tab and vehicle/driver/trailer (t1, t2:v0, t2:tr0): an order number and an index, nothing else.
     if (out.view !== undefined && !(typeof out.view === 'string' && /^t\d{1,3}(:(?:v|d|tr)\d{1,3})?$/.test(out.view))) drop('view');
     // Their names only, never their values; anything that doesn't look like a field name is counted.
-    if (dropped.length) {
-      const names = dropped.filter((k) => DROPPED_NAME.test(k));
+    if (dropped.length || before.length || beforeMore) {
+      const valid = dropped.filter((k) => DROPPED_NAME.test(k));
+      const names = [...new Set([...before, ...valid])];
       out.dropped = names.slice(0, MAX_DROPPED);
-      const more = dropped.length - out.dropped.length;
+      const more = beforeMore + (dropped.length - valid.length) + (names.length - out.dropped.length);
       if (more) out.droppedMore = more;
     }
     // Layouts: never keep option lists or picks naming agency staff (agent of record, producer codes).

@@ -197,6 +197,19 @@ test('dropped fields are named on the event (names only, bounded), and health na
   assert.equal(row.extra0, undefined);
 });
 
+// Codex on PR #47: stored events uploaded again (npm run push-logs) keep what was dropped before.
+test('a re-uploaded event keeps the names an earlier server dropped', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [ev({ dropped: ['typedValue', 'Not a name'], droppedMore: 2, other: 1 }), ev({ dropped: ['how'] })] });
+  });
+  const [again, kept] = stored(dataDir);
+  assert.deepEqual(again.dropped, ['typedValue', 'other']);
+  assert.equal(again.droppedMore, 2);
+  assert.deepEqual(kept.dropped, ['how']);
+  assert.equal(kept.droppedMore, undefined);
+});
+
 test('the daily review tells whether the deployed server is this repository\'s', async () => {
   const health = (body, ok = true) => async () => ({ ok, status: ok ? 200 : 502, json: async () => body });
   assert.equal((await checkServer('http://x', SERVER_HASH, health({ ok: true, server: SERVER_HASH }))).status, 'same');

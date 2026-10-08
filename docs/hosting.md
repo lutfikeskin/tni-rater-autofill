@@ -63,5 +63,7 @@ npm run push-logs -- some/export.json   # an agent's exported log, or an old loc
 review → Run workflow, optionally with a start date). It downloads the log, builds the review for
 the last day, keeps it as an artifact for 90 days, shows it as the run summary, and opens an issue
 labelled `daily-review` when agents reported problems, rule-coverage checks find uncovered questions,
-or the deployed usage server isn't the repository's (`scripts/server-check.mjs`: redeploy it). The
-workflow does not implement or deploy corrections.
+or the deployed usage server isn't the repository's (`scripts/server-check.mjs`, checked first and
+only on the default branch: redeploy it). When the download or the review fails (the server down),
+it opens an issue saying so, with what the server check found. The workflow does not implement or
+deploy corrections.
