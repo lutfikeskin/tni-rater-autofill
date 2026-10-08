@@ -94,3 +94,16 @@ test('daily: AmWINS drift alerts, the comment stays under GitHub\'s limit, recei
   const [e] = loadEvents([path.join(dir, 'events'), path.join(dir, 'export.json')]);
   assert.equal(e.receivedAt, '2026-10-08T09:00:00Z');
 });
+
+// Codex on PR #52: AmWINS layouts named their step from 0.9.6 on, and a step heading can carry
+// counts; a field seen before under the bare page is not new. And the workflow runs one at a time.
+test('daily: a field seen before steps had names is not new under its step', () => {
+  const amwins = (id, receivedAt, step, fields) => ({ id, t: receivedAt, receivedAt, session: id, carrier: 'amwins', type: 'page_layout', page: '/application/businessauto', step, context: { state: 'NJ' }, fields });
+  const field = { id: 'permanentlyAttachedEquipment_2_0_', kind: 'radio', label: 'permanently attached equipment 2', options: ['Yes', 'No'] };
+  const events = [amwins('a', '2026-10-05T20:39:00Z', undefined, [field]), amwins('b', '2026-10-07T15:42:00Z', 'Vehicles', [field])];
+  assert.equal(uncoveredQuestions(events, '2026-10-07T12:00:00Z').new.length, 0);
+  assert.equal(questionId('amwins', '/commerciallines › My Incomplete Submissions 3', { kind: 'combo', caption: 'Please select a Risk State:' }),
+    questionId('amwins', '/commerciallines › My Incomplete Submissions 4', { kind: 'combo', caption: 'Please select a Risk State:' }));
+  const workflow = fs.readFileSync(new URL('../.github/workflows/daily-review.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /concurrency:\s*\n\s*group: daily-review\s*\n\s*cancel-in-progress: false/);
+});

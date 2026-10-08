@@ -28,7 +28,10 @@ if (args[0] === 'since') {
     run = lastSuccess(JSON.parse(gh('run', 'list', '--workflow', 'daily-review.yml', '--branch', branch, '--status', 'success', '--limit', '5', '--json', 'databaseId,createdAt,startedAt,conclusion')));
     if (run) steps = JSON.parse(gh('run', 'view', String(run.databaseId), '--json', 'jobs')).jobs.flatMap((j) => j.steps ?? []);
   } catch (e) {
-    console.error(`couldn't read the last run (${String(e.message).split('\n')[0]}): ${run ? 'from when it started' : 'a day ago'}`);
+    // Never a guessed day: a review that starts too late would leave reports unread for good, and
+    // become the next run's start (Codex on PR #52). The run fails and says so instead.
+    console.error(`couldn't read where the last review stopped: ${String(e.message).split('\n')[0]}`);
+    process.exit(1);
   }
   console.log(windowStart(run, steps));
 } else if (args[0] === 'post') {

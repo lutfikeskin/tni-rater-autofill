@@ -23,14 +23,19 @@ export function windowStart(run, steps = [], now = new Date()) {
   return steps.find((s) => s.name === DOWNLOAD_STEP)?.startedAt ?? run.startedAt ?? run.createdAt;
 }
 
-// One question of a carrier page, whatever its number, row or product: its data-model name, else
-// its kind and text. Rows recorded before names that are named after a vehicle ("2016 FREIGHTLINER
-// CASCADIA 125") don't say which question they are: one per page and kind.
+// One question of a carrier page, whatever its number, row, product or step: its data-model name,
+// else its element id or data-id (AmWINS), else its kind and text. A one-address application's step
+// (`page › step`) isn't part of it: layouts before 0.9.6 named none, and a step heading can carry
+// counts ("My Incomplete Submissions 3"). Rows recorded before names that are named after a vehicle
+// ("2016 FREIGHTLINER CASCADIA 125") don't say which question they are: one per page and kind.
 const VEHICLE = /^(19|20)\d{2}\s+\S/;
 const text = (s) => String(s ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
 export function questionId(carrier, page, f) {
-  if (f.ref) return `${carrier}|${page}|ref:${f.ref}`;
-  return `${carrier}|${page}|${f.kind ?? ''}:${VEHICLE.test(text(f.caption)) ? '<vehicle row>' : text(f.caption)}`;
+  const base = String(page).split(' › ')[0];
+  if (f.ref) return `${carrier}|${base}|ref:${f.ref}`;
+  if (f.id) return `${carrier}|${base}|#${f.id}`;
+  if (f.dataId) return `${carrier}|${base}|data:${f.dataId}`;
+  return `${carrier}|${base}|${f.kind ?? ''}:${VEHICLE.test(text(f.caption)) ? '<vehicle row>' : text(f.caption)}`;
 }
 
 // The AmWINS mock's ids: a live field the mock lacks is drift, alerted on like a question without a
@@ -51,14 +56,17 @@ function questions(events) {
     for (const p of coverage(layout, carrier, { mockIds: mockFor(carrier.id) }).pages) {
       for (const r of p.rows) {
         const id = questionId(layout.carrier, p.page, r);
-        // By its text too: a question recorded before names is the same one once its name shows.
-        seen.add(id).add(questionId(layout.carrier, p.page, { ...r, ref: null }));
-        if ((r.status === 'none' || r.notInMock) && !uncovered.has(id)) uncovered.set(id, { carrier: layout.carrier, page: p.page, caption: r.caption ?? '', ref: r.ref ?? null, kind: r.kind ?? null, ...(r.status === 'none' ? {} : { notInMock: true }) });
+        // By its text too: a question recorded before names (or ids) is the same one once they show.
+        const byText = questionId(layout.carrier, p.page, { kind: r.kind, caption: r.caption });
+        seen.add(id).add(byText);
+        if ((r.status === 'none' || r.notInMock) && !uncovered.has(id)) {
+          uncovered.set(id, { id, byText, carrier: layout.carrier, page: p.page, caption: r.caption ?? '', ref: r.ref ?? null, kind: r.kind ?? null, ...(r.status === 'none' ? {} : { notInMock: true }) });
+        }
       }
     }
   }
-  // A question recorded by its text in one product and by its name in another is one.
-  for (const q of [...uncovered.values()].filter((x) => x.ref)) uncovered.delete(questionId(q.carrier, q.page, { ...q, ref: null }));
+  // A question recorded by its text in one product and by its name or id in another is one.
+  for (const q of [...uncovered.values()].filter((x) => x.id !== x.byText)) uncovered.delete(q.byText);
   return { seen, uncovered };
 }
 
@@ -67,8 +75,8 @@ function questions(events) {
 export function uncoveredQuestions(events, since) {
   const now = questions(events);
   const before = since ? questions(events.filter((e) => receivedAt(e) < since)).seen : new Set();
-  const known = (q) => before.has(questionId(q.carrier, q.page, q)) || before.has(questionId(q.carrier, q.page, { ...q, ref: null }));
-  return { total: now.uncovered.size, new: [...now.uncovered.values()].filter((q) => !known(q)) };
+  const known = (q) => before.has(q.id) || before.has(q.byText);
+  return { total: now.uncovered.size, new: [...now.uncovered.values()].filter((q) => !known(q)).map(({ id, byText, ...q }) => q) };
 }
 
 // What the run says on its issue: nothing when nothing is new and the server is the repository's;

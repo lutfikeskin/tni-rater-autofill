@@ -63,14 +63,15 @@ npm run push-logs -- some/export.json   # an agent's exported log, or an old loc
 late (and on demand: Actions → Daily review → Run workflow, optionally with a start date or time).
 It downloads the log and builds the review of the events the server received since the last
 successful run on the default branch began downloading (`scripts/daily-issue.mjs since`, from that
-run's steps; a day when there is none), so an upload that arrives late is in the next review and
-none is in two. It keeps the review as an
+run's steps; a day when there is none; a run that can't tell fails rather than guess), so an
+upload that arrives late is in the next review and none is in two. Runs go one at a time. It keeps the review as an
 artifact for 90 days and shows it as the run summary. When something is new, it comments on the
 open issue labelled `daily-review`, or opens one titled "Daily review" when none is open: problem
 reports, questions without a rule (or AmWINS fields the mock lacks) first seen in a layout of the
-period (one per question, whatever its row, number or product: `scripts/lib/daily.mjs`), a deployed usage server that isn't the
+period (one per question, whatever its row, number, product or step: `scripts/lib/daily.mjs`), a deployed usage server that isn't the
 repository's (`scripts/server-check.mjs`, checked first and only on the default branch: redeploy
-it), or a run that couldn't finish (the server down, a broken script). Nothing new: no comment.
+it), or a run that couldn't finish (the server down, a broken script; when the broken script is the
+one that comments, the workflow says so with `gh` alone). Nothing new: no comment.
 A long list is cut to fit a GitHub comment, pointing to the review. Closing the issue is how a
 reviewer says it's been read; the next new item opens another. The
 workflow does not implement or deploy corrections.
