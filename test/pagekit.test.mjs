@@ -2473,3 +2473,106 @@ test('a question whose wording carries a date is not flagged as reworded when th
   assert.equal(defensive.children.find((r) => r.checked)?.value, 'No', 'defensive driver discount: standard No');
   assert.equal(report.unknown.length, 0);
 });
+
+// Codex reproduction (2026-10-08): an agent edit during the wait before Continue halted the fill,
+// and Continue was clicked all the same.
+test('an agent edit during the wait before Continue stops the Continue and is a blocker', async () => {
+  const h = harness({ ext: true, search: '?pageName=Synthetic' });
+  const { input } = addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question', value: 'wanted' });
+  const button = addButton(h, 'Continue');
+  let clicks = 0;
+  button.onclick = () => { clicks++; };
+  // The page settles twice: on arrival, and before Continue. The agent edits during the second.
+  let settles = 0;
+  h.context.MutationObserver = class {
+    constructor() {
+      if (++settles === 2) setTimeout(() => {
+        input.dispatchEvent({ type: 'pointerdown', target: input, isTrusted: true });
+        input.value = 'the agent\'s answer';
+        input.dispatchEvent({ type: 'input', target: input, isTrusted: true });
+      }, 10);
+    }
+    observe() {}
+    disconnect() {}
+  };
+  const plan = [{ id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' }];
+  const report = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' } });
+  assert.equal(settles, 2);
+  assert.equal(report.halted, true);
+  assert.equal(clicks, 0, 'no Continue after a halt');
+  assert.equal(report.advanced, undefined);
+  assert.ok(report.blockers.includes(report.reason), `blockers: ${report.blockers.join(' | ')}`);
+  assert.deepEqual([...report.protectedKeys], ['ref:Test.foo']);
+  assert.equal(input.value, 'the agent\'s answer');
+});
+
+test('an agent edit while AI answers go in protects that question and stops the remaining answers', async () => {
+  const h = harness();
+  const pick = (id, label, options) => new SelectNode([{ text: 'Select one', value: '' }, ...options], { id, ariaLabel: label });
+  const commodity = pick('commodity', 'Commodity category', [{ text: 'Consumer Goods', value: 'cg' }, { text: 'Building Materials', value: 'bm' }]);
+  const radius = pick('radius', 'Radius', [{ text: 'Local', value: 'l' }, { text: 'Long haul', value: 'lh' }]);
+  const notes = makeInput({ id: 'notes', ariaLabel: 'Notes' });
+  h.document.body.append(commodity, radius, notes);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const key = (label) => report.unknown.find((x) => x.label === label).key;
+  // While the first answer goes in, the agent picks the radius themselves.
+  commodity.addEventListener('change', () => {
+    if (radius.value) return;
+    radius.dispatchEvent({ type: 'pointerdown', target: radius, isTrusted: true });
+    radius.value = 'l';
+    radius.dispatchEvent({ type: 'change', target: radius, isTrusted: true });
+  });
+  const results = await h.kit.answer([
+    { key: key('Commodity category'), label: 'Commodity category', value: 'Consumer Goods' },
+    { key: key('Radius'), label: 'Radius', value: 'Long haul' },
+    { key: key('Notes'), label: 'Notes', value: 'from the AI' },
+  ]);
+  assert.equal(Array.isArray(results), true, 'the panel reads an array');
+  assert.deepEqual([...results].map((r) => [r.key, r.ok]), [[key('Commodity category'), true], [key('Radius'), false], [key('Notes'), false]]);
+  assert.match(results[1].reason, /agent edit interrupted/);
+  assert.match(results[2].reason, /agent edit interrupted/);
+  assert.equal(commodity.value, 'cg', 'the answer already in stays in');
+  assert.equal(radius.value, 'l', 'the agent\'s pick stays');
+  assert.equal(notes.value, '', 'nothing after the edit goes in');
+  assert.equal(results.halted, true);
+  assert.deepEqual([...results.protectedKeys], [key('Radius')]);
+  assert.notEqual(radius.getAttribute('data-rater-autofill'), 'failed', 'the agent\'s own answer is not marked as a failed AI answer');
+});
+
+// Codex reproduction (2026-10-08, AmWINS Underwriting): "Default all answers to No" reset a Yes the
+// agent had given, while the report listed that question as skipped.
+test('a bulk helper is not clicked while an answer the agent gave is on the page; the other questions still fill one by one', async () => {
+  const questions = { subsidiaryToOther: 'subsidiary to other', subsidiary: 'subsidiary', safetyInfo: 'safety info' };
+  const build = () => {
+    const h = harness();
+    const groups = Object.fromEntries(Object.entries(questions).map(([name, label]) => {
+      const yes = makeInput({ type: 'radio', name, value: 'Yes' });
+      const no = makeInput({ type: 'radio', name, value: 'No' });
+      h.document.body.append(radioGroup(label, yes, no));
+      return [name, { yes, no }];
+    }));
+    const button = addButton(h, 'Default all answers to "No"');
+    button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; for (const g of Object.values(groups)) g.no.click(); };
+    const plan = [
+      ...Object.entries(questions).map(([name, label]) => ({ id: name, path: `amwins.${name}`, re: `^${label}$`, kind: 'bool', value: false, name: label })),
+      { id: 'default', kind: 'action', action: 'defaultNo', text: '^default all answers to\\W*no\\W*$', immediate: true, skipIfProtected: true, pages: [], after: [], afterActions: [], afterPages: [], unless: [] },
+    ];
+    return { h, groups, button, plan };
+  };
+  // The agent answered Yes to the first question before this fill.
+  const guarded = build();
+  guarded.groups.subsidiaryToOther.yes.checked = true;
+  const report = await guarded.h.kit.fill(guarded.plan, { skip: ['subsidiaryToOther'], batch: true, maxRounds: 6 });
+  assert.equal(guarded.button._clicks, undefined, 'the helper would reset the agent\'s answer');
+  assert.deepEqual([...report.actions], []);
+  assert.equal(guarded.groups.subsidiaryToOther.yes.checked, true);
+  assert.deepEqual(['subsidiary', 'safetyInfo'].map((n) => guarded.groups[n].no.checked), [true, true], 'the rules answer the other questions');
+  assert.deepEqual([...report.skipped].map((x) => x.key), ['subsidiaryToOther']);
+  assert.deepEqual([...report.blockers], [], 'nothing holds Continue: the protected answer is the agent\'s');
+  // No answer of the agent's on the page: the helper runs as before.
+  const plain = build();
+  const run = await plain.h.kit.fill(plain.plan, { batch: true, maxRounds: 6 });
+  assert.equal(plain.button._clicks, 1);
+  assert.deepEqual([...run.actions].map((a) => a.id), ['defaultNo']);
+  assert.deepEqual(Object.keys(questions).map((n) => plain.groups[n].no.checked), [true, true, true]);
+});
