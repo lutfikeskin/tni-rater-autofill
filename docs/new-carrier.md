@@ -15,7 +15,7 @@ For each discovered question, record its target by a locator the carrier's own c
 1. Add a module under [src/carriers](../src/carriers/), register it in [carriers.js](../src/carriers.js), and add required hosts to [manifest.json](../manifest.json).
 2. Map confirmed facts and approved scoped defaults. Decide explicitly whether generic fallbacks are suitable; Progressive disables them, and AmWINS keeps them out of its repeating row sections (`rowSections`). See [intake and rules](intake-and-rules.md) if the scenario needs new facts or exceptions.
 3. Implement supported controls and helpers with prerequisites. Use `MAIN` only when page-owned widgets require it; enable batching only with evidence that per-answer server waits are unnecessary. Follow [browser filling](browser-filling.md) for execution changes.
-4. Give repeated drivers/vehicles distinct targets and verify entity identity after redraws, imports, or lookups. Preserve questions that need an agent's answer.
+4. Give repeated drivers/vehicles distinct targets and verify entity identity after redraws, imports, or lookups: a row the page may draw in its own order is found by a witness it shows (`witness: { selector, path }`, AmWINS' vehicle rows by their VIN), not by its position, and a helper whose result the page shows (a lookup, an import) carries `verify` (`revealed`, or `{ appears }`) so a click that showed nothing is not counted as done. Preserve questions that need an agent's answer.
 5. Add the carrier's supported standards to [tni-rules.js](../src/ai/tni-rules.js) when AI assistance is in scope. AI availability does not make the carrier fully supported.
 
 ## Validate and expand
