@@ -2688,7 +2688,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: t
     runKit: async () => { markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
     fillEvents, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
     renderReport: () => { seen.rendered++; }, renderSite() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
-    viewOf: () => 't1', usage: { currentSession: () => ({ intakeId: state.intake.id, keySalt: 'salt' }), log: (...events) => seen.logged.push(...events) },
+    viewOf: () => 't1', usage: { currentSession: () => ({ id: `session-${state.intake.id}`, intakeId: state.intake.id, keySalt: 'salt' }), log: (...events) => seen.logged.push(...events) },
     h: (tag, props, text) => ({ tag, text }), save: async () => {},
     persistAgentKeys: (tabId, keys) => { seen.persistedKeys.push([tabId, keys]); }, persistDoneActions: (tabId, ids) => { seen.persistedActions.push([tabId, ids]); },
     stateCode: () => null, noteQuoteState() {},
@@ -2724,6 +2724,8 @@ test('a fill whose intake changed while the carrier worked is dropped: the new i
   assert.deepEqual([t.seen.rendered, t.seen.layouts, t.seen.persistedKeys.length, t.seen.persistedActions.length, t.seen.afterFill.length], [0, 0, 0, 0, 0]);
   assert.deepEqual(t.seen.logged.map((e) => [e.type, e.carrier, e.page, e.auto, e.error]), [['fill_error', 'amwins', '/quote-A', false, 'stale: intake changed during the fill']]);
   assert.match(t.seen.logged[0].run, /^[\w-]{8,64}$/);
+  // Codex on PR #65 (f8d6215): logged after B was loaded, the event is still A's quote and intake.
+  assert.deepEqual([t.seen.logged[0].session, t.seen.logged[0].intakeId], ['session-intake-A', 'intake-A']);
   assert.match(t.ui.report.children[0].text, /intake changed while this page was being filled/);
   assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value|clientA/, 'no client data in the error');
 });
@@ -2761,6 +2763,21 @@ test('a fill that stays current is remembered for its tab, and its events share 
   assert.deepEqual(JSON.parse(JSON.stringify([fillRun.rules, fillRun.settings, fillRun.step, fillRun.view, fillRun.overwrite, fillRun.auto])), ['abcdef012345', { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false }, 'Vehicles / [client]', 't1', false, false]);
   assert.ok(fields.length && fields.every((e) => e.type === 'fill_field' && e.run === fillRun.run && e.step === 'Vehicles / [client]'), 'every field event shares the run and step');
   assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value/);
+});
+
+// Codex on PR #65 (f8d6215): an automatic fill never overwrites, whatever the checkbox says, and
+// its run's settings say what it used.
+test('a run\'s settings name the overwrite the fill used: never for an automatic fill, the checkbox for a manual one', async () => {
+  for (const [auto, expected] of [[true, false], [false, true]]) {
+    const t = fillHarness();
+    t.ui.overwrite.checked = true;
+    const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
+    await t.started;
+    t.release(t.results);
+    await run;
+    const fillRun = t.seen.logged.find((e) => e.type === 'fill_run');
+    assert.deepEqual([fillRun.auto, fillRun.overwrite, fillRun.settings.overwrite], [auto, expected, expected]);
+  }
 });
 
 test('without a rules fingerprint the run carries none, and a carrier with page names carries no step', async () => {

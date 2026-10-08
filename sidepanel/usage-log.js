@@ -58,6 +58,8 @@ const exclusive = (fn) => (globalThis.navigator?.locks ? navigator.locks.request
 // (session) are taken when log() is called, not when the queue gets to the event: Clear and
 // Replace log intake_closed just before the panel moves to another session. `seq` numbers every
 // event this computer logs, so a quote's events keep their order even when they share a time.
+// An event that names its own session and intakeId keeps them: a fill's results that come back
+// after another intake was loaded are logged as the quote they began in (noteStaleFill).
 export function log(...events) {
   const t = new Date().toISOString();
   const { id: sessionId = null, intakeId = null } = session ?? {};

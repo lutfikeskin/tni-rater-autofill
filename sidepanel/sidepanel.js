@@ -1114,12 +1114,16 @@ if (inExtension) {
 // fills from, the view and edit scope for its tab, and the panel's switches. The intake may be
 // replaced or corrected while the carrier works; the results then belong to this context, not to
 // the panel's current state (staleFill), and its bookkeeping goes to this tab (rememberFill).
+// `ids`: the quote (usage session) and intake the fill began in, which its events keep when they're
+// logged after another intake was loaded. `settings.overwrite` is the overwrite the fill used
+// (never for an automatic fill), not the checkbox.
 function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = false }) {
+  const session = usage.currentSession();
   return {
     run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite,
-    intake: state.intake, revision: state.intakeRevision,
+    intake: state.intake, revision: state.intakeRevision, ids: { session: session?.id ?? null, intakeId: session?.intakeId ?? null },
     view: viewOf(tabId, page, carrier), scope: editScope(page, carrier), active: { ...state.active },
-    settings: { autoAdvance: !!$('auto-advance').checked, autoFollowUps: !!$('auto-followups').checked, autoPages: !!$('auto-pages').checked, overwrite: !!$('overwrite').checked },
+    settings: { autoAdvance: !!$('auto-advance').checked, autoFollowUps: !!$('auto-followups').checked, autoPages: !!$('auto-pages').checked, overwrite: !!overwrite },
   };
 }
 // The intake was replaced or corrected while the page was being filled: the answers on the page
@@ -1127,7 +1131,7 @@ function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = f
 // current intake's.
 function staleFill(ctx) { return state.intake !== ctx.intake || state.intakeRevision !== ctx.revision; }
 function noteStaleFill(ctx) {
-  if (!ctx.carrier.practice) usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run, auto: ctx.auto, error: 'stale: intake changed during the fill' });
+  if (!ctx.carrier.practice) usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run, auto: ctx.auto, error: 'stale: intake changed during the fill', ...ctx.ids });
   const note = h('p', { class: 'error' }, 'The intake changed while this page was being filled: the page may hold the earlier intake\'s answers. Check it, then Fill this page again.');
   if (ctx.auto === true) $('report').append(note); else $('report').replaceChildren(note);
 }
@@ -1198,7 +1202,7 @@ async function autoFill(page) {
     state.autoPaused = true;
     $('report').append(h('p', { class: 'error' }, 'Automatic filling paused after an error. Review the page, then click Fill this page to retry.'));
     // The message may quote the page, so it's redacted like a problem report (audit 2026-10-08).
-    if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, run: ctx.run, auto: true, error: fillErrorText(ctx, e) });
+    if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, run: ctx.run, auto: true, error: fillErrorText(ctx, e), ...ctx.ids });
   } finally {
     await tellRecorder('resume');
     state.filling = false;
@@ -1735,7 +1739,7 @@ async function fillPage({ auto = false } = {}) {
   } catch (e) {
     state.autoPaused = true;
     // The message may quote the page, so it's redacted like a problem report (audit 2026-10-08).
-    if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, run: ctx.run, auto, error: fillErrorText(ctx, e) });
+    if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, run: ctx.run, auto, error: fillErrorText(ctx, e), ...ctx.ids });
     $('report').replaceChildren(h('p', { class: 'error' }, `Couldn't fill this page: ${e.message}`));
   } finally {
     await tellRecorder('resume');

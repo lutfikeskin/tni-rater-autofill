@@ -231,4 +231,15 @@ test('fill events carry their run, the rules fingerprint, the settings in force 
   assert.match(hash, /^[0-9a-f]{12}$/);
   assert.equal(hash, (await sha256Hex(texts.join('\n'))).slice(0, 12));
   assert.notEqual(await rulesHash([...texts.slice(0, -1), `${texts.at(-1)}\n// changed`]), hash, 'a rule change changes it');
+  // Codex on PR #65 (f8d6215): every module the plan, normalization and carriers import changes
+  // the answers, so the fingerprint covers their whole import graph.
+  const reached = new Set();
+  const visit = (file) => {
+    if (reached.has(file)) return;
+    reached.add(file);
+    const text = fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+    for (const [, spec] of text.matchAll(/^import\s[^;]*?from\s+'(\.{1,2}\/[^']+)'/gm)) visit(path.posix.normalize(path.posix.join(path.posix.dirname(file), spec)));
+  };
+  ['src/plan.js', 'src/normalize.js', 'src/carriers.js'].forEach(visit);
+  assert.deepEqual([...reached].sort(), [...RULE_FILES].sort());
 });

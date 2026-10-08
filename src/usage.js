@@ -175,8 +175,10 @@ const stepOf = (step, redact) => (step ? { step: redact(String(step)).slice(0, S
 
 // The rule files whose text the `rules` fingerprint of a fill run covers (in this order), so a
 // review can tell which mappings and defaults a quote was filled with when a version number spans
-// several copies (audit 2026-10-08, finding 7). The panel fetches them from its own package.
-export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js'];
+// several copies (audit 2026-10-08, finding 7). The panel fetches them from its own package. Every
+// module the plan, the record's normalization and the carriers import is here (test/usage.test.mjs
+// checks the import graph), since each one changes the answers a fill puts on the page.
+export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js'];
 export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }

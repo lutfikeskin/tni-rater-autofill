@@ -67,6 +67,8 @@ test('an event keeps the quote it was logged in, even when the panel moves on be
   usage.log({ type: 'intake_closed', reason: 'replaced' });
   const b = usage.startSession('intake-b');
   usage.log({ type: 'intake_loaded' });
+  // A fill begun on A whose results came back now: it names A's quote, and keeps it (noteStaleFill).
+  usage.log({ type: 'fill_error', error: 'stale: intake changed during the fill', session: a.id, intakeId: 'intake-a' });
   // Clear: the close is logged, then the panel has no session.
   usage.log({ type: 'intake_closed', reason: 'cleared' });
   usage.restoreSession(null);
@@ -76,6 +78,7 @@ test('an event keeps the quote it was logged in, even when the panel moves on be
     ['page_view', a.id, 'intake-a'],
     ['intake_closed', a.id, 'intake-a'],
     ['intake_loaded', b.id, 'intake-b'],
+    ['fill_error', a.id, 'intake-a'],
     ['intake_closed', b.id, 'intake-b'],
   ]);
   assert.ok(events.every((e) => e.channel === 'source' && !('commit' in e)), 'which copy logged it: the repository, no commit');
