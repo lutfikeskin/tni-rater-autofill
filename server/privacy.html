@@ -4,22 +4,22 @@
 <style>body{font:16px/1.6 system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 16px;color:#1d2433}h1{font-size:26px}h2{font-size:18px;margin-top:28px}</style></head>
 <body>
 <h1>TNI Rater Autofill – Privacy Policy</h1>
-<p>Last updated: October 2, 2026</p>
+<p>Last updated: October 9, 2026</p>
 <p>TNI Rater Autofill is a Chrome extension used by agents of Truckers National Insurance (TNI) to fill commercial auto insurance quotes on carrier agent portals (Progressive, AmWINS Admitted Placement, GEICO). It is for TNI agents only.</p>
 
 <h2>What the extension handles</h2>
 <ul>
 <li><b>The client's quote application (PDF).</b> Read on the agent's computer and kept only for the browser session. Its details (such as name, address, date of birth, license and vehicle information) are typed into the carrier's quote page the agent has open.</li>
 <li><b>Carrier page content.</b> The questions and options on the carrier's quote page, read to fill them.</li>
-<li><b>The agent's OpenAI API key</b> (optional). Stored in the extension on the agent's computer and sent only to OpenAI to authorise Luna requests.</li>
-<li><b>Usage information.</b> Which fields were filled, what the agent changed afterwards, buttons clicked, timing, page layouts (question text and options, no answers) and problems the agent reports.</li>
+<li><b>The agent's OpenAI API key</b> (optional). Stored in the extension's settings on the agent's computer, readable by the extension's own pages only (Chrome 140 and later), and sent only to OpenAI to authorise Luna requests. It is never logged.</li>
+<li><b>Usage information.</b> Which fields were filled, what the agent changed afterwards (for typed text, only whether it matched the application, never the text), buttons clicked, timing, page layouts (question text and choices, and which choice was picked), what the AI assistant was asked and decided (counts and option texts, not the application's details), problems the agent reports (with the client's names, numbers and address replaced before sending), the agent's initials and the extension version.</li>
 </ul>
 
 <h2>Where data goes</h2>
 <ul>
 <li><b>The carrier's website</b>: the quote answers, as the agent's own entry.</li>
-<li><b>OpenAI</b> (only when the agent turns the AI assistant on): the questions the extension couldn't answer, their options, and the intake details needed for Luna to review them, sent with the agent's own key. Driving record orders, exclusions, signatures, payment details and identification numbers are never sent.</li>
-<li><b>TNI's usage server</b>: the usage information above, to improve the extension. Client names, numbers, addresses and anything the agent types are never included.</li>
+<li><b>OpenAI</b> (only when the agent turns the AI assistant on): the questions the extension couldn't answer with the choices the carrier's page offers, TNI's rules, and the application with the client's names, dates of birth, street address, city, ZIP, contact details and identification numbers (VIN, licence, USDOT, MC, FEIN) removed or replaced by "[client]", in the claims box and notes too. What is sent in clear: the garaging state, business class and operations answers, coverage choices, vehicle and trailer type, year, make, model and value, the driver's licence state and CDL details, and the current insurer, limit and dates. Everything is sent with the agent's own key and with OpenAI's storage turned off for the request. Driving record orders, exclusions, signatures and payment questions are never sent to the AI.</li>
+<li><b>TNI's usage server</b>: the usage information above, to improve the extension, sent over HTTPS with the extension's upload token. Client names, numbers, addresses and anything the agent types are never included. Only TNI can read the stored log; the server tells anyone its version, nothing else.</li>
 </ul>
 
 <h2>What we don't do</h2>
