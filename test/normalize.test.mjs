@@ -120,6 +120,13 @@ test('helpers', () => {
   assert.deepEqual(
     (({ street, unit, city }) => ({ street, unit, city }))(parseAddress('100 Sample Way, APT 12 ORLANDO, FL, 32801')),
     { street: '100 Sample Way', unit: 'APT 12', city: 'ORLANDO' });
+  // A comma, period or country after the ZIP (2026-10-08: "… #235 <city>, MN <zip>," wasn't split
+  // at all, and the agent retyped it).
+  const split = (a) => (({ street, unit, city, state, zip }) => ({ street, unit, city, state, zip }))(parseAddress(a));
+  for (const a of ['12345 67th Ave N #123 Springfield, MN 55000,', '12345 67th Ave N #123 Springfield, MN 55000.', '12345 67th Ave N #123 Springfield, MN 55000, USA', '12345 67th Ave N #123 Springfield MN 55000 , United States']) {
+    assert.deepEqual(split(a), { street: '12345 67th Ave N', unit: '#123', city: 'Springfield', state: 'MN', zip: '55000' }, a);
+  }
+  assert.equal(parseAddress('100 Main St, Rock Hill, SC 29730-1234,').zip, '29730-1234');
   assert.equal(parseAddress('100 Sample Way, #12 Rock Hill, SC 29730').unit, '#12');
   assert.equal(parseAddress('100 Sample Way, #12 Rock Hill, SC 29730').city, 'Rock Hill');
   // A city that starts like a unit word stays whole.
