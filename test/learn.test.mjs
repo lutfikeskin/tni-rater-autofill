@@ -6,6 +6,7 @@ import path from 'node:path';
 import { loadEvents } from '../scripts/lib/events.mjs';
 import { learn, finalAnswers } from '../scripts/lib/learn.mjs';
 import { fieldStatus } from '../scripts/lib/coverage.mjs';
+import { buildPlan } from '../src/plan.js';
 import { buildLayouts, layoutKey } from '../scripts/lib/layouts.mjs';
 import { CARRIERS } from '../src/carriers.js';
 
@@ -354,4 +355,100 @@ test('learning: a quote\'s PDF comes from any of its events, and a suggestion co
   }
   const [review] = learn(mapped, { carriers, minIntakes: 2 }).suggestions.review;
   assert.deepEqual([review.intakes, review.quotes, review.filled], [2, 2, 2]);
+});
+
+// Audit 2026-10-08: a question left to the agent who let the page's answer stand produced no
+// event, so the learner never saw it. The page's last layout before the agent left it does.
+function leftQuote(i, { leave = true, change = null, rows = 1, page = 'MoreAboutBusiness', carrier = 'progressive', q = '3C4', label = 'Does the customer need a certificate of insurance?' } = {}) {
+  const s = `q${i}`;
+  const t = (n) => at(i * 100 + n);
+  const fields = Array.from({ length: rows }, () => ({ q, kind: 'radio', label, options: ['Yes', 'No'], selected: 'No' }));
+  return [
+    { id: `${s}i`, t: t(0), session: s, type: 'intake_loaded', intakeId: `pdf${i}` },
+    { id: `${s}f`, t: t(1), session: s, carrier, type: 'fill_field', page, q, label, controlKind: 'radio', result: 'unfamiliar' },
+    { id: `${s}l`, t: t(2), session: s, carrier, type: 'page_layout', page, context: {}, fields },
+    ...(change ? [{ id: `${s}c`, t: t(3), session: s, carrier, type: 'field_change', page, q, label, kind: 'radio', by: 'agent', to: change }] : []),
+    ...(leave ? [{ id: `${s}v`, t: t(4), session: s, carrier, type: 'page_view', page: 'CoveragesRates-Reload', from: `${page}-Reload` }] : []),
+  ];
+}
+const noRules = [{ id: 'progressive', rules: [], useGenericRules: false }, { id: 'amwins', rules: [], useGenericRules: false }];
+
+test('learning: the page answer an agent left a page with counts, and suggests keeping the question with the agent', () => {
+  const events = Array.from({ length: 5 }, (_, i) => leftQuote(i)).flat();
+  const a = byQ(finalAnswers(events).get('q0'), '3C4');
+  assert.deepEqual([a.value, a.source, a.pageLeft], ['No', 'page', true]);
+  const { suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
+  assert.equal(suggestions.standard.length, 0, 'never a standard answer: the agent chose nothing');
+  const [p] = suggestions.pageAnswer;
+  assert.deepEqual([p.answer, p.intakes], ['No', 5]);
+  // Known, so no longer unfamiliar, but still the agent's: a default proves nothing for a client.
+  const suggested = rule(p.rule);
+  assert.equal(suggested.ignore, undefined);
+  assert.match(suggested.note, /The page's answer "No" was left in 5 of 5 answers \(5 quotes, 5 intake PDFs\); confirm it for this client\./);
+  const carrier = { id: 'progressive', rules: [suggested], useGenericRules: false };
+  assert.equal(fieldStatus({ caption: 'Does the customer need a certificate of insurance?', kind: 'radio' }, carrier, 'MoreAboutBusiness').status, 'agent');
+  const [step] = buildPlan({ applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} }, carrier, {}).filter((x) => x.kind !== 'action');
+  assert.equal(step.note, suggested.note, 'the fill leaves it with the agent, with the evidence');
+});
+
+test('learning: no page answer from a page never left, from a stale layout, or from an id drawn twice without rows', () => {
+  const answer = (opts) => byQ(finalAnswers(leftQuote(0, opts)).get('q0'), '3C4');
+  assert.equal(answer({ leave: false }).value, undefined, 'the agent never left the page');
+  const changed = answer({ change: 'Yes' });
+  assert.deepEqual([changed.value, changed.source, changed.pageLeft], ['Yes', 'agent', undefined], 'the change after the layout wins');
+  assert.equal(answer({ rows: 2 }).value, undefined, 'two rows of one id: which one is not known');
+  // One agent who changed it to another answer: not a page answer to keep.
+  const events = [...Array.from({ length: 5 }, (_, i) => leftQuote(i)).flat(), ...leftQuote(5, { change: 'Yes' })];
+  assert.equal(learn(events, { carriers: noRules, minIntakes: 5 }).suggestions.pageAnswer.length, 0);
+});
+
+test('learning: questions without an id (AmWINS) get no page answers', () => {
+  const events = Array.from({ length: 5 }, (_, i) => leftQuote(i, { carrier: 'amwins', q: null, page: '/application/businessauto' })).flat();
+  for (const m of finalAnswers(events).values()) for (const a of m.values()) assert.equal(a.pageLeft, undefined);
+});
+
+// Codex on PR #51: what proves the page's answer stood when the agent left the page.
+test('learning: a page answer needs this tab\'s own visit, the agent\'s departure, and no AI choice', () => {
+  const base = leftQuote(0);
+  const value = (events) => byQ(finalAnswers(events).get('q0'), '3C4')?.value;
+  const withView = (events, view) => events.map((e) => (e.carrier ? { ...e, view } : e));
+  assert.equal(value(withView(base, 't1')), 'No', 'one tab: as before');
+  // Tab 2 drew the page last; tab 1 left it, without a layout of its own.
+  const twoTabs = withView(base, 't1').map((e) => (e.type === 'page_layout' ? { ...e, view: 't2' } : e));
+  assert.equal(value(twoTabs), undefined, "another tab's layout says nothing");
+  // The extension's fill clicked Continue.
+  const advanced = [...base.slice(0, 3), { id: 'run', t: at(3), session: 'q0', carrier: 'progressive', type: 'fill_run', page: 'MoreAboutBusiness', advanced: 'Continue' }, ...base.slice(3)];
+  assert.equal(value(advanced), undefined, 'not the agent leaving');
+  // An AI choice the agent accepted (the recorder is paused, so no change event).
+  const ai = [...base.slice(0, 3), { id: 'ai', t: at(3), session: 'q0', carrier: 'progressive', type: 'ai_decision', page: 'MoreAboutBusiness', q: '3C4', label: 'Does the customer need a certificate of insurance?', decision: 'accepted', choice: 'No' }, ...base.slice(3)];
+  assert.equal(value(ai), undefined, 'an AI answer, not the page default');
+  // Back on the page (no new layout: same questions), then left again: that visit is unknown.
+  const back = [...base,
+    { id: 'back', t: at(5), session: 'q0', carrier: 'progressive', type: 'page_view', page: 'MoreAboutBusiness', from: 'CoveragesRates' },
+    { id: 'out', t: at(6), session: 'q0', carrier: 'progressive', type: 'page_view', page: 'CoveragesRates', from: 'MoreAboutBusiness' }];
+  assert.equal(value(back), undefined, 'the earlier layout may not show what the page held later');
+  // A -Reload of the same page keeps its layout.
+  const reload = [...base.slice(0, 3), { id: 'rl', t: at(3), session: 'q0', carrier: 'progressive', type: 'page_view', page: 'MoreAboutBusiness-Reload', from: 'MoreAboutBusiness' }, ...base.slice(3)];
+  assert.equal(value(reload), 'No');
+});
+
+test('learning: a question a current rule maps gets no page-answer suggestion', () => {
+  const events = Array.from({ length: 5 }, (_, i) => leftQuote(i)).flat();
+  const mapped = [{ id: 'progressive', useGenericRules: false, rules: [{ page: 'MoreAboutBusiness', ask: 'Does the customer need a certificate of insurance?', kind: 'bool', value: () => false }] }];
+  assert.equal(learn(events, { carriers: mapped, minIntakes: 5 }).suggestions.pageAnswer.length, 0);
+});
+
+// Codex on PR #51: a helper that navigates (the bill plan) moves on too, and the fill that clicked is
+// often logged after the move (seconds later).
+test('learning: no page answer when the extension clicked on the page during that visit', () => {
+  const base = leftQuote(0);
+  const value = (events) => byQ(finalAnswers(events).get('q0'), '3C4')?.value;
+  const run = (n, extra) => ({ id: `run${n}`, t: at(n), session: 'q0', carrier: 'progressive', type: 'fill_run', page: 'MoreAboutBusiness', advanced: null, clicked: [], ...extra });
+  const arrive = { id: 'arr', t: at(0.5), session: 'q0', carrier: 'progressive', type: 'page_view', page: 'MoreAboutBusiness', from: 'Start' };
+  const visit = [base[0], arrive, ...base.slice(1)];
+  assert.equal(value(visit), 'No', 'the agent left');
+  assert.equal(value([...visit.slice(0, 4), run(3, { clicked: ['billPlan'] }), ...visit.slice(4)]), undefined, 'a helper that navigates');
+  assert.equal(value([...visit, run(10, { advanced: 'Continue' })]), undefined, 'Continue logged after the move');
+  assert.equal(value([...visit, run(200, { advanced: 'Continue' })]), 'No', 'a click well after the departure is another visit\'s');
+  assert.equal(value([base[0], run(0.2, { clicked: ['addVehicle'] }), arrive, ...base.slice(1)]), 'No', 'a click before this visit');
 });
