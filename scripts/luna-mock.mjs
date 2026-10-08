@@ -23,6 +23,9 @@ const checks = [], errors = [];
 let context, mock, panel, phase = 'startup', requests = 0, mode = 'normal', started, release;
 // The claims-box review (once per intake), counted apart from page questions.
 let claimsRequests = 0;
+// Fields the rules leave to the agent (manualOnly) that still reached Luna: must stay 0.
+let agentFactsSent = 0;
+const AGENT_FACT = /how long with current carrier|has additional interest|claim free loss run|valued loss runs|gender|marital|licen[cs]e year/i;
 const unexpectedProviderHosts = new Set();
 const verify = (name, actual, expected) => {
   checks.push({ name, ok: actual === expected });
@@ -50,6 +53,7 @@ try {
           usage: { input_tokens: 50, output_tokens: 5 } } });
       }
       requests++;
+      agentFactsSent += Object.values(state.fields ?? {}).filter(f => AGENT_FACT.test(f.label ?? '')).length;
       if (mode === 'slow') { started?.(); await new Promise(resolve => { release = resolve; }); }
       assert.equal(body.reasoning.effort, 'low');
       assert.equal(body.text.verbosity, 'low');
@@ -338,6 +342,19 @@ try {
   verify('automatic selection holds Continue for approval', await mock.evaluate(() => window.__amwinsMock.saves), 0);
   const aiText = await panel.locator('.ai-holder').first().innerText();
   verify('Luna automatic review has no confidence percentage', !aiText.includes('%') && !aiText.includes('confidence'), true);
+  // Facts the intake doesn't give are the agent's since 2026-10-09 (plan.js `source: 'fact'` and
+  // unanswered `clientFact` rules) and hold Continue too. Answering them on the page would change
+  // the snapshot the automatic pick was checked against, so the agent dismisses them (×) here:
+  // only the Luna approval holds Continue below.
+  for (const label of ['how long with current carrier', 'has additional interest', 'can provide claim free loss run', 'valued loss runs']) {
+    const need = panel.locator('.need', { hasText: label });
+    if (!await need.count()) continue;
+    await need.locator('.ignore-review').click();
+    await need.waitFor({ state: 'detached', timeout: 30000 });
+    await approve.waitFor({ timeout: 30000 });
+  }
+  verify('agent-dismissed facts leave Continue held for the Luna approval', await mock.evaluate(() => window.__amwinsMock.saves), 0);
+  verify('facts left to the agent never reach Luna', agentFactsSent, 0);
   await panel.waitForFunction(async () => (await chrome.storage.local.get('aiPendingDecisions')).aiPendingDecisions?.length > 0);
   await panel.reload();
   await panel.locator('#tab-fill').click();
