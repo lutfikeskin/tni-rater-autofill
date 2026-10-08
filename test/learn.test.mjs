@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadEvents, quoteSessions } from '../scripts/lib/events.mjs';
-import { learn, finalAnswers } from '../scripts/lib/learn.mjs';
+import { learn, finalAnswers, questionOf } from '../scripts/lib/learn.mjs';
 import { fieldStatus } from '../scripts/lib/coverage.mjs';
 import { buildPlan } from '../src/plan.js';
 import { buildLayouts, layoutKey } from '../scripts/lib/layouts.mjs';
@@ -470,4 +470,14 @@ test('events: a test-page quote goes whole, a mixed one keeps its carrier work, 
   const loaded = loadEvents([dir]);
   assert.deepEqual(loaded.map((x) => x.id).sort(), ['i1', 'i2', 'm1', 'm3']);
   assert.deepEqual([...quoteSessions(loaded)], ['mixed'], 'an intake never taken to a carrier is loaded, but no quote');
+});
+
+// The review's Speed and AI tables split a question at Progressive's renumbering (91 of 304 rows).
+test('the review names one question once, whatever its number', () => {
+  const layout = (session, q, ref) => ({ id: `l${session}`, t: at(1), session, carrier: 'progressive', type: 'page_layout', page: 'AddVehicle', context: {}, fields: [{ q, ref, kind: 'radio', label: 'Is this vehicle used for hire?' }] });
+  const fill = (session, q, key) => ({ id: `f${session}`, t: at(2), session, carrier: 'progressive', type: 'fill_field', page: 'AddVehicle', q, key, label: 'Is this vehicle used for hire?', result: 'filled' });
+  const events = [layout('old', '2C1A', null), fill('old', '2C1A', '2C1A'), layout('new', '3F07', 'RiskInput.ForHire'), fill('new', '3F07', 'ref:RiskInput.ForHire')];
+  const key = questionOf(events);
+  assert.equal(key(events[1]), key(events[3]));
+  assert.equal(key({ carrier: 'amwins', page: '/application/businessauto', label: 'Gender' }), 'amwins|/application/businessauto|Gender', 'without an id: page and text, as before');
 });

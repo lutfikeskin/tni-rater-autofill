@@ -35,6 +35,13 @@ function identify(e, ids) {
   return { key: `${e.carrier}|${e.page}|${textOf(e.label) ? `text:${textOf(e.label)}` : `q:${e.q}`}`, unit };
 }
 
+// Which question an event is about, as the learner groups them (by data-model name or text, never
+// by its renumbered id): for the review's per-question tables.
+export function questionOf(events) {
+  const ids = fieldIdentities(events);
+  return (e) => identify(e, ids).key;
+}
+
 // session -> answer key (question, then unit) -> { value, source, corrected, matches, label, page, q, kind }
 export function finalAnswers(events, ids = fieldIdentities(events)) {
   const out = new Map();
