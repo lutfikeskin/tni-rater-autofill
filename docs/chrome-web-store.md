@@ -37,12 +37,14 @@ the store refuses a version it already has.
    - `scripting`: "Fills and highlights form fields on the carrier quote page the agent is viewing."
    - `storage`: "Keeps the loaded intake for the session and the agent's settings."
    - `unlimitedStorage`: "Keeps the usage log on the agent's computer while TNI's usage server
-     can't be reached, so what happened isn't lost before it's uploaded (no client details)."
+     can't be reached, so what happened isn't lost before it's uploaded (no client details beyond what an agent
+     types into a problem report)."
    - Host permissions: "foragentsonly.com / progressive.com / amwinsadmittedplacement.com /
      geico.com: the carrier quote pages it fills. api.openai.com: Luna suggestions for unresolved
      choice questions, with the agent's own OpenAI key.
      usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, no client
-     details). localhost: a local test server."
+     details beyond what an agent types into a problem report).
+     localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
      page, sent to OpenAI when the AI assistant is on). TNI's compliance owner should confirm
      these answers.
@@ -95,7 +97,7 @@ What it does
 • Optional AI tips (with your own OpenAI key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
 
 Privacy
-The application stays on your computer for the session. To improve the extension, a usage log (which fields were filled, what you changed afterwards, problems you report) is sent to TNI's server; client names, numbers and anything you type are never included.
+The application stays on your computer for the session. To improve the extension, a usage log (which fields were filled, what you changed afterwards, problems you report) is sent to TNI's server; client names, numbers and what you type into the quote are not included. A problem report is sent as you type it, with values from the loaded application, if one is loaded, replaced only where they appear exactly as written there, so don't type client details into it.
 
 For TNI agents only.
 ```

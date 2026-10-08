@@ -74,9 +74,9 @@ What's recorded (`src/usage.js`, `src/content/recorder.js`):
 | `fill_run`, `fill_field` | per fill: carrier, page, what was filled/kept/failed and why; chosen dropdown/radio options (not typed text) |
 | `field_change` | a field that changed on the rater page, by the agent or by the page: for dropdowns/radios the from/to option; for text boxes only whether it matches what autofill typed (same / format / different) and which intake field the new value equals, e.g. `drivers[0].dob`, worked out on the agent's computer |
 | `page_view` | carrier page switches (for time per page) |
-| `problem_report` | the agent's note from "Report a problem on this page" (client names redacted) |
+| `problem_report` | the agent's note from "Report a problem on this page", as typed; values from the loaded intake are replaced where they appear exactly as written there (nothing is replaced when no intake is loaded), so agents should not type client details into it |
 
-Never recorded: client names, numbers, addresses, or anything typed into text boxes; screenshots; keystrokes; other websites. Client names are also redacted from labels and options.
+Never recorded (apart from what an agent types into a problem report): client names, numbers, addresses, or anything typed into text boxes; screenshots; keystrokes; other websites. Client names are also redacted from labels and options.
 
 Events wait in `chrome.storage.local` on the agent's computer and are uploaded every minute to the collection server set under **Usage log → Server** (TNI's central server by default). Stored events are removed after acknowledgement and failed uploads retry. The local queue is capped, so a prolonged outage can discard the oldest events. **Export log** works as a fallback. See [learning](docs/learning.md) for the collection and review limits.
 
