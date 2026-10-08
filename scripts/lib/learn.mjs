@@ -6,10 +6,11 @@
 //   byState    an unmapped question whose answer is consistent within each state
 //   mapping    an unmapped text box whose typed value matches the same intake field every time
 //   review     a mapped question whose autofill answer agents change often
+//   pageAnswer a question left to the agent where they let the page's own answer stand
 // Suggestions are for a person to review; nothing is changed automatically.
 
 import { sessionContexts } from './events.mjs';
-import { fieldIdentities } from './layouts.mjs';
+import { fieldIdentities, ENTITY_PAGES } from './layouts.mjs';
 import { fieldStatus } from './coverage.mjs';
 
 const CHOICE = new Set(['select', 'radio', 'checkbox', 'combo']);
@@ -54,6 +55,8 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
       if (!a) continue;
       a.kind ??= e.controlKind;
       a.mappedPath = e.path ?? a.mappedPath;
+      // Left to the agent: a question no rule knew, or a required one the fill couldn't answer.
+      if (e.result === 'unfamiliar' || e.result === 'leftRequired') a.leftToAgent = true;
       if (e.result === 'filled') {
         a.source = 'autofill';
         a.autofilled = true;
@@ -80,7 +83,41 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
       else if (e.matchesIntake) a.matches = e.matchesIntake;
     }
   }
+  pageLeftAnswers(events, out, get);
   return out;
+}
+
+// What a question no event answered held when the agent left its page: the page's own answer (a
+// default, or one given in a way we couldn't see) that the agent let stand. From the page's last
+// layout before the quote moved on from it (a page never left says nothing), for its picks
+// (`selected`), only where no fill or change gave the question an answer: events always win.
+// Questions with an id (Progressive) only; not one id drawn several times without rows (which
+// vehicle's isn't known), nor a page about one vehicle, driver or trailer whose layout doesn't say
+// which one.
+function pageLeftAnswers(events, out, get) {
+  const lastLayout = new Map();
+  const left = new Map();
+  for (const e of events) {
+    if (!e.session || !e.carrier) continue;
+    if (e.type === 'page_layout' && !e.step) lastLayout.set(`${e.session}|${e.page}`, e);
+    if (e.type !== 'page_view' || !e.from) continue;
+    const from = String(e.from).replace(/-Reload$/, '');
+    const layout = lastLayout.get(`${e.session}|${from}`);
+    if (layout && from !== String(e.page ?? '').replace(/-Reload$/, '')) left.set(`${e.session}|${from}`, layout);
+  }
+  for (const layout of left.values()) {
+    const unit = String(layout.view ?? '').split(':')[1] ?? '';
+    if (ENTITY_PAGES.get(layout.carrier)?.has(layout.page) && !unit) continue;
+    const fields = layout.fields ?? [];
+    const repeated = new Set(fields.filter((f, i) => f.q && !f.row && fields.findIndex((x) => x.q === f.q) !== i).map((f) => f.q));
+    for (const f of fields) {
+      if (!f.q || f.selected == null || repeated.has(f.q)) continue;
+      const row = String(f.row ?? '').split('_')[1];
+      const a = get({ ...layout, q: f.q, label: f.label, key: row && row !== '1' ? `${f.q}@${row}` : f.q });
+      if (!a || a.source) continue;
+      Object.assign(a, { source: 'page', pageLeft: true, value: f.selected, kind: a.kind ?? f.kind });
+    }
+  }
 }
 
 const share = (counts, n) => [...counts].sort((x, y) => y[1] - x[1]).map(([v, c]) => ({ value: v, count: c, share: c / n }));
@@ -116,7 +153,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     }
   }
 
-  const suggestions = { standard: [], byState: [], mapping: [], review: [] };
+  const suggestions = { standard: [], byState: [], mapping: [], review: [], pageAnswer: [] };
   // Support counts intake PDFs (by fingerprint; a quote without one counts as its own). Every
   // event carries its quote's fingerprint, so a log without the intake_loaded event (a capped
   // export, a slice of days) still knows it.
@@ -137,7 +174,26 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     const field = named ? named.ref ?? named.layout.ref : null;
     const isMapped = obs.some((o) => o.autofilled) || claimed({ ...first, ref: field });
     const base = { carrier, q: first.q, field, page: first.page, label: first.label ?? '', intakes: intakesOf(obs), quotes: quotesOf(obs) };
-    const choices = obs.filter((o) => o.value !== undefined && o.value !== null && o.value !== '' && CHOICE.has(o.kind ?? 'select'));
+    // Answers someone gave (autofill, the agent, the page on an answer): not one the page held
+    // when the agent left it (pageLeft), which is weaker evidence (pageAnswer below).
+    const choices = obs.filter((o) => !o.pageLeft && o.value !== undefined && o.value !== null && o.value !== '' && CHOICE.has(o.kind ?? 'select'));
+
+    // A question the extension left to the agent, whose page answer they let stand in nearly
+    // every quote and never changed to another: a candidate to leave as the page has it. A
+    // default the agents kept, not proof it fits every client.
+    const leftAsIs = obs.filter((o) => o.pageLeft);
+    if (obs.some((o) => o.leftToAgent) && intakesOf(choices) < minIntakes && intakesOf(leftAsIs) >= minIntakes) {
+      const counts = new Map();
+      leftAsIs.forEach((o) => counts.set(o.value, (counts.get(o.value) ?? 0) + 1));
+      const ranked = share(counts, leftAsIs.length);
+      if (ranked[0].share >= threshold && choices.filter((o) => o.source === 'agent').every((o) => o.value === ranked[0].value)) {
+        suggestions.pageAnswer.push({ ...base, ...support(leftAsIs), answers: leftAsIs.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1),
+          // Kept with the agent (a note), never left as the page has it: these are often the
+          // client's decisions (a coverage limit, a payment plan), where a default proves nothing.
+          rule: `{ ${target({ ...first, field })}, name: ${quote(`${String(first.label ?? '').slice(0, 70)} (agent's; page default ${ranked[0].value})`)}, note: ${quote(`The page's answer "${ranked[0].value}" was left in ${counts.get(ranked[0].value)} of ${leftAsIs.length} quotes (${intakesOf(leftAsIs)} intake PDFs); confirm it for this client.`)} },` });
+        continue;
+      }
+    }
 
     if (isMapped) {
       const filled = obs.filter((o) => o.autofilled);

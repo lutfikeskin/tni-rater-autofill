@@ -34,7 +34,7 @@ if (args.includes('--json')) {
 }
 
 const pct = (x) => `${Math.round(x * 100)}%`;
-const { standard, byState, mapping, review } = result.suggestions;
+const { standard, byState, mapping, review, pageAnswer } = result.suggestions;
 const lines = [
   `# Rule suggestions from ${result.quotes} quote${result.quotes === 1 ? '' : 's'} of ${result.intakes} intake PDF${result.intakes === 1 ? '' : 's'}`,
   '',
@@ -63,6 +63,14 @@ const lines = [
   `## Rules agents keep correcting (${review.length})`,
   '',
   ...review.map((s) => `- **${s.carrier} ${s.page}${s.field ? ` ${s.field}` : ''}** "${s.label}": changed in ${s.corrected} of ${s.filled} answers, ${s.intakes} PDFs (${pct(s.rate)}): ${s.changes.slice(0, 3).map((c) => `${c.value} ×${c.count}`).join('; ')}`),
+  '',
+  `## Questions agents leave as the page answers them (${pageAnswer.length})`,
+  'Left to the agent, who let the page\'s own answer stand when leaving the page and never chose another. Weaker evidence: a default the agents kept, not proof it fits every client. Decide per question: map it from the intake, keep it with the agent (the note line below: known, no longer unfamiliar, still the agent\'s), or leave it as the page has it (`ignore`) only when it is not the client\'s decision.',
+  '',
+  ...pageAnswer.flatMap((s) => [
+    `- **${s.carrier} ${s.page}${s.field ? ` ${s.field}` : ''}** "${s.label}": left as "${s.answer}" in ${pct(s.share)} of ${s.answers} (${s.intakes} PDFs)`,
+    `  \`${s.rule}\``,
+  ]),
   '',
 ];
 const text = lines.join('\n');
