@@ -27,7 +27,7 @@ export const TNI_RULES = `
 - Leave empty: middle initial, suffix, DBA name (always), quote vendor code. Don't change agent code or policy start date.
 
 ## Vehicles (MostCommonVehicles, AddVehicle)
-- Vehicle tile: the intake's vehicle type. "Van" is "Cargo Van", "Semi Truck" is "Truck Tractor", "Flatbed" is "Flatbed Truck"; Box Truck and Pickup Truck by their names. "Reefer Truck" is the refrigerated tile only when the intake's business class is also Reefer. Tanker, Dump Truck and Other: the agent picks.
+- Vehicle tile: the intake's vehicle type. "Van" is "Cargo Van", "Semi Truck" is "Truck Tractor", "Flatbed" is "Flatbed Truck"; Box Truck and Pickup Truck by their names. "Reefer Truck" is the refrigerated tile only when the intake's business class is also Reefer. Tanker, Dump Truck and Other: the agent picks. A "Vehicle Type" list on Add Vehicle means the VIN lookup disagrees with the tile: the agent picks it.
 - Garaging ZIP: the garaging address ZIP.
 - Farthest one-way distance: the intake's radius in miles. "Unlimited" or long haul is "More than 500 miles".
 - Business, personal or both: "Business Only" unless the intake says the vehicle is also for personal use.
@@ -37,12 +37,15 @@ export const TNI_RULES = `
 - Permanently attached equipment: "$0 to $2,000", and tick "Vehicle has no equipment" (standard). The vehicle value question that follows ("If this vehicle was sold today…") is the intake's vehicle value.
 - On the vehicle list page, vehicles found by the USDOT lookup are listed; add the intake's vehicle with Add → Add Vehicle.
 - Vehicle registrant (NJ): Named insured. NJ safety equipment boxes (anti-lock brakes, traction control, 5 MPH bumpers, anti-theft devices): keep what the VIN lookup set.
+- How long the insured or their hired driver has had the vehicle: not on the intake; the agent answers it.
 - Vehicle value: the intake's vehicle value. GVW, annual mileage, anti-lock brakes, driver-side airbag and anti-theft device come from the VIN lookup: keep Progressive's answers.
 - Trailers (after the vehicles: Add → Add Trailer, then the trailer tile): "Flatbed" is "Flatbed Trailer", "Dry Van" is "Dry Freight Trailer", "Reefer" is "Refrigerated Dry Freight"; Enclosed, Tanker, Lowboy, Step Deck and Other: the agent picks. On Add Trailer: the intake trailer's VIN, year, make and value; farthest distance as the vehicle's; loan or lease from the intake's trailer ownership (financed: "Yes - Loan", leased: "Yes - Lease", owned or not given: No; another answer such as Rented: the agent's); comprehensive / collision Yes; tick "Trailer has no equipment", unless the intake gives a trailer equipment value (then enter it as the equipment value).
 
 ## Drivers (AddDriver)
 - License state: the full state name. License number: letters and digits only, keeping a state prefix the intake writes ("IL - S123" is "ILS123").
 - Exclude this driver: No.
+- Year CDL issued: the intake's CDL year; "Year is unknown" is the agent's.
+- Defensive driver discount: No, unless the intake's description box mentions a defensive driving course (then the agent answers it).
 - Accidents, claims or violations in the past 3 years: from the intake's claims answer (its first line; later lines in the claims box sometimes answer other questions).
 
 ## More about the business (MoreAboutBusiness)
@@ -58,7 +61,7 @@ export const TNI_RULES = `
 ## Coverages and rates (CoveragesRates)
 - Bodily injury and property damage liability: the intake's requested limit ("$1M CSL" is "$1 million CSL").
 - Medical payments per person (per vehicle): $5,000 per person.
-- UM/UIM: $100k CSL (also when asked separately as Uninsured and Underinsured Motorist). UMPD limit: Not selected. Comprehensive and collision deductibles: $1,000. Rental: "$40 per day, $1,200 max". Rental with Downtime (offered for a truck tractor): Not selected. Fire/theft additional coverage: Not selected. Roadside: keep what the page has selected.
+- UM/UIM: $100k CSL (also when asked separately as Uninsured and Underinsured Motorist; South Carolina's combined BI & PD: "$100k CSL w/ $200 Deductible" uninsured, "$100k CSL w/ $0 Deductible" underinsured). UMPD limit (per vehicle): Not selected. Comprehensive and collision deductibles: $1,000 (South Carolina lists comprehensive as "$1,000 Deductible w/ $0 Glass Deductible"). Rental: "$40 per day, $1,200 max". Rental with Downtime (offered for a truck tractor): Not selected. Fire/theft additional coverage: Not selected. Roadside: keep what the page has selected.
 - With several vehicles, each vehicle's coverages are listed under its name; the same per-vehicle standards apply to every vehicle. A trailer's row ("2019 Wilson"): comprehensive and collision $1,000, rental and fire/theft Not selected.
 - Motor Truck Cargo only when the intake asks for it: special cargo questions (mobile/modular homes; business documents) No; "General freight" is category "Consumer Goods", commodity "Other Consumer Goods"; limit and deductible from the intake ("$100K/$1K Ded" is "$100k with a $1,000 Deductible").
 - Refrigeration Breakdown: use the intake's Reefer breakdown option (coverage.reeferBreakdown). If selected, choose "Yes, match Motor Truck Cargo limits". If unselected, No, or blank/null, answer "No"; an unselected Reefer option does not need agent review.
@@ -73,7 +76,7 @@ export const TNI_RULES = `
 
 ## Payment and printing
 - Order on the rates page (no GL requested): add cargo, open the bill plan / billing options, choose automatic payments from a checking account (keep the pre-selected plan), come back to rates, Recalculate, then Print, Email, Fax.
-- Print: "Insurance Quote (with all bill plans)" and Print; leave Email and Fax unticked.
+- Print: "Insurance Quote (with all bill plans)" and Print; leave Email and Fax unticked. Print/Send is the agent's click (Chrome opens the PDF only for it).
 
 # AmWINS Admitted Placement (Business Auto)
 - Start on the Commercial Lines dashboard: Auto, risk state = the garaging state, Open New Application.

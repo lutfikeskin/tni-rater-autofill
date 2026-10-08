@@ -58,6 +58,8 @@ function actionSteps(carrier, record, active) {
       // Clicked, but what it adds isn't in until one of these is done (a trailer entered): until
       // then the page says `unfinished` (Continue waits).
       doneWhen: resolve(a.doneWhen) ?? [],
+      // Waits while a required question on the page is empty (the carrier would refuse the click).
+      waitRequired: !!a.waitRequired,
       unfinished: resolve(a.unfinished) ?? null,
       unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (/:driver$/.test(id) || (a.scope === 'driver' && !/:/.test(id))
         ? `${id.replace(/:driver$/, '')}:${active.drivers ?? 0}`
@@ -160,7 +162,7 @@ function fieldSteps(rules, record, carrier, active) {
       // May fill its field while it isn't on screen (an earlier step's question added later).
       hidden: !!rule.hidden,
       // An ignored field the page fills itself (a lookup): flagged only if it stays empty.
-      emptyNote: rule.emptyNote ?? null,
+      emptyNote: typeof rule.emptyNote === 'function' ? rule.emptyNote(record, active) : rule.emptyNote ?? null,
       // A default the agent should confirm: filled, but marked yellow with this note.
       warn: typeof rule.warn === 'function' ? rule.warn(record, active) : rule.warn ?? null,
       summaryAfter: typeof rule.summaryAfter === 'function' ? rule.summaryAfter(record, active) : rule.summaryAfter ?? null,

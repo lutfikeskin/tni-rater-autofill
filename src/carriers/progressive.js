@@ -112,6 +112,10 @@ const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').
 // none (TNI standard: "Trailer has no equipment").
 const trailerEquipment = (r) => (r.trailerInfo?.equipTrailer > 0 ? r.trailerInfo.equipTrailer : null);
 
+// TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
+// the driver took a course; then it's the agent's.
+const defensiveMention = (r) => String(r.claims?.notes ?? '').match(/[^\n.]*defensive[^\n.]*/i)?.[0].trim().slice(0, 80) ?? null;
+
 // Farthest one-way distance: "Unlimited" / long haul becomes 501 miles, which picks "More than
 // 500 miles". A trailer goes as far as the vehicle (TNI).
 const radiusMiles = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null);
@@ -266,6 +270,13 @@ const vehicleTileNote = (r, a) => {
     : `${type} isn't matched to a Progressive tile yet: pick the vehicle yourself.`;
 };
 
+const vehicleTypeNote = (r, a) => {
+  const type = r.vehicles[a.vehicles ?? 0]?.type;
+  return type
+    ? `Progressive's VIN lookup doesn't match the intake's ${type}, so it asks for the vehicle type. Check the intake's vehicle type (and the VIN) and pick it yourself.`
+    : 'Progressive asks for the vehicle type after the VIN lookup: pick it yourself.';
+};
+
 // A page's questions (its pageName): each question is looked for on its own page only, so "City" on
 // Business Owner Info and on NoHit are two questions, and a page's label rules stay on it.
 const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
@@ -342,21 +353,20 @@ export const progressive = {
     // Print, Email, Fax. With GL or NTL requested the agent does the rates page by hand.
     // None of the rates helpers run while the liability limit is unresolved (missing, rejected or
     // different from the intake); a limit the agent set themselves counts as resolved.
-    { id: 'billPlan', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: ourBillPlan },
+    { id: 'billPlan', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: ourBillPlan },
     // Back from the bill plan Progressive has usually recalculated already (Recalculate is gone,
     // Print, Email, Fax is there): Recalculate only when the rates say they're out of date.
     // Recalculate and Print follow the bill plan, which waited for a resolved liability limit.
     // They don't re-check that field: back from the bill plan, the reloaded Rates page failed the
     // same check on a limit that was fine (FL and NJ runs: Print, Email, Fax never ran).
     // With GL there is no bill plan step of ours: they keep the liability check instead.
-    { id: 'recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^recalculate$', after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
+    { id: 'recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal.
-    { id: 'print', page: 'CoveragesRates', heldBy: NTL_HOLD, text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], when: notNtl },
-    // This page may have been opened by the agent or restored after a panel reload. Its own
-    // document and delivery controls establish readiness; no in-memory navigation history is needed.
-    // Again on every return to the page (the agent went back, changed something, and reprints).
-    { id: 'printSend', page: 'PrintEmailFax', text: '^print ?/ ?send$', after: ['progressive.q32B0', 'progressive.q32CC'], verify: 'download', repeatOnReturn: true },
+    { id: 'print', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], when: notNtl },
+    // Print/Send is the agent's (TNI 2026-10-07): Progressive opens the quote PDF in a new window
+    // from that click, and Chrome only lets a page open one right after the person's own click, so
+    // ours went through without a PDF. The Print page is filled; the panel asks for the click.
   ],
   // The page listing the quote's vehicles: the side panel works on the next intake vehicle not
   // added yet there, so Add Vehicle repeats until all are in, then Continue.
@@ -373,6 +383,8 @@ export const progressive = {
   driverPage: 'AddDriver',
   // Pages that need the agent whatever the intake says; the side panel says so at the top.
   agentPages: {
+    // Chrome opens the PDF only for the agent's own click (see the actions above).
+    PrintEmailFax: 'Click Print/Send yourself to get the quote PDF: Chrome only opens it after your own click. The document and Print are already chosen.',
     // TNI (2026-10-07): an SSN only when the client gave one; the usual fix is the owner's name.
     NoHit: "Progressive couldn't verify the business owner. Adjust the owner's name: removing the middle name and keeping only the first and last name often fixes it. Check the date of birth and home address too (an SSN only if the client gave one), then Continue.",
     CoveragesRates: (r) => (r.coverage?.ntl === true
@@ -388,8 +400,9 @@ export const progressive = {
   },
   // When a page has nothing left for the agent, its Continue ("Ok, start quote." on page 1) is
   // clicked. Never on the finish/buy pages.
-  // Never on NoHit either: the agent adjusts the owner's details there (agentPages).
-  advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFaxConfirm', 'NoHit'] },
+  // Never on NoHit either: the agent adjusts the owner's details there (agentPages), nor on the
+  // Print page, whose next step is the agent's Print/Send.
+  advance: { text: '^(continue|ok,? start quote\\.?)\\W*$', exceptPages: ['AdditionalDetails', 'SaveQuote', 'Quote', 'PrintEmailFax', 'PrintEmailFaxConfirm', 'NoHit'] },
   rules: [
     ...SAFE_LABEL_RULES,
     // --- Named Insured and Business Overview (pageName=BusinessOwnerInfo) ---------------------
@@ -509,6 +522,10 @@ export const progressive = {
       ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(([q, name, ask, field]) => ({
         q, field, ask, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
       })),
+      // Asked only when the VIN lookup decodes a vehicle other than the tile picked from the intake's
+      // type (TN 2026-10-08: an intake "Van" whose VIN was a truck tractor). The agent's pick, with
+      // the mismatch named.
+      { field: 'RiskInput.VehicleTypeToDisplay', ask: 'Vehicle Type', name: 'Vehicle type (asked when the VIN lookup disagrees with the tile)', ignore: true, scope: 'vehicle', emptyNote: vehicleTypeNote },
       { q: '2B20', field: 'RiskInput.VIN', ask: 'Vehicle Identification Number (VIN)', path: 'vehicles[].vin' },
       { q: '2B92', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip' },
       // "Unlimited" / long haul becomes 501 miles, which picks "More than 500 miles".
@@ -524,7 +541,10 @@ export const progressive = {
       ...[['2C2C', 'Anti-Lock Brakes'], ['2C2D', 'Traction Control'], ['2C2E', 'Five MPH Bumpers'], ['2C45', 'Anti-Theft Device 1'], ['2C46', 'Anti-Theft Device 2'], ['2C47', 'Anti-Theft Device 3'], ['2C48', 'Anti-Theft Device 4']]
         .map(([q, ask]) => ({ q, ask, name: `${ask} (from VIN lookup)`, ignore: true })),
       { q: '2CCC', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this vehicle in an accident or loss?', name: 'Comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
+      // Found by its text: its data-model name is the trailer's too (kept to the trailer pages).
       { q: '2CE0', ask: 'What is the value of the permanently attached equipment?', name: 'Attached equipment amount (only with more than $2,000)', ignore: true },
+      // SC (2026-10-07): how long the insured has had the vehicle. Not on the intake: the agent's (TNI).
+      { q: '2C09', field: 'RiskInput.LengthOfVehicleOwnershipQuestion', ask: 'How long has the insured or their hired driver had the vehicle?', name: 'How long the insured has had the vehicle (the agent\'s)', note: () => 'How long the insured has had this vehicle isn\'t on the intake: answer it yourself.' },
       // Asked here for the vehicle being added, and on Rates (FL, NC, OH) once per vehicle, where each
       // row gets its own vehicle's answer: the same fields, one rule each (scope: 'vehicle').
       { q: '2CCE', field: 'RiskInput.PAValueOptions', ask: 'What is the total value of all permanently attached equipment (including aftermarket parts, mounted equipment, and modifications)?', name: 'Attached equipment value (standard: $0 to $2,000)', kind: 'choice', value: equipment, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
@@ -558,9 +578,14 @@ export const progressive = {
       { q: '28AC', field: 'DriverInput.LicenseStateDup', ask: 'Driver\'s License State', path: 'drivers[].licenseState' },
       { q: '28E6', field: 'DriverInput.HasCDL', ask: 'Does this driver have a Commercial Driver\'s License (CDL)?', path: 'drivers[].cdl', name: 'Has a CDL', kind: 'bool' },
       { q: '28B9', field: 'DriverInput.DriverLicenseNumber', ask: 'Driver’s License Number', path: 'drivers[].licenseNumber' },
-      // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; the agent changes it
-      // when the client has taken one. (299D: the id when it was first seen, after the renumbering.)
-      { q: '299D', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: () => false },
+      // FL (2026-10-07): with a CDL, the year it was issued, from the intake; "Year is unknown" is
+      // the agent's when the intake has no year.
+      { q: '295E', field: 'DriverInputNonShredded.YearCDLIssuedUI', ask: 'Year CDL Issued', path: 'drivers[].cdlYear' },
+      { q: '2960', field: 'DriverInput.CDLYearUnknow', ask: 'Year is unknown', name: 'CDL year unknown (the agent\'s)', ignore: true },
+      // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; a course the
+      // intake's description box mentions is the agent's. (299D: the id when it was first seen,
+      // after the renumbering.)
+      { q: '299D', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
       { q: '28C1', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (standard: No)', kind: 'bool', value: () => false },
       { q: '28F5', field: 'DriverInput.AnyAccidentsViolationsPastExpYears', label: '^has this driver had any accidents claims or violations in the past', path: 'claims.hasClaims', name: 'Accidents / claims / violations (3 yrs)', kind: 'bool' },
     ]),
@@ -576,8 +601,12 @@ export const progressive = {
       { q: '1DB8', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
       // PIP shares its data-model name across states: other states' lists (TX $2,500–$25,000, MD
       // "Full PIP") are left as Progressive set them (TNI 2026-10-07: no standard there).
-      { q: '1E8D', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r) },
+      { q: '1E8D', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r), emptyNote: (r) => (isFlorida(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida only: choose it yourself.') },
       { q: '1DEE', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
+      // SC (2026-10-07): uninsured and underinsured motorist as BI & PD together, each $100k CSL with
+      // the deductible Progressive lists for it (the agent's picks on that quote).
+      { q: '1E68', field: 'LineInput.UMBIPDLimit', ask: 'Uninsured Motorist Bodily Injury & Property Damage', name: 'Uninsured motorist BI & PD (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL w/ $200 Deductible' },
+      { q: '1E6C', field: 'LineInput.UIMBIPDLimit', ask: 'Underinsured Motorist Bodily Injury & Property Damage', name: 'Underinsured motorist BI & PD (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL w/ $0 Deductible' },
       // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
       ...[['1DCA', { ask: 'Uninsured Motorist Bodily Injury' }], ['1DDE', { ask: 'Underinsured Motorist Bodily Injury' }], ['1DD8', { field: 'LineInput.UIMBILimit' }], ['1DBF', { field: 'LineInput.UMBILimit' }]]
         .map(([q, which]) => ({ q, ...which, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
@@ -589,14 +618,17 @@ export const progressive = {
       // PIP's state choice (MD): its box has no question text and its fieldref isn't recorded yet; it's
       // the list offering "$2,500 Full PIP". Other states' (TX: plain amounts) stay the agent's.
       { q: '1E7C', withOption: '$2,500 Full PIP', name: 'PIP (preserve prefilled state choice)', ignore: true },
-      { q: '1FCD', field: 'ComprehensiveInput.Deductible', name: 'Comprehensive deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'comprehensiveDeductible'), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
+      // SC (2026-10-07) lists comprehensive with a $0 glass deductible ("$1,000 Deductible w/ $0
+      // Glass Deductible"): the same deductible.
+      { q: '1FCD', field: 'ComprehensiveInput.Deductible', name: 'Comprehensive deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'comprehensiveDeductible'), choiceAliases: (r) => [`${vehicleDeductible(r, 'comprehensiveDeductible')} w/ $0 Glass Deductible`], scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '1FD2', field: 'CollisionInput.Deductible', name: 'Collision deductible (standard: $1,000)', kind: 'choice', value: (r) => vehicleDeductible(r, 'collisionDeductible'), scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '1FF2', field: 'RentalInput.Limit', name: 'Rental reimbursement (standard: $40/day, $1,200 max)', kind: 'choice', value: () => '$40 per day, $1,200 max', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       // Offered for a truck tractor next to Rental reimbursement (FL, 2026-10-05). TNI: Not selected.
       { q: '1FF9', field: 'RentalWithDTInput.Limit', name: 'Rental with downtime (TNI: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '2000', field: 'RoadsideInput.Limit', name: 'Roadside / towing (first selected option)', kind: 'selected-option', value: () => 'Selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '200F', field: 'FireAndTheftInput.Deductible', name: 'Additional fire / theft coverage (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-      { q: '1FDD', ask: 'UMPDInput.Limit', name: 'UMPD limit (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
+      // One per vehicle (UT 2026-10-07: two vehicles, two rows, no caption on either).
+      { q: '1FDD', field: 'UMPDInput.Limit', ask: 'UMPDInput.Limit', name: 'UMPD limit (standard: Not selected)', kind: 'choice', value: () => 'Not selected', scope: 'vehicle' },
       // Per-vehicle medical payments ("$… per person"; the column is labelled with the vehicle).
       { q: '1FE4', field: 'MedicalPaymentInput.Limit', name: 'Medical payments per person (standard: $5,000)', kind: 'choice', value: () => '$5,000 per person', scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
       { q: '2158', cargo: 'section', ask: 'Does the customer require cargo coverage for mobile/modular homes and buildings?', name: 'Cargo for mobile/modular homes (standard: No)', kind: 'bool', value: () => false },
@@ -618,10 +650,11 @@ export const progressive = {
     // They carry the vehicle rows' data-model names: each row is found by its trailer's year, make
     // and model, on this page only.
     ...onPage('CoveragesRates', [
-      { q: 'TR1FCD', field: 'ComprehensiveInput.Deductible', name: 'Trailer comprehensive deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000 Deductible' },
+      { q: 'TR1FCD', field: 'ComprehensiveInput.Deductible', name: 'Trailer comprehensive deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000 Deductible', choiceAliases: () => ['$1,000 Deductible w/ $0 Glass Deductible'] },
       { q: 'TR1FD2', field: 'CollisionInput.Deductible', name: 'Trailer collision deductible (standard: $1,000)', kind: 'choice', value: () => '$1,000 Deductible' },
       { q: 'TR1FF2', field: 'RentalInput.Limit', name: 'Trailer rental reimbursement (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
       { q: 'TR200F', field: 'FireAndTheftInput.Deductible', name: 'Trailer fire / theft (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
+      { q: 'TR2CE0', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },
       { q: 'TR2CE3', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard, unless the intake gives an equipment value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: 'TR2CE8', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
     ]).map((rule) => ({ ...rule, scope: 'trailer', pageOnly: true })),
@@ -640,8 +673,10 @@ export const progressive = {
       { q: '32C8', ask: 'Welcome Letter Closing Message', name: 'Welcome letter closing message (optional)', ignore: true },
       { q: '32CC', ask: 'Print', name: 'Print (standard)', kind: 'bool', value: () => true },
       { q: '32CE', ask: 'Agent Fax Cover Page', name: 'Agent Fax Cover Page (preserve portal selection)', ignore: true },
-      { q: '32D0', ask: 'Email', name: 'Email (leave unchecked)', ignore: true },
-      { q: '32DD', ask: 'Fax', name: 'Fax (leave unchecked)', ignore: true },
+      // Unticked when Progressive ticked them: the agent's Print/Send must only open the PDF, never
+      // send the quote (Codex on PR #43). A box the agent ticked is theirs (agent edits are kept).
+      { q: '32D0', ask: 'Email', name: 'Email (standard: unchecked)', kind: 'bool', value: () => false },
+      { q: '32DD', ask: 'Fax', name: 'Fax (standard: unchecked)', kind: 'bool', value: () => false },
     ]),
 
     // --- Save Quote (SaveQuote) ------------------------------------------------------------------

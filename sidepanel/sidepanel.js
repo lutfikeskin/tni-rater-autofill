@@ -44,11 +44,17 @@ const agentKeysStore = inExtension && globalThis.chrome?.storage?.local
 let agentKeysQueue = Promise.resolve();
 // Buttons clicked and vehicles/drivers/trailers entered on a quote tab, so a panel closed or
 // reloaded mid-quote never adds a vehicle or trailer again (ids only, scoped like the keys above).
-const DONE_ACTIONS_KEY = 'doneActionsByTab';
+// One storage key per intake and tab: two panels filling two quote tabs never overwrite each
+// other's record (Codex on PR #43).
+const DONE_ACTIONS_PREFIX = 'doneActions:';
+const doneKey = (scope, tabId) => `${DONE_ACTIONS_PREFIX}${scope}:${tabId}`;
 const doneActionsStore = inExtension && globalThis.chrome?.storage?.local
-  ? { get: async () => (await chrome.storage.local.get(DONE_ACTIONS_KEY))[DONE_ACTIONS_KEY] ?? [],
-      set: (records) => chrome.storage.local.set({ [DONE_ACTIONS_KEY]: records }) }
-  : { get: async () => memory[DONE_ACTIONS_KEY] ?? [], set: async (records) => { memory[DONE_ACTIONS_KEY] = records; } };
+  ? { get: async (scope, tabId) => (await chrome.storage.local.get(doneKey(scope, tabId)))[doneKey(scope, tabId)] ?? [],
+      set: (scope, tabId, ids) => (ids.length ? chrome.storage.local.set({ [doneKey(scope, tabId)]: ids }) : chrome.storage.local.remove(doneKey(scope, tabId))),
+      clear: async () => chrome.storage.local.remove(Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX))) }
+  : { get: async (scope, tabId) => memory[doneKey(scope, tabId)] ?? [],
+      set: async (scope, tabId, ids) => { memory[doneKey(scope, tabId)] = ids; },
+      clear: async () => { for (const k of Object.keys(memory)) if (k.startsWith(DONE_ACTIONS_PREFIX)) delete memory[k]; } };
 let doneActionsQueue = Promise.resolve();
 
 const FNV_OFFSET = 1469598103934665603n;
@@ -370,7 +376,7 @@ async function restoreAgentKeys(tabId) {
 function clearAgentKeys() {
   const task = agentKeysQueue.then(() => agentKeysStore.set([]));
   agentKeysQueue = task.catch(() => {});
-  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set([])).catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.clear()).catch(() => {});
   return task;
 }
 
@@ -379,10 +385,7 @@ function persistDoneActions() {
   const tabId = state.tab?.id;
   if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
   const ids = [...state.doneActions].filter((id) => typeof id === 'string');
-  doneActionsQueue = doneActionsQueue.then(async () => {
-    const existing = await doneActionsStore.get();
-    await doneActionsStore.set([...existing.filter((x) => x.scope !== scope || x.tabId !== tabId), ...(ids.length ? [{ scope, tabId, ids }] : [])]);
-  }).catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set(scope, tabId, ids)).catch(() => {});
   return doneActionsQueue;
 }
 
@@ -392,13 +395,10 @@ const doneRestored = new Set();
 async function restoreDoneActions(tabId) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId) || doneRestored.has(`${scope}|${tabId}`)) return;
-  const records = await doneActionsStore.get();
+  const ids = await doneActionsStore.get(scope, tabId);
   if (state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) return;
   doneRestored.add(`${scope}|${tabId}`);
-  for (const x of records) {
-    if (x.scope !== scope || x.tabId !== tabId || !Array.isArray(x.ids)) continue;
-    for (const id of x.ids) if (typeof id === 'string' && id) state.doneActions.add(id);
-  }
+  for (const id of Array.isArray(ids) ? ids : []) if (typeof id === 'string' && id) state.doneActions.add(id);
 }
 
 // Durable decisions store display text separately from the exact live-value fingerprint.
@@ -1546,6 +1546,10 @@ async function fillPage({ auto = false } = {}) {
 // list) and the driver list work the same way (a driver or trailer counts as entered once its
 // page was filled).
 async function pickListItem(carrier, page) {
+  const tabId = state.tab?.id;
+  await verifyListed(carrier, page);
+  // Another tab came to the front while the list was read: its own fill picks for it.
+  if (state.tab?.id !== tabId) return;
   const lists = [
     [carrier?.vehicleList, 'vehicles', (i) => ['lookupVin', 'addVehicle'].some((a) => state.doneActions.has(`${a}:${i}`))],
     // A trailer only once its page was filled: Add Trailer opened and left (an unsupported tile)
@@ -1561,6 +1565,58 @@ async function pickListItem(carrier, page) {
     await save();
     renderPickers();
   }
+}
+
+// On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each
+// unit with its VIN), and not when the list shows the quote's vehicles by VIN but not this one
+// (Add Trailer left by Back or the top menu, Codex on PR #43). Without VINs to compare, the return
+// from its page decides (unitArrival).
+async function verifyListed(carrier, page) {
+  if (carrier?.driverList && page === carrier.driverList) return verifyDrivers(carrier);
+  if (!carrier?.trailerList || page !== carrier.trailerList || !Number.isInteger(state.tab?.id)) return;
+  const record = state.intake?.record ?? {};
+  const vin = (u) => String(u?.vin ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const trailers = (record.trailers ?? []).map(vin);
+  if (!trailers.some((v) => v.length >= 11)) return;
+  const vehicles = (record.vehicles ?? []).map(vin);
+  let shown = null;
+  const tabId = state.tab.id;
+  try {
+    const frames = await runKit(tabId, carrier, (vins) => globalThis.__raterKit?.listed?.(vins) ?? null, [[...vehicles, ...trailers]]);
+    shown = frames.map((f) => f?.result).find(Array.isArray) ?? null;
+  } catch { return; }
+  if (!shown || state.tab?.id !== tabId) return;
+  const showsVins = shown.slice(0, vehicles.length).some(Boolean);
+  trailers.forEach((v, i) => {
+    if (v.length < 11) return;
+    if (shown[vehicles.length + i]) state.doneActions.add(`trailerEntered:${i}`);
+    else if (showsVins) state.doneActions.delete(`trailerEntered:${i}`);
+  });
+  persistDoneActions();
+}
+
+// On the driver list, a driver it shows by name (first and last) is entered, also when the panel
+// was closed while the agent finished the driver's page (Codex on PR #43). A name not shown proves
+// nothing (the list may write it another way): the return from the driver page decides. Nor does
+// a name another intake driver's name holds (two John Smiths, Ann Lee and Mary Ann Lee): one row
+// would count for both, and the other driver would never be added (Codex on PR #43).
+async function verifyDrivers(carrier) {
+  if (!Number.isInteger(state.tab?.id)) return;
+  const words = (d) => [d.first, d.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
+  const drivers = (state.intake?.record?.drivers ?? []).map(words);
+  const names = (state.intake?.record?.drivers ?? []).map((d, i) => drivers.some((other, j) => j !== i && drivers[i].every((w) => other.includes(w)))
+    ? [] : [d.first, d.last].filter(Boolean));
+  if (!names.some((n) => n.length >= 2)) return;
+  let shown = null;
+  const tabId = state.tab.id;
+  try {
+    const frames = await runKit(tabId, carrier, (items) => globalThis.__raterKit?.listed?.(items) ?? null, [names]);
+    shown = frames.map((f) => f?.result).find(Array.isArray) ?? null;
+  } catch { return; }
+  // The agent switched tabs meanwhile: the answer is about the other tab's quote (Codex on PR #43).
+  if (!shown || state.tab?.id !== tabId) return;
+  shown.forEach((on, i) => { if (on) state.doneActions.add(`driverEntered:${i}`); });
+  persistDoneActions();
 }
 
 // A driver or trailer is entered once the carrier took its page: its list comes back from it (its

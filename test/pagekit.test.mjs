@@ -566,6 +566,28 @@ test('TX refrigeration options fill from the intake without an AI review stop', 
   }
 });
 
+// Codex on PR #43: an edit an older build kept under a question id saved before a renumbering
+// names another question now, and the corrected one has a new number. While such a key is kept,
+// an answer already on the page is left as it is and flagged, never replaced.
+test('an edit kept under an old question id leaves answers on the page as they are', async () => {
+  for (const skip of [[], ['3C01']]) {
+    const h = harness({ search: '?pageName=CoveragesRates' });
+    const radios = ['Yes, match Motor Truck Cargo limits', 'No'].map((value, i) => makeInput({
+      id: i ? 'reefer-no' : `f_U${'A'.repeat(32)}9ABC_1_1`, name: 'string_9ABC', type: 'radio', value,
+    }));
+    const group = new FakeNode('div', { attrs: { role: 'radiogroup', 'aria-label': 'Does the customer require Refrigeration Breakdown coverage?' } });
+    group.append(...radios);
+    h.document.body.append(group);
+    radios[1].checked = true; // the agent's No, kept under the question's old number
+    const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: { reeferBreakdown: true }, claims: {} };
+    const report = await h.kit.fill(buildPlan(record, progressive).filter(s => s.q === '215C'), { replaceChoices: true, skip });
+    if (!skip.length) { assert.equal(radios[0].checked, true, 'without such a key, a pre-selected answer is replaced'); continue; }
+    assert.equal(radios[1].checked, true, 'the answer on the page is kept');
+    assert.equal(report.filled.length, 0);
+    assert.match(report.checks[0]?.note ?? '', /older version/);
+  }
+});
+
 test('Freight Hauler searches the remote business dropdown and verifies a collapsed General Freight summary', async () => {
   for (const offered of ['General Freight Hauler', 'General Freight Trucking']) {
     const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
@@ -898,27 +920,31 @@ test('selected Agent Fax Cover Page is preserved without stopping Print-page fil
   assert.equal(print.checked, true);
 });
 
-test('Print/Send works from the current Print page without remembered navigation, preserving fax cover', async () => {
+// TNI 2026-10-07: Chrome opens the quote PDF only after the agent's own click, so the Print page
+// is filled (document, Print, fax cover kept) and Print/Send is left to the agent.
+test('the Print page is filled and Print/Send is left to the agent, preserving fax cover', async () => {
   const h = harness({ search: '?pageName=PrintEmailFax' });
   const quote = makeInput({ id: `f_c${'A'.repeat(32)}32B0_1_1`, name: 'docs_32B0', type: 'radio', value: 'Insurance Quote (with all bill plans)', checked: true });
   const docs = makeInput({ id: 'doc-set', name: 'docs_32B0', type: 'radio', value: 'Document Set' });
   const print = makeInput({ id: `f_c${'A'.repeat(32)}32CC_1_1`, ariaLabel: 'Print', type: 'checkbox', checked: true });
   const cover = makeInput({ id: `f_c${'A'.repeat(32)}32CE_1_1`, ariaLabel: 'Agent Fax Cover Page', type: 'checkbox', checked: true });
-  const email = makeInput({ id: `f_c${'A'.repeat(32)}32D0_1_1`, ariaLabel: 'Email', type: 'checkbox' });
+  // Progressive ticked Email (Codex on PR #43): the agent's Print/Send must not send the quote.
+  const email = makeInput({ id: `f_c${'A'.repeat(32)}32D0_1_1`, ariaLabel: 'Email', type: 'checkbox', checked: true });
   const fax = makeInput({ id: `f_c${'A'.repeat(32)}32DD_1_1`, ariaLabel: 'Fax', type: 'checkbox' });
   h.document.body.append(quote, docs, print, cover, email, fax);
   const button = addButton(h, 'Print/Send');
   let clicks = 0;
   button.onclick = () => clicks++;
   const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
-  const report = await h.kit.fill(buildPlan(record, progressive), { doneActions: [] });
-  assert.equal(clicks, 1);
+  const report = await h.kit.fill(buildPlan(record, progressive), { doneActions: [], replaceChoices: progressive.replaceChoices });
+  assert.equal(clicks, 0, "the agent's click");
+  assert.equal(quote.checked, true);
+  assert.equal(print.checked, true);
   assert.equal(cover.checked, true);
   assert.equal(email.checked, false);
   assert.equal(fax.checked, false);
   assert.equal(report.unknown.length, 0);
-  assert.equal(report.documentPending, true);
-  assert.ok(report.actions.some((action) => action.id === 'printSend'));
+  assert.equal(report.actions.length, 0);
 });
 
 test('action prerequisites are conjunctive and unsafe Start Quote buttons never click', async () => {
@@ -1092,6 +1118,86 @@ test('a left-alone question whose wording changed is a check for the agent', asy
   addExtText(h2, 'c', '194', { value: '10/08/2026' });
   const same = await h2.kit.fill([{ id: 'start', q: '194', field: fieldOf('194'), ask: [liveIdentity('194').caption], path: 'progressive.q194', name: 'Policy start date', kind: 'text', ignore: true, value: null }], { maxRounds: 2 });
   assert.equal(same.checks.length, 0);
+});
+
+test('listed() says which VINs the page shows, as whole runs', () => {
+  const h = harness();
+  h.document.body.innerText = 'Vehicles on the quote:\nVehicle 1\n2013\nPETERBILT 388\n1XPWD40X1DD000001\nEdit\nRemove';
+  assert.deepEqual(Array.from(h.kit.listed(['1xpwd40x1dd000001', '1W1MAFZB0KA000002', '0X1DD000001', null])), [true, false, false, false]);
+  // Names: every word, whole, on one line (one driver).
+  h.document.body.innerText = 'Here are the drivers on the quote:\nJordan Avery Sample\nEdit';
+  assert.deepEqual(Array.from(h.kit.listed([['Jordan', 'Sample'], ['Jordan', 'Samples'], ['Jo', 'Sample']])), [true, false, false]);
+  // Codex on PR #43: a first name from one driver and a last name from another is not a driver.
+  h.document.body.innerText = 'Here are the drivers on the quote:\nJordan Example\nEdit\nCasey Sample\nEdit';
+  assert.deepEqual(Array.from(h.kit.listed([['Jordan', 'Sample'], ['Casey', 'Sample']])), [false, true]);
+});
+
+// Codex on PR #43: a Yes / No question that became a text box is never typed "Yes" into.
+test('a yes/no answer is never typed into a text box with its question\'s wording', async () => {
+  const h = harness();
+  const box = makeInput({ id: 'hazmat', ariaLabel: 'Does the customer haul hazardous materials?' });
+  h.document.body.append(box);
+  const report = await h.kit.fill([{ id: 'hz', path: 'operations.hazmat', name: 'Hauls hazmat', kind: 'bool', ask: ['Does the customer haul hazardous materials?'], value: false }], { maxRounds: 2 });
+  assert.equal(box.value, '');
+  assert.equal(report.filled.length, 0);
+  assert.equal(report.unknown.length, 1, 'left for the agent as unfamiliar');
+});
+
+// SC 2026-10-07: "View bill plan options" clicked right after UM/UIM were cleared did nothing, and
+// the panel waited for the bill plan forever. A button the carrier refuses while a required
+// question is empty waits for it, and says so.
+test('a Rates button waits while a required question on the page is empty', async () => {
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const um = addExtText(h, 'c', '1E68', { caption: 'Uninsured Motorist Bodily Injury & Property Damage', ref: 'LineInput.UMBIPDLimit', required: true });
+  const button = addButton(h, 'View bill plan options');
+  button.onclick = () => { button._clicked = true; };
+  const billPlan = { id: 'bp', kind: 'action', action: 'billPlan', text: '^view bill plan options$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [], waitRequired: true };
+  let report = await h.kit.fill([billPlan], { maxRounds: 2 });
+  assert.equal(button._clicked, undefined);
+  assert.ok(report.blockers.some((b) => /^button: billPlan \(waiting for Uninsured Motorist Bodily Injury & Property Damage answered\)$/.test(b)));
+  um.cmp.setValue('$100k CSL w/ $200 Deductible');
+  um.input.value = '$100k CSL w/ $200 Deductible';
+  report = await h.kit.fill([billPlan], { maxRounds: 2 });
+  assert.equal(button._clicked, true);
+});
+
+// SC 2026-10-07: a trailer rule's data-model name (RiskInput.PAValue, kept to Add Trailer) left the
+// vehicle's own question for that field on Add Vehicle unclaimed. A name fenced off a page claims
+// nothing there.
+test('a data-model name fenced off this page does not keep a text rule from its field', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  addExtText(h, 'c', '2D50', { caption: 'What is the value of the permanently attached equipment?', ref: 'Test.SomeOtherName' });
+  const report = await h.kit.fill([
+    { id: 'trailer', q: '2AFC', field: 'Test.SomeOtherName', ask: ['What is the value of the permanently attached equipment?'], pages: ['AddTrailer'], pageOnly: true, path: 'progressive.q2AFC', kind: 'money', ignore: true },
+    { id: 'vehicle', q: '2CE0', ask: ['What is the value of the permanently attached equipment?'], pages: ['AddVehicle'], path: 'progressive.q2CE0', kind: 'text', ignore: true },
+  ], { maxRounds: 2 });
+  assert.equal(report.unknown.length, 0);
+});
+
+// SC 2026-10-07: the equipment amount showed until "no equipment" was ticked, then went away; it
+// stayed listed as unfamiliar. A question gone by the end of the fill isn't the agent's.
+test('an unfamiliar question that went away during the fill is not reported', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+  const amount = addExtText(h, 'c', '9999', { caption: 'A brand new amount question', ref: 'Test.Brand.New' });
+  const box = makeInput({ id: 'noequip', type: 'checkbox', ariaLabel: 'Vehicle has no equipment' });
+  box.onclick = () => { amount.input.remove(); };
+  h.document.body.append(box);
+  const report = await h.kit.fill([{ id: 'none', selector: '#noequip', path: 'progressive.q2CE3', kind: 'bool', value: true }], { maxRounds: 4 });
+  assert.equal(box.checked, true);
+  assert.equal(report.unknown.length, 0);
+  assert.ok(!report.blockers.some((b) => /^unfamiliar/.test(b)));
+  // Codex on PR #43: a field that looked renamed and then went away doesn't hold Continue either.
+  const r = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const odd = addExtText(r, 'c', '9998', { caption: 'Agent Code', ref: 'AgencyInfo.SomethingRenamed' });
+  const tick = makeInput({ id: 'tick', type: 'checkbox', ariaLabel: 'Tick me' });
+  tick.onclick = () => { odd.input.remove(); };
+  r.document.body.append(tick);
+  const renamed = await r.kit.fill([
+    { id: 'agent', q: '18F', field: 'AgencyInfo.AgencyCodeAgent', ask: ['Agent Code'], pages: ['BusinessOwnerInfo'], path: 'progressive.q18F', kind: 'text', ignore: true },
+    { id: 'tick', selector: '#tick', path: 'x.tick', kind: 'bool', value: true },
+  ], { maxRounds: 4 });
+  assert.equal(renamed.renamed.length, 0);
+  assert.equal(renamed.pageChanged, false);
 });
 
 // PR #17 review: a click on Add Non-Trucking Liability that the page dropped must not count.
@@ -2314,6 +2420,17 @@ test('a button that shows only once the page took an answer: the answer is picke
   await h.kit.fill(plan, { maxRounds: 6 });
   assert.equal(picks, 1, 'picked again once');
   assert.equal(h.done?._clicked, true, 'then Done');
+  // On ExtJS the re-pick hands the select listeners the picked record, as a real pick does.
+  const x = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const list = addExtText(x, 'c', '216B', { caption: ' ', value: 'Other Consumer Goods' });
+  const records = ['', 'Other Consumer Goods'].map((label) => ({ label, get: () => label }));
+  Object.assign(list.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+  const got = [];
+  list.cmp.on('select', (cmp, rec) => { got.push(rec); if (rec?.label === 'Other Consumer Goods') { const done = addButton(x, 'Done with this coverage'); done.onclick = () => { done._clicked = true; x.done = done; }; } });
+  await x.kit.fill(plan, { maxRounds: 6 });
+  assert.equal(got.length, 1);
+  assert.equal(got[0], records[1], 'the record, not its value');
+  assert.equal(x.done?._clicked, true);
 });
 
 test('a question whose wording carries a date is not flagged as reworded when the date moves', async () => {

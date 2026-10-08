@@ -54,6 +54,17 @@ test('vehicles: values parsed, bad VIN flagged, N/A trailer rows dropped', () =>
   assert.equal(record.trailers.length, 0);
 });
 
+test('a semi trailer with no tractor or pickup on the intake is flagged (TN 2026-10-08)', () => {
+  const withTrailer = (types, trailer) => normalizeIntake({ ...raw, veh_type_1: types[0], veh_type_2: types[1], trl_type_1: trailer, trl_year_1: '2018', trl_make_1: 'Wabash', trl_vin_1: '1JJV532D8JL000000' }, { today: new Date('2026-09-30') }).warnings;
+  const noTractor = withTrailer(['Van', 'Box Truck'], 'Dry Van').find((w) => w.code === 'vehicle-type.no-tractor');
+  assert.equal(noTractor?.level, 'check');
+  assert.match(noTractor.msg, /Dry Van trailer.*Van, Box Truck/);
+  assert.ok(!withTrailer(['Van', 'Semi Truck'], 'Dry Van').some((w) => w.code === 'vehicle-type.no-tractor'), 'a tractor pulls it');
+  assert.ok(!withTrailer(['Pickup Truck', 'Van'], 'Flatbed').some((w) => w.code === 'vehicle-type.no-tractor'), 'a pickup pulls a hotshot flatbed');
+  assert.ok(!withTrailer(['Van', 'Box Truck'], 'Enclosed').some((w) => w.code === 'vehicle-type.no-tractor'), 'an enclosed trailer can follow a van');
+  assert.ok(!warnings.some((w) => w.code === 'vehicle-type.no-tractor'), 'no trailer, no warning');
+});
+
 test('claims box: first line answers claims, the rest are notes (no warning), ownership read from them', () => {
   assert.equal(record.claims.hasClaims, false, 'first line "No" answers the claims question');
   assert.equal(record.claims.notes, '3 Years\nFinanced\nDec page will be provided');
@@ -291,7 +302,7 @@ test('progressive: second live quote — business type, standard vehicle answers
   assert.equal(byQ('3E98').value, 'Automatic payments from checking account');
   assert.equal(byQ('32CC').value, true);
   const actions = plan.filter((s) => s.kind === 'action');
-  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'addVehicle:0', 'addDriver:0', 'businessTypeSearch', 'vehicleTile:0', 'lookupVin:0', 'ntlStillAdded', 'openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print', 'printSend']);
+  assert.deepEqual(actions.map((a) => a.action), ['verifyDot', 'addVehicle:0', 'addDriver:0', 'businessTypeSearch', 'vehicleTile:0', 'lookupVin:0', 'ntlStillAdded', 'openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print']);
   assert.deepEqual(actions.find((a) => a.action === 'addVehicle:0').unlessActions, ['lookupVin:0']);
   assert.equal(actions.find((a) => a.action === 'addVehicle:0').opener, '^add$');
   assert.ok(actions.find((a) => a.action === 'lookupVin:0').immediate);

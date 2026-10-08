@@ -1,7 +1,7 @@
 {
  "test/bakeoff/course-MD-expediter-van.json": {
   "questions": 82,
-  "filled": 59,
+  "filled": 61,
   "failed": 2,
   "unmapped": 2,
   "issues": [],
@@ -109,16 +109,13 @@
    },
    "PrintEmailFax": {
     "questions": 5,
-    "filled": 2,
+    "filled": 4,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": [
-     "Print/Send",
-     "Continue ›"
-    ],
-    "outcomes": "5b849e1cb1a2"
+    "clicked": [],
+    "outcomes": "0e530f725d4a"
    }
   }
  },
@@ -223,7 +220,7 @@
  },
  "test/fixtures/progressive/progressive_FL_expediter_van.json": {
   "questions": 110,
-  "filled": 68,
+  "filled": 70,
   "failed": 1,
   "unmapped": 5,
   "issues": [],
@@ -318,23 +315,21 @@
    },
    "PrintEmailFax": {
     "questions": 6,
-    "filled": 2,
+    "filled": 4,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "5b849e1cb1a2"
+    "clicked": [],
+    "outcomes": "0e530f725d4a"
    }
   }
  },
  "test/fixtures/progressive/progressive_IN_expediter_van.json": {
   "questions": 112,
-  "filled": 78,
+  "filled": 79,
   "failed": 2,
-  "unmapped": 1,
+  "unmapped": 0,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
@@ -397,13 +392,15 @@
    },
    "MoreAboutBusiness": {
     "questions": 29,
-    "filled": 23,
+    "filled": 24,
     "failed": [],
     "noData": 0,
-    "unmapped": 1,
-    "blockers": 2,
-    "clicked": [],
-    "outcomes": "860dbefda6b6"
+    "unmapped": 0,
+    "blockers": 0,
+    "clicked": [
+     "Continue ›"
+    ],
+    "outcomes": "8d8924546cdd"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -627,7 +624,7 @@
  },
  "test/fixtures/progressive/progressive_MD_expediter_van.json": {
   "questions": 105,
-  "filled": 68,
+  "filled": 70,
   "failed": 4,
   "unmapped": 3,
   "issues": [],
@@ -709,15 +706,13 @@
    },
    "PrintEmailFax": {
     "questions": 6,
-    "filled": 2,
+    "filled": 4,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "5b849e1cb1a2"
+    "clicked": [],
+    "outcomes": "0e530f725d4a"
    },
    "SaveQuote": {
     "questions": 8,
@@ -755,7 +750,7 @@
  },
  "test/fixtures/progressive/progressive_OH_expediter_van.json": {
   "questions": 104,
-  "filled": 64,
+  "filled": 66,
   "failed": 5,
   "unmapped": 0,
   "issues": [],
@@ -859,15 +854,13 @@
    },
    "PrintEmailFax": {
     "questions": 6,
-    "filled": 2,
+    "filled": 4,
     "failed": [],
     "noData": 0,
     "unmapped": 0,
     "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "5b849e1cb1a2"
+    "clicked": [],
+    "outcomes": "0e530f725d4a"
    }
   }
  },

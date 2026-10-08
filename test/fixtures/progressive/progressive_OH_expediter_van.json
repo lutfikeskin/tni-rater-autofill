@@ -1047,6 +1047,7 @@
      "q": "1FDD",
      "kind": "combo",
      "caption": "UMPDInput.Limit",
+     "ref": "UMPDInput.Limit",
      "req": true,
      "opts": [
       "Not selected",

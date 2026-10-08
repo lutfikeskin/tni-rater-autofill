@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 51 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 57 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -357,7 +357,8 @@
   // reading the same ("Business Name" as a registered-name choice, or a box) is a step's.
   const TEXT_STEPS = new Set(['text', 'date', 'address-suggest']);
   const TYPED_STEPS = new Set(['date', 'address-suggest']);
-  const CHOICE_STEPS = new Set(['choice', 'pick-not', 'first-option', 'selected-option']);
+  // Yes / No too (Codex on PR #43): a question that became a text box is never typed "Yes" into.
+  const CHOICE_STEPS = new Set(['choice', 'pick-not', 'first-option', 'selected-option', 'bool']);
 
   // Pairs plan steps with page fields. A carrier's known question is found by what it is, never
   // by its question id: Progressive renumbered every question on 2026-10-07, and an id kept from
@@ -390,8 +391,9 @@
     const nameHere = (s) => (s.pageOnly ? onPage(s) : !s.notPages?.includes(page));
     const worded = (s) => !!s.ask?.length || !!s.reC;
     const textIs = (s, x) => !!x.text && ((s.ask ?? []).some((a) => squash(a) === x.text) || (!!s.reC && s.reC.test(x.text) && !(s.exC && s.exC.test(x.text))));
-    // Data-model names some rule knows: those fields are that rule's, never a text rule's.
-    const claimed = new Set(steps.map((s) => s.field).filter(Boolean));
+    // Data-model names some rule knows here: those fields are that rule's, never a text rule's. A
+    // name fenced off this page (a trailer's RiskInput.PAValue on Add Vehicle) claims nothing here.
+    const claimed = new Set(steps.filter((s) => s.field && nameHere(s)).map((s) => s.field));
     const isIt = (s, x) => (s.field ? x.ref === s.field && nameHere(s) : onPage(s) && worded(s) && !claimed.has(x.ref) && textIs(s, x));
     // A choice is never typed into a box, nor a typed address or date put in a choice; a plain
     // text step only gives way to a box when its text names a box and a choice.
@@ -1006,6 +1008,12 @@
     // A field the agent edited, by its key, or by the question id an older build kept it under
     // (version 3) in a quote begun before this one: left alone rather than overwritten.
     const skippedField = (c) => skipKeys.has(fieldKey(c)) || skipped(globalThis.__raterFieldKey.legacyKey?.(c.el, { q: c.q }));
+    // Such a question id can't be tied to its question for certain: saved before a renumbering,
+    // it now belongs to another question, and the corrected one has a new number. While one is
+    // kept, no answer already on a Duck Creek field is replaced, so whichever field the agent
+    // corrected keeps their answer (Codex on PR #43).
+    const legacyEdits = skip.some((k) => /^[0-9A-F]+(?:@\d+)?$/.test(String(k)));
+    const mayHoldLegacyEdit = (c) => legacyEdits && c.q != null && hasValue(c);
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
@@ -1171,10 +1179,15 @@
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '') && !agreesWith(step, c);
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
         const differs = isChoice && replaceChoices && !agreesWith(step, c);
-        if (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c))) {
+        const legacyHold = mayHoldLegacyEdit(c) && !refill.has(step.id);
+        if (legacyHold || (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           report.kept.push(item);
+          if (legacyHold && !agreesWith(step, c)) {
+            const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
+            report.checks.push({ ...item, note, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note });
           // Still our default from an earlier fill: still the agent's to confirm.
-          if (step.warn && agreesWith(step, c)) {
+          } else if (step.warn && agreesWith(step, c)) {
             report.checks.push({ ...item, note: step.warn, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.warn });
           } else handled.set(step.id, { status: null });
@@ -1336,15 +1349,24 @@
           const pair = pairs.find(({ step }) => step.path === a.nudge && step.value != null);
           if (pair && agreesWith(pair.step, pair.control)) {
             nudged.add(a.action);
-            if (pair.control.cmp) pair.control.cmp.fireEvent?.('select', pair.control.cmp, cmpValue(pair.control.cmp, pair.control.el));
-            else setNativeValue(pair.control.el, pair.control.el.value);
+            // ExtJS's select hands its listeners the picked record, as a real pick does (Codex on PR #43).
+            const { cmp } = pair.control;
+            if (cmp) {
+              const value = cmpValue(cmp, pair.control.el);
+              const rec = storeOptions(cmp).find((o) => o.value === value || o.text === oneLine(value))?.rec ?? null;
+              cmp.fireEvent?.('select', cmp, rec ?? value);
+            }
+            if (!cmp) setNativeValue(pair.control.el, pair.control.el.value);
             return true;
           }
         }
         // Menu items ("Add Vehicle" under "Add") only show once their menu button is opened.
         if (!button && !a.opener) continue;
         const holds = actions.filter((h) => (a.heldBy ?? []).includes(h.baseAction) && holdOpen(h));
-        const ready = !holds.length && (!a.afterAny?.length || a.afterAny.some(has))
+        // A page button that the carrier refuses while a required question is empty (Rates' bill
+        // plan, SC 2026-10-07: clicked right after UM/UIM were cleared, and nothing opened).
+        const openRequired = a.waitRequired ? controls.filter((c) => c.required && !hasValue(c) && !skippedField(c)) : [];
+        const ready = !holds.length && !openRequired.length && (!a.afterAny?.length || a.afterAny.some(has))
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
           && a.after.every(has)
@@ -1362,6 +1384,7 @@
             ...(a.needsPremium && !premiumReady() ? ['a current premium'] : []),
             ...(a.afterValue ? [`${a.afterValue[0]} set`] : []),
             ...holds.map((h) => `${h.label ?? h.baseAction} resolved`),
+            ...openRequired.slice(0, 3).map((c) => `${c.label || 'a required question'} answered`),
           ];
           blocked.push(a.action);
           report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites' });
@@ -1406,6 +1429,14 @@
     for (const { step, control } of stillHere ? pairs : []) {
       const h = handled.get(step.id);
       if (h?.status) mark(control, h.status, h.note);
+    }
+    // An unfamiliar question that went away during the fill (hidden by an answer, such as the
+    // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
+    if (stillHere) {
+      const onPageNow = new Set(controls.map((c) => fieldKey(c)));
+      report.unknown = report.unknown.filter((x) => onPageNow.has(x.key));
+      // Likewise a field that looked renamed (Codex on PR #43): it no longer holds Continue.
+      report.renamed = report.renamed.filter((x) => onPageNow.has(x.key));
     }
     // Question text for every field on the page, keyed like the usage recorder's changes.
     report.labels = controls.map((c) => [fieldKey(c), c.label]);
@@ -1537,6 +1568,21 @@
   }
 
   // Re-marks one field (e.g. an AI choice the agent rejected). Returns whether it was found.
+  // Which of these the page shows: a VIN as a whole run of letters and digits (the vehicle list's
+  // units on the quote), or a name as all its words on one line (one driver of the driver list, not
+  // a first name from one and a last name from another). Only true/false goes back.
+  function listed(items) {
+    const text = String(document.body?.innerText ?? '').toUpperCase();
+    const page = ` ${text.replace(/[^A-Z0-9]+/g, ' ')} `;
+    const lines = text.split(/\n+/).map((l) => ` ${l.replace(/[^A-Z0-9]+/g, ' ')} `);
+    const word = (w) => String(w ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return (items ?? []).map((t) => {
+      if (Array.isArray(t)) { const words = t.map(word).filter((w) => w.length >= 2); return words.length >= 2 && lines.some((l) => words.every((w) => l.includes(` ${w} `))); }
+      const v = word(t);
+      return v.length >= 11 && page.includes(` ${v} `);
+    });
+  }
+
   function markKey(key, label, status, note) {
     const same = collectControls().filter((c) => fieldKey(c) === key);
     const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
@@ -1716,5 +1762,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 51, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 57, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();
