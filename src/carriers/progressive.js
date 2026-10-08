@@ -26,7 +26,7 @@
 // choices on live quotes). The agent changes them for the exceptions.
 
 import { priorPolicyExpired, ownerIsDriver } from '../util.js';
-import { ntlMention } from '../normalize.js';
+import { ntlMention, isLongHaul } from '../normalize.js';
 
 // Values that Progressive asks the agent to attest to must come from an explicit intake field.
 // Keep these helpers conservative: an absent value is a review item, not a reason to guess.
@@ -118,7 +118,7 @@ const defensiveMention = (r) => String(r.claims?.notes ?? '').match(/[^\n.]*defe
 
 // Farthest one-way distance: "Unlimited" / long haul becomes 501 miles, which picks "More than
 // 500 miles". A trailer goes as far as the vehicle (TNI).
-const radiusMiles = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null);
+const radiusMiles = (r) => r.operations.radiusMiles ?? (isLongHaul(r.operations.radius) ? 501 : null);
 
 // Always "$0 to $2,000" at TNI; the agent changes it for the rare exception.
 const equipment = () => '$0 to $2,000';
