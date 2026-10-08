@@ -390,6 +390,10 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   assert.equal(byQ(plan, '21E').ignore, false);
   assert.equal(byQ(plan, '230').ignore, false, 'business name typed in even with a USDOT number');
   assert.equal(byQ(plan, '230').value, 'Amina Kone', 'no company: the owner');
+  // TN 2026-10-08: Vehicle Type is asked only when the VIN lookup disagrees with the tile.
+  const vehicleType = plan.find((s) => s.field === 'RiskInput.VehicleTypeToDisplay');
+  assert.equal(vehicleType.ignore, true, 'the agent picks the vehicle type');
+  assert.match(vehicleType.emptyNote, /VIN lookup doesn't match the intake's Van/);
   for (const q of ['2BA1', '2BAC', '2BAE']) {
     assert.equal(byQ(plan, q).ignore, true, q);
     assert.match(byQ(plan, q).emptyNote, /VIN lookup/);

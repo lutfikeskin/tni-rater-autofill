@@ -394,6 +394,12 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   units('veh', 'vehicles', 'Vehicle');
   units('trl', 'trailers', 'Trailer');
   if (!record.vehicles.length) check('vehicles.none', 'vehicles', 'No vehicles listed.');
+  // A semi trailer needs something to pull it: a truck tractor (or a pickup for a hotshot flatbed).
+  // An intake listing one with only vans or box trucks has likely mistyped a vehicle (TN 2026-10-08).
+  const semiTrailer = record.trailers.find((t) => /^(dry van|reefer|flatbed|tanker|lowboy|step deck)$/i.test(t.type ?? ''));
+  if (semiTrailer && record.vehicles.length && !record.vehicles.some((v) => /^(semi truck|pickup truck)$/i.test(v.type ?? ''))) {
+    check('vehicle-type.no-tractor', 'vehicles[0].type', `The intake lists a ${semiTrailer.type} trailer, but no vehicle is a Semi Truck (or Pickup Truck) to pull it (vehicle types: ${record.vehicles.map((v) => v.type ?? 'none').join(', ')}). Check the vehicle types.`);
+  }
   if (record.vehicles.length > 1 && ops.licensePlate) info('plate.ambiguous', 'operations.licensePlate', 'The form has one license-plate box but lists several vehicles; the plate may belong to only one of them.');
 
   // --- Operations -----------------------------------------------------------------------------

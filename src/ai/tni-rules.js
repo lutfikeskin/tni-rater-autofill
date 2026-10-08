@@ -27,7 +27,7 @@ export const TNI_RULES = `
 - Leave empty: middle initial, suffix, DBA name (always), quote vendor code. Don't change agent code or policy start date.
 
 ## Vehicles (MostCommonVehicles, AddVehicle)
-- Vehicle tile: the intake's vehicle type. "Van" is "Cargo Van", "Semi Truck" is "Truck Tractor", "Flatbed" is "Flatbed Truck"; Box Truck and Pickup Truck by their names. "Reefer Truck" is the refrigerated tile only when the intake's business class is also Reefer. Tanker, Dump Truck and Other: the agent picks.
+- Vehicle tile: the intake's vehicle type. "Van" is "Cargo Van", "Semi Truck" is "Truck Tractor", "Flatbed" is "Flatbed Truck"; Box Truck and Pickup Truck by their names. "Reefer Truck" is the refrigerated tile only when the intake's business class is also Reefer. Tanker, Dump Truck and Other: the agent picks. A "Vehicle Type" list on Add Vehicle means the VIN lookup disagrees with the tile: the agent picks it.
 - Garaging ZIP: the garaging address ZIP.
 - Farthest one-way distance: the intake's radius in miles. "Unlimited" or long haul is "More than 500 miles".
 - Business, personal or both: "Business Only" unless the intake says the vehicle is also for personal use.

@@ -270,6 +270,13 @@ const vehicleTileNote = (r, a) => {
     : `${type} isn't matched to a Progressive tile yet: pick the vehicle yourself.`;
 };
 
+const vehicleTypeNote = (r, a) => {
+  const type = r.vehicles[a.vehicles ?? 0]?.type;
+  return type
+    ? `Progressive's VIN lookup doesn't match the intake's ${type}, so it asks for the vehicle type. Check the intake's vehicle type (and the VIN) and pick it yourself.`
+    : 'Progressive asks for the vehicle type after the VIN lookup: pick it yourself.';
+};
+
 // A page's questions (its pageName): each question is looked for on its own page only, so "City" on
 // Business Owner Info and on NoHit are two questions, and a page's label rules stay on it.
 const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
@@ -515,6 +522,10 @@ export const progressive = {
       ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(([q, name, ask, field]) => ({
         q, field, ask, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
       })),
+      // Asked only when the VIN lookup decodes a vehicle other than the tile picked from the intake's
+      // type (TN 2026-10-08: an intake "Van" whose VIN was a truck tractor). The agent's pick, with
+      // the mismatch named.
+      { field: 'RiskInput.VehicleTypeToDisplay', ask: 'Vehicle Type', name: 'Vehicle type (asked when the VIN lookup disagrees with the tile)', ignore: true, scope: 'vehicle', emptyNote: vehicleTypeNote },
       { q: '2B20', field: 'RiskInput.VIN', ask: 'Vehicle Identification Number (VIN)', path: 'vehicles[].vin' },
       { q: '2B92', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip' },
       // "Unlimited" / long haul becomes 501 miles, which picks "More than 500 miles".
