@@ -202,9 +202,6 @@ const state = {
   assistPage: null, // a page whose Luna request waits for a helper's follow-up fill (per tab, like the above)
   notesAsking: null, // the intake whose claims box Luna is reading now
   notesRetry: null, // that intake again, when the settings changed meanwhile
-  // Per intake, the fields the agent edited in the panel: a derived one among them (radius miles,
-  // years in business) is theirs and is not recomputed when its source is edited later.
-  agentEdits: new WeakMap(),
   tabSessions: new Map(),
   agentKeys: new Map(),
   filling: false,
@@ -560,7 +557,9 @@ async function loadFile(file) {
   cancelLayouts();
   holdLayouts();
   resetViews();
-  state.intake = { ...result, fileName: file.name, done: [] };
+  // agentEdited: the fields the agent edited in the panel, saved with the intake so a derived one
+  // among them (radius miles, years in business) stays theirs after the panel reopens.
+  state.intake = { ...result, fileName: file.name, done: [], agentEdited: [] };
   // Start on Check intake when something on the intake needs a look, else straight on Fill.
   state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
   state.settingsOpen = false;
@@ -760,9 +759,8 @@ function fieldRow(path, label, kind, flagged, layout = 'row') {
     const before = get(state.intake.record, path);
     const after = parseEdit(kind, input.value);
     set(state.intake.record, path, after);
-    let edited = state.agentEdits.get(state.intake);
-    if (!edited) state.agentEdits.set(state.intake, (edited = new Set()));
-    edited.add(path);
+    const edited = new Set(state.intake.agentEdited ?? []).add(path);
+    state.intake.agentEdited = [...edited];
     // A value derived from this one (radius → miles, year established → years in business)
     // follows the edit, unless the agent set it here themselves; its row in the client details
     // shows the new value without a re-render.

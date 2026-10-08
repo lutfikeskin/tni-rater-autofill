@@ -92,6 +92,10 @@ test('radius: long-haul phrases, miles, ranges and other units, with what each c
     ['lower 48', null, [], 501, 501],
     ['Unlimited', null, [], 501, 501],
     ['Long haul', null, [], 501, 501],
+    ['nationwide', null, [], 501, 501],
+    // Codex review on f49a270: a mileage beside a long-haul word is the answer; the 48 of "48 states" is not miles.
+    ['anywhere within 100 miles', 100, [], 100, 100],
+    ['OTR up to 500 miles', 500, [], 500, 500],
     ['48', 48, [], 48, 48],
     ['48 miles', 48, [], 48, 48],
     ['250', 250, [], 250, 250],

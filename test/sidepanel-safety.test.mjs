@@ -2669,14 +2669,15 @@ test('editing a source field in the panel recomputes what derives from it and re
   const milesInput = { value: '100', closest: () => milesRow };
   const yearsInput = { value: '', closest: () => milesRow };
   const sandbox = {
-    state: { intake: { record, warnings: [] }, agentEdits: new WeakMap() },
+    state: { intake: { record, warnings: [] } },
     get, set, parseEdit, rederive, h: fake,
     document: { getElementById: (id) => ({ 'f-operations_radiusMiles': milesInput, 'f-applicant_yearsInBusiness': yearsInput })[id] ?? null },
     intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
     usage: { log: (e) => calls.push(['log', e.type, e.path]) },
-    save: async () => calls.push(['save']),
+    save: async () => { calls.push(['save']); stored = structuredClone(sandbox.state.intake); },
     claimsTextEdited: () => {}, reviewClaimsBox: () => {},
   };
+  let stored = null;
   vm.createContext(sandbox);
   vm.runInContext(extractFunction('fieldRow'), sandbox);
   sandbox.fieldRow('operations.radius', 'Radius (as written)', 'text', false);
@@ -2716,8 +2717,19 @@ test('editing a source field in the panel recomputes what derives from it and re
   await established.listeners.change();
   assert.equal(record.applicant.yearEstablished, 2020);
   assert.equal(record.applicant.yearsInBusiness, 12, 'the corrected years are not recomputed');
-  // A new intake starts clean: its derived values follow their source again.
+  // Codex review on f49a270: the panel restarts (init() reads the saved intake back); the edits
+  // were saved with it, so a later source edit still leaves the agent's miles alone.
+  sandbox.state.intake = structuredClone(stored);
+  sandbox.fieldRow('operations.radius', 'Radius (as written)', 'text', false);
+  const reopened = inputs.filter((el) => el.tag === 'input').at(-1);
+  reopened.value = '300 miles';
+  await reopened.listeners.change();
+  assert.equal(sandbox.state.intake.record.operations.radius, '300 miles');
+  assert.equal(sandbox.state.intake.record.operations.radiusMiles, 77, 'after a restart the corrected miles are still kept');
+  assert.equal(stored.record.operations.radiusMiles, 77, 'and saved that way');
   sandbox.state.intake = { record, warnings: [] };
+  // A new intake starts clean: its derived values follow their source again.
+  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\] \};/, 'a loaded intake starts with no edits');
   radius.value = '250';
   await radius.listeners.change();
   assert.equal(record.operations.radiusMiles, 250, 'another intake: the miles follow the edit');

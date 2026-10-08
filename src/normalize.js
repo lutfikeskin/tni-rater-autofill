@@ -15,7 +15,12 @@ const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
 // Radius answers that mean the widest band (the carrier rules map them to "more than 500 miles"):
 // unlimited, long haul, nationwide, OTR, "48 states" / "lower 48", anywhere. Whole words only: a
 // bare "48" is 48 miles, and "any" must not be found inside "company".
-export const LONG_HAUL = /\b(unlimited|long(?:[\s-]*(?:haul|distance))?|nation(?:al|wide)?|otr|over[\s-]*the[\s-]*road|(?:lower|all|continental|contiguous)[\s-]*48|48(?:[\s-]+[a-z.]+)?[\s-]*states?|any(?:where)?)\b/i;
+// "48 states" / "lower 48" name an area, and its 48 is not miles.
+const STATES_48 = /\b(?:(?:lower|all|continental|contiguous)[\s-]*48|48(?:[\s-]+[a-z.]+)?[\s-]*states?)\b/i;
+// The other words say how far in general; an explicit mileage beside them ("anywhere within 100
+// miles", "OTR up to 500 miles") is the answer.
+const LONG_HAUL_WORDS = /\b(?:unlimited|long(?:[\s-]*(?:haul|distance))?|nation(?:al|wide)?|otr|over[\s-]*the[\s-]*road|any(?:where)?)\b/i;
+export const LONG_HAUL = new RegExp(`${STATES_48.source}|${LONG_HAUL_WORDS.source}`, 'i');
 export const isLongHaul = (text) => LONG_HAUL.test(String(text ?? ''));
 
 // Kilometres (any spelling) are the one unit worth converting for the agent; the rest are not
@@ -24,8 +29,9 @@ const KILOMETRES = /^(k|km|kms|kilomet(?:er|re)s?)$/i;
 const NOT_DISTANCE = /^(states?|hrs?|hours?|mins?|minutes?|days?|weeks?|counties|cities)$/i;
 
 /**
- * The intake's radius box, read as a number of miles. Phrases come before digits: "48 states" is
- * long haul, not 48 miles. A range ("100-500 miles", "100 miles to 500 miles", "100mi-500mi"), a
+ * The intake's radius box, read as a number of miles. "48 states" / "lower 48" come before digits:
+ * long haul, not 48 miles. A single mileage beats the other long-haul words ("anywhere within 100
+ * miles" is 100); without one, those words are long haul. A range ("100-500 miles", "100 miles to 500 miles", "100mi-500mi"), a
  * non-mile unit ("250 km"), a mileage followed by another number, and text that isn't a distance
  * give no mileage, and the normalizer asks the agent for it.
  * @returns {{ miles: number|null, kind: 'missing'|'long-haul'|'miles'|'range'|'unit'|'text' }}
@@ -33,7 +39,13 @@ const NOT_DISTANCE = /^(states?|hrs?|hours?|mins?|minutes?|days?|weeks?|counties
 export function parseRadius(v) {
   const s = clean(v);
   if (s == null) return { miles: null, kind: 'missing' };
-  if (isLongHaul(s)) return { miles: null, kind: 'long-haul' };
+  if (STATES_48.test(s)) return { miles: null, kind: 'long-haul' };
+  const read = readMiles(s);
+  if (read.kind !== 'miles' && LONG_HAUL_WORDS.test(s)) return { miles: null, kind: 'long-haul' };
+  return read;
+}
+
+function readMiles(s) {
   const digits = s.replace(/(\d),(?=\d{3}\b)/g, '$1');
   const m = digits.match(/^\D*?(\d+(?:\.\d+)?)\s*\+?\s*(?:(?:miles?|mi)\b\.?\s*)?(?:(?:-|–|—|to|through|thru|and)\s*(\d+(?:\.\d+)?))?\s*([a-z]+)?/i);
   if (!m) return { miles: null, kind: 'text' };
