@@ -52,7 +52,7 @@ test('final answers track who answered each question', () => {
 });
 
 test('learning suggests standard answers, per-state answers, mappings and reviews', () => {
-  const { quotes, suggestions } = learn(week(10), { carriers: CARRIERS, minQuotes: 5 });
+  const { quotes, suggestions } = learn(week(10), { carriers: CARRIERS, minIntakes: 5 });
   assert.equal(quotes, 10);
   const std = suggestions.standard.find((s) => s.q === '9A01');
   assert.equal(std.answer, 'No');
@@ -72,7 +72,7 @@ test('learning suggests standard answers, per-state answers, mappings and review
 });
 
 test('too few quotes: no suggestions', () => {
-  const { suggestions } = learn(week(3), { carriers: CARRIERS, minQuotes: 5 });
+  const { suggestions } = learn(week(3), { carriers: CARRIERS, minIntakes: 5 });
   assert.equal(Object.values(suggestions).flat().length, 0);
 });
 
@@ -238,10 +238,10 @@ test('learning: one question across the renumbering is one question, and its rul
     events.push({ id: `c${i}`, t: at(i * 10 + 1), session: s, carrier: 'progressive', type: 'field_change', page: 'MoreAboutBusiness', q,
       key: before ? q : 'ref:RiskInput.HazmatIndicator', label: 'Does the customer haul hazardous materials?', kind: 'radio', by: 'agent', to: 'No' });
   }
-  const { suggestions } = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minQuotes: 5 });
+  const { suggestions } = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minIntakes: 5 });
   assert.equal(suggestions.standard.length, 1);
   const [std] = suggestions.standard;
-  assert.equal(std.quotes, 6, 'the quotes on both sides of the renumbering count together');
+  assert.equal(std.intakes, 6, 'the quotes on both sides of the renumbering count together');
   assert.equal(std.field, 'RiskInput.HazmatIndicator');
   const suggested = rule(std.rule);
   assert.equal(suggested.field, 'RiskInput.HazmatIndicator');
@@ -250,7 +250,7 @@ test('learning: one question across the renumbering is one question, and its rul
   const carrier = { id: 'progressive', rules: [suggested], useGenericRules: false };
   assert.equal(fieldStatus({ ref: 'RiskInput.HazmatIndicator', caption: 'Does the customer haul hazardous materials?', kind: 'radio' }, carrier, 'MoreAboutBusiness').status, 'filled');
   // With that rule in place, it's mapped: not suggested again.
-  assert.equal(learn(events, { carriers: [carrier], minQuotes: 5 }).suggestions.standard.length, 0);
+  assert.equal(learn(events, { carriers: [carrier], minIntakes: 5 }).suggestions.standard.length, 0);
 });
 
 test('learning: two questions reading the same stay apart, and so do one quote\'s vehicles', () => {
@@ -269,7 +269,7 @@ test('learning: two questions reading the same stay apart, and so do one quote\'
   const s0 = finalAnswers(events).get('c0');
   assert.deepEqual([byQ(s0, '280').value, byQ(s0, '2B0').value], ['Business city', 'Home city']);
   assert.deepEqual([...s0.values()].filter((a) => a.ref === 'RiskInput.Refrigerated').map((a) => a.value), ['Yes', 'No']);
-  const { suggestions } = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minQuotes: 5 });
+  const { suggestions } = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minIntakes: 5 });
   assert.deepEqual(suggestions.standard.map((x) => x.answer).sort(), ['Business city', 'Home city'], 'each City its own; the vehicles disagree');
 });
 
@@ -300,7 +300,7 @@ test('learning: a suggested rule takes the question as the page words it, not th
     events.push({ id: `c${i}`, t: at(i * 10 + 1), session: `w${i}`, carrier: 'progressive', type: 'field_change', page: 'MoreAboutBusiness', q: '3A1',
       label: 'Yes No', kind: 'radio', by: 'agent', to: 'No' });
   }
-  const [std] = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minQuotes: 5 }).suggestions.standard;
+  const [std] = learn(events, { carriers: [{ id: 'progressive', rules: [], useGenericRules: false }], minIntakes: 5 }).suggestions.standard;
   assert.equal(std.label, 'Does the customer pull double trailers?');
   assert.equal(rule(std.rule).ask, 'Does the customer pull double trailers?');
 });
@@ -314,4 +314,44 @@ test('learning: a correction counts when the fill was on another page showing th
   const rates = [...finalAnswers(events).get('x').values()].find((a) => a.page === 'CoveragesRates');
   assert.equal(rates.corrected, true);
   assert.equal(rates.autofilled, true);
+});
+
+// Audit 2026-10-08: the sample PDF was quoted 131 times; one PDF's quotes count once.
+test('learning: quotes of one intake PDF count once', () => {
+  const events = [];
+  for (let i = 0; i < 6; i++) {
+    const s = `p${i}`;
+    events.push({ id: `i${i}`, t: at(i * 10), session: s, type: 'intake_loaded', intakeId: i < 5 ? 'same-pdf' : 'other-pdf' });
+    events.push({ id: `c${i}`, t: at(i * 10 + 1), session: s, carrier: 'progressive', type: 'field_change', page: 'MoreAboutBusiness', q: '3B2',
+      label: 'Does the customer tow vehicles?', kind: 'radio', by: 'agent', to: 'No' });
+  }
+  const carriers = [{ id: 'progressive', rules: [], useGenericRules: false }];
+  const r = learn(events, { carriers, minIntakes: 5 });
+  assert.equal(r.quotes, 6);
+  assert.equal(r.intakes, 2);
+  assert.equal(r.suggestions.standard.length, 0, 'six quotes, two PDFs');
+  assert.equal(learn(events, { carriers, minIntakes: 2 }).suggestions.standard[0].intakes, 2);
+});
+
+// Codex on PR #49: a log without the intake_loaded events still knows each quote's PDF, and a
+// suggestion reports the support it qualified on.
+test('learning: a quote\'s PDF comes from any of its events, and a suggestion counts what it rests on', () => {
+  const events = [];
+  for (let i = 0; i < 6; i++) {
+    events.push({ id: `c${i}`, t: at(i), session: `p${i}`, intakeId: i < 5 ? 'same-pdf' : 'other-pdf', carrier: 'progressive', type: 'field_change', page: 'MoreAboutBusiness',
+      q: '3B2', label: 'Does the customer tow vehicles?', kind: 'radio', by: 'agent', to: 'No' });
+  }
+  const carriers = [{ id: 'progressive', rules: [], useGenericRules: false }];
+  assert.equal(learn(events, { carriers, minIntakes: 5 }).suggestions.standard.length, 0, 'no intake_loaded: still two PDFs');
+  // A mapped question autofilled in two PDFs' quotes, typed by hand in four more: the review rests on two.
+  const mapped = [];
+  for (let i = 0; i < 6; i++) {
+    const e = { t: at(10 + i), session: `m${i}`, intakeId: `pdf${i}`, carrier: 'progressive', page: 'AddVehicle', q: '2B9D', label: 'Farthest distance' };
+    if (i < 2) {
+      mapped.push({ ...e, id: `f${i}`, type: 'fill_field', controlKind: 'select', result: 'filled', path: 'x', shown: 'A' });
+      mapped.push({ ...e, id: `g${i}`, type: 'field_change', kind: 'select', by: 'agent', autofilled: 'x', vsAutofill: 'different', from: 'A', to: 'B' });
+    } else mapped.push({ ...e, id: `h${i}`, type: 'field_change', kind: 'select', by: 'agent', to: 'B' });
+  }
+  const [review] = learn(mapped, { carriers, minIntakes: 2 }).suggestions.review;
+  assert.deepEqual([review.intakes, review.quotes, review.filled], [2, 2, 2]);
 });

@@ -26,7 +26,7 @@ if (!inputs.length) {
 }
 
 const events = loadEvents(inputs);
-const result = learn(events, { carriers: CARRIERS, minQuotes: Number(opt('min', 5)), threshold: Number(opt('threshold', 0.9)) });
+const result = learn(events, { carriers: CARRIERS, minIntakes: Number(opt('min', 5)), threshold: Number(opt('threshold', 0.9)) });
 
 if (args.includes('--json')) {
   console.log(JSON.stringify(result, null, 2));
@@ -36,15 +36,15 @@ if (args.includes('--json')) {
 const pct = (x) => `${Math.round(x * 100)}%`;
 const { standard, byState, mapping, review } = result.suggestions;
 const lines = [
-  `# Rule suggestions from ${result.quotes} quote${result.quotes === 1 ? '' : 's'}`,
+  `# Rule suggestions from ${result.quotes} quote${result.quotes === 1 ? '' : 's'} of ${result.intakes} intake PDF${result.intakes === 1 ? '' : 's'}`,
   '',
-  `Generated ${new Date().toISOString().slice(0, 10)} from ${events.length} events. Minimum ${opt('min', 5)} quotes per suggestion. Review before adding anything.`,
+  `Generated ${new Date().toISOString().slice(0, 10)} from ${events.length} events. Minimum ${opt('min', 5)} different intake PDFs per suggestion (quotes of one PDF count once). Review before adding anything.`,
   '',
   `## Standard answers (${standard.length})`,
   'Unmapped questions agents answer the same way nearly every time.',
   '',
   ...standard.flatMap((s) => [
-    `- **${s.carrier} ${s.page}${s.field ? ` ${s.field}` : ''}** "${s.label}": "${s.answer}" in ${pct(s.share)} of ${s.answers}${s.others.length ? ` (also: ${s.others.map((o) => `"${o.value}" ×${o.count}`).join(', ')})` : ''}`,
+    `- **${s.carrier} ${s.page}${s.field ? ` ${s.field}` : ''}** "${s.label}": "${s.answer}" in ${pct(s.share)} of ${s.answers} (${s.intakes} PDFs)${s.others.length ? ` (also: ${s.others.map((o) => `"${o.value}" ×${o.count}`).join(', ')})` : ''}`,
     `  \`${s.rule}\``,
   ]),
   '',
@@ -56,13 +56,13 @@ const lines = [
   'Unmapped text boxes where agents typed the same intake field every time.',
   '',
   ...mapping.flatMap((s) => [
-    `- **${s.carrier} ${s.page}${s.field ? ` ${s.field}` : ''}** "${s.label}": matches \`${s.path}\` in ${pct(s.share)} of ${s.answers}`,
+    `- **${s.carrier} ${s.page}${s.field ? ` ${s.field}` : ''}** "${s.label}": matches \`${s.path}\` in ${pct(s.share)} of ${s.answers} (${s.intakes} PDFs)`,
     `  \`${s.rule}\``,
   ]),
   '',
   `## Rules agents keep correcting (${review.length})`,
   '',
-  ...review.map((s) => `- **${s.carrier} ${s.page}${s.field ? ` ${s.field}` : ''}** "${s.label}": changed in ${s.corrected} of ${s.filled} quotes (${pct(s.rate)}): ${s.changes.slice(0, 3).map((c) => `${c.value} ×${c.count}`).join('; ')}`),
+  ...review.map((s) => `- **${s.carrier} ${s.page}${s.field ? ` ${s.field}` : ''}** "${s.label}": changed in ${s.corrected} of ${s.filled} answers, ${s.intakes} PDFs (${pct(s.rate)}): ${s.changes.slice(0, 3).map((c) => `${c.value} ×${c.count}`).join('; ')}`),
   '',
 ];
 const text = lines.join('\n');

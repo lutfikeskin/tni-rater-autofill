@@ -87,9 +87,11 @@ const share = (counts, n) => [...counts].sort((x, y) => y[1] - x[1]).map(([v, c]
 
 /**
  * @param {object[]} events   from loadEvents()
- * @param {{carriers?: object[], minQuotes?: number, threshold?: number}} opts
+ * @param {{carriers?: object[], minIntakes?: number, threshold?: number}} opts
+ *   minIntakes: how many different intake PDFs a suggestion needs (quotes of one PDF, such as a
+ *   sample retried many times, count once)
  */
-export function learn(events, { carriers = [], minQuotes = 5, threshold = 0.9 } = {}) {
+export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 } = {}) {
   const contexts = sessionContexts(events);
   const answers = finalAnswers(events);
   const byId = new Map(carriers.map((c) => [c.id, c]));
@@ -115,7 +117,16 @@ export function learn(events, { carriers = [], minQuotes = 5, threshold = 0.9 } 
   }
 
   const suggestions = { standard: [], byState: [], mapping: [], review: [] };
+  // Support counts intake PDFs (by fingerprint; a quote without one counts as its own). Every
+  // event carries its quote's fingerprint, so a log without the intake_loaded event (a capped
+  // export, a slice of days) still knows it.
+  const fingerprints = new Map();
+  for (const e of events) if (e.session && e.intakeId && !fingerprints.has(e.session)) fingerprints.set(e.session, e.intakeId);
+  const intakeOf = (session) => fingerprints.get(session) ?? contexts.get(session)?.intakeId ?? session;
   const quotesOf = (list) => new Set(list.map((o) => o.session)).size;
+  const intakesOf = (list) => new Set(list.map((o) => intakeOf(o.session))).size;
+  // A suggestion reports the support it qualified on, not every observation of its question.
+  const support = (list) => ({ intakes: intakesOf(list), quotes: quotesOf(list) });
   for (const [key, obs] of byQuestion) {
     const [carrier] = key.split('|');
     // The question's wording as the page draws it (a layout's caption) over an event's, which can
@@ -125,26 +136,26 @@ export function learn(events, { carriers = [], minQuotes = 5, threshold = 0.9 } 
     const named = obs.find((o) => o.ref ?? o.layout?.ref);
     const field = named ? named.ref ?? named.layout.ref : null;
     const isMapped = obs.some((o) => o.autofilled) || claimed({ ...first, ref: field });
-    const base = { carrier, q: first.q, field, page: first.page, label: first.label ?? '', quotes: quotesOf(obs) };
+    const base = { carrier, q: first.q, field, page: first.page, label: first.label ?? '', intakes: intakesOf(obs), quotes: quotesOf(obs) };
     const choices = obs.filter((o) => o.value !== undefined && o.value !== null && o.value !== '' && CHOICE.has(o.kind ?? 'select'));
 
     if (isMapped) {
       const filled = obs.filter((o) => o.autofilled);
       const corrected = filled.filter((o) => o.corrected);
-      if (quotesOf(filled) >= minQuotes && corrected.length / filled.length >= 0.2) {
+      if (intakesOf(filled) >= minIntakes && corrected.length / filled.length >= 0.2) {
         const changes = new Map();
         corrected.forEach((o) => changes.set(o.correction, (changes.get(o.correction) ?? 0) + 1));
-        suggestions.review.push({ ...base, filled: filled.length, corrected: corrected.length, rate: corrected.length / filled.length, changes: share(changes, corrected.length) });
+        suggestions.review.push({ ...base, ...support(filled), filled: filled.length, corrected: corrected.length, rate: corrected.length / filled.length, changes: share(changes, corrected.length) });
       }
       continue;
     }
 
-    if (quotesOf(choices) >= minQuotes) {
+    if (intakesOf(choices) >= minIntakes) {
       const counts = new Map();
       choices.forEach((o) => counts.set(o.value, (counts.get(o.value) ?? 0) + 1));
       const ranked = share(counts, choices.length);
       if (ranked[0].share >= threshold) {
-        suggestions.standard.push({ ...base, answers: choices.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1), kind: first.kind, rule: ruleFor({ ...first, field }, ranked[0].value) });
+        suggestions.standard.push({ ...base, ...support(choices), answers: choices.length, answer: ranked[0].value, share: ranked[0].share, others: ranked.slice(1), kind: first.kind, rule: ruleFor({ ...first, field }, ranked[0].value) });
         continue;
       }
       // Consistent within each state?
@@ -159,13 +170,13 @@ export function learn(events, { carriers = [], minQuotes = 5, threshold = 0.9 } 
         return { state, n, ...share(m, n)[0] };
       });
       if (perState.length > 1 && perState.every((s) => s.share >= threshold && s.n >= 2)) {
-        suggestions.byState.push({ ...base, answers: choices.length, perState: perState.map(({ state, value, n }) => ({ state, value, n })) });
+        suggestions.byState.push({ ...base, ...support(choices), answers: choices.length, perState: perState.map(({ state, value, n }) => ({ state, value, n })) });
       }
       continue;
     }
 
     const typed = obs.filter((o) => o.matches);
-    if (quotesOf(typed) >= minQuotes) {
+    if (intakesOf(typed) >= minIntakes) {
       const counts = new Map();
       typed.forEach((o) => (o.matches.length ? o.matches : ['(no intake match)']).forEach((m) => {
         const k = m.replace(/:part$/, '');
@@ -174,12 +185,12 @@ export function learn(events, { carriers = [], minQuotes = 5, threshold = 0.9 } 
       const ranked = share(counts, typed.length);
       if (ranked[0].value !== '(no intake match)' && ranked[0].share >= 0.8) {
         const path = ranked[0].value.replace(/\[\d+\]/, '[]');
-        suggestions.mapping.push({ ...base, answers: typed.length, path, share: ranked[0].share, rule: `{ ${target({ ...first, field })}, path: '${path}' },` });
+        suggestions.mapping.push({ ...base, ...support(typed), answers: typed.length, path, share: ranked[0].share, rule: `{ ${target({ ...first, field })}, path: '${path}' },` });
       }
     }
   }
-  for (const list of Object.values(suggestions)) list.sort((a, b) => b.quotes - a.quotes);
-  return { quotes: answers.size, questions: byQuestion.size, suggestions };
+  for (const list of Object.values(suggestions)) list.sort((a, b) => b.intakes - a.intakes || b.quotes - a.quotes);
+  return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, suggestions };
 }
 
 const quote = (s) => `'${String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
