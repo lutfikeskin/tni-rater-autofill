@@ -332,3 +332,26 @@ test('learning: quotes of one intake PDF count once', () => {
   assert.equal(r.suggestions.standard.length, 0, 'six quotes, two PDFs');
   assert.equal(learn(events, { carriers, minIntakes: 2 }).suggestions.standard[0].intakes, 2);
 });
+
+// Codex on PR #49: a log without the intake_loaded events still knows each quote's PDF, and a
+// suggestion reports the support it qualified on.
+test('learning: a quote\'s PDF comes from any of its events, and a suggestion counts what it rests on', () => {
+  const events = [];
+  for (let i = 0; i < 6; i++) {
+    events.push({ id: `c${i}`, t: at(i), session: `p${i}`, intakeId: i < 5 ? 'same-pdf' : 'other-pdf', carrier: 'progressive', type: 'field_change', page: 'MoreAboutBusiness',
+      q: '3B2', label: 'Does the customer tow vehicles?', kind: 'radio', by: 'agent', to: 'No' });
+  }
+  const carriers = [{ id: 'progressive', rules: [], useGenericRules: false }];
+  assert.equal(learn(events, { carriers, minIntakes: 5 }).suggestions.standard.length, 0, 'no intake_loaded: still two PDFs');
+  // A mapped question autofilled in two PDFs' quotes, typed by hand in four more: the review rests on two.
+  const mapped = [];
+  for (let i = 0; i < 6; i++) {
+    const e = { t: at(10 + i), session: `m${i}`, intakeId: `pdf${i}`, carrier: 'progressive', page: 'AddVehicle', q: '2B9D', label: 'Farthest distance' };
+    if (i < 2) {
+      mapped.push({ ...e, id: `f${i}`, type: 'fill_field', controlKind: 'select', result: 'filled', path: 'x', shown: 'A' });
+      mapped.push({ ...e, id: `g${i}`, type: 'field_change', kind: 'select', by: 'agent', autofilled: 'x', vsAutofill: 'different', from: 'A', to: 'B' });
+    } else mapped.push({ ...e, id: `h${i}`, type: 'field_change', kind: 'select', by: 'agent', to: 'B' });
+  }
+  const [review] = learn(mapped, { carriers, minIntakes: 2 }).suggestions.review;
+  assert.deepEqual([review.intakes, review.quotes, review.filled], [2, 2, 2]);
+});
