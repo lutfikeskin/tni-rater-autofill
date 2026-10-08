@@ -40,7 +40,9 @@ const since = args.includes('--all') ? null : opt('since') ?? previous ?? null;
 const out = opt('out') ?? path.join(reviewsDir, `review-${today}.md`);
 
 const all = loadEvents(inputs);
-const recent = since ? all.filter((e) => receivedAt(e) >= since) : all;
+// Compared as full ISO times: gh's run times have no milliseconds, the server's receipts do.
+const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOString() : since;
+const recent = from ? all.filter((e) => receivedAt(e) >= from) : all;
 
 // The existing review scripts, on the period's events (summary) or all events (learn, layouts).
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
@@ -92,7 +94,7 @@ const aiRows = [...byQuestion.entries()]
 const problems = recent.filter((e) => e.type === 'problem_report');
 // Questions without a rule: different ones (a question per page, whatever its number, row or
 // product), and the ones first seen in this period.
-const uncovered = uncoveredQuestions(all, since);
+const uncovered = uncoveredQuestions(all, from);
 
 // --- Report -----------------------------------------------------------------------------------
 const lines = [];
