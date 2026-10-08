@@ -2667,10 +2667,11 @@ test('editing a source field in the panel recomputes what derives from it and re
   };
   const milesRow = { classList: { toggle: (cls, on) => calls.push(['toggle', cls, on]) } };
   const milesInput = { value: '100', closest: () => milesRow };
+  const yearsInput = { value: '', closest: () => milesRow };
   const sandbox = {
-    state: { intake: { record, warnings: [] } },
+    state: { intake: { record, warnings: [] }, agentEdits: new WeakMap() },
     get, set, parseEdit, rederive, h: fake,
-    document: { getElementById: (id) => (id === 'f-operations_radiusMiles' ? milesInput : null) },
+    document: { getElementById: (id) => ({ 'f-operations_radiusMiles': milesInput, 'f-applicant_yearsInBusiness': yearsInput })[id] ?? null },
     intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
     usage: { log: (e) => calls.push(['log', e.type, e.path]) },
     save: async () => calls.push(['save']),
@@ -2695,4 +2696,30 @@ test('editing a source field in the panel recomputes what derives from it and re
   assert.equal(record.operations.radiusMiles, 77);
   assert.equal(record.operations.radius, 'Unlimited');
   assert.deepEqual(calls, [['intakeEdited', 77], ['log', 'intake_edit', 'operations.radiusMiles'], ['save']]);
+  // Codex review on a7ee49e: the agent's miles stay theirs when the radius text is edited later.
+  calls.length = 0;
+  milesInput.value = '77';
+  radius.value = '100-500 miles';
+  await radius.listeners.change();
+  assert.equal(record.operations.radius, '100-500 miles');
+  assert.equal(record.operations.radiusMiles, 77, 'the corrected miles are not recomputed');
+  assert.equal(milesInput.value, '77');
+  assert.deepEqual(calls, [['intakeEdited', 77], ['log', 'intake_edit', 'operations.radius'], ['save']]);
+  // Same for years in business corrected directly, then a year established edit.
+  sandbox.fieldRow('applicant.yearsInBusiness', 'Years in business', 'int', false);
+  const years = inputs.filter((el) => el.tag === 'input').at(-1);
+  years.value = '12';
+  await years.listeners.change();
+  sandbox.fieldRow('applicant.yearEstablished', 'Year established', 'int', false);
+  const established = inputs.filter((el) => el.tag === 'input').at(-1);
+  established.value = '2020';
+  await established.listeners.change();
+  assert.equal(record.applicant.yearEstablished, 2020);
+  assert.equal(record.applicant.yearsInBusiness, 12, 'the corrected years are not recomputed');
+  // A new intake starts clean: its derived values follow their source again.
+  sandbox.state.intake = { record, warnings: [] };
+  radius.value = '250';
+  await radius.listeners.change();
+  assert.equal(record.operations.radiusMiles, 250, 'another intake: the miles follow the edit');
+  assert.equal(milesInput.value, 250);
 });

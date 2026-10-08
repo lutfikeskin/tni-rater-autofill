@@ -206,6 +206,9 @@ test('rederive recomputes a derived value from its edited source, never the othe
   rederive(r, 'applicant.yearEstablished', today);
   assert.equal(r.applicant.yearsInBusiness, null, 'not a year: no years in business');
   assert.deepEqual(rederive(r, 'applicant.name', today), [], 'nothing derives from the name');
+  r.operations.radius = '300 miles';
+  assert.deepEqual(rederive(r, 'operations.radius', { ...today, keep: new Set(['operations.radiusMiles']) }), [], 'miles the agent set are kept');
+  assert.equal(r.operations.radiusMiles, 77);
 });
 
 test('claims box without a yes/no keeps everything as notes and leaves the claims answer open', () => {

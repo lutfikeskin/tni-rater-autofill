@@ -565,7 +565,8 @@ export function parseEdit(kind, text) {
 
 // The scalars normalizeIntake derives from another field, recomputed after the agent corrects
 // the source in the panel (set first, then rederive). Only the source triggers it: an edit to
-// the derived field itself ("Radius (miles)") is the agent's value and is left as typed.
+// the derived field itself ("Radius (miles)") is the agent's value and is left as typed, also
+// when the source is edited afterwards (the panel passes the paths the agent edited as `keep`).
 const DERIVED = {
   'operations.radius': ['operations.radiusMiles', (record) => parseRadius(record.operations?.radius).miles],
   'applicant.yearEstablished': ['applicant.yearsInBusiness', (record, year) => {
@@ -577,12 +578,15 @@ const DERIVED = {
 /**
  * @param {object} record  the client record, already holding the edit at `path`
  * @param {string} path  the edited field
+ * @param {{ today?: Date, keep?: Set<string> }} [options]  keep: derived paths the agent set
+ *   directly, never recomputed
  * @returns {string[]} the derived paths that were recomputed
  */
-export function rederive(record, path, { today = new Date() } = {}) {
+export function rederive(record, path, { today = new Date(), keep } = {}) {
   const derived = DERIVED[path];
   if (!derived) return [];
   const [target, compute] = derived;
+  if (keep?.has(target)) return [];
   set(record, target, compute(record, today.getFullYear()));
   return [target];
 }
