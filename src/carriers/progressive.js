@@ -527,7 +527,7 @@ export const progressive = {
       { q: 'B2', source: 'fact', field: 'MoreBusinessInputNonShredded.ProgressiveBundleNoneInd', ask: 'None of the above', each: true, name: 'Other coverages: None of the above', kind: 'bool',
         note: 'The customer\'s other business coverages aren\'t on the intake: tick what applies yourself.' },
       ...[['A7', 'Business Owners Policy'], ['A8', 'General Liability'], ['A9', 'Workers\' Compensation'], ['AF', 'Business Owners Policy'], ['B0', 'General Liability']]
-        .map(([q, ask]) => ({ q, source: 'fact', ask, each: true, name: `Other coverage: ${ask}`, kind: 'bool', note: `Whether the customer has a ${ask} isn't on the intake: tick it yourself if they do.` })),
+        .map(([q, ask]) => ({ q, source: 'fact', ask, each: true, name: `Other coverage: ${ask}`, kind: 'bool', note: `Whether the customer has ${ask} coverage isn't on the intake: tick it yourself if they do.` })),
       { q: 'B7', field: 'MoreBusinessInput.AdditionalInsuredCount', ask: 'Number of Named Additional Insureds', name: 'Named additional insured count (preserve prefilled value)', ignore: true },
       { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
       { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },
