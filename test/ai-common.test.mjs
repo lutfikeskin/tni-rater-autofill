@@ -118,6 +118,9 @@ test('scoped intake strips identifiers, keeps explicit No, and includes only car
   assert.deepEqual([facts.claims.hasClaims, facts['drivers[1]'].cdl, facts['drivers[1]'].licenseState], [true, true, 'TX'], 'booleans and the license state stay');
   assert.deepEqual([facts['vehicles[1]'].year, facts['vehicles[1]'].value, facts.operations.radius], [2019, 40000, 600], 'numbers stay numbers');
   assert.equal(facts.operations.businessClass, 'Expediter');
+  // Codex review on 4f455f4: a short driver name is not cut out of other words in the facts.
+  const ann = scopedIntake({ ...record, drivers: [{ first: 'Ann', last: 'Car' }], claims: { text: 'Ann wants Cargo; Annual mileage 90k', hasClaims: false } }, { drivers: 0 });
+  assert.equal(ann.claims.text, '[client] wants Cargo; Annual mileage 90k');
   const wire = JSON.stringify(evidenceFor(context));
   for (const term of ['Synthetic Hauler', 'Zorvald', 'Quenby', '02/02/1982', '75001', 'Sampleton', '12 Synthetic Way']) {
     assert.equal(wire.includes(term), false, `${term} must not reach the model`);

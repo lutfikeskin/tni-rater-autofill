@@ -80,8 +80,18 @@ export function matchIntake(record, typed) {
   return hits.slice(0, 5);
 }
 
+// One word (a name word such as "Ann", or a city) is replaced only as a whole word, so "Ann" leaves
+// "Annual" and "Car" leaves "Cargo" alone; any other term (a full name, date of birth, phone, VIN,
+// street) is replaced wherever it appears exactly as written. src/content/pagekit.js `capture`
+// builds the same patterns.
+const ONE_WORD = /^[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*$/u;
+function redactionPattern(term) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return ONE_WORD.test(term) ? new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`, 'giu') : new RegExp(escaped, 'gi');
+}
+
 export function redactor(terms) {
-  const patterns = terms.filter((t) => t && t.length >= 3).map((t) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'));
+  const patterns = terms.filter((t) => t && t.length >= 3).map(redactionPattern);
   return (s) => (s == null ? s : patterns.reduce((acc, re) => acc.replace(re, '[client]'), String(s)));
 }
 

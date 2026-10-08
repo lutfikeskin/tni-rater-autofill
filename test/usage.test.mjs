@@ -92,6 +92,16 @@ test('dropdown changes keep the option text, minus client names', () => {
   assertNoClientData(addr);
 });
 
+test('a name word is redacted only as a whole word; other terms wherever they appear as written', () => {
+  // Codex review on 4f455f4: a driver named Ann turned "Annual mileage" into "[client]ual mileage".
+  const r = redactor(['Ann Carlson', 'Ann', 'Carlson', 'Car', 'José', '1234567', '1FTBR3X87MKA12345']);
+  for (const fact of ['Annual mileage', 'Cargo', 'Caravan', 'carrier', 'Oscar', 'Carlsonville']) assert.equal(r(fact), fact);
+  assert.equal(r('Ann drives. ANN, Ann\'s truck'), '[client] drives. [client], [client]\'s truck');
+  assert.equal(r('Ann Carlson; José.'), '[client]; [client].');
+  assert.equal(r('owner_Ann'), 'owner_[client]', 'an underscore is not part of the word');
+  assert.equal(r('USDOT1234567 vin=1FTBR3X87MKA12345x'), 'USDOT[client] vin=[client]x', 'numbers and VINs still match inside longer text');
+});
+
 test('a combo box keeps its value only when each side is one of its known options', () => {
   const choices = new Map([['2C1A', new Set(['Transit 150', 'Transit 250', 'Transit 350'])]]);
   const combo = (before, after, ctx = {}) => fieldChangeEvent({ key: '2C1A', q: '2C1A', label: 'Model', kind: 'select', combo: true, before, after, agent: true },
