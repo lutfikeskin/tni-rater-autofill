@@ -6,6 +6,7 @@ import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex } from '../src/usage.js';
+import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated } from '../src/ai/luna.js';
@@ -181,6 +182,9 @@ const state = {
   intake: null, // { record, warnings, stats, fileName, done: number[] }
   active: { drivers: 0, vehicles: 0, trailers: 0 },
   tab: null, // { id, url, carrier }
+  // The state each tab's quote was picked for on the carrier's page (tab id -> { carrier, code,
+  // session, dismissed }): kept when the intake is cleared or replaced, as the tab's quote is.
+  quoteStates: new Map(),
   // What autofill put in each field on the current tab (field key -> { path, shown }), so the
   // usage log can tell the agent's corrections apart from agreement.
   filled: new Map(),
@@ -860,8 +864,9 @@ async function refreshTab() {
   renderSite();
   ensureRecorder();
   // A recorder already in the page (the panel was closed or reloaded, or another tab was in
-  // front) doesn't announce the page again: ask for its layout here.
+  // front) doesn't announce the page again: ask for its layout, and its quote state, here.
   scheduleLayout(pageOf(state.tab?.url), 'arrived');
+  if (state.tab?.carrier?.quoteState) seedQuoteState(state.tab.id, state.tab.carrier, pageOf(state.tab.url));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -915,6 +920,7 @@ function onRecorderMessage(msg, sender) {
       }
       showStopPage();
     }
+    if (!sender.frameId && state.tab.carrier?.quoteState) seedQuoteState(sender.tab.id, state.tab.carrier, samePage(msg.page));
     // Even with no fields in the top frame: a form may be all in child frames, which don't report
     // arrivals themselves.
     scheduleLayout(layoutPage, 'arrived');
@@ -946,6 +952,11 @@ function onRecorderMessage(msg, sender) {
     const view = viewOf(sender.tab.id, samePage(msg.page));
     log(...msg.changes.map((c) => ({ carrier, page: msg.page, view, ...fieldChangeEvent(c, ctx) })));
     scheduleLayout(layoutPage, 'changed');
+    // The quote's state, by whoever picked it: remembered for this tab, checked against the intake.
+    for (const c of msg.changes) {
+      const code = quoteStatePick(state.tab.carrier, samePage(msg.page), c);
+      if (code !== undefined) noteQuoteState(sender.tab.id, carrier, code);
+    }
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
@@ -1076,7 +1087,7 @@ async function autoFill(page) {
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
-    rememberFill(frames);
+    rememberFill(frames, { tabId, carrier });
     followUp = afterFill(frames, { carrier, page });
     const hasWarnings = frames.some((f) => f.unknown?.length);
     // The fill whose helper this follows up held Luna back for it.
@@ -1143,6 +1154,7 @@ function jobCurrent(job) {
 // one still waiting is asked again for the corrected intake.
 function intakeEdited() {
   state.intakeRevision++;
+  showStateNote();
   const pending = state.layoutPending;
   if (!pending) return;
   cancelLayouts();
@@ -1339,7 +1351,8 @@ async function layoutWhenQuiet(job, tries = 0) {
   await recordLayout(job.page, null, job);
 }
 
-function rememberFill(frames) {
+// `tabId`, `carrier`: the fill's own tab (the agent may have gone to another one meanwhile).
+function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carrier } = {}) {
   const page = pageOf(state.tab?.url);
   if (state.intake && !state.intake.ntlAdded && frames.some((f) => (f.actions ?? []).some((a) => a.id === 'addNtl'))) {
     state.intake.ntlAdded = true;
@@ -1358,6 +1371,10 @@ function rememberFill(frames) {
   for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
   persistDoneActions();
   for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
+  // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
+  const quoteKey = carrier?.quoteState?.key;
+  const pickedState = quoteKey && frames.flatMap((f) => f.filled).find((x) => x.key === quoteKey);
+  if (pickedState) noteQuoteState(tabId, carrier.id, stateCode(pickedState.shown));
   for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
   // Kept from every fill: a searched combo's list differs from one fill to the next.
   for (const [key, options] of frames.flatMap((f) => f.choices ?? [])) {
@@ -1432,6 +1449,7 @@ function renderSite() {
         ? "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page."
         : 'Open a Progressive, GEICO or AmWINS quote page to fill it.';
   showStopPage();
+  showStateNote();
 }
 
 // Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client
@@ -1454,6 +1472,75 @@ function showStopPage() {
     h('b', {}, ours ? `${carrier.name} stopped this quote` : `${carrier.name} stop page`),
     h('p', {}, ours ? note : `This tab was already on ${carrier.name}'s stop page before this client was loaded, so it may be another client's quote. Open or start this client's quote.`),
     h('p', { class: 'small' }, 'Nothing on this page is filled or clicked.')));
+}
+
+// The tab's quote is for another state than the intake's garaging state (src/quote-state.js): said
+// above both steps until the pick matches, the intake does, or the agent says the pick is right
+// (for this intake). Also when the pick came before this intake was loaded: the tab's quote
+// doesn't change with the intake. A tab that moves to another carrier forgets its pick.
+// A tab's quote state: a new pick replaces it (the same pick keeps when it was made and whether the
+// agent said it's right); no state forgets it.
+function noteQuoteState(tabId, carrier, code) {
+  const was = state.quoteStates.get(tabId);
+  const same = was && was.carrier === carrier && was.code === code;
+  if (code) state.quoteStates.set(tabId, same ? was : { carrier, code, session: usage.currentSession()?.id ?? null, dismissed: null });
+  else state.quoteStates.delete(tabId);
+  showStateNote();
+}
+
+// The quote-state page's pick as it is (a state the page restored or defaulted, or picked before
+// the recorder attached): a change would never report it. Read when the recorder announces the
+// page, and when the panel finds the tab on it (a recorder already in the page, after the panel
+// was closed or reloaded, doesn't announce it again). A pick noted while the page is read (a
+// change, a fill) is newer: the read doesn't replace it.
+function seedQuoteState(tabId, carrier, page) {
+  if (!state.intake || !carrier?.quoteState?.pages.includes(page)) return;
+  const known = state.quoteStates.get(tabId);
+  readQuoteState(tabId, carrier).then((shown) => { if (shown != null && state.quoteStates.get(tabId) === known) noteQuoteState(tabId, carrier.id, stateCode(shown)); });
+}
+
+// The quote-state control's pick on the page's top frame, by its field key: the option's text, ''
+// for no state, null when it isn't there (or the page can't be read).
+async function readQuoteState(tabId, carrier) {
+  const key = carrier?.quoteState?.key;
+  if (!inExtension || !key) return null;
+  try {
+    const [res] = await chrome.scripting.executeScript({ target: { tabId, frameIds: [0] }, args: [key], func: (k) => {
+      const el = [...document.querySelectorAll('select')].find((x) => globalThis.__raterFieldKey?.(x) === k);
+      const o = el?.selectedOptions?.[0];
+      return el ? (o && o.value !== '' ? o.text : '') : null;
+    } });
+    return res?.result ?? null;
+  } catch { return null; }
+}
+
+// Progressive opens the quote in a new tab from its home page: that tab's quote is the one picked
+// there. Not while no intake is loaded: the tab isn't watched then, so its pick may be stale.
+function inheritQuoteState(tab) {
+  if (!state.intake) return;
+  const pick = state.quoteStates.get(tab?.openerTabId);
+  if (pick && Number.isInteger(tab.id) && !state.quoteStates.has(tab.id)) state.quoteStates.set(tab.id, { ...pick });
+}
+
+function showStateNote() {
+  const box = $('state-note');
+  const tabId = state.tab?.id;
+  let pick = state.quoteStates.get(tabId);
+  if (pick && state.tab?.carrier && pick.carrier !== state.tab.carrier.id) { state.quoteStates.delete(tabId); pick = null; }
+  const intakeId = usage.currentSession()?.intakeId ?? null;
+  const off = !pick || !state.intake || pick.carrier !== state.tab?.carrier?.id || pick.dismissed === `${intakeId}|${pick.code}`;
+  const differs = off ? null : stateMismatch(pick.code, state.intake.record);
+  box.hidden = !differs;
+  if (!differs) { box.replaceChildren(); return; }
+  const name = state.tab.carrier.name;
+  const before = pick.session !== (usage.currentSession()?.id ?? null);
+  box.replaceChildren(h('div', { class: 'agent-page stop-page', role: 'alert' },
+    h('b', {}, `This ${name} quote is for ${differs.picked}, the intake for ${differs.intake}`),
+    h('p', {}, before
+      ? `This tab's ${name} quote was started in ${differs.picked} before this intake was loaded; the intake's garaging state is ${differs.intake}.`
+      : `${differs.picked} was picked for this ${name} quote; the intake's garaging state is ${differs.intake}.`),
+    h('p', { class: 'small' }, `A ${differs.picked} quote won't take ${differs.intake} ZIP codes or rules. Start the quote in ${differs.intake}, or check the intake's address.`),
+    h('button', { type: 'button', class: 'link small', onclick: () => { pick.dismissed = `${intakeId}|${pick.code}`; showStateNote(); } }, `${differs.picked} is right for this client`)));
 }
 
 // A tab may still show the previous client's quote after an intake is loaded (or the panel
@@ -1516,7 +1603,7 @@ async function fillPage({ auto = false } = {}) {
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
-    rememberFill(frames);
+    rememberFill(frames, { tabId, carrier });
     state.autoPages.add(page);
     followUp = afterFill(frames, { carrier, page });
     recordLayout(page);
@@ -2652,7 +2739,7 @@ function wire() {
   if (inExtension) {
     chrome.runtime.onMessage.addListener(onRecorderMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
-    chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); });
+    chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
     chrome.windows.onFocusChanged.addListener(refreshTab);
   }
