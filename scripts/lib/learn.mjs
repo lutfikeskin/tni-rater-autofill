@@ -292,6 +292,23 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
       }
     }
   }
+  // A question known only by its text (AmWINS) gets a rule by its label, which no step constrains:
+  // two steps' questions reading the same would get one selector, and pasting both could fill one
+  // step with the other's answer. Such suggestions get no ready rule, only a note naming the steps.
+  const pasted = [...suggestions.standard, ...suggestions.mapping, ...suggestions.pageAnswer].filter((s) => s.rule);
+  const bySelector = new Map();
+  for (const s of pasted) {
+    const k = `${s.carrier}|${target(s)}`;
+    bySelector.set(k, [...(bySelector.get(k) ?? []), s]);
+  }
+  for (const group of bySelector.values()) {
+    const steps = [...new Set(group.map((s) => s.step ?? '(no step)'))];
+    if (steps.length < 2) continue;
+    for (const s of group) {
+      s.rule = null;
+      s.manualRule = `the same label on steps ${steps.join(', ')}: a label rule would match each step; write the rule by hand so it finds this step's question only`;
+    }
+  }
   for (const list of Object.values(suggestions)) list.sort((a, b) => b.intakes - a.intakes || b.quotes - a.quotes);
   return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, suggestions };
 }

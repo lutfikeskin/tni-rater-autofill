@@ -16,7 +16,7 @@
 // npm run layouts builds (captures/progressive/generated/, git-ignored). Needs internet (the
 // replay page loads ExtJS from cdnjs) and Playwright's Chromium (npx playwright install chromium).
 // Reports go to reviews/e2e-<date>.md; the baseline is test/e2e-baseline.json. In every mode, each
-// page's outcomes (what each question got, by its text: a hash) must equal the baseline's, so a
+// page's outcomes (what each question got, by its text and filling rule: a hash) must equal the baseline's, so a
 // rule change that alters an answer with the counts unchanged fails the run until --update.
 
 import crypto from 'node:crypto';
@@ -98,13 +98,14 @@ async function runLayout(layout) {
   }
 }
 
-// What each question of a page got, by its text, never its number (--renumber shifts numbers; an
+// What each question of a page got, by its text and the rule that filled it, never its number (--renumber shifts numbers; an
 // unlabeled field is named after its element id, which holds the number, so that part is masked):
 // a short hash, so the baseline stays small.
 function unnumbered(s) { return String(s ?? '').replace(/\bf [a-z] [0-9a-f]{32}[0-9a-f]+ \d+ \d+\b/gi, 'field'); }
 function outcomes(r) {
   return crypto.createHash('sha1').update(JSON.stringify([
-    ...r.filled.map((x) => `filled ${unnumbered(x.label)} = ${x.shown ?? ''}`),
+    // With the rule that filled it, so two controls reading the same that swap answers differ.
+    ...r.filled.map((x) => `filled ${x.rule ?? ''} :: ${unnumbered(x.label)} = ${x.shown ?? ''}`),
     ...r.noData.map((x) => `agent ${unnumbered(x)}`),
     ...r.unmapped.map((x) => `no rule ${unnumbered(x)}`),
   ].sort())).digest('hex').slice(0, 12);

@@ -297,9 +297,17 @@
       r.actions.forEach((a) => done.actions.add(a.id));
       done.pages.add(window.replay.page);
       const how = (x) => (x.path?.startsWith(`${carrier?.id}.`) ? 'standard/computed' : 'intake');
+      // Which rule filled it, never the page's question number (--renumber shifts those): its name,
+      // the question id it was written for, and its intake path (a vehicle's row index included),
+      // but not the plan-index path a rule without id or path gets (it shifts when a rule is added).
+      const steps = new Map(plan.map((s) => [s.id, s]));
+      const ruleOf = (x) => {
+        const s = steps.get(x.stepId);
+        return s ? [s.name, s.q ?? '', /^[^.[]+\.q[^.[]*$/.test(s.path ?? '') ? '' : s.path ?? ''].join(' | ') : '';
+      };
       return {
         questions: before.length,
-        filled: r.filled.map((x) => ({ label: x.label, shown: x.shown, how: how(x) })),
+        filled: r.filled.map((x) => ({ label: x.label, shown: x.shown, how: how(x), rule: ruleOf(x) })),
         clicked: [...r.actions.map((a) => a.text), ...(r.advanced ? [r.advanced] : [])],
         noData: r.noData.map((x) => x.label + (x.note ? ` (${x.note})` : '')),
         failed: r.failed.map((x) => `${x.label}: ${x.reason}`),

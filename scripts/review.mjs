@@ -78,11 +78,18 @@ const sum = (list, k) => list.reduce((n, e) => n + (Number(e[k]) || 0), 0);
 const filled = sum(fills, 'filled');
 const leftover = sum(fills, 'unknown') + sum(fills, 'failed') + sum(fills, 'noData') + sum(fills, 'leftRequired');
 // An agent's change to an autofilled field counts as a correction only when the value differs
-// (`vsAutofill`: different, format, or cleared). Most such changes re-enter the same value (446 of
-// 502 in the data to 2026-10-08: a combo closed, a retyped value); those are counted apart.
+// (`vsAutofill`: different, format, or cleared). Most such changes end on the autofilled value (446
+// of 502 in the data to 2026-10-08); a change is only logged when the value moved, so one of those
+// came from another value. From an empty one (a combo opened and closed, a box retyped) it is a
+// re-entry; from another answer (a select's `from`, a text box `edited`) the agent put the autofilled
+// answer back after it changed, often a carrier overwriting it (an answer-retention problem), or
+// after their own edit: counted apart, never as a no-op. The log keeps no typed text, so a text
+// box's `edited` is all that says it held something.
 const agentChanges = recent.filter((e) => e.type === 'field_change' && e.by === 'agent' && e.autofilled);
 const corrections = agentChanges.filter((e) => ['different', 'format', 'cleared'].includes(e.vsAutofill)).length;
-const sameAsAutofill = agentChanges.filter((e) => e.vsAutofill === 'same').length;
+const heldAnother = (e) => (e.kind === 'text' ? e.change === 'edited' : e.from != null && e.from !== '');
+const restoredAutofill = agentChanges.filter((e) => e.vsAutofill === 'same' && heldAnother(e)).length;
+const sameAsAutofill = agentChanges.filter((e) => e.vsAutofill === 'same' && !heldAnother(e)).length;
 
 // --- AI assistant -----------------------------------------------------------------------------
 const asks = recent.filter((e) => e.type === 'ai_suggest');
@@ -126,7 +133,8 @@ p(`| Quotes started | ${quotes.size}${Object.keys(states).length ? ` (${Object.e
 p(`| Fields filled by the rules | ${filled} |`);
 p(`| Fields left for the agent (yellow/red/amber) | ${leftover} |`);
 p(`| Autofilled answers the agent corrected (a different, reformatted or cleared value) | ${corrections} |`);
-p(`| Autofilled answers the agent re-entered unchanged (same value; not corrections) | ${sameAsAutofill} |`);
+p(`| Autofilled answers the agent put back after they changed (a carrier overwrite, or the agent's own edit) | ${restoredAutofill} |`);
+p(`| Autofilled answers the agent re-entered unchanged (from an empty field; not corrections) | ${sameAsAutofill} |`);
 p(`| AI requests | ${asks.length}${asks.length ? ` (${asks.filter((a) => a.error).length} errors, median ${median(asks.filter((a) => !a.error).map((a) => a.ms))} ms)` : ''} |`);
 p(`| AI suggestions acted on | ${decisions.length}: ${['accepted', 'approved', 'auto', 'dismissed', 'rejected', 'failed'].map((k) => `${k} ${decisions.filter((d) => d.decision === k).length}`).join(', ')} |`);
 p(`| Problem reports | ${problems.length} |`);
