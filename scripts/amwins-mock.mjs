@@ -29,7 +29,8 @@ const record = {
   drivers: [{ first: 'SAMPLE A', middle: null, last: 'DRIVER', dob: '01/02/1968', licenseNumber: 'H1234567', licenseState: 'NE', maritalStatus: 'Married' }],
   vehicles: ['54DC4W1B5KS800000', '54DC4W1B5KS800001', '54DC4W1B5KS800002']
     .map((vin) => ({ type: 'Box Truck', year: 2019, make: 'ISUZU', model: 'NPR', vin, value: 45000 })),
-  trailers: [],
+  // AmWINS has no trailer section: the trailer is a line of the disclosure text (2026-10-08).
+  trailers: [{ type: 'Dry Van', year: 2015, make: 'GREAT DANE', model: null, vin: '1GRAA0621FB700000', value: 25000 }],
   priorInsurance: [{ type: 'Commercial Auto', carrier: 'PROGRESSIVE', limit: '$1M CSL', expiration: '12/01/2026' }],
   coverage: { autoLiabLimit: '$1M', cargo: true, cargoLimit: 100000, cargoDeductible: 1000 },
   claims: { hasClaims: false },
@@ -67,7 +68,7 @@ const EXPECT = [
     'anyVehicleNotOwned', 'useTheirAuto', 'vehicleMaintenanceProgram', 'vehicleLeased', 'transportingHazardousMaterial', 'vehicleUsedByFamily',
     'mvrVerification', 'recruitingMethod', 'coveredByWC', 'ownedUnscheduledVehicle', 'convictionsMovingViolations'].map((n) => [`radio:${n}`, 'No']),
   ['radio:otherTopic', 'Yes'],
-  ['#remarks', 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026'],
+  ['#remarks', 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nTrailer - 2015 GREAT DANE Dry Van - VIN 1GRAA0621FB700000 - $25K\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026'],
   ['#accept', false],
 ];
 // Left for the agent on purpose: the runner answers them as the agent would, then fills again
