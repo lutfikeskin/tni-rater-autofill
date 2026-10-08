@@ -103,3 +103,73 @@ test('the steps of a one-address application are pages of their own in built lay
   assert.deepEqual(Object.keys(pages), ['/application/businessauto › Vehicles', '/application/businessauto › Coverages']);
   assert.equal(pages['/application/businessauto › Vehicles'].fields[0].cond, undefined, 'not a follow-up: on every layout of its step');
 });
+
+// Codex on PR #43: Progressive renumbered its questions on 2026-10-07. The same question recorded
+// before (267), after (29E) and with its data-model name (0.9.9) is one field of the page; two
+// questions reading the same ("City" of the business and of the owner) stay two.
+test('layouts: one question across the renumbering is one field; repeated texts stay apart', () => {
+  const context = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: [] };
+  const layout = (t, fields) => ({ type: 'page_layout', t, session: t, carrier: 'progressive', page: 'BusinessOwnerInfo', context, fields });
+  const trucker = (q, ref) => ({ q, ref, kind: 'select', label: 'Type of Trucker', options: ['Other For-Hire Trucking'] });
+  const cities = (a, b) => [{ q: a, kind: 'text', label: 'City' }, { q: b, kind: 'text', label: 'City' }];
+  const pages = buildLayouts([
+    layout('2026-10-05T10:00:00Z', [trucker('267'), ...cities('286', '2B0')]),
+    layout('2026-10-07T08:00:00Z', [trucker('29E'), ...cities('2BD', '2E7')]),
+    layout('2026-10-07T12:00:00Z', [trucker('29E', 'AccountInput.SpecificTruckHaulContractType')]),
+  ])[0].layout.pages;
+  const fields = pages.BusinessOwnerInfo.fields;
+  const truckers = fields.filter((f) => f.caption === 'Type of Trucker');
+  assert.equal(truckers.length, 1);
+  assert.equal(truckers[0].ref, 'AccountInput.SpecificTruckHaulContractType');
+  assert.equal(fields.filter((f) => f.caption === 'City').length, 2);
+});
+
+// Codex on PR #43: a follow-up seen once on each side of the data-model names (0.9.9) and of the
+// renumbering still has its two layouts each way: one trigger, one condition.
+test('layouts: a condition counts its layouts from before and after names and numbers changed', () => {
+  const context = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: [] };
+  const layout = (t, fields) => ({ type: 'page_layout', t, session: t, carrier: 'progressive', page: 'MoreAboutBusiness', context, fields });
+  const hazmat = (q, ref, selected) => ({ q, ref, kind: 'radio', label: 'Does the customer haul hazardous materials?', options: ['Yes', 'No'], selected });
+  const hazClass = (q, ref) => ({ q, ref, kind: 'text', label: 'Hazardous material class' });
+  const fields = buildLayouts([
+    layout('2026-10-05T10:00:00Z', [hazmat('100', undefined, 'Yes'), hazClass('101')]),
+    layout('2026-10-05T11:00:00Z', [hazmat('100', undefined, 'No')]),
+    layout('2026-10-07T12:00:00Z', [hazmat('1A0', 'X.Hazmat', 'Yes'), hazClass('1A1', 'X.HazmatClass')]),
+    layout('2026-10-07T13:00:00Z', [hazmat('1A0', 'X.Hazmat', 'No')]),
+  ])[0].layout.pages.MoreAboutBusiness.fields;
+  assert.equal(fields.length, 2);
+  const follow = fields.find((f) => f.caption === 'Hazardous material class');
+  assert.equal(follow.condition, undefined, 'not "condition unknown"');
+  assert.deepEqual(follow.showWhen.is, ['Yes']);
+  assert.equal(follow.showWhen.q, '1A0', 'the trigger by its current number');
+});
+
+// Codex on PR #43: two questions reading the same ("City" of the business and of the owner), the
+// first missing from a layout: the second keeps its own identity.
+test('layouts: a repeated text keeps its identity when the earlier one is missing', () => {
+  const context = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: [] };
+  const layout = (t, fields) => ({ type: 'page_layout', t, session: t, carrier: 'progressive', page: 'BusinessOwnerInfo', context, fields });
+  const text = (q, label) => ({ q, kind: 'text', label });
+  const fields = buildLayouts([
+    layout('2026-10-05T10:00:00Z', [text('27E', 'Street Address'), text('286', 'City'), text('2A9', 'Home Address'), text('2B0', 'City')]),
+    layout('2026-10-05T11:00:00Z', [text('2A9', 'Home Address'), text('2B0', 'City')]),
+  ])[0].layout.pages.BusinessOwnerInfo.fields;
+  const cities = fields.filter((f) => f.caption === 'City');
+  assert.equal(cities.length, 2);
+  assert.deepEqual(cities.map((f) => [f.q, !!f.cond]).sort(), [['286', true], ['2B0', false]], "the owner's City is on both layouts; the business's on one");
+});
+
+// Codex on PR #43: the two "City" questions recorded before data-model names join their named
+// fields, each by its place (after its anchor), not left as two more fields.
+test('layouts: a repeated text recorded before names joins the named field in its place', () => {
+  const context = { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'], coverages: [] };
+  const layout = (t, fields) => ({ type: 'page_layout', t, session: t, carrier: 'progressive', page: 'BusinessOwnerInfo', context, fields });
+  const text = (q, label, ref) => ({ q, ref, kind: 'text', label });
+  const fields = buildLayouts([
+    layout('2026-10-05T10:00:00Z', [text('27E', 'Street Address'), text('286', 'City'), text('2A9', 'Home Address'), text('2B0', 'City')]),
+    layout('2026-10-08T10:00:00Z', [text('2B5', 'Street Address', 'Biz.Street'), text('2BD', 'City', 'Biz.City'), text('2E0', 'Home Address', 'Home.Street'), text('2E7', 'City', 'Home.City')]),
+  ])[0].layout.pages.BusinessOwnerInfo.fields;
+  assert.equal(fields.length, 4);
+  assert.deepEqual(fields.filter((f) => f.caption === 'City').map((f) => f.ref).sort(), ['Biz.City', 'Home.City']);
+  assert.ok(fields.every((f) => !f.cond), 'each on both layouts');
+});

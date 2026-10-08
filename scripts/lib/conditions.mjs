@@ -12,6 +12,8 @@ const tidy = (s) => String(s ?? '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' '
 // kind and label. One with none of them (no label either), or one that repeats on the page (a row
 // per vehicle), can't be told apart and is left out (null).
 export function fieldId(f) {
+  // Its data-model name first (recorded since 0.9.9): question ids are reassigned (2026-10-07).
+  if (f.ref) return `ref:${f.ref}`;
   if (f.q) return f.q;
   if (f.id) return `#${f.id}`;
   if (f.dataId) return `data:${f.dataId}`;

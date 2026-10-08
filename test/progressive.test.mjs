@@ -95,7 +95,7 @@ test('Progressive standard answers: USDOT belongs to the business, filings, MCS-
   assert.equal(byQ(plan, '2C1A').value, true, 'for-hire is the supported workflow default');
   assert.equal(byQ(plan, '29F').value, true, 'owner-as-driver follows the intake');
   assert.equal(byQ(plan, '2A5').kind, 'first-option', 'home address: always the first choice');
-  assert.equal(byQ(plan, '208A').value, true, 'no equipment, other-state id');
+  assert.equal(byQ(plan, '2CE3').value, true, 'no equipment (Add Vehicle and Rates: one field)');
   assert.equal(byQ(plan, '1FDD').value, 'Not selected', 'UMPD');
   assert.equal(byQ(plan, '20F').value, true);
   assert.equal(byQ(plan, '20F').note, null);
@@ -107,9 +107,11 @@ test('Progressive standard answers: USDOT belongs to the business, filings, MCS-
 
 test('Progressive preserves optional and server-owned controls', () => {
   const plan = buildPlan(baseRecord(), progressive, {});
-  for (const q of ['18F', '194', '1CC', '77', '2DB', '2DD', '2DF', '2B00', '1E7C', '3E96', '3E97', '3EA4', '32CE', '32D0', '32DD']) {
+  for (const q of ['18F', '194', '1CC', '77', '2DB', '2DD', '2DF', '2B00', '1E7C', '3E96', '3E97', '3EA4', '32CE']) {
     assert.equal(byQ(plan, q).ignore, true, `q${q} is preserved`);
   }
+  // Email and Fax are unticked (TNI), so the agent's Print/Send only opens the PDF (Codex on PR #43).
+  for (const q of ['32D0', '32DD']) assert.deepEqual([byQ(plan, q).ignore, byQ(plan, q).value], [false, false], q);
   for (const q of ['year', 'make', 'model']) {
     const step = plan.find((s) => s.path === `vehicles[0].${q}`);
     assert.equal(step.verifyOnly, true, `decoded vehicle ${q} is verified, not typed`);
@@ -224,19 +226,22 @@ test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () 
   assert.equal(byQ(plan, '1E66').value, '$5,000');
   assert.equal(byQ(plan, '1FE4').value, '$5,000 per person');
   for (const q of ['1E69', '1E6E', '1E71', '1E74']) assert.equal(byQ(plan, q).value, 'Not Selected');
-  assert.ok(byQ(plan, '1B8D').note, 'SSN is never filled');
+  assert.equal(byQ(plan, '1B8D').ignore, true, 'SSN: never filled, and not a "needs you" item (TNI 2026-10-07)');
+  assert.ok(progressive.advance.exceptPages.includes('NoHit'), 'NoHit is the agent\'s: never continued automatically');
   assert.equal(byQ(plan, '1B8D').value, null);
-  assert.ok(progressive.optional.includes('1B80'));
+  assert.equal(byQ(plan, '1B80').optional, true, 'NoHit middle initial is never "needs you"');
+  // FL run 2026-10-07: Progressive's home address line has no suite; street + suite read as a
+  // different address on every quote with one.
+  record.garaging = { ...record.garaging, street: '100 Example Way', unit: 'Suite 4' };
+  assert.equal(byQ(buildPlan(record, progressive, {}), '1B84').value, '100 Example Way');
 });
 
 test('a vehicle value that is not a dollar amount goes to the agent instead of being typed', () => {
   const record = baseRecord();
   record.vehicles[0].value = 'about 40k';
   const plan = buildPlan(record, progressive, {});
-  for (const q of ['2CE8', '2091']) {
-    assert.equal(byQ(plan, q).value, null);
-    assert.match(byQ(plan, q).note, /about 40k/);
-  }
+  assert.equal(byQ(plan, '2CE8').value, null);
+  assert.match(byQ(plan, '2CE8').note, /about 40k/);
   record.vehicles[0].value = 40000;
   assert.equal(byQ(buildPlan(record, progressive, {}), '2CE8').value, 40000);
 });
@@ -379,17 +384,31 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   record.applicant.dot = '4123456';
   record.applicant.name = null;
   record.applicant.owner1 = 'Amina Kone';
+  record.garaging.state = 'FL';
   const plan = buildPlan(record, progressive, {});
   assert.equal(byQ(plan, '21E').value, true, 'obtained within 60 days: Yes');
   assert.equal(byQ(plan, '21E').ignore, false);
   assert.equal(byQ(plan, '230').ignore, false, 'business name typed in even with a USDOT number');
   assert.equal(byQ(plan, '230').value, 'Amina Kone', 'no company: the owner');
+  // TN 2026-10-08: Vehicle Type is asked only when the VIN lookup disagrees with the tile.
+  const vehicleType = plan.find((s) => s.field === 'RiskInput.VehicleTypeToDisplay');
+  assert.equal(vehicleType.ignore, true, 'the agent picks the vehicle type');
+  assert.match(vehicleType.emptyNote, /VIN lookup doesn't match the intake's Van/);
   for (const q of ['2BA1', '2BAC', '2BAE']) {
     assert.equal(byQ(plan, q).ignore, true, q);
     assert.match(byQ(plan, q).emptyNote, /VIN lookup/);
   }
   assert.equal(byQ(plan, '1DB8').value, 'Not Selected');
   assert.equal(byQ(plan, '1E8D').value, '$10k w/ $0 Deductible');
+  assert.equal(byQ(plan, '1E8D').ignore, false);
+  // TX 2026-10-07: PIP shares its data-model name across states; TX's list has other amounts and
+  // TNI has no standard there: left as Progressive set it.
+  for (const state of ['TX', 'MD']) {
+    const other = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {}), '1E8D');
+    assert.deepEqual([other.value, other.ignore], [null, true], state);
+    assert.match(other.emptyNote, /Florida only/, `${state}: an empty PIP goes to the agent`);
+  }
+  assert.equal(byQ(plan, '1E8D').emptyNote, null);
   record.applicant.dot = null;
   assert.equal(byQ(buildPlan(record, progressive, {}), '21E').ignore, true);
 });
@@ -465,16 +484,16 @@ test('every vehicle on Rates gets the standard per-vehicle coverages; Rental wit
   ];
   const plan = buildPlan(record, progressive, { vehicles: 2 });
   const steps = (q) => plan.filter((step) => step.q === q);
-  for (const q of ['1FCD', '1FD2', '1FE4', '1FF2', '1FF9', '2000', '200F', '207F', '208A', '2091', '2007']) {
+  for (const q of ['1FCD', '1FD2', '1FE4', '1FF2', '1FF9', '2000', '200F', '2CCE', '2CE3', '2CE8', '2007']) {
     assert.equal(steps(q).length, 3, `q${q}: one step per vehicle`);
     assert.deepEqual(steps(q).map((step) => step.activeVehicle), [false, false, true]);
   }
   assert.deepEqual(steps('1FF2').map((step) => step.value), Array(3).fill('$40 per day, $1,200 max'));
   assert.deepEqual(steps('1FF9').map((step) => step.value), Array(3).fill('Not selected'));
-  assert.deepEqual(steps('2091').map((step) => [step.path, step.value]), [['vehicles[0].value', 31000], ['vehicles[1].value', 17000], ['vehicles[2].value', 22000]]);
-  assert.deepEqual(steps('2091').map((step) => step.vehicleHint), [['2025', 'ram', 'promaster 2500'], ['2019', 'mercedes benz', 'sprinter'], ['2016', 'freightliner', 'cascadia']]);
+  assert.deepEqual(steps('2CE8').map((step) => [step.path, step.value]), [['vehicles[0].value', 31000], ['vehicles[1].value', 17000], ['vehicles[2].value', 22000]]);
+  assert.deepEqual(steps('2CE8').map((step) => step.vehicleHint), [['2025', 'ram', 'promaster 2500'], ['2019', 'mercedes benz', 'sprinter'], ['2016', 'freightliner', 'cascadia']]);
   // One vehicle: one step, no row matching, as before.
-  assert.equal(buildPlan(baseRecord(), progressive, {}).filter((step) => step.q === '2091').length, 1);
+  assert.equal(buildPlan(baseRecord(), progressive, {}).filter((step) => step.q === '2CE8').length, 1);
 });
 
 // PR #17 review: NTL is added only once the agent set it, the click is verified, and the bill
@@ -510,7 +529,10 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   // Codex on PR #22: an earlier bill plan visit must not let Recalculate or Print run while the
   // new NTL questions are open. Until the section has been seen live, the whole page is the agent's.
   for (const id of ['billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} is the agent's`);
-  assert.ok(ids(record).includes('printSend'), 'the Print page the agent opens still works as before');
+  // Print/Send is always the agent's click (Chrome opens the PDF only for it); the panel says so.
+  assert.ok(!ids(record).includes('printSend'));
+  assert.match(progressive.agentPages.PrintEmailFax, /Click Print\/Send yourself/);
+  assert.ok(progressive.advance.exceptPages.includes('PrintEmailFax'), 'never continued past the Print page');
   assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print/);
   // GL without NTL is unchanged: no bill plan of ours, the liability check stays.
   const gl = baseRecord();
@@ -553,4 +575,98 @@ test('DeclinationNotice is a stop page: the agent is told the client already has
   // Only that page: the quote pages around it are filled as before.
   assert.deepEqual(Object.keys(progressive.stopPages), ['DeclinationNotice']);
   assert.ok(!progressive.actions.some((a) => [].concat(a.page ?? []).includes('DeclinationNotice')), 'no helper button belongs to it');
+});
+
+// TN live run, 2026-10-07: the first intake trailer (a flatbed), added by hand after Vehicle
+// Summary's Continue left it out. TNI's trailer answers (2026-10-07).
+const trailerRecord = () => ({
+  ...baseRecord(),
+  garaging: { street: '1 Test Way', unit: null, city: 'Testville', state: 'TN', zip: '37000' },
+  operations: { ...baseRecord().operations, businessClass: 'Freight Hauler', radius: 'Unlimited', radiusMiles: null },
+  vehicles: [{ type: 'Semi Truck', year: 2013, make: 'PETERBILT', model: '388', vin: '1XPWD40X1DD000001', value: 60000 }],
+  trailers: [{ type: 'Flatbed', year: 2019, make: 'WILSON', model: null, vin: '1W1MAFZB0KA000002', value: 45000 }],
+  trailerInfo: { ownership: 'Financed' },
+});
+
+test('trailers: Add Trailer once the vehicles are in, its tile, its page, and its own row on Rates', () => {
+  const record = trailerRecord();
+  const plan = buildPlan(record, progressive, { trailers: 0 });
+  const add = plan.find((s) => s.action === 'addTrailer:0');
+  assert.ok(add && new RegExp(add.text, 'i').test('Add Trailer'));
+  assert.deepEqual([add.afterActions, add.unlessActions, add.opener], [['lookupVin:0'], ['trailerEntered:0'], '^add$']);
+  assert.match(add.missing, /Add Trailer/, 'Continue never leaves the trailer out silently');
+  assert.ok(new RegExp(plan.find((s) => s.action === 'trailerTile:0').text).test('Flatbed Trailer'));
+  // Types without a known tile are the agent's to pick.
+  record.trailers[0].type = 'Lowboy';
+  const lowboy = buildPlan(record, progressive, { trailers: 0 }).find((s) => s.action === 'trailerTile:0');
+  assert.equal(lowboy.text, null);
+  assert.match(lowboy.missing, /Lowboy/);
+  record.trailers[0].type = 'Flatbed';
+  // Add Trailer: the trailer's answers, found on that page only; the vehicle's never there.
+  const step = (q) => plan.find((s) => s.q === q);
+  assert.deepEqual(['2A29', '2A2A', '2A2B', '2A65', '2AD0', '2AEE', '2AFF', '2B04'].map((q) => step(q).value),
+    ['1W1MAFZB0KA000002', 2019, 'WILSON', 501, 'Yes - Loan', true, true, 45000]);
+  assert.ok(['2A29', '2B04'].every((q) => step(q).pageOnly && step(q).pages.includes('AddTrailer')));
+  assert.ok(step('2B20').notPages.includes('AddTrailer'), "the vehicle's VIN is never looked for on the trailer page");
+  assert.ok(plan.find((s) => s.path === 'vehicles[0].vin' && s.re).notPages.includes('AddTrailer'));
+  // Codex on PR #43: an equipment value on the intake is entered, not "no equipment".
+  assert.deepEqual([step('2AFF').value, step('2AFC').ignore, step('TR2CE3').value], [true, true, true], 'none on the intake: no equipment');
+  const equipped = buildPlan({ ...record, trailerInfo: { ...record.trailerInfo, equipTrailer: 3500 } }, progressive, { trailers: 0 });
+  assert.deepEqual(['2AFF', '2AFC', 'TR2CE3'].map((q) => equipped.find((s) => s.q === q).value), [false, 3500, false]);
+  assert.equal(equipped.find((s) => s.q === '2AFC').ignore, false);
+  const done = plan.find((s) => s.action === 'addTrailer:0');
+  assert.deepEqual(done.doneWhen, ['trailerEntered:0']);
+  assert.match(done.unfinished, /never entered/);
+  // No trailer ownership on the intake: owned (TNI). One that is none of owned/financed/leased
+  // (Rented) is the agent's (Codex on PR #43).
+  assert.equal(byQ(buildPlan({ ...record, trailerInfo: {} }, progressive, { trailers: 0 }), '2AD0').value, 'No');
+  assert.equal(byQ(buildPlan({ ...record, trailerInfo: { ownership: 'Owned' } }, progressive, { trailers: 0 }), '2AD0').value, 'No');
+  assert.equal(byQ(buildPlan({ ...record, trailerInfo: { ownership: 'Leased' } }, progressive, { trailers: 0 }), '2AD0').value, 'Yes - Lease');
+  const rented = byQ(buildPlan({ ...record, trailerInfo: { ownership: 'Rented' } }, progressive, { trailers: 0 }), '2AD0');
+  assert.equal(rented.value, null);
+  assert.match(rented.note, /Rented/);
+  // Rates: the trailer's row by its year and make; the vehicle's by its own (a row each).
+  assert.deepEqual([step('TR1FCD').value, step('TR1FF2').value, step('TR200F').value], ['$1,000 Deductible', 'Not selected', 'Not selected']);
+  assert.deepEqual(step('TR1FF2').vehicleHint, ['2019', 'wilson']);
+  assert.deepEqual(plan.find((s) => s.q === '1FF2').vehicleHint, ['2013', 'peterbilt', '388']);
+  // Without trailers: none of it.
+  const none = buildPlan({ ...record, trailers: [] }, progressive, {});
+  assert.ok(!none.some((s) => /^(addTrailer|trailerTile):/.test(s.action ?? '') || /^TR/.test(s.q ?? '')));
+  assert.equal(none.find((s) => s.q === '1FF2').vehicleHint, null, 'one vehicle, no trailer: its row needs no name');
+});
+
+// TNI 2026-10-07: "Defensive driver ... default answer no, AI can check the Description box of the
+// intake for that". A course mentioned there is the agent's (Codex on PR #43: not a silent No).
+test('defensive driver discount: No, unless the description box mentions a course', () => {
+  const record = baseRecord();
+  assert.deepEqual([byQ(buildPlan(record, progressive, {}), '299D').value, byQ(buildPlan(record, progressive, {}), '299D').note], [false, null]);
+  record.claims = { ...record.claims, notes: 'No accidents. Driver completed a defensive driving course in 2025.' };
+  const step = byQ(buildPlan(record, progressive, {}), '299D');
+  assert.equal(step.value, null);
+  assert.match(step.note, /defensive driving course/);
+});
+
+// Runs of 2026-10-07 (FL, UT, SC): the CDL year, UMPD per vehicle, SC's glass deductible and
+// combined UM/UIM, Rates buttons waiting on required questions, and vehicle ownership length.
+test('FL / UT / SC questions of 2026-10-07', () => {
+  const record = baseRecord();
+  record.drivers[0] = { ...record.drivers[0], cdl: true, cdlYear: 2015 };
+  record.vehicles = [{ ...record.vehicles[0] }, { ...record.vehicles[0], year: 2019, make: 'FORD', model: 'TRANSIT' }];
+  const plan = buildPlan(record, progressive, {});
+  assert.equal(byQ(plan, '295E').value, 2015, 'Year CDL Issued from the intake');
+  assert.equal(byQ(plan, '2960').ignore, true, '"Year is unknown" is the agent\'s');
+  assert.equal(plan.filter((s) => s.q === '1FDD').length, 2, 'UMPD: one step per vehicle');
+  assert.ok(plan.filter((s) => s.q === '1FDD').every((s) => s.value === 'Not selected' && s.vehicleHint));
+  assert.ok(byQ(plan, '1FCD').choiceAliases.includes('$1,000 Deductible w/ $0 Glass Deductible'));
+  assert.deepEqual([byQ(plan, '1E68').value, byQ(plan, '1E6C').value], ['$100k CSL w/ $200 Deductible', '$100k CSL w/ $0 Deductible']);
+  for (const id of ['billPlan', 'recalculate', 'print']) {
+    const a = plan.find((s) => s.action === id);
+    if (a) assert.equal(a.waitRequired, true, id);
+  }
+  assert.match(byQ(plan, '2C09').note, /answer it yourself/, 'how long the insured has had the vehicle: the agent\'s (TNI)');
+  // Codex on PR #43: a trailer's equipment amount from the intake goes to its Rates row too.
+  const trailer = trailerRecord();
+  trailer.trailerInfo.equipTrailer = 3500;
+  const tr = buildPlan(trailer, progressive, { trailers: 0 }).find((s) => s.q === 'TR2CE0');
+  assert.deepEqual([tr.value, tr.ignore, tr.pageOnly], [3500, false, true]);
 });

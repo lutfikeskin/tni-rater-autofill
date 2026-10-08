@@ -25,6 +25,7 @@
    "fields": [
     {
      "q": "18F",
+     "ref": "AgencyInfo.AgencyCodeAgent",
      "kind": "combo",
      "caption": "Agent Code",
      "req": true,
@@ -32,6 +33,7 @@
     },
     {
      "q": "194",
+     "ref": "PolicyInput.EffectiveDate",
      "kind": "date",
      "caption": "When should this Progressive Commercial Auto policy start?",
      "req": true,
@@ -39,6 +41,7 @@
     },
     {
      "q": "198",
+     "ref": "AccountInput.PGRInsuredIndicator",
      "kind": "radio",
      "caption": "Is the customer currently insured with Progressive Commercial Auto?",
      "req": true,
@@ -50,6 +53,7 @@
     },
     {
      "q": "1CC",
+     "ref": "Warehouse.QuoteVendorCode",
      "kind": "text",
      "caption": "Quote Vendor Code",
      "req": true,
@@ -57,6 +61,7 @@
     },
     {
      "q": "1ED",
+     "ref": "USDOTInput.Question",
      "kind": "radio",
      "caption": "Does the customer have a USDOT Number?",
      "req": true,
@@ -69,6 +74,7 @@
     },
     {
      "q": null,
+     "ref": "USDOTInput.NumberCollection",
      "kind": "text",
      "caption": "USDOT Number associated with the customer's business:",
      "req": true,
@@ -77,6 +83,7 @@
     },
     {
      "q": "22D",
+     "ref": "AccountInput.BusinessStructure",
      "kind": "radio",
      "caption": "How is the customer's business structured?",
      "req": true,
@@ -89,6 +96,7 @@
     },
     {
      "q": "230",
+     "ref": "AccountInput.BusinessName",
      "kind": "text",
      "caption": "Business Name",
      "req": true,
@@ -97,6 +105,7 @@
     },
     {
      "q": "233",
+     "ref": "AccountInput.DBA",
      "kind": "text",
      "caption": "DBA Name",
      "req": true,
@@ -137,6 +146,7 @@
     },
     {
      "q": "295",
+     "ref": "AccountInput.BusinessOwnerName",
      "kind": "text",
      "caption": "Business Owner's Name",
      "req": true,
@@ -144,6 +154,7 @@
     },
     {
      "q": "296",
+     "ref": "AccountInput.BusinessOwnerMiddleInitial",
      "kind": "text",
      "caption": "MIMiddle initial",
      "req": true,
@@ -151,6 +162,7 @@
     },
     {
      "q": "297",
+     "ref": "AccountInput.BusinessOwnerLastName",
      "kind": "text",
      "caption": "Last Name",
      "req": true,
@@ -158,6 +170,7 @@
     },
     {
      "q": "298",
+     "ref": "AccountInput.BusinessOwnerSuffix",
      "kind": "combo",
      "caption": "Suffix",
      "req": true,
@@ -173,6 +186,7 @@
     },
     {
      "q": "29F",
+     "ref": "AccountInput.DriverInPolicyIndicator",
      "kind": "checkbox",
      "caption": "[client] is a driver on the policy.",
      "mapped": "applicant.ownerDrives",
@@ -204,6 +218,7 @@
     },
     {
      "q": "2BB",
+     "ref": "AccountInput.BusinessOwnerDOB",
      "kind": "date",
      "caption": "Date of Birth",
      "req": true,
@@ -211,6 +226,7 @@
     },
     {
      "q": "2DB",
+     "ref": "AccountInput.PhoneAreaCodeString",
      "kind": "text",
      "caption": "Primary Phone Number",
      "req": true,
@@ -218,6 +234,7 @@
     },
     {
      "q": "2DD",
+     "ref": "AccountInput.PhoneThreeDigitsString",
      "kind": "text",
      "caption": "Three digit prefix of phone",
      "req": true,
@@ -225,6 +242,7 @@
     },
     {
      "q": "2DF",
+     "ref": "AccountInput.PhoneFourDigitsString",
      "kind": "text",
      "caption": "Four digit suffix of phone",
      "req": true,
@@ -232,6 +250,7 @@
     },
     {
      "q": "2F6",
+     "ref": "BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard",
      "kind": "radio",
      "caption": "Do any listed vehicles or the load require a hazardous material placard?",
      "req": true,
@@ -281,6 +300,7 @@
     },
     {
      "q": "2A5",
+     "ref": "BusinessOwnerHomeAddressInputNonShredded.AddressOptionsForPrimaryBsnsAdrs",
      "kind": "radio",
      "caption": "Home Address",
      "req": true,
@@ -366,6 +386,7 @@
     },
     {
      "q": "267",
+     "ref": "AccountInput.SpecificTruckHaulContractType",
      "kind": "combo",
      "caption": "Type of Trucker",
      "req": true,
@@ -402,6 +423,7 @@
     },
     {
      "q": "27E",
+     "ref": "PrimaryBusinessAddressOutputNonShredded.StreetAddressDup",
      "kind": "text",
      "caption": "Street Address",
      "req": true,
@@ -418,6 +440,7 @@
     },
     {
      "q": "284",
+     "ref": "PrimaryBusinessAddressInput.ZipCode",
      "kind": "text",
      "caption": "Zip Code",
      "req": true,
@@ -426,6 +449,7 @@
     },
     {
      "q": "286",
+     "ref": "PrimaryBusinessAddressInput.City",
      "kind": "text",
      "caption": "City",
      "req": true,
@@ -458,6 +482,7 @@
     },
     {
      "q": "2B20",
+     "ref": "RiskInput.VIN",
      "kind": "text",
      "caption": "Vehicle Identification Number (VIN)",
      "req": true,
@@ -465,6 +490,7 @@
     },
     {
      "q": "2B92",
+     "ref": "RiskInput.PrimaryZIP",
      "kind": "text",
      "caption": "Zip code where the vehicle is located",
      "req": true,
@@ -472,6 +498,7 @@
     },
     {
      "q": "2B9D",
+     "ref": "RiskInput.Radius",
      "kind": "combo",
      "caption": "Farthest one-way distance this vehicle typically travels (90% or more of the time)",
      "req": true,
@@ -487,6 +514,7 @@
     },
     {
      "q": "2C05",
+     "ref": "BCBTUVehQuestions.V01Use",
      "kind": "radio",
      "caption": "Is this vehicle used for business, personal or both?",
      "req": true,
@@ -499,6 +527,7 @@
     },
     {
      "q": "2C1A",
+     "ref": "BCBTUVehQuestions.V03GoodsHaulIndicator",
      "kind": "radio",
      "caption": "Is this vehicle used to haul goods on a For-Hire basis?",
      "req": true,
@@ -510,6 +539,7 @@
     },
     {
      "q": "2CA7",
+     "ref": "RiskInput.OwnLeaseIndicator",
      "kind": "radio",
      "caption": "Is there a loan/lease on this vehicle?",
      "req": true,
@@ -522,6 +552,7 @@
     },
     {
      "q": "2CCC",
+     "ref": "RiskInput.CompCollIndicator",
      "kind": "radio",
      "caption": "Does the customer need Comprehensive or Collision coverage to protect this vehicle in an accident or loss?",
      "req": true,
@@ -542,6 +573,7 @@
     },
     {
      "q": "2CE3",
+     "ref": "RiskInput.PAValueIndicator",
      "kind": "checkbox",
      "caption": "Vehicle has no equipment",
      "mapped": null,
@@ -549,6 +581,7 @@
     },
     {
      "q": "2CE8",
+     "ref": "RiskInput.NonPAValue",
      "kind": "text",
      "caption": "If this vehicle was sold today, how much would it be worth (excluding any permanently attached equipment)?",
      "req": true,
@@ -557,6 +590,7 @@
     },
     {
      "q": "2CCE",
+     "ref": "RiskInput.PAValueOptions",
      "kind": "radio",
      "caption": "What is the total value of all permanently attached equipment (including aftermarket parts, mounted equipment, and modifications)?",
      "req": true,
@@ -573,6 +607,7 @@
    "fields": [
     {
      "q": "28AC",
+     "ref": "DriverInput.LicenseStateDup",
      "kind": "combo",
      "caption": "Driver's License State",
      "req": true,
@@ -641,6 +676,7 @@
     },
     {
      "q": "28B9",
+     "ref": "DriverInput.DriverLicenseNumber",
      "kind": "text",
      "caption": "Driver’s License Number",
      "req": true,
@@ -648,6 +684,7 @@
     },
     {
      "q": "28C1",
+     "ref": "DriverInput.DriverExcludedInd",
      "kind": "radio",
      "caption": "Exclude this driver from the policy?",
      "req": true,
@@ -659,6 +696,7 @@
     },
     {
      "q": "28F5",
+     "ref": "DriverInput.AnyAccidentsViolationsPastExpYears",
      "kind": "radio",
      "caption": "Has this driver had any accidents, claims or violations in the past 3 years? (since 10/2023)",
      "req": true,
@@ -674,6 +712,7 @@
    "fields": [
     {
      "q": "77",
+     "ref": "AccountInput.Email",
      "kind": "text",
      "caption": "Customer Email Address",
      "req": true,
@@ -681,6 +720,7 @@
     },
     {
      "q": "81",
+     "ref": "MoreBusinessInput.HasCurrentInsurancePolicy",
      "kind": "radio",
      "caption": "Is the customer currently insured?",
      "req": true,
@@ -692,6 +732,7 @@
     },
     {
      "q": "83",
+     "ref": "MoreBusinessInput.HasContinuousCoverage",
      "kind": "radio",
      "caption": "Has the customer had continuous coverage?",
      "req": true,
@@ -703,6 +744,7 @@
     },
     {
      "q": "95",
+     "ref": "MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage",
      "kind": "combo",
      "caption": "Current Bodily Injury Liability Limit",
      "req": true,
@@ -725,6 +767,7 @@
     },
     {
      "q": "9D",
+     "ref": "PriorInsurance.ExpirationDate",
      "kind": "date",
      "caption": "Current Policy Expiration Date",
      "req": true,
@@ -732,6 +775,7 @@
     },
     {
      "q": "A2",
+     "ref": "MoreBusinessInput.OtherBusinessCoverages",
      "kind": "radio",
      "caption": "Does the customer have other coverages for the business?",
      "req": true,
@@ -744,6 +788,7 @@
     },
     {
      "q": "B7",
+     "ref": "MoreBusinessInput.AdditionalInsuredCount",
      "kind": "combo",
      "caption": "Number of Named Additional Insureds",
      "req": true,
@@ -760,6 +805,7 @@
     },
     {
      "q": "B8",
+     "ref": "MoreBusinessInput.WaiverOfSubrogationCount",
      "kind": "combo",
      "caption": "Number of Named Waiver of Subrogation Holders",
      "req": true,
@@ -776,6 +822,7 @@
     },
     {
      "q": "BE",
+     "ref": "AccountInput.BlanketAIQuestion",
      "kind": "radio",
      "caption": "Is a Blanket Additional Insured endorsement needed by contract?",
      "req": true,
@@ -787,6 +834,7 @@
     },
     {
      "q": "C1",
+     "ref": "AccountInput.BlanketWOSQuestion",
      "kind": "radio",
      "caption": "Is a Blanket Waiver of Subrogation endorsement needed by contract?",
      "req": true,
@@ -798,6 +846,7 @@
     },
     {
      "q": "CA",
+     "ref": "MoreBusinessInput.HasOperatingAuthority",
      "kind": "radio",
      "caption": "Are state or federal filings required?",
      "req": true,
@@ -809,6 +858,7 @@
     },
     {
      "q": "D1",
+     "ref": "PolicyInput.ELDHoursOfServiceRecords",
      "kind": "radio",
      "caption": "Is an Electronic Logging Device (ELD) required to record hours of service?",
      "req": true,
@@ -824,6 +874,7 @@
    "fields": [
     {
      "q": "1D97",
+     "ref": "LineInput.RBIPDLimit",
      "kind": "combo",
      "caption": "Bodily Injury and Property Damage Liability",
      "req": true,
@@ -847,6 +898,7 @@
     },
     {
      "q": "1DEE",
+     "ref": "LineInput.UMUIMBILimit",
      "kind": "combo",
      "caption": "Uninsured/Underinsured Motorist Bodily Injury",
      "req": true,
@@ -875,6 +927,7 @@
     },
     {
      "q": "1FCD",
+     "ref": "ComprehensiveInput.Deductible",
      "kind": "combo",
      "caption": "2020 MERCEDES-BENZ SPRINTER",
      "req": true,
@@ -891,6 +944,7 @@
     },
     {
      "q": "1FD2",
+     "ref": "CollisionInput.Deductible",
      "kind": "combo",
      "caption": "2020 MERCEDES-BENZ SPRINTER",
      "req": true,
@@ -910,6 +964,7 @@
     },
     {
      "q": "1FF2",
+     "ref": "RentalInput.Limit",
      "kind": "combo",
      "caption": "2020 MERCEDES-BENZ SPRINTER",
      "req": true,
@@ -923,6 +978,7 @@
     },
     {
      "q": "2000",
+     "ref": "RoadsideInput.Limit",
      "kind": "combo",
      "caption": "2020 MERCEDES-BENZ SPRINTER",
      "req": true,
@@ -934,6 +990,7 @@
     },
     {
      "q": "200F",
+     "ref": "FireAndTheftInput.Deductible",
      "kind": "combo",
      "caption": "2020 MERCEDES-BENZ SPRINTER",
      "req": true,
@@ -950,6 +1007,7 @@
     },
     {
      "q": "207F",
+     "ref": "RiskInput.PAValueOptions",
      "kind": "radio",
      "caption": "What is the total value of all permanently attached equipment (including aftermarket parts, mounted equipment, and modifications)?",
      "req": true,
@@ -985,6 +1043,7 @@
     },
     {
      "q": "216A",
+     "ref": "MTCargoCommodityCategories.MTCargolistOfCommodityCategories",
      "kind": "combo",
      "caption": "",
      "req": true,
@@ -1006,6 +1065,7 @@
     },
     {
      "q": "216B",
+     "ref": "MTCargoCommodityCategories.MTCargoListOfCommodities",
      "kind": "combo",
      "caption": "",
      "req": true,
@@ -1059,6 +1119,7 @@
     },
     {
      "q": "2150",
+     "ref": "LineInput.MotorTruckingCargoLimit",
      "kind": "combo",
      "caption": "Motor Trucking Cargo",
      "req": true,
@@ -1091,6 +1152,7 @@
    "fields": [
     {
      "q": "3E96",
+     "ref": "ChangePaymentPlanPage.PolicyTerm",
      "kind": "radio",
      "caption": "Policy length",
      "req": true,
@@ -1102,6 +1164,7 @@
     },
     {
      "q": "3E97",
+     "ref": "ChangePaymentPlanPage.PaymentType",
      "kind": "radio",
      "caption": "How will the customer pay?",
      "req": true,
@@ -1113,6 +1176,7 @@
     },
     {
      "q": "3E98",
+     "ref": "BillingInfoInput.BillPlanEFTInd",
      "kind": "radio",
      "caption": "Payment method",
      "req": true,
@@ -1124,6 +1188,7 @@
     },
     {
      "q": "3EA4",
+     "ref": "BillingInfoInput.TwelveMonthBillPlanOnUI",
      "kind": "radio",
      "caption": "",
      "req": true,
@@ -1257,6 +1322,7 @@
     },
     {
      "q": "2B20",
+     "ref": "RiskInput.VIN",
      "kind": "text",
      "caption": "Vehicle Identification Number (VIN)",
      "req": true,
@@ -1264,6 +1330,7 @@
     },
     {
      "q": "2B92",
+     "ref": "RiskInput.PrimaryZIP",
      "kind": "text",
      "caption": "Zip code where the vehicle is located",
      "req": true,
@@ -1271,6 +1338,7 @@
     },
     {
      "q": "2B9D",
+     "ref": "RiskInput.Radius",
      "kind": "combo",
      "caption": "Farthest one-way distance this vehicle typically travels (90% or more of the time)",
      "req": true,
@@ -1286,6 +1354,7 @@
     },
     {
      "q": "2C05",
+     "ref": "BCBTUVehQuestions.V01Use",
      "kind": "radio",
      "caption": "Is this vehicle used for business, personal or both?",
      "req": true,
@@ -1298,6 +1367,7 @@
     },
     {
      "q": "2CA7",
+     "ref": "RiskInput.OwnLeaseIndicator",
      "kind": "radio",
      "caption": "Is there a loan/lease on this vehicle?",
      "req": true,
@@ -1314,6 +1384,7 @@
    "fields": [
     {
      "q": "F11",
+     "ref": "FilingsInput.AllVehiclesUsedOwned",
      "kind": "radio",
      "caption": "Will this quote include all the customer's commercially owned and operated vehicles?",
      "req": true,

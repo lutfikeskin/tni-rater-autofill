@@ -1,7 +1,7 @@
 // Rule coverage of the questions agents actually met: every field of a recorded layout (built from
 // page_layout events, or a committed fixture) is matched against the current carrier rules the way
-// the fill engine pairs them (question id, then selector / data-id, then option, then label regex),
-// without a browser. A question no rule claims is one the extension leaves to the agent as
+// the fill engine pairs them (pagekit assign: data-model name, then the question's text on its page,
+// then option, selector / data-id, then label regex; never a question id), without a browser. A question no rule claims is one the extension leaves to the agent as
 // "unfamiliar": either a TNI rule is missing, or the carrier changed its page.
 
 import fs from 'node:fs';
@@ -26,11 +26,50 @@ function selectorMatch(selector, f) {
   return unknown ? 'unknown' : 'no';
 }
 
-// Like pagekit's assign(): exact targets (question id, selector, option) first; a rule's label
-// regex still applies when its exact target isn't there (a redraw without the question id).
-function claims(rule, f) {
-  if (rule.q && f.q === rule.q) return true;
-  if (rule.q && f.q) return false;
+const textIs = (rule, f) => {
+  const text = squash(f.caption);
+  return !!text && ([].concat(rule.ask ?? []).some((a) => squash(a) === text)
+    || (!!rule.label && new RegExp(rule.label, 'i').test(text) && !(rule.not && new RegExp(rule.not, 'i').test(text))));
+};
+const onPage = (rule, page) => (!rule.page || page == null || [].concat(rule.page).includes(page)) && !(page != null && rule.notPages?.includes(page));
+// A data-model name claims its field on any page, except where the rule is fenced off (as in
+// pagekit: a trailer's questions carry the vehicle's names).
+const nameHere = (rule, page) => (rule.pageOnly ? onPage(rule, page) : !(page != null && rule.notPages?.includes(page)));
+
+// The field kinds pagekit's assign() checks a known question against: a layout's combo is a
+// select and its date box a text box. A choice is never a text box, a date or address never a
+// choice, and `control` names the kind when two kinds share a question's text.
+const KIND = { combo: 'select', date: 'text' };
+const CHOICE = new Set(['choice', 'pick-not', 'first-option', 'selected-option', 'bool']);
+const TYPED = new Set(['date', 'address-suggest']);
+const kindFits = (rule, f) => {
+  const kind = KIND[f.kind] ?? f.kind;
+  if (!kind) return true;
+  return (!rule.control || kind === rule.control) && !(CHOICE.has(rule.kind) && kind === 'text') && !(TYPED.has(rule.kind) && kind !== 'text');
+};
+
+// Like pagekit's assign(). A data-model name (`field`) claims its field on any page; a layout
+// recorded before names were kept (0.9.9) is judged by the rule's expected wording instead, as the
+// live page always carries the name ('unnamed' when other fields of the page have names). A question's text (`ask`, or `label` on its page) claims a
+// field no rule knows by name. A question id never claims anything (Progressive renumbers them).
+// A rule whose text repeats on the page (`askAfter`) claims only the first field reading it after
+// its anchor question, as pagekit's afterAnchor does (needs the page's fields in order).
+function anchored(rule, f, fields) {
+  if (!rule.askAfter || !fields) return true;
+  const at = fields.findIndex((x) => squash(x.caption) === squash(rule.askAfter));
+  return at >= 0 && fields.slice(at + 1).find((x) => textIs(rule, x) && kindFits(rule, x)) === f;
+}
+
+function claims(rule, f, page, named, fields) {
+  if (rule.field) {
+    if (f.ref) return f.ref === rule.field && nameHere(rule, page) && kindFits(rule, f);
+    const byText = (!!rule.ask || !!rule.label) && onPage(rule, page) && textIs(rule, f) && anchored(rule, f, fields) && kindFits(rule, f);
+    // On a page recorded with names too, this field may have lost its name on the live page,
+    // where the rule (looked for by name) leaves it unfamiliar: can't tell (Codex on PR #43).
+    return byText && fields?.some((x) => x.ref) ? 'unnamed' : byText;
+  }
+  if ((rule.ask || rule.label) && rule.page) return onPage(rule, page) && !(f.ref && named.has(f.ref)) && textIs(rule, f) && kindFits(rule, f) && anchored(rule, f, fields);
+  if (!onPage(rule, page)) return false;
   if (rule.selector) {
     const m = selectorMatch(rule.selector, f);
     if (m !== 'no') return m === 'yes' || 'unknown';
@@ -45,12 +84,20 @@ function claims(rule, f) {
 }
 
 // What happens to a field: filled by a rule, left alone on purpose (ignore), left for the agent
-// on purpose (note), or unclaimed. `unsure` when only a DOM-only selector might match.
-export function fieldStatus(f, carrier) {
-  const rules = [...(carrier.rules ?? []), ...(carrier.useGenericRules === false ? [] : GENERIC_RULES)];
+// on purpose (note), or unclaimed. `unsure` when only a DOM-only selector might match. `fields`:
+// the page's fields in order, for questions told apart by the question before them (askAfter).
+export function fieldStatus(f, carrier, page = null, fields = null) {
+  const all = [...(carrier.rules ?? []), ...(carrier.useGenericRules === false ? [] : GENERIC_RULES)];
+  // Known questions (a name, a text on its page, an option or a selector) before label rules, as
+  // the fill engine pairs them.
+  const known = (r) => !!(r.field || ((r.ask || r.label) && r.page) || r.selector || r.withOption);
+  const rules = [...all.filter(known), ...all.filter((r) => !known(r))];
+  // Names known on this page (a trailer's names fenced off Add Vehicle claim nothing there).
+  const named = new Set(rules.filter((r) => r.field && nameHere(r, page)).map((r) => r.field));
   let unsure = null;
   for (const rule of rules) {
-    const hit = claims(rule, f);
+    const hit = claims(rule, f, page, named, fields);
+    if (hit === 'unnamed') return { status: 'unsure', rule: rule.name ?? rule.path, unnamed: true };
     if (hit === 'unknown') { unsure ??= rule; continue; }
     if (!hit) continue;
     const how = typeof rule.ignore === 'function' || rule.ignore ? 'ignored' : rule.note && !rule.value ? 'agent' : 'filled';
@@ -64,7 +111,7 @@ export function coverage(layout, carrier, { mockIds = null } = {}) {
   const totals = { fields: 0, filled: 0, ignored: 0, agent: 0, unsure: 0, none: 0, notInMock: 0 };
   for (const [page, p] of Object.entries(layout.pages ?? {})) {
     const rows = (p.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.caption ?? '')).map((f) => {
-      const s = fieldStatus(f, carrier);
+      const s = fieldStatus(f, carrier, page, p.fields ?? null);
       // The page's own id/data-id isn't in the mock: the carrier changed the page, or the mock
       // misses a conditional part of it.
       const notInMock = !!mockIds && !!(f.id || f.dataId) && !mockIds.has(f.id) && !mockIds.has(f.dataId);

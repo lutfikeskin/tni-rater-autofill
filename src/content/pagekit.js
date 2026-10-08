@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 46 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 57 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -161,7 +161,14 @@
     return !!cmp?.dctRequired;
   }
 
-  // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>.
+  // The field's name in the carrier's data model: Duck Creek puts it on every input
+  // (fieldref="RiskInput.VIN", "ComprehensiveInput.Deductible"). It names what the field holds,
+  // where the question id below is only a number, which Progressive renumbers (2026-10-07).
+  const fieldRef = (el) => el?.getAttribute?.('fieldref') || null;
+
+  // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>. The
+  // question id is a number Progressive reassigns: it keeps a page's rows of one question
+  // together, and is logged, but never says which question a field is (see assign).
   function dctQuestionId(id) {
     return String(id ?? '').match(/^f_[a-z]([0-9a-f]{32})([0-9a-f]+)_\d+_\d+/i)?.[2]?.toUpperCase() ?? null;
   }
@@ -237,6 +244,7 @@
       // A checkbox in a group ("Filings: [ ] Federal [ ] MCS-90") is named by its own box label.
       c.label = (c.kind === 'checkbox' && cmp?.boxLabel ? oneLine(String(cmp.boxLabel).replace(/<[^>]+>/g, ' ')) : null) ?? dctCaption(cmp) ?? labelFor(el);
       c.q = dctQuestionId(cmp?.id ?? el.id);
+      c.ref = fieldRef(el);
       out.push(c);
     }
     for (const g of groups.values()) {
@@ -246,6 +254,7 @@
       });
       g.label = dctCaption(g.cmp) ?? radioGroupLabel(g.radios, g.options.map((o) => o.text));
       g.q = dctQuestionId(g.cmp?.id ?? g.el.id) ?? (String(g.el.name).match(/^[a-z]+_([0-9A-F]+)/)?.[1] ?? null);
+      g.ref = g.radios.map(fieldRef).find(Boolean) ?? null;
     }
     for (const c of out) {
       c.text = squash(c.label);
@@ -328,7 +337,7 @@
   // Some known answers become a summary plus a dependent question after the server redraw.
   // Require both witnesses so disappearing controls alone never count as accepted answers.
   function summaryAccepted(step, controls) {
-    if (!step.summaryAfter || !controls.some((c) => c.q === step.summaryAfter)) return false;
+    if (!step.summaryAfter || !controls.some((c) => c.text === squash(step.summaryAfter))) return false;
     return (document.body.innerText ?? '').split(/\r?\n/).some((line) => {
       const text = squash(line).replace(/^business(?: type)? /, '').replace(/ edit$/, '');
       return [step.value, ...(step.choiceAliases ?? [])].some((value) => text === squash(value));
@@ -344,51 +353,111 @@
     try { return el.matches(selector); } catch { return false; }
   }
 
-  // Pairs plan steps with page fields: carrier question ids and selectors first, then label
-  // rules, then a last pass on the field's name/id for pages with unhelpful labels.
+  // Kinds of step that answer a text box, and kinds that pick a choice: which of two questions
+  // reading the same ("Business Name" as a registered-name choice, or a box) is a step's.
+  const TEXT_STEPS = new Set(['text', 'date', 'address-suggest']);
+  const TYPED_STEPS = new Set(['date', 'address-suggest']);
+  // Yes / No too (Codex on PR #43): a question that became a text box is never typed "Yes" into.
+  const CHOICE_STEPS = new Set(['choice', 'pick-not', 'first-option', 'selected-option', 'bool']);
+
+  // Pairs plan steps with page fields. A carrier's known question is found by what it is, never
+  // by its question id: Progressive renumbered every question on 2026-10-07, and an id kept from
+  // before then named another question (Business Name got the trucker type). So, by
+  // - the field's data-model name (`field`, Duck Creek's fieldref: "ComprehensiveInput.Deductible"),
+  //   on whatever page it is; its expected wording (`ask`/`re`) is a check: other words on the field
+  //   fill it, flagged for the agent (`reworded`);
+  // - else its question on its page (`ask`, the exact text, or `re` on `pages`), never a field
+  //   another rule knows by its data-model name; the first one after an anchor question when the
+  //   text repeats (`askAfter`: the business "City" comes after "Street Address", the owner's after
+  //   "Home Address"; with no anchor on screen, none);
+  // - else the list offering a given answer (`withOption`), or a selector.
+  // A known question not found stays with the agent: it never falls back to a looser label rule.
+  // A data-model name not on the page while its expected wording is (a renamed field) is reported
+  // (`pairs.renamed`) and left with the agent. Then label rules, then a pass on the field's name/id.
+  // Each pair says how it was found (`how`).
   function assign(controls, plan) {
     const used = new Set();
     const donePaths = new Set();
     const pairs = [];
+    const page = currentPage();
     const steps = plan.map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
-    const take = (s, c) => { used.add(c); donePaths.add(s.path); pairs.push({ step: s, control: c }); };
+    const take = (s, c, how, reworded = false) => { used.add(c); donePaths.add(s.path); pairs.push({ step: s, control: c, how, reworded }); };
     const fits = (s, c) => !(c.kind === 'checkbox' && s.kind !== 'bool');
+    const known = (s) => !!(s.field || s.ask?.length || (s.reC && s.pages?.length));
+    // A question's own pages (`notPages`: never there, whatever finds it).
+    const onPage = (s) => (!s.pages?.length || s.pages.includes(page)) && !s.notPages?.includes(page);
+    // A data-model name is found on any page, except where the step is fenced off: a trailer's
+    // questions carry the vehicle's names (RiskInput.VIN), so each is kept to its own pages.
+    const nameHere = (s) => (s.pageOnly ? onPage(s) : !s.notPages?.includes(page));
+    const worded = (s) => !!s.ask?.length || !!s.reC;
+    const textIs = (s, x) => !!x.text && ((s.ask ?? []).some((a) => squash(a) === x.text) || (!!s.reC && s.reC.test(x.text) && !(s.exC && s.exC.test(x.text))));
+    // Data-model names some rule knows here: those fields are that rule's, never a text rule's. A
+    // name fenced off this page (a trailer's RiskInput.PAValue on Add Vehicle) claims nothing here.
+    const claimed = new Set(steps.filter((s) => s.field && nameHere(s)).map((s) => s.field));
+    const isIt = (s, x) => (s.field ? x.ref === s.field && nameHere(s) : onPage(s) && worded(s) && !claimed.has(x.ref) && textIs(s, x));
+    // A choice is never typed into a box, nor a typed address or date put in a choice; a plain
+    // text step only gives way to a box when its text names a box and a choice.
+    const definite = (s, x) => !(CHOICE_STEPS.has(s.kind) && x.kind === 'text') && !(TYPED_STEPS.has(s.kind) && x.kind !== 'text');
+    const kindFits = (s, x) => !(TEXT_STEPS.has(s.kind) && x.kind !== 'text');
+    const afterAnchor = (same, anchor) => {
+      const at = controls.findIndex((x) => x.text === squash(anchor));
+      const next = at < 0 ? null : same.find((x) => controls.indexOf(x) > at);
+      return next ? [next] : [];
+    };
+    // The fields a known question is on this page (several: one per vehicle, or one per group).
+    const fieldsOf = (s) => {
+      if (!known(s)) return [];
+      // `control`: the kind of field the question is, when its text is shared with another kind.
+      let same = controls.filter((x) => isIt(s, x) && definite(s, x) && (!s.control || x.kind === s.control));
+      if (same.length > 1 && same.some((x) => kindFits(s, x))) same = same.filter((x) => kindFits(s, x));
+      // The anchor tells repeated texts apart; a data-model name is already the one field.
+      return s.askAfter && !s.field ? afterAnchor(same, s.askAfter) : same;
+    };
+    const found = new Map(steps.map((s) => [s, fieldsOf(s)]));
     // A label fallback can't tell rows of one question apart, nor a vehicle's question from
-    // another vehicle's: those are only answered by their question id and vehicle.
+    // another vehicle's: those are only answered by a known question and its vehicle. (Rows of one
+    // question share a question id on the page: that compares the page with itself.)
     const repeated = new Set(controls.map((x) => x.q).filter((q, i, all) => q && all.indexOf(q) !== i));
-    // Steps of a per-vehicle question, one per vehicle (activeVehicle true or false), with or
-    // without a year/make/model to name its row.
-    const perVehicle = new Set(steps.filter((s) => s.activeVehicle != null && s.q).map((s) => s.q));
+    // Fields of a per-vehicle question: its steps come one per vehicle (activeVehicle true or
+    // false), with or without a year/make/model to name its row.
+    const perVehicle = new Set(steps.filter((s) => s.activeVehicle != null).flatMap((s) => found.get(s)));
     // A page about one vehicle (Add Vehicle): no question names a vehicle and the per-vehicle
     // questions sit in one row. Rows of several vehicles without their names stay with the agent.
-    const oneVehicle = !controls.some((x) => x.vehicle) && new Set(controls.filter((x) => perVehicle.has(x.q)).map((x) => x.row)).size <= 1;
+    const oneVehicle = !controls.some((x) => x.vehicle) && new Set([...perVehicle].map((x) => x.row)).size <= 1;
 
     // Distinct known questions may share intake data (business and home ZIP/City).
-    // Match every explicit target; path deduplication applies only to label fallbacks.
+    // Match every known question; path deduplication applies only to label fallbacks.
     for (const s of steps) {
       let c = null;
-      if (s.q && s.activeVehicle != null) {
+      let how = s.field ? 'field' : 'text';
+      const same = found.get(s);
+      if (known(s) && s.activeVehicle != null) {
         // One step per vehicle (several in the quote): on a page showing one vehicle at a time, the
         // active vehicle's; otherwise the row labelled with this vehicle's year/make/model. A
         // vehicle the intake doesn't describe can't name a row: left to the agent.
-        const same = controls.filter((x) => x.q === s.q);
         c = oneVehicle ? (s.activeVehicle && same.length === 1 ? same[0] : null) : s.vehicleHint ? vehicleRow(same, s.vehicleHint) : null;
         if (c && used.has(c)) c = null;
-      } else if (s.q) {
-        // Without a vehicle, several rows for one question are ambiguous: they stay yellow.
-        const same = controls.filter((x) => !used.has(x) && x.q === s.q);
-        c = same.length > 1 ? null : same[0] ?? null;
+      } else if (known(s)) {
+        // Without a vehicle, several fields for one question are ambiguous: they stay yellow.
+        // `each`: a question repeated in several groups, one step per group.
+        const free = same.filter((x) => !used.has(x));
+        c = s.each ? free[0] ?? null : free.length > 1 ? null : free[0] ?? null;
+      } else if (onPage(s)) {
+        how = 'selector';
+        if (s.selector) c = controls.find((x) => !used.has(x) && (safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector))));
+        // A dropdown with no usable label, known by one of its options ("NO PRIOR").
+        if (!c && s.withOption) { how = 'option'; c = controls.find((x) => !used.has(x) && optionsOf(x).some((o) => squash(o.text) === squash(s.withOption))); }
       }
-      if (!c && s.selector) c = controls.find((x) => !used.has(x) && (safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector))));
-      // A dropdown with no usable label, known by one of its options ("NO PRIOR").
-      if (!c && s.withOption) c = controls.find((x) => !used.has(x) && optionsOf(x).some((o) => squash(o.text) === squash(s.withOption)));
-      if (c) take(s, c);
+      if (c) take(s, c, how, !!s.field && worded(s) && !textIs(s, c));
     }
+    // A data-model name not on the page, while its expected wording is: the field was probably renamed.
+    pairs.renamed = steps.filter((s) => s.field && worded(s) && onPage(s) && nameHere(s) && !found.get(s).length)
+      .flatMap((s) => { const x = controls.find((y) => !used.has(y) && y.ref !== s.field && !claimed.has(y.ref) && textIs(s, y)); return x ? [{ step: s, control: x }] : []; });
     for (const field of ['text', 'hint']) {
       for (const s of steps) {
-        if (!s.reC || donePaths.has(s.path)) continue;
-        const c = controls.find((x) => !used.has(x) && !repeated.has(x.q) && !perVehicle.has(x.q) && x[field] && fits(s, x) && s.reC.test(x[field]) && !(s.exC && s.exC.test(x[field])));
-        if (c) take(s, c);
+        if (!s.reC || known(s) || donePaths.has(s.path) || !onPage(s)) continue;
+        const c = controls.find((x) => !used.has(x) && !repeated.has(x.q) && !perVehicle.has(x) && x[field] && fits(s, x) && s.reC.test(x[field]) && !(s.exC && s.exC.test(x[field])));
+        if (c) take(s, c, field === 'text' ? 'label' : 'name');
       }
     }
     return pairs;
@@ -453,7 +522,7 @@
     // address"), preferring one that matches `prefer` when there are several.
     if (step.kind === 'pick-not') {
       const allowed = usable.filter((o) => !new RegExp(step.value.not, 'i').test(o.text));
-      if (step.q === '22F' && step.businessNames?.length) {
+      if (step.registeredName && step.businessNames?.length) {
         // One registered name listed twice ("ACME LLC", "Acme, LLC") is still one match.
         const matches = uniqueBusinessNames(allowed.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name))));
         return matches.length === 1 ? matches[0] : null;
@@ -719,9 +788,14 @@
     cmp.doQuery(text, false, true);
     const start = Date.now();
     await sleep(200);
+    if (!cmp.store) return null;
     while (cmp.store?.isLoading?.() && Date.now() - start < 6000) await sleep(100);
-    return cmp.store.getRange().map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
+    return storeOptions(cmp);
   }
+
+  // A list redrawn while it's answered may have lost its store (TX 2026-10-07): no options.
+  const storeOptions = (cmp) => (cmp.store?.getRange?.() ?? []).map((rec) => ({ rec, text: oneLine(rec.get(cmp.displayField)), value: rec.get(cmp.valueField ?? cmp.displayField) }));
+  const hasOptions = (options) => options.some((o) => !isPlaceholderOption(o.text));
 
   async function applyExt(step, c) {
     const { cmp, el } = c;
@@ -743,7 +817,13 @@
           if (opt) break;
         }
       }
-      if (!opt) return noMatch(step, c.options);
+      // A list that fills in only after another answer (Progressive's cargo commodities, once
+      // their category is picked) may still be empty: give it a few seconds to load.
+      for (const start = Date.now(); !opt && !hasOptions(storeOptions(cmp)) && Date.now() - start < 6000;) {
+        await sleep(250);
+        opt = matchOption(storeOptions(cmp), step);
+      }
+      if (!opt) return noMatch(step, hasOptions(c.options) ? c.options : storeOptions(cmp));
       extFocusAndBlur(cmp, el, () => {
         cmp.setValue(opt.value);
         cmp.fireEvent('select', cmp, opt.rec);
@@ -807,8 +887,12 @@
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
     if (c.kind === 'text') {
       if (loose(c.el.value) === loose(textFor(step, c))) return true;
-      // Carriers standardize addresses to ZIP+4: 17101-1234 is the intake's 17101.
-      if (/zip/i.test(step.path ?? '') && /^\d{5}$/.test(String(step.value))) return String(c.el.value).replace(/\D/g, '').slice(0, 5) === String(step.value);
+      // Carriers standardize addresses to ZIP+4 (and intakes sometimes have it): 17101-1234 is
+      // 17101, whichever side has the +4.
+      if (/zip/i.test(step.path ?? '') && /^\d{5}(?:-?\d{4})?$/.test(String(step.value).trim())) {
+        const five = (v) => String(v ?? '').replace(/\D/g, '').slice(0, 5);
+        return five(c.el.value).length === 5 && five(c.el.value) === five(step.value);
+      }
       if (step.kind === 'money') {
         const amount = (v) => /^\$?\s*\d[\d,]*(?:\.\d{1,2})?\s*$/.test(String(v)) ? Number(String(v).replace(/[$,\s]/g, '')) : null;
         const actual = amount(c.el.value), wanted = amount(step.value);
@@ -832,13 +916,16 @@
 
   function ratesStale() {
     const text = document.body.innerText ?? '';
-    return /\*{4}|(?:must|please|need to) recalculate|premium.*(?:out of date|not current)|changes.*recalculate/i.test(text);
+    // "The coverages have changed, please "recalculate" to see your rate." / "Recalculate to see
+    // coverage cost" (Progressive), or a premium of ****.
+    return /\*{4}|(?:must|please|need to)\W+recalculate|recalculate to see|premium.*(?:out of date|not current)|chang\w*.*recalculate/i.test(text);
   }
 
   function premiumReady() {
     if (pageBusy() || ratesStale()) return false;
     const text = document.body.innerText ?? '';
-    return /(?:total|annual|policy|estimated)\s+premium\s*:?\s*\$\s*[1-9][\d,]*(?:\.\d{2})?/i.test(text);
+    // "Total premium amount $12,815.00 per year" (Progressive), "Total premium: $12,345.67".
+    return /(?:total|annual|policy|estimated)\s+premium(?:\s+amount)?\s*:?\s*\$\s*[1-9][\d,]*(?:\.\d{2})?/i.test(text);
   }
 
   // The page's own "move on" button, only ever used when nothing is left for the agent. Buttons
@@ -899,7 +986,6 @@
   // on pages that talk to their server after each answer (ExtJS/Duck Creek) stops after one
   // answer and waits. New questions that appear because of an answer get picked up next round.
   // `skip`: field keys to leave alone (ones the agent changed; used by automatic follow-up fills).
-  // `optional`: question ids never flagged as "needs you" (middle initial, suffix, DBA, …).
   // `doneActions`: button actions already clicked earlier in this quote.
   // `replaceChoices`: a dropdown/radio/checkbox answer the page pre-selected (not the agent) is
   // replaced when it differs from ours; agent changes are protected by `skip`.
@@ -913,17 +999,26 @@
   // `doneSteps`: steps of a one-address application (stepKey) already continued from: a step the
   // agent goes back to is theirs, never continued again.
   // `stopPages`: pages where the carrier has stopped the quote: nothing is filled or clicked there.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, optional = [], doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [] } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [] } = {}) {
     // An agent edit protects its field. A plain name saved by an older build (field-key v2)
     // protects every row key made from it (name#<row>): it could have been any row's edit.
     const skipKeys = new Set(skip);
     const skipped = Set.prototype.has.bind(skipKeys);
     skipKeys.has = (key) => skipped(key) || skipped(globalThis.__raterFieldKey.rowKeyBase?.(key));
-    const quiet = new Set(optional);
+    // A field the agent edited, by its key, or by the question id an older build kept it under
+    // (version 3) in a quote begun before this one: left alone rather than overwritten.
+    const skippedField = (c) => skipKeys.has(fieldKey(c)) || skipped(globalThis.__raterFieldKey.legacyKey?.(c.el, { q: c.q }));
+    // Such a question id can't be tied to its question for certain: saved before a renumbering,
+    // it now belongs to another question, and the corrected one has a new number. While one is
+    // kept, no answer already on a Duck Creek field is replaced, so whichever field the agent
+    // corrected keeps their answer (Codex on PR #43).
+    const legacyEdits = skip.some((k) => /^[0-9A-F]+(?:@\d+)?$/.test(String(k)));
+    const mayHoldLegacyEdit = (c) => legacyEdits && c.q != null && hasValue(c);
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
     const openersTried = new Set();
+    const nudged = new Set();
     // Answers the page changed or cleared after we gave them (a lookup redrawing its boxes, a
     // panel re-rendering), or didn't keep the first time: given again, at most twice each.
     const retries = new Map();
@@ -941,7 +1036,7 @@
     const startPage = currentPage();
     if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
-    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], halted: false, rounds: 0 };
+    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], reworded: [], renamed: [], halted: false, rounds: 0 };
     if (stopPages.includes(startPage)) {
       report.halted = true;
       report.reason = 'The carrier stopped this quote on this page: nothing is filled or clicked here.';
@@ -981,13 +1076,18 @@
       const mapped = new Set(allPairs.map((p) => p.control));
       // Rows of one repeated question share a key; their labels (the vehicle) tell them apart.
       const flag = (list, item) => { if (!list.some((x) => x.key === item.key && x.label === item.label)) list.push(item); };
+      // Known questions whose wording changed (answered, and flagged when answered), and fields that
+      // read like a known question whose data-model name isn't on the page (left for the agent).
+      for (const p of allPairs.filter((x) => x.reworded)) flag(report.reworded, { label: p.control.label, key: fieldKey(p.control), name: p.step.name, field: p.step.field });
+      const renamed = new Map(allPairs.renamed.map((r) => [r.control, r.step]));
+      for (const [c, step] of renamed) flag(report.renamed, { label: c.label, key: fieldKey(c), name: step.name, field: step.field, now: c.ref ?? null });
       for (const c of controls) {
-        if (mapped.has(c) || quiet.has(c.q) || skipKeys.has(fieldKey(c))) continue;
-        flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, controlKind: c.kind, required: c.required, ...describe(c) });
-        mark(c, 'needs', 'Unfamiliar question — left for you.');
+        if (mapped.has(c) || skippedField(c)) continue;
+        flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, ref: c.ref ?? null, controlKind: c.kind, required: c.required, ...describe(c) });
+        mark(c, 'needs', renamed.has(c) ? `Looks like "${renamed.get(c).name}", but the carrier renamed this field: left for you.` : 'Unfamiliar question — left for you.');
       }
       for (const c of controls) {
-        if (!mapped.has(c) || skipKeys.has(fieldKey(c)) || !hasValue(c) || !invalidControl(c)) continue;
+        if (!mapped.has(c) || skippedField(c) || !hasValue(c) || !invalidControl(c)) continue;
         // An answer the page invalidated after another one changed (Progressive's liability limit
         // after a PIP change) is picked again, at most twice; then it's the agent's.
         const own = allPairs.find((p) => p.control === c)?.step;
@@ -1001,13 +1101,13 @@
         mark(c, 'failed', 'the page marks this answer invalid');
       }
       for (const { step, control } of allPairs) {
-        if (skipKeys.has(fieldKey(control)) || !hasValue(control)) continue;
+        if (skippedField(control) || !hasValue(control)) continue;
         if (step.verifyOnly && !agreesWith(step, control)) {
           flag(report.failed, { label: control.label, key: fieldKey(control), q: control.q, reason: 'The looked-up value differs from the intake. Check the VIN.' });
           mark(control, 'failed', 'lookup result differs from the intake');
         } else if (!step.verifyOnly && !step.ignore && !step.note && !step.replace && !step.trustPage && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id)) {
           // The page already had a different value (e.g. from the USDOT lookup): keep it, show it.
-          flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, differs: true });
+          flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, name: step.name, differs: true });
           mark(control, 'needs', `page says something different from the intake (${step.name})`);
           handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
         }
@@ -1015,7 +1115,7 @@
       const consumed = consumedPaths();
       for (const previous of [...report.filled]) {
         const pair = allPairs.find(({ step }) => step.id === previous.stepId);
-        if (!pair || skipKeys.has(fieldKey(pair.control)) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path)) continue;
+        if (!pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path)) continue;
         if (retryOnce(pair.step.id)) {
           report.filled = report.filled.filter((x) => x !== previous);
           handled.delete(pair.step.id);
@@ -1037,16 +1137,29 @@
         if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
         continue;
       }
-      const pairs = assign(controls, plan).filter(({ step, control }) => !handled.has(step.id) && !skipKeys.has(fieldKey(control)));
+      const pairs = assign(controls, plan).filter(({ step, control }) => !handled.has(step.id) && !skippedField(control));
       let changed = false;
       // A failed answer may still have redrawn the page (new questions): look again next round.
       let retry = false;
-      for (const { step, control: c } of pairs) {
-        const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind };
+      for (const { step: planned, control: c, how, reworded } of pairs) {
+        // A known field whose question reads differently now: answered, and the agent checks it.
+        const step = reworded ? { ...planned, warn: [planned.warn, `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check the answer.`].filter(Boolean).join(' ') } : planned;
+        const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how };
+        // A question left as the page has it whose wording changed: what the page has may not fit
+        // any more, so the agent checks it (Continue waits).
+        const leftAlone = step.verifyOnly || step.ignore;
+        if (leftAlone && reworded) {
+          const note = `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check what the page has.`;
+          if (step.verifyOnly) report.kept.push(item);
+          report.checks.push({ ...item, note, ...describe(c) });
+          handled.set(step.id, { status: 'needs', note });
+          continue;
+        }
         if (step.verifyOnly) { report.kept.push(item); handled.set(step.id, { status: null }); continue; }
         if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { handled.set(step.id, { status: null }); continue; }
         if (step.businessNames?.length) {
-          const registered = controls.find((x) => x.q === '22F');
+          // The registered names the USDOT lookup offers (Progressive's Business Name choice).
+          const registered = assign(controls, plan).find((p) => p.step.registeredName)?.control;
           const names = uniqueBusinessNames(registered ? optionsOf(registered).filter((o) => o.text.trim() && !/^enter a different/i.test(o.text)) : []);
           const matches = names.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name)));
           if (names.length && matches.length !== 1) {
@@ -1057,7 +1170,7 @@
           }
         }
         if (step.note || step.value == null) {
-          if (quiet.has(c.q)) { handled.set(step.id, { status: null }); continue; }
+          if (step.optional) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note, ...describe(c) });
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
           continue;
@@ -1066,10 +1179,15 @@
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '') && !agreesWith(step, c);
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
         const differs = isChoice && replaceChoices && !agreesWith(step, c);
-        if (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c))) {
+        const legacyHold = mayHoldLegacyEdit(c) && !refill.has(step.id);
+        if (legacyHold || (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           report.kept.push(item);
+          if (legacyHold && !agreesWith(step, c)) {
+            const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
+            report.checks.push({ ...item, note, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note });
           // Still our default from an earlier fill: still the agent's to confirm.
-          if (step.warn && agreesWith(step, c)) {
+          } else if (step.warn && agreesWith(step, c)) {
             report.checks.push({ ...item, note: step.warn, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.warn });
           } else handled.set(step.id, { status: null });
@@ -1113,7 +1231,8 @@
         if (result.ok) {
           if (currentPage() === 'CoveragesRates') {
             // The bill plan (payment method) stays chosen; the premium needs recalculating.
-            for (const id of ['recalculate', 'print', 'printSend', ...(/^21/.test(c.q ?? '') ? ['doneCargo'] : [])]) {
+            // A cargo answer re-arms Done with this coverage too.
+            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : [])]) {
               clicked.delete(id);
               report.actions = report.actions.filter((x) => x.id !== id);
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
@@ -1174,8 +1293,9 @@
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
       if (a.verify === 'cargoClosed') {
         const controls = collectControls();
-        const expanded = controls.some((c) => ['2158', '215A', '216A', '216B'].includes(c.q));
-        const cargoSteps = plan.filter((s) => ['2150', '216F'].includes(s.q) && s.value != null);
+        // The cargo section's questions still on screen (found by the rules for them).
+        const expanded = assign(controls, plan).some(({ step }) => step.cargo === 'section');
+        const cargoSteps = plan.filter((s) => s.cargo === 'limit' && s.value != null);
         const retained = assign(controls, cargoSteps).some(({ step, control }) => agreesWith(step, control));
         const summary = (document.body.innerText ?? '').match(/motor truck cargo[^\n]*(?:\n[^\n]*){0,2}/i)?.[0] ?? '';
         const amounts = moneyTokens(summary);
@@ -1203,7 +1323,7 @@
       // A prerequisite holds when its field shows the intake's answer, or an answer the agent chose
       // themselves (their correction counts as resolved). Missing, rejected or different: not yet.
       const has = (path) => pairs.some(({ step, control }) => step.path === path && !step.ignore && !invalidControl(control)
-        && ((step.value != null && agreesWith(step, control)) || (skipKeys.has(fieldKey(control)) && hasValue(control))));
+        && ((step.value != null && agreesWith(step, control)) || (skippedField(control) && hasValue(control))));
       const blocked = [];
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         // A link verified by its going away that is back on its page (NTL removed by hand, then
@@ -1214,7 +1334,7 @@
         // its fields have not been filled yet (or the agent went back to this step).
         if (a.unlessSelector && deepQueryAll(document, a.unlessSelector).length) { clicked.add(a.action); continue; }
         if (report.halted || pageBusy()) return false;
-        if (a.action === 'printSend' && controls.some((c) => (['32D0', '32DD'].includes(c.q) || /^(email|e mail|fax)$/.test(c.text)) && hasValue(c))) {
+        if (a.action === 'printSend' && controls.some((c) => /^(email|e mail|fax)$/.test(c.text) && hasValue(c))) {
           report.blocked.push({ id: a.action, why: 'Email or Fax is ticked; untick it to print' });
           continue;
         }
@@ -1222,10 +1342,31 @@
         // Recalculate only when the rates are out of date; otherwise it isn't waited for.
         if (a.needsRecalculation && !ratesStale()) continue;
         const button = findButton(a);
+        // `nudge`: a button that shows only once the page took an answer (Progressive's "Done with
+        // this coverage" after the cargo commodity): with everything else ready and no button, that
+        // answer is picked again, once (the agent's re-pick is what made it show).
+        if (!button && a.nudge && !nudged.has(a.action) && a.after.every(has) && a.afterActions.every((id) => clicked.has(id))) {
+          const pair = pairs.find(({ step }) => step.path === a.nudge && step.value != null);
+          if (pair && agreesWith(pair.step, pair.control)) {
+            nudged.add(a.action);
+            // ExtJS's select hands its listeners the picked record, as a real pick does (Codex on PR #43).
+            const { cmp } = pair.control;
+            if (cmp) {
+              const value = cmpValue(cmp, pair.control.el);
+              const rec = storeOptions(cmp).find((o) => o.value === value || o.text === oneLine(value))?.rec ?? null;
+              cmp.fireEvent?.('select', cmp, rec ?? value);
+            }
+            if (!cmp) setNativeValue(pair.control.el, pair.control.el.value);
+            return true;
+          }
+        }
         // Menu items ("Add Vehicle" under "Add") only show once their menu button is opened.
         if (!button && !a.opener) continue;
         const holds = actions.filter((h) => (a.heldBy ?? []).includes(h.baseAction) && holdOpen(h));
-        const ready = !holds.length && (!a.afterAny?.length || a.afterAny.some(has))
+        // A page button that the carrier refuses while a required question is empty (Rates' bill
+        // plan, SC 2026-10-07: clicked right after UM/UIM were cleared, and nothing opened).
+        const openRequired = a.waitRequired ? controls.filter((c) => c.required && !hasValue(c) && !skippedField(c)) : [];
+        const ready = !holds.length && !openRequired.length && (!a.afterAny?.length || a.afterAny.some(has))
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
           && a.after.every(has)
@@ -1243,6 +1384,7 @@
             ...(a.needsPremium && !premiumReady() ? ['a current premium'] : []),
             ...(a.afterValue ? [`${a.afterValue[0]} set`] : []),
             ...holds.map((h) => `${h.label ?? h.baseAction} resolved`),
+            ...openRequired.slice(0, 3).map((c) => `${c.label || 'a required question'} answered`),
           ];
           blocked.push(a.action);
           report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites' });
@@ -1265,15 +1407,18 @@
       return false;
     }
 
+    // A helper that opened the next page (the vehicle tile opens Add Vehicle) leaves its questions
+    // to that page's own fill: none of them is reported or marked as this page's.
+    const stillHere = !report.navigatedTo && currentPage() === startPage;
     // Answers still waiting for another try when the fill ended are left for the agent, and so is
     // a field the page should have filled itself (emptyNote) but didn't.
-    for (const { step, control } of assign(collectControls(), plan)) {
-      if (step.emptyNote && !hasValue(control) && !skipKeys.has(fieldKey(control))) {
+    for (const { step, control } of stillHere ? assign(collectControls(), plan) : []) {
+      if (step.emptyNote && !hasValue(control) && !skippedField(control)) {
         report.noData.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, note: step.emptyNote, ...describe(control) });
         handled.set(step.id, { status: 'needs', note: step.emptyNote });
         continue;
       }
-      if (!refill.has(step.id) || handled.has(step.id) || skipKeys.has(fieldKey(control)) || agreesWith(step, control)) continue;
+      if (!refill.has(step.id) || handled.has(step.id) || skippedField(control) || agreesWith(step, control)) continue;
       report.failed.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, reason: 'the page did not keep the answer; check it', ...describe(control) });
       handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: the page did not keep the answer` });
     }
@@ -1281,9 +1426,17 @@
     // The page may have redrawn while filling, so mark the final fields.
     const controls = collectControls();
     const pairs = assign(controls, plan);
-    for (const { step, control } of pairs) {
+    for (const { step, control } of stillHere ? pairs : []) {
       const h = handled.get(step.id);
       if (h?.status) mark(control, h.status, h.note);
+    }
+    // An unfamiliar question that went away during the fill (hidden by an answer, such as the
+    // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
+    if (stillHere) {
+      const onPageNow = new Set(controls.map((c) => fieldKey(c)));
+      report.unknown = report.unknown.filter((x) => onPageNow.has(x.key));
+      // Likewise a field that looked renamed (Codex on PR #43): it no longer holds Continue.
+      report.renamed = report.renamed.filter((x) => onPageNow.has(x.key));
     }
     // Question text for every field on the page, keyed like the usage recorder's changes.
     report.labels = controls.map((c) => [fieldKey(c), c.label]);
@@ -1291,11 +1444,11 @@
     // pick from text typed into the box.
     report.choices = controls.filter((c) => c.cmp && c.kind === 'select' && c.options && !/agent|producer/i.test(c.label ?? ''))
       .map((c) => [fieldKey(c), [...new Set(c.options.map((o) => o.text).filter(Boolean))]]);
-    report.skipped = controls.filter((c) => skipKeys.has(fieldKey(c))).map((c) => ({ label: c.label, key: fieldKey(c) }));
+    report.skipped = controls.filter((c) => skippedField(c)).map((c) => ({ label: c.label, key: fieldKey(c) }));
     const matched = new Set(pairs.map((p) => p.control));
-    for (const c of controls) {
-      if (!matched.has(c) && report.unknown.some((x) => x.key === fieldKey(c)) && !skipKeys.has(fieldKey(c))) mark(c, 'needs', 'Unfamiliar question — left for you.');
-      if (!matched.has(c) && c.required && !hasValue(c) && !quiet.has(c.q) && !skipKeys.has(fieldKey(c))) {
+    for (const c of stillHere ? controls : []) {
+      if (!matched.has(c) && report.unknown.some((x) => x.key === fieldKey(c)) && !skippedField(c)) mark(c, 'needs', 'Unfamiliar question — left for you.');
+      if (!matched.has(c) && c.required && !hasValue(c) && !skippedField(c)) {
         report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
         mark(c, 'needs', 'required, and not on the intake form');
       }
@@ -1305,27 +1458,45 @@
     if (window === window.top && currentPage() === startPage) {
       for (const a of actions) {
         if (!a.missing || clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage())) || findButton(a)
-          || !a.afterActions.every((id) => clicked.has(id)) || (a.resolvedBy && findButton({ text: a.resolvedBy }))) continue;
+          || !a.afterActions.every((id) => clicked.has(id)) || a.unlessActions?.some((id) => clicked.has(id))
+          || (a.resolvedBy && findButton({ text: a.resolvedBy }))) continue;
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing });
+      }
+      // Clicked earlier, but what it adds never got in (Add Trailer opened, the trailer page left
+      // without filling it): the agent finishes it before Continue.
+      for (const a of actions) {
+        if (!a.unfinished || !a.doneWhen?.length || !clicked.has(a.action) || a.doneWhen.some((id) => clicked.has(id))
+          || (a.pages.length && !a.pages.includes(currentPage()))) continue;
+        report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.unfinished });
       }
     }
     // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
     report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findIndex((x) => x.id === b.id) === i);
     // Anything the agent should look at before moving on.
+    // The carrier probably changed this page: a known field renamed, or most of its questions
+    // unfamiliar at once. Continue waits for the agent, and the panel says so.
+    report.pageChanged = report.renamed.length > 0 || (report.unknown.length >= 5 && report.unknown.length >= 0.4 * Math.max(1, report.fields));
+    // A field drawn without a caption (the cargo commodity lists) is named after its rule.
+    const called = (x) => x.label || x.name || x.path || 'a question with no label';
     report.blockers = [
+      ...(report.pageChanged ? [`page changed: ${report.unknown.length} unfamiliar question(s)${report.renamed.length ? `, ${report.renamed.length} known field(s) renamed` : ''}`] : []),
       // An unfamiliar question with no answer yet is left for the agent even when the page
       // doesn't mark it required (Progressive validates some only on Continue).
-      ...report.unknown.filter((x) => x.required || x.current == null).map((x) => `unfamiliar: ${x.label}`),
-      ...report.noData.map((x) => `needs you: ${x.label}`),
-      ...report.failed.map((x) => `failed: ${x.label}`),
-      ...report.leftRequired.map((x) => `required: ${x.label}`),
-      ...report.kept.filter((x) => x.differs).map((x) => `differs: ${x.label}`),
-      ...report.checks.map((x) => `check: ${x.label}`),
+      ...report.unknown.filter((x) => x.required || x.current == null).map((x) => `unfamiliar: ${called(x)}`),
+      ...report.noData.map((x) => `needs you: ${called(x)}`),
+      ...report.failed.map((x) => `failed: ${called(x)}`),
+      ...report.leftRequired.map((x) => `required: ${called(x)}`),
+      ...report.kept.filter((x) => x.differs).map((x) => `differs: ${called(x)}`),
+      ...report.checks.map((x) => `check: ${called(x)}`),
       ...report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
       ...(report.halted ? [report.reason] : []),
     ];
     report.stepKey = stepKey();
-    if (advance && window === window.top && !report.blockers.length && currentPage() === startPage && !pageBusy()
+    // A page the plan expects questions on that shows none yet, with nothing done on it, is still
+    // drawing (Business Owner Info right after the state is picked, OK 2026-10-07): Continue there
+    // only gets "fields are empty" errors. (A tile page that was clicked continues.)
+    const notDrawn = !report.fields && !report.actions.length && plan.some((s) => s.pages?.includes(startPage));
+    if (advance && window === window.top && !report.blockers.length && !notDrawn && currentPage() === startPage && !pageBusy()
       && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)) {
       // The last answer may still be redrawing part of the page (a new payment method reloads the
       // plan list): a Continue clicked meanwhile is lost. Let it finish first.
@@ -1397,6 +1568,21 @@
   }
 
   // Re-marks one field (e.g. an AI choice the agent rejected). Returns whether it was found.
+  // Which of these the page shows: a VIN as a whole run of letters and digits (the vehicle list's
+  // units on the quote), or a name as all its words on one line (one driver of the driver list, not
+  // a first name from one and a last name from another). Only true/false goes back.
+  function listed(items) {
+    const text = String(document.body?.innerText ?? '').toUpperCase();
+    const page = ` ${text.replace(/[^A-Z0-9]+/g, ' ')} `;
+    const lines = text.split(/\n+/).map((l) => ` ${l.replace(/[^A-Z0-9]+/g, ' ')} `);
+    const word = (w) => String(w ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return (items ?? []).map((t) => {
+      if (Array.isArray(t)) { const words = t.map(word).filter((w) => w.length >= 2); return words.length >= 2 && lines.some((l) => words.every((w) => l.includes(` ${w} `))); }
+      const v = word(t);
+      return v.length >= 11 && page.includes(` ${v} `);
+    });
+  }
+
   function markKey(key, label, status, note) {
     const same = collectControls().filter((c) => fieldKey(c) === key);
     const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
@@ -1453,6 +1639,10 @@
       headings: deepQueryAll(document, 'h1, h2, h3, legend, [role=heading]').filter(isVisible).map((h) => r(h.textContent)).filter(Boolean).slice(0, 40),
       controls: controls.map((c) => ({
         q: c.q ?? undefined,
+        // The field's data-model name (fieldref): how a rule finds it (assign).
+        ref: c.ref ?? undefined,
+        // Its row (Duck Creek "<page>_<row>": one per vehicle or trailer on Rates), numbers only.
+        row: c.row ?? undefined,
         kind: c.kind,
         type: c.cmp?.xtype ?? c.type,
         label: r(c.label),
@@ -1572,5 +1762,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 46, build: BUILD, fill, answer, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 57, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

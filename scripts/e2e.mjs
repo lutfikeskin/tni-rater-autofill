@@ -8,12 +8,15 @@
 //   npm run e2e -- --update     # accept the current results as the new baseline
 //   npm run e2e -- --headed     # watch it
 //   npm run e2e -- --fixtures   # only committed layouts (what CI runs: no usage logs there)
+//   npm run e2e -- --renumber   # every question renumbered, as Progressive did on 2026-10-07: the
+//                               # results must equal the baseline (questions are found by name/text)
 //
 // Layouts: test/bakeoff/course-*.json, captures/progressive/*.json and the per-state layouts
 // npm run layouts builds (captures/progressive/generated/, git-ignored). Needs internet (the
 // replay page loads ExtJS from cdnjs) and Playwright's Chromium (npx playwright install chromium).
 // Reports go to reviews/e2e-<date>.md; the baseline is test/e2e-baseline.json.
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -72,7 +75,7 @@ async function runLayout(layout) {
     page.on('pageerror', (e) => errors.push(String(e.message).slice(0, 200)));
 
     try {
-      await page.goto(`${base}/test/replay/`, { waitUntil: 'load' });
+      await page.goto(`${base}/test/replay/${args.has('--renumber') ? '?shift=55' : ''}`, { waitUntil: 'load' });
       await page.waitForFunction(() => window.Ext && window.replay && window.__raterKit, null, { timeout: 30000 });
       await page.fill('#layout', `/${layout}`);
       await page.click('#load');
@@ -92,6 +95,18 @@ async function runLayout(layout) {
   }
 }
 
+// What each question of a page got, by its text, never its number (--renumber shifts numbers; an
+// unlabeled field is named after its element id, which holds the number, so that part is masked):
+// a short hash, so the baseline stays small.
+function unnumbered(s) { return String(s ?? '').replace(/\bf [a-z] [0-9a-f]{32}[0-9a-f]+ \d+ \d+\b/gi, 'field'); }
+function outcomes(r) {
+  return crypto.createHash('sha1').update(JSON.stringify([
+    ...r.filled.map((x) => `filled ${unnumbered(x.label)} = ${x.shown ?? ''}`),
+    ...r.noData.map((x) => `agent ${unnumbered(x)}`),
+    ...r.unmapped.map((x) => `no rule ${unnumbered(x)}`),
+  ].sort())).digest('hex').slice(0, 12);
+}
+
 // Per layout: totals, per-page numbers, and things that are wrong whatever the baseline says.
 function summarize(rows, status, errors) {
   const pages = {};
@@ -100,7 +115,7 @@ function summarize(rows, status, errors) {
   for (const e of errors) issues.push(`page error: ${e}`);
   for (const r of rows) {
     const continued = r.clicked.some((c) => /^(continue|ok,? start quote)/i.test(c));
-    pages[r.page] = { questions: r.questions, filled: r.filled.length, failed: r.failed, noData: r.noData.length, unmapped: r.unmapped.length, clicked: r.clicked };
+    pages[r.page] = { questions: r.questions, filled: r.filled.length, failed: r.failed, noData: r.noData.length, unmapped: r.unmapped.length, blockers: r.blockers?.length ?? 0, clicked: r.clicked, outcomes: outcomes(r) };
     // Continue with something still open on the page is the bug from the first PA quote.
     if (continued && (r.failed.length || r.unmapped.length)) issues.push(`${r.page}: clicked Continue with ${r.failed.length} failed / ${r.unmapped.length} unmapped question(s) open`);
   }
@@ -118,11 +133,23 @@ for (const [layout, now] of layouts.filter((l) => results[l]).map((l) => [l, res
   for (const [pageName, p] of Object.entries(now.pages)) {
     const b = before.pages?.[pageName];
     if (!b) continue;
-    if (p.filled < b.filled) regressions.push(`${layout} ${pageName}: filled ${b.filled} → ${p.filled}`);
     // Diagnostics in parentheses (e.g. which elements appeared) don't make a failure new.
     const core = (f) => f.replace(/\s*\([^)]*\)\s*$/, '');
+    const continued = (x) => x.clicked.some((c) => /^(continue|ok,? start quote)/i.test(c));
+    if (args.has('--renumber')) {
+      // Renumbered questions are the same questions: each gets the same outcome as in the recorded
+      // run (not just as many), and the helpers are clicked in the same order.
+      const shape = (x) => JSON.stringify([x.filled, x.failed.map(core).sort(), x.noData, x.unmapped, x.blockers ?? null, x.clicked, b.outcomes ? x.outcomes : null]);
+      if (shape(p) !== shape(b)) regressions.push(`${layout} ${pageName}: renumbered run differs: ${shape(b)} → ${shape(p)}`);
+      continue;
+    }
+    if (p.filled < b.filled) regressions.push(`${layout} ${pageName}: filled ${b.filled} → ${p.filled}`);
     const newFails = p.failed.filter((f) => !b.failed.map(core).includes(core(f)));
     for (const f of newFails) regressions.push(`${layout} ${pageName}: new failure: ${f}`);
+    if (p.unmapped > b.unmapped) regressions.push(`${layout} ${pageName}: unmapped ${b.unmapped} → ${p.unmapped}`);
+    if (p.noData > b.noData) regressions.push(`${layout} ${pageName}: left for the agent ${b.noData} → ${p.noData}`);
+    if (b.blockers != null && p.blockers > b.blockers) regressions.push(`${layout} ${pageName}: blockers ${b.blockers} → ${p.blockers}`);
+    if (continued(b) && !continued(p)) regressions.push(`${layout} ${pageName}: Continue no longer clicked`);
   }
 }
 
@@ -141,6 +168,10 @@ const out = path.join(root, 'reviews', `e2e-${today}.md`);
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, lines.join('\n'));
 
+if (args.has('--update') && args.has('--renumber')) {
+  console.error('--renumber checks the baseline; it never updates it.');
+  process.exit(1);
+}
 if (args.has('--update')) {
   // Merged: layouts not run this time (generated ones CI doesn't have) keep their entries.
   fs.writeFileSync(baselineFile, JSON.stringify({ ...(baseline ?? {}), ...results }, null, 1) + '\n');

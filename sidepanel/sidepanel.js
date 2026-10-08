@@ -42,6 +42,20 @@ const agentKeysStore = inExtension && globalThis.chrome?.storage?.local
       set: (records) => chrome.storage.local.set({ [AGENT_KEYS_KEY]: records }) }
   : { get: async () => memory[AGENT_KEYS_KEY] ?? [], set: async (records) => { memory[AGENT_KEYS_KEY] = records; } };
 let agentKeysQueue = Promise.resolve();
+// Buttons clicked and vehicles/drivers/trailers entered on a quote tab, so a panel closed or
+// reloaded mid-quote never adds a vehicle or trailer again (ids only, scoped like the keys above).
+// One storage key per intake and tab: two panels filling two quote tabs never overwrite each
+// other's record (Codex on PR #43).
+const DONE_ACTIONS_PREFIX = 'doneActions:';
+const doneKey = (scope, tabId) => `${DONE_ACTIONS_PREFIX}${scope}:${tabId}`;
+const doneActionsStore = inExtension && globalThis.chrome?.storage?.local
+  ? { get: async (scope, tabId) => (await chrome.storage.local.get(doneKey(scope, tabId)))[doneKey(scope, tabId)] ?? [],
+      set: (scope, tabId, ids) => (ids.length ? chrome.storage.local.set({ [doneKey(scope, tabId)]: ids }) : chrome.storage.local.remove(doneKey(scope, tabId))),
+      clear: async () => chrome.storage.local.remove(Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX))) }
+  : { get: async (scope, tabId) => memory[doneKey(scope, tabId)] ?? [],
+      set: async (scope, tabId, ids) => { memory[doneKey(scope, tabId)] = ids; },
+      clear: async () => { for (const k of Object.keys(memory)) if (k.startsWith(DONE_ACTIONS_PREFIX)) delete memory[k]; } };
+let doneActionsQueue = Promise.resolve();
 
 const FNV_OFFSET = 1469598103934665603n;
 const FNV_PRIME = 1099511628211n;
@@ -362,7 +376,29 @@ async function restoreAgentKeys(tabId) {
 function clearAgentKeys() {
   const task = agentKeysQueue.then(() => agentKeysStore.set([]));
   agentKeysQueue = task.catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.clear()).catch(() => {});
   return task;
+}
+
+function persistDoneActions() {
+  const scope = usage.currentSession()?.intakeId;
+  const tabId = state.tab?.id;
+  if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
+  const ids = [...state.doneActions].filter((id) => typeof id === 'string');
+  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.set(scope, tabId, ids)).catch(() => {});
+  return doneActionsQueue;
+}
+
+// Once per tab and intake while the panel is open (after a reload): later arrivals keep the
+// panel's own set, which may have dropped a button to run again (Print / Send on a return).
+const doneRestored = new Set();
+async function restoreDoneActions(tabId) {
+  const scope = usage.currentSession()?.intakeId;
+  if (!scope || !Number.isInteger(tabId) || doneRestored.has(`${scope}|${tabId}`)) return;
+  const ids = await doneActionsStore.get(scope, tabId);
+  if (state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) return;
+  doneRestored.add(`${scope}|${tabId}`);
+  for (const id of Array.isArray(ids) ? ids : []) if (typeof id === 'string' && id) state.doneActions.add(id);
 }
 
 // Durable decisions store display text separately from the exact live-value fingerprint.
@@ -819,6 +855,7 @@ async function refreshTab() {
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false } : null;
   await restoreAgentKeys(state.tab?.id);
+  await restoreDoneActions(state.tab?.id);
   if (state.tab?.carrier && !state.filling) await retireAiOrigins({ tabId: state.tab.id, tabUrl: state.tab.url, intake: state.intake, carrier: state.tab.carrier });
   renderSite();
   ensureRecorder();
@@ -885,8 +922,11 @@ function onRecorderMessage(msg, sender) {
     // back and changes something, coming back to print means printing the new quote).
     if (msg.from && samePage(msg.from) !== samePage(msg.page)) {
       for (const a of state.tab.carrier?.actions ?? []) {
-        if (a.repeatOnReturn && [].concat(a.page ?? []).includes(samePage(msg.page))) state.doneActions.delete(a.id);
+        if (!a.repeatOnReturn || ![].concat(a.page ?? []).includes(samePage(msg.page))) continue;
+        for (const id of [...state.doneActions]) if (id === a.id || id.startsWith(`${a.id}:`)) state.doneActions.delete(id);
+        persistDoneActions();
       }
+      if (state.tab.carrier?.trailerPage || state.tab.carrier?.driverPage) unitArrival(state.tab.carrier, samePage(msg.from), samePage(msg.page));
     }
     // Setting "Fill each new page as soon as it opens": fill right away (the fill itself waits
     // for the page to settle first).
@@ -966,7 +1006,8 @@ function resetViews() {
 
 function stepScope(page, carrier = state.tab?.carrier) {
   const entity = carrier?.vehiclePages?.includes(page) ? `v${state.active.vehicles ?? 0}`
-    : carrier?.driverPage && carrier.driverPage === page ? `d${state.active.drivers ?? 0}` : '';
+    : carrier?.trailerPages?.includes(page) ? `tr${state.active.trailers ?? 0}`
+      : carrier?.driverPage && carrier.driverPage === page ? `d${state.active.drivers ?? 0}` : '';
   return `${page}|${entity}|`;
 }
 
@@ -986,7 +1027,6 @@ function agentEdited(page, key) {
 }
 
 const fillOptions = (carrier, extra = {}) => ({
-  optional: carrier.optional ?? [],
   replaceChoices: !!carrier.replaceChoices,
   // Carriers whose pages never wait on a server per answer are filled a round at a time.
   batch: !!carrier.batch,
@@ -1151,7 +1191,7 @@ async function captureLayout(job, reason) {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
       const staff = /agent|producer/i.test(c.label ?? '');
       return {
-        q: c.q ?? null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
+        q: c.q ?? null, ref: c.ref ?? null, row: /^\d{1,3}_\d{1,3}$/.test(c.row ?? '') ? c.row : null, kind: c.kind, type: c.type, label: c.label, required: c.required, section: c.section,
         // Element ids (stable ones only) and data-ids: how id-based rules (AmWINS) find the field.
         id: c.id && !/\d{5,}|ext-|-inputEl$/.test(c.id) ? c.id : null, dataId: c.dataId ?? null, name: c.name ?? null,
         options: c.options?.length && !staff ? c.options : undefined,
@@ -1166,8 +1206,9 @@ async function captureLayout(job, reason) {
     // Compared with the last layout logged for this page in this quote. Only the structure
     // counts: the questions, their choices and which are required. Answers are in the change
     // events; counting them would log a layout per answer. Yes, No, then Yes again on a
-    // question that shows a follow-up logs three layouts.
-    const shape = fields.map((f) => [f.q ?? f.label, f.label, !!f.required, f.options ?? [], !!f.optionsTruncated]);
+    // question that shows a follow-up logs three layouts. A field renamed under the same number
+    // (its data-model name) is a change too: that's the evidence of a carrier rename.
+    const shape = fields.map((f) => [f.q ?? f.label, f.ref, f.label, !!f.required, f.options ?? [], !!f.optionsTruncated]);
     const signature = await sha256Hex(JSON.stringify(shape));
     if (!jobCurrent(job) || superseded(job)) return;
     // Per quote tab too: each tab keeps its own quote state (refreshTab).
@@ -1315,6 +1356,7 @@ function rememberFill(frames) {
   }
   for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) state.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
+  persistDoneActions();
   for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
   for (const [key, label] of frames.flatMap((f) => f.labels ?? [])) if (label) state.labels.set(key, label);
   // Kept from every fill: a searched combo's list differs from one fill to the next.
@@ -1500,12 +1542,20 @@ async function fillPage({ auto = false } = {}) {
 
 // On the carrier's vehicle list page, work on the first intake vehicle not added yet (its Add
 // Vehicle or VIN lookup not done in this quote). When every vehicle is in, the active one stays
-// and nothing is left to add, so the page's Continue is clicked. The driver list works the same
-// way (a driver counts as entered once its driver page was filled).
+// and nothing is left to add, so the page's Continue is clicked. Trailers (added from the same
+// list) and the driver list work the same way (a driver or trailer counts as entered once its
+// page was filled).
 async function pickListItem(carrier, page) {
+  const tabId = state.tab?.id;
+  await verifyListed(carrier, page);
+  // Another tab came to the front while the list was read: its own fill picks for it.
+  if (state.tab?.id !== tabId) return;
   const lists = [
     [carrier?.vehicleList, 'vehicles', (i) => ['lookupVin', 'addVehicle'].some((a) => state.doneActions.has(`${a}:${i}`))],
-    [carrier?.driverList, 'drivers', (i) => ['driverEntered', 'addDriver'].some((a) => state.doneActions.has(`${a}:${i}`))],
+    // A trailer only once its page was filled: Add Trailer opened and left (an unsupported tile)
+    // doesn't count, and Vehicle Summary holds Continue for it (the action's `unfinished` note).
+    [carrier?.trailerList, 'trailers', (i) => state.doneActions.has(`trailerEntered:${i}`)],
+    [carrier?.driverList, 'drivers', (i) => state.doneActions.has(`driverEntered:${i}`)],
   ];
   for (const [listPage, list, done] of lists) {
     if (!listPage || page !== listPage) continue;
@@ -1517,13 +1567,75 @@ async function pickListItem(carrier, page) {
   }
 }
 
-// Bookkeeping after a fill: the driver page marks its driver entered; a click that opens more
+// On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each
+// unit with its VIN), and not when the list shows the quote's vehicles by VIN but not this one
+// (Add Trailer left by Back or the top menu, Codex on PR #43). Without VINs to compare, the return
+// from its page decides (unitArrival).
+async function verifyListed(carrier, page) {
+  if (carrier?.driverList && page === carrier.driverList) return verifyDrivers(carrier);
+  if (!carrier?.trailerList || page !== carrier.trailerList || !Number.isInteger(state.tab?.id)) return;
+  const record = state.intake?.record ?? {};
+  const vin = (u) => String(u?.vin ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const trailers = (record.trailers ?? []).map(vin);
+  if (!trailers.some((v) => v.length >= 11)) return;
+  const vehicles = (record.vehicles ?? []).map(vin);
+  let shown = null;
+  const tabId = state.tab.id;
+  try {
+    const frames = await runKit(tabId, carrier, (vins) => globalThis.__raterKit?.listed?.(vins) ?? null, [[...vehicles, ...trailers]]);
+    shown = frames.map((f) => f?.result).find(Array.isArray) ?? null;
+  } catch { return; }
+  if (!shown || state.tab?.id !== tabId) return;
+  const showsVins = shown.slice(0, vehicles.length).some(Boolean);
+  trailers.forEach((v, i) => {
+    if (v.length < 11) return;
+    if (shown[vehicles.length + i]) state.doneActions.add(`trailerEntered:${i}`);
+    else if (showsVins) state.doneActions.delete(`trailerEntered:${i}`);
+  });
+  persistDoneActions();
+}
+
+// On the driver list, a driver it shows by name (first and last) is entered, also when the panel
+// was closed while the agent finished the driver's page (Codex on PR #43). A name not shown proves
+// nothing (the list may write it another way): the return from the driver page decides. Nor does
+// a name another intake driver's name holds (two John Smiths, Ann Lee and Mary Ann Lee): one row
+// would count for both, and the other driver would never be added (Codex on PR #43).
+async function verifyDrivers(carrier) {
+  if (!Number.isInteger(state.tab?.id)) return;
+  const words = (d) => [d.first, d.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
+  const drivers = (state.intake?.record?.drivers ?? []).map(words);
+  const names = (state.intake?.record?.drivers ?? []).map((d, i) => drivers.some((other, j) => j !== i && drivers[i].every((w) => other.includes(w)))
+    ? [] : [d.first, d.last].filter(Boolean));
+  if (!names.some((n) => n.length >= 2)) return;
+  let shown = null;
+  const tabId = state.tab.id;
+  try {
+    const frames = await runKit(tabId, carrier, (items) => globalThis.__raterKit?.listed?.(items) ?? null, [names]);
+    shown = frames.map((f) => f?.result).find(Array.isArray) ?? null;
+  } catch { return; }
+  // The agent switched tabs meanwhile: the answer is about the other tab's quote (Codex on PR #43).
+  if (!shown || state.tab?.id !== tabId) return;
+  shown.forEach((on, i) => { if (on) state.doneActions.add(`driverEntered:${i}`); });
+  persistDoneActions();
+}
+
+// A driver or trailer is entered once the carrier took its page: its list comes back from it (its
+// Continue went through). Answers filled there alone don't count: the page may still have failed
+// or been left (Codex on PR #43). A driver page Progressive filled itself from Business Owner Info
+// counts the same way once continued (OK 2026-10-07: the list added that driver again).
+function unitArrival(carrier, from, page) {
+  for (const [unitPage, listPage, list, marker] of [[carrier?.driverPage, carrier?.driverList, 'drivers', 'driverEntered'], [carrier?.trailerPage, carrier?.trailerList, 'trailers', 'trailerEntered']]) {
+    if (!unitPage || from !== unitPage || page !== listPage) continue;
+    state.doneActions.add(`${marker}:${state.active[list] ?? 0}`);
+    persistDoneActions();
+  }
+}
+
+// Bookkeeping after a fill: a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
 function afterFill(frames, { carrier, page }) {
-  if (carrier.driverPage && carrier.driverPage === page && frames.some((f) => f.filled?.length)) {
-    state.doneActions.add(`driverEntered:${state.active.drivers ?? 0}`);
-  }
+  persistDoneActions();
   const clicked = frames.some((f) => (f.actions ?? []).length);
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
   if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 900);
@@ -1635,22 +1747,35 @@ function renderReport(frames) {
   const need = (x) => h('div', { class: 'need', dataset: { need: `${x.key}|${x.label}` } },
     h('div', { class: 'need-head' },
       h('span', { class: `mark ${x.mark}` }),
-      h('div', { class: 'row-text' }, h('b', {}, x.label), h('span', {}, x.why)),
-      x.key ? h('button', { class: 'ignore-review', type: 'button', title: 'Ignore this question and continue', 'aria-label': `Ignore ${x.label} and continue`, onclick: () => ignoreReview(x.key, tabId, page) }, '×') : null),
+      h('div', { class: 'row-text' }, h('b', {}, x.label || x.name), h('span', {}, x.why)),
+      x.key ? h('button', { class: 'ignore-review', type: 'button', title: 'Ignore this question and continue', 'aria-label': `Ignore ${x.label || x.name} and continue`, onclick: () => ignoreReview(x.key, tabId, page) }, '×') : null),
     x.options?.length && x.mark === 'failed' ? h('div', { class: 'options' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null,
     h('div', { class: 'ai-slot' }),
     h('div', { class: 'need-note' }, 'Answer it on the page.'));
+  // Answers an earlier pass on this page filled (a follow-up pass, after the VIN lookup or a
+  // redraw, finds them already there): still ours, shown as filled.
+  const earlier = kept.filter((x) => !x.differs && state.filled?.get?.(x.key));
   const doneRows = [
-    ...filled.map((x) => [x.label, x.shown ?? '']),
+    ...filled.map((x) => [x.label || x.name, x.shown ?? '']),
+    ...earlier.map((x) => [x.label || x.name, state.filled.get(x.key).shown || 'filled']),
     ...all('actions').map((x) => ['Clicked', x.text || x.id]),
-    ...kept.filter((x) => !x.differs).map((x) => [x.label, 'left as the page had it']),
+    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => [x.label || x.name, 'left as the page had it']),
     ...all('skipped').map((x) => [x.label, 'ignored']),
   ];
+  // The carrier probably changed this page (pagekit: a known field renamed, or most questions
+  // unfamiliar). The rest still filled; Continue waits for the agent.
+  const renamedNames = all('renamed').map((x) => '"' + x.name + '"').join(', ');
+  const pageChanged = frames.some((f) => f.pageChanged)
+    ? (state.tab?.carrier?.name ?? 'The carrier') + ' seems to have changed this page: ' + all('unknown').length + " question(s) aren't known"
+      + (renamedNames ? ', and ' + renamedNames + " moved to a field the extension doesn't know" : '')
+      + ". They're left for you and Continue waits. Please report it (a Capture page layout helps)."
+    : null;
   box.replaceChildren(...[
     agentPage ? h('p', { class: 'agent-page' }, agentPage) : null,
     frames.some((f) => f.halted) ? h('p', { class: 'card bad' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then click Fill this page to retry.`) : null,
+    pageChanged ? h('p', { class: 'card bad' }, pageChanged) : null,
     h('div', { class: 'card summary' },
-      h('div', { class: 'summary-line' }, h('b', {}, `Filled ${filled.length} of ${fields} questions`),
+      h('div', { class: 'summary-line' }, h('b', {}, `Filled ${filled.length + earlier.length} of ${fields} questions`),
         h('span', { class: 'small muted' }, advanced ? `Clicked "${advanced}"` : needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you` : 'Nothing left for you')),
       h('div', { class: 'bar' }, h('div', { style: `width: ${pct}%` })),
       h('div', { class: 'legend' },
@@ -1662,7 +1787,7 @@ function renderReport(frames) {
     ...needs.map(need),
     waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Buttons waiting'), h('span', { class: 'muted' }, waiting.map((x) => `${x.id.replace(/:\d+$/, '')}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`).join('; '))) : null,
     doneRows.length ? h('details', { class: 'more' },
-      h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'See what was filled'), h('span', { class: 'small muted' }, String(filled.length))),
+      h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'See what was filled'), h('span', { class: 'small muted' }, String(filled.length + earlier.length))),
       h('div', { class: 'more-body' }, doneRows.map(([k, v]) => h('div', { class: 'kv' }, h('span', {}, k), h('span', {}, v))))) : null,
   ].filter((node) => node != null && node !== false));
 }

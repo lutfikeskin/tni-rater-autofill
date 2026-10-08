@@ -5,10 +5,35 @@ import { findPii } from '../scripts/lib/privacy.mjs';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 
-test('coverage: Progressive questions by id, AmWINS by id / data-id, and what no rule claims', () => {
+test('coverage: Progressive questions by data-model name or text, AmWINS by id / data-id, and what no rule claims', () => {
   assert.equal(fieldStatus({ q: '1D97', caption: 'Bodily Injury and Property Damage Liability' }, progressive).status, 'filled');
   assert.equal(fieldStatus({ q: '2BCB', caption: 'Annual Mileage' }, progressive).status, 'ignored');
+  // Renumbered (2026-10-07): 267 is Business Name now. Its data-model name says which rule it is.
+  assert.equal(fieldStatus({ q: '267', ref: 'AccountInput.BusinessName', caption: 'Business Name' }, progressive, 'BusinessOwnerInfo').rule, 'Business / sole proprietor name');
+  // A question id alone claims nothing, and a name no rule knows is unclaimed whatever its number.
+  assert.equal(fieldStatus({ q: '1D97', caption: 'A reworded liability question' }, progressive, 'CoveragesRates').status, 'none');
+  assert.equal(fieldStatus({ q: '1D97', ref: 'LineInput.SomethingNew', caption: 'Something new' }, progressive, 'CoveragesRates').status, 'none');
+  // Text claims only on the question's page: "Zip Code" on NoHit is NoHit's.
+  assert.equal(fieldStatus({ caption: 'Zip Code' }, progressive, 'NoHit').rule, 'Owner home ZIP (NoHit)');
   assert.equal(fieldStatus({ q: 'ZZZZ', caption: 'A brand new Progressive question' }, progressive).status, 'none');
+  // Codex on PR #43: two kinds of field read "Business Type"; the kind decides, as when filling.
+  assert.equal(fieldStatus({ caption: 'Business Type', kind: 'combo' }, progressive, 'BusinessOwnerInfo').rule, 'Business type');
+  assert.equal(fieldStatus({ caption: 'Business Type', kind: 'text' }, progressive, 'BusinessOwnerInfo').status, 'ignored');
+  // Codex on PR #43: in a layout without data-model names, the two "City" boxes are told apart by
+  // the question before them, as when filling.
+  const boi = [{ caption: 'Street Address', kind: 'text' }, { caption: 'City', kind: 'text' }, { caption: 'Home Address', kind: 'text' }, { caption: 'City', kind: 'text' }];
+  assert.deepEqual(boi.filter((f) => f.caption === 'City').map((f) => fieldStatus(f, progressive, 'BusinessOwnerInfo', boi).rule), ['Business city', 'Owner home city']);
+  // Codex on PR #43: on a page recorded with names, one without a name may have lost it, and the
+  // live rule (looked for by name) wouldn't take it: can't tell, never covered.
+  const named = [{ q: '267', ref: 'AccountInput.BusinessName', caption: 'Business Name', kind: 'text' }, ...boi];
+  const city = fieldStatus(named[2], progressive, 'BusinessOwnerInfo', named);
+  assert.equal(city.status, 'unsure');
+  assert.equal(city.unnamed, true);
+  // A yes/no question that became a text box is not covered (as when filling: left unfamiliar).
+  assert.equal(fieldStatus({ caption: 'Does the customer haul hazardous materials?', kind: 'text' }, { rules: [{ page: 'X', ask: 'Does the customer haul hazardous materials?', kind: 'bool', value: () => false }], useGenericRules: false }, 'X').status, 'none');
+  // The trailer page carries the vehicle's data-model names: there they are the trailer's.
+  assert.equal(fieldStatus({ ref: 'RiskInput.VIN', caption: 'VIN', kind: 'text' }, progressive, 'AddTrailer').rule, 'trailers[].vin');
+  assert.equal(fieldStatus({ ref: 'RiskInput.VIN', caption: 'Vehicle Identification Number (VIN)', kind: 'text' }, progressive, 'AddVehicle').rule, 'vehicles[].vin');
   assert.equal(fieldStatus({ id: 'ownerDob', caption: 'owner dob' }, amwins).status, 'filled');
   assert.equal(fieldStatus({ dataId: 'gender', caption: 'Gender', kind: 'combo' }, amwins).status, 'filled');
   assert.equal(fieldStatus({ id: 'agnecyName', caption: 'agnecy name' }, amwins).status, 'ignored');
