@@ -16,7 +16,7 @@ const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
 // unlimited, long haul, nationwide, OTR, "48 states" / "lower 48", anywhere. Whole words only: a
 // bare "48" is 48 miles, and "any" must not be found inside "company".
 // "48 states" / "lower 48" name an area, and its 48 is not miles.
-const STATES_48 = /\b(?:(?:lower|all|continental|contiguous)[\s-]*48|48(?:[\s-]+[a-z.]+)?[\s-]*states?)\b/i;
+const STATES_48 = /\b(?:(?:lower|all|continental|contiguous)[\s-]*48|48(?:[\s-]+(?:continental|contiguous|u\.?s\.?))?[\s-]+states?)\b/i;
 // The other words say how far in general; an explicit mileage beside them ("anywhere within 100
 // miles", "OTR up to 500 miles") is the answer.
 const LONG_HAUL_WORDS = /\b(?:unlimited|long(?:[\s-]*(?:haul|distance))?|nation(?:al|wide)?|otr|over[\s-]*the[\s-]*road|any(?:where)?)\b/i;
@@ -53,11 +53,13 @@ export function parseRadius(v) {
 
 function readMiles(s) {
   const digits = s.replace(/(\d),(?=\d{3}\b)/g, '$1');
-  const m = digits.match(/^\D*?(\d+(?:\.\d+)?)\s*\+?\s*(?:-?\s*(miles?|mi)\b\.?\s*)?(?:(?:-|–|—|to|through|thru|and)\s*(\d+(?:\.\d+)?))?\s*(?:-\s*)?([a-z]+)?/i);
+  const m = digits.match(/^\D*?(\d+(?:\.\d+)?)\s*\+?\s*(?:-?\s*(?:(?:in[\s-]+state|interstate)[\s-]+)?(miles?|mi)\b\.?\s*)?(?:(?:-|–|—|to|through|thru|and)\s*(\d+(?:\.\d+)?))?\s*(?:-\s*)?([a-z]+)?/i);
   if (!m) return { miles: null, kind: 'text' };
   const [, from, mileUnit, to, word] = m;
   if (word && NOT_DISTANCE.test(word)) return { miles: null, kind: 'text' };
-  if (word && (NON_MILE_UNITS.test(word) || (!mileUnit && !MILE_UNIT.test(word) && !RADIUS_PROSE.test(word)))) return { miles: null, kind: 'unit' };
+  // After an explicit mile unit, 'in' introduces location prose; by itself it can mean inches.
+  const nonMileUnit = word && NON_MILE_UNITS.test(word) && !(mileUnit && /^in$/i.test(word));
+  if (word && (nonMileUnit || (!mileUnit && !MILE_UNIT.test(word) && !RADIUS_PROSE.test(word)))) return { miles: null, kind: 'unit' };
   if (to != null) return { miles: null, kind: 'range' };
   // One mileage only when no other number is left over ("100 miles / 500 miles" is not 100).
   if (/\d/.test(digits.slice(m.index + m[0].length))) return { miles: null, kind: 'text' };

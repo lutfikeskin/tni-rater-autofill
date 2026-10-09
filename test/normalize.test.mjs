@@ -164,6 +164,39 @@ test('radius: long-haul words do not hide invalid distances or unsupported units
   }
 });
 
+test('radius: in-state and interstate mileage never means the lower 48', () => {
+  for (const written of ['48 in-state miles', '48 in state miles', '48 interstate miles']) {
+    assert.deepEqual(parseRadius(written), { miles: 48, kind: 'miles' }, written);
+    assert.equal(isLongHaul(written), false, written);
+    const { record: r, warnings } = normalizeIntake({ ...raw, avg_radius: written });
+    assert.equal(r.operations.radius, written);
+    assert.equal(r.operations.radiusMiles, 48);
+    assert.ok(!warnings.some(w => w.code.startsWith('radius.')));
+    assert.equal(buildPlan(r, progressive).find(s => s.q === '2B9D').value, 48);
+    const plan = buildPlan(r, amwins);
+    assert.equal(plan.find(s => s.name === 'Radius').value, 48);
+    assert.match(plan.find(s => s.re === '^disclosure details$').value, /^48 miles radius/m);
+  }
+  for (const written of ['48 states', '48 contiguous states', '48 continental states', '48 US states', '48 U.S. states', '48-states', 'lower 48']) {
+    assert.deepEqual(parseRadius(written), { miles: null, kind: 'long-haul' }, written);
+  }
+});
+
+test('radius: in after an explicit mile unit is prose, while standalone inches need conversion', () => {
+  for (const written of ['100 miles in state', '100 miles in CA', '100 mi. in California', '100 miles in-state']) {
+    assert.deepEqual(parseRadius(written), { miles: 100, kind: 'miles' }, written);
+    const { record: r, warnings } = normalizeIntake({ ...raw, avg_radius: written });
+    assert.equal(r.operations.radius, written);
+    assert.ok(!warnings.some(w => w.code.startsWith('radius.')));
+    assert.equal(buildPlan(r, progressive).find(s => s.q === '2B9D').value, 100);
+    assert.equal(buildPlan(r, amwins).find(s => s.name === 'Radius').value, 100);
+  }
+  for (const written of ['100 in', '100in', '100 inches', '100 miles km', '100 in-state km']) {
+    assert.deepEqual(parseRadius(written), { miles: null, kind: 'unit' }, written);
+  }
+  assert.deepEqual(parseRadius('100 miles in CA / 200 miles in NV'), { miles: null, kind: 'text' });
+});
+
 test('parseRadius and isLongHaul', () => {
   assert.deepEqual(parseRadius('between 100 and 500'), { miles: null, kind: 'range' });
   assert.deepEqual(parseRadius('50-mile radius'), { miles: 50, kind: 'miles' });
