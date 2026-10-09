@@ -131,6 +131,7 @@ const NOT_MAPPED = {
     'applicant.email': 'the contact email box is the agency\'s / left as the page has it',
     'applicant.owner2': 'AmWINS asks for one owner',
     'operations.personalUse': 'not asked; usage is For Hire (derived) or the agent\'s',
+    'operations.vehicleOwnership': 'TNI answers not owned, leased and additional interest No; a lienholder or lessor is added after the quote',
     'operations.usesEld': 'not asked on the Business Auto application',
     'operations.eldBrand': 'not asked on the Business Auto application',
     'operations.needSr22': 'not asked on the Business Auto application',
@@ -193,12 +194,15 @@ test('a client fact the intake does not answer is manualOnly; answered, it is fi
   const blank = with_({ 'drivers.0.maritalStatus': null, 'applicant.yearEstablished': null, 'operations.vehicleOwnership': null, 'trailerInfo.ownership': null, 'applicant.dot': null, 'applicant.mcDotWithin60Days': null, 'claims.hasClaims': null });
   const a = buildPlan(blank, amwins, { drivers: 0, vehicles: 0 });
   const p = buildPlan(blank, progressive, { drivers: 0, vehicles: 0, trailers: 0 });
-  const unanswered = [named(a, /^Marital status/), bySel(a, '#yearBusinessEstablished'), named(a, /^Vehicles leased/), named(a, /^Vehicles not owned/),
-    named(a, /^Additional interest/), named(a, /convictions/i), byQ(p, '2CA7'), byQ(p, '2AD0'), byQ(p, '1ED')];
+  const unanswered = [named(a, /^Marital status/), byQ(p, '2CA7'), byQ(p, '2AD0'), byQ(p, '1ED')];
   for (const step of unanswered) {
     assert.ok(step, 'step present');
     assert.equal(step.value, null, step.name);
     assert.equal(step.manualOnly, true, step.name);
+  }
+  // TNI's standard No on AmWINS, whatever the intake leaves blank (2026-10-09).
+  for (const step of [named(a, /^Vehicles leased/), named(a, /^Vehicles not owned/), named(a, /^Additional interest/), named(a, /convictions/i)]) {
+    assert.deepEqual([step.value, step.source, step.manualOnly], [false, 'standard', false], step.name);
   }
   const full = expediter();
   const fa = buildPlan(full, amwins, { drivers: 0, vehicles: 0 });
@@ -211,39 +215,27 @@ test('a client fact the intake does not answer is manualOnly; answered, it is fi
   assert.equal(named(fa, /^Waiver type/).manualOnly, false);
 });
 
-test('a leased vehicle: AmWINS not-owned Yes, leased to others the agent\'s, Progressive loan/lease "Yes - Lease"', () => {
-  const r = with_({ 'operations.vehicleOwnership': 'Leased' });
-  const a = buildPlan(r, amwins, {});
-  assert.equal(named(a, /^Vehicles not owned/).value, true);
-  // Codex on 2dcd1e8: "Are any vehicles leased to others?" isn't answered by leasing from a lessor.
-  const toOthers = named(a, /^Vehicles leased to others/);
-  agentsNote(toOthers);
-  assert.deepEqual([toOthers.source, toOthers.manualOnly], ['fact', true]);
-  assert.match(toOthers.note, /leased to others/);
-  agentsNote(named(a, /^Additional interest/));
-  assert.match(named(a, /^Additional interest/).note, /lienholder|lessor|leased/i);
-  assert.equal(byQ(buildPlan(r, progressive, {}), '2CA7').value, 'Yes - Lease');
-  const owned = buildPlan(expediter(), amwins, {});
-  assert.deepEqual([named(owned, /^Vehicles leased to others/).value, named(owned, /^Vehicles not owned/).value, named(owned, /^Additional interest/).value], [null, false, false]);
-  agentsNote(named(owned, /^Vehicles leased to others/));
-  const financed = buildPlan(with_({ 'operations.vehicleOwnership': 'Financed' }), amwins, {});
-  assert.deepEqual([named(financed, /^Vehicles leased to others/).value, named(financed, /^Vehicles not owned/).value], [null, false]);
-  agentsNote(named(financed, /^Additional interest/));
+test('a leased or financed vehicle: AmWINS ownership questions stay No (TNI), Progressive loan/lease follows the intake', () => {
+  // TNI 2026-10-09: not owned, leased to others and additional interest are No on every intake;
+  // a lienholder or lessor is added after the quote.
+  for (const ownership of ['Leased', 'Financed', 'Owned', null]) {
+    const a = buildPlan(with_({ 'operations.vehicleOwnership': ownership }), amwins, {});
+    for (const re of [/^Vehicles not owned/, /^Vehicles leased to others/, /^Additional interest/]) {
+      assert.deepEqual([named(a, re).value, named(a, re).source, named(a, re).note ?? null], [false, 'standard', null], `${ownership}: ${named(a, re).name}`);
+    }
+  }
+  assert.equal(byQ(buildPlan(with_({ 'operations.vehicleOwnership': 'Leased' }), progressive, {}), '2CA7').value, 'Yes - Lease');
   assert.equal(byQ(buildPlan(with_({ 'operations.vehicleOwnership': 'Financed' }), progressive, {}), '2CA7').value, 'Yes - Loan');
 });
 
-test('claims Yes: convictions are the agent\'s (a combined claims / violations Yes is not convictions), prior loss Yes', () => {
-  const plan = buildPlan(with_({ 'claims.hasClaims': true }), amwins, {});
-  const convictions = named(plan, /convictions/i);
-  agentsNote(convictions);
-  assert.equal(convictions.source, 'derived');
-  assert.equal(named(plan, /^Any prior loss/).value, true);
-  const none = buildPlan(expediter(), amwins, {});
-  assert.equal(named(none, /convictions/i).value, false);
-  assert.equal(named(none, /^Any prior loss/).value, false);
-  agentsNote(named(buildPlan(with_({ 'claims.hasClaims': null }), amwins, {}), /convictions/i));
-  // Never Yes, whatever the intake says.
-  for (const r of RECORDS()) assert.notEqual(named(buildPlan(r, amwins, {}), /convictions/i).value, true);
+test('convictions are TNI\'s standard No whatever the claims answer; prior loss follows the intake', () => {
+  for (const hasClaims of [true, false, null]) {
+    const plan = buildPlan(with_({ 'claims.hasClaims': hasClaims }), amwins, {});
+    const convictions = named(plan, /convictions/i);
+    assert.deepEqual([convictions.value, convictions.source, convictions.manualOnly], [false, 'standard', false], String(hasClaims));
+  }
+  assert.equal(named(buildPlan(with_({ 'claims.hasClaims': true }), amwins, {}), /^Any prior loss/).value, true);
+  assert.equal(named(buildPlan(expediter(), amwins, {}), /^Any prior loss/).value, false);
 });
 
 test('AmWINS prior loss preserves unknown claims and explicit Yes / No', () => {
@@ -311,14 +303,12 @@ test('attached equipment of $5,000 on the intake: entered, never "no equipment"'
   assert.deepEqual([rates(null).source, rates(null).standard, rates(2500).source, rates(2500).value], ['standard', true, 'derived', false]);
 });
 
-test('missing ownership: loan / lease, leased, not owned and additional interest are the agent\'s', () => {
+test('missing ownership: Progressive\'s loan / lease questions are the agent\'s', () => {
   const r = with_({ 'operations.vehicleOwnership': null, 'trailerInfo.ownership': null });
   const p = buildPlan(r, progressive, { trailers: 0 });
   agentsNote(byQ(p, '2CA7'));
   agentsNote(byQ(p, '2AD0'));
   assert.match(byQ(p, '2AD0').note, /trailer ownership/i);
-  const a = buildPlan(r, amwins, {});
-  for (const re of [/^Vehicles leased to others/, /^Vehicles not owned/, /^Additional interest/]) agentsNote(named(a, re));
   // Owned stays No (vehicle and trailer).
   const owned = buildPlan(expediter(), progressive, { trailers: 0 });
   assert.deepEqual([byQ(owned, '2CA7').value, byQ(owned, '2AD0').value], ['No', 'No']);
@@ -367,10 +357,24 @@ test('facts the intake lacks are left to the agent: Progressive attestations, Am
   }
   assert.equal(bySel(a, '#driversPanel [data-id="martialStatus"]').value, null, 'no marital status on the intake: left blank, no Married default');
   assert.equal(bySel(a, '#driversPanel [data-id="martialStatus"]').warn, null);
-  assert.equal(bySel(a, '#yearBusinessEstablished').value, null, 'no year established: no current-year default');
+  assert.equal(bySel(a, '#yearBusinessEstablished').value, new Date().getFullYear(), 'no year established: this year (TNI standard)');
   const given = buildPlan(expediter(), amwins, {});
   assert.equal(bySel(given, '#driversPanel [data-id="martialStatus"]').value, 'Married', 'the intake\'s marital status is filled');
   assert.equal(bySel(given, '#yearBusinessEstablished').value, 2019);
+});
+
+test('AmWINS years in business blank on the intake: TNI\'s standard 0 years, established this year', () => {
+  const blank = buildPlan(with_({ 'applicant.yearEstablished': null, 'applicant.yearsInBusiness': null, 'applicant.yearsExperience': null }), amwins, {});
+  const years = bySel(blank, '#yrsInBusiness');
+  const est = bySel(blank, '#yearBusinessEstablished');
+  assert.deepEqual([years.value, years.source, years.manualOnly], ['New Venture', 'standard', false]);
+  assert.deepEqual([est.value, est.source, est.manualOnly], [new Date().getFullYear(), 'standard', false]);
+  // Any answer on the intake wins, and is derived.
+  const given = buildPlan(expediter(), amwins, {});
+  assert.deepEqual([bySel(given, '#yrsInBusiness').value, bySel(given, '#yrsInBusiness').source], ['5+', 'derived']);
+  assert.deepEqual([bySel(given, '#yearBusinessEstablished').value, bySel(given, '#yearBusinessEstablished').source], [2019, 'derived']);
+  const three = buildPlan(with_({ 'applicant.yearEstablished': null, 'applicant.yearsInBusiness': 3 }), amwins, {});
+  assert.deepEqual([bySel(three, '#yrsInBusiness').value, bySel(three, '#yearBusinessEstablished').value], ['3', new Date().getFullYear()]);
 });
 
 test('derived values that did not move: exclude driver No, for-hire Yes for expediters and freight haulers, note otherwise', () => {

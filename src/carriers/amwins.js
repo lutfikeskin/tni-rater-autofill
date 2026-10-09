@@ -15,9 +15,9 @@
 //
 // Rule sources (plan.js `source`): `derived` reads the intake, `standard` is TNI's coverage or
 // workflow choice (tagged in the panel; a check item in review mode), `fact` / `attestation` is
-// never filled (2026-10-09: gender, year licensed, blank year established, current-carrier tenure,
-// loss runs and blank marital status are the agent's; leased / not owned, convictions, additional
-// interest and attached equipment follow the intake).
+// never filled (2026-10-09: gender, year licensed, current-carrier tenure, loss runs and blank
+// marital status are the agent's; attached equipment follows the intake; additional interest and
+// the underwriting questions are No, and a blank years in business is a new venture).
 //
 // Third quote (2026-10-02): the contact is the client (name and phone), the garage address boxes
 // (no ids) are filled from the intake, each "Exclude …" box gets its own rule, "Default all
@@ -70,26 +70,6 @@ const entityTypeNote = (r) => (entityType(r) == null
 // assistant leaves it).
 const fact = (name, note) => ({ name, source: 'fact', note });
 
-// The intake's vehicle ownership (one answer for all the vehicles): leased means a vehicle is not
-// solely owned by the applicant; owned or financed means it is; none given is the agent's. It
-// doesn't say whether vehicles are leased out to others. A financed or
-// leased vehicle likely has a lienholder or lessor as an additional interest: the agent's; owned
-// has none.
-const ownership = (r) => String(r.operations?.vehicleOwnership ?? '').trim();
-const leased = (r) => (/leas/i.test(ownership(r)) ? true : /^owned?$|financ|loan/i.test(ownership(r)) ? false : null);
-const ownershipNote = (what) => (r) => (leased(r) == null
-  ? (ownership(r) ? `The intake's vehicle ownership "${ownership(r)}" isn't owned, financed or leased: answer ${what} yourself.` : `The intake has no vehicle ownership answer: answer ${what} yourself.`) : null);
-const additionalInterest = (r) => (/^owned?$/i.test(ownership(r)) ? false : null);
-const additionalInterestNote = (r) => (/financ|loan|leas/i.test(ownership(r))
-  ? `The vehicles are ${ownership(r).toLowerCase()}, so a lienholder or lessor is likely an additional interest: answer it yourself.` : ownershipNote('the additional interest question')(r));
-
-// Convictions / moving violations: No when the intake says no claims or violations. A Yes to the
-// intake's combined "claims / violations" doesn't establish convictions, so it's the agent's, as
-// is no answer. Never filled Yes.
-const convictions = (r) => (r.claims?.hasClaims === false ? false : null);
-const convictionsNote = (r) => (r.claims?.hasClaims === true ? 'The intake reports claims or violations: whether there were convictions or moving violations is yours to answer.'
-  : r.claims?.hasClaims === false ? null : 'The intake doesn\'t answer the claims / violations question: answer convictions / moving violations yourself.');
-
 // Permanently attached equipment: any value on the intake is the agent's (AmWINS asks Yes / No and
 // details); none given is No, TNI's standard (as Progressive's "no equipment"), and an explicit $0
 // on the intake is No derived from it.
@@ -106,12 +86,18 @@ const ownerFull = (r) => {
   return name || r.applicant.owner1 || null;
 };
 
-// Years in business: the intake's years in business, else its years under own authority.
+// Years in business: the intake's years in business, else its years under own authority; neither
+// is TNI's standard 0, a new venture established this year (2026-10-09). Check intake warns
+// (years-in-business.default), and Luna points out a claims-box line saying how long it has run.
+const businessYears = (r) => r.applicant.yearsInBusiness ?? r.applicant.yearsExperience ?? null;
 const yearsInBusiness = (r) => {
-  const n = r.applicant.yearsInBusiness ?? r.applicant.yearsExperience;
-  if (n == null) return null;
+  const n = businessYears(r) ?? 0;
   return n < 1 ? 'New Venture' : n >= 5 ? '5+' : String(n);
 };
+const yearsSource = (r) => (businessYears(r) == null ? 'standard' : 'derived');
+// Year established: the intake's, else this year (TNI's standard, as on the recorded quotes).
+const yearEstablished = (r) => r.applicant.yearEstablished ?? new Date().getFullYear();
+const establishedSource = (r) => (r.applicant.yearEstablished == null ? 'standard' : 'derived');
 
 // Expediters and general freight haulers are 484122 (general freight trucking, long-distance,
 // LTL), nature of business TRANSPORTATION, usage FOR HIRE and the for-hire description. Any other
@@ -169,8 +155,8 @@ const bodyType = (r, a) => {
   const t = r.vehicles?.[a.vehicles ?? 0]?.type ?? null;
   return t && /^van$/i.test(t.trim()) ? 'Cargo Van' : t;
 };
-// Underwriting questions TNI answers No (both sections), by the field names AmWINS uses. Those
-// about the client's own facts (vehicles leased / not owned, convictions) have their own rules.
+// Underwriting questions TNI answers No (both sections), by the field names AmWINS uses.
+// The second section's vehicle, MVR and conviction questions have their own rules below.
 const UNDERWRITING_NO = [
   'subsidiary to other', 'subsidiary', 'safety info', 'hazard exposure', 'other insurance', 'coverage denial',
   'past criminal activity', 'criminal activity in past ?5 ?years', 'code vo\\w*ation', 'finacial default', 'financial default',
@@ -301,9 +287,8 @@ export const amwins = {
     { selector: '#mailingZip', path: 'garaging.zip' },
     { selector: '#businessPhone', name: 'Business phone', source: 'derived', value: (r) => digits(r.applicant.phone) },
     { selector: '#entityType', name: 'Entity type (from the company name)', kind: 'choice', source: 'derived', clientFact: true, value: entityType, note: entityTypeNote },
-    { selector: '#yrsInBusiness', name: 'Years in business', kind: 'choice', source: 'derived', value: yearsInBusiness },
-    // From the intake; blank there is the agent's (2026-10-09; until then this year was filled in).
-    { selector: '#yearBusinessEstablished', name: 'Year established', path: 'applicant.yearEstablished', clientFact: true },
+    { selector: '#yrsInBusiness', name: 'Years in business (standard when blank: New Venture)', kind: 'choice', source: yearsSource, value: yearsInBusiness },
+    { selector: '#yearBusinessEstablished', name: 'Year established (standard when blank: this year)', kind: 'int', source: establishedSource, value: yearEstablished },
     { name: 'Non-profit (standard: No)', label: '^is non profit$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Single contact (standard: Yes)', label: '^is single contact$', kind: 'bool', source: 'standard', value: () => true },
     { name: 'Garage address same as mailing (standard)', label: '^same as mailing address', kind: 'bool', source: 'standard', value: () => true },
@@ -316,7 +301,8 @@ export const amwins = {
     { selector: '#retailOrServiceOperationPert', name: 'Retail / service operations % (standard: 0)', source: 'standard', value: () => '0' },
     { selector: '#classCodeAndDescription', name: 'Classification (484122 for expediters / general freight)', kind: 'search-select', source: 'derived', search: classSearch, value: classChoice, note: freightNote('The classification') },
     { selector: '#operationDescription', name: 'Description of operations (for hire, for expediters / general freight)', source: 'derived', value: operationsDescription, note: freightNote('The description of operations') },
-    { name: 'Additional interest (from the vehicle ownership)', label: '^has additional interest$', kind: 'bool', source: 'derived', clientFact: true, value: additionalInterest, note: additionalInterestNote },
+    // Lienholders and lessors are added after the quote (TNI, 2026-10-09).
+    { name: 'Additional interest (standard: No)', label: '^has additional interest$', kind: 'bool', source: 'standard', value: () => false },
     { selector: '#waiverType', name: 'Waiver type (standard: NONE)', kind: 'choice', source: 'standard', value: () => 'NONE' },
     // Filing counts: skipped (TNI).
     ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map((selector) => ({ selector, name: 'Filing count (skipped)', ignore: true })),
@@ -408,16 +394,13 @@ export const amwins = {
       label: `^ex\\w*de\\b.*(${topic})`, not: 'waiver', kind: 'bool', source: 'standard', value: () => false })),
 
     // --- Underwriting questions --------------------------------------------------------------------
-    // "Are any vehicles … not solely owned by and registered to the applicant?" (encumbrances
-    // excepted): from the intake's vehicle ownership (2026-10-09; until then always No): leased is
-    // Yes; owned or financed (a lien is an encumbrance) is No.
-    { name: 'Vehicles not owned (from the vehicle ownership)', label: '^any vehicle not owned$', kind: 'bool', source: 'derived', clientFact: true, value: leased, note: ownershipNote('whether any vehicle is not owned') },
-    // "Are any vehicles leased to others?": leasing a vehicle from a lessor (the intake's ownership)
-    // says nothing about leasing vehicles out, and the intake has no such answer: the agent's.
-    { label: '^vehicle leased$', kind: 'bool', ...fact('Vehicles leased to others', 'Whether any vehicle is leased to others isn\'t on the intake (its vehicle ownership is about leasing from a lessor): answer it yourself.') },
+    // TNI answers this section No (2026-10-09), also when the intake reports claims or leased
+    // vehicles; hazardous material is the intake's answer.
+    { name: 'Vehicles not owned (standard: No)', label: '^any vehicle not owned$', kind: 'bool', source: 'standard', value: () => false },
+    { name: 'Vehicles leased to others (standard: No)', label: '^vehicle leased$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'MVR verification (standard: No)', label: '^mvr verification$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Owned unscheduled vehicles (standard: No)', label: '^owned unscheduled vehicle$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'Convictions / moving violations (No when the intake reports none)', label: '^convictions moving violations$', kind: 'bool', source: 'derived', clientFact: true, value: convictions, note: convictionsNote },
+    { name: 'Convictions / moving violations (standard: No)', label: '^convictions moving violations$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Hazardous material', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat' },
     ...UNDERWRITING_NO.map((q) => ({ name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
     // Yes again after "Default all answers to No".

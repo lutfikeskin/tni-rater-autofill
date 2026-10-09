@@ -54,9 +54,10 @@ console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.
 await panel.bringToFront();
 await panel.click('#fill');
 // These are explicit synthetic agent answers for this workflow test, not facts inferred from
-// the PDF. Never dismiss a review item or inject protected keys to make navigation succeed.
+// the PDF (additional interest and vehicles leased are TNI's standard No since 2026-10-09: the
+// extension fills them, and EXACT below still checks both). Never dismiss a review item or
+// inject protected keys to make navigation succeed.
 const AGENT_ANSWERS = [
-  ['Insured Info', /^has additional interest$/i, 'input[name="hasAdditionalInterest"][value="0"]', '0'],
   ['Insured Info', /^valued loss runs$/i, 'input[name="valuedLossRuns"][value="0"]', '0'],
   ['Insured Info', /^how long with current carrier$/i, '#howLongWithCurrentCarrier', '1 TO 2 YEARS'],
   ['Insured Info', /^can provide claim free loss run$/i, 'input[name="canProvideClaimFreeLossRun"][value="0"]', '0'],
@@ -64,7 +65,6 @@ const AGENT_ANSWERS = [
     ['Drivers', /^gender$/i, `#driversPanel .app-rp-section[data-id="${row}"] [data-id="gender"]`, row ? 'FEMALE' : 'MALE'],
     ['Drivers', /^license year/i, `#driversPanel .app-rp-section[data-id="${row}"] [data-id="licenseYear"]`, row ? '2013' : '2006'],
   ]),
-  ['Underwriting', /^vehicle leased$/i, 'input[name="vehicleLeased"][value="0"]', '0'],
 ];
 const manualFailures = [], agentAnswered = new Set();
 const answeredSteps = new Map();

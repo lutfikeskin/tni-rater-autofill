@@ -2261,7 +2261,8 @@ async function aiSettings() {
 }
 
 // Luna reads the claims box once per intake (reviewNotes in src/ai/luna.js): lines that may name
-// non-trucking liability or ask for a coverage change become Check intake items, and the tab
+// non-trucking liability, ask for a coverage change or say how long the business has run (when
+// that differs from the intake) become Check intake items, and the tab
 // count goes up (the panel doesn't switch steps under the agent). Flags only; the agent decides.
 // Logged as counts, never the text. A review that failed says so on Check intake and is tried
 // again when the assistant settings change (`retry`), not on every panel reload. What it read
@@ -2292,7 +2293,7 @@ function claimsTextEdited(intake) {
 function supersedeClaimsItems(intake) {
   const truncated = claimsTruncated(intake.record.claims?.text);
   intake.warnings.forEach((w, i) => {
-    if (['ai.ntl', 'ai.coverage-change'].includes(w.code) || (w.code === 'ai.claims-truncated' && !truncated)) {
+    if (['ai.ntl', 'ai.coverage-change', 'ai.years-in-business'].includes(w.code) || (w.code === 'ai.claims-truncated' && !truncated)) {
       if (w.code === 'ai.ntl' && intake.record.claims) intake.record.claims.aiNtl = false;
       intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box since edited: ${w.msg}` };
     }

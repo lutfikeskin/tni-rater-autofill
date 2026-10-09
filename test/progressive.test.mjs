@@ -299,8 +299,8 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
   assert.equal(sel('#ownerName').value, 'IBRAHIM ALHARAZ');
   assert.equal(sel('#ownerDob').value, '01/01/1968');
   assert.equal(sel('#yrsInBusiness').value, '5+', 'years under own authority 7');
-  assert.equal(sel('#yearBusinessEstablished').value, null, 'blank on the intake: the agent\'s, not this year (2026-10-09)');
-  assert.equal(sel('#yearBusinessEstablished').path, 'applicant.yearEstablished');
+  assert.equal(sel('#yearBusinessEstablished').value, new Date().getFullYear(), 'blank on the intake: this year (TNI standard)');
+  assert.equal(sel('#yearBusinessEstablished').source, 'standard');
   assert.equal(sel('#classCodeAndDescription').kind, 'search-select');
   assert.equal(sel('#classCodeAndDescription').search, '484122');
   const prior = plan.filter((x) => /^Prior carrier/.test(x.name));
@@ -381,8 +381,10 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
     for (const label of LABELS) assert.equal(mine.filter((s) => new RegExp(s.re, 'i').test(label)).length, 1, `vehicle ${row + 1}: ${label}`);
   }
   assert.ok(plan.some((s) => s.re && new RegExp(s.re, 'i').test('code voilation')), 'the page spells it "voilation"');
-  assert.equal(named(/^Vehicles leased to others/)[0].value, null, 'not on the intake: the agent\'s (2026-10-09; always No before)');
-  assert.equal(named(/^Vehicles leased to others/)[0].source, 'fact');
+  for (const re of [/^Vehicles leased to others/, /^Vehicles not owned/, /^Convictions/, /^Additional interest/]) {
+    assert.equal(named(re)[0].value, false, `${re}: TNI's standard No (2026-10-09)`);
+    assert.equal(named(re)[0].source, 'standard');
+  }
   assert.equal(named(/^Body type/)[0].replace, true);
   assert.equal(named(/^Other topics/)[0].replace, true, 'Yes again after Default all answers to No');
   const actions = plan.filter((s) => s.kind === 'action');

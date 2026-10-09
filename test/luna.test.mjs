@@ -377,7 +377,7 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.deepEqual(body.text.format.schema.properties.lines.required, ['l0', 'l1', 'l2', 'l3']);
   assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'nothing to read');
 
-  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
+  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange, businessYears: null, businessSince: null }])) });
   // coverageChange means a change other than NTL (NTL has its own flag).
   const json = flags([[false, true], [true, false], [false, false], [false, false]]);
   const results = parseNotesReview(json, review);
@@ -404,7 +404,7 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.match(JSON.parse(JSON.stringify(mixed.body)).instructions, /other than non-trucking liability \(that is the ntl question\)/);
 
   assert.throws(() => parseNotesReview(flags([[false, true]]), review), AssistError, 'a missing line fails the whole review');
-  assert.throws(() => parseNotesReview(envelope({ lines: { l0: { ntl: 'yes', coverageChange: false }, l1: { ntl: false, coverageChange: false }, l2: { ntl: false, coverageChange: false }, l3: { ntl: false, coverageChange: false } } }), review), AssistError);
+  assert.throws(() => parseNotesReview(envelope({ lines: { l0: { ntl: 'yes', coverageChange: false, businessYears: null, businessSince: null }, l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null }, l2: { ntl: false, coverageChange: false, businessYears: null, businessSince: null }, l3: { ntl: false, coverageChange: false, businessYears: null, businessSince: null } } }), review), AssistError);
   assert.throws(() => parseNotesReview({ ...json, model: 'other-model' }, review), AssistError, 'an unexpected model fails');
 
   let sent;
@@ -435,14 +435,14 @@ test('non-trucking liability questions stay with the agent', () => {
 // Codex on PR #22: counts are lines, not cards; a long claims box says what wasn't read.
 test('claims-box review counts flagged lines and says when the box was too long to read whole', async () => {
   const mixed = { coverage: {}, claims: { text: 'No\nNeeds bobtail and physical damage\nFinanced' } };
-  const two = (body) => envelope({ lines: { l0: { ntl: true, coverageChange: true }, l1: { ntl: false, coverageChange: false } } });
+  const two = (body) => envelope({ lines: { l0: { ntl: true, coverageChange: true, businessYears: null, businessSince: null }, l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null } } });
   const done = await reviewNotes(mixed, { apiKey: 'k' }, { call: async ({ body }) => two(body) });
   assert.deepEqual(done.warnings.map((w) => w.code), ['ai.coverage-change'], 'the intake quotes the bobtail line');
   assert.equal(done.flagged, 1);
   assert.equal(done.lines, 2);
   assert.ok(done.warnings.every((w) => !('line' in w)), 'no extra fields on the intake items');
   const long = { coverage: {}, claims: { text: Array.from({ length: 25 }, (_, i) => `Line number ${i + 1} about the truck`).join('\n') } };
-  const all = await reviewNotes(long, { apiKey: 'k' }, { call: async ({ body }) => envelope({ lines: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).claimsBox).map((id) => [id, { ntl: false, coverageChange: false }])) }) });
+  const all = await reviewNotes(long, { apiKey: 'k' }, { call: async ({ body }) => envelope({ lines: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).claimsBox).map((id) => [id, { ntl: false, coverageChange: false, businessYears: null, businessSince: null }])) }) });
   assert.equal(all.lines, 20);
   assert.deepEqual(all.warnings.map((w) => [w.code, w.level]), [['ai.claims-truncated', 'check']]);
   assert.match(all.warnings[0].msg, /first 20 lines only/);
@@ -450,7 +450,7 @@ test('claims-box review counts flagged lines and says when the box was too long 
 
 // Codex on PR #22: a later "NTL" line isn't the quoted "Does not want NTL"; "GL" alone is read.
 test('claims-box review: only the quoted line\'s own sentences are the intake\'s, and short coverage words are read', () => {
-  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
+  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange, businessYears: null, businessSince: null }])) });
   const review = buildNotesReview({ coverage: {}, claims: { text: 'No\nDoes not want NTL\nNTL' } });
   assert.deepEqual(review.lines, ['Does not want NTL', 'NTL']);
   assert.deepEqual(review.quotedFragments, ['Does not want NTL']);
@@ -458,4 +458,39 @@ test('claims-box review: only the quoted line\'s own sentences are the intake\'s
     [['ai.ntl', 'NTL']], 'the later positive line keeps its item');
   assert.deepEqual(buildNotesReview({ coverage: { gl: false }, claims: { text: 'No\nGL' } }).lines, ['GL']);
   assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'a bare No is still nothing to read');
+});
+
+// WA run 2026-10-09: year established blank, "in Biz for 3+ years" in the claims box. Luna copies
+// the stated years (or start year); code compares them with the intake's and tells the agent.
+test('claims-box review: a stated time in business the intake lacks or contradicts is a check item', async () => {
+  const today = new Date('2026-10-09');
+  const record = (applicant) => ({ applicant, coverage: {}, claims: { text: '1 AF in 2024\nin Biz for 3+ years' } });
+  const answer = (l1) => envelope({ lines: {
+    l0: { ntl: false, coverageChange: false, businessYears: null, businessSince: null },
+    l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, ...l1 } } });
+  const blank = buildNotesReview(record({ yearsInBusiness: null, yearsExperience: null }), { today });
+  const schema = blank.body.text.format.schema.properties.lines.properties.l0;
+  assert.deepEqual(schema.required, ['ntl', 'coverageChange', 'businessYears', 'businessSince']);
+  assert.deepEqual(schema.properties.businessYears.type, ['integer', 'null']);
+  assert.match(blank.body.instructions, /Do not calculate/);
+
+  const items = notesWarnings(parseNotesReview(answer({ businessYears: 3 }), blank), blank);
+  assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.years-in-business', 'applicant.yearsInBusiness', 'check']]);
+  assert.match(items[0].msg, /"in Biz for 3\+ years" \(3 years\).*blank on the intake.*New Venture/);
+  // A start year: code counts the years.
+  assert.match(notesWarnings(parseNotesReview(answer({ businessSince: 2021 }), blank), blank)[0].msg, /\(5 years\)/);
+  // The intake agrees: nothing to say; it disagrees: say both.
+  const three = buildNotesReview(record({ yearsInBusiness: 3 }), { today });
+  assert.deepEqual(notesWarnings(parseNotesReview(answer({ businessYears: 3 }), three), three), []);
+  const one = buildNotesReview(record({ yearsInBusiness: null, yearsExperience: 1 }), { today });
+  assert.match(notesWarnings(parseNotesReview(answer({ businessYears: 3 }), one), one)[0].msg, /but the intake gives 1/);
+  // Nothing stated: no item.
+  assert.deepEqual(notesWarnings(parseNotesReview(answer({}), blank), blank), []);
+  // Out-of-range answers fail the review.
+  for (const bad of [{ businessYears: -1 }, { businessYears: 2.5 }, { businessYears: 101 }, { businessSince: 2027 }, { businessSince: 1900 }, { businessYears: '3' }]) {
+    assert.throws(() => parseNotesReview(answer(bad), blank), AssistError, JSON.stringify(bad));
+  }
+  const done = await reviewNotes(record({ yearsInBusiness: null }), { apiKey: 'k' }, { today, call: async () => answer({ businessYears: 3 }) });
+  assert.deepEqual(done.warnings.map((w) => w.code), ['ai.years-in-business']);
+  assert.equal(done.flagged, 1);
 });
