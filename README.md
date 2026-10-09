@@ -19,7 +19,7 @@ Agents install it from its private Chrome Web Store listing (see [docs/chrome-we
 ## Using it
 
 1. Drop the client's intake PDF into the side panel.
-2. Work through **Check before quoting**. These are things the form got wrong or left ambiguous, such as an address with no commas, a VIN that fails its check digit, answers typed into the claims box, or a missing vehicle ownership answer. Edit any value in the sections below; your edits are what gets filled.
+2. Work through **Check before quoting**. These are things the form got wrong or left ambiguous, such as an address with no commas, a VIN that fails its check digit, answers typed into the claims box, a radius given as a range or in kilometres, or a missing or unclear vehicle ownership answer. Edit any value in the sections below; your edits are what gets filled.
 3. Open the rater page and click **Fill this page**. If the client has several drivers or vehicles, pick which one the current page is about first.
 4. Look at the marks on the page:
    - **green**: filled by a rule, using intake data or a programmed standard
