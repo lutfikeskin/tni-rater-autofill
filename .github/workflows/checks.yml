@@ -1,4 +1,4 @@
-# Critical PR checks only. Run browser and carrier suites locally.
+# Unit and package checks on both platforms; browser checks live in windows-smoke.yml.
 name: Checks
 
 on:

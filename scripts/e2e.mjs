@@ -11,7 +11,7 @@
 //   npm run e2e -- --renumber   # every question renumbered, as Progressive did on 2026-10-07: the
 //                               # results must equal the baseline (questions are found by name/text)
 //
-// A local check: CI runs only the unit tests and packaging (docs/testing.md, since 2026-10-05).
+// Runs locally and in Windows CI; see docs/testing.md for the required checks.
 // Layouts: test/bakeoff/course-*.json, captures/progressive/*.json and the per-state layouts
 // npm run layouts builds (captures/progressive/generated/, git-ignored). Needs internet (the
 // replay page loads ExtJS from cdnjs) and Playwright's Chromium (npx playwright install chromium).

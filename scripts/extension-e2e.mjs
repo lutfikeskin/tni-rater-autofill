@@ -70,6 +70,51 @@ const answeredSteps = new Map();
 let reachedDeclaration = false;
 const atStep = () => mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), saves: window.__amwinsMock.saves }));
 const idlePanel = () => panel.waitForFunction(() => !document.querySelector('#fill').disabled && document.querySelector('#report .summary'), null, { timeout: 20000 });
+const recorderContext = await sw.evaluate(async url => {
+  const tab = (await chrome.tabs.query({})).find(tab => tab.url === url);
+  const { session } = await chrome.storage.session.get('session');
+  return { tabId: tab?.id, scope: session?.intakeId };
+}, mock.url());
+if (!Number.isInteger(recorderContext.tabId) || !recorderContext.scope) throw new Error('The mock tab or intake recorder scope is missing.');
+const recordedKey = async selector => {
+  const [{ result: key }] = await sw.evaluate(async ({ tabId, selector }) => chrome.scripting.executeScript({
+    target: { tabId, frameIds: [0] }, world: 'ISOLATED', args: [selector],
+    func: selector => globalThis.__raterFieldKey?.(document.querySelector(selector)),
+  }), { tabId: recorderContext.tabId, selector });
+  if (!key) throw new Error(`The recorder field key is missing: ${selector}`);
+  return key;
+};
+const acknowledgedEdit = async key => {
+  try {
+    await panel.waitForFunction(async ({ tabId, scope, key }) => {
+      const { agentEditedKeys = [] } = await chrome.storage.local.get('agentEditedKeys');
+      return agentEditedKeys.some(record => record.tabId === tabId && record.scope === scope && record.keys.includes(key));
+    }, { ...recorderContext, key }, { timeout: 15000, polling: 100 });
+  } catch (error) {
+    throw new Error(`The recorder did not acknowledge the trusted agent edit: ${key}`, { cause: error });
+  }
+};
+const resumeFromPanel = async () => {
+  await idlePanel();
+  const oldSummary = await panel.locator('#report .summary').elementHandle();
+  const deadline = Date.now() + 15000;
+  try {
+    // Automatic follow-ups do not always disable Fill or replace the report. A click while
+    // one is running is ignored. An accepted ordinary Fill removes this summary before it
+    // runs; observing that removal also catches a fill that starts and finishes very quickly.
+    while (await oldSummary.evaluate(node => node.isConnected)) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw new Error('The panel did not accept Fill after the recorder acknowledged the agent answers.');
+      try {
+        await panel.click('#fill', { timeout: Math.min(1000, remaining) });
+        await panel.waitForFunction(node => !node.isConnected, oldSummary, { timeout: Math.min(250, Math.max(1, deadline - Date.now())) });
+      } catch (error) {
+        if (error.name !== 'TimeoutError') throw error;
+      }
+    }
+    await idlePanel();
+  } finally { await oldSummary.dispose(); }
+};
 for (let round = 0; round < 20; round++) {
   await idlePanel();
   await mock.waitForTimeout(1500); // the carrier's background save/reload and next-page fill
@@ -110,6 +155,7 @@ for (let round = 0; round < 20; round++) {
     break;
   }
   for (const [, , selector, value] of answers) {
+    const key = await recordedKey(selector);
     const control = mock.locator(selector);
     const blank = await control.evaluate(el => el.type === 'radio'
       ? ![...document.querySelectorAll(`input[name="${el.name}"]`)].some(r => r.checked) : !el.value);
@@ -143,13 +189,19 @@ for (let round = 0; round < 20; round++) {
       await control.press('Tab');
     }
     if (!await control.evaluate((el, want) => el.__harnessTrustedChange && el.value === want, value)) manualFailures.push(`No trusted agent change: ${selector}`);
+    await acknowledgedEdit(key);
     agentAnswered.add(selector);
   }
   answeredSteps.set(before.step, before.saves);
-  await idlePanel();
   // A trusted edit can schedule a follow-up fill; the explicit panel click is still the
   // ordinary resume action and must preserve every correction the recorder just observed.
-  await panel.click('#fill');
+  await resumeFromPanel();
+  const afterResume = await atStep();
+  const freshNeeds = await panel.locator('#report .need .row-text b').allTextContents();
+  if (afterResume.step === before.step && freshNeeds.some(label => answers.some(([, re]) => re.test(label)))) {
+    manualFailures.push(`The fresh report still needs acknowledged agent answers on ${before.step}: ${freshNeeds.join(', ')}`);
+    break;
+  }
 }
 for (const [, , selector] of AGENT_ANSWERS) if (!agentAnswered.has(selector)) manualFailures.push(`Manual hold wasn't exercised: ${selector}`);
 if (manualFailures.length) console.log('MANUAL:', manualFailures.join('; '));
