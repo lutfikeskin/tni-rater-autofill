@@ -5,7 +5,7 @@
 //   PORT=8787 HOST=0.0.0.0 DATA_DIR=/srv/rater RATER_TOKEN=secret node server/index.mjs
 //
 // POST /v1/events   { agent, version, events: [...] }  -> { accepted, duplicates }
-// GET  /v1/health                                       -> { ok, events, server }
+// GET  /v1/health                                       -> { ok, server } (+ events with the admin token)
 // GET  /v1/days      (admin token)                      -> { days: [{ day, bytes }] }
 // GET  /v1/export?since=YYYY-MM-DD[&until=YYYY-MM-DD] (admin token) -> the days' JSONL, in order
 //
@@ -19,10 +19,13 @@
 // from one an older server threw away. /v1/health names this file's version (`server`, a hash of
 // it), so the daily review sees when the deployed server isn't the one in the repository.
 //
-// Listens on 127.0.0.1 unless HOST says otherwise. When exposed beyond this computer, set
-// RATER_TOKEN and put it behind HTTPS (Railway does: see docs/hosting.md). RATER_TOKEN is the
-// upload token the extension ships with; reading the logs back needs RATER_ADMIN_TOKEN, which
-// only TNI (and the daily review job) has. Without RATER_ADMIN_TOKEN the export is switched off.
+// Listens on 127.0.0.1 unless HOST says otherwise. Without RATER_TOKEN every upload is accepted,
+// which is fine on this computer only: bound to any other address the server refuses to start
+// (audit 2026-10-08: an unset variable made the deployment an open write endpoint). When exposed
+// beyond this computer, set RATER_TOKEN and put it behind HTTPS (Railway does: see
+// docs/hosting.md). RATER_TOKEN is the upload token the extension ships with; reading the logs
+// back needs RATER_ADMIN_TOKEN, which only TNI (and the daily review job) has. Without
+// RATER_ADMIN_TOKEN the export is switched off. PORT=0 takes a free port (the startup line names it).
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -41,6 +44,15 @@ export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fi
 const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
 const MAX_DROPPED = 20;
 
+// Addresses only this computer can reach: the one place an upload needs no token.
+const LOOPBACK = /^(127(\.\d{1,3}){3}|localhost|::1|\[::1\]|::ffff:127(\.\d{1,3}){3})$/i;
+// Why the server must not start with this host and token: null when it may. Fail closed: a
+// deployment that lost its RATER_TOKEN variable stops, rather than taking anyone's events.
+export function startupError({ host, token }) {
+  if (token || LOOPBACK.test(String(host))) return null;
+  return `RATER_TOKEN is not set and HOST=${host} is not loopback: refusing to start an open upload endpoint. Set RATER_TOKEN (docs/hosting.md), or bind HOST to 127.0.0.1 for local use.`;
+}
+
 // Event type -> fields kept. Anything else in an event is dropped.
 export const COMMON = ['id', 't', 'v', 'channel', 'commit', 'agent', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page', 'view'];
 export const EVENT_FIELDS = {
@@ -54,16 +66,32 @@ export const EVENT_FIELDS = {
   layout_error: ['reason', 'error'],
   // pageChanged: the carrier probably changed the page; reworded: known fields whose question reads
   // differently; renamed: known questions whose data-model name isn't on the page (rule, names).
-  fill_run: ['overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
+  // run: one fill invocation, shared with its fill_field events; rules: the rule files'
+  // fingerprint; settings: the panel's filling switches; step: a one-address application's step
+  // (AmWINS). Their shapes are checked below (RUN_FIELDS): a malformed value refuses the event.
+  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
-  fill_field: ['result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how'],
-  fill_error: ['auto', 'error'],
-  field_change: ['q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
+  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how'],
+  fill_error: ['run', 'rules', 'settings', 'auto', 'error'],
+  field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   problem_report: ['text'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
   // setting) acted on. Choices are option texts; typed text suggestions are never logged.
-  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'cached', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'],
-  ai_decision: ['model', 'policy', 'probability', 'support', 'evidenceProbability', 'q', 'label', 'controlKind', 'decision', 'choice', 'confidence', 'basis', 'intakePath', 'reason'],
+  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'],
+  // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
+  ai_decision: ['model', 'policy', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
+};
+
+// The run-identity fields (audit 2026-10-08, finding 7; Contract 1): their exact shapes, since a
+// review joins events by them. An event with one of these present but malformed is refused, not
+// trimmed: a wrong run id or rules hash would join the wrong events.
+const SETTINGS_KEYS = ['autoAdvance', 'autoFollowUps', 'autoPages', 'overwrite'];
+export const RUN_FIELDS = {
+  run: (v) => typeof v === 'string' && /^[\w-]{8,64}$/.test(v),
+  rules: (v) => typeof v === 'string' && /^[0-9a-f]{6,16}$/.test(v),
+  settings: (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+    && Object.keys(v).length === SETTINGS_KEYS.length && SETTINGS_KEYS.every((k) => typeof v[k] === 'boolean'),
+  step: (v) => typeof v === 'string' && v.length <= 120,
 };
 
 export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
@@ -84,6 +112,8 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     const want = Buffer.from(secret);
     return given.length === want.length && crypto.timingSafeEqual(given, want);
   };
+  // No token configured: every upload is taken. The CLI allows that on loopback only (startupError);
+  // a caller of createServer (tests, the e2e harness) binds 127.0.0.1 itself.
   const authorized = (req) => !token || matches(req, token);
   const isAdmin = (req) => !!adminToken && matches(req, adminToken);
   const dayFiles = () => fs.readdirSync(eventsDir).filter((n) => /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(n)).sort();
@@ -101,6 +131,12 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     const out = {};
     const allowed = new Set([...COMMON, ...keep]);
     for (const k of allowed) if (e[k] !== undefined) out[k] = e[k];
+    // Older page_layout events used null when no step was recognized. Keep only that legacy
+    // representation exempt; non-null steps still pass the ordinary shape check.
+    for (const [k, valid] of Object.entries(RUN_FIELDS)) {
+      if (k === 'step' && out.type === 'page_layout' && out.step === null) continue;
+      if (out[k] !== undefined && keep.includes(k) && !valid(out[k])) return { error: `${k} is not a valid ${k === 'settings' ? 'settings object' : k === 'step' ? 'step name' : k === 'run' ? 'run id' : 'rules hash'}` };
+    }
     // A re-upload of stored events (npm run push-logs) keeps what an earlier server dropped.
     const before = Array.isArray(e.dropped) ? e.dropped.filter((k) => typeof k === 'string' && DROPPED_NAME.test(k)) : [];
     const beforeMore = Number.isSafeInteger(e.droppedMore) && e.droppedMore > 0 ? e.droppedMore : 0;
@@ -111,6 +147,12 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     if (out.key != null && !(typeof out.key === 'string' && out.key.length <= 256)) drop('key');
     // Which tab and vehicle/driver/trailer (t1, t2:v0, t2:tr0): an order number and an index, nothing else.
     if (out.view !== undefined && !(typeof out.view === 'string' && /^t\d{1,3}(:(?:v|d|tr)\d{1,3})?$/.test(out.view))) drop('view');
+    // Historical AI evidence is a score, null (unavailable), or the original confidence enum.
+    // It never becomes a place to retain arbitrary text from an older/malformed client.
+    if (out.type === 'ai_decision') for (const k of ['probability', 'support', 'evidenceProbability', 'confidence']) {
+      if (out[k] !== undefined && !(out[k] === null || (typeof out[k] === 'number' && Number.isFinite(out[k]) && out[k] >= 0 && out[k] <= 1)
+        || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
+    }
     // Which copy and commit logged it (scripts/package.mjs): those values, nothing else in their place.
     if (out.channel !== undefined && !['store', 'unpacked', 'source'].includes(out.channel)) drop('channel');
     if (out.commit !== undefined && !(typeof out.commit === 'string' && /^[0-9a-f]{7,12}(\+dirty)?$/.test(out.commit))) drop('commit');
@@ -178,7 +220,11 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
       res.end(fs.readFileSync(new URL('./privacy.html', import.meta.url)));
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/v1/health') return done(200, { ok: true, events: seen.size, server: SERVER_HASH });
+    // What the daily server check reads (scripts/lib/central.mjs: `server`) and the panel's "is it
+    // there" probe need, for anyone; how many events are stored, for TNI only.
+    if (req.method === 'GET' && url.pathname === '/v1/health') {
+      return done(200, { ok: true, server: SERVER_HASH, ...(isAdmin(req) ? { events: seen.size } : {}) });
+    }
     if (req.method === 'GET' && (url.pathname === '/v1/days' || url.pathname === '/v1/export')) {
       if (!isAdmin(req)) return done(401, { error: 'admin token required' });
       if (url.pathname === '/v1/days') {
@@ -235,12 +281,18 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const port = Number(process.env.PORT) || 8787;
+  const port = process.env.PORT === '0' ? 0 : Number(process.env.PORT) || 8787;
   const host = process.env.HOST || '127.0.0.1';
+  const token = process.env.RATER_TOKEN || '';
+  const problem = startupError({ host, token });
+  if (problem) {
+    console.error(problem);
+    process.exit(1);
+  }
   const dataDir = path.resolve(process.env.DATA_DIR || 'server-data');
-  const server = createServer({ dataDir, token: process.env.RATER_TOKEN || '', adminToken: process.env.RATER_ADMIN_TOKEN || '' });
+  const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '' });
   server.listen(port, host, () => {
-    console.log(`rater usage server on http://${host}:${port}  data: ${dataDir}${process.env.RATER_TOKEN ? '  (token required)' : ''}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}`);
+    console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}`);
   });
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => server.close(() => process.exit(0)));
 }

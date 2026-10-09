@@ -3,7 +3,7 @@
   "name": "TNI Rater Autofill",
   "version": "0.9.9",
   "description": "Fills Progressive, AmWINS and GEICO quotes from a TNI quote application PDF, with AI tips for questions left to the agent.",
-  "minimum_chrome_version": "116",
+  "minimum_chrome_version": "140",
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",

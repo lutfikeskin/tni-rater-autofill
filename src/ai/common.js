@@ -2,6 +2,8 @@
 // Exact answers, calculations and page execution remain in code.
 import { TNI_RULES } from './tni-rules.js';
 import { priorPolicyExpired } from '../util.js';
+import { redactionTerms } from '../plan.js';
+import { redactor } from '../usage.js';
 
 export const LEAVE = '__leave__';
 const CHOICE_KINDS = new Set(['radio', 'select', 'checkbox']);
@@ -44,7 +46,20 @@ export function neverReason(item) {
 
 export function collectItems(frames) {
   const seen = new Set(), items = [], blocked = [];
-  for (const [group, status] of [['failed', 'failed'], ['unknown', 'unfamiliar'], ['noData', 'not_on_intake'], ['leftRequired', 'required']]) {
+  const groups = [['failed', 'failed'], ['unknown', 'unfamiliar'], ['noData', 'not_on_intake'], ['leftRequired', 'required']];
+  const restrictions = new Map();
+  // One control can be both invalid and missing an intake fact. Retain the strictest
+  // safety flags before report priority deduplicates those entries.
+  for (const [group] of groups) {
+    for (const x of frames.flatMap(f => f?.[group] ?? [])) {
+      const sig = `${x.key}|${x.label}`;
+      const flags = restrictions.get(sig) ?? { manualOnly: false, reviewOnly: false };
+      flags.manualOnly ||= x.manualOnly === true;
+      flags.reviewOnly ||= x.reviewOnly === true;
+      restrictions.set(sig, flags);
+    }
+  }
+  for (const [group, status] of groups) {
     for (const x of frames.flatMap(f => f?.[group] ?? [])) {
       const sig = `${x.key}|${x.label}`;
       if (!x.key || seen.has(sig)) continue;
@@ -54,9 +69,11 @@ export function collectItems(frames) {
       const item = { key: x.key, q: x.q ?? null, label: x.label ?? '', section: x.section || null,
         controlKind: x.controlKind ?? null, required: !!x.required, status, reason: x.reason ?? x.note ?? null,
         current: x.current ?? null, options, applyable: CHOICE_KINDS.has(x.controlKind) && options.length > 0,
-        reviewOnly: x.reviewOnly === true, manualOnly: x.manualOnly === true,
+        ...restrictions.get(sig),
         fieldType: x.fieldType ?? x.valueType ?? x.semanticType ?? null };
-      const why = x.reviewOnly ? 'lookup identity mismatch requires agent review' : neverReason(item)
+      // A client fact or attestation the rules leave to the agent (plan.js manualOnly): never the AI's.
+      const why = item.reviewOnly ? 'lookup identity mismatch requires agent review'
+        : item.manualOnly ? 'TNI leaves this client fact to the agent' : neverReason(item)
         || (!item.applyable ? 'The assistant needs visible choices; enter this answer on the page' : null)
         || (options.length > MAX_OPTIONS ? 'too many choices; narrow the list on the page first' : null);
       if (why) blocked.push({ ...item, why });
@@ -68,10 +85,17 @@ export function collectItems(frames) {
 
 // Keep only the active row of repeating entities. Identifiers are represented by presence,
 // never guessed or copied by the assistant. Other sensitive fields are not needed for option matching.
+// Every string the model sees is redacted with the same terms as the claims-box review and the
+// usage log (redactionTerms: the client's names, dates of birth, street, city, ZIP, contact and ID
+// numbers become `[client]`), in the evidence sources and in the verification call's intake alike
+// (audit 2026-10-08: names, DOB, address and claims text went verbatim). Numbers and booleans
+// stay; the prior carrier's name and the garaging state are not terms and are still sent.
 export function scopedIntake(record, active) {
   const privateKey = /^(vin|licenseNumber|licensePlate|fein|ssn|socialSecurity|phone|email|policyNumber|accountNumber|routingNumber|password)$/i;
+  const redact = redactor(redactionTerms(record));
   const clean = (obj) => {
     if (Array.isArray(obj)) return obj.map(clean);
+    if (typeof obj === 'string') return redact(obj);
     if (!obj || typeof obj !== 'object') return obj;
     return Object.fromEntries(Object.entries(obj).filter(([k]) => !privateKey.test(k)).map(([k, v]) =>
       ['dot', 'mc'].includes(k) ? [`has${k.toUpperCase()}`, !!v] : [k, clean(v)]));

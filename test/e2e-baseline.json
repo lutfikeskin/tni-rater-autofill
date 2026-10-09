@@ -1,25 +1,25 @@
 {
  "test/bakeoff/course-MD-expediter-van.json": {
   "questions": 82,
-  "filled": 61,
+  "filled": 58,
   "failed": 2,
   "unmapped": 2,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
     "questions": 32,
-    "filled": 19,
+    "filled": 18,
     "failed": [
      "Home Address: the page offered no address suggestion; check the address, city and ZIP",
      "Street Address: the page offered no address suggestion; check the address, city and ZIP"
     ],
-    "noData": 0,
+    "noData": 1,
     "unmapped": 2,
-    "blockers": 7,
+    "blockers": 8,
     "clicked": [
      "Verify DOT"
     ],
-    "outcomes": "057e673221c5"
+    "outcomes": "4b59b832aa80"
    },
    "MostCommonVehicles": {
     "questions": 0,
@@ -45,7 +45,7 @@
      "Lookup VIN",
      "Continue ›"
     ],
-    "outcomes": "b60e5f1cf175"
+    "outcomes": "2887d2056af3"
    },
    "AddDriver": {
     "questions": 4,
@@ -57,19 +57,17 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "9565b140fffd"
+    "outcomes": "9e59087e4283"
    },
    "MoreAboutBusiness": {
     "questions": 12,
-    "filled": 7,
+    "filled": 5,
     "failed": [],
-    "noData": 0,
+    "noData": 2,
     "unmapped": 0,
-    "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "1bda60067176"
+    "blockers": 2,
+    "clicked": [],
+    "outcomes": "36ef2065f5fc"
    },
    "Filings": {
     "questions": 4,
@@ -81,7 +79,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "19adce7e0179"
+    "outcomes": "8cb9fc52a134"
    },
    "CoveragesRates": {
     "questions": 9,
@@ -93,7 +91,7 @@
     "clicked": [
      "+"
     ],
-    "outcomes": "977799f6eb13"
+    "outcomes": "6cb48578b2fd"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -105,7 +103,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f6710b1b68d5"
+    "outcomes": "8a26f0eb5d53"
    },
    "PrintEmailFax": {
     "questions": 5,
@@ -115,13 +113,13 @@
     "unmapped": 0,
     "blockers": 0,
     "clicked": [],
-    "outcomes": "6516eed71aec"
+    "outcomes": "0e530f725d4a"
    }
   }
  },
  "test/fixtures/progressive/progressive_IA_expediter_van.json": {
   "questions": 101,
-  "filled": 65,
+  "filled": 61,
   "failed": 1,
   "unmapped": 5,
   "issues": [],
@@ -136,7 +134,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "d7ee08535cd1"
+    "outcomes": "74d6526e0e11"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -146,7 +144,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "45f3a935ab6e"
+    "outcomes": "0671612edb24"
    },
    "AddVehicle": {
     "questions": 11,
@@ -158,7 +156,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "b60e5f1cf175"
+    "outcomes": "2887d2056af3"
    },
    "AddDriver": {
     "questions": 5,
@@ -170,29 +168,27 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "05493154d58a"
+    "outcomes": "42a30d6577f2"
    },
    "NoHit": {
     "questions": 19,
-    "filled": 11,
+    "filled": 9,
     "failed": [],
-    "noData": 0,
+    "noData": 2,
     "unmapped": 0,
-    "blockers": 0,
+    "blockers": 2,
     "clicked": [],
-    "outcomes": "3ee5115f13f8"
+    "outcomes": "449bccbff08f"
    },
    "MoreAboutBusiness": {
     "questions": 12,
-    "filled": 7,
+    "filled": 5,
     "failed": [],
-    "noData": 0,
+    "noData": 2,
     "unmapped": 0,
-    "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "1bda60067176"
+    "blockers": 2,
+    "clicked": [],
+    "outcomes": "36ef2065f5fc"
    },
    "CoveragesRates": {
     "questions": 22,
@@ -202,7 +198,7 @@
     "unmapped": 5,
     "blockers": 4,
     "clicked": [],
-    "outcomes": "06bf606b7140"
+    "outcomes": "85dfb2e8c79a"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -214,28 +210,28 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f6710b1b68d5"
+    "outcomes": "8a26f0eb5d53"
    }
   }
  },
  "test/fixtures/progressive/progressive_FL_expediter_van.json": {
   "questions": 110,
-  "filled": 70,
+  "filled": 66,
   "failed": 1,
   "unmapped": 5,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
     "questions": 26,
-    "filled": 16,
+    "filled": 15,
     "failed": [
      "Street Address: the page offered no address suggestion; check the address, city and ZIP"
     ],
-    "noData": 0,
+    "noData": 1,
     "unmapped": 0,
-    "blockers": 1,
+    "blockers": 2,
     "clicked": [],
-    "outcomes": "527a0bca6118"
+    "outcomes": "de9471f35b2a"
    },
    "MostCommonVehicles": {
     "questions": 9,
@@ -245,7 +241,7 @@
     "unmapped": 0,
     "blockers": 4,
     "clicked": [],
-    "outcomes": "67a2910fc2bb"
+    "outcomes": "4a094155a244"
    },
    "AddVehicle": {
     "questions": 12,
@@ -255,7 +251,7 @@
     "unmapped": 0,
     "blockers": 3,
     "clicked": [],
-    "outcomes": "1d11a74c0af8"
+    "outcomes": "0a81e8102012"
    },
    "AddDriver": {
     "questions": 9,
@@ -267,7 +263,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "82cda3485263"
+    "outcomes": "f5c51c5eb3de"
    },
    "NoHit": {
     "questions": 9,
@@ -277,19 +273,17 @@
     "unmapped": 0,
     "blockers": 0,
     "clicked": [],
-    "outcomes": "f19991328145"
+    "outcomes": "0e67d1eb210c"
    },
    "MoreAboutBusiness": {
     "questions": 13,
-    "filled": 8,
+    "filled": 5,
     "failed": [],
-    "noData": 0,
+    "noData": 3,
     "unmapped": 0,
-    "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "8676731eee4d"
+    "blockers": 3,
+    "clicked": [],
+    "outcomes": "a189ed8a2b97"
    },
    "CoveragesRates": {
     "questions": 22,
@@ -299,7 +293,7 @@
     "unmapped": 5,
     "blockers": 4,
     "clicked": [],
-    "outcomes": "091acf32f574"
+    "outcomes": "f0f338ef707a"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -311,7 +305,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f6710b1b68d5"
+    "outcomes": "8a26f0eb5d53"
    },
    "PrintEmailFax": {
     "questions": 6,
@@ -321,13 +315,13 @@
     "unmapped": 0,
     "blockers": 0,
     "clicked": [],
-    "outcomes": "6516eed71aec"
+    "outcomes": "0e530f725d4a"
    }
   }
  },
  "test/fixtures/progressive/progressive_IN_expediter_van.json": {
   "questions": 112,
-  "filled": 79,
+  "filled": 71,
   "failed": 2,
   "unmapped": 0,
   "issues": [],
@@ -342,7 +336,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "6314328d435a"
+    "outcomes": "529e8abe4dac"
    },
    "BECAPopup": {
     "questions": 25,
@@ -354,7 +348,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "56069e601edb"
+    "outcomes": "7c3cf5eff484"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -364,7 +358,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "45f3a935ab6e"
+    "outcomes": "0671612edb24"
    },
    "AddVehicle": {
     "questions": 9,
@@ -376,7 +370,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "47f4b08c0818"
+    "outcomes": "2a8a738c11f7"
    },
    "AddDriver": {
     "questions": 4,
@@ -388,19 +382,17 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "ff17149859cf"
+    "outcomes": "f33eaee1edc5"
    },
    "MoreAboutBusiness": {
     "questions": 29,
-    "filled": 24,
+    "filled": 16,
     "failed": [],
-    "noData": 0,
+    "noData": 8,
     "unmapped": 0,
-    "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "edcfa7627502"
+    "blockers": 8,
+    "clicked": [],
+    "outcomes": "453087426948"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -412,7 +404,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "70ef04b64195"
+    "outcomes": "b66ea715d75c"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -424,13 +416,13 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f6710b1b68d5"
+    "outcomes": "8a26f0eb5d53"
    }
   }
  },
  "test/fixtures/progressive/progressive_NJ_expediter_van.json": {
   "questions": 78,
-  "filled": 47,
+  "filled": 44,
   "failed": 1,
   "unmapped": 0,
   "issues": [],
@@ -445,29 +437,27 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "d7ee08535cd1"
+    "outcomes": "74d6526e0e11"
    },
    "MostCommonVehicles": {
     "questions": 7,
-    "filled": 6,
+    "filled": 5,
+    "failed": [],
+    "noData": 2,
+    "unmapped": 0,
+    "blockers": 2,
+    "clicked": [],
+    "outcomes": "8b7b539e64af"
+   },
+   "AddVehicle": {
+    "questions": 16,
+    "filled": 7,
     "failed": [],
     "noData": 1,
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "c9a9885186f8"
-   },
-   "AddVehicle": {
-    "questions": 16,
-    "filled": 8,
-    "failed": [],
-    "noData": 0,
-    "unmapped": 0,
-    "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "39228447f9e7"
+    "outcomes": "c072e4f0c929"
    },
    "AddDriver": {
     "questions": 5,
@@ -479,19 +469,17 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "05493154d58a"
+    "outcomes": "42a30d6577f2"
    },
    "MoreAboutBusiness": {
     "questions": 9,
-    "filled": 4,
+    "filled": 3,
     "failed": [],
-    "noData": 0,
+    "noData": 1,
     "unmapped": 0,
-    "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "097db529025d"
+    "blockers": 1,
+    "clicked": [],
+    "outcomes": "f59f5818c92d"
    },
    "CoveragesRates": {
     "questions": 15,
@@ -501,7 +489,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "afdac4a415dd"
+    "outcomes": "acdc56578089"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -513,13 +501,13 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f6710b1b68d5"
+    "outcomes": "8a26f0eb5d53"
    }
   }
  },
  "test/fixtures/progressive/progressive_NC_freight-hauler_box-truck.json": {
   "questions": 95,
-  "filled": 59,
+  "filled": 57,
   "failed": 4,
   "unmapped": 0,
   "issues": [],
@@ -536,7 +524,7 @@
     "unmapped": 0,
     "blockers": 3,
     "clicked": [],
-    "outcomes": "e7ed304b676c"
+    "outcomes": "2294483e42c7"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -546,7 +534,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "ce104bb60020"
+    "outcomes": "d11adb4fff71"
    },
    "AddVehicle": {
     "questions": 11,
@@ -558,7 +546,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "c5cf9e0a5daa"
+    "outcomes": "444311c276c4"
    },
    "AddDriver": {
     "questions": 6,
@@ -570,19 +558,17 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "d6b759681eee"
+    "outcomes": "f12b5dd854de"
    },
    "MoreAboutBusiness": {
     "questions": 11,
-    "filled": 6,
+    "filled": 4,
     "failed": [],
-    "noData": 0,
+    "noData": 2,
     "unmapped": 0,
-    "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "b92829ecde47"
+    "blockers": 2,
+    "clicked": [],
+    "outcomes": "ab8d56b5bf66"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -594,7 +580,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "173bfe52c1e7"
+    "outcomes": "4a57f7aaa50e"
    },
    "VehicleSummary": {
     "questions": 20,
@@ -606,7 +592,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "0a3683a61466"
+    "outcomes": "ccdfdb712672"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -618,31 +604,31 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f6710b1b68d5"
+    "outcomes": "8a26f0eb5d53"
    }
   }
  },
  "test/fixtures/progressive/progressive_MD_expediter_van.json": {
   "questions": 105,
-  "filled": 70,
+  "filled": 67,
   "failed": 4,
   "unmapped": 3,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
     "questions": 37,
-    "filled": 21,
+    "filled": 20,
     "failed": [
      "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
      "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])",
      "Street Address: the page offered no address suggestion; check the address, city and ZIP",
      "Business type list: no option matches \"For Hire Trucking\""
     ],
-    "noData": 0,
+    "noData": 1,
     "unmapped": 3,
-    "blockers": 10,
+    "blockers": 11,
     "clicked": [],
-    "outcomes": "2e2a39f361e5"
+    "outcomes": "1781fbd2df44"
    },
    "AddVehicle": {
     "questions": 12,
@@ -654,7 +640,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "b60e5f1cf175"
+    "outcomes": "2887d2056af3"
    },
    "AddDriver": {
     "questions": 4,
@@ -666,19 +652,17 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "9565b140fffd"
+    "outcomes": "9e59087e4283"
    },
    "MoreAboutBusiness": {
     "questions": 12,
-    "filled": 7,
+    "filled": 5,
     "failed": [],
-    "noData": 0,
+    "noData": 2,
     "unmapped": 0,
-    "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "1bda60067176"
+    "blockers": 2,
+    "clicked": [],
+    "outcomes": "36ef2065f5fc"
    },
    "CoveragesRates": {
     "questions": 15,
@@ -690,7 +674,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "c24a3c75c729"
+    "outcomes": "7eb877d97e0f"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -702,7 +686,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f6710b1b68d5"
+    "outcomes": "8a26f0eb5d53"
    },
    "PrintEmailFax": {
     "questions": 6,
@@ -712,7 +696,7 @@
     "unmapped": 0,
     "blockers": 0,
     "clicked": [],
-    "outcomes": "6516eed71aec"
+    "outcomes": "0e530f725d4a"
    },
    "SaveQuote": {
     "questions": 8,
@@ -722,7 +706,7 @@
     "unmapped": 0,
     "blockers": 0,
     "clicked": [],
-    "outcomes": "b8a25a9e1c5b"
+    "outcomes": "a8cc202a4f17"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -732,7 +716,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "45f3a935ab6e"
+    "outcomes": "0671612edb24"
    },
    "Filings": {
     "questions": 1,
@@ -744,13 +728,13 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f0e843c35ff7"
+    "outcomes": "a3f08ffc2cd3"
    }
   }
  },
  "test/fixtures/progressive/progressive_OH_expediter_van.json": {
   "questions": 104,
-  "filled": 66,
+  "filled": 64,
   "failed": 5,
   "unmapped": 0,
   "issues": [],
@@ -767,7 +751,7 @@
     "unmapped": 0,
     "blockers": 3,
     "clicked": [],
-    "outcomes": "1efc477ea7a5"
+    "outcomes": "54cdfa91aafe"
    },
    "BECAPopup": {
     "questions": 26,
@@ -780,7 +764,7 @@
     "unmapped": 0,
     "blockers": 2,
     "clicked": [],
-    "outcomes": "c697c8865063"
+    "outcomes": "654381afd63a"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -790,7 +774,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "45f3a935ab6e"
+    "outcomes": "0671612edb24"
    },
    "AddVehicle": {
     "questions": 7,
@@ -802,7 +786,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "5adbb3edbae5"
+    "outcomes": "943464bb1a7c"
    },
    "AddDriver": {
     "questions": 5,
@@ -814,19 +798,17 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "6223c93f0db3"
+    "outcomes": "8c360645d48a"
    },
    "MoreAboutBusiness": {
     "questions": 12,
-    "filled": 7,
+    "filled": 5,
     "failed": [],
-    "noData": 0,
+    "noData": 2,
     "unmapped": 0,
-    "blockers": 0,
-    "clicked": [
-     "Continue ›"
-    ],
-    "outcomes": "1bda60067176"
+    "blockers": 2,
+    "clicked": [],
+    "outcomes": "36ef2065f5fc"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -838,7 +820,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "1dc9094093b9"
+    "outcomes": "a0426a8b009a"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -850,7 +832,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f6710b1b68d5"
+    "outcomes": "8a26f0eb5d53"
    },
    "PrintEmailFax": {
     "questions": 6,
@@ -860,13 +842,13 @@
     "unmapped": 0,
     "blockers": 0,
     "clicked": [],
-    "outcomes": "6516eed71aec"
+    "outcomes": "0e530f725d4a"
    }
   }
  },
  "test/fixtures/progressive/progressive_PA_expediter_van.json": {
   "questions": 111,
-  "filled": 78,
+  "filled": 71,
   "failed": 1,
   "unmapped": 7,
   "issues": [],
@@ -881,7 +863,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "d7ee08535cd1"
+    "outcomes": "74d6526e0e11"
    },
    "MostCommonVehicles": {
     "questions": 6,
@@ -891,7 +873,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "45f3a935ab6e"
+    "outcomes": "0671612edb24"
    },
    "AddVehicle": {
     "questions": 10,
@@ -903,7 +885,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "11c1e76346a5"
+    "outcomes": "fbb5556b4c70"
    },
    "AddDriver": {
     "questions": 5,
@@ -915,7 +897,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "05493154d58a"
+    "outcomes": "42a30d6577f2"
    },
    "NoHit": {
     "questions": 9,
@@ -925,17 +907,17 @@
     "unmapped": 0,
     "blockers": 0,
     "clicked": [],
-    "outcomes": "f19991328145"
+    "outcomes": "0e67d1eb210c"
    },
    "MoreAboutBusiness": {
     "questions": 30,
-    "filled": 18,
+    "filled": 11,
     "failed": [],
-    "noData": 0,
+    "noData": 7,
     "unmapped": 7,
-    "blockers": 14,
+    "blockers": 21,
     "clicked": [],
-    "outcomes": "dfc37e520f92"
+    "outcomes": "18ff3c715727"
    },
    "CoveragesRates": {
     "questions": 25,
@@ -947,7 +929,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "fed86adec958"
+    "outcomes": "164a2bf54188"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -959,7 +941,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f6710b1b68d5"
+    "outcomes": "8a26f0eb5d53"
    }
   }
  }

@@ -7,7 +7,8 @@ import { loadEvents, quoteSessions } from '../scripts/lib/events.mjs';
 import { learn, finalAnswers, questionOf } from '../scripts/lib/learn.mjs';
 import { fieldStatus } from '../scripts/lib/coverage.mjs';
 import { buildPlan } from '../src/plan.js';
-import { buildLayouts, layoutKey } from '../scripts/lib/layouts.mjs';
+import { buildLayouts, layoutKey, layoutStep } from '../scripts/lib/layouts.mjs';
+import { layoutTransitions } from '../scripts/lib/transitions.mjs';
 import { CARRIERS } from '../src/carriers.js';
 
 // A synthetic week: `n` quotes, each an intake plus what autofill and the agent did.
@@ -112,6 +113,29 @@ test('the steps of a one-address application are pages of their own in built lay
   const pages = buildLayouts([event('Vehicles', 'VIN'), event('Coverages', 'Medical payment'), event('Vehicles', 'VIN')])[0].layout.pages;
   assert.deepEqual(Object.keys(pages), ['/application/businessauto › Vehicles', '/application/businessauto › Coverages']);
   assert.equal(pages['/application/businessauto › Vehicles'].fields[0].cond, undefined, 'not a follow-up: on every layout of its step');
+});
+
+// Maintainer decision on PR #65: layouts name the step as one of the carrier's step names. An
+// older layout's raw heading that holds one joins that step; any other stays as it was.
+test('built layouts and transitions: older raw step headings join the step names; others group as before', () => {
+  const event = (step, label, t) => ({ type: 'page_layout', carrier: 'amwins', page: '/application/businessauto', step, session: 's', t,
+    context: { state: 'FL', businessClass: 'Expediter', vehicleTypes: ['Van'] }, fields: [{ kind: 'text', label }] });
+  const pages = buildLayouts([
+    event('Vehicles', 'VIN', '2026-10-06T10:00:00Z'),
+    event('Draft Application Saved! / Vehicles', 'VIN', '2026-10-06T10:01:00Z'),
+    event('coverages', 'Medical payment', '2026-10-06T10:02:00Z'),
+    event('Some Other Heading', 'Odd', '2026-10-06T10:03:00Z'),
+  ])[0].layout.pages;
+  assert.deepEqual(Object.keys(pages), ['/application/businessauto › Vehicles', '/application/businessauto › Coverages', '/application/businessauto › Some Other Heading']);
+  assert.equal(layoutStep({ carrier: 'amwins', step: '[client] / Drivers' }), 'Drivers');
+  assert.equal(layoutStep({ carrier: 'amwins' }), undefined);
+  assert.equal(layoutStep({ carrier: 'progressive', step: 'Vehicles' }), 'Vehicles', 'no step names: kept as sent');
+  // Transitions pair an older raw heading's layout with a new one of the same step.
+  const change = { type: 'field_change', carrier: 'amwins', page: '/application/businessauto', session: 's', q: 'x', kind: 'select', from: '', to: 'Yes', t: '2026-10-06T10:00:30Z', seq: 2 };
+  const a = { ...event('Draft Application Saved! / Vehicles', 'VIN', '2026-10-06T10:00:00Z'), seq: 1, reason: 'arrived' };
+  const b = { ...event('Vehicles', 'Trailer VIN', '2026-10-06T10:01:00Z'), seq: 3, reason: 'changed', fields: [{ kind: 'text', label: 'VIN' }, { kind: 'text', label: 'Trailer VIN' }] };
+  const out = layoutTransitions([a, change, b]);
+  assert.deepEqual(out.map((x) => [x.page, x.appeared]), [['/application/businessauto › Vehicles', ['Trailer VIN']]]);
 });
 
 // Codex on PR #43: Progressive renumbered its questions on 2026-10-07. The same question recorded

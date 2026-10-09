@@ -8,7 +8,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms } from '../src/plan.js';
-import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor } from '../src/usage.js';
+import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep } from '../src/usage.js';
 
 const bytes = new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url)));
 const raw = await readIntakeFields(pdfjs, bytes.slice());
@@ -90,6 +90,31 @@ test('dropdown changes keep the option text, minus client names', () => {
   const addr = fieldChangeEvent({ key: '277', q: '277', label: 'Address', kind: 'radio', before: '', after: '125 Maple Leaf Dr Springfield IL (USDOT Address)', agent: false }, { record, filled: new Map(), redact });
   assert.equal(addr.by, 'page');
   assertNoClientData(addr);
+});
+
+test('a name word is redacted only as a whole word; other terms wherever they appear as written', () => {
+  // Codex review on 4f455f4: a driver named Ann turned "Annual mileage" into "[client]ual mileage".
+  const r = redactor(['Ann Carlson', 'Ann', 'Carlson', 'Car', 'José', '1234567', '1FTBR3X87MKA12345']);
+  for (const fact of ['Annual mileage', 'Cargo', 'Caravan', 'carrier', 'Oscar', 'Carlsonville']) assert.equal(r(fact), fact);
+  assert.equal(r('Ann drives. ANN, Ann\'s truck'), '[client] drives. [client], [client]\'s truck');
+  assert.equal(r('Ann Carlson; José.'), '[client]; [client].');
+  assert.equal(r('owner_Ann'), 'owner_[client]', 'an underscore is not part of the word');
+  assert.equal(r('USDOT1234567 vin=1FTBR3X87MKA12345x'), 'USDOT[client] vin=[client]x', 'numbers and VINs still match inside longer text');
+});
+
+test('machine control keys redact embedded name terms without changing natural-language labels', () => {
+  const redact = redactor(['Ann', 'Car', 'José']);
+  const ctx = { record: {}, filled: new Map(), redact, keySalt: 'quote-salt' };
+  for (const [key, redactedKey] of [['driverAnn1', 'driver[client]1'], ['ownerCar2', 'owner[client]2'], ['driverJosé3', 'driver[client]3']]) {
+    const change = { key, label: 'Annual mileage and Cargo', kind: 'text', before: '', after: '123', agent: true };
+    const event = fieldChangeEvent(change, ctx);
+    assert.match(event.key, new RegExp(`^${redactedKey.replace('[client]', '\\[client\\]')}#[0-9a-f]{8}$`));
+    assert.equal(event.label, change.label);
+    assert.equal(fieldChangeEvent(change, { ...ctx, keySalt: undefined }).key, null);
+    const [, fill] = fillEvents([{ filled: [{ key, label: change.label, controlKind: 'text' }] }], { ...ctx, carrier: 'amwins' });
+    assert.equal(fill.key, event.key, 'fill and change events identify the same redacted control');
+    assert.equal(fill.label, change.label);
+  }
 });
 
 test('a combo box keeps its value only when each side is one of its known options', () => {
@@ -202,4 +227,62 @@ test('fill events say which view (tab and vehicle) they were on', () => {
   const events = fillEvents([{ fields: 1, filled: [{ key: '2B9D@2', q: '2B9D', label: 'Farthest distance', controlKind: 'select', shown: '500 miles' }] }],
     { carrier: 'progressive', page: 'AddVehicle', view: 't1:v1', overwrite: false, ms: 1, redact });
   assert.deepEqual(events.map((e) => [e.type, e.view]), [['fill_run', 't1:v1'], ['fill_field', 't1:v1']]);
+});
+
+// Codex on PR #65 (2c8eeb9): a step heading could name the insured, and the tab may still show the
+// previous client's quote, which the loaded intake's redaction doesn't know: only the carrier's own
+// step names are sent.
+test('only a known step name is sent as the step', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  assert.deepEqual(amwins.layoutSteps, ['Insured Info', 'Drivers', 'Vehicles', 'Coverages', 'Underwriting']);
+  assert.equal(knownStep(amwins, 'Vehicles '), 'Vehicles');
+  assert.equal(knownStep(amwins, 'coverages'), 'Coverages');
+  assert.equal(knownStep(amwins, '  Draft Application Saved! / Insured  Info'), 'Insured Info', 'a dialog heading beside the step');
+  assert.equal(knownStep(amwins, 'Old Client Trucking LLC'), undefined);
+  assert.equal(knownStep(amwins, 'Vehicles for Old Client Trucking LLC'), undefined, 'a heading that only contains a step name');
+  assert.equal(knownStep(amwins, ''), undefined);
+  assert.equal(knownStep({ id: 'amwins', layoutSteps: true }, 'Vehicles'), undefined, 'no list of names: no step');
+  assert.equal(knownStep({ id: 'progressive' }, 'Vehicles'), undefined);
+  const change = fieldChangeEvent({ key: 'k', label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact, step: knownStep(amwins, 'Old Client Trucking LLC') });
+  assert.equal('step' in change, false);
+});
+
+// Audit 2026-10-08, finding 7: a fill's events can be joined by run and attributed to a rule version.
+test('fill events carry their run, the rules fingerprint, the settings in force and the step', async () => {
+  const frames = [{ fields: 2, filled: [{ key: 'vin', label: 'VIN', controlKind: 'text', shown: '1FTBR3X87MKA12345' }], failed: [{ key: 'x', label: 'Radius', controlKind: 'select', reason: 'no option' }], stepKey: 'Vehicles' }];
+  const settings = { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false };
+  const events = fillEvents(frames, { carrier: 'amwins', page: '/application/businessauto', overwrite: false, ms: 1, redact,
+    run: 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', rules: 'f00dbeefcafe', settings, step: 'Vehicles / Jordan Avery' });
+  assert.equal(events[0].type, 'fill_run');
+  assert.deepEqual([events[0].run, events[0].rules, events[0].settings, events[0].step], ['e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', 'f00dbeefcafe', settings, 'Vehicles / [client]']);
+  assert.ok(events.slice(1).every((e) => e.run === events[0].run && e.step === 'Vehicles / [client]'), 'every field event shares the run and step');
+  assert.ok(events.slice(1).every((e) => !('rules' in e) && !('settings' in e)), 'rules and settings only on the run');
+  events.forEach(assertNoClientData);
+  // A carrier whose pages have names carries no step; nothing is sent as null.
+  const plain = fillEvents(frames, { carrier: 'progressive', page: 'AddVehicle', overwrite: false, ms: 1, redact });
+  assert.ok(plain.every((e) => !('run' in e) && !('rules' in e) && !('settings' in e) && !('step' in e)));
+  // A long step heading is cut.
+  const long = fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 1, redact, step: 'x'.repeat(300) });
+  assert.equal(long[0].step.length, STEP_MAX);
+  // Field changes name their step the same way, redacted.
+  const change = fieldChangeEvent({ key: 'k', label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact, step: 'Drivers / Jordan Avery' });
+  assert.equal(change.step, 'Drivers / [client]');
+  assert.equal('step' in fieldChangeEvent({ key: 'k', label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact }), false);
+  // The rules fingerprint: the first 12 hex of SHA-256 over the rule files' text, in their order.
+  const texts = RULE_FILES.map((f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8'));
+  const hash = await rulesHash(texts);
+  assert.match(hash, /^[0-9a-f]{12}$/);
+  assert.equal(hash, (await sha256Hex(texts.join('\n'))).slice(0, 12));
+  assert.notEqual(await rulesHash([...texts.slice(0, -1), `${texts.at(-1)}\n// changed`]), hash, 'a rule change changes it');
+  // Codex on PR #65 (f8d6215): every module the plan, normalization and carriers import changes
+  // the answers, so the fingerprint covers their whole import graph.
+  const reached = new Set();
+  const visit = (file) => {
+    if (reached.has(file)) return;
+    reached.add(file);
+    const text = fs.readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+    for (const [, spec] of text.matchAll(/^import\s[^;]*?from\s+'(\.{1,2}\/[^']+)'/gm)) visit(path.posix.normalize(path.posix.join(path.posix.dirname(file), spec)));
+  };
+  ['src/plan.js', 'src/normalize.js', 'src/carriers.js'].forEach(visit);
+  assert.deepEqual([...reached].sort(), [...RULE_FILES].sort());
 });

@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createServer, SERVER_HASH } from '../server/index.mjs';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS } from '../server/index.mjs';
 import { checkServer } from '../scripts/lib/central.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
@@ -22,13 +24,13 @@ const stored = (dir) => fs.readdirSync(path.join(dir, 'events')).flatMap((f) => 
 
 test('stores events once, even when an upload is retried', async () => {
   const dataDir = tmp();
-  await withServer({ dataDir }, async ({ post, base }) => {
+  await withServer({ dataDir, adminToken: 'admin' }, async ({ post, base }) => {
     const events = [ev(), ev({ type: 'page_view', from: 'X', fields: 4 })];
     const r1 = await (await post({ agent: 'AYAZ', events })).json();
     assert.deepEqual([r1.accepted, r1.duplicates], [2, 0]);
     const r2 = await (await post({ agent: 'AYAZ', events })).json();
     assert.deepEqual([r2.accepted, r2.duplicates], [0, 2]);
-    assert.equal((await (await fetch(`${base}/v1/health`)).json()).events, 2);
+    assert.equal((await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json()).events, 2);
   });
   const rows = stored(dataDir);
   assert.equal(rows.length, 2);
@@ -232,6 +234,79 @@ test('a re-uploaded event keeps the names an earlier server dropped', async () =
   assert.equal(kept.droppedMore, undefined);
 });
 
+// Audit 2026-10-08: /v1/health told anyone how many events were stored.
+test('health names the server version for anyone; how many events are stored only for the admin token', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir, token: 'up' }, async ({ post, base }) => {
+    await post({ events: [ev()] }, { authorization: 'Bearer up' });
+    const anyone = await (await fetch(`${base}/v1/health`)).json();
+    assert.deepEqual(anyone, { ok: true, server: SERVER_HASH }, 'no admin token configured: never a count');
+    const uploader = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer up' } })).json();
+    assert.equal(uploader.events, undefined, 'the token every extension carries is not enough');
+  });
+  await withServer({ dataDir, token: 'up', adminToken: 'admin' }, async ({ base }) => {
+    assert.equal((await (await fetch(`${base}/v1/health`)).json()).events, undefined);
+    assert.deepEqual(await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json(), { ok: true, server: SERVER_HASH, events: 1 });
+  });
+});
+
+// Audit 2026-10-08: without RATER_TOKEN the server took anyone's uploads, wherever it listened.
+test('without a token the server starts on loopback only', () => {
+  assert.equal(startupError({ host: '127.0.0.1', token: '' }), null);
+  assert.equal(startupError({ host: 'localhost', token: '' }), null);
+  assert.equal(startupError({ host: '::1', token: '' }), null);
+  assert.match(startupError({ host: '0.0.0.0', token: '' }), /RATER_TOKEN is not set and HOST=0\.0\.0\.0 is not loopback/);
+  assert.match(startupError({ host: '::', token: '' }), /refusing to start/);
+  assert.match(startupError({ host: '10.0.0.5', token: '' }), /refusing to start/);
+  assert.equal(startupError({ host: '0.0.0.0', token: 'secret' }), null);
+});
+
+// The server as deployed (node server/index.mjs): its own environment, never this shell's tokens.
+const SERVER = fileURLToPath(new URL('../server/index.mjs', import.meta.url));
+function startServer(env) {
+  const child = spawn(process.execPath, [SERVER], { env: { PATH: process.env.PATH, DATA_DIR: tmp(), PORT: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', (c) => { stdout += c; });
+  child.stderr.on('data', (c) => { stderr += c; });
+  const exit = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+  // The startup line names the port it took; a server that refused never prints one.
+  const started = new Promise((resolve) => {
+    const look = () => { const m = stdout.match(/on http:\/\/[^\s]+:(\d+)/); if (m) resolve(Number(m[1])); };
+    child.stdout.on('data', look);
+    exit.then(() => resolve(null));
+  });
+  return { child, exit, started, out: () => ({ stdout, stderr }) };
+}
+// A child that neither starts nor exits fails the test instead of hanging it.
+async function within(promise, what, ms = 10000) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(what)), ms); })]);
+  } finally { clearTimeout(timer); }
+}
+
+test('HOST=0.0.0.0 without RATER_TOKEN refuses to start, saying why', async () => {
+  const s = startServer({ HOST: '0.0.0.0' });
+  try {
+    const code = await within(s.exit, 'the server did not exit');
+    assert.notEqual(code, 0, 'exits with an error');
+    assert.match(s.out().stderr, /RATER_TOKEN is not set and HOST=0\.0\.0\.0 is not loopback: refusing to start/);
+    assert.equal(s.out().stdout, '', 'never listened');
+  } finally { s.child.kill(); }
+});
+
+test('loopback without RATER_TOKEN still starts and takes uploads (npm run server)', async () => {
+  const s = startServer({ HOST: '127.0.0.1' });
+  try {
+    const port = await within(s.started, 'the server did not start');
+    assert.ok(port, `started: ${JSON.stringify(s.out())}`);
+    assert.match(s.out().stdout, /\(no token: loopback only\)/);
+    const res = await fetch(`http://127.0.0.1:${port}/v1/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: [ev()] }) });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).accepted, 1);
+  } finally { s.child.kill(); }
+});
+
 test('the daily review tells whether the deployed server is this repository\'s', async () => {
   const health = (body, ok = true) => async () => ({ ok, status: ok ? 200 : 502, json: async () => body });
   assert.equal((await checkServer('http://x', SERVER_HASH, health({ ok: true, server: SERVER_HASH }))).status, 'same');
@@ -239,4 +314,102 @@ test('the daily review tells whether the deployed server is this repository\'s',
   assert.equal((await checkServer('http://x', SERVER_HASH, health({ ok: true, events: 5 }))).status, 'different', 'a server from before the check names no version');
   assert.equal((await checkServer('http://x', SERVER_HASH, health({}, false))).status, 'unreachable');
   assert.equal((await checkServer('http://x', SERVER_HASH, async () => { throw new Error('ECONNREFUSED'); })).status, 'unreachable');
+});
+
+// Audit 2026-10-08, finding 7 (Contract 1): a fill's run id, rules fingerprint, settings and step
+// are kept in their exact shapes; a malformed one refuses the event rather than trimming it.
+test('run-identity fields are kept as sent and a malformed one refuses the event', async () => {
+  const dataDir = tmp();
+  const settings = { autoAdvance: true, autoFollowUps: false, autoPages: false, overwrite: true };
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ run: 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', rules: '0123456789ab', settings, step: 'Vehicles' }),
+      ev({ type: 'fill_field', result: 'filled', run: 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', step: 'Vehicles', filled: undefined }),
+      ev({ type: 'fill_error', error: 'stale: intake changed during the fill', run: 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', filled: undefined }),
+      ev({ type: 'field_change', q: '1', kind: 'select', from: 'a', to: 'b', step: 'Drivers', filled: undefined }),
+      ev({ run: 'short' }),
+      ev({ rules: 'XYZ' }),
+      ev({ settings: { autoAdvance: true } }),
+      ev({ settings: { ...settings, extra: true } }),
+      ev({ settings: { ...settings, overwrite: 'yes' } }),
+      ev({ step: 's'.repeat(121) }),
+      ev({ run: null }),
+      // A field_change carries no run: dropped like any unknown field, not refused.
+      ev({ type: 'field_change', q: '1', kind: 'select', from: 'a', to: 'b', run: 'short', filled: undefined }),
+    ] })).json();
+    assert.equal(r.accepted, 5);
+    assert.deepEqual(r.rejected.map((x) => x.index), [4, 5, 6, 7, 8, 9, 10]);
+    assert.match(r.rejected[0].error, /run id/);
+    assert.match(r.rejected[1].error, /rules hash/);
+    assert.match(r.rejected[2].error, /settings object/);
+    assert.match(r.rejected[5].error, /step name/);
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual([rows[0].run, rows[0].rules, rows[0].settings, rows[0].step], ['e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', '0123456789ab', settings, 'Vehicles']);
+  assert.deepEqual([rows[1].run, rows[1].step, rows[2].run, rows[3].step], ['e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', 'Vehicles', 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', 'Drivers']);
+  assert.deepEqual([rows[4].run, rows[4].dropped], [undefined, ['run']]);
+  assert.ok(!Object.values(EVENT_FIELDS).flat().includes('cached'), 'no client emitted this obsolete suggestion field');
+});
+
+// Legacy layouts explicitly wrote null for an unrecognized AmWINS step; queued/re-uploaded
+// layouts retain that representation without weakening step checks on other events.
+test('legacy page-layout null steps are accepted while malformed non-null and run steps are refused', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const result = await (await post({ events: [
+      ev({ type: 'page_layout', step: null, fields: [] }),
+      ev({ type: 'page_layout', step: 'Vehicles', fields: [] }),
+      ev({ type: 'page_layout', fields: [] }),
+      ev({ type: 'page_layout', step: 123, fields: [] }),
+      ev({ type: 'page_layout', step: 's'.repeat(121), fields: [] }),
+      ev({ step: null }),
+      ev({ type: 'fill_field', step: null }),
+      ev({ type: 'field_change', step: null }),
+    ] })).json();
+    assert.equal(result.accepted, 3);
+    assert.deepEqual(result.rejected.map((x) => x.index), [3, 4, 5, 6, 7]);
+    assert.ok(result.rejected.every((x) => /step name/.test(x.error)));
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((x) => x.step), [null, 'Vehicles', undefined]);
+});
+
+test('failed runs retain rule/settings identity and reject malformed metadata like successful runs', async () => {
+  const dataDir = tmp();
+  const settings = { autoAdvance: false, autoFollowUps: true, autoPages: false, overwrite: false };
+  await withServer({ dataDir }, async ({ post }) => {
+    const result = await (await post({ events: [
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-123', rules: '0123456789ab', settings, error: 'safe error' }),
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-124', rules: 'client name', settings, error: 'safe error' }),
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-125', settings: { ...settings, client: 'must not persist' }, error: 'safe error' }),
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-126', settings: { ...settings, autoAdvance: 'yes' }, error: 'safe error' }),
+    ] })).json();
+    assert.equal(result.accepted, 1);
+    assert.deepEqual(result.rejected.map((x) => x.index), [1, 2, 3]);
+  });
+  assert.deepEqual([stored(dataDir)[0].rules, stored(dataDir)[0].settings, stored(dataDir)[0].dropped], ['0123456789ab', settings, undefined]);
+  assert.doesNotMatch(JSON.stringify(stored(dataDir)), /client name|must not persist/);
+});
+
+test('legacy AI decision evidence survives older-client uploads and historical reuploads in its original bounded shapes', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const result = await (await post({ events: [
+      ev({ type: 'ai_decision', filled: undefined, probability: 0.99, support: 0.98, evidenceProbability: 0.97, confidence: 0.96 }),
+      ev({ type: 'ai_decision', filled: undefined, confidence: 'high' }),
+      ev({ type: 'ai_decision', filled: undefined, probability: 0, support: null, evidenceProbability: 0, confidence: 0, dropped: ['someOtherField'] }),
+      ev({ type: 'ai_decision', filled: undefined, probability: 'client name', support: { text: 'client name' }, evidenceProbability: 2, confidence: 'client name' }),
+      ev({ type: 'ai_decision', filled: undefined, probability: -1, support: 1, evidenceProbability: 1, confidence: 'medium' }),
+    ] })).json();
+    assert.equal(result.accepted, 5);
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(['probability', 'support', 'evidenceProbability', 'confidence'].map((k) => rows[0][k]), [0.99, 0.98, 0.97, 0.96]);
+  assert.equal(rows[0].dropped, undefined);
+  assert.equal(rows[1].confidence, 'high');
+  assert.deepEqual(['probability', 'support', 'evidenceProbability', 'confidence'].map((k) => rows[2][k]), [0, null, 0, 0]);
+  assert.deepEqual(rows[2].dropped, ['someOtherField']);
+  assert.deepEqual(rows[3].dropped, ['probability', 'support', 'evidenceProbability', 'confidence']);
+  assert.deepEqual([rows[4].probability, rows[4].support, rows[4].evidenceProbability, rows[4].confidence], [undefined, 1, 1, 'medium']);
+  assert.doesNotMatch(JSON.stringify(rows), /client name/);
 });

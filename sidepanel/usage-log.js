@@ -58,6 +58,8 @@ const exclusive = (fn) => (globalThis.navigator?.locks ? navigator.locks.request
 // (session) are taken when log() is called, not when the queue gets to the event: Clear and
 // Replace log intake_closed just before the panel moves to another session. `seq` numbers every
 // event this computer logs, so a quote's events keep their order even when they share a time.
+// An event that names its own session and intakeId keeps them: a fill's results that come back
+// after another intake was loaded are logged as the quote they began in (noteStaleFill).
 export function log(...events) {
   const t = new Date().toISOString();
   const { id: sessionId = null, intakeId = null } = session ?? {};
@@ -80,9 +82,16 @@ export function log(...events) {
   return queue;
 }
 
-export async function count() {
+// Events waiting on this computer: the upload queue, and the ones a server refused or that were
+// too large to send (kept aside for export). Export writes both and Clear deletes both, so the
+// panel's count and its "haven't been exported" check cover both (audit 2026-10-08).
+export async function counts() {
   await queue;
-  return ((await local.get(LOG_KEY)) ?? []).length;
+  return { queued: ((await local.get(LOG_KEY)) ?? []).length, rejected: ((await local.get(REJECTED_KEY)) ?? []).length };
+}
+export async function count() {
+  const { queued, rejected } = await counts();
+  return queued + rejected;
 }
 
 export async function exportLog() {
@@ -123,6 +132,19 @@ const BATCH = 500;
 // of UTF-8. Page layouts can be tens of KB each.
 const BATCH_CHARS = 1_000_000;
 let uploadStatus = { state: 'idle' }; // idle | ok | error | off
+// A request that hangs (a proxy, a half-open connection) is given up after this long: the status
+// says so and the events stay queued for the next upload (audit 2026-10-08, finding 11). The time
+// covers reading the reply too (`read`): a reply whose body stalls after its headers held the
+// queue (Codex on PR #65).
+export const UPLOAD_TIMEOUT_MS = 20_000;
+const timedFetch = (url, init, timeoutMs, read = (res) => res) => {
+  const control = new AbortController();
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => { control.abort(); reject(Object.assign(new Error('timed out'), { name: 'AbortError' })); }, timeoutMs);
+  });
+  return Promise.race([fetch(url, { ...init, signal: control.signal }).then(read), timeout]).finally(() => clearTimeout(timer));
+};
 
 export const lastUpload = () => uploadStatus;
 
@@ -155,7 +177,8 @@ async function park(events) {
 
 // Sends pending events in batches. Events leave this computer's list only after the server has
 // stored them (or already had them), so a server outage loses nothing.
-export function upload() {
+// `timeoutMs`: per request (tests shorten it).
+export function upload({ timeoutMs = UPLOAD_TIMEOUT_MS } = {}) {
   queue = queue.then(() => exclusive(async () => {
     const { agent = null } = await settings();
     const { serverUrl, serverToken } = await serverConfig();
@@ -175,10 +198,10 @@ export function upload() {
     // panel before a quote's events start piling up on this computer.
     if (!((await local.get(LOG_KEY)) ?? []).length) {
       try {
-        const res = await fetch(new URL('/v1/health', serverUrl), { headers: serverToken ? { authorization: `Bearer ${serverToken}` } : {} });
+        const res = await timedFetch(new URL('/v1/health', serverUrl), { headers: serverToken ? { authorization: `Bearer ${serverToken}` } : {} }, timeoutMs);
         uploadStatus = res.ok ? { state: 'ok', at: new Date().toISOString(), sent: 0 } : { state: 'error', at: new Date().toISOString(), message: `server said ${res.status}` };
-      } catch {
-        uploadStatus = { state: 'error', at: new Date().toISOString(), message: `can't reach ${serverUrl}` };
+      } catch (e) {
+        uploadStatus = { state: 'error', at: new Date().toISOString(), message: e?.name === 'AbortError' ? `${serverUrl} didn't answer in time` : `can't reach ${serverUrl}` };
       }
       return;
     }
@@ -190,15 +213,16 @@ export function upload() {
       const list = (await local.get(LOG_KEY)) ?? [];
       const batch = nextBatch(list, max);
       if (!batch.length) break;
-      let res;
+      let res, body;
       try {
-        res = await fetch(new URL('/v1/events', serverUrl), {
+        ({ res, body } = await timedFetch(new URL('/v1/events', serverUrl), {
           method: 'POST',
           headers: { 'content-type': 'application/json', ...(serverToken ? { authorization: `Bearer ${serverToken}` } : {}) },
           body: JSON.stringify({ agent, version, events: batch }),
-        });
-      } catch {
-        uploadStatus = { state: 'error', at: new Date().toISOString(), message: `can't reach ${serverUrl}` };
+        }, timeoutMs, async (r) => ({ res: r, body: r.status === 413 ? null : await r.json().catch(() => null) })));
+      } catch (e) {
+        // Given up or unreachable: the events stay here for the next upload.
+        uploadStatus = { state: 'error', at: new Date().toISOString(), message: e?.name === 'AbortError' ? `${serverUrl} didn't answer in time; the events stay here` : `can't reach ${serverUrl}` };
         return;
       }
       // Too large for this server (or a proxy in front of it): send fewer at a time. One event
@@ -210,11 +234,10 @@ export function upload() {
         continue;
       }
       if (!res.ok) {
-        const msg = await res.json().then((b) => b.error).catch(() => res.statusText);
+        const msg = body ? body.error : res.statusText;
         uploadStatus = { state: 'error', at: new Date().toISOString(), message: `server said ${res.status}: ${msg}` };
         return;
       }
-      const body = await res.json().catch(() => null);
       if (!receiptFor(body, batch.length)) {
         uploadStatus = { state: 'error', at: new Date().toISOString(), message: "the server's reply didn't confirm the upload; the events stay here" };
         return;
@@ -235,7 +258,12 @@ export function upload() {
   return queue;
 }
 
+// Deletes the upload queue and the events kept aside for export: what Export wrote (audit
+// 2026-10-08: Clear left the refused events, which Export kept including).
 export async function clearLog() {
   await queue;
-  await exclusive(() => local.set(LOG_KEY, []));
+  await exclusive(async () => {
+    await local.set(LOG_KEY, []);
+    await local.set(REJECTED_KEY, []);
+  });
 }
