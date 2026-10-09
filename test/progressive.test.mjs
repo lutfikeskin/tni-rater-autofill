@@ -490,7 +490,42 @@ test('the owner with a two-word surname is matched to their driver row (date of 
   record.drivers = [{ first: 'Bob', middle: null, last: 'Jones Smith', dob: '01/02/1980' }];
   assert.equal(owner(record).driver, null, 'a shared surname word with another first name is someone else');
   record.drivers = [{ first: 'Bob', middle: null, last: 'Smith', dob: '01/02/1980' }];
-  assert.equal(owner(record).driver?.dob, '01/02/1980', 'the same one-word surname, as before');
+  assert.equal(owner(record).driver, null, 'the same one-word surname with another first name is someone else (audit 2026-10-08)');
+});
+
+// Audit 2026-10-08: owner "Alice Sample" who doesn't drive took the first name and date of birth
+// of the sole driver "Bob Sample" (through the surname-only match), on both carriers.
+test('the owner is never another driver: first names must agree, and a non-driving owner links no row', () => {
+  const record = baseRecord();
+  record.applicant.owner1 = 'Alice Sample';
+  record.applicant.ownerDrives = false;
+  record.drivers = [{ first: 'Bob', middle: null, last: 'Sample', dob: '01/02/1990' }];
+  let o = owner(record);
+  assert.equal(o.driver, null);
+  assert.equal(o.first, 'Alice');
+  assert.equal(o.last, 'Sample');
+  let plan = buildPlan(record, progressive);
+  assert.equal(byQ(plan, '295').value, 'Alice');
+  assert.equal(byQ(plan, '297').value, 'Sample');
+  assert.equal(byQ(plan, '2BB').value, null, 'no date of birth: the agent\'s');
+  record.applicant.ownerDrives = true;
+  o = owner(record);
+  assert.equal(o.driver, null, 'the owner drives, but the sole driver has another first name');
+  assert.equal(o.first, 'Alice');
+  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, null);
+  record.drivers = [{ first: 'Alice', middle: null, last: 'Sample', dob: '03/04/1985' }];
+  assert.equal(owner(record).driver?.dob, '03/04/1985', 'the exact full name links');
+  record.applicant.ownerDrives = false;
+  assert.equal(owner(record).driver, null, 'an owner who doesn\'t drive is not a driver row, even by full name');
+  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, null);
+  // The owner box holding only the first name still finds the one driver with it, unless the
+  // intake says the owner doesn't drive.
+  record.applicant.owner1 = 'Alice';
+  record.applicant.ownerDrives = null;
+  assert.equal(owner(record).driver?.dob, '03/04/1985');
+  record.applicant.ownerDrives = false;
+  assert.equal(owner(record).driver, null);
+  assert.equal(owner(record).last, 'Alice', 'a one-word box: the word, as before');
 });
 
 // 2026-10-05 FL run: two vans and a Semi Truck.

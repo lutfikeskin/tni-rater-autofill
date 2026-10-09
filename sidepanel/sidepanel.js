@@ -1,6 +1,6 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseEdit, ntlMention, ntlCheckMessage } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
@@ -591,7 +591,9 @@ async function loadFile(file) {
   cancelLayouts();
   holdLayouts();
   resetViews();
-  state.intake = { ...result, fileName: file.name, done: [] };
+  // agentEdited: the fields the agent edited in the panel, saved with the intake so a derived one
+  // among them (radius miles, years in business) stays theirs after the panel reopens.
+  state.intake = { ...result, fileName: file.name, done: [], agentEdited: [] };
   // Start on Check intake when something on the intake needs a look, else straight on Fill.
   state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
   state.settingsOpen = false;
@@ -793,6 +795,18 @@ function fieldRow(path, label, kind, flagged, layout = 'row') {
     const before = get(state.intake.record, path);
     const after = parseEdit(kind, input.value);
     set(state.intake.record, path, after);
+    const edited = new Set(state.intake.agentEdited ?? []).add(path);
+    state.intake.agentEdited = [...edited];
+    // A value derived from this one (radius → miles, year established → years in business)
+    // follows the edit, unless the agent set it here themselves; its row in the client details
+    // shows the new value without a re-render.
+    for (const derived of rederive(state.intake.record, path, { keep: edited })) {
+      const row = document.getElementById(`f-${derived.replace(/[^\w]/g, '_')}`);
+      if (!row) continue;
+      const value = get(state.intake.record, derived);
+      row.value = value ?? '';
+      row.closest('.field')?.classList.toggle('empty', value == null);
+    }
     intakeEdited();
     // Log that the agent corrected the intake here (and whether it was flagged), not the value.
     const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);

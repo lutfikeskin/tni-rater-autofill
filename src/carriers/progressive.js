@@ -30,7 +30,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver } from '../util.js';
-import { ntlMention } from '../normalize.js';
+import { ntlMention, isLongHaul } from '../normalize.js';
 
 // Values that Progressive asks the agent to attest to must come from an explicit intake field.
 // Keep these helpers conservative: an absent value is a review item, not a reason to guess.
@@ -42,12 +42,16 @@ const explicitBoolean = (record, path) => {
 };
 
 // The business owner, matched to their driver row (for date of birth and a clean name split).
+// An intake saying the owner doesn't drive links no row, whatever the names: the name parts come
+// from the owner box alone and the date of birth stays the agent's (a driver with the owner's
+// surname is another person).
 export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
-  const fullMatches = r.drivers.filter((d) => nameKey(full) && nameKey(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''}`) === nameKey(full));
-  // The same surname, or a word of a two-word surname with a matching first name (util.js).
-  const lastMatches = r.drivers.filter((d) => ownerIsDriver(full, d));
+  const candidates = r.applicant.ownerDrives === false ? [] : r.drivers;
+  const fullMatches = candidates.filter((d) => nameKey(full) && nameKey(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''}`) === nameKey(full));
+  // The owner's surname (or a word of a two-word surname) with a matching first name (util.js).
+  const lastMatches = candidates.filter((d) => ownerIsDriver(full, d));
   // Some intakes repeat the first name in the sole driver's last-name box. Only connect
   // that DOB when the intake explicitly says the owner drives and the owner's first name agrees.
   const sole = r.drivers.length === 1 ? r.drivers[0] : null;
@@ -57,7 +61,7 @@ export function owner(r) {
   // The owner box sometimes holds only the first name ("IBRAHIM"): the one driver whose first
   // name starts with it is the owner.
   const firstOnly = !/\s/.test(full.trim()) && full.trim()
-    ? r.drivers.filter((d) => (d.first ?? '').trim().split(/\s+/)[0].toLowerCase() === full.trim().toLowerCase()) : [];
+    ? candidates.filter((d) => (d.first ?? '').trim().split(/\s+/)[0].toLowerCase() === full.trim().toLowerCase()) : [];
   const driver = fullMatches.length === 1 ? fullMatches[0] : fullMatches.length ? null : lastMatches.length === 1 ? lastMatches[0]
     : repeatedFirst ? sole : firstOnly.length === 1 ? firstOnly[0] : null;
   const first = driver?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
@@ -127,7 +131,7 @@ const defensiveMention = (r) => String(r.claims?.notes ?? '').match(/[^\n.]*defe
 
 // Farthest one-way distance: "Unlimited" / long haul becomes 501 miles, which picks "More than
 // 500 miles". A trailer goes as far as the vehicle (TNI).
-const radiusMiles = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null);
+const radiusMiles = (r) => r.operations.radiusMiles ?? (isLongHaul(r.operations.radius) ? 501 : null);
 
 // The vehicle's permanently attached equipment, from the intake (operations.equipVehicle, one
 // answer for all the vehicles). None or up to $2,000: TNI's standard band "$0 to $2,000" and

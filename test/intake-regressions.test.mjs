@@ -30,6 +30,26 @@ test('expired policy is not currently insured; proof availability is independent
   assert.equal(priorPolicyExpired(r), false);
 });
 
+// Audit 2026-10-08: AmWINS imports owner() from the Progressive rules, so a borrowed identity
+// reached both carriers. A non-driving owner keeps the owner box's name and no date of birth.
+test('an owner who shares a surname with a driver keeps their own identity on both carriers', () => {
+  const r = record();
+  r.applicant.owner1 = 'Alice Example';
+  r.applicant.ownerDrives = false;
+  r.drivers = [{ first: 'Bob', last: 'Example', dob: '01/02/1990', licenseNumber: 'SYNTHETIC-ONE' }];
+  const progressivePlan = buildPlan(r, progressive);
+  assert.equal(progressivePlan.find((s) => s.q === '295').value, 'Alice');
+  assert.equal(progressivePlan.find((s) => s.q === '2BB').value, null);
+  const amwinsPlan = buildPlan(r, amwins);
+  assert.equal(amwinsPlan.find((s) => s.selector === '#ownerName').value, 'Alice Example');
+  assert.equal(amwinsPlan.find((s) => s.selector === '#ownerDob').value, null);
+  assert.equal(amwinsPlan.find((s) => s.selector === '#inspectionContactName').value, 'Alice Example');
+  r.applicant.ownerDrives = true;
+  r.drivers.push({ first: 'Alice', last: 'Example', dob: '03/04/1985', licenseNumber: 'SYNTHETIC-TWO' });
+  assert.equal(buildPlan(r, amwins).find((s) => s.selector === '#ownerDob').value, '03/04/1985', 'the driver with the same full name');
+  assert.equal(buildPlan(r, progressive).find((s) => s.q === '2BB').value, '03/04/1985');
+});
+
 test('AmWINS maps each repeated row independently and adds only missing driver rows', () => {
   const plan = buildPlan(record(), amwins, { drivers: 1, vehicles: 1 });
   const firstNames = plan.filter(s => s.selector?.includes('firstName'));
