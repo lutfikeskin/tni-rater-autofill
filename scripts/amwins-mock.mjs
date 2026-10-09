@@ -12,7 +12,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { buildPlan } from '../src/plan.js';
 import { amwins } from '../src/carriers/amwins.js';
@@ -110,7 +110,9 @@ const browser = await chromium.launch({ headless: !headed });
 const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e.message)));
-await page.goto('file://' + path.join(root, 'test/fixtures/amwins/application.html') + (reversed ? '?import=reversed' : ''));
+const fixtureUrl = pathToFileURL(path.join(root, 'test/fixtures/amwins/application.html'));
+if (reversed) fixtureUrl.searchParams.set('import', 'reversed');
+await page.goto(fixtureUrl.href);
 await page.evaluate(PAGEKIT);
 
 const plan = buildPlan(record, amwins, {});

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadEvents, quoteSessions } from '../scripts/lib/events.mjs';
 import { learn, finalAnswers, questionOf } from '../scripts/lib/learn.mjs';
 import { fieldStatus } from '../scripts/lib/coverage.mjs';
@@ -582,7 +583,7 @@ test('the review names two questions reading the same apart', async () => {
   const changes = [{ ...change('c1', 'same'), change: 'entered' }, change('c2', 'same'), { ...change('c8', 'same'), kind: 'select', change: undefined, from: '$500K', to: '$1M' }, { ...change('c9', 'same'), kind: 'select', change: undefined, from: null, to: '$1M' }, change('c3', 'different'), change('c4', 'format'), change('c5', 'cleared'), { ...change('c6', 'different'), by: 'page' }, { ...change('c7', 'different'), autofilled: undefined }];
   fs.writeFileSync(path.join(dir, 'events', '2026-10-05.jsonl'), [row('284', 'ref:PrimaryBusinessAddressInput.City'), row('2B0', 'ref:BusinessOwnerHomeAddressInput.City'), ...changes].map((e) => JSON.stringify(e)).join('\n'));
   const out = path.join(dir, 'review.md');
-  execFileSync(process.execPath, [new URL('../scripts/review.mjs', import.meta.url).pathname, dir, '--all', '--out', out], { stdio: 'ignore' });
+  execFileSync(process.execPath, [fileURLToPath(new URL('../scripts/review.mjs', import.meta.url)), dir, '--all', '--out', out], { stdio: 'ignore' });
   const md = fs.readFileSync(out, 'utf8');
   assert.match(md, /progressive BusinessOwnerInfo "City" `PrimaryBusinessAddressInput\.City`/);
   assert.match(md, /progressive BusinessOwnerInfo "City" `BusinessOwnerHomeAddressInput\.City`/);
