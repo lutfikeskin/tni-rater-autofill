@@ -84,15 +84,15 @@ for (let round = 0; round < 20; round++) {
     break;
   }
   if (!unresolved.length) continue; // next-page report may still be waiting behind the background save
-  // Save & Continue changes the carrier step before the panel publishes its next report.
-  // On slower runners, that old report can still list facts we just answered. Wait only
-  // for this recognized prior-step report; the bounded loop and every hold assertion stay active.
-  const previousStepReport = unresolved.every(label => {
+  // A trusted edit or Save & Continue can land before the panel publishes its next report.
+  // Wait only for recognized facts already answered in this or a completed step. Never
+  // answer a control twice; the bounded loop and every hold/retention assertion stay active.
+  const settlingReport = unresolved.every(label => {
     const matches = AGENT_ANSWERS.filter(([step, re]) =>
-      step !== before.step && answeredSteps.get(step) < before.saves && re.test(label));
+      (step === before.step || answeredSteps.get(step) < before.saves) && re.test(label));
     return matches.length > 0 && matches.every(([, , selector]) => agentAnswered.has(selector));
   });
-  if (previousStepReport) continue;
+  if (settlingReport) continue;
   const remaining = [...AGENT_ANSWERS];
   const answers = unresolved.map(label => {
     const index = remaining.findIndex(([step, re]) => step === before.step && re.test(label));
