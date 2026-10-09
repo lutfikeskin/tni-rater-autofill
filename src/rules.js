@@ -4,6 +4,11 @@
 // becomes "drivers license"). The first rule that matches a field claims it, so order matters:
 // specific rules come before general ones.
 
+import { noPriorInsurance } from './util.js';
+
+const noPriorNote = (r) => (noPriorInsurance(r.priorInsurance?.[0])
+  ? `The intake's current insurance says "${r.priorInsurance[0].carrier}": no prior insurance. Answer it yourself.` : null);
+
 export const GENERIC_RULES = [
   // Drivers
   { path: 'drivers[].licenseState', label: '(licen[cs]e|dl) (issu(ed|ing) )?state|state (of|issu\\w*) (licen[cs]e|dl)|licensed in|state licensed' },
@@ -59,7 +64,8 @@ export const GENERIC_RULES = [
   { path: 'coverage.glLimit', label: 'general liability.*limit|\\bgl limit' },
   { path: 'coverage.autoLiabLimit', label: '(auto |bodily injury |combined single |csl )?liability limit|^bi limit|combined single limit', not: 'general|cargo' },
 
-  // Current insurance
-  { path: 'priorInsurance[0].carrier', label: '(prior|current|previous) (carrier|insurer|insurance (company|carrier))' },
-  { path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration' },
+  // Current insurance. "NO POP" and the like is no prior: nothing is typed, and the question stays
+  // the agent's (how a rater says "no prior" differs).
+  { path: 'priorInsurance[0].carrier', label: '(prior|current|previous) (carrier|insurer|insurance (company|carrier))', note: noPriorNote },
+  { path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration', note: noPriorNote },
 ];
