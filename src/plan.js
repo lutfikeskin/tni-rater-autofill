@@ -145,7 +145,9 @@ function fieldSteps(rules, record, carrier, active) {
     const info = rule.path ? fieldInfo(rule.path) : { label: rule.name ?? path, kind: 'text' };
     const name = rule.name ?? info.label;
     // A rule with a path and no computed value reads the intake; the rest declare their source.
-    const source = rule.source ?? (rule.path && rule.value === undefined ? 'intake' : null);
+    // A rule's source may depend on the record (a TNI standard when the intake is silent, derived
+    // when it answers).
+    const source = (typeof rule.source === 'function' ? rule.source(record, active) : rule.source) ?? (rule.path && rule.value === undefined ? 'intake' : null);
     // A fact or attestation the intake doesn't supply is the agent's: never filled, whatever the
     // rule's value says, with the rule's note or a plain one.
     const agents = AGENT_SOURCES.includes(source);

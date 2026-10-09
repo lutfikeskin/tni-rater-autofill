@@ -381,8 +381,8 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
     for (const label of LABELS) assert.equal(mine.filter((s) => new RegExp(s.re, 'i').test(label)).length, 1, `vehicle ${row + 1}: ${label}`);
   }
   assert.ok(plan.some((s) => s.re && new RegExp(s.re, 'i').test('code voilation')), 'the page spells it "voilation"');
-  assert.equal(named(/^Vehicles leased/)[0].value, null, 'no ownership on this record: the agent\'s (2026-10-09; always No before)');
-  assert.equal(named(/^Vehicles leased/)[0].source, 'derived');
+  assert.equal(named(/^Vehicles leased to others/)[0].value, null, 'not on the intake: the agent\'s (2026-10-09; always No before)');
+  assert.equal(named(/^Vehicles leased to others/)[0].source, 'fact');
   assert.equal(named(/^Body type/)[0].replace, true);
   assert.equal(named(/^Other topics/)[0].replace, true, 'Yes again after Default all answers to No');
   const actions = plan.filter((s) => s.kind === 'action');

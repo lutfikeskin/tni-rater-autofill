@@ -53,8 +53,12 @@ test('every rule that computes an answer declares a valid source', () => {
   for (const carrier of CARRIERS) {
     for (const rule of carrier.rules) {
       const where = `${carrier.id}: ${rule.name ?? rule.q ?? rule.selector ?? rule.label ?? rule.path}`;
-      if (rule.source !== undefined) assert.ok(SOURCES.includes(rule.source), `${where}: source "${rule.source}"`);
-      if (rule.value !== undefined) assert.ok(SOURCES.includes(rule.source), `${where}: a rule with a value declares its source`);
+      // A source may depend on the record: every record's must be valid.
+      const sources = typeof rule.source === 'function' ? RECORDS().map((r) => rule.source(r, {})) : [rule.source];
+      for (const source of sources) {
+        if (rule.source !== undefined) assert.ok(SOURCES.includes(source), `${where}: source "${source}"`);
+        if (rule.value !== undefined) assert.ok(SOURCES.includes(source), `${where}: a rule with a value declares its source`);
+      }
       // A path alone reads the intake; declaring another source for it would be a contradiction.
       if (rule.path && rule.value === undefined && rule.source) assert.ok(['intake', ...AGENT_SOURCES].includes(rule.source), `${where}: a path rule is intake (or the agent's)`);
     }
@@ -199,7 +203,7 @@ test('a client fact the intake does not answer is manualOnly; answered, it is fi
   const full = expediter();
   const fa = buildPlan(full, amwins, { drivers: 0, vehicles: 0 });
   const fp = buildPlan(full, progressive, { drivers: 0, vehicles: 0, trailers: 0 });
-  for (const step of [named(fa, /^Marital status/), bySel(fa, '#yearBusinessEstablished'), named(fa, /^Vehicles leased/), named(fa, /convictions/i), byQ(fp, '2CA7'), byQ(fp, '1ED')]) {
+  for (const step of [named(fa, /^Marital status/), bySel(fa, '#yearBusinessEstablished'), named(fa, /^Vehicles not owned/), named(fa, /convictions/i), byQ(fp, '2CA7'), byQ(fp, '1ED')]) {
     assert.notEqual(step.value, null, step.name);
     assert.equal(step.manualOnly, false, step.name);
   }
@@ -207,19 +211,23 @@ test('a client fact the intake does not answer is manualOnly; answered, it is fi
   assert.equal(named(fa, /^Waiver type/).manualOnly, false);
 });
 
-test('a leased vehicle: AmWINS leased and not-owned Yes, Progressive loan/lease "Yes - Lease"', () => {
+test('a leased vehicle: AmWINS not-owned Yes, leased to others the agent\'s, Progressive loan/lease "Yes - Lease"', () => {
   const r = with_({ 'operations.vehicleOwnership': 'Leased' });
   const a = buildPlan(r, amwins, {});
-  assert.equal(named(a, /^Vehicles leased/).value, true);
   assert.equal(named(a, /^Vehicles not owned/).value, true);
-  assert.equal(named(a, /^Vehicles leased/).source, 'derived');
+  // Codex on 2dcd1e8: "Are any vehicles leased to others?" isn't answered by leasing from a lessor.
+  const toOthers = named(a, /^Vehicles leased to others/);
+  agentsNote(toOthers);
+  assert.deepEqual([toOthers.source, toOthers.manualOnly], ['fact', true]);
+  assert.match(toOthers.note, /leased to others/);
   agentsNote(named(a, /^Additional interest/));
   assert.match(named(a, /^Additional interest/).note, /lienholder|lessor|leased/i);
   assert.equal(byQ(buildPlan(r, progressive, {}), '2CA7').value, 'Yes - Lease');
   const owned = buildPlan(expediter(), amwins, {});
-  assert.deepEqual([named(owned, /^Vehicles leased/).value, named(owned, /^Vehicles not owned/).value, named(owned, /^Additional interest/).value], [false, false, false]);
+  assert.deepEqual([named(owned, /^Vehicles leased to others/).value, named(owned, /^Vehicles not owned/).value, named(owned, /^Additional interest/).value], [null, false, false]);
+  agentsNote(named(owned, /^Vehicles leased to others/));
   const financed = buildPlan(with_({ 'operations.vehicleOwnership': 'Financed' }), amwins, {});
-  assert.deepEqual([named(financed, /^Vehicles leased/).value, named(financed, /^Vehicles not owned/).value], [false, false]);
+  assert.deepEqual([named(financed, /^Vehicles leased to others/).value, named(financed, /^Vehicles not owned/).value], [null, false]);
   agentsNote(named(financed, /^Additional interest/));
   assert.equal(byQ(buildPlan(with_({ 'operations.vehicleOwnership': 'Financed' }), progressive, {}), '2CA7').value, 'Yes - Loan');
 });
@@ -243,6 +251,7 @@ test('attached equipment of $5,000 on the intake: entered, never "no equipment"'
   const p = buildPlan(r, progressive, {});
   assert.equal(byQ(p, '2CE3').value, false, 'Vehicle has no equipment: No');
   assert.equal(byQ(p, '2CE3').source, 'derived');
+  assert.equal(byQ(p, '2CE3').standard, false);
   assert.deepEqual([byQ(p, '2CE0').value, byQ(p, '2CE0').ignore, byQ(p, '2CE0').kind], [5000, false, 'money']);
   agentsNote(byQ(p, '2CCE'));
   assert.match(byQ(p, '2CCE').note, /5,?000/);
@@ -255,7 +264,15 @@ test('attached equipment of $5,000 on the intake: entered, never "no equipment"'
     assert.deepEqual([byQ(q, '2CE3').value, byQ(q, '2CCE').value, byQ(q, '2CE0').ignore], [true, '$0 to $2,000', true], String(amount));
     assert.equal(byQ(q, '2CCE').standard, true);
     assert.equal(byQ(q, '2CCE').note, null);
+    // Codex on 2dcd1e8: no value on the intake is TNI's standard, not a client fact; a value up to
+    // $2,000 on the intake is derived from it.
+    const blank = amount == null || amount === 0;
+    assert.deepEqual([byQ(q, '2CE3').source, byQ(q, '2CE3').standard], blank ? ['standard', true] : ['derived', false], String(amount));
   }
+  // Review mode makes the blank-intake answer a check item; the intake's $1,500 stays derived.
+  const review = (amount) => byQ(buildPlan(with_({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel', 'operations.equipVehicle': amount }), progressive, {}), '2CE3');
+  assert.match(review(null).warn ?? '', /Review mode/);
+  assert.equal(review(1500).warn ?? null, null);
   assert.equal(named(buildPlan(with_({ 'operations.equipVehicle': 1500 }), amwins, {}), /^Permanently attached equipment/).value, null, 'any amount on the intake is the agent\'s on AmWINS');
   assert.equal(named(buildPlan(expediter(), amwins, {}), /^Permanently attached equipment/).value, false);
 });
@@ -267,7 +284,7 @@ test('missing ownership: loan / lease, leased, not owned and additional interest
   agentsNote(byQ(p, '2AD0'));
   assert.match(byQ(p, '2AD0').note, /trailer ownership/i);
   const a = buildPlan(r, amwins, {});
-  for (const re of [/^Vehicles leased/, /^Vehicles not owned/, /^Additional interest/]) agentsNote(named(a, re));
+  for (const re of [/^Vehicles leased to others/, /^Vehicles not owned/, /^Additional interest/]) agentsNote(named(a, re));
   // Owned stays No (vehicle and trailer).
   const owned = buildPlan(expediter(), progressive, { trailers: 0 });
   assert.deepEqual([byQ(owned, '2CA7').value, byQ(owned, '2AD0').value], ['No', 'No']);
@@ -289,6 +306,11 @@ test('business structure: a suffix is a corporation, no company is a sole propri
   assert.equal(structure('Synthetic Expediter Inc.', progressive).value, 'Corporation or LLC / Non-Profit');
   assert.equal(structure(null, progressive).value, 'Individual / Sole Proprietor');
   agentsNote(structure('Synthetic Expediter', progressive));
+  // Codex on 2dcd1e8: a bare name's structure is the agent's, never the AI's (clientFact).
+  assert.equal(structure('Synthetic Expediter', progressive).manualOnly, true);
+  assert.equal(structure('Synthetic Expediter LLC', progressive).manualOnly, false);
+  assert.equal(structure(null, progressive).manualOnly, false);
+  assert.equal(structure('Synthetic Expediter', amwins).manualOnly, true);
   assert.equal(structure('Synthetic Expediter LLC', amwins).value, 'LLC');
   assert.equal(structure('Synthetic Expediter Corp', amwins).value, 'CORPORATION');
   assert.equal(structure(null, amwins).value, 'SOLE PROPRIETOR');
@@ -342,7 +364,9 @@ test('deductibles are TNI\'s standard $1,000 (no intake deductible field exists)
 test('supportedClass: expediter, freight hauler and general freight; a missing class is unsupported', () => {
   for (const carrier of CARRIERS) {
     assert.equal(supportedClass(expediter(), carrier), true, carrier.id);
-    assert.equal(supportedClass(with_({ 'operations.businessClass': 'Freight Hauler', 'operations.whatHaul': 'Furniture' }), carrier), true);
+    // Codex on 2dcd1e8: AmWINS's freight answers (isFreight) need expediting or general freight.
+    assert.equal(supportedClass(with_({ 'operations.businessClass': 'Freight Hauler', 'operations.whatHaul': 'Furniture' }), carrier), carrier === progressive, carrier.id);
+    assert.equal(supportedClass(with_({ 'operations.businessClass': 'Freight Hauler', 'operations.whatHaul': 'General freight' }), carrier), true, carrier.id);
     assert.equal(supportedClass(with_({ 'operations.businessClass': 'General Freight' }), carrier), true);
     assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dry Van', 'operations.whatHaul': 'General freight' }), carrier), true, 'general freight on what they haul, as the freight helpers read it');
     assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' }), carrier), false);
@@ -351,6 +375,19 @@ test('supportedClass: expediter, freight hauler and general freight; a missing c
   }
   assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dump Truck' }), { id: 'geico', rules: [] }), true, 'no classes declared: no gate');
   assert.equal(supportedClass(expediter(), null), true);
+});
+
+test('AmWINS: review mode exactly when its freight answers are the agent\'s (one predicate)', () => {
+  const classes = [['Expediter', 'Furniture'], ['Freight Hauler', 'Furniture'], ['Freight Hauler', 'General freight'], ['General Freight', null],
+    ['Dry Van', 'General freight'], ['Dump Truck', 'Gravel'], ['Box Truck', 'Expedited loads']];
+  for (const [cls, haul] of classes) {
+    const r = with_({ 'operations.businessClass': cls, 'operations.whatHaul': haul });
+    const plan = buildPlan(r, amwins, {});
+    const nature = bySel(plan, '#natureOfBusiness');
+    assert.equal(supportedClass(r, amwins), nature.note == null, `${cls} / ${haul}`);
+    // Outside the class, the standards are check items.
+    assert.equal(field(plan).filter((s) => s.standard).every((s) => /Review mode/.test(s.warn ?? '')), !supportedClass(r, amwins), `${cls} / ${haul}`);
+  }
 });
 
 test('review mode: every standard step is a check item naming the class and carrier; none for an expediter', () => {

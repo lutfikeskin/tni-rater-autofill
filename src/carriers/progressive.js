@@ -134,6 +134,9 @@ const radiusMiles = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|o
 const vehicleEquipment = (r) => (r.operations?.equipVehicle > 0 ? r.operations.equipVehicle : null);
 const equipmentOver = (r) => vehicleEquipment(r) > 2000;
 const equipment = (r) => (equipmentOver(r) ? null : '$0 to $2,000');
+// "Vehicle has no equipment": with no value on the intake it is TNI's standard (like the band);
+// a value on the intake (up to $2,000: Yes, more: No) is derived from it.
+const equipmentSource = (r) => (vehicleEquipment(r) == null ? 'standard' : 'derived');
 const equipmentNote = (r) => (equipmentOver(r) ? `The intake's attached equipment value is $${vehicleEquipment(r).toLocaleString('en-US')}: pick the band that covers it yourself.` : null);
 
 const cargo = (r) => {
@@ -479,7 +482,7 @@ export const progressive = {
       { q: '1D', ask: 'Business Type', control: 'text', each: true, name: 'Business type search box', ignore: true },
       { q: '36', source: 'standard', ask: 'Business Type Label', name: 'Business type (search list: For Hire Trucking, else General Freight Trucking)', kind: 'choice', value: () => 'For Hire Trucking', choiceAliases: () => ['General Freight Trucking'] },
       { q: '239', source: 'derived', ask: ['Business type list', 'Business Type'], control: 'select', name: 'Business type', kind: 'choice', value: businessType, choiceAliases: businessAliases, summaryAfter: (r) => isExpediter(r) ? 'Type of Trucker' : 'How is the customer\'s business structured?' },
-      { q: '22D', source: 'derived', field: 'AccountInput.BusinessStructure', ask: 'How is the customer\'s business structured?', name: 'Business structure (from the company name)', kind: 'choice', value: businessStructure, note: businessStructureNote },
+      { q: '22D', source: 'derived', clientFact: true, field: 'AccountInput.BusinessStructure', ask: 'How is the customer\'s business structured?', name: 'Business structure (from the company name)', kind: 'choice', value: businessStructure, note: businessStructureNote },
       { q: '267', source: 'derived', field: 'AccountInput.SpecificTruckHaulContractType', ask: 'Type of Trucker', name: 'Type of trucker', kind: 'choice', value: truckerType, ignore: (r) => !isExpediter(r) },
       { q: '295', source: 'derived', field: 'AccountInput.BusinessOwnerName', ask: 'Business Owner\'s Name', name: 'Owner first name', value: (r) => owner(r).first },
       { q: '296', source: 'derived', field: 'AccountInput.BusinessOwnerMiddleInitial', ask: 'MIMiddle initial', optional: true, name: 'Owner middle initial', value: (r) => owner(r).middle?.[0] ?? null, ignore: true },
@@ -585,7 +588,7 @@ export const progressive = {
       // Asked here for the vehicle being added, and on Rates (FL, NC, OH) once per vehicle, where each
       // row gets its own vehicle's answer: the same fields, one rule each (scope: 'vehicle').
       { q: '2CCE', source: 'standard', field: 'RiskInput.PAValueOptions', ask: 'What is the total value of all permanently attached equipment (including aftermarket parts, mounted equipment, and modifications)?', name: 'Attached equipment value (standard: $0 to $2,000 unless the intake gives more)', kind: 'choice', value: equipment, note: equipmentNote, scope: 'vehicle', scopeIndex: (r, a) => a.vehicles ?? 0 },
-      { q: '2CE3', source: 'derived', field: 'RiskInput.PAValueIndicator', ask: 'Vehicle has no equipment', name: 'Vehicle has no equipment (none, or up to $2,000, on the intake)', kind: 'bool', value: (r) => !equipmentOver(r), scope: 'vehicle' },
+      { q: '2CE3', source: equipmentSource, field: 'RiskInput.PAValueIndicator', ask: 'Vehicle has no equipment', name: 'Vehicle has no equipment (standard when the intake gives none; up to $2,000 on the intake)', kind: 'bool', value: (r) => !equipmentOver(r), scope: 'vehicle' },
       { q: '2CE8', field: 'RiskInput.NonPAValue', ask: 'If this vehicle was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'vehicles[].value', name: 'Vehicle value if sold today', note: vehicleValueNote, scope: 'vehicle' },
     ]).map(offTrailerPages),
     // --- Add trailer (AddTrailer) ------------------------------------------------------------

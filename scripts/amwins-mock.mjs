@@ -84,6 +84,7 @@ const AGENT_ANSWERS = [
   [/gender/i, '#driversPanel [data-id="gender"]', 'MALE'],
   [/mar[it]+al status/i, '#driversPanel [data-id="martialStatus"]', 'MARRIED'],
   [/licen[cs]e year/i, '#driversPanel [data-id="licenseYear"]', '1985'],
+  [/^vehicle leased$|leased to others/i, 'radio:vehicleLeased', '0'],
 ];
 const DECLARATION = /i declare/i;
 
@@ -118,8 +119,10 @@ for (let i = 0; i < 12; i++) {
   if (report.actions?.length) lines.push(`clicked: ${report.actions.map((a) => a.text).join(' · ')}`);
   lines.push(report.advanced ? `→ ${report.advanced}` : `stopped: ${report.blockers.join(' · ') || 'nothing left'}`, '');
   if (!report.advanced) {
-    const left = [...report.noData, ...report.unknown, ...report.failed, ...report.leftRequired];
-    if (left.some((x) => DECLARATION.test(x.label)) && left.every((x) => DECLARATION.test(x.label))) { reachedDeclaration = true; break; }
+    const all = [...report.noData, ...report.unknown, ...report.failed, ...report.leftRequired];
+    if (all.some((x) => DECLARATION.test(x.label)) && all.every((x) => DECLARATION.test(x.label))) { reachedDeclaration = true; break; }
+    // The agent's answers on the declaration's step (vehicles leased to others) come first.
+    const left = all.filter((x) => !DECLARATION.test(x.label));
     const answers = left.map((x) => [x, AGENT_ANSWERS.find(([re]) => re.test(x.label))]);
     if (!left.length || answers.some(([, a]) => !a)) { stoppedAt = step; break; }
     for (const [x, [, sel, value]] of answers) {

@@ -69,8 +69,9 @@ const entityTypeNote = (r) => (entityType(r) == null
 // assistant leaves it).
 const fact = (name, note) => ({ name, source: 'fact', note });
 
-// The intake's vehicle ownership (one answer for all the vehicles): leased means the vehicles are
-// leased and not owned; owned or financed means neither; none given is the agent's. A financed or
+// The intake's vehicle ownership (one answer for all the vehicles): leased means a vehicle is not
+// solely owned by the applicant; owned or financed means it is; none given is the agent's. It
+// doesn't say whether vehicles are leased out to others. A financed or
 // leased vehicle likely has a lienholder or lessor as an additional interest: the agent's; owned
 // has none.
 const ownership = (r) => String(r.operations?.vehicleOwnership ?? '').trim();
@@ -112,7 +113,10 @@ const yearsInBusiness = (r) => {
 // Expediters and general freight haulers are 484122 (general freight trucking, long-distance,
 // LTL), nature of business TRANSPORTATION, usage FOR HIRE and the for-hire description. Any other
 // business class is the agent's for all four (2026-10-09; review mode covers its standards).
-const isFreight = (r) => /expedit|general\s*freight/i.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
+// One pattern for these answers and the review-mode gate (supportedClasses): a class it doesn't
+// match fills in review mode, so a "Freight Hauler" of furniture gets both the notes and the review.
+const FREIGHT = /expedit|general\s*freight/i;
+const isFreight = (r) => FREIGHT.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
 const freightNote = (what) => (r) => (isFreight(r) ? null : `${what} for a ${r.operations.businessClass || 'business of this class'} isn't known: answer it yourself.`);
 const classSearch = (r) => (isFreight(r) ? '484122' : null);
 // AmWINS lists several results for 484122: the one TNI picks, in full.
@@ -239,8 +243,9 @@ export const amwins = {
   // request): fill a round of answers at a time.
   batch: true,
   // The business classes these rules were written and checked for (expediters and general freight
-  // haulers). Any other class fills in review mode (plan.js supportedClass).
-  supportedClasses: [/expedit/i, /^(?:general\s+)?freight\s+haul(?:er|ing)$/i, { re: /general\s*freight/i, whatHaul: true }],
+  // haulers), as isFreight reads them: the class or what they haul names expediting or general
+  // freight (a missing class is still review mode).
+  supportedClasses: [{ re: FREIGHT, whatHaul: true }],
   // Import Data right after the VIN list is filled, before the vehicle boxes, which it fills.
   actions: [
     ...[1, 2, 3].map((index) => ({ id: `addDriver${index}`, text: '^add driver$',
@@ -388,10 +393,13 @@ export const amwins = {
       label: `^ex\\w*de\\b.*(${topic})`, not: 'waiver', kind: 'bool', source: 'standard', value: () => false })),
 
     // --- Underwriting questions --------------------------------------------------------------------
-    // From the intake's vehicle ownership (2026-10-09; until then always No): leased vehicles are
-    // leased and not owned.
+    // "Are any vehicles … not solely owned by and registered to the applicant?" (encumbrances
+    // excepted): from the intake's vehicle ownership (2026-10-09; until then always No): leased is
+    // Yes; owned or financed (a lien is an encumbrance) is No.
     { name: 'Vehicles not owned (from the vehicle ownership)', label: '^any vehicle not owned$', kind: 'bool', source: 'derived', clientFact: true, value: leased, note: ownershipNote('whether any vehicle is not owned') },
-    { name: 'Vehicles leased (from the vehicle ownership)', label: '^vehicle leased$', kind: 'bool', source: 'derived', clientFact: true, value: leased, note: ownershipNote('whether the vehicles are leased') },
+    // "Are any vehicles leased to others?": leasing a vehicle from a lessor (the intake's ownership)
+    // says nothing about leasing vehicles out, and the intake has no such answer: the agent's.
+    { label: '^vehicle leased$', kind: 'bool', ...fact('Vehicles leased to others', 'Whether any vehicle is leased to others isn\'t on the intake (its vehicle ownership is about leasing from a lessor): answer it yourself.') },
     { name: 'MVR verification (standard: No)', label: '^mvr verification$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Owned unscheduled vehicles (standard: No)', label: '^owned unscheduled vehicle$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Convictions / moving violations (No when the intake reports none)', label: '^convictions moving violations$', kind: 'bool', source: 'derived', clientFact: true, value: convictions, note: convictionsNote },
