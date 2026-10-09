@@ -732,5 +732,10 @@ test('AmWINS vehicle rows are found by their VIN (witness), not their position; 
   const p = buildPlan(record, progressive, {});
   assert.equal(p.find((s) => s.baseAction === 'lookupVin').verify, 'revealed');
   assert.equal(p.find((s) => s.baseAction === 'verifyDot').verify, 'revealed');
+  // Already shown before Fill (the agent ran it): the decoded year/make/model of the active
+  // vehicle, all answered; the USDOT record's questions, any of them.
+  const second = buildPlan(record, progressive, { vehicles: 1 });
+  assert.deepEqual(second.find((s) => s.baseAction === 'lookupVin').shownBy, { all: ['vehicles[1].year', 'vehicles[1].make', 'vehicles[1].model'], any: [], answered: true });
+  assert.deepEqual(p.find((s) => s.baseAction === 'verifyDot').shownBy, { all: [], any: ['progressive.q20F', 'progressive.q22F', 'progressive.q277'], answered: false });
   assert.ok(p.filter((s) => s.kind !== 'action').every((s) => s.witness === null));
 });

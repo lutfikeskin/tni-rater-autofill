@@ -123,6 +123,13 @@ async function amwinsCase(page, c, record, lookup) {
   check(checks, 'vehicle count', got.vehicles.length, c.vehicleCount);
   for (const [i, v] of record.vehicles.entries()) {
     const g = got.vehicles[i] ?? {};
+    // A vehicle whose VIN the lookup rejected has no row of its own: it is handed to the agent
+    // (named on the Vehicles page), and nothing of it is typed into another row (maintainer, PR #66).
+    if (c.lookupScenario === 'vin-not-found') {
+      check(checks, `vehicle ${i + 1} handed to the agent`, reports.some(r => r.page?.startsWith('Vehicles') && (r.noData ?? []).some(x => x.label === `Vehicle ${i + 1}`)), true);
+      check(checks, `vehicle ${i + 1} details not typed`, [g.year, g.make, g.model, g.costNew, g.bodyType].map(x => x ?? '').join(''), '');
+      continue;
+    }
     for (const [field, want] of Object.entries({ vin: v.vin, year: String(v.year), make: v.make, model: v.model })) check(checks, `vehicle ${i + 1} ${field}`, g[field], want);
     check(checks, `vehicle ${i + 1} bodyType`, g.bodyType?.toLowerCase(), 'cargo van');
     check(checks, `vehicle ${i + 1} value`, money(g.costNew), v.value);

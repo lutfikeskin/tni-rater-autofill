@@ -2612,6 +2612,104 @@ test('verify revealed: a question appearing or an answer changing counts; a redr
   assert.ok(report.invalidatedActions.includes('lookupVin:0'));
 });
 
+// A lookup the agent ran before Fill (Codex on PR #66): its result already shows for the VIN on
+// the page, so it is done without a click; a click alone never counts.
+const shownPlan = (vin) => [
+  { id: 'vin', selector: '#vin', path: 'vehicles[0].vin', kind: 'text', value: vin, name: 'VIN' },
+  { id: 'year', selector: '#year', path: 'vehicles[0].year', kind: 'text', value: '2022', name: 'Year', verifyOnly: true },
+  { id: 'make', selector: '#make', path: 'vehicles[0].make', kind: 'text', value: 'Freightliner', name: 'Make', verifyOnly: true },
+  { id: 'model', selector: '#model', path: 'vehicles[0].model', kind: 'text', value: 'Cascadia', name: 'Model', verifyOnly: true },
+  { ...revealAction('revealed'), after: ['vehicles[0].vin'], shownBy: { all: ['vehicles[0].year', 'vehicles[0].make', 'vehicles[0].model'], any: [], answered: true } },
+];
+const decodedPage = (h, { vin = VINS[0], year = '2022', make = 'FREIGHTLINER', model = 'CASCADIA', yearAttrs = {} } = {}) => {
+  const els = {
+    vin: makeInput({ id: 'vin', ariaLabel: 'VIN', value: vin }),
+    year: makeInput({ id: 'year', ariaLabel: 'Year', value: year, attrs: yearAttrs }),
+    make: makeInput({ id: 'make', ariaLabel: 'Make', value: make }),
+    model: makeInput({ id: 'model', ariaLabel: 'Model', value: model }),
+  };
+  h.document.body.append(els.vin, els.year, els.make, els.model);
+  return els;
+};
+
+test('verify revealed: a lookup already shown for the VIN on the page is done without a click', async () => {
+  const h = harness();
+  decodedPage(h);
+  const button = addButton(h, 'Lookup VIN');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; };
+  const report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
+  assert.equal(button._clicks ?? 0, 0, 'not clicked again');
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, a.alreadyShown]), [['lookupVin:0', true]]);
+  assert.equal(report.blockers.length, 0, report.blockers.join(' | '));
+  assert.equal(report.noData.length, 0);
+});
+
+test('verify revealed: a decoded vehicle that is not this VIN\'s, or not decoded yet, is still clicked', async () => {
+  // The fill typed the VIN (the box was empty): the year/make/model already on the page are no
+  // result for it. The click that redraws them unchanged is no result either.
+  let h = harness();
+  let els = decodedPage(h, { vin: '' });
+  let button = addButton(h, 'Lookup VIN');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; els.year.value = els.year.value; };
+  let report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
+  assert.equal(els.vin.value, VINS[0]);
+  assert.equal(button._clicks, 3, 'clicked, and tried twice more');
+  assert.equal(report.actions.length, 0);
+  assert.ok(report.blockers.some((b) => b.startsWith('button: lookupVin:0')), report.blockers.join(' | '));
+  assert.deepEqual(Array.from(report.noData, (x) => x.label), ['lookupVin']);
+  // Model not decoded yet: clicked, and the decoded model is its result.
+  h = harness();
+  els = decodedPage(h, { model: '' });
+  button = addButton(h, 'Lookup VIN');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; els.model.value = 'CASCADIA'; };
+  report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
+  assert.equal(button._clicks, 1);
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, !!a.alreadyShown]), [['lookupVin:0', false]]);
+  assert.equal(report.blockers.length, 0, report.blockers.join(' | '));
+});
+
+test('verify revealed: a USDOT already verified for the number on the page is done without a click', async () => {
+  const dotPlan = [
+    { id: 'dot', selector: '#dot', path: 'applicant.dot', kind: 'text', value: '1234567', name: 'USDOT' },
+    { id: 'belongs', selector: '#belongs', path: 'progressive.q20F', kind: 'text', value: null, name: 'USDOT belongs to the business' },
+    { ...revealAction('revealed'), action: 'verifyDot', baseAction: 'verifyDot', path: 'action.verifyDot', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], shownBy: { all: [], any: ['progressive.q20F'], answered: false } },
+  ];
+  // The record's question shows: done, unclicked.
+  let h = harness();
+  h.document.body.append(makeInput({ id: 'dot', ariaLabel: 'USDOT number', value: '1234567' }), makeInput({ id: 'belongs', ariaLabel: 'Does this USDOT Number belong to the business?' }));
+  let button = addButton(h, 'Verify');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; };
+  let report = await h.kit.fill(dotPlan, { maxRounds: 8 });
+  assert.equal(button._clicks ?? 0, 0);
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, a.alreadyShown]), [['verifyDot', true]]);
+  // No record question yet: clicked, and the question it shows is its result.
+  h = harness();
+  h.document.body.append(makeInput({ id: 'dot', ariaLabel: 'USDOT number', value: '1234567' }));
+  button = addButton(h, 'Verify');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; h.document.body.append(makeInput({ id: 'belongs', ariaLabel: 'Does this USDOT Number belong to the business?' })); };
+  report = await h.kit.fill(dotPlan, { maxRounds: 8 });
+  assert.equal(button._clicks, 1);
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, !!a.alreadyShown]), [['verifyDot', false]]);
+});
+
+test('verify revealed: a click that redraws the result unchanged counts when it shows for this VIN', async () => {
+  // Before the click the year showed a stale error (not a result yet); the redraw clears it and
+  // shows the same decoded vehicle.
+  const h = harness();
+  const els = decodedPage(h, { yearAttrs: { 'aria-invalid': 'true' } });
+  const button = addButton(h, 'Lookup VIN');
+  button.onclick = () => {
+    button._clicks = (button._clicks ?? 0) + 1;
+    const fresh = makeInput({ id: 'year', ariaLabel: 'Year', value: els.year.value });
+    h.document.body.replaceChild(fresh, els.year);
+    els.year = fresh;
+  };
+  const report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
+  assert.equal(button._clicks, 1, 'clicked once, and its result accepted');
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, !!a.alreadyShown]), [['lookupVin:0', false]]);
+  assert.ok(!report.blockers.includes('button: lookupVin:0'), report.blockers.join(' | '));
+});
+
 test('verify { appears }: more matching elements than before the click, or any when there were none', async () => {
   let h = harness();
   let button = addButton(h, 'Lookup VIN');

@@ -1374,9 +1374,12 @@
       // the snapshot taken as the button was clicked (a lookup's decoded values, the rows an
       // import redraws, the registered names a USDOT check offers). A redraw of the same
       // questions with the same answers is no result.
+      // A redraw that shows the result again unchanged (it was there before the click) counts too.
       if (a.verify === 'revealed') {
         const before = a.before ?? new Map();
-        accepted = [...controlSnapshot(collectControls())].some(([k, v]) => !before.has(k) || before.get(k) !== v);
+        const controls = collectControls();
+        accepted = [...controlSnapshot(controls)].some(([k, v]) => !before.has(k) || before.get(k) !== v)
+          || resultShown(a, assign(controls, plan));
       }
       // `{ appears }`: more of these on the page than before the click (any, when there were none).
       if (a.verify?.appears) accepted = deepQueryAll(document, a.verify.appears).length > (a.before ?? 0);
@@ -1398,6 +1401,18 @@
         }
       }
       return accepted;
+    }
+
+    // A helper's result already on the page (`shownBy`), for the unit's own value: the helper's
+    // fields show the intake's value, and this fill didn't type them (an older result would then
+    // be another value's). A click alone never counts.
+    function resultShown(a, pairs) {
+      const shown = a.shownBy;
+      if (!shown || !a.after.length) return false;
+      if (report.filled.some((x) => a.after.includes(x.path))) return false;
+      const agrees = (p) => pairs.some(({ step, control }) => step.path === p && step.value != null && !invalidControl(control) && agreesWith(step, control));
+      const present = (p) => pairs.some(({ step, control }) => step.path === p && !invalidControl(control) && (!shown.answered || hasValue(control)));
+      return a.after.every(agrees) && (shown.all.length ? shown.all.every(present) : shown.any.some(present));
     }
 
     // What the page's questions show, by question: the snapshot a `revealed` check compares with.
@@ -1482,6 +1497,12 @@
           ];
           blocked.push(a.action);
           report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites' });
+          continue;
+        }
+        // Its result already shows (the agent ran the lookup before Fill): done, not clicked again.
+        if (a.verify === 'revealed' && resultShown(a, pairs)) {
+          clicked.add(a.action);
+          report.actions.push({ id: a.action, text: 'already shown on the page', alreadyShown: true });
           continue;
         }
         if (!button) {

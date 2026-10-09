@@ -1723,7 +1723,8 @@ function unitArrival(carrier, from, page) {
 // Returns whether that follow-up fill is coming.
 function afterFill(frames, { carrier, page }) {
   persistDoneActions();
-  const clicked = frames.some((f) => (f.actions ?? []).length);
+  // A helper found already done on the page (alreadyShown) clicked nothing: no follow-up for it.
+  const clicked = frames.some((f) => (f.actions ?? []).some((a) => !a.alreadyShown));
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
   if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 900);
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
