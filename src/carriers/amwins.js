@@ -220,8 +220,10 @@ export const amwins = {
     // Import Data only shows a preview: this adds the vehicles (and redraws their rows).
     { id: 'importVinRecords', text: '^import valid records$', afterActions: ['importVins'], immediate: true },
     // Underwriting: answers every General Information question No in one go (before the rules
-    // below answer them one at a time; "other topics" is set back to Yes afterwards).
-    { id: 'defaultNo', text: '^default all answers to\\W*no\\W*$', immediate: true },
+    // below answer them one at a time; "other topics" is set back to Yes afterwards). Not while
+    // an answer the agent gave is on the step: it reset a Yes of theirs (reproduced 2026-10-08),
+    // and the rules answer the other questions anyway.
+    { id: 'defaultNo', text: '^default all answers to\\W*no\\W*$', immediate: true, skipIfProtected: true },
   ],
   // Each step ends with Save & Continue (saves the draft, opens the next step) once nothing is
   // left for the agent. The declaration step never gets there: the declaration is the agent's.

@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { randomUUID } from 'node:crypto';
 import { buildPlan } from '../src/plan.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
+import { assistContextKey } from '../src/ai/common.js';
 
 // This is a deliberately small DOM/ExtJS replay.  It exercises the injected MAIN-world
 // script itself, without a browser session, real quote data, or customer identifiers.
@@ -1400,6 +1402,36 @@ test('trusted agent gesture plus input protects the edit and reports no filled a
   assert.equal(report.filled.length, 0);
 });
 
+// Codex review on b62188f: the kit's own click on a radio or checkbox fires trusted input/change
+// in Chromium. An agent gesture elsewhere just before it is not an edit of that question.
+test('during a fill, a trusted change counts as an agent edit only when the gesture was on that control or its label', async () => {
+  const run = async (gesture) => {
+    const h = harness();
+    const notes = makeInput({ id: 'notes', ariaLabel: 'Notes' });
+    const box = makeInput({ id: 'cb', type: 'checkbox', ariaLabel: 'Hauls hazmat' });
+    const label = new FakeNode('label', { textContent: 'Hauls hazmat', attrs: { for: 'cb' } });
+    h.document.body.append(notes, label, box);
+    box.addEventListener('click', () => {
+      gesture({ notes, label, box }).dispatchEvent({ type: 'pointerdown', isTrusted: true });
+      box.dispatchEvent({ type: 'change', target: box, isTrusted: true });
+    });
+    const report = await h.kit.fill([
+      { id: 'cb-step', selector: '#cb', path: 'hazmat', kind: 'checkbox', value: true },
+      { id: 'notes-step', selector: '#notes', path: 'notes', kind: 'text', value: 'from the intake' },
+    ], { maxRounds: 4 });
+    return { report, box, notes };
+  };
+  const elsewhere = await run(({ notes }) => notes);
+  assert.equal(elsewhere.report.halted, false, 'a gesture on another field does not halt the fill');
+  assert.deepEqual([...elsewhere.report.protectedKeys], []);
+  assert.equal(elsewhere.box.checked, true);
+  assert.equal(elsewhere.notes.value, 'from the intake');
+  const onLabel = await run(({ label }) => label);
+  assert.equal(onLabel.report.halted, true, 'a gesture on the checkbox\'s label then a change on it is the agent\'s');
+  assert.equal([...onLabel.report.protectedKeys].length, 1);
+  assert.equal(onLabel.notes.value, '');
+});
+
 test('portal-invalid retained answers are flagged and keep helpers waiting', async () => {
   const h = harness();
   const invalid = makeInput({ id: 'invalid', ariaLabel: 'Retained portal answer', value: 'retained', attrs: { 'aria-invalid': 'true' } });
@@ -2473,3 +2505,292 @@ test('a question whose wording carries a date is not flagged as reworded when th
   assert.equal(defensive.children.find((r) => r.checked)?.value, 'No', 'defensive driver discount: standard No');
   assert.equal(report.unknown.length, 0);
 });
+
+// Codex reproduction (2026-10-08): an agent edit during the wait before Continue halted the fill,
+// and Continue was clicked all the same.
+test('an agent edit during the wait before Continue stops the Continue and is a blocker', async () => {
+  const h = harness({ ext: true, search: '?pageName=Synthetic' });
+  const { input } = addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question', value: 'wanted' });
+  const button = addButton(h, 'Continue');
+  let clicks = 0;
+  button.onclick = () => { clicks++; };
+  // The page settles twice: on arrival, and before Continue. The agent edits during the second.
+  let settles = 0;
+  h.context.MutationObserver = class {
+    constructor() {
+      if (++settles === 2) setTimeout(() => {
+        input.dispatchEvent({ type: 'pointerdown', target: input, isTrusted: true });
+        input.value = 'the agent\'s answer';
+        input.dispatchEvent({ type: 'input', target: input, isTrusted: true });
+      }, 10);
+    }
+    observe() {}
+    disconnect() {}
+  };
+  const plan = [{ id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' }];
+  const report = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' } });
+  assert.equal(settles, 2);
+  assert.equal(report.halted, true);
+  assert.equal(clicks, 0, 'no Continue after a halt');
+  assert.equal(report.advanced, undefined);
+  assert.ok(report.blockers.includes(report.reason), `blockers: ${report.blockers.join(' | ')}`);
+  assert.deepEqual([...report.protectedKeys], ['ref:Test.foo']);
+  assert.equal(input.value, 'the agent\'s answer');
+});
+
+test('an agent edit while AI answers go in protects that question and stops the remaining answers', async () => {
+  const h = harness();
+  const pick = (id, label, options) => new SelectNode([{ text: 'Select one', value: '' }, ...options], { id, ariaLabel: label });
+  const commodity = pick('commodity', 'Commodity category', [{ text: 'Consumer Goods', value: 'cg' }, { text: 'Building Materials', value: 'bm' }]);
+  const radius = pick('radius', 'Radius', [{ text: 'Local', value: 'l' }, { text: 'Long haul', value: 'lh' }]);
+  const notes = makeInput({ id: 'notes', ariaLabel: 'Notes' });
+  h.document.body.append(commodity, radius, notes);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const key = (label) => report.unknown.find((x) => x.label === label).key;
+  // While the first answer goes in, the agent picks the radius themselves.
+  commodity.addEventListener('change', () => {
+    if (radius.value) return;
+    radius.dispatchEvent({ type: 'pointerdown', target: radius, isTrusted: true });
+    radius.value = 'l';
+    radius.dispatchEvent({ type: 'change', target: radius, isTrusted: true });
+  });
+  const results = await h.kit.answer([
+    { key: key('Commodity category'), label: 'Commodity category', value: 'Consumer Goods' },
+    { key: key('Radius'), label: 'Radius', value: 'Long haul' },
+    { key: key('Notes'), label: 'Notes', value: 'from the AI' },
+  ]);
+  assert.equal(Array.isArray(results), true, 'the panel reads an array');
+  assert.deepEqual([...results].map((r) => [r.key, r.ok]), [[key('Commodity category'), true], [key('Radius'), false], [key('Notes'), false]]);
+  assert.match(results[1].reason, /agent edit interrupted/);
+  assert.match(results[2].reason, /agent edit interrupted/);
+  assert.equal(commodity.value, 'cg', 'the answer already in stays in');
+  assert.equal(radius.value, 'l', 'the agent\'s pick stays');
+  assert.equal(notes.value, '', 'nothing after the edit goes in');
+  // Codex review (2026-10-09): the protection rides on the items, which survive the trip to the panel.
+  const sent = JSON.parse(JSON.stringify(results));
+  assert.deepEqual(sent.map((r) => [r.key, r.protected === true]), [[key('Commodity category'), false], [key('Radius'), true], [key('Notes'), false]]);
+  assert.notEqual(radius.getAttribute('data-rater-autofill'), 'failed', 'the agent\'s own answer is not marked as a failed AI answer');
+});
+
+test('a question the agent edits while AI answers go in, that was not among them, gets a protected item of its own', async () => {
+  const h = harness();
+  const pick = (id, label, options) => new SelectNode([{ text: 'Select one', value: '' }, ...options], { id, ariaLabel: label });
+  const commodity = pick('commodity', 'Commodity category', [{ text: 'Consumer Goods', value: 'cg' }, { text: 'Building Materials', value: 'bm' }]);
+  const radius = pick('radius', 'Radius', [{ text: 'Local', value: 'l' }, { text: 'Long haul', value: 'lh' }]);
+  h.document.body.append(commodity, radius);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const key = (label) => report.unknown.find((x) => x.label === label).key;
+  commodity.addEventListener('change', () => {
+    if (radius.value) return;
+    radius.dispatchEvent({ type: 'keydown', target: radius, isTrusted: true });
+    radius.value = 'l';
+    radius.dispatchEvent({ type: 'change', target: radius, isTrusted: true });
+  });
+  const results = JSON.parse(JSON.stringify(await h.kit.answer([{ key: key('Commodity category'), label: 'Commodity category', value: 'Consumer Goods' }])));
+  assert.deepEqual(results.map((r) => [r.key, r.label, r.ok, r.protected === true]),
+    [[key('Commodity category'), 'Commodity category', true, false], [key('Radius'), 'Radius', false, true]]);
+  assert.match(results[1].reason, /your answer stays/);
+  assert.equal(radius.value, 'l');
+});
+
+// Codex reproduction (2026-10-08, AmWINS Underwriting): "Default all answers to No" reset a Yes the
+// agent had given, while the report listed that question as skipped.
+test('a bulk helper is not clicked while an answer the agent gave is on the page; the other questions still fill one by one', async () => {
+  const questions = { subsidiaryToOther: 'subsidiary to other', subsidiary: 'subsidiary', safetyInfo: 'safety info' };
+  const build = () => {
+    const h = harness();
+    const groups = Object.fromEntries(Object.entries(questions).map(([name, label]) => {
+      const yes = makeInput({ type: 'radio', name, value: 'Yes' });
+      const no = makeInput({ type: 'radio', name, value: 'No' });
+      h.document.body.append(radioGroup(label, yes, no));
+      return [name, { yes, no }];
+    }));
+    const button = addButton(h, 'Default all answers to "No"');
+    button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; for (const g of Object.values(groups)) g.no.click(); };
+    const plan = [
+      ...Object.entries(questions).map(([name, label]) => ({ id: name, path: `amwins.${name}`, re: `^${label}$`, kind: 'bool', value: false, name: label })),
+      { id: 'default', kind: 'action', action: 'defaultNo', text: '^default all answers to\\W*no\\W*$', immediate: true, skipIfProtected: true, pages: [], after: [], afterActions: [], afterPages: [], unless: [] },
+    ];
+    return { h, groups, button, plan };
+  };
+  // The agent answered Yes to the first question before this fill.
+  const guarded = build();
+  guarded.groups.subsidiaryToOther.yes.checked = true;
+  const report = await guarded.h.kit.fill(guarded.plan, { skip: ['subsidiaryToOther'], batch: true, maxRounds: 6 });
+  assert.equal(guarded.button._clicks, undefined, 'the helper would reset the agent\'s answer');
+  assert.deepEqual([...report.actions], []);
+  assert.equal(guarded.groups.subsidiaryToOther.yes.checked, true);
+  assert.deepEqual(['subsidiary', 'safetyInfo'].map((n) => guarded.groups[n].no.checked), [true, true], 'the rules answer the other questions');
+  assert.deepEqual([...report.skipped].map((x) => x.key), ['subsidiaryToOther']);
+  assert.deepEqual([...report.blockers], [], 'nothing holds Continue: the protected answer is the agent\'s');
+  // No answer of the agent's on the page: the helper runs as before.
+  const plain = build();
+  const run = await plain.h.kit.fill(plain.plan, { batch: true, maxRounds: 6 });
+  assert.equal(plain.button._clicks, 1);
+  assert.deepEqual([...run.actions].map((a) => a.id), ['defaultNo']);
+  assert.deepEqual(Object.keys(questions).map((n) => plain.groups[n].no.checked), [true, true, true]);
+});
+
+
+// A pointer event on an ExtJS option bubbles from a popup outside its combo's DOM subtree.
+for (const ownership of ['focused', 'aria-controls', 'aria-owns']) {
+  test(`a detached dropdown pick (${ownership}) during AI apply protects the combo and halts later answers`, async () => {
+    const h = harness({ ext: true });
+    const first = addExtText(h, 'first', '1001', { ref: 'Test.first', caption: 'First' });
+    const combo = addExtText(h, 'combo', '1002', { ref: 'Test.combo', caption: 'Combo' });
+    const later = addExtText(h, 'later', '1003', { ref: 'Test.later', caption: 'Later' });
+    const popup = new FakeNode('div', { id: 'combo-popup', className: 'x-boundlist' });
+    const option = new FakeNode('div', { className: 'x-boundlist-item', textContent: 'Agent choice' });
+    popup.append(option); h.document.body.append(popup);
+    if (ownership === 'focused') h.document.activeElement = combo.input;
+    else combo.input.setAttribute(ownership, popup.id);
+    first.input.addEventListener('input', () => {
+      option.dispatchEvent({ type: 'pointerdown', target: option, isTrusted: true });
+      // Focus can move before the input event; ownership must be captured at the gesture.
+      h.document.activeElement = later.input;
+      combo.cmp.setValue('Agent choice');
+      combo.input.dispatchEvent({ type: 'change', target: combo.input, isTrusted: true });
+    });
+    const results = JSON.parse(JSON.stringify(await h.kit.answer([
+      { key: 'ref:Test.first', label: 'First', value: 'AI first' },
+      { key: 'ref:Test.combo', label: 'Combo', value: 'AI combo' },
+      { key: 'ref:Test.later', label: 'Later', value: 'AI later' },
+    ])));
+    assert.equal(combo.input.value, 'Agent choice');
+    assert.equal(later.input.value, '');
+    assert.equal(results.find(r => r.key === 'ref:Test.combo').protected, true);
+    assert.match(results.at(-1).reason, /agent edit interrupted/);
+  });
+}
+
+test('a detached dropdown pick while waiting before Continue stops navigation', async () => {
+  const h = harness({ ext: true });
+  const combo = addExtText(h, 'combo', '1002', { ref: 'Test.combo', caption: 'Combo', value: 'wanted' });
+  const popup = new FakeNode('div', { className: 'x-boundlist' });
+  const option = new FakeNode('div', { className: 'x-boundlist-item' });
+  popup.append(option); h.document.body.append(popup);
+  h.document.activeElement = combo.input;
+  const button = addButton(h, 'Continue');
+  let clicks = 0, settles = 0;
+  button.onclick = () => { clicks++; };
+  h.context.MutationObserver = class {
+    constructor() {
+      if (++settles === 2) setTimeout(() => {
+        option.dispatchEvent({ type: 'pointerdown', target: option, isTrusted: true });
+        combo.cmp.setValue('Agent choice');
+        combo.input.dispatchEvent({ type: 'change', target: combo.input, isTrusted: true });
+      }, 10);
+    }
+    observe() {} disconnect() {}
+  };
+  const report = await h.kit.fill([{ id: 'combo', field: 'Test.combo', kind: 'text', value: 'wanted', name: 'Combo' }],
+    { maxRounds: 2, advance: { text: 'Continue' } });
+  assert.equal(clicks, 0);
+  assert.equal(report.halted, true);
+  assert.ok(report.blockers.includes(report.reason));
+  assert.deepEqual([...report.protectedKeys], ['ref:Test.combo']);
+  assert.equal(combo.input.value, 'Agent choice');
+});
+
+for (const scenario of ['future frame', 'finished frame', 'same frame without edits', 'transport failure', 'transport failure after edit', 'document replacement', 'context invalidation']) {
+  test(`AI apply guards across frames: ${scenario}`, async () => {
+    const frames = [harness(), harness(), harness()];
+    const owners = ['same frame without edits', 'document replacement', 'context invalidation'].includes(scenario) ? [0, 0, 0] : [0, 1, 2];
+    const controls = owners.map((owner, i) => {
+      const h = frames[owner];
+      const select = new SelectNode([{ text: '', value: '' }, { text: 'No', value: 'no' }, { text: 'Yes', value: 'yes' }],
+        { id: `choice${i}`, ariaLabel: `Choice ${i}` });
+      h.document.body.append(select);
+      return select;
+    });
+    // First apply returns from B and C immediately, while A is waiting for its page to settle.
+    // The agent changes B during that wait. C must never receive its planned answer.
+    if (scenario === 'future frame' || scenario === 'finished frame' || scenario === 'transport failure after edit') {
+      const trigger = scenario === 'finished frame' ? 1 : 0;
+      const edited = scenario === 'finished frame' ? 0 : 1;
+      controls[trigger].addEventListener('change', () => setTimeout(() => {
+        controls[edited].dispatchEvent({ type: 'pointerdown', isTrusted: true });
+        controls[edited].value = 'yes';
+        controls[edited].dispatchEvent({ type: 'change', isTrusted: true });
+      }, 10));
+    }
+    const pre = frames.map((h, frameId) => ({ frameId, documentId: `doc-${frameId}`, result: h.kit.decisionSnapshot() }));
+    const xs = controls.map((el, i) => {
+      const field = JSON.parse(pre[owners[i]].result)[1].find(f => f.key === el.id);
+      return { ...field, controlKind: field.kind, choice: 'No', autoOk: true };
+    });
+    const record = {}, intake = { record };
+    const state = { filling: false, intake, active: {}, tab: { id: 1, url: 'https://synthetic.example/rater' },
+      aiCache: new Map(xs.map((x, i) => [`1\n/rater\n${i}`, x])), agentKeys: new Map(), filled: new Map() };
+    const ctx = { tabId: 1, page: '/rater', tabUrl: state.tab.url, intake, carrier: { practice: true },
+      contextKey: assistContextKey(record, state.active), snapshots: pre };
+    if (scenario === 'context invalidation') controls[0].addEventListener('change', () => setTimeout(() => {
+      state.intake = { record: { changed: true } };
+    }, 10));
+    const documents = frames.map((_, i) => `doc-${i}`);
+    let dispatches = 0, replacementControls;
+    const sandbox = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+      runKit: async (tabId, carrier, func, args = [], frameIds) => {
+        // Navigation after the global read, immediately before dispatch: a frameId alone
+        // must not authorize writing into the new document, even with identical fields.
+        if (/\.answer\(/.test(String(func)) && ++dispatches === 2 && scenario === 'document replacement') {
+          frames[0] = harness();
+          documents[0] = 'replacement-document';
+          replacementControls = controls.map((_, i) => new SelectNode(
+            [{ text: '', value: '' }, { text: 'No', value: 'no' }, { text: 'Yes', value: 'yes' }],
+            { id: `choice${i}`, ariaLabel: `Choice ${i}` }));
+          frames[0].document.body.append(...replacementControls);
+        }
+        const results = await Promise.all(frames.map(async (h, frameId) => {
+          if (frameIds && !frameIds.includes(frameId)) return null;
+          h.context.__testArgs = args;
+          const result = await vm.runInNewContext(`(${func.toString()})(...__testArgs)`, h.context);
+          return { frameId, documentId: documents[frameId], result: JSON.parse(JSON.stringify(result)) };
+        }));
+        if (scenario.startsWith('transport failure') && /\.answer\(/.test(String(func))) throw new Error('Transport unavailable after answer');
+        return results.filter(Boolean);
+      },
+      tellRecorder: async () => {}, persistAiPending: async () => {},
+      agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => {} },
+      usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
+    const source = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
+    const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
+      'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
+      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'stepScope'];
+    vm.runInNewContext(functions.map(name => {
+      const match = source.match(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
+      assert.ok(match, name);
+      return source.slice(match.index, source.indexOf('\n}', match.index) + 2);
+    }).join('\n') + '\nfunction scheduleLayout() {}', sandbox);
+    const applied = await sandbox.applyAi(xs, ctx, 'auto');
+    assert.equal(applied, !scenario.startsWith('transport failure'), JSON.stringify(xs.map(x => x.error)));
+    if (scenario === 'same frame without edits') {
+      assert.deepEqual(controls.map(el => el.value), ['no', 'no', 'no']);
+      assert.ok(xs.every(x => x.done === 'auto'), 'later answers use per-field validation after the first changes the snapshot');
+    } else if (scenario.startsWith('transport failure')) {
+      assert.deepEqual(controls.map(el => el.value), ['no', scenario.endsWith('after edit') ? 'yes' : '', '']);
+      if (scenario.endsWith('after edit')) assert.deepEqual([...state.agentKeys.get('/rater')], ['choice1'], 'cleanup preserves edits even when answer transport failed');
+      assert.ok(xs.every(x => x.done === 'auto'), 'transport failure retains conservative approval holds');
+    } else if (scenario === 'document replacement') {
+      assert.deepEqual(replacementControls.map(el => el.value), ['', '', ''], 'no remaining answer is written into the replacement document');
+      assert.match(xs[1].error, /page or frame changed/);
+      assert.match(xs[2].error, /page or frame changed/);
+      assert.equal(xs[1].done, null);
+    } else if (scenario === 'context invalidation') {
+      assert.deepEqual(controls.map(el => el.value), ['no', '', ''], 'changing intake stops all later dispatches');
+      assert.match(xs[1].error, /context changed/);
+      assert.equal(xs[0].done, 'auto', 'the sent answer retains its original durable review hold');
+      assert.equal(xs[1].done, null);
+      assert.equal(state.filled.size, 0, 'the replacement intake bookkeeping is untouched');
+    } else {
+      assert.deepEqual(controls.map(el => el.value), scenario === 'future frame' ? ['no', 'yes', ''] : ['yes', 'no', ''],
+        'the correction stays and future frame C is not answered');
+      assert.deepEqual([...state.agentKeys.get('/rater')].sort(), ['choice0', 'choice1']);
+      assert.match(xs[2].error, /agent edit interrupted/);
+      assert.equal(xs[2].done, null);
+      if (scenario === 'finished frame') assert.equal(xs[0].done, null, 'a correction to an earlier applied answer replaces its AI hold');
+    }
+    // A completed or failed operation must not leave listeners behind.
+    for (const h of frames) assert.equal((h.document._listeners.get('pointerdown') ?? []).length, 0);
+  });
+}

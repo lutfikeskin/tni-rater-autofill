@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { randomUUID } from 'node:crypto';
 import { assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex } from '../src/usage.js';
@@ -73,6 +74,7 @@ function extractFunction(name) {
       depth -= 1;
       if (!depth) {
         let source = SIDEPANEL.slice(start, i + 1);
+        if (name !== 'persistGuardedEdits' && /\bpersistGuardedEdits\(/.test(source)) source += `\n${extractFunction('persistGuardedEdits')}`;
         // Agent-edit scoping is shared by many functions: bring its helpers along.
         if (name !== 'agentEdited' && /\bagentEdited\(/.test(source)) source += `\n${extractFunction('agentEdited')}`;
         return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
@@ -136,6 +138,7 @@ function harness() {
 
   return {
     state,
+    context,
     ui,
     scheduled,
     cleared,
@@ -690,9 +693,9 @@ test('AI application drops stale in-flight work and refuses duplicate frame ques
     let resolveSnapshot, snapshotEntered, calls = 0, persisted = 0;
     const started = new Promise(resolve => { snapshotEntered = resolve; });
     const snapshot = new Promise(resolve => { resolveSnapshot = resolve; });
-    const context = { state, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
-      runKit: () => { calls++; snapshotEntered(); return snapshot; }, tellRecorder: async () => {},
-      persistAiPending: async () => { persisted++; } };
+    const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+      runKit: (tabId, carrier, func) => /answerEdits/.test(String(func)) ? frames.map(frame => ({ ...frame, result: [] })) : (calls++, snapshotEntered(), snapshot), tellRecorder: async () => {},
+      persistAiPending: async () => { persisted++; }, usage: { currentSession: () => ({ intakeId: 'scope' }) } };
     vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'aiSnapshotFields', 'aiSnapshotFieldMatches', 'applyAi'].map(extractFunction).join('\n') + LAYOUT_STUB, context);
     const action = context.applyAi([x], ctx, 'auto');
@@ -720,8 +723,8 @@ test('approval expects the successful answer when a carrier redraw changes its v
     aiCache: new Map([['1\n/quote', x]]), agentKeys: new Map(), filled: new Map() };
   const ctx = { tabId: 1, page: '/quote', tabUrl: state.tab.url, intake, carrier: { practice: true },
     contextKey: assistContextKey(record, state.active), snapshots: pre };
-  const context = { state, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
-    runKit: async () => responses.shift(), tellRecorder: async () => {}, persistAiPending: async () => {},
+  const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+    runKit: async (tabId, carrier, func) => /answerEdits/.test(String(func)) ? pre.map(frame => ({ ...frame, result: [] })) : responses.shift(), tellRecorder: async () => {}, persistAiPending: async () => {},
     usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
   vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
     'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
@@ -732,6 +735,45 @@ test('approval expects the successful answer when a carrier redraw changes its v
   assert.equal(x.origin.fieldHash, JSON.stringify(['choice', 'Choice', 'No']));
   assert.equal(context.aiCurrentAnswerPresent(post, x), false, 'the redraw cannot substitute a new approval value');
   assert.equal(context.aiCurrentAnswerPresent([{ ...post[0], result: JSON.stringify(['Quote', [{ ...field, current: 'No' }]]) }], x), true);
+});
+
+// Codex review (2026-10-09): answer()'s protection did not survive executeScript, and a halt in one
+// frame did not stop the others. The items carry it now; frames go one at a time.
+test('an agent edit caught during an AI apply is protected, and stops the answers of the frames still to come', async () => {
+  const record = {}, intake = { record };
+  const xs = [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }].map(x => ({ ...x, controlKind: 'radio', choice: 'No', autoOk: true }));
+  const pre = [0, 1].map(i => ({ frameId: i, documentId: `doc-${i}`, result: JSON.stringify(['Quote', [{ key: xs[i].key, label: xs[i].label, current: '' }]]) }));
+  const answered = [];
+  // Frame 0 answers A; the agent edited C meanwhile. Frame 1 has nothing of A's.
+  const runKit = async (tabId, carrier, func, args = []) => {
+    if (/answerEdits/.test(String(func))) return pre.map(frame => ({ ...frame, result: [] }));
+    if (!args.length) return pre;
+    answered.push(args[0].map(a => a.key).join(','));
+    return [{ frameId: 0, documentId: 'doc-0', result: [{ key: 'a', label: 'A', ok: true, shown: 'No' },
+      { key: 'c', label: 'C', ok: false, protected: true, reason: 'you changed this question yourself while the AI answers went in; your answer stays' }] },
+    { frameId: 1, documentId: 'doc-1', result: [{ key: 'a', label: 'A', ok: false, reason: 'the question is no longer on this page' }] }];
+  };
+  let persisted = 0;
+  const state = { filling: false, intake, active: {}, tab: { id: 1, url: 'https://example.test/quote' },
+    aiCache: new Map(xs.map((x, i) => [`${i}\n/quote`, x])), agentKeys: new Map(), filled: new Map() };
+  const ctx = { tabId: 1, page: '/quote', tabUrl: state.tab.url, intake, carrier: { practice: true },
+    contextKey: assistContextKey(record, state.active), snapshots: pre };
+  const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+    runKit, tellRecorder: async () => {}, persistAiPending: async () => {},
+    agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => { persisted++; } },
+    usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
+  vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
+    'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
+    'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent',
+    'applyAi'].map(extractFunction).join('\n') + LAYOUT_STUB, context);
+  const applied = await context.applyAi(xs, ctx, 'auto');
+  assert.equal(applied, true, JSON.stringify(xs.map(x => x.error)));
+  assert.deepEqual(answered, ['a'], 'frame 1\'s answer is not sent after the halt');
+  assert.equal(xs[0].done, 'auto');
+  assert.equal(xs[1].done, null);
+  assert.match(xs[1].error, /agent edit interrupted/);
+  assert.deepEqual([...state.agentKeys.get('/quote')].sort(), ['a', 'c'], 'the agent\'s edit is kept from a later fill');
+  assert.equal(persisted, 1);
 });
 
 const AI_ACTION_FUNCTIONS = [
@@ -937,13 +979,14 @@ test('dispatched answers retain durable holds across intake, cache and transport
     let stored = [], scope = 'original-intake', calls = 0, release, fail, entered;
     const started = new Promise(resolve => { entered = resolve; });
     const settlement = new Promise((resolve, reject) => { release = resolve; fail = reject; });
-    const context = { state, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String,
+    const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String,
       DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy', pageOf: value => new URL(value).pathname,
       usage: { currentSession: () => scope ? { intakeId: scope } : null },
       aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
       aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
       tellRecorder: async () => {},
-      runKit: () => {
+      runKit: (tabId, carrier, func) => {
+        if (/answerEdits/.test(String(func))) return Promise.resolve(pre.map(frame => ({ ...frame, result: [] })));
         calls++;
         if (calls === 1) return Promise.resolve(pre);
         if (calls === 2) { entered(); return settlement; }
@@ -1050,7 +1093,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
   const pending = { key: 'pending', label: 'Pending', choice: 'No', done: 'auto' };
   const state = { intake: { record }, tabSessions: new Map(), layoutPending: null, aiCache: new Map([[manualSig, manual], [pendingSig, pending]]) };
   let stored = [];
-  const context = { state, DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
+  const context = { state, doneRestored: new Set(), DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
     aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
     aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
     usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
@@ -2650,3 +2693,208 @@ test('the quote state comes from the page as it is, the fill, the tab the quote 
   assert.equal(t.state.quoteStates.has(11), false);
   assert.match(SIDEPANEL, /rememberFill\(frames, \{ tabId, carrier \}\);[\s\S]*rememberFill\(frames, \{ tabId, carrier \}\);/, 'both fills say whose tab');
 });
+
+
+for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transport of ['complete', 'failure']) {
+  test(`guarded edits keep origin scope after ${switchTo} switch (${transport})`, async () => {
+    const h = harness(), { state, context } = h;
+    const originRecord = { applicant: { name: 'PRIVATE_CLIENT_TEXT' }, vehicles: [{}, {}] };
+    const intake = { record: originRecord };
+    const carrier = { id: 'progressive', practice: true, vehiclePages: ['AddVehicle'] };
+    const originTab = { ...quoteTab(1), carrier };
+    state.tab = originTab; state.intake = intake; state.active = { vehicles: 0 };
+    state.agentKeys = new Map([['AddVehicle|v0', new Set(['existing-key'])]]);
+    const originKeys = state.agentKeys;
+    const choice = { key: 'planned-choice', label: 'Choice', controlKind: 'select', choice: 'No', autoOk: true };
+    state.aiCache = new Map([['1\nAddVehicle', choice]]);
+    let scope = 'origin-fingerprint';
+    let records = [
+      { scope, tabId: 1, page: 'AddVehicle|v0', keys: ['existing-key'] },
+      { scope, tabId: 1, page: 'OtherPage', keys: ['other-page-key'] },
+      { scope: 'other-fingerprint', tabId: 2, page: 'AddVehicle|v0', keys: ['other-client-key'] },
+    ];
+    let answerStarted, resolveAnswer, rejectAnswer, edited = false;
+    const entered = new Promise(resolve => { answerStarted = resolve; });
+    const pending = new Promise((resolve, reject) => { resolveAnswer = resolve; rejectAnswer = reject; });
+    const frame = { frameId: 0, documentId: 'origin-document', result: JSON.stringify([originTab.url,
+      [{ key: choice.key, label: choice.label, current: '' }]]) };
+    const protectedItem = { key: 'agent-correction', label: 'PRIVATE_CARRIER_VALUE', ok: false, protected: true };
+    const resultFrames = items => [{ ...frame, result: items }];
+    let nextRecord = { applicant: {}, vehicles: [] }, nextFingerprint = 'replacement-fingerprint';
+    h.ui['load-error'] = {};
+    Object.assign(context, {
+      crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String, doneRestored: new Set(),
+      usage: { currentSession: () => scope ? { intakeId: scope } : null, log() {},
+        startSession: fingerprint => { scope = fingerprint; return { intakeId: fingerprint }; } },
+      agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => structuredClone(records),
+        set: async value => { records = structuredClone(value); } },
+      doneActionsQueue: Promise.resolve(), doneActionsStore: { clear: async () => {} },
+      tellRecorder: async () => {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
+      aiRetiredSignatures: new Set(),
+      runKit: async (tabId, c, func, args = []) => {
+        assert.equal(tabId, 1, 'the apply continues observing its originating tab');
+        if (/answerEdits/.test(String(func))) return resultFrames(edited ? [protectedItem] : []);
+        if (/\.answer\(/.test(String(func))) { answerStarted(); return pending; }
+        return [frame];
+      },
+      readIntakeFields: async () => ({ synthetic: true }), normalizeIntake: () => ({ record: nextRecord, warnings: [] }),
+      intakeSummary: async () => ({ intakeId: nextFingerprint }), pdfjs: {},
+      cancelLayouts() {}, holdLayouts() {}, resetViews() {}, discardAiSuggestions() {}, uploadNow() {},
+      store: { set: async () => {} }, render() {}, reviewClaimsBox() {}, refreshTab() {},
+    });
+    const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
+      'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
+      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi',
+      'persistAgentKeys', 'restoreAgentKeys', 'clearAgentKeys', 'loadFile'];
+    vm.runInNewContext(functions.map(extractFunction).join('\n') + LAYOUT_STUB, context);
+    const ctx = { tabId: 1, page: 'AddVehicle', tabUrl: originTab.url, intake, carrier,
+      contextKey: assistContextKey(originRecord, state.active), snapshots: [frame] };
+    const apply = context.applyAi([choice], ctx, 'auto');
+    await entered;
+    if (switchTo === 'tab') {
+      context.carrierForUrl = () => carrier;
+      h.setActiveTab(quoteTab(2));
+      await h.refreshTab();
+      assert.equal(state.tabSessions.get(1).agentKeys, originKeys, 'the original tab was snapshotted before the edit arrived');
+    } else if (switchTo === 'intake') {
+      await context.loadFile({ name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(0) });
+    } else if (switchTo === 'entity') state.active = { vehicles: 1 };
+    else { state.intake = null; scope = null; await context.clearAgentKeys(); }
+    edited = true;
+    if (transport === 'failure') rejectAnswer(new Error('Answer transport unavailable'));
+    else resolveAnswer(resultFrames([{ key: choice.key, label: choice.label, ok: true, shown: 'No' }, protectedItem]));
+    await apply;
+    await context.agentKeysQueue;
+    if (switchTo === 'clear') {
+      assert.deepEqual(records, [], 'Clear prevents an old apply from recreating its deleted records');
+      assert.equal(originKeys.get('AddVehicle|v0').has('agent-correction'), false);
+      return;
+    }
+    const saved = records.find(x => x.scope === 'origin-fingerprint' && x.tabId === 1 && x.page === 'AddVehicle|v0');
+    assert.ok(saved?.keys.includes('agent-correction'), 'the trusted key is durable in its originating intake/tab/entity');
+    assert.ok(saved.keys.includes('existing-key'), 'a late edit merges with earlier origin protection');
+    assert.ok(records.some(x => x.page === 'OtherPage' && x.keys.includes('other-page-key')), 'other origin pages survive');
+    assert.ok(records.some(x => x.scope === 'other-fingerprint' && x.keys.includes('other-client-key')), 'another intake is untouched');
+    assert.equal(JSON.stringify(records).includes('PRIVATE'), false, 'durable records contain keys, never labels, values or client text');
+    if (switchTo === 'tab') {
+      assert.equal(state.agentKeys.get('AddVehicle|v0')?.has('agent-correction') ?? false, false, 'the newly followed tab is untouched');
+      h.setActiveTab(quoteTab(1)); await h.refreshTab();
+      assert.ok(state.agentKeys.get('AddVehicle|v0').has('agent-correction'), 'returning to the origin restores its late edit');
+    } else if (switchTo === 'entity') {
+      assert.equal(state.agentKeys.has('AddVehicle|v1'), false, 'the next vehicle never inherits the correction');
+    } else assert.equal(state.agentKeys.size, 0, 'the replacement intake stays untouched');
+    if (switchTo === 'intake') {
+      nextRecord = originRecord; nextFingerprint = 'origin-fingerprint';
+      await context.loadFile({ name: 'origin.pdf', arrayBuffer: async () => new ArrayBuffer(0) });
+    }
+    // A panel reload can recover the protection using only its original opaque scope.
+    scope = 'origin-fingerprint'; state.tab = originTab; state.active = { vehicles: 0 }; state.agentKeys = new Map();
+    await context.restoreAgentKeys(1);
+    assert.deepEqual([...state.agentKeys.get('AddVehicle|v0')].sort(), ['agent-correction', 'existing-key']);
+    assert.deepEqual(Object.keys(saved).sort(), ['keys', 'page', 'scope', 'tabId']);
+  });
+}
+
+test('Clear also cancels an origin edit write already waiting on local storage', async () => {
+  let releaseRead, readStarted;
+  const entered = new Promise(resolve => { readStarted = resolve; });
+  const reading = new Promise(resolve => { releaseRead = resolve; });
+  let records = [{ scope: 'origin', tabId: 1, page: 'Quote', keys: ['earlier'] }];
+  const state = { agentKeysEpoch: 0, tab: { id: 1 }, agentKeys: new Map() };
+  const context = { state, usage: { currentSession: () => ({ intakeId: 'origin' }) }, agentKeysQueue: Promise.resolve(),
+    agentKeysStore: { get: () => { readStarted(); return reading; }, set: async value => { records = structuredClone(value); } },
+    doneActionsQueue: Promise.resolve(), doneActionsStore: { clear: async () => {} } };
+  vm.runInNewContext(['persistGuardedEdits', 'clearAgentKeys'].map(extractFunction).join('\n'), context);
+  const writing = context.persistGuardedEdits({ scope: 'origin', tabId: 1, page: 'Quote', keys: state.agentKeys, epoch: 0 }, ['late-key']);
+  await entered;
+  const clearing = context.clearAgentKeys();
+  releaseRead(records);
+  await Promise.all([writing, clearing]);
+  assert.deepEqual(records, [], 'the queued pre-Clear write cannot recreate deleted protection');
+});
+
+
+// The same panel replaces its live sets, but must reread each fingerprint's durable helpers.
+test('completed helpers survive actual intake A to B to A loading and panel reload', async () => {
+  const memory = new Map();
+  const make = () => {
+    const h = harness(), { context, state } = h;
+    let scope = 'A', loading = 'A', refreshed;
+    h.setActiveTab(quoteTab(7));
+    Object.assign(context, {
+      usage: { currentSession: () => ({ intakeId: scope }), startSession: id => { scope = id; return { intakeId: id }; }, log() {} },
+      doneActionsQueue: Promise.resolve(), doneRestored: new Set(),
+      doneActionsStore: { get: async (id, tab) => memory.get(`${id}|${tab}`) ?? [],
+        set: async (id, tab, ids) => { memory.set(`${id}|${tab}`, [...ids]); } },
+      $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }),
+      normalizeIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+      store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
+      discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
+      uploadNow() {}, render() {}, reviewClaimsBox() {},
+      refreshTab: () => { refreshed = h.refreshTab(); return refreshed; },
+    });
+    vm.runInNewContext(['loadFile', 'persistDoneActions', 'restoreDoneActions'].map(extractFunction).join('\n'), context);
+    return { h, context, state, load: async id => {
+      loading = id;
+      await context.loadFile({ name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) });
+      await refreshed;
+    } };
+  };
+  const first = make();
+  await first.load('A');
+  first.state.doneActions.add('lookupVin:0'); first.state.doneActions.add('addDriver:0');
+  await first.context.persistDoneActions();
+  await first.load('B');
+  assert.equal(first.state.doneActions.size, 0, 'a different intake has no completed helpers');
+  await first.load('A');
+  assert.deepEqual([...first.state.doneActions].sort(), ['addDriver:0', 'lookupVin:0'], 'A restores after replacement');
+  first.state.doneActions.delete('lookupVin:0');
+  await first.h.refreshTab();
+  assert.equal(first.state.doneActions.has('lookupVin:0'), false, 'ordinary arrivals still respect an intentional rerun');
+  const reopened = make();
+  await reopened.load('A');
+  assert.deepEqual([...reopened.state.doneActions].sort(), ['addDriver:0', 'lookupVin:0'], 'the durable records also restore after panel reload');
+});
+
+for (const failAt of ['first-guard-read', 'second-guard-read', 'answer-transport']) {
+  test(`AI dispatch holds reflect actual sends on ${failAt} failure`, async () => {
+    const record = {}, intake = { record }, url = 'https://example.test/quote';
+    const choices = ['first', 'second'].map(key => ({ key, label: key, controlKind: 'radio', choice: 'No', autoOk: true }));
+    const pre = [{ frameId: 0, documentId: 'doc', result: JSON.stringify(['Quote', choices.map(x => ({ key: x.key, label: x.label, current: '' }))]) }];
+    const state = { filling: false, intake, active: {}, tab: { id: 1, url }, agentKeys: new Map(), filled: new Map(),
+      aiCache: new Map(choices.map(x => [[1, '/quote', DEFAULT_MODEL, POLICY_VERSION, 'context', x.key, JSON.stringify(url)].join('\n'), x])) };
+    const ctx = { tabId: 1, page: '/quote', tabUrl: url, intake, carrier: { practice: true },
+      contextKey: assistContextKey(record, state.active), snapshots: pre };
+    let stored = [], sends = 0, reads = 0, sawPrepared = false;
+    const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String,
+      DEFAULT_MODEL, POLICY_VERSION, pageOf: value => new URL(value).pathname,
+      usage: { currentSession: () => ({ intakeId: 'A' }) }, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
+      aiPendingStore: { get: async () => stored, set: async value => { stored = value; } }, tellRecorder: async () => {},
+      runKit: async (tabId, carrier, func, args) => {
+        if (/answerEdits/.test(String(func))) {
+          if (args[0] === 'read') {
+            reads++; sawPrepared = stored.length === 2;
+            if (reads === (failAt === 'first-guard-read' ? 1 : 2)) throw new Error('Guard transport unavailable');
+          }
+          return pre.map(frame => ({ ...frame, result: [] }));
+        }
+        if (/\.answer\(/.test(String(func))) {
+          sends++;
+          if (failAt === 'answer-transport') throw new Error('Answer transport unavailable');
+          return [{ ...pre[0], result: [{ key: 'first', label: 'first', ok: true, shown: 'No' }] }];
+        }
+        return pre;
+      } };
+    vm.runInNewContext(DISPATCH_HELPERS, context);
+    assert.equal(await context.applyAi(choices, ctx, 'auto'), false);
+    assert.equal(sawPrepared, true, 'conservative holds exist before the guard read');
+    assert.equal(sends, failAt === 'first-guard-read' ? 0 : 1);
+    const count = failAt === 'first-guard-read' ? 0 : 2;
+    assert.equal(stored.length, count, 'unsent preparation clears; ambiguous partial dispatch stays held');
+    assert.equal(context.pendingAi(1, '/quote').length, count);
+    assert.match(choices[0].error, failAt === 'first-guard-read' ? /couldn't reach/ : /sent but could not be confirmed/);
+    state.aiCache.clear();
+    await context.restoreAiPending();
+    assert.equal(context.pendingAi(1, '/quote').length, count, 'reload preserves only actual-dispatch holds');
+  });
+}
