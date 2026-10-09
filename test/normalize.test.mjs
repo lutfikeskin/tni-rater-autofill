@@ -605,7 +605,7 @@ test('"no POP" or "No" as the carrier without an expiration date is no prior, wh
       assert.ok(steps.filter((s) => s.path === path).every((s) => s.ignore), `${carrier}: ${path} not filled`);
     }
     const generic = buildPlan(r.record, { name: 'generic', fields: [] }, {}).filter((s) => s.path?.startsWith('priorInsurance'));
-    assert.ok(generic.length && generic.every((s) => s.ignore), `${carrier}: generic prior-carrier rules not filled`);
+    assert.ok(generic.length && generic.every((s) => !s.ignore && s.value == null && /no prior insurance/.test(s.note ?? '')), `${carrier}: generic prior questions left to the agent, not filled or skipped`);
   }
   // An expiration date means a policy: kept, as is a named carrier without one.
   const dated = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: 'no POP', ins_limit_1: 'State Minimum', ins_exp_1: '12/01/2026' }, { today: new Date('2026-10-09') });
