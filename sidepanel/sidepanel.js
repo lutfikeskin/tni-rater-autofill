@@ -2,7 +2,7 @@ import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
-import { buildPlan, redactionTerms } from '../src/plan.js';
+import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex } from '../src/usage.js';
@@ -1420,7 +1420,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) state.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) state.doneActions.add(a.id);
   persistDoneActions();
-  for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown });
+  for (const x of frames.flatMap((f) => f.filled)) state.filled.set(x.key, { path: x.path, shown: x.shown, standard: !!x.standard });
   // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
   const quoteKey = carrier?.quoteState?.key;
   const pickedState = quoteKey && frames.flatMap((f) => f.filled).find((x) => x.key === quoteKey);
@@ -1500,6 +1500,23 @@ function renderSite() {
         : 'Open a Progressive, GEICO or AmWINS quote page to fill it.';
   showStopPage();
   showStateNote();
+  showReviewMode();
+}
+
+// Review mode (plan.js supportedClass): the intake's business class isn't one this carrier's rules
+// were written for, so every standard answer is filled as a check item (Continue waits on every
+// page) and the agent is told why, above the fill button.
+function showReviewMode() {
+  const box = $('review-note');
+  const carrier = state.tab?.carrier;
+  const record = state.intake?.record;
+  const on = !!carrier && !!record && !supportedClass(record, carrier);
+  box.hidden = !on;
+  if (!on) { box.replaceChildren(); return; }
+  const cls = String(record.operations?.businessClass ?? '').trim();
+  box.replaceChildren(h('div', { class: 'review-mode', role: 'status' },
+    h('b', {}, `Review mode: ${cls ? `"${cls}"` : 'no business class'} on the intake`),
+    h('p', {}, `${carrier.name}'s rules were written for expediters and general freight haulers. ${cls ? `"${cls}" isn't validated` : 'The intake gives no business class'}, so every standard answer is filled but marked for you to confirm, and Continue waits on each page.`)));
 }
 
 // Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client
@@ -1892,11 +1909,13 @@ function renderReport(frames) {
   // Answers an earlier pass on this page filled (a follow-up pass, after the VIN lookup or a
   // redraw, finds them already there): still ours, shown as filled.
   const earlier = kept.filter((x) => !x.differs && state.filled?.get?.(x.key));
+  // A TNI standard (not an intake fact) is tagged, so the agent can tell them apart (plan.js source),
+  // also when an earlier pass filled it or the page already had it.
   const doneRows = [
-    ...filled.map((x) => [x.label || x.name, x.shown ?? '']),
-    ...earlier.map((x) => [x.label || x.name, state.filled.get(x.key).shown || 'filled']),
+    ...filled.map((x) => [x.label || x.name, x.shown ?? '', !!x.standard]),
+    ...earlier.map((x) => [x.label || x.name, state.filled.get(x.key).shown || 'filled', !!(x.standard || state.filled.get(x.key).standard)]),
     ...all('actions').map((x) => ['Clicked', x.text || x.id]),
-    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => [x.label || x.name, 'left as the page had it']),
+    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => [x.label || x.name, 'left as the page had it', !!x.standard]),
     ...all('skipped').map((x) => [x.label, 'ignored']),
   ];
   // The carrier probably changed this page (pagekit: a known field renamed, or most questions
@@ -1925,7 +1944,7 @@ function renderReport(frames) {
     waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Buttons waiting'), h('span', { class: 'muted' }, waiting.map((x) => `${x.id.replace(/:\d+$/, '')}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`).join('; '))) : null,
     doneRows.length ? h('details', { class: 'more' },
       h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'See what was filled'), h('span', { class: 'small muted' }, String(filled.length + earlier.length))),
-      h('div', { class: 'more-body' }, doneRows.map(([k, v]) => h('div', { class: 'kv' }, h('span', {}, k), h('span', {}, v))))) : null,
+      h('div', { class: 'more-body' }, doneRows.map(([k, v, standard]) => h('div', { class: 'kv' }, h('span', {}, k, standard ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'standard') : null), h('span', {}, v))))) : null,
   ].filter((node) => node != null && node !== false));
 }
 

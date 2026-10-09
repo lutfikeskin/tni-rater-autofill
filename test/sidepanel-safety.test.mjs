@@ -303,6 +303,25 @@ test('fill report counts answers an earlier pass on the page filled', () => {
   assert.match(text, /left as the page had it/, 'a value the page had itself is still said so');
 });
 
+// Codex on c31942e: a TNI standard keeps its tag when an earlier pass filled it or the page
+// already had it (kept), not only when this pass filled it.
+test('fill report tags standards that an earlier pass filled or the page already had', () => {
+  const box = { className: '', children: [], replaceChildren(...children) { this.children = children; } };
+  const context = {
+    $: () => box,
+    state: { tab: { id: 1, url: 'https://example.test/?pageName=AddDriver' }, filled: new Map([['earlier-std', { path: null, shown: 'No', standard: true }], ['earlier-intake', { path: 'drivers[0].first', shown: 'Test' }]]) },
+    pageOf: () => 'AddDriver',
+    h: (tag, props, ...children) => ({ tag, props, children }),
+  };
+  vm.runInNewContext(extractFunction('renderReport'), context);
+  context.renderReport([{ fields: 4, filled: [], failed: [], noData: [], leftRequired: [], actions: [],
+    kept: [{ label: 'Defensive driver', key: 'earlier-std' }, { label: 'First name', key: 'earlier-intake' },
+      { label: 'Waiver', key: 'page-std', standard: true }, { label: 'Middle', key: 'page-intake' }] }]);
+  const more = box.children.find((c) => c?.tag === 'details');
+  const rows = more.children[1].children.flat().map((row) => [row.children[0].children[0], !!row.children[0].children[1]]);
+  assert.deepEqual(rows, [['Defensive driver', true], ['First name', false], ['Waiver', true], ['Middle', false]]);
+});
+
 // FL live run, 2026-10-07: the cargo commodity list has no caption, and the panel showed a
 // failure with no name. Such a field is named after its rule.
 test('fill report names a field without a caption after its rule', () => {

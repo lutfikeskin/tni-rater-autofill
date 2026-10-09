@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { buildPlan } from '../src/plan.js';
+import { collectItems } from '../src/ai/common.js';
 import { progressive } from '../src/carriers/progressive.js';
+import { amwins } from '../src/carriers/amwins.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
 import { assistContextKey } from '../src/ai/common.js';
 
@@ -1572,7 +1574,8 @@ test('blank optional address detail and blank DOT do not stop standard business-
     ], { id: `f_U${'A'.repeat(32)}1ED_1_1`, ariaLabel: 'Does the customer have a USDOT Number?', attrs: { fieldref: 'USDOTInput.Question' } });
     h.document.body.append(detail, street, dot, name, dotNumber);
     const record = {
-      applicant: { name: 'Example LLC', dot: null, mcDotWithin60Days: null, owner1: 'Test Owner' },
+      // The intake says no USDOT number is coming (a blank 60-day answer would leave the question to the agent).
+      applicant: { name: 'Example LLC', dot: null, mcDotWithin60Days: false, owner1: 'Test Owner' },
       garaging: { street: '1 Example St', city: 'Example City', zip: '21000', unit },
       operations: { businessClass: 'Expediter' },
       drivers: [], vehicles: [], trailers: [], priorInsurance: [],
@@ -2491,7 +2494,8 @@ test('a button that shows only once the page took an answer: the answer is picke
 });
 
 test('a question whose wording carries a date is not flagged as reworded when the date moves', async () => {
-  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+  // An expediter: outside the supported classes the standard No would be a check item (review mode).
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
   const plan = buildPlan(record, progressive).filter((s) => ['28F5', '299D'].includes(s.q));
   const h = harness({ search: '?pageName=AddDriver' });
   const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
@@ -2504,6 +2508,119 @@ test('a question whose wording carries a date is not flagged as reworded when th
   assert.equal(accidents.children.find((r) => r.checked)?.value, 'No');
   assert.equal(defensive.children.find((r) => r.checked)?.value, 'No', 'defensive driver discount: standard No');
   assert.equal(report.unknown.length, 0);
+});
+
+// Answer provenance (plan.js `source`): a standard answer is reported as such, so the panel can tag
+// it; in review mode (a business class the rules weren't written for) it is a check item that holds
+// Continue, and an intake answer is neither.
+test('the fill report says which answers are TNI standards; review mode makes them check items', async () => {
+  const fillBoth = async (businessClass) => {
+    const h = harness({ search: '?pageName=AddDriver' });
+    const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
+    h.document.body.append(yesNo('DriverInput.AnyAccidentsViolationsPastExpYears', 'Has this driver had any accidents, claims or violations in the past 3 years?'), yesNo('DriverInput.DefensiveDriverDiscount', 'Defensive Driver Discount'));
+    const record = { applicant: {}, garaging: {}, operations: { businessClass }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+    const plan = buildPlan(record, progressive).filter((s) => ['28F5', '299D'].includes(s.q));
+    const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+    // Report items carry the control's own q (none on these synthetic controls): name them by step.
+    const qOf = (x) => plan.find((s) => s.id === x.stepId)?.q;
+    for (const x of [...report.filled, ...report.checks]) x.q = qOf(x);
+    return report;
+  };
+  const ok = await fillBoth('Expediter');
+  assert.deepEqual([...ok.filled].map((x) => [x.q, x.standard]).sort(), [['28F5', false], ['299D', true]]);
+  assert.equal(ok.checks.length, 0);
+  const review = await fillBoth('Dump Truck');
+  assert.deepEqual([...review.filled].map((x) => [x.q, x.standard]).sort(), [['28F5', false], ['299D', true]], 'still filled');
+  assert.deepEqual([...review.checks].map((x) => x.q), ['299D'], 'the standard is a check item; the intake answer is not');
+  assert.match(review.checks[0].note, /^Review mode: the business class "Dump Truck" isn't validated for Progressive; confirm this standard answer\.$/);
+  assert.ok(review.blockers.some((b) => /^check: /.test(b)), 'Continue waits');
+});
+
+// Codex on c31942e: a fact the intake doesn't give reaches the report as the agent's (manualOnly),
+// so the AI assistant leaves it (ai/common.js collectItems).
+test('AmWINS review mode confirms differing retained standard choices before Continue', async () => {
+  const run = async (businessClass) => {
+    const h = harness({ pathname: '/application/businessauto' });
+    const nonprofit = radioGroup('Is non profit', ...['Yes', 'No'].map((value) => makeInput({ name: 'isNonProfit', type: 'radio', value, checked: value === 'Yes' })));
+    const waiver = new SelectNode(['', 'NONE', 'BROAD'], { id: 'waiverType', ariaLabel: 'Waiver type', value: 'BROAD' });
+    h.document.body.append(nonprofit, waiver);
+    const next = addButton(h, 'Save & Continue');
+    next.onclick = () => { next._clicked = true; };
+    const record = { applicant: {}, garaging: {}, operations: { businessClass }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+    const plan = buildPlan(record, amwins).filter((s) => s.re === '^is non profit$' || s.selector === '#waiverType');
+    assert.equal(plan.length, 2, 'the real carrier plan supplies both standard choices');
+    const options = { maxRounds: 3, advance: amwins.advance };
+    const report = await h.kit.fill(plan, options);
+    const retained = () => [nonprofit.children.find((r) => r.checked)?.value, waiver.value];
+    assert.deepEqual(retained(), ['Yes', 'BROAD'], 'carrier answers are retained');
+    assert.equal(report.filled.length, 0);
+    return { h, plan, next, options, report, retained };
+  };
+  const supported = await run('Expediter');
+  assert.equal(supported.report.checks.length, 0, 'supported-class behavior is unchanged');
+  assert.ok(supported.next._clicked);
+  const review = await run('Dump Truck');
+  assert.equal(review.report.checks.length, 2, 'both differing standards need confirmation');
+  assert.ok(review.report.checks.every((x) => x.standard && /^Review mode:/.test(x.note) && x.key));
+  assert.ok(review.report.blockers.some((b) => /^check:/.test(b)));
+  assert.ok(!review.next._clicked, 'Continue waits');
+  assert.deepEqual(collectItems([review.report]).items, [], 'confirmation checks are not AI choices');
+  const again = await review.h.kit.fill(review.plan, review.options);
+  assert.equal(again.checks.length, 2, 'a new fill does not acknowledge them');
+  const keys = again.checks.map((x) => x.key);
+  const partial = await review.h.kit.fill(review.plan, { ...review.options, skip: [keys[0]] });
+  assert.equal(partial.checks.length, 1, 'acknowledging or manually editing one choice protects only it');
+  assert.ok(!review.next._clicked);
+  await review.h.kit.fill(review.plan, { ...review.options, skip: keys });
+  assert.deepEqual(review.retained(), ['Yes', 'BROAD'], 'acknowledgements preserve the retained values');
+  assert.ok(review.next._clicked, 'Continue follows explicit acknowledgements');
+  const ignored = await run('Dump Truck');
+  const ignoredReport = await ignored.h.kit.fill(ignored.plan.map((s) => ({ ...s, ignore: true })), ignored.options);
+  assert.equal(ignoredReport.checks.length, 0, 'deliberate ignore rules remain ignored');
+  assert.deepEqual(ignored.retained(), ['Yes', 'BROAD']);
+});
+
+test('a fact step is reported manualOnly and kept from the AI', async () => {
+  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));
+  h.document.body.append(yesNo('MoreBusinessInput.HasContinuousCoverage', 'Has the customer had continuous coverage?'));
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => s.q === '83');
+  assert.equal(plan.length, 1);
+  const report = await h.kit.fill(plan, { maxRounds: 2 });
+  assert.equal(report.filled.length, 0);
+  assert.equal(report.noData.length, 1);
+  assert.equal(report.noData[0].manualOnly, true);
+  const ai = collectItems([report]);
+  assert.deepEqual(ai.items, [], 'never sent to the AI');
+  assert.equal(ai.blocked.length, 1);
+});
+
+test('an invalid retained client fact stays manual-only across duplicate report rows', async () => {
+  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const question = 'Has the customer had continuous coverage?';
+  const yes = makeInput({ name: 'continuous', type: 'radio', value: 'Yes', checked: true,
+    attrs: { fieldref: 'MoreBusinessInput.HasContinuousCoverage', 'aria-invalid': 'true' } });
+  const no = makeInput({ name: 'continuous', type: 'radio', value: 'No',
+    attrs: { fieldref: 'MoreBusinessInput.HasContinuousCoverage' } });
+  h.document.body.append(radioGroup(question, yes, no));
+  h.document.body.append(new SelectNode(['', 'Yes', 'No'], { id: 'unfamiliar', ariaLabel: 'Synthetic unfamiliar choice' }));
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => s.q === '83');
+  assert.equal(plan.length, 1);
+  const report = await h.kit.fill(plan, { maxRounds: 2 });
+  assert.equal(report.failed.length, 1, 'the invalid prefill is reported before missing intake data');
+  assert.equal(report.noData.length, 1);
+  assert.equal(report.failed[0].key, report.noData[0].key);
+  assert.equal(report.failed[0].label, report.noData[0].label);
+  assert.equal(report.noData[0].manualOnly, true, 'the real carrier plan leaves the fact to the agent');
+  assert.equal(yes.checked, true, 'the retained page value is preserved');
+  assert.ok(report.blockers.length, 'the agent still must resolve the invalid/missing fact');
+  const ai = collectItems([report]);
+  assert.deepEqual(ai.items.map((x) => x.label), ['Synthetic unfamiliar choice'], 'only the unrelated choice may reach Luna');
+  assert.equal(ai.blocked.length, 1);
+  assert.equal(ai.blocked[0].manualOnly, true);
+  assert.match(ai.blocked[0].why, /client fact.*agent/);
 });
 
 // Codex reproduction (2026-10-08): an agent edit during the wait before Continue halted the fill,

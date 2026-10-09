@@ -71,7 +71,9 @@ test('prefilled insurance type without limit or expiry means currently insured N
   record.priorInsurance = [{ type: 'Commercial Auto', carrier: null, limit: null, expiration: null }];
   const plan = buildPlan(record, progressive);
   assert.equal(byQ(plan, '81').value, false);
-  assert.equal(byQ(plan, '83').value, false);
+  // Continuous coverage isn't on the intake: the agent's, insured or not (2026-10-09).
+  assert.equal(byQ(plan, '83').value, null);
+  assert.match(byQ(plan, '83').note, /continuous coverage/i);
   for (const q of ['95', '9D']) assert.equal(byQ(plan, q).ignore, true);
   record.priorInsurance[0].limit = '$500k CSL';
   record.priorInsurance[0].expiration = '10/31/2026';
@@ -88,18 +90,22 @@ test('sole owner-driver with duplicated first name uses owner surname and driver
   assert.equal(byQ(buildPlan(record, progressive), '2BB').value, null);
 });
 
-test('Progressive standard answers: USDOT belongs to the business, filings, MCS-90 left to the page', () => {
+test('Progressive standard answers: USDOT belongs to the business is the agent\'s, filings, MCS-90 left to the page', () => {
   const record = baseRecord();
   record.applicant.dot = '1234567';
   const plan = buildPlan(record, progressive, {});
-  assert.equal(byQ(plan, '2C1A').value, true, 'for-hire is the supported workflow default');
+  assert.equal(byQ(plan, '2C1A').value, true, 'for-hire: an expediter hauls for hire');
   assert.equal(byQ(plan, '29F').value, true, 'owner-as-driver follows the intake');
   assert.equal(byQ(plan, '2A5').kind, 'first-option', 'home address: always the first choice');
   assert.equal(byQ(plan, '2CE3').value, true, 'no equipment (Add Vehicle and Rates: one field)');
   assert.equal(byQ(plan, '1FDD').value, 'Not selected', 'UMPD');
-  assert.equal(byQ(plan, '20F').value, true);
-  assert.equal(byQ(plan, '20F').note, null);
+  // 2026-10-09: an attestation, never filled (TNI's 2026-10-01 Yes is reversed); the lookup's
+  // registered names are still compared (businessNames).
+  assert.equal(byQ(plan, '20F').value, null);
+  assert.match(byQ(plan, '20F').note, /belong/);
+  assert.deepEqual(byQ(plan, '20F').businessNames, ['Synthetic Expediter LLC']);
   assert.equal(byQ(plan, 'F11').value, true);
+  assert.equal(byQ(plan, 'F11').standard, true, 'kept as TNI\'s 2026-10-01 decision, marked standard');
   assert.equal(plan.find((step) => step.re === '^federal( liability)?( filing)?$').value, true);
   assert.equal(plan.find((step) => step.re === '^mcs ?-?90$').ignore, true);
   assert.equal(plan.find((step) => step.re === '^state( filing)?$').ignore, true);
@@ -130,8 +136,7 @@ test('Progressive coverage and helper ordering are conservative', () => {
   assert.equal(byQ(plan, '216F').value, '$100000/$1000');
   assert.equal(byQ(plan, '1FCD').value, '$1,000 Deductible', 'TNI standard deductible');
   assert.equal(byQ(plan, '1FD2').value, '$1,000 Deductible');
-  record.coverage.comprehensiveDeductible = '$500 Deductible';
-  assert.equal(byQ(buildPlan(record, progressive, {}), '1FCD').value, '$500 Deductible', 'the intake wins when it has one');
+  assert.ok(byQ(plan, '1FCD').standard && byQ(plan, '1FD2').standard, 'the intake has no deductible field: a standard');
   const actions = plan.filter((step) => step.kind === 'action');
   const recalc = actions.find((step) => step.action === 'recalculate');
   const bill = actions.find((step) => step.action === 'billPlan');
@@ -172,15 +177,18 @@ test('filings follow the intake; a missing USDOT number is only a warning', () =
   assert.match(byQ(plan, 'CA').note, /no USDOT/i);
   record.applicant.dot = '1234567';
   assert.equal(byQ(buildPlan(record, progressive, {}), 'CA').value, true);
-  assert.equal(byQ(buildPlan(record, progressive, {}), '20F').value, true);
+  assert.equal(byQ(buildPlan(record, progressive, {}), '20F').value, null, 'the agent confirms the number is the client\'s');
 });
 
-test('absent DOT means No unless applying within 60 days is explicitly Yes', () => {
+test('absent DOT: No only when the intake says no USDOT within 60 days; no answer is the agent\'s', () => {
   const record = baseRecord();
-  for (const pending of [null, undefined, false]) {
+  for (const pending of [null, undefined]) {
     record.applicant.mcDotWithin60Days = pending;
-    assert.equal(byQ(buildPlan(record, progressive), '1ED').value, 'No - and the customer will not have a USDOT number');
+    assert.equal(byQ(buildPlan(record, progressive), '1ED').value, null, 'the intake doesn\'t say: not asserted (2026-10-09)');
+    assert.match(byQ(buildPlan(record, progressive), '1ED').note, /60 days/);
   }
+  record.applicant.mcDotWithin60Days = false;
+  assert.equal(byQ(buildPlan(record, progressive), '1ED').value, 'No - and the customer will not have a USDOT number');
   record.applicant.mcDotWithin60Days = true;
   assert.match(byQ(buildPlan(record, progressive), '1ED').value, /^Not Yet/);
   record.applicant.dot = '1234567';
@@ -205,9 +213,8 @@ test('search-style business type (IN), other-coverage checkboxes, vehicle list',
   assert.deepEqual(q36.choiceAliases, ['General Freight Trucking']);
   assert.equal(byQ(plan, '24D').ignore, true, 'the search box itself is not typed into');
   assert.equal(byQ(plan, '1D').ignore, true);
-  assert.equal(byQ(plan, 'AA').value, true, 'coverage not on the intake = None of the above');
-  assert.equal(byQ(plan, 'B2').value, true);
-  assert.equal(byQ(plan, 'A8').value, false);
+  // 2026-10-09: the intake never asks about other coverages, so none of these is filled.
+  for (const q of ['AA', 'B2', 'A8', 'A2']) { assert.equal(byQ(plan, q).value, null, q); assert.match(byQ(plan, q).note, /other business coverages|General Liability/); }
   const search = plan.find((s) => s.action === 'businessTypeSearch');
   assert.equal(search.near, 'business type');
   assert.equal(progressive.vehicleList, 'VehicleSummary');
@@ -292,7 +299,8 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
   assert.equal(sel('#ownerName').value, 'IBRAHIM ALHARAZ');
   assert.equal(sel('#ownerDob').value, '01/01/1968');
   assert.equal(sel('#yrsInBusiness').value, '5+', 'years under own authority 7');
-  assert.equal(sel('#yearBusinessEstablished').value, new Date().getFullYear());
+  assert.equal(sel('#yearBusinessEstablished').value, null, 'blank on the intake: the agent\'s, not this year (2026-10-09)');
+  assert.equal(sel('#yearBusinessEstablished').path, 'applicant.yearEstablished');
   assert.equal(sel('#classCodeAndDescription').kind, 'search-select');
   assert.equal(sel('#classCodeAndDescription').search, '484122');
   const prior = plan.filter((x) => /^Prior carrier/.test(x.name));
@@ -302,7 +310,8 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
     assert.equal(step.value, 'NO PRIOR');
     assert.equal(step.hidden, true, 'collapsed year panels are filled too');
   }
-  assert.equal(named(/^Year licensed/).value, '1985');
+  assert.equal(named(/^Year licensed/).value, null, 'not on the intake: the agent\'s (2026-10-09; birth year + 17 before)');
+  assert.equal(named(/^Year licensed/).source, 'fact');
   assert.equal(named(/^Disclosure/).value, 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026');
   assert.equal(sel('#autoSymbol6').value, true);
   assert.equal(sel('#autoSymbol1').value, false);
@@ -372,7 +381,8 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
     for (const label of LABELS) assert.equal(mine.filter((s) => new RegExp(s.re, 'i').test(label)).length, 1, `vehicle ${row + 1}: ${label}`);
   }
   assert.ok(plan.some((s) => s.re && new RegExp(s.re, 'i').test('code voilation')), 'the page spells it "voilation"');
-  assert.equal(named(/^Vehicles leased/)[0].value, false, 'second section: always No');
+  assert.equal(named(/^Vehicles leased to others/)[0].value, null, 'not on the intake: the agent\'s (2026-10-09; always No before)');
+  assert.equal(named(/^Vehicles leased to others/)[0].source, 'fact');
   assert.equal(named(/^Body type/)[0].replace, true);
   assert.equal(named(/^Other topics/)[0].replace, true, 'Yes again after Default all answers to No');
   const actions = plan.filter((s) => s.kind === 'action');
@@ -382,33 +392,34 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
   assert.ok(!new RegExp(amwins.advance.text, 'i').test('Save & Exit'));
 });
 
-test('AmWINS standard answers from the agent: current carrier 1-2 years with a DOT only, no claim-free loss runs, PIP left alone, Married to confirm', async () => {
+test('AmWINS facts the intake lacks: current carrier tenure (asked with a DOT only), loss runs and marital status are the agent\'s; PIP No', async () => {
   const { amwins } = await import('../src/carriers/amwins.js');
   const record = baseRecord();
   record.applicant.dot = '1234567';
   let plan = buildPlan(record, amwins, {});
   const sel = (s) => plan.find((x) => x.selector === s);
   const named = (re) => plan.find((x) => re.test(x.name ?? ''));
-  assert.equal(sel('#howLongWithCurrentCarrier').value, '1 TO 2 YEARS');
+  // 2026-10-09: 1 TO 2 YEARS and No were facts about the client, not standards.
+  assert.equal(sel('#howLongWithCurrentCarrier').value, null);
+  assert.match(sel('#howLongWithCurrentCarrier').note, /current carrier/);
   assert.equal(sel('#howLongWithCurrentCarrier').ignore, false);
-  assert.equal(named(/^Claim-free loss runs/).value, false);
+  assert.equal(named(/^Claim-free loss runs/).value, null);
+  assert.match(named(/^Claim-free loss runs/).note, /loss runs/);
   const pip = named(/^Personal Injury Protection \(/);
   assert.equal(pip.ignore, false);
   assert.equal(pip.value, false, 'No: Medical Payments is offered');
   assert.equal(pip.replace, true, 'replaces the page pre-selected Yes');
   assert.equal(sel('#personalInjuryProtectionLimit').ignore, true);
   const marital = () => sel('#driversPanel [data-id="martialStatus"]');
-  assert.equal(marital().value, record.drivers[0].maritalStatus ?? 'MARRIED');
-  record.drivers[0].maritalStatus = null;
+  assert.equal(marital().value, null, 'no marital status on this record: left to the agent, no Married default (2026-10-09)');
+  assert.equal(marital().warn, null);
   record.applicant.dot = null;
   plan = buildPlan(record, amwins, {});
-  assert.equal(marital().value, 'MARRIED');
-  assert.match(marital().warn, /no marital status/);
   assert.equal(sel('#howLongWithCurrentCarrier').ignore, true, 'only asked of clients with a DOT number');
   record.drivers[0].maritalStatus = 'Single';
   plan = buildPlan(record, amwins, {});
-  assert.equal(marital().value, 'Single');
-  assert.equal(marital().warn, null);
+  assert.equal(marital().value, 'Single', 'the intake\'s answer is filled');
+  assert.equal(marital().path, 'drivers[0].maritalStatus');
 });
 
 test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN lookup, PD-only and PIP not selected', () => {
@@ -418,7 +429,9 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   record.applicant.owner1 = 'Amina Kone';
   record.garaging.state = 'FL';
   const plan = buildPlan(record, progressive, {});
-  assert.equal(byQ(plan, '21E').value, true, 'obtained within 60 days: Yes');
+  // 2026-10-09: when the number was obtained is the agent's (TNI's 2026-10-01 Yes reversed).
+  assert.equal(byQ(plan, '21E').value, null);
+  assert.match(byQ(plan, '21E').note, /60 days/);
   assert.equal(byQ(plan, '21E').ignore, false);
   assert.equal(byQ(plan, '230').ignore, false, 'business name typed in even with a USDOT number');
   assert.equal(byQ(plan, '230').value, 'Amina Kone', 'no company: the owner');
@@ -447,7 +460,8 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
 
 test('Progressive NJ run: vehicle registrant, VIN-lookup safety boxes kept, Rates loan/lease carried over, rates helpers wait for the liability limit', () => {
   const plan = buildPlan(baseRecord(), progressive, {});
-  assert.equal(byQ(plan, '2C97').value, 'Named insured');
+  assert.equal(byQ(plan, '2C97').value, null, 'the registrant isn\'t on the intake: the agent\'s (2026-10-09)');
+  assert.match(byQ(plan, '2C97').note, /registered/);
   for (const q of ['2C2C', '2C2D', '2C2E', '2C45', '2C46', '2C47', '2C48']) assert.equal(byQ(plan, q).ignore, true, q);
   assert.equal(byQ(plan, '2007').ignore, true);
   assert.match(byQ(plan, '2007').emptyNote, /carry over/, 'an empty carryover goes to the agent');
@@ -684,9 +698,11 @@ test('trailers: Add Trailer once the vehicles are in, its tile, its page, and it
   const done = plan.find((s) => s.action === 'addTrailer:0');
   assert.deepEqual(done.doneWhen, ['trailerEntered:0']);
   assert.match(done.unfinished, /never entered/);
-  // No trailer ownership on the intake: owned (TNI). One that is none of owned/financed/leased
-  // (Rented) is the agent's (Codex on PR #43).
-  assert.equal(byQ(buildPlan({ ...record, trailerInfo: {} }, progressive, { trailers: 0 }), '2AD0').value, 'No');
+  // No trailer ownership on the intake: the agent's (2026-10-09; TNI's 2026-10-07 "owned" is
+  // reversed). One that is none of owned/financed/leased (Rented) is the agent's (Codex on PR #43).
+  const blank = byQ(buildPlan({ ...record, trailerInfo: {} }, progressive, { trailers: 0 }), '2AD0');
+  assert.equal(blank.value, null);
+  assert.match(blank.note, /no trailer ownership/);
   assert.equal(byQ(buildPlan({ ...record, trailerInfo: { ownership: 'Owned' } }, progressive, { trailers: 0 }), '2AD0').value, 'No');
   assert.equal(byQ(buildPlan({ ...record, trailerInfo: { ownership: 'Leased' } }, progressive, { trailers: 0 }), '2AD0').value, 'Yes - Lease');
   const rented = byQ(buildPlan({ ...record, trailerInfo: { ownership: 'Rented' } }, progressive, { trailers: 0 }), '2AD0');

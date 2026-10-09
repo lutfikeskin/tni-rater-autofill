@@ -1242,7 +1242,7 @@
       for (const { step: planned, control: c, how, reworded } of pairs) {
         // A known field whose question reads differently now: answered, and the agent checks it.
         const step = reworded ? { ...planned, warn: [planned.warn, `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check the answer.`].filter(Boolean).join(' ') } : planned;
-        const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how };
+        const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how, standard: !!step.standard, manualOnly: !!step.manualOnly };
         // A question left as the page has it whose wording changed: what the page has may not fit
         // any more, so the agent checks it (Continue waits).
         const leftAlone = step.verifyOnly || step.ignore;
@@ -1284,8 +1284,9 @@
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
             report.checks.push({ ...item, note, ...describe(c) });
             handled.set(step.id, { status: 'needs', note });
-          // Still our default from an earlier fill: still the agent's to confirm.
-          } else if (step.warn && agreesWith(step, c)) {
+          // Review mode confirms every retained standard, including a differing carrier choice.
+          // Other defaults retain their existing confirmation behavior.
+          } else if (step.warn && (step.reviewRequired || agreesWith(step, c))) {
             report.checks.push({ ...item, note: step.warn, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.warn });
           } else handled.set(step.id, { status: null });
