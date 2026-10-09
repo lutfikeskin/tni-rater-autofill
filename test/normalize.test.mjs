@@ -130,6 +130,40 @@ test('radius: long-haul phrases, miles, ranges and other units, with what each c
   assert.match(disclosure('48'), /^48 miles radius/m);
 });
 
+test('radius: long-haul words do not hide invalid distances or unsupported units', () => {
+  const cases = [
+    ['OTR 100-500 miles', 'range'],
+    ['lower 48, 100-500 miles', 'range'],
+    ['48 states 250 km', 'unit'],
+    ['long haul 250 km', 'unit'],
+    ['nationwide 100 miles / 500 miles', 'text'],
+    ['OTR 0 miles', 'text'],
+    ['100 feet', 'unit'],
+    ['100 furlongs', 'unit'],
+    ['100 leagues', 'unit'],
+    ['100 parsecs', 'unit'],
+    ['100-furlongs radius', 'unit'],
+    ['100 nautical miles', 'unit'],
+    ['100 meters', 'unit'],
+    ['100-ft radius', 'unit'],
+    ['long haul 100 yards', 'unit'],
+  ];
+  for (const [written, kind] of cases) {
+    assert.deepEqual(parseRadius(written), { miles: null, kind }, written);
+    assert.equal(isLongHaul(written), false, `${written}: no widest-band fallback`);
+    const { record: r, warnings } = normalizeIntake({ ...raw, avg_radius: written });
+    assert.equal(r.operations.radius, written, `${written}: original retained`);
+    assert.equal(r.operations.radiusMiles, null, `${written}: no invented miles`);
+    assert.ok(warnings.some((w) => w.code === `radius.${kind === 'text' ? 'not-miles' : kind}`), written);
+    assert.equal(buildPlan(r, progressive).find((s) => s.q === '2B9D').value, null, `${written}: Progressive`);
+    assert.equal(buildPlan(r, amwins).find((s) => s.name === 'Radius').value, null, `${written}: AmWINS`);
+    assert.doesNotMatch(buildPlan(r, amwins).find((s) => s.re === '^disclosure details$').value, /miles radius/, `${written}: disclosure`);
+  }
+  for (const written of ['100 miles', '100 mi.', '100-mile radius', '100 miles radius of operation', '100 radius of operation', 'OTR up to 100 miles', 'lower 48, 100 miles', '48 states up to 100 miles']) {
+    assert.deepEqual(parseRadius(written), { miles: 100, kind: 'miles' }, written);
+  }
+});
+
 test('parseRadius and isLongHaul', () => {
   assert.deepEqual(parseRadius('between 100 and 500'), { miles: null, kind: 'range' });
   assert.deepEqual(parseRadius('50-mile radius'), { miles: 50, kind: 'miles' });

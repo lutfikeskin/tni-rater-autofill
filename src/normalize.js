@@ -21,37 +21,43 @@ const STATES_48 = /\b(?:(?:lower|all|continental|contiguous)[\s-]*48|48(?:[\s-]+
 // miles", "OTR up to 500 miles") is the answer.
 const LONG_HAUL_WORDS = /\b(?:unlimited|long(?:[\s-]*(?:haul|distance))?|nation(?:al|wide)?|otr|over[\s-]*the[\s-]*road|any(?:where)?)\b/i;
 export const LONG_HAUL = new RegExp(`${STATES_48.source}|${LONG_HAUL_WORDS.source}`, 'i');
-export const isLongHaul = (text) => LONG_HAUL.test(String(text ?? ''));
+export const isLongHaul = (text) => parseRadius(String(text ?? '')).kind === 'long-haul';
 
-// Kilometres (any spelling) are the one unit worth converting for the agent; the rest are not
-// distances at all.
-const KILOMETRES = /^(k|km|kms|kilomet(?:er|re)s?)$/i;
+// Other distance units need an agent conversion; never treat their number as miles.
+const NON_MILE_UNITS = /^(k|km|kms|kilomet(?:er|re)s?|m|met(?:er|re)s?|cm|mm|ft|feet|foot|yds?|yards?|in|inch(?:es)?|nautical|nmi|nm)$/i;
+const MILE_UNIT = /^(miles?|mi)$/i;
+// A bare number can be followed by these radius descriptions, rather than a unit. With an
+// explicit mile unit, other prose may follow too; another distance unit is still unresolved.
+const RADIUS_PROSE = /^(radius|of|one|away|maximum|max|distance|round)$/i;
 const NOT_DISTANCE = /^(states?|hrs?|hours?|mins?|minutes?|days?|weeks?|counties|cities)$/i;
 
 /**
- * The intake's radius box, read as a number of miles. "48 states" / "lower 48" come before digits:
- * long haul, not 48 miles. A single mileage beats the other long-haul words ("anywhere within 100
+ * The intake's radius box, read as a number of miles. The 48 in "48 states" / "lower 48" is
+ * geography, not mileage; read any other digits normally. A single mileage beats the other long-haul words ("anywhere within 100
  * miles" is 100); without one, those words are long haul. A range ("100-500 miles", "100 miles to 500 miles", "100mi-500mi"), a
- * non-mile unit ("250 km"), a mileage followed by another number, and text that isn't a distance
+ * non-mile unit ("250 km", "100 feet"), a mileage followed by another number, and text that isn't a distance
  * give no mileage, and the normalizer asks the agent for it.
  * @returns {{ miles: number|null, kind: 'missing'|'long-haul'|'miles'|'range'|'unit'|'text' }}
  */
 export function parseRadius(v) {
-  const s = clean(v);
+  let s = clean(v);
   if (s == null) return { miles: null, kind: 'missing' };
-  if (STATES_48.test(s)) return { miles: null, kind: 'long-haul' };
+  if (STATES_48.test(s)) {
+    s = s.replace(new RegExp(STATES_48.source, 'gi'), '');
+    if (!/\d/.test(s)) return { miles: null, kind: 'long-haul' };
+  }
   const read = readMiles(s);
-  if (read.kind !== 'miles' && LONG_HAUL_WORDS.test(s)) return { miles: null, kind: 'long-haul' };
+  if (!/\d/.test(s) && LONG_HAUL_WORDS.test(s)) return { miles: null, kind: 'long-haul' };
   return read;
 }
 
 function readMiles(s) {
   const digits = s.replace(/(\d),(?=\d{3}\b)/g, '$1');
-  const m = digits.match(/^\D*?(\d+(?:\.\d+)?)\s*\+?\s*(?:(?:miles?|mi)\b\.?\s*)?(?:(?:-|–|—|to|through|thru|and)\s*(\d+(?:\.\d+)?))?\s*([a-z]+)?/i);
+  const m = digits.match(/^\D*?(\d+(?:\.\d+)?)\s*\+?\s*(?:-?\s*(miles?|mi)\b\.?\s*)?(?:(?:-|–|—|to|through|thru|and)\s*(\d+(?:\.\d+)?))?\s*(?:-\s*)?([a-z]+)?/i);
   if (!m) return { miles: null, kind: 'text' };
-  const [, from, to, word] = m;
-  if (word && KILOMETRES.test(word)) return { miles: null, kind: 'unit' };
+  const [, from, mileUnit, to, word] = m;
   if (word && NOT_DISTANCE.test(word)) return { miles: null, kind: 'text' };
+  if (word && (NON_MILE_UNITS.test(word) || (!mileUnit && !MILE_UNIT.test(word) && !RADIUS_PROSE.test(word)))) return { miles: null, kind: 'unit' };
   if (to != null) return { miles: null, kind: 'range' };
   // One mileage only when no other number is left over ("100 miles / 500 miles" is not 100).
   if (/\d/.test(digits.slice(m.index + m[0].length))) return { miles: null, kind: 'text' };
