@@ -388,6 +388,11 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
   }
   if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
+  // TNI's standard for a blank (2026-10-09): 0 years, established this year (the carrier rules
+  // fill it; the record stays blank, so a later answer here replaces it).
+  if (a.yearsInBusiness == null && a.yearsExperience == null) {
+    check('years-in-business.default', 'applicant.yearsInBusiness', `Years in business and year established are blank: the quote gets 0 years (New Venture), established ${year}. If the client has been in business longer, enter Years in business or Year established.`);
+  }
 
   // --- Garaging address -----------------------------------------------------------------------
   const addr = parseAddress(raw.garaging_address);
@@ -510,9 +515,14 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     type: txt('ins_type_1'), carrier: txt('ins_carrier_1'), limit: txt('ins_limit_1'), expiration: toDate(raw.ins_exp_1),
   };
   if (txt('ins_exp_1') && !prior.expiration) { prior.expiration = txt('ins_exp_1'); check('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`); }
-  // "NO POP" (no proof of prior), "None", "No prior": the client has no current insurance.
-  const noPrior = /^(no\s*(pop|prior|insurance|ins|coverage)|none|n\/?a)\b/i.test(prior.carrier ?? '') && !prior.limit && !prior.expiration;
-  if (noPrior) info('prior.none', 'priorInsurance', `Current insurance says "${prior.carrier}": treated as not currently insured.`);
+  // "No", "NO POP" (no proof of prior), "None", "No prior" as the carrier, without an expiration
+  // date: the client has no current insurance, whatever type or limit the form shows (TNI,
+  // 2026-10-09: "Personal Auto", "no POP", "State Minimum" is no prior). Nothing is written about
+  // it in a carrier's disclosure.
+  // As written: "None" and "N/A" read as blank otherwise, and a blank carrier is no answer.
+  const carrierAsWritten = String(raw.ins_carrier_1 ?? '').replace(/\s+/g, ' ').trim();
+  const noPrior = /^(no|none|n\/?a)\b/i.test(carrierAsWritten) && !prior.expiration;
+  if (noPrior) info('prior.none', 'priorInsurance', `Current insurance says "${carrierAsWritten}": treated as not currently insured.`);
   if (!noPrior && (prior.type || prior.carrier || prior.limit || prior.expiration)) {
     record.priorInsurance.push(prior);
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');

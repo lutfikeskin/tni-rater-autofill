@@ -47,7 +47,7 @@ try {
         assert.equal(body.max_output_tokens, 2048);
         assert.equal(body.temperature, undefined);
         // Nothing flagged: the synthetic claims box holds no coverage request.
-        const lines = Object.fromEntries(Object.keys(state.claimsBox).map(id => [id, { ntl: false, coverageChange: false }]));
+        const lines = Object.fromEntries(Object.keys(state.claimsBox).map(id => [id, { ntl: false, coverageChange: false, businessYears: null, businessSince: null }]));
         return route.fulfill({ json: { status: 'completed', model: 'gpt-6-luna',
           output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify({ lines }) }] }],
           usage: { input_tokens: 50, output_tokens: 5 } } });
@@ -445,13 +445,13 @@ try {
   const priorValues = await priorCarriers.evaluateAll((els) => els.map((el) => el.value));
   verify('unrelated garage edit is retained', await garageState.inputValue(), 'IN');
   verify('all three prior carrier rows receive NO PRIOR', JSON.stringify(priorValues), JSON.stringify(['NO PRIOR', 'NO PRIOR', 'NO PRIOR']));
-  const firstReport = await panel.locator('#report').innerText();
-  verify('missing intake years remain a review warning until the page answer is supplied', /(?:years|yrs)\s+in\s+business/i.test(firstReport), true);
+  // Blank years on the intake: TNI's standard New Venture (2026-10-09), which the agent corrects.
+  verify('missing intake years get the New Venture standard', await mock.locator('#yrsInBusiness').inputValue(), 'New Venture');
 
   // Keep the long native-selection pause in the regression without relying on a popup-specific
   // browser behavior; the value is still changed through real keyboard events.
   await keyboardSelect(mock.locator('#yrsInBusiness'), '3', 5000);
-  verify('trusted Years in Business selection resolves the page warning', await mock.locator('#yrsInBusiness').inputValue(), '3');
+  verify('trusted Years in Business selection replaces the standard', await mock.locator('#yrsInBusiness').inputValue(), '3');
 
   // Fill immediately after the Years in Business correction. This is the no-extra-Luna-request
   // check; at this point all three prior rows are still the carrier default.
@@ -460,7 +460,7 @@ try {
   await panel.waitForTimeout(1000);
   const yearsFillValues = await priorCarriers.evaluateAll((els) => els.map((el) => el.value));
   verify('Fill again after Years in Business reuses the settled Luna result', requests, beforeYearsFill);
-  verify('Years in Business warning clears after the trusted selection', /(?:years|yrs)\s+in\s+business/i.test(await panel.locator('#report').innerText()), false);
+  verify('the agent\'s Years in Business survives Fill again', await mock.locator('#yrsInBusiness').inputValue(), '3');
   verify('prior carrier defaults survive the Years in Business correction', JSON.stringify(yearsFillValues), JSON.stringify(['NO PRIOR', 'NO PRIOR', 'NO PRIOR']));
 
   // Select one genuine prior row after the Years in Business re-fill. The other two must remain
