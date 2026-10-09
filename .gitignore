@@ -13,3 +13,4 @@ layouts/
 
 # Local notes that may hold keys or tokens.
 .env.md
+.env
