@@ -1559,9 +1559,9 @@ async function injectKit(tabId, carrier) {
   await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), files: ['src/content/field-key.js', 'src/content/pagekit.js'] });
 }
 
-async function runKit(tabId, carrier, func, args = []) {
+async function runKit(tabId, carrier, func, args = [], frameIds) {
   await injectKit(tabId, carrier);
-  return chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), func, args });
+  return chrome.scripting.executeScript({ target: { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) }, world: worldFor(carrier), func, args });
 }
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
@@ -2236,10 +2236,16 @@ async function applyAi(list, ctx, decision) {
     && ctx.contextKey === assistContextKey(state.intake?.record, state.active)
     && (ctx.run === undefined || ctx.run === state.aiRun);
   const entries = [...state.aiCache].filter(([, x]) => list.includes(x));
-  let dispatched = false, prepared = false;
+  let dispatched = false, prepared = false, guarding = false;
+  const guardToken = crypto.randomUUID();
   state.filling = true;
   await tellRecorder('pause', ctx.tabId);
   try {
+    if (!isCurrent()) return false;
+    // Watch every frame before the snapshot and pending-hold writes. An idle frame stays
+    // guarded while another waits on its server, until the full apply finishes.
+    guarding = true;
+    await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [guardToken]);
     if (!isCurrent()) return false;
     const current = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     if (!isCurrent()) return false;
@@ -2276,31 +2282,42 @@ async function applyAi(list, ctx, decision) {
     }
     await persistAiPending();
     if (!isCurrent()) return false;
+    // One answer at a time lets an edit in any frame stop every answer still to come,
+    // including later answers in the active frame.
     dispatched = true;
-    // One frame's answers at a time (each question is in exactly one frame): an agent edit caught
-    // in one frame (a protected item) stops the answers of the frames still to come, as answer()
-    // stops its own. With several frames, a frame's items count only for its own questions; the
-    // other frames answer "not on this page" or, their page changed by the earlier answers,
-    // "the page changed", and protected items count from any frame.
-    const byFrame = new Map();
-    list.forEach((x, i) => {
-      const frameId = aiSnapshotFieldMatches(current, x)[0].frame.frameId;
-      byFrame.set(frameId, [...(byFrame.get(frameId) ?? []), answers[i]]);
-    });
     const results = [];
-    let halted = false;
-    for (const [frameId, group] of byFrame) {
-      if (halted) {
-        for (const a of group) results.push({ key: a.key, label: a.label, ok: false, reason: 'an agent edit interrupted applying the answers; review the page, then request fresh suggestions' });
+    const readEdits = async (command = 'read') => {
+      const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit.answerEdits(c, t), [command, guardToken]);
+      for (const frame of frames) for (const item of frame.result ?? []) {
+        if (item?.protected) results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
+      }
+      if (current.some(origin => !frames.some(frame => frame.frameId === origin.frameId
+        && frame.documentId === origin.documentId && Array.isArray(frame.result)))) {
+        return 'the page or frame changed while applying the answers; request fresh suggestions';
+      }
+      return results.some(r => r.protected)
+        ? 'an agent edit interrupted applying the answers; review the page, then request fresh suggestions' : null;
+    };
+    const startedFrames = new Set();
+    for (let i = 0; i < answers.length; i++) {
+      const a = answers[i];
+      const interruption = await readEdits();
+      if (interruption || !isCurrent()) {
+        results.push({ key: a.key, label: a.label, ok: false, reason: interruption
+          ?? 'the intake or page context changed; request fresh suggestions' });
         continue;
       }
-      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots) => globalThis.__raterKit.answer(a, snapshots), [group, ctx.snapshots.map(r => r.result)]);
-      const items = answerFrames.flatMap((frame) => (Array.isArray(frame.result) ? frame.result : [])
-        .filter(result => result && typeof result === 'object')
-        .map(result => ({ ...result, frameId: frame.frameId, documentId: frame.documentId })));
-      halted = items.some(r => r.protected);
-      results.push(...(byFrame.size > 1 ? items.filter(r => r.frameId === frameId || r.protected) : items));
+      const frameId = aiSnapshotFieldMatches(current, list[i])[0].frame.frameId;
+      const expected = startedFrames.has(frameId) ? null : ctx.snapshots.map(r => r.result);
+      startedFrames.add(frameId);
+      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t) => globalThis.__raterKit.answer(a, snapshots, t),
+        [[a], expected, guardToken], [frameId]);
+      for (const frame of answerFrames) for (const item of frame.result ?? []) {
+        if (item && typeof item === 'object') results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
+      }
     }
+    await readEdits('end');
+    guarding = false;
     const sameContext = isCurrent();
     const keys = sameContext ? state.agentKeys.get(editScope(ctx.page)) ?? new Set() : null;
     // The agent's own edits while the answers went in (also on a control the carrier redrew, which
@@ -2308,7 +2325,7 @@ async function applyAi(list, ctx, decision) {
     const protectedKeys = results.filter(r => r.protected).map(r => r.key);
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
-      const ok = mine.find((r) => r.ok);
+      const ok = !protectedKeys.includes(x.key) && mine.find((r) => r.ok);
       const problem = mine.find((r) => !r.ok && !/no longer on this page/.test(r.reason ?? '')) ?? mine[0];
       if (ok) {
         x.origin = aiOriginRecord({ frameId: ok.frameId, documentId: ok.documentId,
@@ -2348,6 +2365,19 @@ async function applyAi(list, ctx, decision) {
       : `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
     return false;
   } finally {
+    if (guarding) {
+      try {
+        const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('end', t), [guardToken]);
+        // Even a failed answer transport must preserve edits the still-live guards caught.
+        const edited = frames.flatMap(frame => frame.result ?? []).filter(item => item?.protected);
+        if (isCurrent() && edited.length) {
+          const keys = state.agentKeys.get(editScope(ctx.page)) ?? new Set();
+          for (const item of edited) keys.add(item.key);
+          state.agentKeys.set(editScope(ctx.page), keys);
+          persistAgentKeys();
+        }
+      } catch { /* a removed or navigating frame no longer has live listeners */ }
+    }
     if (prepared && !dispatched) for (const x of list) x.done = null;
     if (dispatched) for (const [sig, x] of entries) if (list.includes(x) && x.done === 'auto') {
       if (!aiActionCurrent(ctx, list)) {

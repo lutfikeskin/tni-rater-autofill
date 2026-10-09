@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { randomUUID } from 'node:crypto';
 import { assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex } from '../src/usage.js';
@@ -690,8 +691,8 @@ test('AI application drops stale in-flight work and refuses duplicate frame ques
     let resolveSnapshot, snapshotEntered, calls = 0, persisted = 0;
     const started = new Promise(resolve => { snapshotEntered = resolve; });
     const snapshot = new Promise(resolve => { resolveSnapshot = resolve; });
-    const context = { state, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
-      runKit: () => { calls++; snapshotEntered(); return snapshot; }, tellRecorder: async () => {},
+    const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+      runKit: (tabId, carrier, func) => /answerEdits/.test(String(func)) ? frames.map(frame => ({ ...frame, result: [] })) : (calls++, snapshotEntered(), snapshot), tellRecorder: async () => {},
       persistAiPending: async () => { persisted++; } };
     vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'aiSnapshotFields', 'aiSnapshotFieldMatches', 'applyAi'].map(extractFunction).join('\n') + LAYOUT_STUB, context);
@@ -720,8 +721,8 @@ test('approval expects the successful answer when a carrier redraw changes its v
     aiCache: new Map([['1\n/quote', x]]), agentKeys: new Map(), filled: new Map() };
   const ctx = { tabId: 1, page: '/quote', tabUrl: state.tab.url, intake, carrier: { practice: true },
     contextKey: assistContextKey(record, state.active), snapshots: pre };
-  const context = { state, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
-    runKit: async () => responses.shift(), tellRecorder: async () => {}, persistAiPending: async () => {},
+  const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+    runKit: async (tabId, carrier, func) => /answerEdits/.test(String(func)) ? pre.map(frame => ({ ...frame, result: [] })) : responses.shift(), tellRecorder: async () => {}, persistAiPending: async () => {},
     usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
   vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
     'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
@@ -743,6 +744,7 @@ test('an agent edit caught during an AI apply is protected, and stops the answer
   const answered = [];
   // Frame 0 answers A; the agent edited C meanwhile. Frame 1 has nothing of A's.
   const runKit = async (tabId, carrier, func, args = []) => {
+    if (/answerEdits/.test(String(func))) return pre.map(frame => ({ ...frame, result: [] }));
     if (!args.length) return pre;
     answered.push(args[0].map(a => a.key).join(','));
     return [{ frameId: 0, documentId: 'doc-0', result: [{ key: 'a', label: 'A', ok: true, shown: 'No' },
@@ -754,7 +756,7 @@ test('an agent edit caught during an AI apply is protected, and stops the answer
     aiCache: new Map(xs.map((x, i) => [`${i}\n/quote`, x])), agentKeys: new Map(), filled: new Map() };
   const ctx = { tabId: 1, page: '/quote', tabUrl: state.tab.url, intake, carrier: { practice: true },
     contextKey: assistContextKey(record, state.active), snapshots: pre };
-  const context = { state, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+  const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
     runKit, tellRecorder: async () => {}, persistAiPending: async () => {}, persistAgentKeys: () => { persisted++; },
     usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
   vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
@@ -974,13 +976,14 @@ test('dispatched answers retain durable holds across intake, cache and transport
     let stored = [], scope = 'original-intake', calls = 0, release, fail, entered;
     const started = new Promise(resolve => { entered = resolve; });
     const settlement = new Promise((resolve, reject) => { release = resolve; fail = reject; });
-    const context = { state, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String,
+    const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String,
       DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy', pageOf: value => new URL(value).pathname,
       usage: { currentSession: () => scope ? { intakeId: scope } : null },
       aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
       aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
       tellRecorder: async () => {},
-      runKit: () => {
+      runKit: (tabId, carrier, func) => {
+        if (/answerEdits/.test(String(func))) return Promise.resolve(pre.map(frame => ({ ...frame, result: [] })));
         calls++;
         if (calls === 1) return Promise.resolve(pre);
         if (calls === 2) { entered(); return settlement; }

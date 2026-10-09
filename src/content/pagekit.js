@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 59 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 61 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1003,18 +1003,37 @@
   function guardEdits(onEdit) {
     let lastGesture = -Infinity;
     let gestureTarget = null;
+    let gestureControl = null;
+    // ExtJS draws its options outside the combo. Resolve ownership at pointerdown, while the
+    // combo still owns focus; the carrier can move focus before its input/change event.
+    const popupControl = (target) => {
+      const option = target?.closest?.('[role=option], .x-boundlist-item');
+      const popup = option?.closest?.('[role=listbox], .x-boundlist');
+      if (!popup) return null;
+      const isControl = (el) => /^(INPUT|SELECT|TEXTAREA)$/.test(el?.tagName ?? '');
+      if (popup.id) {
+        for (const owner of deepQueryAll(document, 'input, select, textarea, [role=combobox]')) {
+          const refs = `${owner.getAttribute('aria-owns') ?? ''} ${owner.getAttribute('aria-controls') ?? ''}`.split(/\s+/);
+          if (!refs.includes(popup.id)) continue;
+          const control = isControl(owner) ? owner : owner.querySelector('input, select, textarea');
+          if (isControl(control)) return control;
+        }
+      }
+      return isControl(document.activeElement) ? document.activeElement : null;
+    };
     const gestureTypes = ['pointerdown', 'keydown', 'paste', 'drop'];
     const trackGesture = (event) => {
       if (!event.isTrusted) return;
       lastGesture = Date.now();
       gestureTarget = event.target ?? null;
+      gestureControl = popupControl(gestureTarget);
     };
     const sameGroup = (a, b) => a === b || (!!a && !!b && a.type === 'radio' && b.type === 'radio'
       && !!a.name && a.name === b.name && (a.form ?? null) === (b.form ?? null));
     const gestureOn = (el) => {
       const target = gestureTarget;
       if (!target || !el) return false;
-      if (sameGroup(target, el)) return true;
+      if (sameGroup(target, el) || sameGroup(gestureControl, el)) return true;
       const label = target.closest?.('label');
       if (label) {
         const forId = label.htmlFor || label.getAttribute?.('for');
@@ -1039,6 +1058,27 @@
       document.removeEventListener('input', protectEdit, true);
       document.removeEventListener('change', protectEdit, true);
     };
+  }
+
+  // The panel installs this guard in every frame for the whole AI apply, including frames
+  // whose answers are still to come or have already finished. Short answer() calls must not
+  // remove another frame's protection while the active frame is waiting for its server.
+  let answerEditSession = null;
+  function answerEdits(command = 'read', token) {
+    if (command === 'begin') {
+      answerEditSession?.release();
+      const questions = new Map();
+      const release = guardEdits((key, c) => questions.set(key, c.label ?? null));
+      answerEditSession = { questions, release, token };
+    }
+    if (!answerEditSession || answerEditSession.token !== token) return null;
+    const results = [...(answerEditSession?.questions ?? [])].map(([key, label]) => ({ key, label,
+      ok: false, protected: true, reason: 'you changed this question yourself while the AI answers went in; your answer stays' }));
+    if (command === 'end') {
+      answerEditSession?.release();
+      answerEditSession = null;
+    }
+    return results;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -1595,7 +1635,13 @@
   // `protected: true`, and a question the agent edited that was not among the answers gets an item
   // of its own after them (`protected: true`, `ok: false`): the panel protects those keys, and a
   // protected item means the apply halted. Only the items survive the trip to the panel.
-  async function answer(answers, expectedSnapshots) {
+  async function answer(answers, expectedSnapshots, guardToken) {
+    // A frameId can be reused after navigation. Only the document guarded for this apply may
+    // receive its later answers, even after earlier answers changed the original snapshot.
+    if (guardToken && answerEditSession?.token !== guardToken) {
+      return answers.map(a => ({ key: a.key, label: a.label, ok: false,
+        reason: 'the page or frame changed while applying the answers; request fresh suggestions' }));
+    }
     if (expectedSnapshots && !expectedSnapshots.includes(decisionSnapshot())) {
       return answers.map(a => ({ key: a.key, label: a.label, ok: false, reason: 'the page changed since the assistant evaluated it; request fresh suggestions' }));
     }
@@ -1608,9 +1654,9 @@
     // The agent at the page while the answers go in (the recorder is paused then, as during a
     // fill): their edit keeps its question, and the answers still to come are not put in (they
     // were chosen for the page as it was).
-    const editedQuestions = new Map();
+    const editedQuestions = answerEditSession?.questions ?? new Map();
     const edited = (key) => editedQuestions.has(key);
-    const releaseEditGuard = guardEdits((key, c) => {
+    const releaseEditGuard = answerEditSession ? () => {} : guardEdits((key, c) => {
       if (!edited(key)) editedQuestions.set(key, c.label ?? null);
     });
     try {
@@ -1853,5 +1899,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 59, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 61, build: BUILD, fill, answer, answerEdits, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { randomUUID } from 'node:crypto';
 import { buildPlan } from '../src/plan.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
+import { assistContextKey } from '../src/ai/common.js';
 
 // This is a deliberately small DOM/ExtJS replay.  It exercises the injected MAIN-world
 // script itself, without a browser session, real quote data, or customer identifiers.
@@ -2628,3 +2630,166 @@ test('a bulk helper is not clicked while an answer the agent gave is on the page
   assert.deepEqual([...run.actions].map((a) => a.id), ['defaultNo']);
   assert.deepEqual(Object.keys(questions).map((n) => plain.groups[n].no.checked), [true, true, true]);
 });
+
+
+// A pointer event on an ExtJS option bubbles from a popup outside its combo's DOM subtree.
+for (const ownership of ['focused', 'aria-controls', 'aria-owns']) {
+  test(`a detached dropdown pick (${ownership}) during AI apply protects the combo and halts later answers`, async () => {
+    const h = harness({ ext: true });
+    const first = addExtText(h, 'first', '1001', { ref: 'Test.first', caption: 'First' });
+    const combo = addExtText(h, 'combo', '1002', { ref: 'Test.combo', caption: 'Combo' });
+    const later = addExtText(h, 'later', '1003', { ref: 'Test.later', caption: 'Later' });
+    const popup = new FakeNode('div', { id: 'combo-popup', className: 'x-boundlist' });
+    const option = new FakeNode('div', { className: 'x-boundlist-item', textContent: 'Agent choice' });
+    popup.append(option); h.document.body.append(popup);
+    if (ownership === 'focused') h.document.activeElement = combo.input;
+    else combo.input.setAttribute(ownership, popup.id);
+    first.input.addEventListener('input', () => {
+      option.dispatchEvent({ type: 'pointerdown', target: option, isTrusted: true });
+      // Focus can move before the input event; ownership must be captured at the gesture.
+      h.document.activeElement = later.input;
+      combo.cmp.setValue('Agent choice');
+      combo.input.dispatchEvent({ type: 'change', target: combo.input, isTrusted: true });
+    });
+    const results = JSON.parse(JSON.stringify(await h.kit.answer([
+      { key: 'ref:Test.first', label: 'First', value: 'AI first' },
+      { key: 'ref:Test.combo', label: 'Combo', value: 'AI combo' },
+      { key: 'ref:Test.later', label: 'Later', value: 'AI later' },
+    ])));
+    assert.equal(combo.input.value, 'Agent choice');
+    assert.equal(later.input.value, '');
+    assert.equal(results.find(r => r.key === 'ref:Test.combo').protected, true);
+    assert.match(results.at(-1).reason, /agent edit interrupted/);
+  });
+}
+
+test('a detached dropdown pick while waiting before Continue stops navigation', async () => {
+  const h = harness({ ext: true });
+  const combo = addExtText(h, 'combo', '1002', { ref: 'Test.combo', caption: 'Combo', value: 'wanted' });
+  const popup = new FakeNode('div', { className: 'x-boundlist' });
+  const option = new FakeNode('div', { className: 'x-boundlist-item' });
+  popup.append(option); h.document.body.append(popup);
+  h.document.activeElement = combo.input;
+  const button = addButton(h, 'Continue');
+  let clicks = 0, settles = 0;
+  button.onclick = () => { clicks++; };
+  h.context.MutationObserver = class {
+    constructor() {
+      if (++settles === 2) setTimeout(() => {
+        option.dispatchEvent({ type: 'pointerdown', target: option, isTrusted: true });
+        combo.cmp.setValue('Agent choice');
+        combo.input.dispatchEvent({ type: 'change', target: combo.input, isTrusted: true });
+      }, 10);
+    }
+    observe() {} disconnect() {}
+  };
+  const report = await h.kit.fill([{ id: 'combo', field: 'Test.combo', kind: 'text', value: 'wanted', name: 'Combo' }],
+    { maxRounds: 2, advance: { text: 'Continue' } });
+  assert.equal(clicks, 0);
+  assert.equal(report.halted, true);
+  assert.ok(report.blockers.includes(report.reason));
+  assert.deepEqual([...report.protectedKeys], ['ref:Test.combo']);
+  assert.equal(combo.input.value, 'Agent choice');
+});
+
+for (const scenario of ['future frame', 'finished frame', 'same frame without edits', 'transport failure', 'transport failure after edit', 'document replacement', 'context invalidation']) {
+  test(`AI apply guards across frames: ${scenario}`, async () => {
+    const frames = [harness(), harness(), harness()];
+    const owners = ['same frame without edits', 'document replacement', 'context invalidation'].includes(scenario) ? [0, 0, 0] : [0, 1, 2];
+    const controls = owners.map((owner, i) => {
+      const h = frames[owner];
+      const select = new SelectNode([{ text: '', value: '' }, { text: 'No', value: 'no' }, { text: 'Yes', value: 'yes' }],
+        { id: `choice${i}`, ariaLabel: `Choice ${i}` });
+      h.document.body.append(select);
+      return select;
+    });
+    // First apply returns from B and C immediately, while A is waiting for its page to settle.
+    // The agent changes B during that wait. C must never receive its planned answer.
+    if (scenario === 'future frame' || scenario === 'finished frame' || scenario === 'transport failure after edit') {
+      const trigger = scenario === 'finished frame' ? 1 : 0;
+      const edited = scenario === 'finished frame' ? 0 : 1;
+      controls[trigger].addEventListener('change', () => setTimeout(() => {
+        controls[edited].dispatchEvent({ type: 'pointerdown', isTrusted: true });
+        controls[edited].value = 'yes';
+        controls[edited].dispatchEvent({ type: 'change', isTrusted: true });
+      }, 10));
+    }
+    const pre = frames.map((h, frameId) => ({ frameId, documentId: `doc-${frameId}`, result: h.kit.decisionSnapshot() }));
+    const xs = controls.map((el, i) => {
+      const field = JSON.parse(pre[owners[i]].result)[1].find(f => f.key === el.id);
+      return { ...field, controlKind: field.kind, choice: 'No', autoOk: true };
+    });
+    const record = {}, intake = { record };
+    const state = { filling: false, intake, active: {}, tab: { id: 1, url: 'https://synthetic.example/rater' },
+      aiCache: new Map(xs.map((x, i) => [`1\n/rater\n${i}`, x])), agentKeys: new Map(), filled: new Map() };
+    const ctx = { tabId: 1, page: '/rater', tabUrl: state.tab.url, intake, carrier: { practice: true },
+      contextKey: assistContextKey(record, state.active), snapshots: pre };
+    if (scenario === 'context invalidation') controls[0].addEventListener('change', () => setTimeout(() => {
+      state.intake = { record: { changed: true } };
+    }, 10));
+    const documents = frames.map((_, i) => `doc-${i}`);
+    let dispatches = 0, replacementControls;
+    const sandbox = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+      runKit: async (tabId, carrier, func, args = [], frameIds) => {
+        // Navigation after the global read, immediately before dispatch: a frameId alone
+        // must not authorize writing into the new document, even with identical fields.
+        if (/\.answer\(/.test(String(func)) && ++dispatches === 2 && scenario === 'document replacement') {
+          frames[0] = harness();
+          documents[0] = 'replacement-document';
+          replacementControls = controls.map((_, i) => new SelectNode(
+            [{ text: '', value: '' }, { text: 'No', value: 'no' }, { text: 'Yes', value: 'yes' }],
+            { id: `choice${i}`, ariaLabel: `Choice ${i}` }));
+          frames[0].document.body.append(...replacementControls);
+        }
+        const results = await Promise.all(frames.map(async (h, frameId) => {
+          if (frameIds && !frameIds.includes(frameId)) return null;
+          h.context.__testArgs = args;
+          const result = await vm.runInNewContext(`(${func.toString()})(...__testArgs)`, h.context);
+          return { frameId, documentId: documents[frameId], result: JSON.parse(JSON.stringify(result)) };
+        }));
+        if (scenario.startsWith('transport failure') && /\.answer\(/.test(String(func))) throw new Error('Transport unavailable after answer');
+        return results.filter(Boolean);
+      },
+      tellRecorder: async () => {}, persistAiPending: async () => {}, persistAgentKeys: () => {},
+      usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
+    const source = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
+    const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
+      'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
+      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'agentEdited', 'editScope', 'stepScope'];
+    vm.runInNewContext(functions.map(name => {
+      const match = source.match(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
+      assert.ok(match, name);
+      return source.slice(match.index, source.indexOf('\n}', match.index) + 2);
+    }).join('\n') + '\nfunction scheduleLayout() {}', sandbox);
+    const applied = await sandbox.applyAi(xs, ctx, 'auto');
+    assert.equal(applied, !scenario.startsWith('transport failure'), JSON.stringify(xs.map(x => x.error)));
+    if (scenario === 'same frame without edits') {
+      assert.deepEqual(controls.map(el => el.value), ['no', 'no', 'no']);
+      assert.ok(xs.every(x => x.done === 'auto'), 'later answers use per-field validation after the first changes the snapshot');
+    } else if (scenario.startsWith('transport failure')) {
+      assert.deepEqual(controls.map(el => el.value), ['no', scenario.endsWith('after edit') ? 'yes' : '', '']);
+      if (scenario.endsWith('after edit')) assert.deepEqual([...state.agentKeys.get('/rater')], ['choice1'], 'cleanup preserves edits even when answer transport failed');
+      assert.ok(xs.every(x => x.done === 'auto'), 'transport failure retains conservative approval holds');
+    } else if (scenario === 'document replacement') {
+      assert.deepEqual(replacementControls.map(el => el.value), ['', '', ''], 'no remaining answer is written into the replacement document');
+      assert.match(xs[1].error, /page or frame changed/);
+      assert.match(xs[2].error, /page or frame changed/);
+      assert.equal(xs[1].done, null);
+    } else if (scenario === 'context invalidation') {
+      assert.deepEqual(controls.map(el => el.value), ['no', '', ''], 'changing intake stops all later dispatches');
+      assert.match(xs[1].error, /context changed/);
+      assert.equal(xs[0].done, 'auto', 'the sent answer retains its original durable review hold');
+      assert.equal(xs[1].done, null);
+      assert.equal(state.filled.size, 0, 'the replacement intake bookkeeping is untouched');
+    } else {
+      assert.deepEqual(controls.map(el => el.value), scenario === 'future frame' ? ['no', 'yes', ''] : ['yes', 'no', ''],
+        'the correction stays and future frame C is not answered');
+      assert.deepEqual([...state.agentKeys.get('/rater')].sort(), ['choice0', 'choice1']);
+      assert.match(xs[2].error, /agent edit interrupted/);
+      assert.equal(xs[2].done, null);
+      if (scenario === 'finished frame') assert.equal(xs[0].done, null, 'a correction to an earlier applied answer replaces its AI hold');
+    }
+    // A completed or failed operation must not leave listeners behind.
+    for (const h of frames) assert.equal((h.document._listeners.get('pointerdown') ?? []).length, 0);
+  });
+}
