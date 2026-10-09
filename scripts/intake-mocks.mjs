@@ -219,11 +219,12 @@ async function lookupCase(page, c, record, lookup) {
     history.replaceState(null, '', `?pageName=${r.page}`);
     r.byPage = { [r.page]: { answers: {}, texts: {} } };
     const seed = vinMode ? [{ q: '2B20', kind: 'text', caption: 'VIN', req: true }]
-      : [{ q: '1F3', kind: 'text', caption: 'USDOT Number', req: true }];
+      : [{ q: '1F3', ref: 'USDOTInput.NumberCollection', kind: 'text', caption: "USDOT Number associated with the customer's business:", req: true }];
     r.fields = [...seed];
     r.pageButtons = [{ text: vinMode ? 'Lookup VIN' : 'Verify DOT' }];
     r.lookupAttempts = 0;
     r.lookupStatus = null;
+    r.lookupResponses = [];
     r.click = () => {
       const sequence = vinMode ? lookup.attempts?.vinLookups?.[0] : lookup.attempts?.dotLookup;
       let result = sequence?.[Math.min(r.lookupAttempts, sequence.length - 1)] ?? (vinMode ? lookup.vinLookups[0] : lookup.dotLookup);
@@ -233,6 +234,7 @@ async function lookupCase(page, c, record, lookup) {
       r.form.mask('Looking up...');
       setTimeout(() => {
         r.lookupStatus = result.status;
+        r.lookupResponses.push(result.status);
         r.fields = [...seed];
         const state = r.byPage[r.page];
         if (result.status === 'found' && vinMode) {
@@ -246,7 +248,7 @@ async function lookupCase(page, c, record, lookup) {
             opts: [result.company.legalName, 'Enter a different Business Name'] },
           { q: '20F', kind: 'radio', caption: "Does this USDOT Number belong to the customer's business?", req: true, opts: ['Yes', 'No'] });
         } else if (result.status === 'not_found' && !vinMode) {
-          r.fields.push({ q: '21E', kind: 'radio', caption: 'Did the customer obtain their USDOT number within the last 60 days?', req: true, opts: ['Yes', 'No'] });
+          r.fields.push({ q: '21E', ref: 'USDOTInput.SixtyDayQuestion', kind: 'radio', caption: 'Did the customer obtain their USDOT Number within the last 60 days?', req: true, opts: ['Yes', 'No'] });
         }
         r.render();
       }, 200);
@@ -255,8 +257,10 @@ async function lookupCase(page, c, record, lookup) {
   }, { lookup, vinMode });
   const reports = [await fill(page, record, progressive)];
   const checks = [];
-  const first = await page.evaluate(() => ({ status: window.replay.lookupStatus, texts: window.replay.byPage[window.replay.page].texts, attempts: window.replay.lookupAttempts }));
-  check(checks, 'first lookup response', first.status, (vinMode ? lookup.vinLookups[0] : lookup.dotLookup).status);
+  const first = await page.evaluate(() => ({ status: window.replay.lookupStatus, texts: window.replay.byPage[window.replay.page].texts, attempts: window.replay.lookupAttempts, responses: window.replay.lookupResponses }));
+  const expectedFirst = (vinMode ? lookup.attempts?.vinLookups?.[0]?.[0] : lookup.attempts?.dotLookup?.[0])
+    ?? (vinMode ? lookup.vinLookups[0] : lookup.dotLookup);
+  check(checks, 'first lookup response', first.responses[0], expectedFirst.status);
   if (c.lookupScenario === 'dot-identity-mismatch') {
     check(checks, 'different company not accepted', first.texts['22F'] ?? '', '');
     check(checks, 'ownership not asserted', first.texts['20F'] ?? '', '');
@@ -266,16 +270,13 @@ async function lookupCase(page, c, record, lookup) {
   if (c.lookupScenario === 'dot-not-found') check(checks, 'new registration branch', first.texts['21E'], 'Yes');
   if (c.lookupScenario === 'success') check(checks, 'matching company accepted', first.texts['22F'], c.companyName);
   if (c.lookupScenario.endsWith('timeout-retry')) {
-    await page.evaluate(() => window.replay.click());
-    await page.waitForFunction(() => window.replay.lookupStatus === 'found');
-    reports.push(await fill(page, record, progressive, {}, null, reports[0].actions.map(a => a.id)));
-    const retried = await page.evaluate(() => ({ status: window.replay.lookupStatus, attempts: window.replay.lookupAttempts }));
-    check(checks, 'retry recovered', retried.status, 'found');
-    check(checks, 'exactly two attempts', retried.attempts, 2);
+    check(checks, 'automatic retry recovered', first.status, 'found');
+    check(checks, 'timeout then success', first.responses.join(','), 'timeout,found');
+    check(checks, 'exactly two attempts', first.attempts, 2);
   }
   if (vinMode) check(checks, 'VIN retained', first.texts['2B20'], c.vins[0]);
   await page.screenshot({ path: path.join(out, `${c.id}-lookup.png`), fullPage: false });
-  return { checks, reports, scope: 'Observed lookup controls with independent injected responses; retry is an explicit agent action, not automatic navigation.' };
+  return { checks, reports, scope: 'Observed lookup controls with independent injected responses; bounded retries occur inside the initial fill; no manual retry or automatic navigation.' };
 }
 
 async function worker() {

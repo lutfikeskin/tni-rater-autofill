@@ -14,8 +14,11 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 60 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 61 && globalThis.__raterKit.build === BUILD) return;
 
+  // Private to this document: no VIN or reversible VIN-derived token leaves the page.
+  // A carrier redraw keeps the acknowledgement; a new document requires another decision.
+  const extraRowKeys = new Map();
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
   // ai: an answer the AI assistant chose (accepted by the agent or auto-selected); check it.
@@ -493,7 +496,23 @@
     pairs.witnessed = witnessed;
     // Numbered by their place among the page's rows (by their witness controls), never by value.
     const rowWitnesses = [...new Set(controls.flatMap((x) => [...extraRows.values()].some((w) => safeMatches(x.el, w.selector)) ? [x.el] : []))];
-    pairs.extraRows = [...extraRows].map(([el, witness]) => ({ witness, position: rowWitnesses.indexOf(el) + 1 }));
+    const identities = [...extraRows].map(([el, witness]) => JSON.stringify([
+      witness.selector, String(witness.path ?? '').replace(/\[\d+\]/g, '[]'), idText(el.value),
+    ]));
+    // A removed identity loses its acknowledgement, including a later re-addition of the same VIN.
+    for (const identity of extraRowKeys.keys()) if (!identities.includes(identity)) extraRowKeys.delete(identity);
+    pairs.extraRows = [...extraRows].map(([el, witness], i) => {
+      const identity = identities[i];
+      const count = identities.filter((id) => id === identity).length;
+      // A duplicate's VIN cannot identify which row was reviewed. Keep its key on that DOM
+      // control through reordering; after a redraw each duplicate requires fresh confirmation.
+      if (extraRowKeys.get(identity)?.count !== count) {
+        extraRowKeys.set(identity, { count, key: `extra-row:${crypto.randomUUID()}`, rows: new WeakMap() });
+      }
+      const entry = extraRowKeys.get(identity);
+      if (count > 1 && !entry.rows.has(el)) entry.rows.set(el, `extra-row:${crypto.randomUUID()}`);
+      return { witness, position: rowWitnesses.indexOf(el) + 1, key: count === 1 ? entry.key : entry.rows.get(el) };
+    });
     return pairs;
   }
 
@@ -1542,12 +1561,13 @@
     }
     // A row showing a VIN no intake vehicle has: an unintended vehicle may be on the quote. Left
     // as it is (never removed or answered); Continue waits for the agent. Named by its place only.
-    for (const { witness, position } of finalPairs.extraRows ?? []) {
+    for (const { witness, position, key } of finalPairs.extraRows ?? []) {
+      if (skipKeys.has(key)) continue;
       const kind = String(witness.path ?? '').match(/^(\w+?)s?\[/)?.[1] ?? 'unit';
       const label = `${kind.replace(/^\w/, (ch) => ch.toUpperCase())} row ${position || '?'} on the page`;
       if (report.checks.some((x) => x.label === label)) continue;
-      report.checks.push({ label, path: null, name: label, key: null, q: null, controlKind: null,
-        note: `Its ${witnessName(witness)} matches no ${kind} on the intake. Remove it, or keep it if it belongs on this quote, before continuing.` });
+      report.checks.push({ label, path: null, name: label, key, q: null, controlKind: null,
+        note: `Its ${witnessName(witness)} matches no ${kind} on the intake. Remove it, or dismiss this check to confirm it belongs on this quote, before continuing.` });
     }
     for (const { step, control } of finalPairs) {
       if (step.emptyNote && !hasValue(control) && !skippedField(control)) {
@@ -1899,5 +1919,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 60, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 61, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

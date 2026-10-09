@@ -302,6 +302,7 @@ function harness({ ext = false, pathname = '/rater', search = '' } = {}) {
     document,
     location,
     URLSearchParams,
+    crypto,
     window: null,
     Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
     NodeFilter: { SHOW_TEXT: 4, FILTER_REJECT: 2, FILTER_ACCEPT: 1 },
@@ -2564,6 +2565,97 @@ test('a row showing a VIN the intake doesn\'t have: left as it is, one check nam
   const plain = await h2.kit.fill(witnessPlan(), { maxRounds: 8 });
   assert.equal(plain.checks.length, 0);
   assert.equal(plain.blockers.length, 0, plain.blockers.join(' | '));
+});
+
+test('extra-row acknowledgement survives redraw and reorder, holds Continue until confirmed', async () => {
+  const h = harness();
+  const extra = '1FTBR3X87MKA00099';
+  const rows = vehicleRows(h, [...VINS, extra]);
+  const next = addButton(h, 'Continue');
+  let advances = 0;
+  next.onclick = () => advances++;
+  const options = { maxRounds: 8, advance: { text: '^Continue$' } };
+  const held = await h.kit.fill(witnessPlan(), options);
+  const key = held.checks[0].key;
+  assert.ok(key, 'the check must expose a dismissible acknowledgement key');
+  assert.ok(!key.includes(extra), 'the key contains no VIN');
+  assert.equal(advances, 0);
+  rows[0].row.parentElement.remove();
+  const redrawn = vehicleRows(h, [extra, VINS[2], VINS[0], VINS[1]]);
+  const heldAgain = await h.kit.fill(witnessPlan(), options);
+  assert.equal(heldAgain.checks[0].key, key, 'same vehicle, new DOM and position');
+  assert.equal(advances, 0);
+  const accepted = await h.kit.fill(witnessPlan(), { ...options, skip: [key] });
+  assert.equal(accepted.checks.length, 0);
+  assert.equal(accepted.blockers.length, 0, accepted.blockers.join(' | '));
+  assert.equal(advances, 1);
+  assert.equal(redrawn[0].vin.value, extra);
+  assert.equal(redrawn[0].body.value, '', 'acknowledgement does not answer the extra vehicle');
+  redrawn[0].vin.value = '1FTBR3X87MKA00098';
+  const replaced = await h.kit.fill(witnessPlan(), { ...options, skip: [key] });
+  assert.equal(replaced.checks.length, 1);
+  assert.notEqual(replaced.checks[0].key, key, 'a replacement vehicle needs its own decision');
+  assert.equal(advances, 1);
+});
+
+test('extra-row acknowledgement is separate for duplicates and expires in a new document', async () => {
+  const extra = '1FTBR3X87MKA00099';
+  const h = harness();
+  const rows = vehicleRows(h, [...VINS, extra]);
+  const first = await h.kit.fill(witnessPlan(), { maxRounds: 8 });
+  const key = first.checks[0].key;
+  assert.ok(key);
+  rows[0].row.parentElement.remove();
+  vehicleRows(h, [...VINS, extra, extra]);
+  const duplicates = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip: [key] });
+  assert.equal(duplicates.checks.length, 2, 'a duplicate invalidates the earlier single-row decision');
+  const keys = Array.from(duplicates.checks, x => x.key);
+  assert.equal(new Set(keys).size, 2, 'each extra row has its own acknowledgement');
+  const partial = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip: [keys[0]] });
+  assert.equal(partial.checks.length, 1);
+  assert.equal(partial.checks[0].key, keys[1]);
+  const accepted = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip: keys });
+  assert.equal(accepted.checks.length, 0);
+  const fresh = harness();
+  vehicleRows(fresh, [...VINS, extra, extra]);
+  const newDocument = await fresh.kit.fill(witnessPlan(), { maxRounds: 8, skip: keys });
+  assert.equal(newDocument.checks.length, 2, 'old quote acknowledgements never apply in another document');
+  assert.ok(newDocument.checks.every(x => !keys.includes(x.key)));
+});
+
+test('extra-row acknowledgement expires after removal even if the same VIN returns', async () => {
+  const extra = '1FTBR3X87MKA00099';
+  const h = harness();
+  const rows = vehicleRows(h, [...VINS, extra]);
+  const first = await h.kit.fill(witnessPlan(), { maxRounds: 8 });
+  const skip = [first.checks[0].key];
+  rows[3].row.remove();
+  const removed = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip });
+  assert.equal(removed.checks.length, 0);
+  rows[0].row.parentElement.append(rows[3].row);
+  const returned = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip });
+  assert.equal(returned.checks.length, 1, 'returning vehicle requires a new decision');
+  assert.notEqual(returned.checks[0].key, skip[0]);
+});
+
+test('duplicate extra-row acknowledgement follows its DOM row and redraw needs fresh confirmation', async () => {
+  const extra = '1FTBR3X87MKA00099';
+  const h = harness();
+  const rows = vehicleRows(h, [...VINS, extra, extra]);
+  const first = await h.kit.fill(witnessPlan(), { maxRounds: 8 });
+  const skip = [first.checks[0].key];
+  const otherKey = first.checks[1].key;
+  const panel = rows[0].row.parentElement;
+  rows[3].row.remove();
+  panel.append(rows[3].row);
+  const reordered = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip });
+  assert.equal(reordered.checks.length, 1);
+  assert.equal(reordered.checks[0].label, 'Vehicle row 4 on the page', 'the unreviewed row is still blocked');
+  assert.equal(reordered.checks[0].key, otherKey);
+  panel.remove();
+  vehicleRows(h, [...VINS, extra, extra]);
+  const redrawn = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip: [...skip, otherKey] });
+  assert.equal(redrawn.checks.length, 2, 'same-VIN duplicates cannot be identified across DOM replacement');
 });
 
 // A helper verified by what it shows: `revealed` (a question appeared or an answer changed since
