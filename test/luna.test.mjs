@@ -163,9 +163,11 @@ test('suggestions wait for both calls; stale verification responses are discarde
 test('twelve questions need two calls with complete facts and deduplicated verification evidence', async () => {
   const calls = [], fields = questions(12);
   const ctx = { ...context, carrier: 'amwins', record: { ...context.record,
-    operations: { hazPlacard: false, radius: 0, notes: 'Contradicting details must remain visible.' },
-    drivers: [{ name: 'active-person', licenseNumber: 'private-identifier' }, { name: 'inactive-person' }],
-    priorInsurance: [{ expiration: '2020-01-01' }] } };
+    applicant: { name: 'Quenby Haulage LLC' },
+    operations: { hazPlacard: false, radius: 0, notes: 'Contradicting details must remain visible. Zorvald Quenby drives.' },
+    garaging: { street: '12 Synthetic Way', city: 'Sampleton', state: 'TX', zip: '75001' },
+    drivers: [{ first: 'Zorvald', last: 'Quenby', dob: '02/02/1982', licenseState: 'TX', licenseNumber: 'private-identifier' }, { name: 'inactive-person' }],
+    priorInsurance: [{ carrier: 'Synthetic Mutual', expiration: '2020-01-01' }] } };
   const result = await suggest(fields, ctx, { apiKey: 'synthetic' }, { call: async ({ body }) => {
     calls.push(body);
     return JSON.parse(body.input[0].content).fields ? groupAnswer(body) : groupCheck(body);
@@ -178,16 +180,21 @@ test('twelve questions need two calls with complete facts and deduplicated verif
   const source = path => Object.values(first.sources).find(x => x.path === path);
   assert.equal(source('operations.hazPlacard').value, false);
   assert.equal(source('operations.radius').value, 0);
-  assert.equal(source('operations.notes').value, ctx.record.operations.notes);
-  assert.equal(source('drivers[0].name').value, 'active-person');
+  // Audit 2026-10-08: client terms are redacted in both calls; the rest of the fact stays.
+  assert.equal(source('operations.notes').value, 'Contradicting details must remain visible. [client] [client] drives.');
+  assert.deepEqual([source('drivers[0].first').value, source('drivers[0].dob').value, source('drivers[0].licenseState').value], ['[client]', '[client]', 'TX']);
+  assert.deepEqual([source('garaging.zip').value, source('garaging.state').value], ['[client]', 'TX']);
+  assert.equal(source('priorInsurance[0].carrier').value, 'Synthetic Mutual', 'the prior carrier is not a redaction term');
   assert.ok(source('computed.priorPolicyExpired'));
   assert.ok(Object.values(first.sources).some(x => x.basis === 'tni_rule'));
   assert.equal(Object.keys(second.sources).length, 1, 'a common fact is sent only once');
-  assert.equal(second.intake.operations.notes, ctx.record.operations.notes, 'verification still sees uncited conflicts');
+  assert.equal(second.intake.operations.notes, source('operations.notes').value, 'verification still sees uncited conflicts, redacted the same way');
+  assert.equal(second.intake['drivers[0]'].first, '[client]');
   assert.equal(Object.keys(second.proposed).length, 12);
   assert.deepEqual(second.proposed.f12.sourceIds, ['s1']);
-  assert.equal(JSON.stringify(calls).includes('inactive-person'), false);
-  assert.equal(JSON.stringify(calls).includes('private-identifier'), false);
+  for (const term of ['inactive-person', 'private-identifier', 'Zorvald', 'Quenby', '02/02/1982', 'Sampleton', '75001', '12 Synthetic Way']) {
+    assert.equal(JSON.stringify(calls).includes(term), false, `${term} must not reach the model`);
+  }
   assert.ok(calls.every(body => JSON.stringify(body).length <= 48000));
 });
 

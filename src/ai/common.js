@@ -2,6 +2,8 @@
 // Exact answers, calculations and page execution remain in code.
 import { TNI_RULES } from './tni-rules.js';
 import { priorPolicyExpired } from '../util.js';
+import { redactionTerms } from '../plan.js';
+import { redactor } from '../usage.js';
 
 export const LEAVE = '__leave__';
 const CHOICE_KINDS = new Set(['radio', 'select', 'checkbox']);
@@ -83,10 +85,17 @@ export function collectItems(frames) {
 
 // Keep only the active row of repeating entities. Identifiers are represented by presence,
 // never guessed or copied by the assistant. Other sensitive fields are not needed for option matching.
+// Every string the model sees is redacted with the same terms as the claims-box review and the
+// usage log (redactionTerms: the client's names, dates of birth, street, city, ZIP, contact and ID
+// numbers become `[client]`), in the evidence sources and in the verification call's intake alike
+// (audit 2026-10-08: names, DOB, address and claims text went verbatim). Numbers and booleans
+// stay; the prior carrier's name and the garaging state are not terms and are still sent.
 export function scopedIntake(record, active) {
   const privateKey = /^(vin|licenseNumber|licensePlate|fein|ssn|socialSecurity|phone|email|policyNumber|accountNumber|routingNumber|password)$/i;
+  const redact = redactor(redactionTerms(record));
   const clean = (obj) => {
     if (Array.isArray(obj)) return obj.map(clean);
+    if (typeof obj === 'string') return redact(obj);
     if (!obj || typeof obj !== 'object') return obj;
     return Object.fromEntries(Object.entries(obj).filter(([k]) => !privateKey.test(k)).map(([k, v]) =>
       ['dot', 'mc'].includes(k) ? [`has${k.toUpperCase()}`, !!v] : [k, clean(v)]));

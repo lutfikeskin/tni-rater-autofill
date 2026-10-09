@@ -22,15 +22,16 @@ const record = {
     fein: '99-0000000',
   },
   operations: { businessClass: 'Expediter', radius: 600 },
-  garaging: { state: 'TX', zip: '75001' },
+  garaging: { street: '12 Synthetic Way', city: 'Sampleton', state: 'TX', zip: '75001' },
   coverage: { reeferBreakdown: false },
+  claims: { text: 'Zorvald Quenby had a minor accident in Sampleton. Wants NTL.', hasClaims: true },
   drivers: [
-    { first: 'First', last: 'Driver', dob: '01/01/1980', phone: '555-0101' },
-    { first: 'Active', last: 'Driver', dob: '02/02/1982', phone: '555-0102' },
+    { first: 'Firstly', last: 'Driverson', dob: '01/01/1980', phone: '555-0101' },
+    { first: 'Zorvald', last: 'Quenby', dob: '02/02/1982', licenseState: 'TX', cdl: true, phone: '555-0102' },
   ],
   vehicles: [
     { type: 'Cargo Van', vin: 'SYNTHETIC-VIN-0', value: 20000 },
-    { type: 'Truck Tractor', vin: 'SYNTHETIC-VIN-1', value: 40000 },
+    { type: 'Truck Tractor', year: 2019, vin: 'SYNTHETIC-VIN-1', value: 40000 },
   ],
   trailers: [{ type: 'Dry Van' }],
   extraPrivateValue: 'must not be sent',
@@ -136,6 +137,23 @@ test('scoped intake strips identifiers, keeps explicit No, and includes only car
   assert.equal(facts.applicant.fein, undefined);
   assert.equal(facts['vehicles[1]'].vin, undefined);
   assert.equal(facts.extraPrivateValue, undefined);
+
+  // Audit 2026-10-08: the same redaction as the claims-box review, on every string the model sees.
+  assert.equal(facts.applicant.name, '[client]', 'the business name');
+  assert.deepEqual([facts['drivers[1]'].first, facts['drivers[1]'].last, facts['drivers[1]'].dob], ['[client]', '[client]', '[client]']);
+  assert.deepEqual([facts.garaging.street, facts.garaging.city, facts.garaging.zip, facts.garaging.state], ['[client]', '[client]', '[client]', 'TX']);
+  assert.equal(facts.claims.text, '[client] [client] had a minor accident in [client]. Wants NTL.');
+  assert.deepEqual([facts.claims.hasClaims, facts['drivers[1]'].cdl, facts['drivers[1]'].licenseState], [true, true, 'TX'], 'booleans and the license state stay');
+  assert.deepEqual([facts['vehicles[1]'].year, facts['vehicles[1]'].value, facts.operations.radius], [2019, 40000, 600], 'numbers stay numbers');
+  assert.equal(facts.operations.businessClass, 'Expediter');
+  // Codex review on 4f455f4: a short driver name is not cut out of other words in the facts.
+  const ann = scopedIntake({ ...record, drivers: [{ first: 'Ann', last: 'Car' }], claims: { text: 'Ann wants Cargo; Annual mileage 90k', hasClaims: false } }, { drivers: 0 });
+  assert.equal(ann.claims.text, '[client] wants Cargo; Annual mileage 90k');
+  const wire = JSON.stringify(evidenceFor(context));
+  for (const term of ['Synthetic Hauler', 'Zorvald', 'Quenby', '02/02/1982', '75001', 'Sampleton', '12 Synthetic Way']) {
+    assert.equal(wire.includes(term), false, `${term} must not reach the model`);
+  }
+  assert.ok(Object.values(evidenceFor(context).sources).some(x => x.path === 'claims.text' && x.value.includes('[client]')), 'redacted notes are still evidence');
 
   const progressiveRules = Object.values(evidenceFor(context).sources)
     .filter(x => x.basis === 'tni_rule').map(x => x.rule);

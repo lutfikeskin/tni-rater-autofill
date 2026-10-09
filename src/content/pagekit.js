@@ -1918,7 +1918,13 @@
   // which dropdown/radio choice is picked); any text matching `redact` (client names, numbers)
   // is replaced with [client].
   function capture(plan, redact = []) {
-    const patterns = redact.filter((t) => t && t.length >= 3).map((t) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'));
+    // As src/usage.js `redactor`: one word (a name word) only as a whole word, so "Ann" leaves
+    // "Annual mileage" alone; anything else wherever it appears as written.
+    const patterns = redact.filter((t) => t && t.length >= 3).map((t) => {
+      const escaped = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return /^[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*$/u.test(t)
+        ? new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`, 'giu') : new RegExp(escaped, 'gi');
+    });
     // Registered addresses offered by the carrier aren't in the intake, so redact them by shape.
     const r = (s) => patterns.reduce((acc, re) => acc.replace(re, '[client]'), oneLine(s)).replace(/^.+?(?=\((?:USDOT|Primary Business|Mailing|Garaging) Address\))/i, '[client] ');
     const controls = collectControls();

@@ -37,7 +37,7 @@ The rules run first. Luna receives unresolved choice questions, the carrier's ac
 
 Luna's policy v4 request budget is optimized for bounded review: `gpt-6-luna` uses low reasoning, low text verbosity, up to 12 eligible fields per adaptive request, a 4,096-token choice response cap, and a 2,048-token verification cap. The combined request state and schema stays under 48,000 characters while preserving the complete evidence set needed for the decision. The first call carries the complete fact/rule sources once; the verification call carries the scoped intake and cited evidence. The same local answer cache is used, with no extended paid API cache configuration. These are request-budget limits, not a claim about actual billed tokens, live latency, or live accuracy.
 
-The loaded intake record is kept in Chrome's session storage and cleared when Chrome closes or you click **Clear**. Filled answers go into the carrier's website. With assistance on, unresolved questions, options, active intake facts and relevant TNI rules are sent to OpenAI with your key. Exact identifier keys are filtered, but names, addresses, dates of birth and free-text notes may remain. Separately, redacted usage events are queued locally and uploaded to TNI's server.
+The loaded intake record is kept in Chrome's session storage and cleared when Chrome closes or you click **Clear**. Filled answers go into the carrier's website. With assistance on, unresolved questions and their option texts, relevant TNI rules and the active intake facts are sent to OpenAI with your key. Identifier fields are removed and the client's names, dates of birth, street, city, ZIP, contact and ID numbers are replaced by `[client]` where they appear as written in the intake's fields, in the claims box and notes too (written another way there, such as 1/2/1980 for 01/02/1980, they may still be sent); the garaging state, business class and operations answers, coverage choices, vehicle details, the driver's license state and CDL, and the prior carrier still go in clear ([docs/ai-assistant.md](docs/ai-assistant.md) lists them). Separately, redacted usage events are queued locally and uploaded to TNI's server.
 
 ## Setting up a carrier: page captures
 
@@ -74,9 +74,9 @@ What's recorded (`src/usage.js`, `src/content/recorder.js`):
 | `fill_run`, `fill_field`, `fill_error` | per fill: carrier, page, what was filled/kept/failed and why; chosen dropdown/radio options (not typed text); the fill's run id, the rule files' fingerprint and the filling switches in force; on AmWINS the step's heading. A fill that failed, whose intake changed meanwhile, or whose Continue didn't take: the reason, client names redacted |
 | `field_change` | a field that changed on the rater page, by the agent or by the page: for dropdowns/radios the from/to option; for text boxes only whether it matches what autofill typed (same / format / different) and which intake field the new value equals, e.g. `drivers[0].dob`, worked out on the agent's computer; on AmWINS the step's heading |
 | `page_view` | carrier page switches (for time per page) |
-| `problem_report` | the agent's note from "Report a problem on this page" (client names redacted) |
+| `problem_report` | the agent's note from "Report a problem on this page", as typed; values from the loaded intake are replaced where they appear exactly as written there (nothing is replaced when no intake is loaded), so agents should not type client details into it |
 
-Never recorded: client names, numbers, addresses, or anything typed into text boxes; screenshots; keystrokes; other websites. Client names are also redacted from labels and options.
+Never recorded (apart from what an agent types into a problem report): client names, numbers, addresses, or anything typed into text boxes; screenshots; keystrokes; other websites. Client names are also redacted from labels and options.
 
 Events wait in `chrome.storage.local` on the agent's computer and are uploaded every minute to the collection server set under **Usage log → Server** (TNI's central server by default). Stored events are removed after acknowledgement and failed uploads retry. The local queue is capped, so a prolonged outage can discard the oldest events. **Export log** works as a fallback. See [learning](docs/learning.md) for the collection and review limits.
 
@@ -86,7 +86,7 @@ Events wait in `chrome.storage.local` on the agent's computer and are uploaded e
 npm run server
 ```
 
-Plain Node, no dependencies. It listens on `127.0.0.1:8787` and appends events to `server-data/events/YYYY-MM-DD.jsonl`, one file per day. It accepts only known event types and fields, drops agency staff lists from layouts, and ignores duplicates, so retried uploads are safe. Settings: `PORT`, `HOST`, `DATA_DIR`, `RATER_TOKEN`. Before running it anywhere other than this computer, set `RATER_TOKEN` (the extension sends it as a Bearer token), put it behind HTTPS, and add the server's address to `host_permissions` in `manifest.json`.
+Plain Node, no dependencies. It listens on `127.0.0.1:8787` and appends events to `server-data/events/YYYY-MM-DD.jsonl`, one file per day. It accepts only known event types and fields, drops agency staff lists from layouts, and ignores duplicates, so retried uploads are safe. Settings: `PORT`, `HOST`, `DATA_DIR`, `RATER_TOKEN`. On this computer (loopback) it needs no token. With `HOST` set to anything else it refuses to start until `RATER_TOKEN` is set (the extension sends it as a Bearer token); also put it behind HTTPS and add the server's address to `host_permissions` in `manifest.json`. `/v1/health` tells anyone the server's version; the event count needs the admin token ([hosting](docs/hosting.md)).
 
 ### Weekly review
 

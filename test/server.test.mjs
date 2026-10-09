@@ -4,7 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { createServer, SERVER_HASH, EVENT_FIELDS } from '../server/index.mjs';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS } from '../server/index.mjs';
 import { checkServer } from '../scripts/lib/central.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
@@ -22,13 +24,13 @@ const stored = (dir) => fs.readdirSync(path.join(dir, 'events')).flatMap((f) => 
 
 test('stores events once, even when an upload is retried', async () => {
   const dataDir = tmp();
-  await withServer({ dataDir }, async ({ post, base }) => {
+  await withServer({ dataDir, adminToken: 'admin' }, async ({ post, base }) => {
     const events = [ev(), ev({ type: 'page_view', from: 'X', fields: 4 })];
     const r1 = await (await post({ agent: 'AYAZ', events })).json();
     assert.deepEqual([r1.accepted, r1.duplicates], [2, 0]);
     const r2 = await (await post({ agent: 'AYAZ', events })).json();
     assert.deepEqual([r2.accepted, r2.duplicates], [0, 2]);
-    assert.equal((await (await fetch(`${base}/v1/health`)).json()).events, 2);
+    assert.equal((await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json()).events, 2);
   });
   const rows = stored(dataDir);
   assert.equal(rows.length, 2);
@@ -230,6 +232,79 @@ test('a re-uploaded event keeps the names an earlier server dropped', async () =
   assert.equal(again.droppedMore, 2);
   assert.deepEqual(kept.dropped, ['how']);
   assert.equal(kept.droppedMore, undefined);
+});
+
+// Audit 2026-10-08: /v1/health told anyone how many events were stored.
+test('health names the server version for anyone; how many events are stored only for the admin token', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir, token: 'up' }, async ({ post, base }) => {
+    await post({ events: [ev()] }, { authorization: 'Bearer up' });
+    const anyone = await (await fetch(`${base}/v1/health`)).json();
+    assert.deepEqual(anyone, { ok: true, server: SERVER_HASH }, 'no admin token configured: never a count');
+    const uploader = await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer up' } })).json();
+    assert.equal(uploader.events, undefined, 'the token every extension carries is not enough');
+  });
+  await withServer({ dataDir, token: 'up', adminToken: 'admin' }, async ({ base }) => {
+    assert.equal((await (await fetch(`${base}/v1/health`)).json()).events, undefined);
+    assert.deepEqual(await (await fetch(`${base}/v1/health`, { headers: { authorization: 'Bearer admin' } })).json(), { ok: true, server: SERVER_HASH, events: 1 });
+  });
+});
+
+// Audit 2026-10-08: without RATER_TOKEN the server took anyone's uploads, wherever it listened.
+test('without a token the server starts on loopback only', () => {
+  assert.equal(startupError({ host: '127.0.0.1', token: '' }), null);
+  assert.equal(startupError({ host: 'localhost', token: '' }), null);
+  assert.equal(startupError({ host: '::1', token: '' }), null);
+  assert.match(startupError({ host: '0.0.0.0', token: '' }), /RATER_TOKEN is not set and HOST=0\.0\.0\.0 is not loopback/);
+  assert.match(startupError({ host: '::', token: '' }), /refusing to start/);
+  assert.match(startupError({ host: '10.0.0.5', token: '' }), /refusing to start/);
+  assert.equal(startupError({ host: '0.0.0.0', token: 'secret' }), null);
+});
+
+// The server as deployed (node server/index.mjs): its own environment, never this shell's tokens.
+const SERVER = fileURLToPath(new URL('../server/index.mjs', import.meta.url));
+function startServer(env) {
+  const child = spawn(process.execPath, [SERVER], { env: { PATH: process.env.PATH, DATA_DIR: tmp(), PORT: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '', stderr = '';
+  child.stdout.on('data', (c) => { stdout += c; });
+  child.stderr.on('data', (c) => { stderr += c; });
+  const exit = new Promise((resolve) => child.on('exit', (code) => resolve(code)));
+  // The startup line names the port it took; a server that refused never prints one.
+  const started = new Promise((resolve) => {
+    const look = () => { const m = stdout.match(/on http:\/\/[^\s]+:(\d+)/); if (m) resolve(Number(m[1])); };
+    child.stdout.on('data', look);
+    exit.then(() => resolve(null));
+  });
+  return { child, exit, started, out: () => ({ stdout, stderr }) };
+}
+// A child that neither starts nor exits fails the test instead of hanging it.
+async function within(promise, what, ms = 10000) {
+  let timer;
+  try {
+    return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(what)), ms); })]);
+  } finally { clearTimeout(timer); }
+}
+
+test('HOST=0.0.0.0 without RATER_TOKEN refuses to start, saying why', async () => {
+  const s = startServer({ HOST: '0.0.0.0' });
+  try {
+    const code = await within(s.exit, 'the server did not exit');
+    assert.notEqual(code, 0, 'exits with an error');
+    assert.match(s.out().stderr, /RATER_TOKEN is not set and HOST=0\.0\.0\.0 is not loopback: refusing to start/);
+    assert.equal(s.out().stdout, '', 'never listened');
+  } finally { s.child.kill(); }
+});
+
+test('loopback without RATER_TOKEN still starts and takes uploads (npm run server)', async () => {
+  const s = startServer({ HOST: '127.0.0.1' });
+  try {
+    const port = await within(s.started, 'the server did not start');
+    assert.ok(port, `started: ${JSON.stringify(s.out())}`);
+    assert.match(s.out().stdout, /\(no token: loopback only\)/);
+    const res = await fetch(`http://127.0.0.1:${port}/v1/events`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ events: [ev()] }) });
+    assert.equal(res.status, 200);
+    assert.equal((await res.json()).accepted, 1);
+  } finally { s.child.kill(); }
 });
 
 test('the daily review tells whether the deployed server is this repository\'s', async () => {

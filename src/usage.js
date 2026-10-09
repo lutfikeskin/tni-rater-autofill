@@ -80,9 +80,23 @@ export function matchIntake(record, typed) {
   return hits.slice(0, 5);
 }
 
+// One word (a name word such as "Ann", or a city) is replaced only as a whole word, so "Ann" leaves
+// "Annual" and "Car" leaves "Cargo" alone; any other term (a full name, date of birth, phone, VIN,
+// street) is replaced wherever it appears exactly as written. src/content/pagekit.js `capture`
+// builds the same patterns.
+const ONE_WORD = /^[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*$/u;
+function redactionPattern(term, identifier = false) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return !identifier && ONE_WORD.test(term) ? new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`, 'giu') : new RegExp(escaped, 'gi');
+}
+
 export function redactor(terms) {
-  const patterns = terms.filter((t) => t && t.length >= 3).map((t) => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'));
-  return (s) => (s == null ? s : patterns.reduce((acc, re) => acc.replace(re, '[client]'), String(s)));
+  const valid = terms.filter((t) => t && t.length >= 3);
+  const replace = (patterns) => (s) => (s == null ? s : patterns.reduce((acc, re) => acc.replace(re, '[client]'), String(s)));
+  const redact = replace(valid.map((term) => redactionPattern(term)));
+  // IDs concatenate names with letters/digits (driverAnn1); word boundaries only fit prose.
+  redact.identifier = replace(valid.map((term) => redactionPattern(term, true)));
+  return redact;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -90,14 +104,14 @@ export function redactor(terms) {
 
 // The control, not only its question: a question repeated per vehicle row (`<q>@<row>`) or a
 // field without a question id keeps its own key, the same one in fill and change events. Keys are
-// element ids and names, redacted like labels in case a page ever builds one from client data. A
+// element ids and names, redacted even within words in case a page builds one from client data. A
 // redacted key gets a digest under the quote's secret salt, so `owner_<one name>` and
 // `owner_<another>` stay two controls and a guessed name can't be checked; without a salt it's
 // left out rather than merged with others.
 function fieldKeyOf(key, redact, salt) {
   if (!key) return null;
   const raw = String(key);
-  const shown = redact(raw);
+  const shown = (redact.identifier ?? redact)(raw);
   if (shown === raw) return raw;
   return salt ? `${shown}#${digest(`${salt}|${raw}`)}` : null;
 }

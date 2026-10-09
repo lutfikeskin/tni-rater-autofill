@@ -2413,14 +2413,13 @@ async function runAssist(frames, ctx) {
   // driver/vehicle, model and policy. Not keyed on the rest of the page: every automatic
   // follow-up fill changes that, which asked the assistant again each time. Putting an answer in still
   // checks the page snapshot (applyAi), and approving checks it again.
-  const onPage = frames.flatMap(f => f.filled ?? []).map(x => ({ question: x.label, answer: x.shown, controlKind: x.controlKind }));
   const contextHash = aiFingerprint(ctx.contextKey);
   const sigOf = x => aiCacheSignature({ tabId: ctx.tabId, page: ctx.page, model: cfg.model, policy: provider.policy, contextHash, itemHash: aiItemFingerprint(x), quoteHash: aiFingerprint(ctx.tabUrl) });
   const missing = items.filter((x) => !state.aiCache.has(sigOf(x)));
   if (missing.length) {
     holder.replaceChildren(h('p', { class: 'ai-wait' }, `Asking ${provider.name} about ${missing.length} question${missing.length === 1 ? '' : 's'} left for you…`));
     const started = Date.now();
-    const context = { record, carrier: ctx.carrier.id, page: ctx.page, active, onPage };
+    const context = { record, carrier: ctx.carrier.id, page: ctx.page, active };
     const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
     try {
       const result = await suggest(missing, context, cfg, { isStale: stale });
@@ -2438,7 +2437,7 @@ async function runAssist(frames, ctx) {
       }));
     } catch (e) {
       const msg = e instanceof AssistError ? e.message : 'The assistant could not review this page. Nothing was applied.';
-      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
+      if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, error: redactor(redactionTerms(record))(msg).slice(0, 200) });
       if (!stale()) holder.replaceChildren(h('p', { class: 'card bad small' }, `AI assistant: ${msg}`));
       else dropped(`${staleWhy()} while it was answering, so nothing was applied`);
       return;
@@ -2893,7 +2892,7 @@ async function renderAiSettings() {
   $('agent-model').textContent = cfg.model;
   $('agent-status').dataset.on = String(cfg.on);
   $('ai-note').textContent = !cfg.on ? 'Off · Turn on when you need help.' : !cfg.apiKey ? `On, but needs ${provider.keyLabel}.` : `On · ${cfg.model}${cfg.auto ? ' · picks answers, you approve them before Continue' : ' · suggestions only'}`;
-  $('ai-privacy').textContent = `Relevant intake facts, page context and TNI rules are sent to ${provider.company} with your key. Keys are saved on this device. Missing facts stay unanswered. Report orders, exclusions, signatures and payment fields stay with you.`;
+  $('ai-privacy').textContent = `Sent to ${provider.company} with your key: the questions left for you with their option texts, TNI's rules, and the intake with the client's names, dates of birth, street, city, ZIP, contact and ID numbers replaced by [client] where they appear as written in the intake's fields; written another way in the claims box or notes (1/2/1980 for 01/02/1980), they may still be sent. What still goes includes the business's years and experience, the garaging state, business class and operations, coverage choices, the trailer section, vehicle and trailer type, year, make, model and value, the active driver's license state, CDL and marital status, prior insurance (carrier, limit, dates), and the claims box and notes as redacted, with whether there are claims. Keys are saved on this device. Missing facts stay unanswered. Report orders, exclusions, signatures and payment fields stay with you.`;
   renderUsage();
 }
 
