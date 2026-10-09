@@ -116,8 +116,10 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     const out = {};
     const allowed = new Set([...COMMON, ...keep]);
     for (const k of allowed) if (e[k] !== undefined) out[k] = e[k];
-    // page_layout's own `step` predates this check and is kept as before.
+    // Older page_layout events used null when no step was recognized. Keep only that legacy
+    // representation exempt; non-null steps still pass the ordinary shape check.
     for (const [k, valid] of Object.entries(RUN_FIELDS)) {
+      if (k === 'step' && out.type === 'page_layout' && out.step === null) continue;
       if (out[k] !== undefined && keep.includes(k) && !valid(out[k])) return { error: `${k} is not a valid ${k === 'settings' ? 'settings object' : k === 'step' ? 'step name' : k === 'run' ? 'run id' : 'rules hash'}` };
     }
     // A re-upload of stored events (npm run push-logs) keeps what an earlier server dropped.

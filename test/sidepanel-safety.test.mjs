@@ -3132,3 +3132,93 @@ test('a scheduled automatic fill keeps its tab and intake through the final time
     assert.deepEqual(fills, [], change);
   }
 });
+
+// PR #65 round 4: local tab ids are scoped to one browser/extension session. Evaluate the
+// actual store declarations as well as persistence functions so every read/write path is gated.
+function tabRecordsHarness(localData = {}, sessionData = {}, locks) {
+  const clone = (value) => value === undefined ? undefined : structuredClone(value);
+  const area = (data) => ({
+    get: async (key) => clone(key == null ? data : Object.fromEntries((Array.isArray(key) ? key : [key]).map((k) => [k, data[k]]))),
+    set: async (values) => Object.assign(data, clone(values)),
+    remove: async (keys) => { for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key]; },
+    getKeys: async () => Object.keys(data),
+  });
+  if (!locks) {
+    let queue = Promise.resolve();
+    locks = { request: (name, task) => { const result = queue.then(task); queue = result.catch(() => {}); return result; } };
+  }
+  const state = { tab: { id: 7 }, agentKeys: new Map(), doneActions: new Set() };
+  let intakeId = 'A';
+  const context = { state, inExtension: true, memory: {}, chrome: { storage: { local: area(localData), session: area(sessionData) } },
+    navigator: { locks }, crypto, usage: { currentSession: () => ({ intakeId }) } };
+  vm.createContext(context);
+  vm.runInContext(SIDEPANEL.slice(SIDEPANEL.includes('const TAB_RECORDS_SESSION_KEY') ? SIDEPANEL.indexOf('const TAB_RECORDS_SESSION_KEY') : SIDEPANEL.indexOf('const AGENT_KEYS_KEY'), SIDEPANEL.indexOf('const FNV_OFFSET'))
+    + '\nconst doneRestored = new Set();\n'
+    + ['persistAgentKeys', 'restoreAgentKeys', 'persistDoneActions', 'restoreDoneActions', 'clearAgentKeys', 'pruneAgentRecords'].map(extractFunction).join('\n')
+    + '\nglobalThis.stores = { agentKeysStore, doneActionsStore };', context);
+  return { context, state, localData, sessionData, locks, setIntake: (id) => { intakeId = id; } };
+}
+
+test('reused numeric tab ids never restore edit or helper records from a fresh browser session or unmarked legacy records', async () => {
+  for (const marked of [false, true]) {
+    const local = { agentEditedKeys: [{ scope: 'A', tabId: 7, page: 'Quote', keys: ['old-edit'] }], 'doneActions:A:7': ['lookupVin:0'], settings: { keep: true } };
+    if (marked) local.tabRecordsSession = 'earlier-browser';
+    const t = tabRecordsHarness(local);
+    await Promise.all([t.context.restoreAgentKeys(7), t.context.restoreDoneActions(7)]);
+    assert.deepEqual([t.state.agentKeys.size, t.state.doneActions.size], [0, 0], 'neither edit nor helper records may cross the browser session');
+    assert.deepEqual(local.agentEditedKeys, []);
+    assert.equal(local['doneActions:A:7'], undefined);
+    assert.deepEqual(local.settings, { keep: true }, 'only tab-scoped edit/helper records expire');
+    assert.equal(local.tabRecordsSession, t.sessionData.tabRecordsSession);
+    assert.notEqual(local.tabRecordsSession, 'earlier-browser');
+  }
+});
+
+test('the same browser session preserves records across panel reloads and intake switching, and Clear stays intake-scoped', async () => {
+  const first = tabRecordsHarness();
+  first.state.agentKeys.set('Quote', new Set(['edit-A']));
+  first.state.doneActions.add('lookupVin:0');
+  await Promise.all([first.context.persistAgentKeys(), first.context.persistDoneActions()]);
+  const reload = tabRecordsHarness(first.localData, first.sessionData, first.locks);
+  await Promise.all([reload.context.restoreAgentKeys(7), reload.context.restoreDoneActions(7)]);
+  assert.deepEqual([...reload.state.agentKeys.get('Quote')], ['edit-A']);
+  assert.deepEqual([...reload.state.doneActions], ['lookupVin:0']);
+  reload.setIntake('B');
+  reload.state.agentKeys = new Map([['Quote', new Set(['edit-B'])]]);
+  reload.state.doneActions = new Set(['driverEntered:0']);
+  await Promise.all([reload.context.persistAgentKeys(), reload.context.persistDoneActions()]);
+  await reload.context.clearAgentKeys('B');
+  const back = tabRecordsHarness(first.localData, first.sessionData, first.locks);
+  await Promise.all([back.context.restoreAgentKeys(7), back.context.restoreDoneActions(7)]);
+  assert.deepEqual([...back.state.agentKeys.get('Quote')], ['edit-A']);
+  assert.deepEqual([...back.state.doneActions], ['lookupVin:0']);
+  await back.context.clearAgentKeys('A');
+  const cleared = tabRecordsHarness(first.localData, first.sessionData, first.locks);
+  await Promise.all([cleared.context.restoreAgentKeys(7), cleared.context.restoreDoneActions(7)]);
+  assert.equal(cleared.state.agentKeys.size, 0);
+  assert.equal(cleared.state.doneActions.size, 0);
+});
+
+test('simultaneous panels share one session initialization before writing edit/helper records', async () => {
+  const first = tabRecordsHarness({ tabRecordsSession: 'old-browser', 'doneActions:A:7': ['old'] });
+  const second = tabRecordsHarness(first.localData, first.sessionData, first.locks);
+  await Promise.all([
+    first.context.stores.agentKeysStore.set([{ scope: 'A', tabId: 7, page: 'Quote', keys: ['new-edit'] }]),
+    second.context.stores.doneActionsStore.set('A', 7, ['new-helper']),
+  ]);
+  assert.deepEqual(first.localData.agentEditedKeys, [{ scope: 'A', tabId: 7, page: 'Quote', keys: ['new-edit'] }]);
+  assert.deepEqual(first.localData['doneActions:A:7'], ['new-helper'], 'a second initialization never deletes the first panel\'s write');
+  assert.equal(first.localData.tabRecordsSession, first.sessionData.tabRecordsSession);
+});
+
+test('failed session expiry blocks reads and writes and retries initialization safely', async () => {
+  const t = tabRecordsHarness({ tabRecordsSession: 'old-browser', 'doneActions:A:7': ['old'] });
+  const remove = t.context.chrome.storage.local.remove;
+  t.context.chrome.storage.local.remove = async () => { throw new Error('temporary storage failure'); };
+  await assert.rejects(t.context.stores.doneActionsStore.get('A', 7), /temporary storage failure/);
+  assert.equal(t.localData.tabRecordsSession, 'old-browser');
+  assert.deepEqual(t.localData['doneActions:A:7'], ['old']);
+  t.context.chrome.storage.local.remove = remove;
+  assert.deepEqual(Array.from(await t.context.stores.doneActionsStore.get('A', 7)), []);
+  assert.equal(t.localData.tabRecordsSession, t.sessionData.tabRecordsSession);
+});

@@ -36,11 +36,39 @@ const aiPendingStore = inExtension && globalThis.chrome?.storage?.local
       set: (v) => chrome.storage.local.set({ [AI_PENDING_KEY]: v }),
     }
   : { get: async () => memory[AI_PENDING_KEY] ?? [], set: async (v) => { memory[AI_PENDING_KEY] = v; } };
+// Tab ids can be reused after Chrome restarts. Local edit/helper records belong to the
+// extension's current browser session, whose nonce survives panel reloads in storage.session.
+const TAB_RECORDS_SESSION_KEY = 'tabRecordsSession';
+let tabRecordsSessionReady = null;
+function tabRecordsReady() {
+  if (tabRecordsSessionReady) return tabRecordsSessionReady;
+  const initialize = async () => {
+    let nonce = (await chrome.storage.session.get(TAB_RECORDS_SESSION_KEY))[TAB_RECORDS_SESSION_KEY];
+    if (!nonce) {
+      nonce = crypto.randomUUID();
+      await chrome.storage.session.set({ [TAB_RECORDS_SESSION_KEY]: nonce });
+    }
+    const local = chrome.storage.local;
+    const previous = (await local.get(TAB_RECORDS_SESSION_KEY))[TAB_RECORDS_SESSION_KEY];
+    if (previous !== nonce) {
+      // Also expire legacy records without a nonce: their numeric tabs cannot be identified.
+      await local.remove((await storedKeys(local)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX)));
+      await local.set({ [AGENT_KEYS_KEY]: [], [TAB_RECORDS_SESSION_KEY]: nonce });
+    }
+  };
+  // Two panels opening together must not create different nonces or clear each other's writes.
+  tabRecordsSessionReady = navigator.locks.request('rater-tab-records-session', initialize).catch((e) => {
+    tabRecordsSessionReady = null;
+    throw e;
+  });
+  return tabRecordsSessionReady;
+}
+
 // Keys only, scoped to the intake and tab: no typed answer or client text is retained here.
 const AGENT_KEYS_KEY = 'agentEditedKeys';
 const agentKeysStore = inExtension && globalThis.chrome?.storage?.local
-  ? { get: async () => (await chrome.storage.local.get(AGENT_KEYS_KEY))[AGENT_KEYS_KEY] ?? [],
-      set: (records) => chrome.storage.local.set({ [AGENT_KEYS_KEY]: records }) }
+  ? { get: async () => { await tabRecordsReady(); return (await chrome.storage.local.get(AGENT_KEYS_KEY))[AGENT_KEYS_KEY] ?? []; },
+      set: async (records) => { await tabRecordsReady(); return chrome.storage.local.set({ [AGENT_KEYS_KEY]: records }); } }
   : { get: async () => memory[AGENT_KEYS_KEY] ?? [], set: async (records) => { memory[AGENT_KEYS_KEY] = records; } };
 let agentKeysQueue = Promise.resolve();
 // Buttons clicked and vehicles/drivers/trailers entered on a quote tab, so a panel closed or
@@ -57,10 +85,10 @@ async function storedKeys(local) {
   return typeof local.getKeys === 'function' ? local.getKeys() : Object.keys(await local.get(null));
 }
 const doneActionsStore = inExtension && globalThis.chrome?.storage?.local
-  ? { get: async (scope, tabId) => (await chrome.storage.local.get(doneKey(scope, tabId)))[doneKey(scope, tabId)] ?? [],
-      set: (scope, tabId, ids) => (ids.length ? chrome.storage.local.set({ [doneKey(scope, tabId)]: ids }) : chrome.storage.local.remove(doneKey(scope, tabId))),
-      clear: async (scope) => chrome.storage.local.remove((await storedKeys(chrome.storage.local)).filter((k) => k.startsWith(scope ? `${DONE_ACTIONS_PREFIX}${scope}:` : DONE_ACTIONS_PREFIX))),
-      scopes: async () => (await storedKeys(chrome.storage.local)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX)).map((k) => k.slice(DONE_ACTIONS_PREFIX.length).replace(/:[^:]*$/, '')) }
+  ? { get: async (scope, tabId) => { await tabRecordsReady(); return (await chrome.storage.local.get(doneKey(scope, tabId)))[doneKey(scope, tabId)] ?? []; },
+      set: async (scope, tabId, ids) => { await tabRecordsReady(); return ids.length ? chrome.storage.local.set({ [doneKey(scope, tabId)]: ids }) : chrome.storage.local.remove(doneKey(scope, tabId)); },
+      clear: async (scope) => { await tabRecordsReady(); return chrome.storage.local.remove((await storedKeys(chrome.storage.local)).filter((k) => k.startsWith(scope ? `${DONE_ACTIONS_PREFIX}${scope}:` : DONE_ACTIONS_PREFIX))); },
+      scopes: async () => { await tabRecordsReady(); return (await storedKeys(chrome.storage.local)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX)).map((k) => k.slice(DONE_ACTIONS_PREFIX.length).replace(/:[^:]*$/, '')); } }
   : { get: async (scope, tabId) => memory[doneKey(scope, tabId)] ?? [],
       set: async (scope, tabId, ids) => { memory[doneKey(scope, tabId)] = ids; },
       clear: async (scope) => { for (const k of Object.keys(memory)) if (k.startsWith(scope ? `${DONE_ACTIONS_PREFIX}${scope}:` : DONE_ACTIONS_PREFIX)) delete memory[k]; },

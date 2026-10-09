@@ -275,3 +275,26 @@ test('run-identity fields are kept as sent and a malformed one refuses the event
   assert.deepEqual([rows[4].run, rows[4].dropped], [undefined, ['run']]);
   for (const legacy of ['probability', 'support', 'evidenceProbability', 'confidence', 'cached']) assert.ok(!Object.values(EVENT_FIELDS).flat().includes(legacy));
 });
+
+// Legacy layouts explicitly wrote null for an unrecognized AmWINS step; queued/re-uploaded
+// layouts retain that representation without weakening step checks on other events.
+test('legacy page-layout null steps are accepted while malformed non-null and run steps are refused', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const result = await (await post({ events: [
+      ev({ type: 'page_layout', step: null, fields: [] }),
+      ev({ type: 'page_layout', step: 'Vehicles', fields: [] }),
+      ev({ type: 'page_layout', fields: [] }),
+      ev({ type: 'page_layout', step: 123, fields: [] }),
+      ev({ type: 'page_layout', step: 's'.repeat(121), fields: [] }),
+      ev({ step: null }),
+      ev({ type: 'fill_field', step: null }),
+      ev({ type: 'field_change', step: null }),
+    ] })).json();
+    assert.equal(result.accepted, 3);
+    assert.deepEqual(result.rejected.map((x) => x.index), [3, 4, 5, 6, 7]);
+    assert.ok(result.rejected.every((x) => /step name/.test(x.error)));
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((x) => x.step), [null, 'Vehicles', undefined]);
+});
