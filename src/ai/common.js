@@ -1,7 +1,7 @@
 // Shared intake scoping and field restrictions for Luna assistance.
 // Exact answers, calculations and page execution remain in code.
 import { TNI_RULES } from './tni-rules.js';
-import { priorPolicyExpired } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired } from '../util.js';
 import { redactionTerms } from '../plan.js';
 import { redactor } from '../usage.js';
 
@@ -108,7 +108,7 @@ export function scopedIntake(record, active) {
     const index = active[key] ?? 0;
     if (Number.isInteger(index) && index >= 0 && record[key]?.[index]) out[`${key}[${index}]`] = clean(record[key][index]);
   }
-  if (record.priorInsurance?.length) out.computed = { priorPolicyExpired: priorPolicyExpired(record) };
+  if (record.priorInsurance?.length) out.computed = { priorPolicyExpired: priorPolicyExpired(record), noPriorInsurance: noPriorInsurance(record.priorInsurance[0]) };
   return out;
 }
 

@@ -48,7 +48,7 @@
 
 import { owner } from './progressive.js';
 import { isLongHaul } from '../normalize.js';
-import { priorPolicyExpired } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired } from '../util.js';
 
 const street = (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null;
 const digits = (v) => (v ? String(v).replace(/\D/g, '') || null : null);
@@ -140,7 +140,7 @@ const disclosure = (r) => {
   if (miles) lines.push(miles > 500 ? 'More than 500 miles radius of operation' : `${miles} miles radius of operation`);
   for (const t of r.trailers ?? []) { const line = trailerLine(t); if (line) lines.push(line); }
   const p = r.priorInsurance?.[0];
-  if (p?.carrier) {
+  if (p?.carrier && !noPriorInsurance(p)) {
     const kind = /commercial/i.test(p.type ?? '') ? 'Commercial' : /personal/i.test(p.type ?? '') ? 'Personal' : p.type;
     const carrier = p.carrier.toLowerCase().replace(/\b\w/g, (x) => x.toUpperCase());
     const unavailable = /\b(?:pop|proof of prior)(?:\s+(?:insurance|document))?\s+(?:unavailable|missing|not available)\b/i.test(r.claims?.notes ?? '');

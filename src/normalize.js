@@ -4,7 +4,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, ownerIsDriver, set } from './util.js';
+import { STATES, noPriorInsurance, ownerIsDriver, set } from './util.js';
 
 const ROWS = [1, 2, 3, 4];
 // The marital-status dropdowns have odd hierarchical names; positions on the page put them on
@@ -515,15 +515,17 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     type: txt('ins_type_1'), carrier: txt('ins_carrier_1'), limit: txt('ins_limit_1'), expiration: toDate(raw.ins_exp_1),
   };
   if (txt('ins_exp_1') && !prior.expiration) { prior.expiration = txt('ins_exp_1'); check('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`); }
-  // "No", "NO POP" (no proof of prior), "None", "No prior" as the carrier, without an expiration
-  // date: the client has no current insurance, whatever type or limit the form shows (TNI,
-  // 2026-10-09: "Personal Auto", "no POP", "State Minimum" is no prior). Nothing is written about
-  // it in a carrier's disclosure.
+  // "No", "NO POP", "None" as the carrier without an expiration date is no prior insurance (TNI,
+  // 2026-10-09: "Personal Auto", "no POP", "State Minimum" is no prior). It stays on the record,
+  // as written, so the panel's Current insurance shows it; carriers fill and disclose nothing
+  // from it (noPriorInsurance).
   // As written: "None" and "N/A" read as blank otherwise, and a blank carrier is no answer.
   const carrierAsWritten = String(raw.ins_carrier_1 ?? '').replace(/\s+/g, ' ').trim();
-  const noPrior = /^(no|none|n\/?a)\b/i.test(carrierAsWritten) && !prior.expiration;
-  if (noPrior) info('prior.none', 'priorInsurance', `Current insurance says "${carrierAsWritten}": treated as not currently insured.`);
-  if (!noPrior && (prior.type || prior.carrier || prior.limit || prior.expiration)) {
+  const noPrior = noPriorInsurance({ carrier: carrierAsWritten, expiration: prior.expiration });
+  if (noPrior) {
+    record.priorInsurance.push({ ...prior, carrier: carrierAsWritten });
+    info('prior.none', 'priorInsurance', `Current insurance says "${carrierAsWritten}": treated as not currently insured.`);
+  } else if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
     const missing = [

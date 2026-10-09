@@ -6,6 +6,7 @@ import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
+import { noPriorInsurance } from '../src/util.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 
@@ -579,9 +580,11 @@ test('a blank DOT/MC section is a valid absence, not a missing-data warning', ()
   assert.equal(noDot.warnings.some((warning) => warning.code === 'dot.missing'), false);
 });
 
-test('"NO POP" as the current carrier means not currently insured, without a warning', () => {
+test('"NO POP" as the current carrier means not currently insured, without a warning, and stays on the panel', () => {
   const r = normalizeIntake({ ...raw, ins_type_1: 'Select*', ins_carrier_1: 'NO POP ', ins_limit_1: 'Select*', ins_exp_1: 'n/a' }, { today: new Date('2026-09-30') });
-  assert.equal(r.record.priorInsurance.length, 0);
+  assert.equal(r.record.priorInsurance.length, 1);
+  assert.equal(r.record.priorInsurance[0].carrier, 'NO POP');
+  assert.ok(noPriorInsurance(r.record.priorInsurance[0]));
   assert.ok(!r.warnings.some((w) => w.code === 'prior.incomplete'));
 });
 
@@ -590,15 +593,24 @@ test('"no POP" or "No" as the carrier without an expiration date is no prior, wh
   const { amwins } = await import('../src/carriers/amwins.js');
   for (const carrier of ['no POP', 'No', 'NONE']) {
     const r = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: ` ${carrier} `, ins_limit_1: 'State Minimum', ins_exp_1: '' }, { today: new Date('2026-10-09') });
-    assert.equal(r.record.priorInsurance.length, 0, carrier);
+    assert.deepEqual(r.record.priorInsurance, [{ type: 'Personal Auto', carrier, limit: 'State Minimum', expiration: null }], `${carrier}: shown as written`);
+    assert.ok(noPriorInsurance(r.record.priorInsurance[0]), carrier);
     assert.ok(r.warnings.some((w) => w.code === 'prior.none'), carrier);
     assert.ok(!r.warnings.some((w) => /^prior\.(incomplete|personal-auto)$/.test(w.code)), carrier);
     const disclosure = buildPlan(r.record, amwins, {}).find((s) => /^Disclosure details/.test(s.name ?? ''));
     assert.doesNotMatch(disclosure.value ?? '', /POP|prior/i, `${carrier}: nothing about prior insurance in the disclosure`);
+    const steps = buildPlan(r.record, progressive, {});
+    assert.equal(steps.find((s) => s.name === 'Currently insured')?.value, false, `${carrier}: not currently insured`);
+    for (const path of ['priorInsurance[0].limit', 'priorInsurance[0].expiration']) {
+      assert.ok(steps.filter((s) => s.path === path).every((s) => s.ignore), `${carrier}: ${path} not filled`);
+    }
+    const generic = buildPlan(r.record, { name: 'generic', fields: [] }, {}).filter((s) => s.path?.startsWith('priorInsurance'));
+    assert.ok(generic.length && generic.every((s) => s.ignore), `${carrier}: generic prior-carrier rules not filled`);
   }
   // An expiration date means a policy: kept, as is a named carrier without one.
   const dated = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: 'no POP', ins_limit_1: 'State Minimum', ins_exp_1: '12/01/2026' }, { today: new Date('2026-10-09') });
   assert.equal(dated.record.priorInsurance.length, 1);
+  assert.ok(!noPriorInsurance(dated.record.priorInsurance[0]));
   const named = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: 'Nationwide', ins_limit_1: 'State Minimum', ins_exp_1: '' }, { today: new Date('2026-10-09') });
   assert.equal(named.record.priorInsurance[0].carrier, 'Nationwide');
 });
