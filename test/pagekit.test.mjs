@@ -2644,6 +2644,39 @@ test('verify revealed: a lookup already shown for the VIN on the page is done wi
   assert.equal(report.noData.length, 0);
 });
 
+// A verified result doesn't require the helper's button to remain clickable afterwards.
+for (const buttonState of ['absent', 'disabled']) {
+  test(`verify revealed: an already-shown lookup with its button ${buttonState} records completion before Continue`, async () => {
+    const h = harness();
+    decodedPage(h);
+    if (buttonState === 'disabled') {
+      const lookup = addButton(h, 'Lookup VIN');
+      lookup.disabled = true;
+      lookup.onclick = () => { throw new Error('a disabled lookup must never be clicked'); };
+    }
+    const next = addButton(h, 'Continue');
+    next.onclick = () => { next._clicks = (next._clicks ?? 0) + 1; };
+    const report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8, advance: { text: '^Continue$' } });
+    assert.deepEqual(Array.from(report.actions, (a) => [a.id, a.alreadyShown]), [['lookupVin:0', true]], 'kept for the origin unit and later helper prerequisites');
+    assert.equal(report.blockers.length, 0, report.blockers.join(' | '));
+    assert.equal(report.advanced, 'Continue');
+    assert.equal(next._clicks, 1);
+  });
+}
+
+test('verify revealed: an absent lookup with a shown result still waits for its prerequisites', async () => {
+  const h = harness();
+  decodedPage(h);
+  const plan = shownPlan(VINS[0]);
+  plan.at(-1).afterActions = ['required-helper'];
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { throw new Error('Continue must wait for the prerequisite'); };
+  const report = await h.kit.fill(plan, { maxRounds: 8, advance: { text: '^Continue$' } });
+  assert.equal(report.actions.length, 0);
+  assert.ok(report.blockers.some((b) => /required-helper clicked/.test(b)), report.blockers.join(' | '));
+  assert.equal(report.advanced, undefined);
+});
+
 test('verify revealed: an already-shown decode that is not the intake vehicle is named for the agent', async () => {
   // The agent looked up another VIN, then typed this one without looking it up again: the lookup
   // counts as shown, but the decoded make that isn't the intake's is flagged for the agent.

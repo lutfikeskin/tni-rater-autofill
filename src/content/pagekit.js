@@ -1470,7 +1470,8 @@
           }
         }
         // Menu items ("Add Vehicle" under "Add") only show once their menu button is opened.
-        if (!button && !a.opener) continue;
+        const alreadyShown = a.verify === 'revealed' && resultShown(a, pairs);
+        if (!button && !a.opener && !alreadyShown) continue;
         const holds = actions.filter((h) => (a.heldBy ?? []).includes(h.baseAction) && holdOpen(h));
         // A page button that the carrier refuses while a required question is empty (Rates' bill
         // plan, SC 2026-10-07: clicked right after UM/UIM were cleared, and nothing opened).
@@ -1500,7 +1501,7 @@
           continue;
         }
         // Its result already shows (the agent ran the lookup before Fill): done, not clicked again.
-        if (a.verify === 'revealed' && resultShown(a, pairs)) {
+        if (alreadyShown) {
           clicked.add(a.action);
           report.actions.push({ id: a.action, text: 'already shown on the page', alreadyShown: true });
           continue;
