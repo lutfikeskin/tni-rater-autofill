@@ -306,7 +306,7 @@ export const progressive = {
     // Done once the page shows the lookup's result (the registered names to pick, or the 60-day
     // question when the number is new): a click without one is tried again, then the agent's.
     // Already showing them for the number on the page (the agent verified it before Fill): done.
-    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q22F', 'progressive.q277'] } },
+    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] } },
     // Vehicle summary: "Add a Vehicle" for a vehicle not entered yet (its VIN lookup not done).
     // The vehicles found by the USDOT lookup are listed there too; ours is added with Add Vehicle,
     // which sits in the "Add" menu.

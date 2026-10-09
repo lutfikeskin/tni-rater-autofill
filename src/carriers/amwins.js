@@ -380,7 +380,7 @@ export const amwins = {
     // are still the row at the unit's position.
     if (panel === VEHICLE) {
       return { ...rule, repeat: list, witness: { selector: '[data-id="vin"]', path: 'vehicles[].vin' },
-        repeatSelector: (r) => (r[list].length > 1 ? selector.replace(panel, `${panel} .app-rp-section`) : rule.selector || selector) };
+        repeatSelector: (r) => (r[list].length > 1 ? selector.replace(panel, `${panel} .app-rp-section`) : selector) };
     }
     return { ...rule, repeat: list, repeatSelector: (r, a) => r[list].length > 1
       ? selector.replace(panel, `${panel} > .app-rp-section[data-id="${a[list]}"]`) : rule.selector || selector };

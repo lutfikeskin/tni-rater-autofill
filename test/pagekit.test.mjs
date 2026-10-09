@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { buildPlan } from '../src/plan.js';
 import { progressive } from '../src/carriers/progressive.js';
+import { amwins } from '../src/carriers/amwins.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
 
 // This is a deliberately small DOM/ExtJS replay.  It exercises the injected MAIN-world
@@ -2861,4 +2862,72 @@ test('verify { appears }: more matching elements than before the click, or any w
   assert.equal(report.actions.length, 0);
   assert.ok(report.blockers.includes('button: lookupVin:0'));
   assert.equal(report.noData.length, 1);
+});
+
+
+test('the real USDOT plan recognizes an already shown no-record result', async () => {
+  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  h.document.body.append(makeInput({ id: 'dot', ariaLabel: "USDOT Number associated with the customer's business:", value: '1234567', attrs: { fieldref: 'USDOTInput.NumberCollection' } }));
+  const question = 'Did the customer obtain their USDOT Number within the last 60 days?';
+  const yes = makeInput({ name: 'sixtyDay', type: 'radio', value: 'Yes', checked: true, attrs: { fieldref: 'USDOTInput.SixtyDayQuestion' } });
+  const no = makeInput({ name: 'sixtyDay', type: 'radio', value: 'No', attrs: { fieldref: 'USDOTInput.SixtyDayQuestion' } });
+  h.document.body.append(radioGroup(question, yes, no));
+  const button = addButton(h, 'Verify DOT');
+  let clicks = 0;
+  button.onclick = () => clicks++;
+  const record = { applicant: { dot: '1234567' }, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => s.path === 'applicant.dot' || s.q === '21E' || s.action === 'verifyDot');
+  assert.equal(plan.length, 3, 'the real plan supplies DOT, its no-record result and helper');
+  const report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(clicks, 0, 'matching DOT with an already visible result needs no retry');
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, a.alreadyShown]), [['verifyDot', true]]);
+  assert.equal(report.blockers.length, 0, report.blockers.join(' | '));
+});
+
+test('extra-row acknowledgement survives an unrelated step with no visible witnesses', async () => {
+  const h = harness({ pathname: '/application/businessauto' });
+  const rows = vehicleRows(h, [...VINS, '1FTBR3X87MKA00099']);
+  const elsewhere = makeInput({ id: 'otherStep', ariaLabel: 'Other step answer' });
+  elsewhere._visible = false;
+  h.document.body.append(elsewhere);
+  const plan = [...witnessPlan(), { id: 'other', selector: '#otherStep', path: 'workflow.other', kind: 'text', value: 'done' }];
+  const first = await h.kit.fill(plan, { maxRounds: 8 });
+  const skip = [first.checks[0].key];
+  assert.equal((await h.kit.fill(plan, { maxRounds: 8, skip })).checks.length, 0);
+  for (const row of rows) { row.vin._visible = false; row.body._visible = false; }
+  elsewhere._visible = true;
+  const otherStep = await h.kit.fill(plan, { maxRounds: 8, skip });
+  assert.equal(otherStep.checks.length, 0);
+  assert.equal(elsewhere.value, 'done');
+  for (const row of rows) { row.vin._visible = true; row.body._visible = true; }
+  elsewhere._visible = false;
+  const returned = await h.kit.fill(plan, { maxRounds: 8, skip });
+  assert.equal(returned.checks.length, 0, 'the unchanged extra vehicle remains acknowledged');
+  assert.equal(returned.blockers.length, 0, returned.blockers.join(' | '));
+  const held = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(held.checks[0].key, skip[0], 'the opaque key survives the step change');
+});
+
+test('one intake vehicle value targets its VIN behind an extra quote row with the real AmWINS plan', async () => {
+  const h = harness({ pathname: '/application/businessauto' });
+  const extra = '1FTBR3X87MKA00099';
+  const rows = vehicleRows(h, [extra, VINS[0]]);
+  const values = rows.map(({ row }, i) => {
+    const value = makeInput({ id: i === 0 ? 'marketValue' : 'costNew1', ariaLabel: 'Vehicle value', attrs: { 'data-id': 'costNew' } });
+    // This small DOM replay handles simple selectors. Support the real descendant selector
+    // here so the expanded carrier plan is exercised unchanged, including its first-row id.
+    value.matches = (selector) => selector === '#vehiclesPanel [data-id="costNew"]' || matchesSelector(value, selector);
+    row.children[0].append(value);
+    return value;
+  });
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [{ vin: VINS[0], value: 45000 }], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, amwins).filter((s) => s.path === 'vehicles[0].value' && s.witness);
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0].witness.value, VINS[0]);
+  const report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(values[1].value, '45000', 'the matching later vehicle gets its value');
+  assert.equal(values[0].value, '', 'the unmatched first row is untouched');
+  assert.equal(rows[0].vin.value, extra);
+  assert.equal(report.noData.length, 0, 'the vehicle row was found');
+  assert.equal(report.checks.length, 1, 'the extra vehicle still requires review');
 });

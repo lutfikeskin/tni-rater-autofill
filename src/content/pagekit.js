@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 61 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 62 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -495,12 +495,16 @@
     pairs.unwitnessed = unwitnessed;
     pairs.witnessed = witnessed;
     // Numbered by their place among the page's rows (by their witness controls), never by value.
-    const rowWitnesses = [...new Set(controls.flatMap((x) => [...extraRows.values()].some((w) => safeMatches(x.el, w.selector)) ? [x.el] : []))];
+    const witnesses = steps.filter((s) => s.witness).map((s) => s.witness);
+    const rowWitnesses = [...new Set(controls.flatMap((x) => witnesses.some((w) => safeMatches(x.el, w.selector)) ? [x.el] : []))];
     const identities = [...extraRows].map(([el, witness]) => JSON.stringify([
       witness.selector, String(witness.path ?? '').replace(/\[\d+\]/g, '[]'), idText(el.value),
     ]));
     // A removed identity loses its acknowledgement, including a later re-addition of the same VIN.
-    for (const identity of extraRowKeys.keys()) if (!identities.includes(identity)) extraRowKeys.delete(identity);
+    // Without visible witness rows (another application step), absence proves no removal.
+    if (rowWitnesses.length) {
+      for (const identity of extraRowKeys.keys()) if (!identities.includes(identity)) extraRowKeys.delete(identity);
+    }
     pairs.extraRows = [...extraRows].map(([el, witness], i) => {
       const identity = identities[i];
       const count = identities.filter((id) => id === identity).length;
@@ -1919,5 +1923,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 61, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 62, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();
