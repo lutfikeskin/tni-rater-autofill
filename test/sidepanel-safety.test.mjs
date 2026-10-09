@@ -2694,6 +2694,90 @@ test('the quote state comes from the page as it is, the fill, the tab the quote 
   assert.match(SIDEPANEL, /rememberFill\(frames, \{ tabId, carrier \}\);[\s\S]*rememberFill\(frames, \{ tabId, carrier \}\);/, 'both fills say whose tab');
 });
 
+// Audit 2026-10-08: a panel edit set one field and only bumped the capture revision, so the
+// radius typed as "Unlimited" kept its old 100 miles. The derived value follows the edit, its
+// row on screen shows it, and both happen before the capture revision moves on.
+test('editing a source field in the panel recomputes what derives from it and refreshes that row', async () => {
+  const { get, set } = await import('../src/util.js');
+  const { parseEdit, rederive } = await import('../src/normalize.js');
+  const record = { operations: { radius: '100', radiusMiles: 100 }, applicant: {} };
+  const calls = [];
+  const inputs = [];
+  const fake = (tag) => {
+    const el = { tag, listeners: {}, value: '', addEventListener: (type, fn) => { el.listeners[type] = fn; }, removeAttribute() {}, append() {}, closest: () => null };
+    inputs.push(el);
+    return el;
+  };
+  const milesRow = { classList: { toggle: (cls, on) => calls.push(['toggle', cls, on]) } };
+  const milesInput = { value: '100', closest: () => milesRow };
+  const yearsInput = { value: '', closest: () => milesRow };
+  const sandbox = {
+    state: { intake: { record, warnings: [] } },
+    get, set, parseEdit, rederive, h: fake,
+    document: { getElementById: (id) => ({ 'f-operations_radiusMiles': milesInput, 'f-applicant_yearsInBusiness': yearsInput })[id] ?? null },
+    intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
+    usage: { log: (e) => calls.push(['log', e.type, e.path]) },
+    save: async () => { calls.push(['save']); stored = structuredClone(sandbox.state.intake); },
+    claimsTextEdited: () => {}, reviewClaimsBox: () => {},
+  };
+  let stored = null;
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('fieldRow'), sandbox);
+  sandbox.fieldRow('operations.radius', 'Radius (as written)', 'text', false);
+  const radius = inputs.find((el) => el.tag === 'input');
+  radius.value = 'Unlimited';
+  await radius.listeners.change();
+  assert.equal(record.operations.radius, 'Unlimited');
+  assert.equal(record.operations.radiusMiles, null, 'the miles follow the edit');
+  assert.equal(milesInput.value, '', 'the miles row on screen shows it');
+  assert.deepEqual(calls, [['toggle', 'empty', true], ['intakeEdited', null], ['log', 'intake_edit', 'operations.radius'], ['save']], 'recomputed before the revision moves on; one edit logged');
+  // The agent's own miles are theirs: nothing else is recomputed from them.
+  calls.length = 0;
+  sandbox.fieldRow('operations.radiusMiles', 'Radius (miles)', 'int', false);
+  const miles = inputs.filter((el) => el.tag === 'input').at(-1);
+  miles.value = '77';
+  await miles.listeners.change();
+  assert.equal(record.operations.radiusMiles, 77);
+  assert.equal(record.operations.radius, 'Unlimited');
+  assert.deepEqual(calls, [['intakeEdited', 77], ['log', 'intake_edit', 'operations.radiusMiles'], ['save']]);
+  // Codex review on a7ee49e: the agent's miles stay theirs when the radius text is edited later.
+  calls.length = 0;
+  milesInput.value = '77';
+  radius.value = '100-500 miles';
+  await radius.listeners.change();
+  assert.equal(record.operations.radius, '100-500 miles');
+  assert.equal(record.operations.radiusMiles, 77, 'the corrected miles are not recomputed');
+  assert.equal(milesInput.value, '77');
+  assert.deepEqual(calls, [['intakeEdited', 77], ['log', 'intake_edit', 'operations.radius'], ['save']]);
+  // Same for years in business corrected directly, then a year established edit.
+  sandbox.fieldRow('applicant.yearsInBusiness', 'Years in business', 'int', false);
+  const years = inputs.filter((el) => el.tag === 'input').at(-1);
+  years.value = '12';
+  await years.listeners.change();
+  sandbox.fieldRow('applicant.yearEstablished', 'Year established', 'int', false);
+  const established = inputs.filter((el) => el.tag === 'input').at(-1);
+  established.value = '2020';
+  await established.listeners.change();
+  assert.equal(record.applicant.yearEstablished, 2020);
+  assert.equal(record.applicant.yearsInBusiness, 12, 'the corrected years are not recomputed');
+  // Codex review on f49a270: the panel restarts (init() reads the saved intake back); the edits
+  // were saved with it, so a later source edit still leaves the agent's miles alone.
+  sandbox.state.intake = structuredClone(stored);
+  sandbox.fieldRow('operations.radius', 'Radius (as written)', 'text', false);
+  const reopened = inputs.filter((el) => el.tag === 'input').at(-1);
+  reopened.value = '300 miles';
+  await reopened.listeners.change();
+  assert.equal(sandbox.state.intake.record.operations.radius, '300 miles');
+  assert.equal(sandbox.state.intake.record.operations.radiusMiles, 77, 'after a restart the corrected miles are still kept');
+  assert.equal(stored.record.operations.radiusMiles, 77, 'and saved that way');
+  sandbox.state.intake = { record, warnings: [] };
+  // A new intake starts clean: its derived values follow their source again.
+  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\] \};/, 'a loaded intake starts with no edits');
+  radius.value = '250';
+  await radius.listeners.change();
+  assert.equal(record.operations.radiusMiles, 250, 'another intake: the miles follow the edit');
+  assert.equal(milesInput.value, 250);
+});
 
 for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transport of ['complete', 'failure']) {
   test(`guarded edits keep origin scope after ${switchTo} switch (${transport})`, async () => {

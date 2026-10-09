@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible } from '../src/normalize.js';
+import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
+import { progressive } from '../src/carriers/progressive.js';
+import { amwins } from '../src/carriers/amwins.js';
 
 // test/fixtures/sample-intake.pdf is the real TNI form filled with made-up data, including the
 // kinds of mess real clients produce (stray tabs, "45,000$", state prefix on the license, etc.).
@@ -78,6 +80,236 @@ test('"Unlimited" radius needs no warning; an unreadable one still does', () => 
   assert.doesNotMatch(msgs, /operations\.radius/);
   const odd = normalizeIntake({ ...raw, avg_radius: 'around town' }, { today: new Date('2026-09-30') });
   assert.ok(odd.warnings.some((w) => w.code === 'radius.not-miles'));
+});
+
+// Audit 2026-10-08: "48 states" was read as 48 miles and "100-500 miles" as 100, with no warning.
+// Phrases come first; a range or another unit is the agent's; a bare "48" is still 48 miles.
+test('radius: long-haul phrases, miles, ranges and other units, with what each carrier plans', () => {
+  const today = { today: new Date('2026-09-30') };
+  const cases = [
+    // [as written, radiusMiles, warning codes on the radius fields, Progressive 2B9D, AmWINS radius]
+    ['48 states', null, [], 501, 501],
+    ['lower 48', null, [], 501, 501],
+    ['Unlimited', null, [], 501, 501],
+    ['Long haul', null, [], 501, 501],
+    ['nationwide', null, [], 501, 501],
+    // Codex review on f49a270: a mileage beside a long-haul word is the answer; the 48 of "48 states" is not miles.
+    ['anywhere within 100 miles', 100, [], 100, 100],
+    ['OTR up to 500 miles', 500, [], 500, 500],
+    ['48', 48, [], 48, 48],
+    ['48 miles', 48, [], 48, 48],
+    ['250', 250, [], 250, 250],
+    ['1,500 miles', 1500, [], 1500, 1500],
+    ['500+', 500, [], 500, 500],
+    ['100-500 miles', null, ['radius.range'], null, null],
+    ['100 to 500', null, ['radius.range'], null, null],
+    ['100–500', null, ['radius.range'], null, null],
+    ['100 miles to 500 miles', null, ['radius.range'], null, null],
+    ['100 miles - 500 miles', null, ['radius.range'], null, null],
+    ['100mi-500mi', null, ['radius.range'], null, null],
+    ['250 km', null, ['radius.unit'], null, null],
+    ['11 states', null, ['radius.not-miles'], null, null],
+    ['0', null, ['radius.not-miles'], null, null],
+    ['around town', null, ['radius.not-miles'], null, null],
+    ['', null, ['radius.missing'], null, null],
+  ];
+  for (const [written, miles, codes, progressiveMiles, amwinsMiles] of cases) {
+    const { record: r, warnings: w } = normalizeIntake({ ...raw, avg_radius: written }, today);
+    assert.equal(r.operations.radius, written || null, `${written}: kept as written`);
+    assert.equal(r.operations.radiusMiles, miles, `${written}: miles`);
+    assert.deepEqual(w.filter((x) => x.path.startsWith('operations.radius')).map((x) => x.code), codes, `${written}: warnings`);
+    assert.equal(buildPlan(r, progressive).find((s) => s.q === '2B9D').value, progressiveMiles, `${written}: Progressive farthest one-way distance`);
+    assert.equal(buildPlan(r, amwins).find((s) => s.name === 'Radius').value, amwinsMiles, `${written}: AmWINS radius`);
+  }
+  const range = normalizeIntake({ ...raw, avg_radius: '100-500 miles' }, today).warnings.find((w) => w.code === 'radius.range');
+  assert.equal(range.level, 'check');
+  assert.equal(range.path, 'operations.radiusMiles', 'the check card edits the miles');
+  assert.match(range.msg, /"100-500 miles", a range/);
+  const disclosure = (written) => buildPlan(normalizeIntake({ ...raw, avg_radius: written }, today).record, amwins).find((s) => s.re === '^disclosure details$').value;
+  assert.match(disclosure('48 states'), /More than 500 miles radius/, 'AmWINS disclosure line for the lower 48');
+  assert.match(disclosure('48'), /^48 miles radius/m);
+});
+
+test('radius: long-haul words do not hide invalid distances or unsupported units', () => {
+  const cases = [
+    ['OTR 100-500 miles', 'range'],
+    ['lower 48, 100-500 miles', 'range'],
+    ['48 states 250 km', 'unit'],
+    ['long haul 250 km', 'unit'],
+    ['nationwide 100 miles / 500 miles', 'text'],
+    ['OTR 0 miles', 'text'],
+    ['100 feet', 'unit'],
+    ['100 furlongs', 'unit'],
+    ['100 leagues', 'unit'],
+    ['100 parsecs', 'unit'],
+    ['100-furlongs radius', 'unit'],
+    ['100 nautical miles', 'unit'],
+    ['100 meters', 'unit'],
+    ['100-ft radius', 'unit'],
+    ['long haul 100 yards', 'unit'],
+  ];
+  for (const [written, kind] of cases) {
+    assert.deepEqual(parseRadius(written), { miles: null, kind }, written);
+    assert.equal(isLongHaul(written), false, `${written}: no widest-band fallback`);
+    const { record: r, warnings } = normalizeIntake({ ...raw, avg_radius: written });
+    assert.equal(r.operations.radius, written, `${written}: original retained`);
+    assert.equal(r.operations.radiusMiles, null, `${written}: no invented miles`);
+    assert.ok(warnings.some((w) => w.code === `radius.${kind === 'text' ? 'not-miles' : kind}`), written);
+    assert.equal(buildPlan(r, progressive).find((s) => s.q === '2B9D').value, null, `${written}: Progressive`);
+    assert.equal(buildPlan(r, amwins).find((s) => s.name === 'Radius').value, null, `${written}: AmWINS`);
+    assert.doesNotMatch(buildPlan(r, amwins).find((s) => s.re === '^disclosure details$').value, /miles radius/, `${written}: disclosure`);
+  }
+  for (const written of ['100 miles', '100 mi.', '100-mile radius', '100 miles radius of operation', '100 radius of operation', 'OTR up to 100 miles', 'lower 48, 100 miles', '48 states up to 100 miles']) {
+    assert.deepEqual(parseRadius(written), { miles: 100, kind: 'miles' }, written);
+  }
+});
+
+test('radius: in-state and interstate mileage never means the lower 48', () => {
+  for (const written of ['48 in-state miles', '48 in state miles', '48 interstate miles']) {
+    assert.deepEqual(parseRadius(written), { miles: 48, kind: 'miles' }, written);
+    assert.equal(isLongHaul(written), false, written);
+    const { record: r, warnings } = normalizeIntake({ ...raw, avg_radius: written });
+    assert.equal(r.operations.radius, written);
+    assert.equal(r.operations.radiusMiles, 48);
+    assert.ok(!warnings.some(w => w.code.startsWith('radius.')));
+    assert.equal(buildPlan(r, progressive).find(s => s.q === '2B9D').value, 48);
+    const plan = buildPlan(r, amwins);
+    assert.equal(plan.find(s => s.name === 'Radius').value, 48);
+    assert.match(plan.find(s => s.re === '^disclosure details$').value, /^48 miles radius/m);
+  }
+  for (const written of ['48 states', '48 contiguous states', '48 continental states', '48 US states', '48 U.S. states', '48-states', 'lower 48']) {
+    assert.deepEqual(parseRadius(written), { miles: null, kind: 'long-haul' }, written);
+  }
+});
+
+test('radius: in after an explicit mile unit is prose, while standalone inches need conversion', () => {
+  for (const written of ['100 miles in state', '100 miles in CA', '100 mi. in California', '100 miles in-state']) {
+    assert.deepEqual(parseRadius(written), { miles: 100, kind: 'miles' }, written);
+    const { record: r, warnings } = normalizeIntake({ ...raw, avg_radius: written });
+    assert.equal(r.operations.radius, written);
+    assert.ok(!warnings.some(w => w.code.startsWith('radius.')));
+    assert.equal(buildPlan(r, progressive).find(s => s.q === '2B9D').value, 100);
+    assert.equal(buildPlan(r, amwins).find(s => s.name === 'Radius').value, 100);
+  }
+  for (const written of ['100 in', '100in', '100 inches', '100 miles km', '100 in-state km']) {
+    assert.deepEqual(parseRadius(written), { miles: null, kind: 'unit' }, written);
+  }
+  assert.deepEqual(parseRadius('100 miles in CA / 200 miles in NV'), { miles: null, kind: 'text' });
+});
+
+test('parseRadius and isLongHaul', () => {
+  assert.deepEqual(parseRadius('between 100 and 500'), { miles: null, kind: 'range' });
+  assert.deepEqual(parseRadius('50-mile radius'), { miles: 50, kind: 'miles' });
+  assert.deepEqual(parseRadius('250 kilometers'), { miles: null, kind: 'unit' });
+  assert.deepEqual(parseRadius('5 hours'), { miles: null, kind: 'text' });
+  assert.deepEqual(parseRadius('100 miles / 500 miles'), { miles: null, kind: 'text' }, 'a second number is never dropped');
+  assert.deepEqual(parseRadius('50 mi.'), { miles: 50, kind: 'miles' });
+  assert.deepEqual(parseRadius('100 min'), { miles: null, kind: 'text' }, '"mi" only as a whole word');
+  assert.deepEqual(parseRadius('N/A'), { miles: null, kind: 'missing' });
+  for (const text of ['OTR', 'over the road', 'nationwide', 'National', 'anywhere', 'all 48', 'long-haul', 'longhaul', '48 contiguous states', '48 US states', 'contiguous 48', '48 state']) assert.ok(isLongHaul(text), text);
+  assert.deepEqual(parseRadius('48 contiguous states'), { miles: null, kind: 'long-haul' }, 'never 48 miles');
+  for (const text of ['48', '48 miles', 'company', 'longer trips', '', null, 'Regional']) assert.ok(!isLongHaul(text), String(text));
+});
+
+// Audit 2026-10-08: the first ownership word in the notes became the answer ("not leased; owned
+// outright" → Leased). Only an unambiguous single mention is taken; the rest is quoted for the agent.
+test('ownership from the claims notes: one plain word is the answer, anything else is the agent\'s', () => {
+  const today = { today: new Date('2026-09-30') };
+  const loanLease = (r) => buildPlan(r, progressive).find((s) => s.q === '2CA7').value;
+  const codes = (w) => w.filter((x) => x.path === 'operations.vehicleOwnership').map((x) => x.code);
+  const read = (notes, box = '') => normalizeIntake({ ...raw, veh_ownership: box, claims_details: `No\n${notes}` }, today);
+  const financed = read('Financed');
+  assert.equal(financed.record.operations.vehicleOwnership, 'Financed');
+  assert.deepEqual(codes(financed.warnings), []);
+  assert.equal(loanLease(financed.record), 'Yes - Loan');
+  const leased = read('Leased');
+  assert.equal(leased.record.operations.vehicleOwnership, 'Leased');
+  assert.equal(loanLease(leased.record), 'Yes - Lease');
+  const owned = read('owned');
+  assert.equal(owned.record.operations.vehicleOwnership, 'Owned');
+  assert.deepEqual(codes(owned.warnings), []);
+  assert.equal(loanLease(owned.record), 'No');
+  for (const notes of ['Not leased; owned outright', 'Vehicle is not leased; owned outright.', 'Trailer leased. Truck owned.', 'Leased trailer', 'Has a dry van trailer and a truck. Financed.', 'on a lease, truck owned']) {
+    const { record: r, warnings: w } = read(notes);
+    assert.equal(r.operations.vehicleOwnership, null, `${notes}: not read as an answer`);
+    assert.deepEqual(codes(w), ['ownership.notes'], `${notes}: one warning, in place of ownership.missing`);
+    const warning = w.find((x) => x.code === 'ownership.notes');
+    assert.equal(warning.level, 'check');
+    assert.ok(warning.msg.includes(notes.split('\n')[0]), `${notes}: the line is quoted`);
+    assert.notEqual(loanLease(r), 'Yes - Lease', `${notes}: Progressive never plans a lease from it`);
+  }
+  const none = read('New venture');
+  assert.equal(none.record.operations.vehicleOwnership, null);
+  assert.deepEqual(codes(none.warnings), ['ownership.missing'], 'no ownership word: the plain missing check');
+  const box = read('Leased', 'Owned');
+  assert.equal(box.record.operations.vehicleOwnership, 'Owned', 'the ownership box wins over the notes');
+  assert.deepEqual(codes(box.warnings), []);
+  assert.deepEqual(ownershipFromNotes('No claims in 3 years\nTruck financed'), { value: 'Financed', lines: 'Truck financed' }, 'a negation on another line is not the mention\'s');
+  assert.deepEqual(ownershipFromNotes('Truck owned, trailer too'), { value: null, lines: 'Truck owned, trailer too' }, 'a trailer in the same sentence: the agent reads it');
+  assert.deepEqual(ownershipFromNotes('Trailer leased.\nTruck owned.'), { value: null, lines: 'Trailer leased. / Truck owned.' }, 'every line with a mention is quoted');
+  assert.equal(ownershipFromNotes(null), null);
+});
+
+test('split trailer ownership notes never become vehicle ownership on either carrier', () => {
+  const read = (notes, ownership = '') => normalizeIntake({ ...raw, veh_ownership: ownership, claims_details: `No\n${notes}` });
+  const targets = (r) => {
+    const p = buildPlan(r, progressive);
+    const a = buildPlan(r, amwins);
+    return [p.find((s) => s.q === '2CA7').value, ...a.filter((s) => /^Vehicles (leased|not owned)|^Additional interest/.test(s.name ?? '')).map((s) => s.value)];
+  };
+  const missingTargets = targets(read('New venture').record);
+  for (const notes of ['Trailer.\nFinanced.', 'Trailer:\nLeased.', 'Trailer. Financed.', 'Financed.\nTrailer.', 'Dry van trailer\nOwned', 'Trailer.\nTruck.\nFinanced.', 'Trailer present.\nTruck financed.']) {
+    const { record: r, warnings } = read(notes);
+    assert.equal(r.operations.vehicleOwnership, null, notes);
+    assert.equal(r.claims.notes, notes, 'the agent keeps the complete subject and ownership text');
+    const check = warnings.find((w) => w.code === 'ownership.notes');
+    assert.equal(check?.path, 'operations.vehicleOwnership');
+    assert.equal(check?.level, 'check');
+    assert.match(check?.msg ?? '', /doesn't settle it for the vehicles/);
+    assert.deepEqual(targets(r), missingTargets, `${notes}: neither carrier receives an inferred vehicle fact`);
+  }
+  for (const notes of ['Financed', 'Truck financed.', 'Truck.\nFinanced.', 'No claims in 3 years\nVehicle financed.']) {
+    const { record: r, warnings } = read(notes);
+    assert.equal(r.operations.vehicleOwnership, 'Financed', `${notes}: safe existing inference preserved`);
+    assert.equal(buildPlan(r, progressive).find((s) => s.q === '2CA7').value, 'Yes - Loan');
+    assert.ok(!warnings.some((w) => w.code === 'ownership.notes'));
+  }
+  const answered = read('Trailer.\nFinanced.', 'Leased');
+  assert.equal(answered.record.operations.vehicleOwnership, 'Leased', 'the explicit vehicle box wins');
+  assert.equal(buildPlan(answered.record, progressive).find((s) => s.q === '2CA7').value, 'Yes - Lease');
+  assert.ok(!answered.warnings.some((w) => w.code === 'ownership.notes'));
+});
+
+// Audit 2026-10-08: a panel edit set one field and left what was derived from it stale.
+test('rederive recomputes a derived value from its edited source, never the other way round', () => {
+  const today = { today: new Date('2026-09-30') };
+  const r = normalizeIntake({ ...raw, avg_radius: '100', year_established: '2020' }, today).record;
+  assert.equal(r.operations.radiusMiles, 100);
+  assert.equal(r.applicant.yearsInBusiness, 6);
+  r.operations.radius = 'Unlimited';
+  assert.deepEqual(rederive(r, 'operations.radius', today), ['operations.radiusMiles']);
+  assert.equal(r.operations.radiusMiles, null, 'long haul: no mileage, the carriers pick their widest band');
+  assert.equal(buildPlan(r, progressive).find((s) => s.q === '2B9D').value, 501);
+  r.operations.radius = '100-500 miles';
+  rederive(r, 'operations.radius', today);
+  assert.equal(r.operations.radiusMiles, null, 'a range stays the agent\'s');
+  r.operations.radius = '250 miles';
+  rederive(r, 'operations.radius', today);
+  assert.equal(r.operations.radiusMiles, 250);
+  r.operations.radiusMiles = 77;
+  assert.deepEqual(rederive(r, 'operations.radiusMiles', today), [], 'the agent\'s own miles are kept');
+  assert.equal(r.operations.radiusMiles, 77);
+  r.applicant.yearEstablished = 2025;
+  assert.deepEqual(rederive(r, 'applicant.yearEstablished', today), ['applicant.yearsInBusiness']);
+  assert.equal(r.applicant.yearsInBusiness, 1);
+  assert.equal(buildPlan(r, amwins).find((s) => s.selector === '#yrsInBusiness').value, '1', 'AmWINS years in business follows');
+  r.applicant.yearEstablished = 'soon';
+  rederive(r, 'applicant.yearEstablished', today);
+  assert.equal(r.applicant.yearsInBusiness, null, 'not a year: no years in business');
+  assert.deepEqual(rederive(r, 'applicant.name', today), [], 'nothing derives from the name');
+  r.operations.radius = '300 miles';
+  assert.deepEqual(rederive(r, 'operations.radius', { ...today, keep: new Set(['operations.radiusMiles']) }), [], 'miles the agent set are kept');
+  assert.equal(r.operations.radiusMiles, 77);
 });
 
 test('claims box without a yes/no keeps everything as notes and leaves the claims answer open', () => {
@@ -369,6 +601,11 @@ test('an owner whose surname has two words is found in the driver list', () => {
   assert.ok(other.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a different person still warns');
   const sharedWord = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO' }, { today: new Date('2026-09-30') });
   assert.ok(sharedWord.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'a surname word with another first name still warns');
+  // Audit 2026-10-08: a one-word surname alone linked another person ("Alice Sample" to "Bob Sample").
+  const family = normalizeIntake({ ...people, owner_name_1: 'ALICE EXAMPLO', drv_first_1: 'BOB', drv_last_1: 'EXAMPLO' }, { today: new Date('2026-09-30') });
+  assert.ok(family.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'the same one-word surname with another first name is another person');
+  const same = normalizeIntake({ ...people, owner_name_1: 'BOB EXAMPLO', drv_first_1: 'BOB', drv_last_1: 'EXAMPLO' }, { today: new Date('2026-09-30') });
+  assert.ok(!same.warnings.some((w) => w.code === 'drivers.owner-not-listed'));
 });
 
 // PR #17 review: a mention ("no bobtail") must never become NTL coverage. The agent sets it.

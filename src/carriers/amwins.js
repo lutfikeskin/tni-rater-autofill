@@ -41,6 +41,7 @@
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { owner } from './progressive.js';
+import { isLongHaul } from '../normalize.js';
 import { priorPolicyExpired } from '../util.js';
 
 const street = (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null;
@@ -144,7 +145,7 @@ const filings = (r) => (r.operations.filingsRequired === true ? true : r.operati
 
 // Radius bands: "< 50 MILES", "51 - 100 MILES", "101- 200 MILES", "201 + MILES". Unlimited / long
 // haul is the top band.
-const radius = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|otr|48|any/i.test(r.operations.radius ?? '') ? 501 : null);
+const radius = (r) => r.operations.radiusMiles ?? (isLongHaul(r.operations.radius) ? 501 : null);
 
 // The dashboard's address is spelled both ways.
 const START_PAGES = ['/commerciallines', '/CommercialLines'];
