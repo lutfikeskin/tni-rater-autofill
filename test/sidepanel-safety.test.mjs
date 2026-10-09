@@ -1093,7 +1093,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
   const pending = { key: 'pending', label: 'Pending', choice: 'No', done: 'auto' };
   const state = { intake: { record }, tabSessions: new Map(), layoutPending: null, aiCache: new Map([[manualSig, manual], [pendingSig, pending]]) };
   let stored = [];
-  const context = { state, DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
+  const context = { state, doneRestored: new Set(), DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
     aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
     aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
     usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
@@ -2723,7 +2723,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
     let nextRecord = { applicant: {}, vehicles: [] }, nextFingerprint = 'replacement-fingerprint';
     h.ui['load-error'] = {};
     Object.assign(context, {
-      crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String,
+      crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String, doneRestored: new Set(),
       usage: { currentSession: () => scope ? { intakeId: scope } : null, log() {},
         startSession: fingerprint => { scope = fingerprint; return { intakeId: fingerprint }; } },
       agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => structuredClone(records),
@@ -2812,3 +2812,89 @@ test('Clear also cancels an origin edit write already waiting on local storage',
   await Promise.all([writing, clearing]);
   assert.deepEqual(records, [], 'the queued pre-Clear write cannot recreate deleted protection');
 });
+
+
+// The same panel replaces its live sets, but must reread each fingerprint's durable helpers.
+test('completed helpers survive actual intake A to B to A loading and panel reload', async () => {
+  const memory = new Map();
+  const make = () => {
+    const h = harness(), { context, state } = h;
+    let scope = 'A', loading = 'A', refreshed;
+    h.setActiveTab(quoteTab(7));
+    Object.assign(context, {
+      usage: { currentSession: () => ({ intakeId: scope }), startSession: id => { scope = id; return { intakeId: id }; }, log() {} },
+      doneActionsQueue: Promise.resolve(), doneRestored: new Set(),
+      doneActionsStore: { get: async (id, tab) => memory.get(`${id}|${tab}`) ?? [],
+        set: async (id, tab, ids) => { memory.set(`${id}|${tab}`, [...ids]); } },
+      $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }),
+      normalizeIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+      store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
+      discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
+      uploadNow() {}, render() {}, reviewClaimsBox() {},
+      refreshTab: () => { refreshed = h.refreshTab(); return refreshed; },
+    });
+    vm.runInNewContext(['loadFile', 'persistDoneActions', 'restoreDoneActions'].map(extractFunction).join('\n'), context);
+    return { h, context, state, load: async id => {
+      loading = id;
+      await context.loadFile({ name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) });
+      await refreshed;
+    } };
+  };
+  const first = make();
+  await first.load('A');
+  first.state.doneActions.add('lookupVin:0'); first.state.doneActions.add('addDriver:0');
+  await first.context.persistDoneActions();
+  await first.load('B');
+  assert.equal(first.state.doneActions.size, 0, 'a different intake has no completed helpers');
+  await first.load('A');
+  assert.deepEqual([...first.state.doneActions].sort(), ['addDriver:0', 'lookupVin:0'], 'A restores after replacement');
+  first.state.doneActions.delete('lookupVin:0');
+  await first.h.refreshTab();
+  assert.equal(first.state.doneActions.has('lookupVin:0'), false, 'ordinary arrivals still respect an intentional rerun');
+  const reopened = make();
+  await reopened.load('A');
+  assert.deepEqual([...reopened.state.doneActions].sort(), ['addDriver:0', 'lookupVin:0'], 'the durable records also restore after panel reload');
+});
+
+for (const failAt of ['first-guard-read', 'second-guard-read', 'answer-transport']) {
+  test(`AI dispatch holds reflect actual sends on ${failAt} failure`, async () => {
+    const record = {}, intake = { record }, url = 'https://example.test/quote';
+    const choices = ['first', 'second'].map(key => ({ key, label: key, controlKind: 'radio', choice: 'No', autoOk: true }));
+    const pre = [{ frameId: 0, documentId: 'doc', result: JSON.stringify(['Quote', choices.map(x => ({ key: x.key, label: x.label, current: '' }))]) }];
+    const state = { filling: false, intake, active: {}, tab: { id: 1, url }, agentKeys: new Map(), filled: new Map(),
+      aiCache: new Map(choices.map(x => [[1, '/quote', DEFAULT_MODEL, POLICY_VERSION, 'context', x.key, JSON.stringify(url)].join('\n'), x])) };
+    const ctx = { tabId: 1, page: '/quote', tabUrl: url, intake, carrier: { practice: true },
+      contextKey: assistContextKey(record, state.active), snapshots: pre };
+    let stored = [], sends = 0, reads = 0, sawPrepared = false;
+    const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String,
+      DEFAULT_MODEL, POLICY_VERSION, pageOf: value => new URL(value).pathname,
+      usage: { currentSession: () => ({ intakeId: 'A' }) }, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
+      aiPendingStore: { get: async () => stored, set: async value => { stored = value; } }, tellRecorder: async () => {},
+      runKit: async (tabId, carrier, func, args) => {
+        if (/answerEdits/.test(String(func))) {
+          if (args[0] === 'read') {
+            reads++; sawPrepared = stored.length === 2;
+            if (reads === (failAt === 'first-guard-read' ? 1 : 2)) throw new Error('Guard transport unavailable');
+          }
+          return pre.map(frame => ({ ...frame, result: [] }));
+        }
+        if (/\.answer\(/.test(String(func))) {
+          sends++;
+          if (failAt === 'answer-transport') throw new Error('Answer transport unavailable');
+          return [{ ...pre[0], result: [{ key: 'first', label: 'first', ok: true, shown: 'No' }] }];
+        }
+        return pre;
+      } };
+    vm.runInNewContext(DISPATCH_HELPERS, context);
+    assert.equal(await context.applyAi(choices, ctx, 'auto'), false);
+    assert.equal(sawPrepared, true, 'conservative holds exist before the guard read');
+    assert.equal(sends, failAt === 'first-guard-read' ? 0 : 1);
+    const count = failAt === 'first-guard-read' ? 0 : 2;
+    assert.equal(stored.length, count, 'unsent preparation clears; ambiguous partial dispatch stays held');
+    assert.equal(context.pendingAi(1, '/quote').length, count);
+    assert.match(choices[0].error, failAt === 'first-guard-read' ? /couldn't reach/ : /sent but could not be confirmed/);
+    state.aiCache.clear();
+    await context.restoreAiPending();
+    assert.equal(context.pendingAi(1, '/quote').length, count, 'reload preserves only actual-dispatch holds');
+  });
+}

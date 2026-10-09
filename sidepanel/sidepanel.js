@@ -598,6 +598,7 @@ async function loadFile(file) {
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
   state.filled = new Map();
   state.doneActions = new Set();
+  doneRestored.clear(); // every tab set was reset; retained helpers must rehydrate for this intake
   discardAiSuggestions();
   await store.set('session', usage.startSession(summary.intakeId));
   await persistAiPending();
@@ -2321,7 +2322,6 @@ async function applyAi(list, ctx, decision) {
     if (!isCurrent()) return false;
     // One answer at a time lets an edit in any frame stop every answer still to come,
     // including later answers in the active frame.
-    dispatched = true;
     const results = [];
     const readEdits = async (command = 'read') => {
       const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit.answerEdits(c, t), [command, guardToken]);
@@ -2347,6 +2347,7 @@ async function applyAi(list, ctx, decision) {
       const frameId = aiSnapshotFieldMatches(current, list[i])[0].frame.frameId;
       const expected = startedFrames.has(frameId) ? null : ctx.snapshots.map(r => r.result);
       startedFrames.add(frameId);
+      dispatched = true;
       const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t) => globalThis.__raterKit.answer(a, snapshots, t),
         [[a], expected, guardToken], [frameId]);
       for (const frame of answerFrames) for (const item of frame.result ?? []) {
