@@ -107,6 +107,21 @@ test('collectItems keeps manualOnly client facts away from the AI', () => {
   assert.ok(blocked.every(x => /agent/.test(x.why)));
 });
 
+test('duplicate report rows preserve manual-only and review-only restrictions in either group', () => {
+  for (const flag of ['manualOnly', 'reviewOnly']) {
+    for (const restrictedGroup of ['failed', 'noData']) {
+      const duplicate = item('fact', 'Synthetic client choice');
+      const failed = { ...duplicate, ...(restrictedGroup === 'failed' ? { [flag]: true } : {}) };
+      const noData = { ...duplicate, ...(restrictedGroup === 'noData' ? { [flag]: true } : {}) };
+      const { items, blocked } = collectItems([{ failed: [failed], noData: [noData], unknown: [item('other', 'Unrelated choice')] }]);
+      assert.deepEqual(items.map(x => x.key), ['other'], `${flag} on ${restrictedGroup}`);
+      assert.equal(blocked.length, 1);
+      assert.equal(blocked[0][flag], true);
+      assert.equal(blocked[0].status, 'failed', 'report priority remains intact');
+    }
+  }
+});
+
 test('scoped intake strips identifiers, keeps explicit No, and includes only carrier rules', () => {
   const facts = scopedIntake(record, context.active);
   assert.equal(facts.coverage.reeferBreakdown, false);

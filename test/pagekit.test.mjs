@@ -2563,3 +2563,30 @@ test('a fact step is reported manualOnly and kept from the AI', async () => {
   assert.deepEqual(ai.items, [], 'never sent to the AI');
   assert.equal(ai.blocked.length, 1);
 });
+
+test('an invalid retained client fact stays manual-only across duplicate report rows', async () => {
+  const h = harness({ search: '?pageName=MoreAboutBusiness' });
+  const question = 'Has the customer had continuous coverage?';
+  const yes = makeInput({ name: 'continuous', type: 'radio', value: 'Yes', checked: true,
+    attrs: { fieldref: 'MoreBusinessInput.HasContinuousCoverage', 'aria-invalid': 'true' } });
+  const no = makeInput({ name: 'continuous', type: 'radio', value: 'No',
+    attrs: { fieldref: 'MoreBusinessInput.HasContinuousCoverage' } });
+  h.document.body.append(radioGroup(question, yes, no));
+  h.document.body.append(new SelectNode(['', 'Yes', 'No'], { id: 'unfamiliar', ariaLabel: 'Synthetic unfamiliar choice' }));
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => s.q === '83');
+  assert.equal(plan.length, 1);
+  const report = await h.kit.fill(plan, { maxRounds: 2 });
+  assert.equal(report.failed.length, 1, 'the invalid prefill is reported before missing intake data');
+  assert.equal(report.noData.length, 1);
+  assert.equal(report.failed[0].key, report.noData[0].key);
+  assert.equal(report.failed[0].label, report.noData[0].label);
+  assert.equal(report.noData[0].manualOnly, true, 'the real carrier plan leaves the fact to the agent');
+  assert.equal(yes.checked, true, 'the retained page value is preserved');
+  assert.ok(report.blockers.length, 'the agent still must resolve the invalid/missing fact');
+  const ai = collectItems([report]);
+  assert.deepEqual(ai.items.map((x) => x.label), ['Synthetic unfamiliar choice'], 'only the unrelated choice may reach Luna');
+  assert.equal(ai.blocked.length, 1);
+  assert.equal(ai.blocked[0].manualOnly, true);
+  assert.match(ai.blocked[0].why, /client fact.*agent/);
+});
