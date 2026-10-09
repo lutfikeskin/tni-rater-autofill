@@ -1685,7 +1685,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
     sessionId: session,
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     store: { saved: {}, set(k, v) { this.saved[k] = v; return Promise.resolve(); } },
-    LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; },
+    LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; }, knownStep,
   };
   vm.runInNewContext(['viewOf', 'saveViews', 'resetViews', 'stepScope', 'recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);
@@ -2372,10 +2372,11 @@ test('an empty page is logged only when questions went away, never from a fill o
 test('a one-address application names the step of each layout, and steps are compared apart', async () => {
   let controls = [{ label: 'VIN', kind: 'text' }];
   const { context, logged } = layoutHarness(() => controls);
-  context.state.tab.carrier = { id: 'amwins', layoutUrl: /./, layoutSteps: true };
+  context.state.tab.carrier = { id: 'amwins', layoutUrl: /./, layoutSteps: amwins.layoutSteps };
   context.domStep = 'Vehicles';
   await context.recordLayout('Vehicles', 'arrived');
-  context.domStep = 'Coverages';
+  // The visible headings, as one of the carrier's step names (knownStep).
+  context.domStep = 'Draft Application Saved! / coverages';
   controls = [{ label: 'Exclude Collision Coverage', kind: 'radio', options: ['Yes', 'No'] }];
   await context.recordLayout('Vehicles', 'changed');
   // Back on the Vehicles step, unchanged: already logged for that step.
@@ -2383,6 +2384,14 @@ test('a one-address application names the step of each layout, and steps are com
   controls = [{ label: 'VIN', kind: 'text' }];
   await context.recordLayout('Vehicles', 'changed');
   assert.deepEqual(logged.map((e) => [e.step, e.fields[0].label]), [['Vehicles', 'VIN'], ['Coverages', 'Exclude Collision Coverage']]);
+  // A heading that is none of the step names (it can name the insured, maybe the previous
+  // client's): the layout carries no step.
+  context.domStep = 'Old Client Trucking LLC';
+  controls = [{ label: 'Business name', kind: 'text' }];
+  await context.recordLayout('Vehicles', 'changed');
+  assert.equal(logged.at(-1).fields[0].label, 'Business name');
+  assert.equal(logged.at(-1).step, undefined);
+  assert.ok(!JSON.stringify(logged.at(-1)).includes('Old Client'));
   // Other carriers' layouts carry no step (their pages have their own names).
   context.state.tab.carrier = { id: 'progressive', layoutUrl: /./ };
   controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'] }];

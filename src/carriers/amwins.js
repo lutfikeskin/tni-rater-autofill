@@ -197,8 +197,8 @@ export const amwins = {
   // Where fills run (also "Fill this page"): the start page, where the risk state is picked and the
   // application opened, and the application. Never the portal's other pages (audit 2026-10-08).
   autoFillUrl: /\/(commerciallines|application\/businessauto)/i,
-  // One address for every step: a layout also names its step (the visible step heading). Fill
-  // and field-change events name it only when it is one of these headings (src/usage.js knownStep).
+  // One address for every step: layouts, fill and field-change events name the step (the visible
+  // step heading) only when it is one of these headings (src/usage.js knownStep).
   layoutSteps: ['Insured Info', 'Drivers', 'Vehicles', 'Coverages', 'Underwriting'],
   // The rules below answer these sections row by row; a generic label rule never does. A row the
   // intake doesn't describe stays the agent's: on 2026-10-08 a trailer added by hand as a second

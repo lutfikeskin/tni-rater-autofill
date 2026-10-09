@@ -167,11 +167,11 @@ export function fieldChangeEvent(change, { record, filled, redact, labels, choic
 }
 
 // The step of a one-address application (AmWINS: Insured Info, Vehicles, …), whose steps share
-// the page's address: pagekit's `stepKey` (the visible headings) on fill events, the recorder's
-// reading of the same headings on field changes. Only a heading that is one of the carrier's own
-// step names (`layoutSteps`) is sent, as that name: a heading can name the insured, and the tab may
-// still show the previous client's quote, whose names the loaded intake's redaction doesn't know
-// (Codex on PR #65). Absent on carriers whose pages have names of their own (audit 2026-10-08).
+// the page's address: pagekit's `stepKey` (the visible headings) on fill events and page layouts,
+// the recorder's reading of the same headings on field changes. Only a heading that is one of the
+// carrier's own step names (`layoutSteps`) is sent, as that name: a heading can name the insured,
+// and the tab may still show the previous client's quote, whose names the loaded intake's
+// redaction doesn't know (Codex on PR #65). Absent on carriers whose pages have names of their own (audit 2026-10-08).
 export const STEP_MAX = 120;
 export function knownStep(carrier, headings) {
   const names = Array.isArray(carrier?.layoutSteps) ? carrier.layoutSteps : [];

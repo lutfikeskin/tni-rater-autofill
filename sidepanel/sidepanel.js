@@ -1304,8 +1304,10 @@ async function captureLayout(job, reason) {
     const top = results.map((r) => r.result).find((f) => f?.isTopFrame);
     if (top?.page !== page) return;
     // On a one-address application, which step (Insured Info, Vehicles, …): otherwise every step
-    // would look like one page whose questions come and go.
-    const step = carrier.layoutSteps ? top.step || null : undefined;
+    // would look like one page whose questions come and go. Only as one of the carrier's step
+    // names (knownStep), like fill and field-change events: a heading can name the insured, and
+    // the tab may still show the previous client's quote. Any other heading: no step.
+    const step = carrier.layoutSteps ? knownStep(carrier, top.step) : undefined;
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
