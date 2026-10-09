@@ -42,7 +42,8 @@ class Document {
     this.title = 'Synthetic recorder page';
   }
 
-  querySelectorAll() { return [...this.body.controls]; }
+  // Headings (the recorder's stepKey) are asked for apart from the controls.
+  querySelectorAll(selector) { return /^h1/.test(selector ?? '') ? [...(this.headings ?? [])] : [...this.body.controls]; }
   getElementById(id) { return this.body.controls.find((c) => c.id === id) ?? null; }
   createTreeWalker() { return { currentNode: null, previousNode: () => false }; }
 }
@@ -391,6 +392,31 @@ test('a recorder orphaned by an extension reload is replaced, not reused', () =>
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
   assert.notEqual(h.context.__raterRecorder, old);
   assert.equal(h.context.__raterRecorder.alive(), true);
+});
+
+// Contract 1 (audit 2026-10-08): a change on a one-address application (AmWINS) names the step it
+// was on, as pagekit's stepKey reads the visible headings; the panel keeps it only for such carriers.
+test('field changes name the visible step headings, when the page has any', () => {
+  const h = harness();
+  const field = select({ id: 'bodyType', value: '1' });
+  h.append(field);
+  h.context.__raterRecorder.rebaseline();
+  field.value = '3';
+  h.emit('change', field, true);
+  h.tick();
+  let message = h.sent.filter((m) => m.event === 'field_changes').at(-1);
+  assert.equal(message.step, undefined, 'no headings: no step');
+  h.document.headings = [
+    { tagName: 'H3', textContent: ' Vehicles ', getClientRects: () => [{}] },
+    { tagName: 'H1', textContent: 'Hidden title', getClientRects: () => [] },
+    { tagName: 'H2', textContent: 'Unit 1', getClientRects: () => [{}] },
+  ];
+  field.value = '5+';
+  h.emit('change', field, true);
+  h.tick();
+  message = h.sent.filter((m) => m.event === 'field_changes').at(-1);
+  assert.equal(message.step, 'Vehicles / Unit 1');
+  assert.equal(message.changes[0].after, '5+');
 });
 
 // Codex reproduction (2026-10-08): a trusted change made while paused produced no event and

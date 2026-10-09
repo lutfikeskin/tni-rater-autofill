@@ -5,7 +5,8 @@ import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { assistContextKey } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
-import { fillEvents, sha256Hex } from '../src/usage.js';
+import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
+import { amwins } from '../src/carriers/amwins.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
@@ -77,6 +78,10 @@ function extractFunction(name) {
         if (name !== 'persistGuardedEdits' && /\bpersistGuardedEdits\(/.test(source)) source += `\n${extractFunction('persistGuardedEdits')}`;
         // Agent-edit scoping is shared by many functions: bring its helpers along.
         if (name !== 'agentEdited' && /\bagentEdited\(/.test(source)) source += `\n${extractFunction('agentEdited')}`;
+        // So are a fill's context and its tab's maps (fillContext, rememberFill).
+        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'logFillError', 'stepOfResults']) {
+          if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
+        }
         return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
       }
     }
@@ -406,10 +411,10 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   const logged = [], rendered = [], layouts = [], assisted = [];
   const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
   const context = {
-    state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
+    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
-    fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }],
+    fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }], knownStep,
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events), currentSession: () => null },
     runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
     pickListItem: async () => {}, retireAiOrigins: async () => {},
@@ -1118,7 +1123,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
     $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }),
     normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
-    store: { set: async () => {} }, clearAgentKeys: async () => {}, uploadNow() {},
+    store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
     'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile'].map(extractFunction).join('\n'), context);
@@ -1129,6 +1134,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
   assert.equal(state.aiCache.get(pendingSig), pending, 'the existing unresolved hold keeps its identity');
   assert.equal(stored.length, 1);
   assert.equal(stored[0].key, 'pending');
+  assert.equal(context.doneRestored.size, 0, 'the intake\'s done actions may be restored again (its records are kept now)');
 });
 
 // 2026-10-05 FL run: after the first vehicle's Add Vehicle was continued, the second and third
@@ -1439,7 +1445,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), layoutReadyTabs: new Set(),
       autoPaused: false, filling: false, assistPage: 'Rates' };
     const context = {
-      state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
+      state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
       recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, retireAiOrigins: async () => {},
@@ -1741,7 +1747,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
     sessionId: session,
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     store: { saved: {}, set(k, v) { this.saved[k] = v; return Promise.resolve(); } },
-    LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; },
+    LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; }, knownStep,
   };
   vm.runInNewContext(['viewOf', 'saveViews', 'resetViews', 'stepScope', 'recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);
@@ -1849,7 +1855,7 @@ test('with no fill at all, Yes, No, Yes on the page logs each change and the thr
   const { context, logged } = layoutHarness(() => controls);
   Object.assign(context, {
     samePage: (p) => p, redactor: () => (s) => s, scheduleAutoFill: () => {},
-    fieldChangeEvent: (c) => ({ type: 'field_change', q: c.q, from: c.before, to: c.after, by: 'page' }),
+    fieldChangeEvent: (c) => ({ type: 'field_change', q: c.q, from: c.before, to: c.after, by: 'page' }), knownStep,
   });
   Object.assign(context.state, { filled: new Map(), labels: new Map() });
   context.state.tab.url = 'Operations';
@@ -1961,7 +1967,7 @@ test('reasons belong to the capture they were given to', async () => {
 test('a change in a child frame schedules the layout of the quote page around it', async () => {
   const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
   const { context, logged } = layoutHarness(() => controls);
-  Object.assign(context, { samePage: (p) => p, redactor: () => (s) => s, scheduleAutoFill: () => {}, fieldChangeEvent: () => ({ type: 'field_change' }) });
+  Object.assign(context, { samePage: (p) => p, redactor: () => (s) => s, scheduleAutoFill: () => {}, fieldChangeEvent: () => ({ type: 'field_change' }), knownStep });
   Object.assign(context.state, { filled: new Map(), labels: new Map() });
   vm.runInContext(extractFunction('onRecorderMessage'), context);
   context.onRecorderMessage({ ra: 'usage', event: 'new_fields', page: '/widgets/address-frame', keys: ['x'] }, { tab: { id: 1 }, frameId: 3 });
@@ -2076,7 +2082,7 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   const controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'], selected: 'Yes' }];
   const { context, logged } = layoutHarness(() => controls);
   Object.assign(context, { samePage: (p) => p, $: () => ({ checked: false }), redactor: () => (s) => s, scheduleAutoFill: () => {},
-    fieldChangeEvent: () => ({ type: 'field_change' }) });
+    fieldChangeEvent: () => ({ type: 'field_change' }), knownStep });
   Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set(), filled: new Map(), labels: new Map() });
   vm.runInContext(extractFunction('onRecorderMessage'), context);
   const sender = { tab: { id: 1 } };
@@ -2095,7 +2101,8 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   await context.state.layoutChain;
   assert.deepEqual(logged.filter((e) => e.type === 'page_layout').map((e) => [e.page, e.reason]), [['Drivers', 'arrived']]);
   // Fills ready their tab once they went through (tested with autoFill below; fillPage the same).
-  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, fillOptions\(carrier, \{ overwrite \}\)\]\);\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
+  // (After the stale check: a fill whose intake changed meanwhile proves nothing for the new one.)
+  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
 });
 
 test('a queued capture is dropped for a later change on its page, which gets its reasons', async () => {
@@ -2235,11 +2242,11 @@ test('an automatic fill readies its tab for layouts only when it went through', 
   const run = async (runKit) => {
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
     const context = {
-      state, Date, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
+      state, Date, crypto, rulesVersion: null, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
       redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: () => {}, pickListItem: async () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
-      $: () => ({ append() {} }), h: () => ({}), viewOf: () => 't1',
+      $: () => ({ checked: false, append() {} }), h: () => ({}), viewOf: () => 't1',
     };
     vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
     await context.autoFill('Rates');
@@ -2427,10 +2434,11 @@ test('an empty page is logged only when questions went away, never from a fill o
 test('a one-address application names the step of each layout, and steps are compared apart', async () => {
   let controls = [{ label: 'VIN', kind: 'text' }];
   const { context, logged } = layoutHarness(() => controls);
-  context.state.tab.carrier = { id: 'amwins', layoutUrl: /./, layoutSteps: true };
+  context.state.tab.carrier = { id: 'amwins', layoutUrl: /./, layoutSteps: amwins.layoutSteps };
   context.domStep = 'Vehicles';
   await context.recordLayout('Vehicles', 'arrived');
-  context.domStep = 'Coverages';
+  // The visible headings, as one of the carrier's step names (knownStep).
+  context.domStep = 'Draft Application Saved! / coverages';
   controls = [{ label: 'Exclude Collision Coverage', kind: 'radio', options: ['Yes', 'No'] }];
   await context.recordLayout('Vehicles', 'changed');
   // Back on the Vehicles step, unchanged: already logged for that step.
@@ -2438,6 +2446,14 @@ test('a one-address application names the step of each layout, and steps are com
   controls = [{ label: 'VIN', kind: 'text' }];
   await context.recordLayout('Vehicles', 'changed');
   assert.deepEqual(logged.map((e) => [e.step, e.fields[0].label]), [['Vehicles', 'VIN'], ['Coverages', 'Exclude Collision Coverage']]);
+  // A heading that is none of the step names (it can name the insured, maybe the previous
+  // client's): the layout carries no step.
+  context.domStep = 'Old Client Trucking LLC';
+  controls = [{ label: 'Business name', kind: 'text' }];
+  await context.recordLayout('Vehicles', 'changed');
+  assert.equal(logged.at(-1).fields[0].label, 'Business name');
+  assert.equal(logged.at(-1).step, undefined);
+  assert.ok(!JSON.stringify(logged.at(-1)).includes('Old Client'));
   // Other carriers' layouts carry no step (their pages have their own names).
   context.state.tab.carrier = { id: 'progressive', layoutUrl: /./ };
   controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'] }];
@@ -2470,7 +2486,7 @@ test('events name their view: the tab\'s order in the quote and the vehicle or d
   assert.equal(logged.at(-1).view, 't1');
   // Field changes and arrivals from the recorder carry it too.
   Object.assign(context, { samePage: (p) => p, $: () => ({ checked: false }), redactor: () => (s) => s, scheduleAutoFill: () => {},
-    fieldChangeEvent: () => ({ type: 'field_change' }), unitArrival: () => {} });
+    fieldChangeEvent: () => ({ type: 'field_change' }), knownStep, unitArrival: () => {} });
   Object.assign(context.state, { visitedPages: new Set(), autoPages: new Set(), filled: new Map(), labels: new Map() });
   vm.runInContext(extractFunction('onRecorderMessage'), context);
   context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: 'AddVehicle', changes: [{ key: 'x', before: '', after: 'Yes' }] }, { tab: { id: 917 } });
@@ -2487,9 +2503,11 @@ test('events name their view: the tab\'s order in the quote and the vehicle or d
 test('fills take their view before waiting, stop pages log theirs, and a reopened panel keeps the quote\'s views', () => {
   for (const name of ['fillPage', 'autoFill']) {
     const body = extractFunction(name);
-    assert.ok(body.indexOf('const view = viewOf(tabId, page, carrier);') < body.indexOf('await pickListItem('), `${name} takes the view before any waiting`);
-    assert.match(body, /fillEvents\(frames, \{[^}]*\bview\b/, `${name} logs that view`);
+    assert.ok(body.indexOf('const ctx = fillContext(') < body.indexOf('await pickListItem('), `${name} takes its context (with the view) before any waiting`);
+    assert.match(body, /logFill\(ctx, frames, results, started\)/, `${name} logs that view`);
   }
+  assert.match(extractFunction('fillContext'), /view: viewOf\(tabId, page, carrier\)/);
+  assert.match(extractFunction('logFill'), /fillEvents\(frames, \{[^}]*\bview: ctx\.view\b/);
   assert.match(extractFunction('onRecorderMessage'), /auto: 'stop'/);
   assert.match(extractFunction('onRecorderMessage'), /page: stopPage, view: viewOf\(sender\.tab\.id, stopPage\)/);
   assert.match(extractFunction('init'), /usage\.restoreSession\([\s\S]{0,80}\);\s+const views = await store\.get\('views'\);\s+if \(views\?\.session && views\.session === usage\.currentSession\(\)\?\.id\) state\.viewTabs = new Map\(views\.tabs\);/);
@@ -2554,7 +2572,7 @@ async function stateNoteHarness() {
   const record = (st) => ({ applicant: { name: 'Synthetic Client LLC' }, garaging: { state: st } });
   const state = {
     intake: { record: record('FL') }, tab: { id: 7, url: 'https://www.foragentsonly.com/home/', carrier: progressive },
-    quoteStates: new Map(), filled: new Map(), labels: new Map(), choices: new Map(), agentKeys: new Map(), doneActions: new Set(),
+    quoteStates: new Map(), tabSessions: new Map(), filled: new Map(), labels: new Map(), choices: new Map(), agentKeys: new Map(), doneActions: new Set(),
     viewTabs: new Map(), layoutReadyTabs: new Set(), layoutNewTabs: new Set(), visitedPages: new Set(), active: {},
     intakeRevision: 0, layoutPending: null,
   };
@@ -2563,7 +2581,7 @@ async function stateNoteHarness() {
   const context = {
     state, URL, h: node, $: (id) => ui[id], quoteStatePick, stateCode, stateMismatch, inExtension: false,
     usage: { log: (...e) => logged.push(...e), currentSession: () => session.current },
-    fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), redactor: () => (x) => x, redactionTerms: () => [],
+    fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), knownStep, redactor: () => (x) => x, redactionTerms: () => [],
     scheduleLayout: () => {}, persistAgentKeys: () => {}, persistDoneActions: () => {}, save: () => {}, settleRejectedAi: async () => false,
     scheduleAutoFill: () => {}, syncAiBanner: () => {}, showStopPage: () => {}, fillEvents, store: { set: async () => {} },
     unitArrival: () => {}, onQuotePage: () => false, fillPage: async () => {}, setTimeout: () => 0,
@@ -2710,7 +2728,614 @@ test('the quote state comes from the page as it is, the fill, the tab the quote 
   t.context.rememberFill([{ filled: [{ key: 'riskState', path: 'amwins.riskState', shown: 'Ohio' }] }], { tabId: 12, carrier: t.amwins });
   assert.equal(t.state.quoteStates.get(12)?.code, 'OH');
   assert.equal(t.state.quoteStates.has(11), false);
-  assert.match(SIDEPANEL, /rememberFill\(frames, \{ tabId, carrier \}\);[\s\S]*rememberFill\(frames, \{ tabId, carrier \}\);/, 'both fills say whose tab');
+  assert.match(SIDEPANEL, /rememberFill\(frames, ctx\);[\s\S]*rememberFill\(frames, ctx\);/, 'both fills say whose tab');
+});
+
+// ---------------------------------------------------------------------------------------------
+// Audit 2026-10-08, finding 5 (PR claude/run-identity): a fill's context is taken before it waits,
+// and its results are checked against it before anything is remembered.
+
+// A fill that waits on the carrier while the panel moves on, as the Codex reproduction modelled it.
+function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: amwins.layoutSteps }, rules = 'abcdef012345' } = {}) {
+  let release, reject, markStarted;
+  const started = new Promise((resolve) => { markStarted = resolve; });
+  const pending = new Promise((resolve, fail) => { release = resolve; reject = fail; });
+  const intakeA = { id: 'intake-A', record: { client: 'A' } };
+  const state = {
+    intake: intakeA, intakeRevision: 0, active: { drivers: 0, vehicles: 0, trailers: 0 },
+    tab: { id: 7, url: 'https://carrier.test/quote-A', carrier }, tabSessions: new Map(),
+    filled: new Map(), labels: new Map(), choices: new Map(), agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), autoPages: new Set(), doneSteps: new Set(),
+    layoutReadyTabs: new Set(), autoPaused: false, autoPending: false, pagePending: null, filling: false, autoTimer: null,
+  };
+  const ui = {
+    overwrite: { checked: false }, 'auto-advance': { checked: true }, 'auto-followups': { checked: true }, 'auto-pages': { checked: false },
+    fill: { disabled: false, textContent: '' }, report: { children: [], replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); } },
+  };
+  const seen = { plan: null, logged: [], rendered: 0, layouts: 0, persistedKeys: [], persistedActions: [], afterFill: [], options: null };
+  const context = {
+    state, URL, crypto, Date, rulesVersion: rules, $: (id) => ui[id], pageOf: (url) => new URL(url).pathname, onQuotePage: () => true, showStopPage() {},
+    clearTimeout() {}, setTimeout: () => 1, pickListItem: async () => {},
+    buildPlan: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
+    fillOptions: () => ({}), pendingAi: () => [], ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
+    runKit: async (tabId, carrier, func, args) => { seen.options = args[1]; markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
+    fillEvents, knownStep, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
+    renderReport: () => { seen.rendered++; }, renderSite() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
+    viewOf: () => 't1', usage: { currentSession: () => ({ id: `session-${state.intake.id}`, intakeId: state.intake.id, keySalt: 'salt' }), log: (...events) => seen.logged.push(...events) },
+    h: (tag, props, text) => ({ tag, text }), save: async () => {},
+    persistAgentKeys: (tabId, keys) => { seen.persistedKeys.push([tabId, keys]); }, persistDoneActions: (tabId, ids) => { seen.persistedActions.push([tabId, ids]); },
+    stateCode: () => null, noteQuoteState() {},
+  };
+  vm.createContext(context);
+  vm.runInContext(['rememberFill', 'fillPage', 'autoFill'].map(extractFunction).join('\n'), context);
+  const results = [{ frameId: 0, result: {
+    fields: 1, filled: [{ key: 'old-field', path: 'clientA.field', shown: 'A value', controlKind: 'select' }], actions: [{ id: 'old-helper' }], protectedKeys: ['old-manual-edit'],
+    labels: [['old-field', 'Old field']], choices: [['old-choice', ['A']]], invalidatedActions: [], halted: false, stepKey: 'Vehicles / A value',
+  } }];
+  return { state, ui, seen, context, intakeA, started, release, reject, results };
+}
+
+// Codex reproduction (stale-fill-reproduction.mjs): a fill's results came back after the agent had
+// loaded another intake and moved to its tab, and were remembered and logged as that intake's.
+test('a fill whose intake changed while the carrier worked is dropped: the new intake and tab are untouched', async () => {
+  const t = fillHarness();
+  const run = t.context.fillPage();
+  await t.started;
+  assert.equal(t.state.filling, true);
+  assert.deepEqual(t.seen.plan, { client: 'A', active: { drivers: 0, vehicles: 0, trailers: 0 } });
+  // Another intake is loaded and its quote tab comes to the front while the carrier works.
+  t.state.intake = { id: 'intake-B', record: { client: 'B' } };
+  t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier };
+  t.state.active = { drivers: 1, vehicles: 1, trailers: 0 };
+  Object.assign(t.state, { filled: new Map(), labels: new Map(), choices: new Map(), agentKeys: new Map(), doneActions: new Set(), autoPages: new Set() });
+  t.release(t.results);
+  await run;
+  assert.equal(t.state.filling, false);
+  assert.deepEqual([t.state.filled.size, t.state.labels.size, t.state.choices.size, t.state.agentKeys.size, t.state.doneActions.size, t.state.autoPages.size], [0, 0, 0, 0, 0, 0], "intake B's state is untouched");
+  assert.equal(t.state.tabSessions.size, 0, 'nor is tab 7 given the earlier intake\'s results');
+  assert.equal(t.state.layoutReadyTabs.has(7), false, 'tab 7 holds intake A\'s answers: no layouts for B from it');
+  assert.deepEqual([t.seen.rendered, t.seen.layouts, t.seen.persistedKeys.length, t.seen.persistedActions.length, t.seen.afterFill.length], [0, 0, 0, 0, 0]);
+  assert.deepEqual(t.seen.logged.map((e) => [e.type, e.carrier, e.page, e.auto, e.error]), [['fill_error', 'amwins', '/quote-A', false, 'stale: intake changed during the fill']]);
+  assert.match(t.seen.logged[0].run, /^[\w-]{8,64}$/);
+  // Codex on PR #65 (f8d6215): logged after B was loaded, the event is still A's quote and intake.
+  assert.deepEqual([t.seen.logged[0].session, t.seen.logged[0].intakeId], ['session-intake-A', 'intake-A']);
+  assert.match(t.ui.report.children[0].text, /intake changed while this page was being filled/);
+  assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value|clientA/, 'no client data in the error');
+});
+
+test('an intake correction during a fill makes its results stale too, for automatic fills as well', async () => {
+  const t = fillHarness();
+  const run = t.context.autoFill('/quote-A');
+  await t.started;
+  t.state.intakeRevision++;
+  t.release(t.results);
+  await run;
+  assert.deepEqual([t.state.filled.size, t.state.doneActions.size, t.seen.afterFill.length, t.state.layoutReadyTabs.size], [0, 0, 0, 0]);
+  assert.deepEqual(t.seen.logged.map((e) => [e.type, e.auto, e.error]), [['fill_error', true, 'stale: intake changed during the fill']]);
+  assert.equal(t.state.filling, false);
+});
+
+test('a fill that stays current is remembered for its tab, and its events share a run with the rules, settings and step', async () => {
+  const t = fillHarness();
+  const run = t.context.fillPage();
+  await t.started;
+  // The agent looks at another quote tab meanwhile: the results still belong to tab 7.
+  t.state.tab = { id: 8, url: 'https://carrier.test/quote-B', carrier: t.state.tab.carrier };
+  t.release(t.results);
+  await run;
+  assert.equal(t.state.filled.size, 0, 'tab 8 gets nothing');
+  const tab7 = t.state.tabSessions.get(7);
+  assert.deepEqual([[...tab7.doneActions], tab7.filled.get('old-field').path, [...tab7.agentKeys.get('/quote-A')], tab7.labels.get('old-field')], [['old-helper'], 'clientA.field', ['old-manual-edit'], 'Old field']);
+  assert.deepEqual(t.seen.persistedKeys.map(([id]) => id), [7], 'persisted as tab 7\'s');
+  assert.deepEqual(t.seen.persistedActions.map(([id]) => id), [7]);
+  assert.equal(t.state.layoutReadyTabs.has(7), true);
+  assert.equal(t.seen.afterFill[0].run, t.seen.logged[0].run, 'the step watcher knows the run');
+  const [fillRun, ...fields] = t.seen.logged;
+  assert.equal(fillRun.type, 'fill_run');
+  assert.match(fillRun.run, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(JSON.parse(JSON.stringify([fillRun.rules, fillRun.settings, fillRun.step, fillRun.view, fillRun.overwrite, fillRun.auto])), ['abcdef012345', { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false }, 'Vehicles', 't1', false, false]);
+  assert.ok(fields.length && fields.every((e) => e.type === 'fill_field' && e.run === fillRun.run && e.step === 'Vehicles'), 'every field event shares the run and step, as the step\'s own name');
+  assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value/);
+});
+
+// Codex on PR #65 (f8d6215): an automatic fill never overwrites, whatever the checkbox says, and
+// its run's settings say what it used.
+test('a run\'s settings name the overwrite the fill used: never for an automatic fill, the checkbox for a manual one', async () => {
+  for (const [auto, expected] of [[true, false], [false, true]]) {
+    const t = fillHarness();
+    t.ui.overwrite.checked = true;
+    const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
+    await t.started;
+    t.release(t.results);
+    await run;
+    const fillRun = t.seen.logged.find((e) => e.type === 'fill_run');
+    assert.deepEqual([fillRun.auto, fillRun.overwrite, fillRun.settings.overwrite], [auto, expected, expected]);
+  }
+});
+
+test('without a rules fingerprint the run carries none, and a carrier with page names carries no step', async () => {
+  const t = fillHarness({ carrier: { id: 'progressive', practice: false }, rules: null });
+  const run = t.context.fillPage();
+  await t.started;
+  t.release(t.results);
+  await run;
+  const [fillRun] = t.seen.logged;
+  assert.equal('rules' in fillRun, false);
+  assert.equal('step' in fillRun, false);
+  assert.equal(t.state.filled.get('old-field').path, 'clientA.field', 'remembered on the tab in front');
+});
+
+test('a fill error is logged redacted, with its run, and not from a practice page', async () => {
+  for (const practice of [false, true]) {
+    const t = fillHarness({ carrier: { id: 'progressive', practice } });
+    t.context.runKit = async () => { throw new Error('A value could not be put in Business Name'); };
+    await t.context.fillPage();
+    assert.equal(t.state.autoPaused, true);
+    if (practice) { assert.deepEqual(t.seen.logged, []); continue; }
+    assert.deepEqual(t.seen.logged.map((e) => [e.type, e.error]), [['fill_error', '[client] could not be put in Business Name']]);
+    assert.match(t.seen.logged[0].run, /^[0-9a-f-]{36}$/);
+  }
+});
+
+test('a fill\'s bookkeeping lands on the tab it filled when the agent has moved to another, and follows a switch back', async () => {
+  const h = harness();
+  const carrier = { id: 'progressive' };
+  h.state.tab = { ...quoteTab(1), carrier };
+  h.setActiveTab(quoteTab(2, 'Drivers'));
+  await h.refreshTab();
+  h.rememberFill([{ fields: 1, filled: [{ key: 'k', path: 'p', shown: 'v' }], actions: [{ id: 'lookupVin:0' }], protectedKeys: ['pk'], labels: [['k', 'Key']], choices: [['c', ['A']]], halted: true }],
+    { tabId: 1, carrier, page: 'AddVehicle', scope: 'AddVehicle|v0' });
+  assert.deepEqual([h.state.filled.size, h.state.doneActions.size, h.state.agentKeys.size, h.state.autoPaused], [0, 0, 0, false], 'the tab in front gets nothing');
+  const saved = h.state.tabSessions.get(1);
+  assert.deepEqual([[...saved.doneActions], saved.filled.get('k').path, [...saved.agentKeys.get('AddVehicle|v0')], saved.labels.get('k'), [...saved.choices.get('c')], saved.autoPaused],
+    [['lookupVin:0'], 'p', ['pk'], 'Key', ['A'], true]);
+  h.setActiveTab(quoteTab(1));
+  await h.refreshTab();
+  assert.deepEqual([[...h.state.doneActions], h.state.autoPaused], [['lookupVin:0'], true]);
+  // A tab the panel has no session for yet (its sessions were cleared) gets one of its own.
+  h.rememberFill([{ filled: [], actions: [{ id: 'x' }] }], { tabId: 9, carrier, page: 'P', scope: 'P' });
+  assert.deepEqual([...h.state.tabSessions.get(9).doneActions], ['x']);
+  assert.equal(h.state.doneActions.has('x'), false);
+});
+
+// Audit 2026-10-08, finding 5: loading a PDF wiped every intake's edit keys and helper records,
+// so coming back to a client whose quote was still open added its vehicles again.
+test('loading another intake keeps the first intake\'s edit keys and helper records; Clear forgets only the current one', async () => {
+  const memory = {};
+  const records = { keys: [], seen: {} };
+  const context = {
+    Promise, Set, Date, state: { agentKeysEpochs: new Map() }, agentKeysQueue: Promise.resolve(), doneActionsQueue: Promise.resolve(), KEEP_INTAKES: 20, KEEP_INTAKE_DAYS: 30,
+    agentKeysStore: { get: async () => records.keys, set: async (v) => { records.keys = v; } },
+    doneActionsStore: {
+      clear: async (scope) => { for (const k of Object.keys(memory)) if (k.startsWith(`doneActions:${scope}:`)) delete memory[k]; },
+      scopes: async () => Object.keys(memory).map((k) => k.split(':')[1]),
+    },
+    intakesSeenStore: { get: async () => records.seen, set: async (v) => { records.seen = v; } },
+  };
+  vm.runInNewContext(['clearAgentKeys', 'pruneAgentRecords'].map(extractFunction).join('\n'), context);
+  const day = 86_400_000;
+  const seed = () => { records.keys = [{ scope: 'A', tabId: 7, page: 'Quote', keys: ['k'] }]; memory['doneActions:A:7'] = ['addVehicle:0']; };
+  seed();
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.pruneAgentRecords('A', 1000 * day))), []);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.pruneAgentRecords('B', 1001 * day))), [], 'loading B keeps A');
+  assert.deepEqual([records.keys.length, memory['doneActions:A:7']], [1, ['addVehicle:0']]);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.pruneAgentRecords('A', 1002 * day))), [], 'A again (the same PDF): its records are still there');
+  await context.clearAgentKeys('B');
+  assert.deepEqual([records.keys.length, memory['doneActions:A:7']], [1, ['addVehicle:0']], 'Clear on B leaves A');
+  await context.clearAgentKeys(null);
+  assert.equal(records.keys.length, 1, 'nothing is cleared without an intake');
+  await context.clearAgentKeys('A');
+  assert.deepEqual([records.keys.length, Object.keys(memory)], [0, []]);
+  // Another intake's records go after 30 days without being loaded...
+  seed();
+  await context.pruneAgentRecords('A', 1000 * day);
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.pruneAgentRecords('B', 1031 * day))), ['A']);
+  assert.deepEqual([records.keys.length, Object.keys(memory), Object.keys(records.seen)], [0, [], ['B']]);
+  // ...or once more than 20 intakes have records (the ones loaded longest ago go first); a record
+  // from before intakes were stamped counts from now.
+  records.seen = {};
+  for (let i = 1; i <= 21; i++) await context.pruneAgentRecords(`C${i}`, (2000 + i) * day);
+  records.keys = [{ scope: 'old', tabId: 1, page: 'P', keys: ['k'] }];
+  assert.deepEqual(JSON.parse(JSON.stringify(await context.pruneAgentRecords('D', 2030 * day))), ['C3', 'C2'], 'C1 already went when the 21st was loaded');
+  assert.deepEqual(records.keys.map((x) => x.scope), ['old']);
+  assert.equal(records.seen.old, new Date(2030 * day).toISOString());
+  // The panel: on load, this intake's records may be restored again and the others are pruned;
+  // Clear takes the intake before the session is dropped; nothing clears every intake any more.
+  assert.match(extractFunction('loadFile'), /doneRestored\.clear\(\);/);
+  assert.match(extractFunction('loadFile'), /await pruneAgentRecords\(summary\.intakeId\);/);
+  assert.doesNotMatch(SIDEPANEL, /clearAgentKeys\(\)/);
+  assert.match(SIDEPANEL, /\$\('clear-client'\)\.addEventListener\('click', async \(\) => \{\s+const scope = usage\.currentSession\(\)\?\.intakeId;[\s\S]{0,600}usage\.restoreSession\(null\);[\s\S]{0,300}await clearAgentKeys\(scope\);/);
+});
+
+// Codex on PR #65 (2c8eeb9): Clear was done once the edit keys were gone, while the helper records'
+// removal could still be queued; the same PDF loaded right after got the cleared helper ids back.
+test('Clear is done only once the helper records are gone, and a restore waits for it', async () => {
+  let releaseClear;
+  const memory = { 'doneActions:A:7': ['addVehicle:0'] };
+  const context = {
+    Promise, Number, Array, Set, agentKeysQueue: Promise.resolve(), doneActionsQueue: Promise.resolve(),
+    agentKeysStore: { get: async () => [], set: async () => {} },
+    doneActionsStore: {
+      clear: (scope) => new Promise((resolve) => { releaseClear = () => { delete memory[`doneActions:${scope}:7`]; resolve(); }; }),
+      get: async (scope, tabId) => memory[`doneActions:${scope}:${tabId}`] ?? [],
+    },
+    usage: { currentSession: () => ({ intakeId: 'A' }) }, state: { tab: { id: 7 }, doneActions: new Set() },
+  };
+  vm.runInNewContext(`${SIDEPANEL.match(/const doneRestored = new Set\(\);/)[0]}\n${['clearAgentKeys', 'restoreDoneActions'].map(extractFunction).join('\n')}`, context);
+  let cleared = false;
+  const clear = context.clearAgentKeys('A').then(() => { cleared = true; });
+  const restore = context.restoreDoneActions(7);
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+  assert.equal(cleared, false, 'still removing the helper records');
+  releaseClear();
+  await Promise.all([clear, restore]);
+  assert.equal(cleared, true);
+  assert.deepEqual([...context.state.doneActions], [], 'the cleared ids are not restored');
+});
+
+// Codex on PR #65 (2c8eeb9): listing helper records read the whole of extension storage, with the
+// usage queue (up to 20,000 events), on every PDF load.
+test('helper records are listed by key, without reading the stored values where Chrome can', async () => {
+  const context = { Object };
+  vm.runInNewContext(extractFunction('storedKeys'), context);
+  const values = { 'doneActions:A:7': ['x'], usageLog: new Array(3).fill({}) };
+  const modern = { getKeys: async () => Object.keys(values), get: async (k) => { if (k === null) throw new Error('read everything'); return {}; } };
+  assert.deepEqual(await context.storedKeys(modern), ['doneActions:A:7', 'usageLog']);
+  const older = { get: async (k) => (k === null ? values : {}) }; // Chrome before 130
+  assert.deepEqual(await context.storedKeys(older), ['doneActions:A:7', 'usageLog']);
+  assert.doesNotMatch(SIDEPANEL, /storage\.local\.get\(null\)/);
+});
+
+// Audit 2026-10-08, finding 5: a recorder paused by a fill the panel never finished (closed
+// mid-fill) stayed paused, blind until the page reloaded.
+test('a recorder already in the page is told to resume, unless a fill or AI apply is under way', async () => {
+  const sent = [];
+  const state = { intake: {}, tab: { id: 4, carrier: { id: 'progressive' } }, filling: false };
+  const context = { state, inExtension: true, chrome: { scripting: { executeScript: async () => {} } }, tellRecorder: async (cmd, tabId) => sent.push([cmd, tabId]) };
+  vm.runInNewContext(extractFunction('ensureRecorder'), context);
+  await context.ensureRecorder();
+  assert.deepEqual(sent, [['resume', 4]]);
+  state.filling = true;
+  await context.ensureRecorder();
+  assert.equal(sent.length, 1, 'a fill (or applyAi) paused it on purpose');
+  state.filling = false;
+  context.chrome.scripting.executeScript = async () => { throw new Error('no access'); };
+  await context.ensureRecorder();
+  assert.equal(sent.length, 1, 'no recorder in the page: nothing to resume');
+  assert.match(extractFunction('fillPage'), /await ensureRecorder\(\);\s+await tellRecorder\('pause', tabId\);/, 'a fill pauses right after, with filling already set');
+});
+
+// Audit 2026-10-08, finding 6: a Continue that didn't take went unreported after the silent retry.
+test('a Continue that did not take after its retry pauses automatic filling, tells the agent and is logged', async () => {
+  const logged = [], appended = [];
+  let fills = 0;
+  const state = { tab: { id: 1, url: 'Step' }, intake: {}, filling: false, pagePending: null, autoPaused: false, advanceRetried: new Set(), doneSteps: new Set(['Step||Vehicles']) };
+  const context = { state, pageOf: (u) => u, $: () => ({ checked: true, append: (...x) => appended.push(...x) }), h: (tag, props, text) => text, setTimeout: (fn) => fn(),
+    runKit: async () => [{ frameId: 0, result: 'same' }], fillPage: () => { fills++; }, usage: { log: (e) => logged.push(e) } };
+  vm.runInNewContext(extractFunction('watchNextStep'), context);
+  const carrier = { id: 'amwins', practice: false };
+  await context.watchNextStep(carrier, 'Step', 'same', 'Step||Vehicles', 'run-1');
+  assert.equal(fills, 1, 'the lost Continue is clicked once more, silently');
+  assert.deepEqual([[...state.advanceRetried], state.doneSteps.has('Step||Vehicles'), state.autoPaused, logged], [['Step||Vehicles'], false, false, []]);
+  // The retried fill clicked Continue again and watches again; the step still doesn't change.
+  await context.watchNextStep(carrier, 'Step', 'same', 'Step||Vehicles', 'run-2');
+  assert.equal(fills, 1, 'not clicked a third time');
+  assert.equal(state.autoPaused, true);
+  assert.match(appended[0], /Continue didn't take: click it yourself, then Fill this page again if needed/);
+  assert.deepEqual(JSON.parse(JSON.stringify(logged)), [{ type: 'fill_error', carrier: 'amwins', page: 'Step', run: 'run-2', auto: 'page', error: 'continue did not take' }]);
+  // A practice page says it but logs nothing; a step that does change is filled as before.
+  state.autoPaused = false;
+  await context.watchNextStep({ id: 'amwins', practice: true }, 'Step', 'same', 'Step||Vehicles');
+  assert.deepEqual([state.autoPaused, logged.length, appended.length], [true, 1, 2]);
+  let reads = 0;
+  context.runKit = async () => [{ frameId: 0, result: ++reads > 2 ? 'next' : 'same' }];
+  await context.watchNextStep(carrier, 'Step', 'same', 'Step||Other');
+  assert.equal(fills, 2);
+  assert.match(extractFunction('afterFill'), /watchNextStep\(carrier, page, advanced\.signatureBefore, doneKey, run, ctx\)/);
+});
+
+test('the fill hint says Continue is clicked for the agent only while that setting is on and the carrier has an advance pattern', () => {
+  const body = extractFunction('renderSite');
+  assert.match(body, /: carrier && \$\('auto-advance'\)\.checked && carrier\.advance \? 'Nothing is submitted or bound\. Continue is clicked for you once nothing on a page is left for you; review each page\\'s report\.'\s+: carrier \? 'Nothing is submitted\. Review the page, then click Next yourself\.'/);
+  assert.match(extractFunction('wireUsage'), /\$\('auto-advance'\)\.addEventListener\('change', \(e\) => \{ usage\.saveSettings\(\{ autoAdvance: e\.target\.checked \}\); renderSite\(\); \}\);/, 'the hint follows the switch');
+});
+
+// Audit 2026-10-08, finding 11: a problem report waited for the next minute's upload, which the
+// panel was often closed before.
+test('a problem report is uploaded as soon as it is logged', () => {
+  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[\s\S]{0,400}\$\('usage-note'\)\.textContent = 'Thanks — saved with the usage log\.';\s+\/\/[^\n]*\n\s+uploadNow\(\);/);
+});
+
+// Contract 1 (audit 2026-10-08): a field change on a one-address application names its step.
+test('field changes carry the step the recorder read, only for one-address applications', () => {
+  const logged = [];
+  const state = { intake: { record: {} }, tab: { id: 1, url: 'https://x.test/application/businessauto', carrier: { id: 'amwins', layoutSteps: amwins.layoutSteps } }, filled: new Map(), labels: new Map(), choices: new Map(),
+    agentKeys: new Map(), visitedPages: new Set(), autoPages: new Set(), layoutReadyTabs: new Set(), layoutNewTabs: new Set(), quoteStates: new Map() };
+  const context = { state, URL, $: () => ({ checked: false }), usage: { log: (...e) => logged.push(...e), currentSession: () => ({ keySalt: 's' }) }, redactor: () => (s) => s, redactionTerms: () => [],
+    fieldChangeEvent: (c, ctx) => ({ type: 'field_change', key: c.key, step: ctx.step }), knownStep, viewOf: () => 't1', scheduleLayout() {}, scheduleAutoFill() {}, quoteStatePick: () => undefined, persistAgentKeys() {}, settleRejectedAi: async () => false };
+  vm.runInNewContext(`${PAGE_HELPERS}\n${extractFunction('onRecorderMessage')}`, context);
+  const change = (step = 'Vehicles ') => context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/application/businessauto', step, changes: [{ key: 'vin', before: '', after: 'x', agent: true }] }, { tab: { id: 1 }, frameId: 0 });
+  change();
+  assert.equal(logged.at(-1).step, 'Vehicles');
+  // Codex on PR #65 (2c8eeb9): only a known step name is sent. The tab may still show the previous
+  // client's quote, whose names the loaded intake's redaction doesn't know.
+  change('Draft Application Saved! / Coverages');
+  assert.equal(logged.at(-1).step, 'Coverages', 'a dialog heading beside the step: the step');
+  change('Jordan Avery Trucking LLC');
+  assert.equal(logged.at(-1).step, undefined, 'a heading that is no step name: nothing');
+  state.tab.carrier = { id: 'progressive' };
+  change();
+  assert.equal(logged.at(-1).step, undefined, 'a carrier with page names: no step');
+});
+
+// PR #65 round 3: retained results do not authorize work on the tab now in front.
+test('fills finishing on another tab keep origin markers and never start its helpers, watcher, report or AI', async () => {
+  for (const auto of [false, true]) {
+    const t = fillHarness({ carrier: { id: 'progressive', vehiclePages: ['/quote-A'] } });
+    const timers = [], watched = [];
+    t.context.setTimeout = (fn) => { timers.push(fn); return 1; };
+    t.context.watchNextStep = (...args) => watched.push(args);
+    vm.runInContext(extractFunction('afterFill'), t.context);
+    Object.assign(t.results[0].result, { advanced: 'Continue', signatureBefore: 'old', stepKey: 'Vehicles' });
+    const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
+    await t.started;
+    t.state.tab = { id: 8, url: 'https://carrier.test/quote-A', carrier: t.state.tab.carrier };
+    t.state.active = { drivers: 2, vehicles: 2, trailers: 2 };
+    t.ui.report.replaceChildren({ text: 'Tab B report' });
+    t.release(t.results);
+    await run;
+    const origin = t.state.tabSessions.get(7);
+    assert.equal(origin.autoPages.has('/quote-A'), !auto, 'manual origin marker stays with tab 7');
+    assert.deepEqual([...origin.doneSteps], ['/quote-A|v0|Vehicles'], 'Continue uses the origin entity');
+    assert.deepEqual([t.state.autoPages.size, t.state.doneSteps.size, t.seen.rendered, t.seen.layouts, timers.length, watched.length], [0, 0, 0, 0, 0, 0]);
+    assert.deepEqual(t.ui.report.children, [{ text: 'Tab B report' }]);
+  }
+});
+
+test('helper follow-ups and pending-page timers discard a switched tab or changed intake', () => {
+  for (const change of ['tab', 'replacement', 'correction']) {
+    const t = fillHarness();
+    const timers = [], scheduled = [];
+    t.context.setTimeout = (fn) => { timers.push(fn); return 1; };
+    t.context.scheduleAutoFill = () => scheduled.push('follow-up');
+    t.context.fillPage = () => scheduled.push('pending page');
+    vm.runInContext(['afterFill', 'runPendingPage'].map(extractFunction).join('\n'), t.context);
+    const ctx = t.context.fillContext({ tabId: 7, carrier: t.state.tab.carrier, page: '/quote-A' });
+    t.context.afterFill([{ actions: [{ id: 'helper' }] }], ctx);
+    t.state.pagePending = '/quote-A';
+    t.context.runPendingPage(ctx);
+    assert.equal(timers.length, 2);
+    if (change === 'tab') t.state.tab = { ...t.state.tab, id: 8 };
+    if (change === 'replacement') t.state.intake = { record: {} };
+    if (change === 'correction') t.state.intakeRevision++;
+    timers.forEach((fn) => fn());
+    assert.deepEqual(scheduled, [], change);
+  }
+});
+
+test('list verification discards driver and trailer reads after intake replacement or correction before writing helpers', async () => {
+  for (const list of ['drivers', 'trailers']) for (const change of ['replacement', 'correction']) {
+    const carrier = { driverList: 'Drivers', trailerList: 'Vehicles' };
+    const record = { vehicles: [{ vin: '1XPWD40X1DD000001' }], trailers: [{ vin: '1W1MAFZB0KA000002' }], drivers: [{ first: 'Jordan', last: 'Sample' }] };
+    const state = { tab: { id: 7 }, intake: { record }, intakeRevision: 0, active: { drivers: 0, trailers: 0, vehicles: 0 }, doneActions: new Set(['trailerEntered:0']) };
+    let release, started;
+    const ready = new Promise((resolve) => { started = resolve; });
+    const pending = new Promise((resolve) => { release = resolve; });
+    const writes = [];
+    const context = { state, runKit: async () => { started(); return pending; }, persistDoneActions: () => writes.push('persist'), save: async () => writes.push('save'), renderPickers: () => writes.push('render') };
+    vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+    const run = context.pickListItem(carrier, list === 'drivers' ? 'Drivers' : 'Vehicles');
+    await ready;
+    if (change === 'replacement') state.intake = { record: { ...record } };
+    else state.intakeRevision++;
+    state.doneActions = new Set(['replacement-helper', 'trailerEntered:0']);
+    release([{ result: list === 'drivers' ? [true] : [true, false] }]);
+    await run;
+    assert.deepEqual([...state.doneActions], ['replacement-helper', 'trailerEntered:0'], `${list}: no add or deletion from the old read`);
+    assert.deepEqual(writes, [], `${list}: no storage or picker writes`);
+    assert.deepEqual(state.active, { drivers: 0, trailers: 0, vehicles: 0 });
+  }
+});
+
+test('manual and automatic fill rejections after intake replacement or correction use only the stale warning', async () => {
+  for (const auto of [false, true]) for (const change of ['replacement', 'correction']) {
+    const t = fillHarness();
+    const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
+    await t.started;
+    if (change === 'replacement') t.state.intake = { id: 'intake-B', record: { client: 'B' } };
+    else t.state.intakeRevision++;
+    t.ui.report.replaceChildren();
+    t.reject(new Error('Old carrier error with A value'));
+    await run;
+    assert.equal(t.state.autoPaused, false, 'a rejected old request does not pause the current intake');
+    assert.equal(t.state.tabSessions.size, 0);
+    assert.deepEqual(t.seen.logged.map((e) => [e.error, e.session, e.intakeId]), [['stale: intake changed during the fill', 'session-intake-A', 'intake-A']]);
+    assert.equal(t.ui.report.children.length, 1);
+    assert.match(t.ui.report.children[0].text, /intake changed while this page was being filled/);
+    assert.doesNotMatch(JSON.stringify([t.ui.report.children, t.seen.logged]), /Old carrier error|A value/);
+  }
+});
+
+test('Continue watchers recheck their tab and intake after each awaited page read', async () => {
+  for (const change of ['tab', 'replacement', 'correction']) {
+    const state = { tab: { id: 7, url: 'Step' }, intake: {}, intakeRevision: 0, filling: false, doneSteps: new Set(), advanceRetried: new Set(), autoPaused: false };
+    let reads = 0;
+    const writes = [];
+    const context = { state, pageOf: (url) => url, $: () => ({ checked: true }), setTimeout: (fn) => fn(), fillPage: () => writes.push('fill'),
+      runKit: async (tabId) => {
+        assert.equal(tabId, 7);
+        if (++reads === 2) {
+          if (change === 'tab') state.tab = { id: 8, url: 'Step' };
+          if (change === 'replacement') state.intake = {};
+          if (change === 'correction') state.intakeRevision++;
+        }
+        return [{ frameId: 0, result: 'next' }];
+      } };
+    vm.runInNewContext(extractFunction('watchNextStep'), context);
+    await context.watchNextStep({}, 'Step', 'old', 'done');
+    assert.equal(reads, 2);
+    assert.deepEqual(writes, [], change);
+    assert.deepEqual([state.autoPaused, state.doneSteps.size, state.advanceRetried.size], [false, 0, 0]);
+  }
+});
+
+test('a scheduled automatic fill keeps its tab and intake through the final timer', () => {
+  for (const change of ['tab', 'replacement', 'correction']) {
+    const t = fillHarness();
+    const timers = [], fills = [];
+    t.state.autoPages.add('/quote-A');
+    t.context.autoFill = () => fills.push('fill');
+    t.context.setTimeout = (fn) => { timers.push(fn); return 1; };
+    vm.runInContext(extractFunction('scheduleAutoFill'), t.context);
+    t.context.scheduleAutoFill('/quote-A');
+    assert.equal(timers.length, 1);
+    if (change === 'tab') t.state.tab = { ...t.state.tab, id: 8 };
+    if (change === 'replacement') t.state.intake = { record: {} };
+    if (change === 'correction') t.state.intakeRevision++;
+    timers[0]();
+    assert.deepEqual(fills, [], change);
+  }
+});
+
+// PR #65 round 4: local tab ids are scoped to one browser/extension session. Evaluate the
+// actual store declarations as well as persistence functions so every read/write path is gated.
+function tabRecordsHarness(localData = {}, sessionData = {}, locks) {
+  const clone = (value) => value === undefined ? undefined : structuredClone(value);
+  const area = (data) => ({
+    get: async (key) => clone(key == null ? data : Object.fromEntries((Array.isArray(key) ? key : [key]).map((k) => [k, data[k]]))),
+    set: async (values) => Object.assign(data, clone(values)),
+    remove: async (keys) => { for (const key of Array.isArray(keys) ? keys : [keys]) delete data[key]; },
+    getKeys: async () => Object.keys(data),
+  });
+  if (!locks) {
+    let queue = Promise.resolve();
+    locks = { request: (name, task) => { const result = queue.then(task); queue = result.catch(() => {}); return result; } };
+  }
+  const state = { tab: { id: 7 }, agentKeys: new Map(), doneActions: new Set() };
+  let intakeId = 'A';
+  const context = { state, inExtension: true, memory: {}, chrome: { storage: { local: area(localData), session: area(sessionData) } },
+    navigator: { locks }, crypto, usage: { currentSession: () => ({ intakeId }) } };
+  vm.createContext(context);
+  vm.runInContext(SIDEPANEL.slice(SIDEPANEL.includes('const TAB_RECORDS_SESSION_KEY') ? SIDEPANEL.indexOf('const TAB_RECORDS_SESSION_KEY') : SIDEPANEL.indexOf('const AGENT_KEYS_KEY'), SIDEPANEL.indexOf('const FNV_OFFSET'))
+    + '\nconst doneRestored = new Set();\n'
+    + ['persistAgentKeys', 'persistGuardedEdits', 'restoreAgentKeys', 'persistDoneActions', 'restoreDoneActions', 'clearAgentKeys', 'pruneAgentRecords'].map(extractFunction).join('\n')
+    + '\nglobalThis.stores = { agentKeysStore, doneActionsStore };', context);
+  return { context, state, localData, sessionData, locks, setIntake: (id) => { intakeId = id; } };
+}
+
+test('reused numeric tab ids never restore edit or helper records from a fresh browser session or unmarked legacy records', async () => {
+  for (const marked of [false, true]) {
+    const local = { agentEditedKeys: [{ scope: 'A', tabId: 7, page: 'Quote', keys: ['old-edit'] }], 'doneActions:A:7': ['lookupVin:0'], settings: { keep: true } };
+    if (marked) local.tabRecordsSession = 'earlier-browser';
+    const t = tabRecordsHarness(local);
+    await Promise.all([t.context.restoreAgentKeys(7), t.context.restoreDoneActions(7)]);
+    assert.deepEqual([t.state.agentKeys.size, t.state.doneActions.size], [0, 0], 'neither edit nor helper records may cross the browser session');
+    assert.deepEqual(local.agentEditedKeys, []);
+    assert.equal(local['doneActions:A:7'], undefined);
+    assert.deepEqual(local.settings, { keep: true }, 'only tab-scoped edit/helper records expire');
+    assert.equal(local.tabRecordsSession, t.sessionData.tabRecordsSession);
+    assert.notEqual(local.tabRecordsSession, 'earlier-browser');
+  }
+});
+
+test('the same browser session preserves records across panel reloads and intake switching, and Clear stays intake-scoped', async () => {
+  const first = tabRecordsHarness();
+  first.state.agentKeys.set('Quote', new Set(['edit-A']));
+  first.state.doneActions.add('lookupVin:0');
+  await Promise.all([first.context.persistAgentKeys(), first.context.persistDoneActions()]);
+  const reload = tabRecordsHarness(first.localData, first.sessionData, first.locks);
+  await Promise.all([reload.context.restoreAgentKeys(7), reload.context.restoreDoneActions(7)]);
+  assert.deepEqual([...reload.state.agentKeys.get('Quote')], ['edit-A']);
+  assert.deepEqual([...reload.state.doneActions], ['lookupVin:0']);
+  reload.setIntake('B');
+  reload.state.agentKeys = new Map([['Quote', new Set(['edit-B'])]]);
+  reload.state.doneActions = new Set(['driverEntered:0']);
+  await Promise.all([reload.context.persistAgentKeys(), reload.context.persistDoneActions()]);
+  await reload.context.clearAgentKeys('B');
+  const back = tabRecordsHarness(first.localData, first.sessionData, first.locks);
+  await Promise.all([back.context.restoreAgentKeys(7), back.context.restoreDoneActions(7)]);
+  assert.deepEqual([...back.state.agentKeys.get('Quote')], ['edit-A']);
+  assert.deepEqual([...back.state.doneActions], ['lookupVin:0']);
+  await back.context.clearAgentKeys('A');
+  const cleared = tabRecordsHarness(first.localData, first.sessionData, first.locks);
+  await Promise.all([cleared.context.restoreAgentKeys(7), cleared.context.restoreDoneActions(7)]);
+  assert.equal(cleared.state.agentKeys.size, 0);
+  assert.equal(cleared.state.doneActions.size, 0);
+});
+
+test('simultaneous panels share one session initialization before writing edit/helper records', async () => {
+  const first = tabRecordsHarness({ tabRecordsSession: 'old-browser', 'doneActions:A:7': ['old'] });
+  const second = tabRecordsHarness(first.localData, first.sessionData, first.locks);
+  await Promise.all([
+    first.context.stores.agentKeysStore.set([{ scope: 'A', tabId: 7, page: 'Quote', keys: ['new-edit'] }]),
+    second.context.stores.doneActionsStore.set('A', 7, ['new-helper']),
+  ]);
+  assert.deepEqual(first.localData.agentEditedKeys, [{ scope: 'A', tabId: 7, page: 'Quote', keys: ['new-edit'] }]);
+  assert.deepEqual(first.localData['doneActions:A:7'], ['new-helper'], 'a second initialization never deletes the first panel\'s write');
+  assert.equal(first.localData.tabRecordsSession, first.sessionData.tabRecordsSession);
+});
+
+test('failed session expiry blocks reads and writes and retries initialization safely', async () => {
+  const t = tabRecordsHarness({ tabRecordsSession: 'old-browser', 'doneActions:A:7': ['old'] });
+  const remove = t.context.chrome.storage.local.remove;
+  t.context.chrome.storage.local.remove = async () => { throw new Error('temporary storage failure'); };
+  await assert.rejects(t.context.stores.doneActionsStore.get('A', 7), /temporary storage failure/);
+  assert.equal(t.localData.tabRecordsSession, 'old-browser');
+  assert.deepEqual(t.localData['doneActions:A:7'], ['old']);
+  t.context.chrome.storage.local.remove = remove;
+  assert.deepEqual(Array.from(await t.context.stores.doneActionsStore.get('A', 7)), []);
+  assert.equal(t.localData.tabRecordsSession, t.sessionData.tabRecordsSession);
+});
+
+// The last Auto-advance choice before kit execution is the effective switch, including a
+// change while list verification or AI retirement was pending. AI approval remains a hold.
+test('manual and automatic fills log the Auto-advance switch used after async preparation', async () => {
+  for (const auto of [false, true]) for (const waitAt of ['pickListItem', 'retireAiOrigins']) for (const enabled of [false, true]) {
+    const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/, layoutSteps: amwins.layoutSteps } });
+    const start = SIDEPANEL.indexOf('const fillOptions =');
+    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+    t.ui['auto-advance'].checked = !enabled;
+    t.context[waitAt] = async () => { await Promise.resolve(); t.ui['auto-advance'].checked = enabled; };
+    const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
+    await t.started;
+    assert.equal(!!t.seen.options.advance, enabled, `${auto}/${waitAt}: latest setting controls the kit`);
+    t.release(t.results);
+    await run;
+    assert.equal(t.seen.logged.find((e) => e.type === 'fill_run').settings.autoAdvance, enabled);
+  }
+  const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+  t.context.pendingAi = () => [{ approved: false }];
+  const run = t.context.fillPage();
+  await t.started;
+  assert.equal(t.seen.options.advance, null, 'the enabled switch cannot bypass the pending AI approval hold');
+  t.release(t.results);
+  await run;
+  assert.equal(t.seen.logged.find((e) => e.type === 'fill_run').settings.autoAdvance, true, 'telemetry records the switch; approval still gates continuation');
+});
+
+test('failed manual and automatic fills retain bounded run metadata without a result event or client text', async () => {
+  for (const auto of [false, true]) for (const operation of ['runKit', 'retireAiOrigins', 'recorder']) {
+    const t = fillHarness();
+    t.context[operation === 'recorder' ? (auto ? 'tellRecorder' : 'ensureRecorder') : operation] = async (cmd) => {
+      if (cmd === 'resume') return;
+      throw new Error('A value could not be filled');
+    };
+    await (auto ? t.context.autoFill('/quote-A') : t.context.fillPage());
+    assert.equal(t.state.filling, false);
+    assert.equal(t.seen.logged.length, 1, `${auto}/${operation}: rejected invocation has one diagnostic event`);
+    const [error] = t.seen.logged;
+    assert.deepEqual(JSON.parse(JSON.stringify({ type: error.type, rules: error.rules, settings: error.settings, auto: error.auto, error: error.error })), {
+      type: 'fill_error', rules: 'abcdef012345', settings: { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false }, auto, error: '[client] could not be filled',
+    });
+    assert.match(error.run, /^[0-9a-f-]{36}$/);
+    assert.deepEqual([error.session, error.intakeId], ['session-intake-A', 'intake-A']);
+    assert.doesNotMatch(JSON.stringify(error), /A value/);
+  }
+  const t = fillHarness({ rules: null });
+  t.context.runKit = async () => { throw new Error('A value failed'); };
+  await t.context.fillPage();
+  assert.equal(t.seen.logged[0].rules, undefined, 'unknown rule fingerprint is never fabricated');
 });
 
 // Audit 2026-10-08: a panel edit set one field and only bumped the capture revision, so the
@@ -2840,6 +3465,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
         if (/\.answer\(/.test(String(func))) { answerStarted(); return pending; }
         return [frame];
       },
+      pruneAgentRecords: async () => [],
       readIntakeFields: async () => ({ synthetic: true }), normalizeIntake: () => ({ record: nextRecord, warnings: [] }),
       intakeSummary: async () => ({ intakeId: nextFingerprint }), pdfjs: {},
       cancelLayouts() {}, holdLayouts() {}, resetViews() {}, discardAiSuggestions() {}, uploadNow() {},
@@ -2862,14 +3488,14 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
     } else if (switchTo === 'intake') {
       await context.loadFile({ name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(0) });
     } else if (switchTo === 'entity') state.active = { vehicles: 1 };
-    else { state.intake = null; scope = null; await context.clearAgentKeys(); }
+    else { state.intake = null; scope = null; await context.clearAgentKeys('origin-fingerprint'); }
     edited = true;
     if (transport === 'failure') rejectAnswer(new Error('Answer transport unavailable'));
     else resolveAnswer(resultFrames([{ key: choice.key, label: choice.label, ok: true, shown: 'No' }, protectedItem]));
     await apply;
     await context.agentKeysQueue;
     if (switchTo === 'clear') {
-      assert.deepEqual(records, [], 'Clear prevents an old apply from recreating its deleted records');
+      assert.deepEqual(records, [{ scope: 'other-fingerprint', tabId: 2, page: 'AddVehicle|v0', keys: ['other-client-key'] }], 'Clear deletes only the origin and prevents its late apply from recreating records');
       assert.equal(originKeys.get('AddVehicle|v0').has('agent-correction'), false);
       return;
     }
@@ -2903,14 +3529,14 @@ test('Clear also cancels an origin edit write already waiting on local storage',
   const entered = new Promise(resolve => { readStarted = resolve; });
   const reading = new Promise(resolve => { releaseRead = resolve; });
   let records = [{ scope: 'origin', tabId: 1, page: 'Quote', keys: ['earlier'] }];
-  const state = { agentKeysEpoch: 0, tab: { id: 1 }, agentKeys: new Map() };
+  const state = { agentKeysEpochs: new Map(), tab: { id: 1 }, agentKeys: new Map() };
   const context = { state, usage: { currentSession: () => ({ intakeId: 'origin' }) }, agentKeysQueue: Promise.resolve(),
     agentKeysStore: { get: () => { readStarted(); return reading; }, set: async value => { records = structuredClone(value); } },
     doneActionsQueue: Promise.resolve(), doneActionsStore: { clear: async () => {} } };
   vm.runInNewContext(['persistGuardedEdits', 'clearAgentKeys'].map(extractFunction).join('\n'), context);
   const writing = context.persistGuardedEdits({ scope: 'origin', tabId: 1, page: 'Quote', keys: state.agentKeys, epoch: 0 }, ['late-key']);
   await entered;
-  const clearing = context.clearAgentKeys();
+  const clearing = context.clearAgentKeys('origin');
   releaseRead(records);
   await Promise.all([writing, clearing]);
   assert.deepEqual(records, [], 'the queued pre-Clear write cannot recreate deleted protection');
@@ -2929,7 +3555,7 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
       doneActionsQueue: Promise.resolve(), doneRestored: new Set(),
       doneActionsStore: { get: async (id, tab) => memory.get(`${id}|${tab}`) ?? [],
         set: async (id, tab, ids) => { memory.set(`${id}|${tab}`, [...ids]); } },
-      $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }),
+      $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), pruneAgentRecords: async () => [],
       normalizeIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
       store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
       discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
@@ -3001,3 +3627,39 @@ for (const failAt of ['first-guard-read', 'second-guard-read', 'answer-transport
     assert.equal(context.pendingAi(1, '/quote').length, count, 'reload preserves only actual-dispatch holds');
   });
 }
+
+// PR63 origin writes and PR65 scoped Clear share the nonce-gated production stores. A Clear
+// while a write awaits storage must invalidate only the cleared intake, including later edits.
+for (const clearedScope of ['A', 'B']) test(`Clear ${clearedScope} ${clearedScope === 'A' ? 'cancels' : 'preserves'} an in-flight guarded edit for intake A`, async () => {
+  const t = tabRecordsHarness({ tabRecordsSession: 'browser-session', agentEditedKeys: [
+    { scope: 'A', tabId: 7, page: 'Quote|v0', keys: ['earlier-A'] },
+    { scope: 'B', tabId: 7, page: 'Quote|v0', keys: ['earlier-B'] },
+  ], 'doneActions:A:7': ['lookupVin:0'], 'doneActions:B:7': ['lookupVin:1'] }, { tabRecordsSession: 'browser-session' });
+  const originKeys = new Map([['Quote|v0', new Set(['earlier-A'])]]);
+  t.state.agentKeys = originKeys;
+  const origin = { scope: 'A', tabId: 7, page: 'Quote|v0', keys: originKeys, epoch: 0 };
+  let readStarted, releaseRead, first = true;
+  const entered = new Promise(resolve => { readStarted = resolve; });
+  const waiting = new Promise(resolve => { releaseRead = resolve; });
+  const get = t.context.chrome.storage.local.get;
+  t.context.chrome.storage.local.get = async key => {
+    if (key === 'agentEditedKeys' && first) { first = false; readStarted(); await waiting; }
+    return get(key);
+  };
+  const writing = t.context.persistGuardedEdits(origin, ['trusted-A']);
+  await entered;
+  t.setIntake(clearedScope);
+  t.state.agentKeys = new Map();
+  const clearing = t.context.clearAgentKeys(clearedScope);
+  releaseRead();
+  await Promise.all([writing, clearing]);
+  const remaining = clearedScope === 'A' ? 'B' : 'A';
+  assert.deepEqual(t.localData.agentEditedKeys.map(record => record.scope), [remaining]);
+  assert.equal(t.localData[`doneActions:${clearedScope}:7`], undefined);
+  assert.ok(t.localData[`doneActions:${remaining}:7`], 'another intake keeps its helper records');
+  if (clearedScope === 'B') assert.deepEqual(t.localData.agentEditedKeys[0].keys.sort(), ['earlier-A', 'trusted-A']);
+  await t.context.persistGuardedEdits(origin, ['even-later-A']);
+  if (clearedScope === 'A') assert.equal(t.localData.agentEditedKeys.some(record => record.scope === 'A'), false, 'late guard results cannot recreate cleared A');
+  else assert.deepEqual(t.localData.agentEditedKeys[0].keys.sort(), ['earlier-A', 'even-later-A', 'trusted-A'], 'Clear B never invalidates A\'s captured origin');
+  assert.equal(t.localData.tabRecordsSession, 'browser-session', 'integration keeps the shared browser-session marker');
+});

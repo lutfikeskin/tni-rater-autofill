@@ -6,11 +6,22 @@
 
 import { fieldId, inferShowWhenByGroup } from './conditions.mjs';
 import { CARRIERS } from '../../src/carriers.js';
+import { knownStep } from '../../src/usage.js';
 
 // Carriers whose steps share one address (AmWINS): their layouts from before 0.9.6 name no step,
 // so every step looks like one page whose questions come and go. Those are kept in the page's
 // list of questions but not used to tell when a question shows.
 export const STEPPED = new Set(CARRIERS.filter((c) => c.layoutSteps).map((c) => c.id));
+
+// The step a layout names, as the carrier's own step name (knownStep), as layouts send it
+// from PR #65 on. Older layouts sent the raw visible heading
+// ("Draft Application Saved! / Insured Info"): one that holds a step name joins that step; any
+// other heading is kept as it was, so it still groups as before.
+const BY_ID = new Map(CARRIERS.map((c) => [c.id, c]));
+export function layoutStep(e) {
+  if (!e.step) return undefined;
+  return knownStep(BY_ID.get(e.carrier), e.step) ?? e.step;
+}
 
 // Pages about one vehicle or driver (Progressive's AddVehicle, AddDriver): their layouts come from
 // different vehicles and drivers, which can differ in ways no answer on the page explains, and the
@@ -204,7 +215,7 @@ export function fieldIdentities(events) {
   for (const e of events) {
     if (e.type !== 'page_layout' || !e.carrier || !e.page || !e.session) continue;
     if (e.carrier === 'progressive' && e.page.startsWith('/')) continue;
-    const name = e.step ? `${e.page} › ${e.step}` : e.page;
+    const name = e.step ? `${e.page} › ${layoutStep(e)}` : e.page;
     const p = pages.get(`${e.carrier}|${name}`) ?? { carrier: e.carrier, page: e.page, snapshots: [] };
     const fields = (e.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.label ?? ''));
     if (fields.length) p.snapshots.push({ session: e.session, fields });
@@ -263,7 +274,7 @@ export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_P
     layout.sessions.add(e.session);
     layout.to = e.t;
     // A one-address application's steps (AmWINS) are pages of their own.
-    const name = e.step ? `${e.page} › ${e.step}` : e.page;
+    const name = e.step ? `${e.page} › ${layoutStep(e)}` : e.page;
     const page = layout.pages.get(name) ?? { snapshots: [], buttons: [] };
     // Our own mark tooltips got into early layouts as captions; they aren't questions.
     const fields = (e.fields ?? []).filter((f) => !/^Rater Autofill:|^Su Mo Tu We/.test(f.label ?? ''));

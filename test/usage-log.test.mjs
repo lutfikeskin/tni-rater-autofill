@@ -67,6 +67,8 @@ test('an event keeps the quote it was logged in, even when the panel moves on be
   usage.log({ type: 'intake_closed', reason: 'replaced' });
   const b = usage.startSession('intake-b');
   usage.log({ type: 'intake_loaded' });
+  // A fill begun on A whose results came back now: it names A's quote, and keeps it (noteStaleFill).
+  usage.log({ type: 'fill_error', error: 'stale: intake changed during the fill', session: a.id, intakeId: 'intake-a' });
   // Clear: the close is logged, then the panel has no session.
   usage.log({ type: 'intake_closed', reason: 'cleared' });
   usage.restoreSession(null);
@@ -76,6 +78,7 @@ test('an event keeps the quote it was logged in, even when the panel moves on be
     ['page_view', a.id, 'intake-a'],
     ['intake_closed', a.id, 'intake-a'],
     ['intake_loaded', b.id, 'intake-b'],
+    ['fill_error', a.id, 'intake-a'],
     ['intake_closed', b.id, 'intake-b'],
   ]);
   assert.ok(events.every((e) => e.channel === 'source' && !('commit' in e)), 'which copy logged it: the repository, no commit');
@@ -205,5 +208,47 @@ test('events that could not be saved on this computer are reported, until a save
     assert.deepEqual(data.usageLog.map((e) => e.page), ['B']);
   } finally {
     delete globalThis.chrome;
+  }
+});
+
+// Audit 2026-10-08, finding 11: an upload that hangs (a proxy, a half-open connection) kept the
+// queue waiting on it; now it is given up and the events stay for the next upload.
+test('an upload that hangs is given up: the status says so and the events stay queued', async () => {
+  let aborted = 0;
+  globalThis.fetch = (url, init) => new Promise((_, reject) => {
+    init.signal.addEventListener('abort', () => { aborted++; reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })); });
+  });
+  await usage.saveSettings({ serverUrl: 'http://usage.test', serverToken: '' });
+  await usage.log({ type: 'page_view', page: 'T1' });
+  await usage.upload({ timeoutMs: 20 });
+  assert.equal(aborted, 1);
+  assert.equal(await usage.count(), 1, 'the event stays queued');
+  assert.equal(usage.lastUpload().state, 'error');
+  assert.match(usage.lastUpload().message, /didn't answer in time; the events stay here/);
+  assert.equal(usage.UPLOAD_TIMEOUT_MS, 20_000);
+  // The health check (nothing queued) is given up the same way.
+  const requests = fakeServer(stores);
+  await usage.upload();
+  assert.deepEqual([await usage.count(), requests.length, usage.lastUpload().state], [0, 1, 'ok']);
+  globalThis.fetch = (url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))));
+  await usage.upload({ timeoutMs: 20 });
+  assert.match(usage.lastUpload().message, /didn't answer in time/);
+  assert.ok(requests.every((r) => r.body), 'every upload request still carried its events');
+});
+
+// Codex on PR #65 (2c8eeb9): the timer stopped once the headers came, so a reply whose body never
+// arrived held the upload queue for good.
+test('a reply whose body never arrives is given up too, and the next upload still runs', async () => {
+  for (const status of [200, 500]) {
+    globalThis.fetch = async () => ({ ok: status === 200, status, statusText: 'x', json: () => new Promise(() => {}) });
+    await usage.saveSettings({ serverUrl: 'http://usage.test', serverToken: '' });
+    await usage.log({ type: 'page_view', page: 'T2' });
+    await usage.upload({ timeoutMs: 20 });
+    assert.equal(usage.lastUpload().state, 'error');
+    assert.match(usage.lastUpload().message, /didn't answer in time; the events stay here/);
+    assert.equal(await usage.count(), 1, 'the event stays queued');
+    const requests = fakeServer(stores);
+    await usage.upload();
+    assert.deepEqual([await usage.count(), requests.length, usage.lastUpload().state], [0, 1, 'ok'], 'the queue is not held');
   }
 });

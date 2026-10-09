@@ -8,9 +8,9 @@
 
 import { fieldId } from './conditions.mjs';
 import { sessionContexts } from './events.mjs';
-import { STEPPED } from './layouts.mjs';
+import { STEPPED, layoutStep } from './layouts.mjs';
 
-const pageOf = (e) => (e.step ? `${e.page} › ${e.step}` : e.page);
+const pageOf = (e) => (e.step ? `${e.page} › ${layoutStep(e)}` : e.page);
 const reasons = (e) => String(e.reason ?? '').split('+');
 const label = (f) => f.label ?? f.caption ?? f.q ?? '';
 
