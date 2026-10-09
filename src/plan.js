@@ -55,6 +55,9 @@ function actionSteps(carrier, record, active) {
       opener: a.opener ?? null,
       nudge: a.nudge ?? null,
       immediate: !!a.immediate,
+      // A helper that answers many questions at once: not clicked while an answer the agent gave
+      // is on the page (it would reset it).
+      skipIfProtected: !!a.skipIfProtected,
       after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
       afterAny: (resolve(a.afterAny) ?? []).map((p) => withIndex(p, active)),
       unless: (resolve(a.unless) ?? []).map((p) => withIndex(p, active)),

@@ -204,6 +204,7 @@ const state = {
   notesRetry: null, // that intake again, when the settings changed meanwhile
   tabSessions: new Map(),
   agentKeys: new Map(),
+  agentKeysEpoch: 0, // explicit Clear invalidates late guarded-edit writes
   filling: false,
   autoTimer: null,
   autoPending: false,
@@ -364,6 +365,38 @@ function persistAgentKeys() {
   return agentKeysQueue;
 }
 
+// A paused recorder may resume after the panel moved to another tab/intake/entity. Guarded
+// edits still belong to the captured origin, whose tab snapshot may already have been saved.
+// Merge only field keys into that origin's ledger; never persist a label, answer or snapshot.
+function persistGuardedEdits(origin, editedKeys) {
+  const additions = editedKeys.filter(key => typeof key === 'string' && key);
+  if (!additions.length || origin.epoch !== state.agentKeysEpoch) return Promise.resolve();
+  const merge = (pages) => {
+    if (!pages) return;
+    const keys = pages.get(origin.page) ?? new Set();
+    for (const key of additions) keys.add(key);
+    pages.set(origin.page, keys);
+  };
+  merge(origin.keys);
+  if (usage.currentSession()?.intakeId === origin.scope) {
+    merge(state.tab?.id === origin.tabId ? state.agentKeys : state.tabSessions?.get(origin.tabId)?.agentKeys);
+  }
+  if (!origin.scope || !Number.isInteger(origin.tabId)) return Promise.resolve();
+  const keys = [...origin.keys.get(origin.page)];
+  const task = agentKeysQueue.then(async () => {
+    if (origin.epoch !== state.agentKeysEpoch) return;
+    const existing = await agentKeysStore.get();
+    if (origin.epoch !== state.agentKeysEpoch) return;
+    const matches = record => record.scope === origin.scope && record.tabId === origin.tabId && record.page === origin.page;
+    const merged = new Set(existing.filter(matches).flatMap(record => record.keys ?? []).filter(key => typeof key === 'string' && key));
+    for (const key of keys) merged.add(key);
+    await agentKeysStore.set([...existing.filter(record => !matches(record)),
+      { scope: origin.scope, tabId: origin.tabId, page: origin.page, keys: [...merged] }]);
+  });
+  agentKeysQueue = task.catch(() => {});
+  return agentKeysQueue;
+}
+
 async function restoreAgentKeys(tabId) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId)) return;
@@ -378,6 +411,7 @@ async function restoreAgentKeys(tabId) {
 }
 
 function clearAgentKeys() {
+  state.agentKeysEpoch = (state.agentKeysEpoch ?? 0) + 1;
   const task = agentKeysQueue.then(() => agentKeysStore.set([]));
   agentKeysQueue = task.catch(() => {});
   doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.clear()).catch(() => {});
@@ -566,11 +600,13 @@ async function loadFile(file) {
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
   state.filled = new Map();
   state.doneActions = new Set();
+  doneRestored.clear(); // every tab set was reset; retained helpers must rehydrate for this intake
   discardAiSuggestions();
   await store.set('session', usage.startSession(summary.intakeId));
   await persistAiPending();
   await restoreAiPending();
-  await clearAgentKeys();
+  // Replacing an intake keeps opaque edit/helper records under their original fingerprint.
+  // Explicit Clear forgets them and invalidates any still-running guarded edit writes.
   usage.log({ type: 'intake_loaded', ...summary });
   uploadNow();
   await save();
@@ -1573,9 +1609,9 @@ async function injectKit(tabId, carrier) {
   await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), files: ['src/content/field-key.js', 'src/content/pagekit.js'] });
 }
 
-async function runKit(tabId, carrier, func, args = []) {
+async function runKit(tabId, carrier, func, args = [], frameIds) {
   await injectKit(tabId, carrier);
-  return chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), func, args });
+  return chrome.scripting.executeScript({ target: { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) }, world: worldFor(carrier), func, args });
 }
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
@@ -2250,10 +2286,18 @@ async function applyAi(list, ctx, decision) {
     && ctx.contextKey === assistContextKey(state.intake?.record, state.active)
     && (ctx.run === undefined || ctx.run === state.aiRun);
   const entries = [...state.aiCache].filter(([, x]) => list.includes(x));
-  let dispatched = false, prepared = false;
+  const editOrigin = { scope: usage.currentSession()?.intakeId, tabId: ctx.tabId,
+    page: editScope(ctx.page, ctx.carrier), keys: state.agentKeys, epoch: state.agentKeysEpoch };
+  let dispatched = false, prepared = false, guarding = false;
+  const guardToken = crypto.randomUUID();
   state.filling = true;
   await tellRecorder('pause', ctx.tabId);
   try {
+    if (!isCurrent()) return false;
+    // Watch every frame before the snapshot and pending-hold writes. An idle frame stays
+    // guarded while another waits on its server, until the full apply finishes.
+    guarding = true;
+    await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [guardToken]);
     if (!isCurrent()) return false;
     const current = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     if (!isCurrent()) return false;
@@ -2290,16 +2334,50 @@ async function applyAi(list, ctx, decision) {
     }
     await persistAiPending();
     if (!isCurrent()) return false;
-    dispatched = true;
-    const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots) => globalThis.__raterKit.answer(a, snapshots), [answers, ctx.snapshots.map(r => r.result)]);
-    const results = answerFrames.flatMap((frame) => (Array.isArray(frame.result) ? frame.result : [])
-      .filter(result => result && typeof result === 'object')
-      .map(result => ({ ...result, frameId: frame.frameId, documentId: frame.documentId })));
+    // One answer at a time lets an edit in any frame stop every answer still to come,
+    // including later answers in the active frame.
+    const results = [];
+    const readEdits = async (command = 'read') => {
+      const frames = await runKit(ctx.tabId, ctx.carrier, (c, t) => globalThis.__raterKit.answerEdits(c, t), [command, guardToken]);
+      for (const frame of frames) for (const item of frame.result ?? []) {
+        if (item?.protected) results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
+      }
+      if (current.some(origin => !frames.some(frame => frame.frameId === origin.frameId
+        && frame.documentId === origin.documentId && Array.isArray(frame.result)))) {
+        return 'the page or frame changed while applying the answers; request fresh suggestions';
+      }
+      return results.some(r => r.protected)
+        ? 'an agent edit interrupted applying the answers; review the page, then request fresh suggestions' : null;
+    };
+    const startedFrames = new Set();
+    for (let i = 0; i < answers.length; i++) {
+      const a = answers[i];
+      const interruption = await readEdits();
+      if (interruption || !isCurrent()) {
+        results.push({ key: a.key, label: a.label, ok: false, reason: interruption
+          ?? 'the intake or page context changed; request fresh suggestions' });
+        continue;
+      }
+      const frameId = aiSnapshotFieldMatches(current, list[i])[0].frame.frameId;
+      const expected = startedFrames.has(frameId) ? null : ctx.snapshots.map(r => r.result);
+      startedFrames.add(frameId);
+      dispatched = true;
+      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t) => globalThis.__raterKit.answer(a, snapshots, t),
+        [[a], expected, guardToken], [frameId]);
+      for (const frame of answerFrames) for (const item of frame.result ?? []) {
+        if (item && typeof item === 'object') results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
+      }
+    }
+    await readEdits('end');
+    guarding = false;
     const sameContext = isCurrent();
-    const keys = sameContext ? state.agentKeys.get(editScope(ctx.page)) ?? new Set() : null;
+    const keys = sameContext ? state.agentKeys.get(editOrigin.page) ?? new Set() : null;
+    // The agent's own edits while the answers went in (also on a control the carrier redrew, which
+    // the recorder cannot match on resume): a later fill keeps them, as after a fill.
+    const protectedKeys = results.filter(r => r.protected).map(r => r.key);
     for (const x of list) {
       const mine = results.filter((r) => r.key === x.key && r.label === x.label);
-      const ok = mine.find((r) => r.ok);
+      const ok = !protectedKeys.includes(x.key) && mine.find((r) => r.ok);
       const problem = mine.find((r) => !r.ok && !/no longer on this page/.test(r.reason ?? '')) ?? mine[0];
       if (ok) {
         x.origin = aiOriginRecord({ frameId: ok.frameId, documentId: ok.documentId,
@@ -2319,7 +2397,8 @@ async function applyAi(list, ctx, decision) {
       }
       if (sameContext && !ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
     }
-    if (sameContext) state.agentKeys.set(editScope(ctx.page), keys);
+    if (sameContext) state.agentKeys.set(editOrigin.page, keys);
+    await persistGuardedEdits(editOrigin, protectedKeys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
     const after = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     for (const x of list) if (x.done) {
@@ -2335,6 +2414,14 @@ async function applyAi(list, ctx, decision) {
       : `couldn't reach the page (${String(e?.message ?? e).slice(0, 80)})`;
     return false;
   } finally {
+    if (guarding) {
+      try {
+        const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('end', t), [guardToken]);
+        // Even a failed answer transport must preserve edits the still-live guards caught.
+        const edited = frames.flatMap(frame => frame.result ?? []).filter(item => item?.protected);
+        await persistGuardedEdits(editOrigin, edited.map(item => item.key));
+      } catch { /* a removed or navigating frame no longer has live listeners */ }
+    }
     if (prepared && !dispatched) for (const x of list) x.done = null;
     if (dispatched) for (const [sig, x] of entries) if (list.includes(x) && x.done === 'auto') {
       if (!aiActionCurrent(ctx, list)) {
