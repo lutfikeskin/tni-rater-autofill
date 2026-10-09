@@ -1067,10 +1067,10 @@ function resetViews() {
   saveViews();
 }
 
-function stepScope(page, carrier = state.tab?.carrier) {
-  const entity = carrier?.vehiclePages?.includes(page) ? `v${state.active.vehicles ?? 0}`
-    : carrier?.trailerPages?.includes(page) ? `tr${state.active.trailers ?? 0}`
-      : carrier?.driverPage && carrier.driverPage === page ? `d${state.active.drivers ?? 0}` : '';
+function stepScope(page, carrier = state.tab?.carrier, active = state.active) {
+  const entity = carrier?.vehiclePages?.includes(page) ? `v${active.vehicles ?? 0}`
+    : carrier?.trailerPages?.includes(page) ? `tr${active.trailers ?? 0}`
+      : carrier?.driverPage && carrier.driverPage === page ? `d${active.drivers ?? 0}` : '';
   return `${page}|${entity}|`;
 }
 
@@ -1139,6 +1139,8 @@ function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = f
 // are the earlier intake's, and nothing from this fill may be remembered, logged or shown as the
 // current intake's.
 function staleFill(ctx) { return state.intake !== ctx.intake || state.intakeRevision !== ctx.revision; }
+// Automatic work and panel reports belong only to the fill still shown in the panel.
+function fillCurrent(ctx) { return !staleFill(ctx) && state.tab?.id === ctx.tabId; }
 function noteStaleFill(ctx) {
   if (!ctx.carrier.practice) usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run, auto: ctx.auto, error: 'stale: intake changed during the fill', ...ctx.ids });
   const note = h('p', { class: 'error' }, 'The intake changed while this page was being filled: the page may hold the earlier intake\'s answers. Check it, then Fill this page again.');
@@ -1158,11 +1160,11 @@ function logFill(ctx, frames, results, started) {
 }
 function fillErrorText(ctx, e) { return redactor(redactionTerms(ctx.intake.record))(String(e?.message ?? e)).slice(0, 200); }
 
-function scheduleAutoFill(page) {
+function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
   if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || state.tab?.carrier?.stopPages?.[page]) return;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
-  state.autoTimer = setTimeout(() => autoFill(page), 600);
+  state.autoTimer = setTimeout(() => { if (fillCurrent(ctx)) autoFill(page); }, 600);
 }
 
 async function autoFill(page) {
@@ -1173,16 +1175,18 @@ async function autoFill(page) {
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto: true });
-  await pickListItem(carrier, page);
+  await pickListItem(carrier, page, ctx);
   if (staleFill(ctx) || state.tab?.id !== tabId) return;
   state.filling = true;
   state.autoPending = false;
   const started = Date.now();
   let assistFrames = null;
   let followUp = false;
-  await tellRecorder('pause');
+  await tellRecorder('pause', tabId);
   try {
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
+    if (staleFill(ctx)) { noteStaleFill(ctx); return; }
+    if (!fillCurrent(ctx)) return;
     // The list page may have picked the next vehicle or driver: the plan is for that one.
     ctx.active = { ...state.active };
     const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
@@ -1197,37 +1201,43 @@ async function autoFill(page) {
     rememberFill(frames, ctx);
     followUp = afterFill(frames, ctx);
     const hasWarnings = frames.some((f) => f.unknown?.length);
+    const current = fillCurrent(ctx);
     // The fill whose helper this follows up held Luna back for it.
-    if (state.autoPaused || hasWarnings || state.assistPage === page) { renderReport(frames); assistFrames = frames; }
+    if (current && (state.autoPaused || hasWarnings || state.assistPage === page)) { renderReport(frames); assistFrames = frames; }
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings) {
       logFill(ctx, frames, results, started);
-      if (n) {
+      if (n && current) {
         const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
         $('report').append(note);
       }
-      recordLayout(page);
+      if (current) recordLayout(page);
     }
   } catch (e) {
-    state.autoPaused = true;
-    $('report').append(h('p', { class: 'error' }, 'Automatic filling paused after an error. Review the page, then click Fill this page to retry.'));
-    // The message may quote the page, so it's redacted like a problem report (audit 2026-10-08).
+    if (staleFill(ctx)) { noteStaleFill(ctx); return; }
+    tabMaps(tabId).autoPaused = true;
+    // The message may quote the page, so it's redacted with the origin intake.
     if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, run: ctx.run, auto: true, error: fillErrorText(ctx, e), ...ctx.ids });
+    if (!fillCurrent(ctx)) return;
+    $('report').append(h('p', { class: 'error' }, 'Automatic filling paused after an error. Review the page, then click Fill this page to retry.'));
   } finally {
-    await tellRecorder('resume');
+    await tellRecorder('resume', tabId);
     state.filling = false;
-    if (state.autoPending) scheduleAutoFill(page);
+    if (fillCurrent(ctx) && state.autoPending) scheduleAutoFill(page);
   }
+  if (!fillCurrent(ctx)) return;
   // The page moved on to a stop page while this ran: its card stays on top of this fill's report.
   if (state.tab?.carrier?.stopPages?.[pageOf(state.tab?.url)]) showStopPage();
-  runPendingPage();
+  runPendingPage(ctx);
   if (assistFrames) assistAfterFill(assistFrames, { tabId, page, carrier }, followUp);
 }
 
-function runPendingPage() {
+function runPendingPage(ctx) {
   const pending = state.pagePending;
   state.pagePending = null;
-  if (pending && pending === pageOf(state.tab?.url)) setTimeout(() => fillPage({ auto: 'page' }), 300);
+  if (pending && pending === pageOf(state.tab?.url)) setTimeout(() => {
+    if (fillCurrent(ctx) && pending === pageOf(state.tab?.url)) fillPage({ auto: 'page' });
+  }, 300);
 }
 
 // Each page's question layout (ids, question text, options, which choice is picked; no typed
@@ -1716,7 +1726,7 @@ async function fillPage({ auto = false } = {}) {
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite });
-  await pickListItem(carrier, page);
+  await pickListItem(carrier, page, ctx);
   if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); return; }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
@@ -1729,9 +1739,11 @@ async function fillPage({ auto = false } = {}) {
   let followUp = false;
   // Our own fills aren't the agent's changes: pause the recorder while filling.
   await ensureRecorder();
-  await tellRecorder('pause');
+  await tellRecorder('pause', tabId);
   try {
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
+    if (staleFill(ctx)) { noteStaleFill(ctx); return; }
+    if (!fillCurrent(ctx)) return;
     // The agent's edits on this page as the fill's tab holds them (retiring AI picks may just
     // have released some), never the tab in front.
     const options = fillOptions(carrier, { overwrite, skip: [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])] });
@@ -1742,24 +1754,29 @@ async function fillPage({ auto = false } = {}) {
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames, ctx);
-    state.autoPages.add(page);
+    tabMaps(tabId).autoPages.add(page);
     followUp = afterFill(frames, ctx);
-    recordLayout(page);
     logFill(ctx, frames, results, started);
+    if (!fillCurrent(ctx)) return;
+    recordLayout(page);
     renderReport(frames);
     assistFrames = frames;
   } catch (e) {
-    state.autoPaused = true;
-    // The message may quote the page, so it's redacted like a problem report (audit 2026-10-08).
+    if (staleFill(ctx)) { noteStaleFill(ctx); return; }
+    tabMaps(tabId).autoPaused = true;
+    // The message may quote the page, so it's redacted with the origin intake.
     if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, run: ctx.run, auto, error: fillErrorText(ctx, e), ...ctx.ids });
+    if (!fillCurrent(ctx)) return;
     $('report').replaceChildren(h('p', { class: 'error' }, `Couldn't fill this page: ${e.message}`));
   } finally {
-    await tellRecorder('resume');
+    await tellRecorder('resume', tabId);
     state.filling = false;
     renderSite();
   }
-  runPendingPage();
+  if (!fillCurrent(ctx)) return;
+  runPendingPage(ctx);
   await remarkAi({ tabId, page, carrier });
+  if (!fillCurrent(ctx)) return;
   if (assistFrames && !assistFrames.some((f) => f.halted)) assistAfterFill(assistFrames, { tabId, page, carrier }, followUp);
 }
 
@@ -1768,11 +1785,10 @@ async function fillPage({ auto = false } = {}) {
 // and nothing is left to add, so the page's Continue is clicked. Trailers (added from the same
 // list) and the driver list work the same way (a driver or trailer counts as entered once its
 // page was filled).
-async function pickListItem(carrier, page) {
-  const tabId = state.tab?.id;
-  await verifyListed(carrier, page);
+async function pickListItem(carrier, page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
+  await verifyListed(carrier, page, ctx);
   // Another tab came to the front while the list was read: its own fill picks for it.
-  if (state.tab?.id !== tabId) return;
+  if (!fillCurrent(ctx)) return;
   const lists = [
     [carrier?.vehicleList, 'vehicles', (i) => ['lookupVin', 'addVehicle'].some((a) => state.doneActions.has(`${a}:${i}`))],
     // A trailer only once its page was filled: Add Trailer opened and left (an unsupported tile)
@@ -1786,6 +1802,7 @@ async function pickListItem(carrier, page) {
     if (next < 0 || next === state.active[list]) continue;
     state.active[list] = next;
     await save();
+    if (!fillCurrent(ctx)) return;
     renderPickers();
   }
 }
@@ -1794,28 +1811,28 @@ async function pickListItem(carrier, page) {
 // unit with its VIN), and not when the list shows the quote's vehicles by VIN but not this one
 // (Add Trailer left by Back or the top menu, Codex on PR #43). Without VINs to compare, the return
 // from its page decides (unitArrival).
-async function verifyListed(carrier, page) {
-  if (carrier?.driverList && page === carrier.driverList) return verifyDrivers(carrier);
-  if (!carrier?.trailerList || page !== carrier.trailerList || !Number.isInteger(state.tab?.id)) return;
-  const record = state.intake?.record ?? {};
+async function verifyListed(carrier, page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
+  if (carrier?.driverList && page === carrier.driverList) return verifyDrivers(carrier, ctx);
+  if (!carrier?.trailerList || page !== carrier.trailerList || !Number.isInteger(ctx.tabId)) return;
+  const record = ctx.intake?.record ?? {};
   const vin = (u) => String(u?.vin ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   const trailers = (record.trailers ?? []).map(vin);
   if (!trailers.some((v) => v.length >= 11)) return;
   const vehicles = (record.vehicles ?? []).map(vin);
   let shown = null;
-  const tabId = state.tab.id;
+  const tabId = ctx.tabId;
   try {
     const frames = await runKit(tabId, carrier, (vins) => globalThis.__raterKit?.listed?.(vins) ?? null, [[...vehicles, ...trailers]]);
     shown = frames.map((f) => f?.result).find(Array.isArray) ?? null;
   } catch { return; }
-  if (!shown || state.tab?.id !== tabId) return;
+  if (!shown || !fillCurrent(ctx)) return;
   const showsVins = shown.slice(0, vehicles.length).some(Boolean);
   trailers.forEach((v, i) => {
     if (v.length < 11) return;
     if (shown[vehicles.length + i]) state.doneActions.add(`trailerEntered:${i}`);
     else if (showsVins) state.doneActions.delete(`trailerEntered:${i}`);
   });
-  persistDoneActions();
+  persistDoneActions(tabId, state.doneActions);
 }
 
 // On the driver list, a driver it shows by name (first and last) is entered, also when the panel
@@ -1823,23 +1840,23 @@ async function verifyListed(carrier, page) {
 // nothing (the list may write it another way): the return from the driver page decides. Nor does
 // a name another intake driver's name holds (two John Smiths, Ann Lee and Mary Ann Lee): one row
 // would count for both, and the other driver would never be added (Codex on PR #43).
-async function verifyDrivers(carrier) {
-  if (!Number.isInteger(state.tab?.id)) return;
+async function verifyDrivers(carrier, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
+  if (!Number.isInteger(ctx.tabId)) return;
   const words = (d) => [d.first, d.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
-  const drivers = (state.intake?.record?.drivers ?? []).map(words);
-  const names = (state.intake?.record?.drivers ?? []).map((d, i) => drivers.some((other, j) => j !== i && drivers[i].every((w) => other.includes(w)))
+  const drivers = (ctx.intake?.record?.drivers ?? []).map(words);
+  const names = (ctx.intake?.record?.drivers ?? []).map((d, i) => drivers.some((other, j) => j !== i && drivers[i].every((w) => other.includes(w)))
     ? [] : [d.first, d.last].filter(Boolean));
   if (!names.some((n) => n.length >= 2)) return;
   let shown = null;
-  const tabId = state.tab.id;
+  const tabId = ctx.tabId;
   try {
     const frames = await runKit(tabId, carrier, (items) => globalThis.__raterKit?.listed?.(items) ?? null, [names]);
     shown = frames.map((f) => f?.result).find(Array.isArray) ?? null;
   } catch { return; }
   // The agent switched tabs meanwhile: the answer is about the other tab's quote (Codex on PR #43).
-  if (!shown || state.tab?.id !== tabId) return;
+  if (!shown || !fillCurrent(ctx)) return;
   shown.forEach((on, i) => { if (on) state.doneActions.add(`driverEntered:${i}`); });
-  persistDoneActions();
+  persistDoneActions(tabId, state.doneActions);
 }
 
 // A driver or trailer is entered once the carrier took its page: its list comes back from it (its
@@ -1857,17 +1874,20 @@ function unitArrival(carrier, from, page) {
 // Bookkeeping after a fill: a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
-function afterFill(frames, { carrier, page, run = null }) {
-  persistDoneActions();
+function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, intake = state.intake, revision = state.intakeRevision, active = state.active }) {
+  const ctx = { tabId, carrier, page, run, intake, revision };
+  const maps = tabMaps(tabId);
   const clicked = frames.some((f) => (f.actions ?? []).length);
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
-  if (clicked && !moved) setTimeout(() => scheduleAutoFill(page), 900);
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
-  if (advanced) {
-    const doneKey = advanced.stepKey ? stepScope(page, carrier) + advanced.stepKey : null;
-    if (doneKey) state.doneSteps.add(doneKey);
-    watchNextStep(carrier, page, advanced.signatureBefore, doneKey, run);
-  }
+  const doneKey = advanced?.stepKey ? stepScope(page, carrier, active) + advanced.stepKey : null;
+  if (doneKey) maps.doneSteps.add(doneKey);
+  // Keep the origin's bookkeeping, but never start helpers or Continue work in another tab.
+  if (!fillCurrent(ctx)) return false;
+  if (clicked && !moved) setTimeout(() => {
+    if (fillCurrent(ctx) && pageOf(state.tab?.url) === page) scheduleAutoFill(page);
+  }, 900);
+  if (advanced) watchNextStep(carrier, page, advanced.signatureBefore, doneKey, run, ctx);
   return clicked && !moved && !state.autoPaused && $('auto-followups').checked;
 }
 
@@ -1896,20 +1916,21 @@ function assistAfterFill(frames, ctx, followUp) {
 // When the second click doesn't take either, automatic filling pauses and the agent is told
 // (audit 2026-10-08, finding 6): until then the lost Continue went unreported.
 // `doneKey`: the continued step's entry in state.doneSteps (see stepScope); `run`: the fill's.
-async function watchNextStep(carrier, page, before, doneKey = null, run = null) {
-  const tabId = state.tab?.id;
+async function watchNextStep(carrier, page, before, doneKey = null, run = null, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
+  const tabId = ctx.tabId;
   if (!$('auto-followups').checked && !$('auto-pages').checked) return;
   let last = null;
   let unchanged = 0;
   for (let i = 0; i < 100; i++) {
     await new Promise((r) => setTimeout(r, 300));
-    if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || !state.intake) return;
+    if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page || !state.intake) return;
     let now = null;
     try {
       // While the page saves / reloads (its loading overlay) the step isn't ready yet.
       const results = await runKit(tabId, carrier, () => (globalThis.__raterKit.busy() ? null : globalThis.__raterKit.signature()));
       now = results.find((r) => r.frameId === 0)?.result ?? null;
     } catch { return; }
+    if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page) return;
     if (now != null && now !== before && now === last) {
       if (state.filling) state.pagePending = page;
       else fillPage({ auto: 'page' });
