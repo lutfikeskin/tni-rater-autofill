@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { buildPlan } from '../src/plan.js';
 import { collectItems } from '../src/ai/common.js';
 import { progressive } from '../src/carriers/progressive.js';
+import { amwins } from '../src/carriers/amwins.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
 
 // This is a deliberately small DOM/ExtJS replay.  It exercises the injected MAIN-world
@@ -2505,6 +2506,48 @@ test('the fill report says which answers are TNI standards; review mode makes th
 
 // Codex on c31942e: a fact the intake doesn't give reaches the report as the agent's (manualOnly),
 // so the AI assistant leaves it (ai/common.js collectItems).
+test('AmWINS review mode confirms differing retained standard choices before Continue', async () => {
+  const run = async (businessClass) => {
+    const h = harness({ pathname: '/application/businessauto' });
+    const nonprofit = radioGroup('Is non profit', ...['Yes', 'No'].map((value) => makeInput({ name: 'isNonProfit', type: 'radio', value, checked: value === 'Yes' })));
+    const waiver = new SelectNode(['', 'NONE', 'BROAD'], { id: 'waiverType', ariaLabel: 'Waiver type', value: 'BROAD' });
+    h.document.body.append(nonprofit, waiver);
+    const next = addButton(h, 'Save & Continue');
+    next.onclick = () => { next._clicked = true; };
+    const record = { applicant: {}, garaging: {}, operations: { businessClass }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+    const plan = buildPlan(record, amwins).filter((s) => s.re === '^is non profit$' || s.selector === '#waiverType');
+    assert.equal(plan.length, 2, 'the real carrier plan supplies both standard choices');
+    const options = { maxRounds: 3, advance: amwins.advance };
+    const report = await h.kit.fill(plan, options);
+    const retained = () => [nonprofit.children.find((r) => r.checked)?.value, waiver.value];
+    assert.deepEqual(retained(), ['Yes', 'BROAD'], 'carrier answers are retained');
+    assert.equal(report.filled.length, 0);
+    return { h, plan, next, options, report, retained };
+  };
+  const supported = await run('Expediter');
+  assert.equal(supported.report.checks.length, 0, 'supported-class behavior is unchanged');
+  assert.ok(supported.next._clicked);
+  const review = await run('Dump Truck');
+  assert.equal(review.report.checks.length, 2, 'both differing standards need confirmation');
+  assert.ok(review.report.checks.every((x) => x.standard && /^Review mode:/.test(x.note) && x.key));
+  assert.ok(review.report.blockers.some((b) => /^check:/.test(b)));
+  assert.ok(!review.next._clicked, 'Continue waits');
+  assert.deepEqual(collectItems([review.report]).items, [], 'confirmation checks are not AI choices');
+  const again = await review.h.kit.fill(review.plan, review.options);
+  assert.equal(again.checks.length, 2, 'a new fill does not acknowledge them');
+  const keys = again.checks.map((x) => x.key);
+  const partial = await review.h.kit.fill(review.plan, { ...review.options, skip: [keys[0]] });
+  assert.equal(partial.checks.length, 1, 'acknowledging or manually editing one choice protects only it');
+  assert.ok(!review.next._clicked);
+  await review.h.kit.fill(review.plan, { ...review.options, skip: keys });
+  assert.deepEqual(review.retained(), ['Yes', 'BROAD'], 'acknowledgements preserve the retained values');
+  assert.ok(review.next._clicked, 'Continue follows explicit acknowledgements');
+  const ignored = await run('Dump Truck');
+  const ignoredReport = await ignored.h.kit.fill(ignored.plan.map((s) => ({ ...s, ignore: true })), ignored.options);
+  assert.equal(ignoredReport.checks.length, 0, 'deliberate ignore rules remain ignored');
+  assert.deepEqual(ignored.retained(), ['Yes', 'BROAD']);
+});
+
 test('a fact step is reported manualOnly and kept from the AI', async () => {
   const h = harness({ search: '?pageName=MoreAboutBusiness' });
   const yesNo = (ref, question) => radioGroup(question, ...['Yes', 'No'].map((value) => makeInput({ name: `r_${ref}`, type: 'radio', value, attrs: { fieldref: ref } })));

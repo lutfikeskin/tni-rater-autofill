@@ -182,6 +182,8 @@ function fieldSteps(rules, record, carrier, active) {
       // A TNI standard, not an intake fact: the panel tags it, and in review mode (an unvalidated
       // business class) it is a check item.
       standard,
+      // Review mode requires confirmation even when a retained carrier answer differs.
+      reviewRequired: standard && !!reviewNote,
       // The agent's to answer: the report says so and the AI assistant leaves it (ai/common.js).
       manualOnly,
       // The carrier's question id when the rule was written: only the rule's name (its path), never

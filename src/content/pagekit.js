@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 58 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 59 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -1189,8 +1189,9 @@
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
             report.checks.push({ ...item, note, ...describe(c) });
             handled.set(step.id, { status: 'needs', note });
-          // Still our default from an earlier fill: still the agent's to confirm.
-          } else if (step.warn && agreesWith(step, c)) {
+          // Review mode confirms every retained standard, including a differing carrier choice.
+          // Other defaults retain their existing confirmation behavior.
+          } else if (step.warn && (step.reviewRequired || agreesWith(step, c))) {
             report.checks.push({ ...item, note: step.warn, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.warn });
           } else handled.set(step.id, { status: null });
@@ -1765,5 +1766,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 58, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 59, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();
