@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EVENT_FIELDS, COMMON } from '../server/index.mjs';
+import { EVENT_FIELDS, COMMON, RUN_FIELDS } from '../server/index.mjs';
 import { CARRIERS } from '../src/carriers.js';
 import { DEFAULT_SERVER } from '../sidepanel/usage-log.js';
 import { fillEvents, fieldChangeEvent } from '../src/usage.js';
@@ -29,11 +29,19 @@ test('fill events carry only fields the server keeps (nothing silently dropped)'
   const frames = [{ fields: 3, rounds: 2, filled: [{ label: 'A', key: 'a', q: '1', path: 'x', controlKind: 'text', shown: 'v', timing: { ms: 1 } }],
     unknown: [{ label: 'B', key: 'b', controlKind: 'radio', options: ['Yes', 'No'] }], failed: [], noData: [], kept: [], leftRequired: [],
     actions: [{ id: 'act', text: 'Go' }], blockers: ['unfamiliar: B'], advanced: 'Continue', checks: [] }];
-  for (const e of fillEvents(frames, { carrier: 'progressive', page: 'P', overwrite: false, ms: 5, redact: (s) => s })) {
+  // With the run-identity fields too (Contract 1, audit 2026-10-08): the server must keep them.
+  const settings = { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false };
+  for (const e of fillEvents(frames, { carrier: 'amwins', page: 'P', overwrite: false, ms: 5, redact: (s) => s, run: '4c1e0b7a-run-id', rules: 'abcdef012345', settings, step: 'Vehicles' })) {
     const keep = new Set([...COMMON, ...(EVENT_FIELDS[e.type] ?? [])]);
     const dropped = Object.keys(e).filter((k) => !keep.has(k) && e[k] !== undefined);
     assert.deepEqual(dropped, [], `${e.type}: the server drops ${dropped.join(', ')}`);
+    for (const [k, valid] of Object.entries(RUN_FIELDS)) if (e[k] !== undefined) assert.ok(valid(e[k]), `${e.type}.${k} as the extension sends it would be refused`);
   }
+  assert.deepEqual(Object.keys(RUN_FIELDS).sort(), ['rules', 'run', 'settings', 'step']);
+  for (const f of ['run', 'rules', 'settings', 'step']) assert.ok(EVENT_FIELDS.fill_run.includes(f), `fill_run keeps ${f}`);
+  for (const f of ['run', 'step']) assert.ok(EVENT_FIELDS.fill_field.includes(f), `fill_field keeps ${f}`);
+  for (const f of ['run', 'rules', 'settings']) assert.ok(EVENT_FIELDS.fill_error.includes(f), `fill_error keeps ${f} without a fill_run result`);
+  assert.ok(EVENT_FIELDS.field_change.includes('step'));
 });
 
 // Audit 2026-10-08: field changes too, text and choice alike.
@@ -44,11 +52,24 @@ test('field change events carry only fields the server keeps', () => {
     { key: 'k', q: '1', label: 'A', kind: 'select', before: 'a', after: 'b', agent: false },
   ];
   for (const c of changes) {
-    const e = { carrier: 'progressive', page: 'P', view: 't1', ...fieldChangeEvent(c, ctx) };
+    const e = { carrier: 'progressive', page: 'P', view: 't1', ...fieldChangeEvent(c, { ...ctx, step: 'Vehicles' }) };
+    assert.ok(RUN_FIELDS.step(e.step), 'the step as the extension sends it is kept');
     const keep = new Set([...COMMON, ...EVENT_FIELDS[e.type]]);
     const dropped = Object.keys(e).filter((k) => !keep.has(k) && e[k] !== undefined);
     assert.deepEqual(dropped, [], `${c.kind}: the server drops ${dropped.join(', ')}`);
   }
+});
+
+// Earlier AI clients emitted decision scores; current builders omit them, but ingestion must
+// retain valid historical evidence without expanding the fields accepted on other event types.
+test('legacy AI evidence is accepted only on decisions and current clients do not emit it', () => {
+  const builder = read('sidepanel/sidepanel.js').match(/function aiDecisionEvent[\s\S]*?\n}/)[0];
+  for (const legacy of ['probability', 'support', 'evidenceProbability', 'confidence']) {
+    assert.ok(EVENT_FIELDS.ai_decision.includes(legacy));
+    assert.doesNotMatch(builder, new RegExp(`\\b${legacy}\\s*:`), `current decisions omit ${legacy}`);
+    for (const [type, fields] of Object.entries(EVENT_FIELDS)) if (type !== 'ai_decision') assert.ok(!fields.includes(legacy), `${type} does not accept ${legacy}`);
+  }
+  assert.ok(!Object.values(EVENT_FIELDS).flat().includes('cached'));
 });
 
 // The store's Privacy practices tab asks why for each permission (docs/chrome-web-store.md has the text).

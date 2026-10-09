@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS } from '../server/index.mjs';
 import { checkServer } from '../scripts/lib/central.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
@@ -314,4 +314,102 @@ test('the daily review tells whether the deployed server is this repository\'s',
   assert.equal((await checkServer('http://x', SERVER_HASH, health({ ok: true, events: 5 }))).status, 'different', 'a server from before the check names no version');
   assert.equal((await checkServer('http://x', SERVER_HASH, health({}, false))).status, 'unreachable');
   assert.equal((await checkServer('http://x', SERVER_HASH, async () => { throw new Error('ECONNREFUSED'); })).status, 'unreachable');
+});
+
+// Audit 2026-10-08, finding 7 (Contract 1): a fill's run id, rules fingerprint, settings and step
+// are kept in their exact shapes; a malformed one refuses the event rather than trimming it.
+test('run-identity fields are kept as sent and a malformed one refuses the event', async () => {
+  const dataDir = tmp();
+  const settings = { autoAdvance: true, autoFollowUps: false, autoPages: false, overwrite: true };
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ run: 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', rules: '0123456789ab', settings, step: 'Vehicles' }),
+      ev({ type: 'fill_field', result: 'filled', run: 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', step: 'Vehicles', filled: undefined }),
+      ev({ type: 'fill_error', error: 'stale: intake changed during the fill', run: 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', filled: undefined }),
+      ev({ type: 'field_change', q: '1', kind: 'select', from: 'a', to: 'b', step: 'Drivers', filled: undefined }),
+      ev({ run: 'short' }),
+      ev({ rules: 'XYZ' }),
+      ev({ settings: { autoAdvance: true } }),
+      ev({ settings: { ...settings, extra: true } }),
+      ev({ settings: { ...settings, overwrite: 'yes' } }),
+      ev({ step: 's'.repeat(121) }),
+      ev({ run: null }),
+      // A field_change carries no run: dropped like any unknown field, not refused.
+      ev({ type: 'field_change', q: '1', kind: 'select', from: 'a', to: 'b', run: 'short', filled: undefined }),
+    ] })).json();
+    assert.equal(r.accepted, 5);
+    assert.deepEqual(r.rejected.map((x) => x.index), [4, 5, 6, 7, 8, 9, 10]);
+    assert.match(r.rejected[0].error, /run id/);
+    assert.match(r.rejected[1].error, /rules hash/);
+    assert.match(r.rejected[2].error, /settings object/);
+    assert.match(r.rejected[5].error, /step name/);
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual([rows[0].run, rows[0].rules, rows[0].settings, rows[0].step], ['e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', '0123456789ab', settings, 'Vehicles']);
+  assert.deepEqual([rows[1].run, rows[1].step, rows[2].run, rows[3].step], ['e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', 'Vehicles', 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', 'Drivers']);
+  assert.deepEqual([rows[4].run, rows[4].dropped], [undefined, ['run']]);
+  assert.ok(!Object.values(EVENT_FIELDS).flat().includes('cached'), 'no client emitted this obsolete suggestion field');
+});
+
+// Legacy layouts explicitly wrote null for an unrecognized AmWINS step; queued/re-uploaded
+// layouts retain that representation without weakening step checks on other events.
+test('legacy page-layout null steps are accepted while malformed non-null and run steps are refused', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const result = await (await post({ events: [
+      ev({ type: 'page_layout', step: null, fields: [] }),
+      ev({ type: 'page_layout', step: 'Vehicles', fields: [] }),
+      ev({ type: 'page_layout', fields: [] }),
+      ev({ type: 'page_layout', step: 123, fields: [] }),
+      ev({ type: 'page_layout', step: 's'.repeat(121), fields: [] }),
+      ev({ step: null }),
+      ev({ type: 'fill_field', step: null }),
+      ev({ type: 'field_change', step: null }),
+    ] })).json();
+    assert.equal(result.accepted, 3);
+    assert.deepEqual(result.rejected.map((x) => x.index), [3, 4, 5, 6, 7]);
+    assert.ok(result.rejected.every((x) => /step name/.test(x.error)));
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(rows.map((x) => x.step), [null, 'Vehicles', undefined]);
+});
+
+test('failed runs retain rule/settings identity and reject malformed metadata like successful runs', async () => {
+  const dataDir = tmp();
+  const settings = { autoAdvance: false, autoFollowUps: true, autoPages: false, overwrite: false };
+  await withServer({ dataDir }, async ({ post }) => {
+    const result = await (await post({ events: [
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-123', rules: '0123456789ab', settings, error: 'safe error' }),
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-124', rules: 'client name', settings, error: 'safe error' }),
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-125', settings: { ...settings, client: 'must not persist' }, error: 'safe error' }),
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-126', settings: { ...settings, autoAdvance: 'yes' }, error: 'safe error' }),
+    ] })).json();
+    assert.equal(result.accepted, 1);
+    assert.deepEqual(result.rejected.map((x) => x.index), [1, 2, 3]);
+  });
+  assert.deepEqual([stored(dataDir)[0].rules, stored(dataDir)[0].settings, stored(dataDir)[0].dropped], ['0123456789ab', settings, undefined]);
+  assert.doesNotMatch(JSON.stringify(stored(dataDir)), /client name|must not persist/);
+});
+
+test('legacy AI decision evidence survives older-client uploads and historical reuploads in its original bounded shapes', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const result = await (await post({ events: [
+      ev({ type: 'ai_decision', filled: undefined, probability: 0.99, support: 0.98, evidenceProbability: 0.97, confidence: 0.96 }),
+      ev({ type: 'ai_decision', filled: undefined, confidence: 'high' }),
+      ev({ type: 'ai_decision', filled: undefined, probability: 0, support: null, evidenceProbability: 0, confidence: 0, dropped: ['someOtherField'] }),
+      ev({ type: 'ai_decision', filled: undefined, probability: 'client name', support: { text: 'client name' }, evidenceProbability: 2, confidence: 'client name' }),
+      ev({ type: 'ai_decision', filled: undefined, probability: -1, support: 1, evidenceProbability: 1, confidence: 'medium' }),
+    ] })).json();
+    assert.equal(result.accepted, 5);
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(['probability', 'support', 'evidenceProbability', 'confidence'].map((k) => rows[0][k]), [0.99, 0.98, 0.97, 0.96]);
+  assert.equal(rows[0].dropped, undefined);
+  assert.equal(rows[1].confidence, 'high');
+  assert.deepEqual(['probability', 'support', 'evidenceProbability', 'confidence'].map((k) => rows[2][k]), [0, null, 0, 0]);
+  assert.deepEqual(rows[2].dropped, ['someOtherField']);
+  assert.deepEqual(rows[3].dropped, ['probability', 'support', 'evidenceProbability', 'confidence']);
+  assert.deepEqual([rows[4].probability, rows[4].support, rows[4].evidenceProbability, rows[4].confidence], [undefined, 1, 1, 'medium']);
+  assert.doesNotMatch(JSON.stringify(rows), /client name/);
 });

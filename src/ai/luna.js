@@ -4,7 +4,7 @@ import { ntlMention, NTL_WORDS } from '../normalize.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
 export const API_URL = 'https://api.openai.com/v1/responses';
-export const POLICY_VERSION = 'luna-evidence-v3';
+export const POLICY_VERSION = 'luna-evidence-v4';
 const KINDS = new Set(['radio', 'select', 'checkbox']);
 const BATCH_SIZE = 12;
 const MAX_REQUEST_CHARS = 48000;

@@ -95,6 +95,34 @@ test('collectItems sends only bounded choices and blocks unsafe or unsupported f
   assert.equal(neverReason({ section: 'Business', label: 'Has a USDOT number?', controlKind: 'radio' }), null);
 });
 
+// Codex on c31942e: a client fact or attestation the rules leave to the agent (plan.js manualOnly,
+// carried on the pagekit report item) is never sent to the AI, even as a bounded choice.
+test('collectItems keeps manualOnly client facts away from the AI', () => {
+  const { items, blocked } = collectItems([{ noData: [
+    { key: 'gender', label: 'Gender', controlKind: 'select', options: ['MALE', 'FEMALE'], current: '', manualOnly: true, note: "Gender isn't on the intake: answer it yourself." },
+    { key: 'continuous', label: 'Has the customer had continuous coverage?', controlKind: 'radio', options: ['Yes', 'No'], current: '', manualOnly: true },
+    { key: 'haz', label: 'Hazardous materials requiring placards?', controlKind: 'radio', options: ['Yes', 'No'], current: '' },
+  ] }]);
+  assert.deepEqual(items.map(x => x.key), ['haz']);
+  assert.deepEqual(blocked.map(x => x.key), ['gender', 'continuous']);
+  assert.ok(blocked.every(x => /agent/.test(x.why)));
+});
+
+test('duplicate report rows preserve manual-only and review-only restrictions in either group', () => {
+  for (const flag of ['manualOnly', 'reviewOnly']) {
+    for (const restrictedGroup of ['failed', 'noData']) {
+      const duplicate = item('fact', 'Synthetic client choice');
+      const failed = { ...duplicate, ...(restrictedGroup === 'failed' ? { [flag]: true } : {}) };
+      const noData = { ...duplicate, ...(restrictedGroup === 'noData' ? { [flag]: true } : {}) };
+      const { items, blocked } = collectItems([{ failed: [failed], noData: [noData], unknown: [item('other', 'Unrelated choice')] }]);
+      assert.deepEqual(items.map(x => x.key), ['other'], `${flag} on ${restrictedGroup}`);
+      assert.equal(blocked.length, 1);
+      assert.equal(blocked[0][flag], true);
+      assert.equal(blocked[0].status, 'failed', 'report priority remains intact');
+    }
+  }
+});
+
 test('scoped intake strips identifiers, keeps explicit No, and includes only carrier rules', () => {
   const facts = scopedIntake(record, context.active);
   assert.equal(facts.coverage.reeferBreakdown, false);

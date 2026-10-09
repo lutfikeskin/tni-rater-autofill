@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 58 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 61 && globalThis.__raterKit.build === BUILD) return;
 
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
@@ -983,6 +983,105 @@
   }
 
   // ---------------------------------------------------------------------------------------------
+  // Agent edits while answers go in
+
+  // Why a fill stops when the agent edits the page meanwhile (the panel shows it as a blocker).
+  const EDIT_HALT = 'An agent edit interrupted filling. Review before resuming.';
+  // Why the AI answers after such an edit are not put in.
+  const EDIT_HALT_ANSWERS = 'an agent edit interrupted applying the answers; review the page, then request fresh suggestions';
+
+  // The recorder is paused while the kit puts answers in (a fill, an AI apply), so a real edit by
+  // the agent has to be caught here: a trusted input/change within 2 s of a trusted gesture (a
+  // click, a key, a paste, a drop) on that same control, on a question of the page, gives that
+  // question's key and control to `onEdit`. The gesture must be on the control because the kit's
+  // own click on a radio or checkbox fires trusted input/change too: an agent click elsewhere
+  // just before it is not an edit of that question. On the control means its target is the
+  // control, a radio of its group (arrow keys move the pick), its label (label[for] or a wrapping
+  // label; for a radio, the label of any radio in its group), inside its ExtJS trigger wrap, or an
+  // element holding no other control than it (or its radio group). Returns the function that
+  // takes the listeners off again.
+  function guardEdits(onEdit) {
+    let lastGesture = -Infinity;
+    let gestureTarget = null;
+    let gestureControl = null;
+    // ExtJS draws its options outside the combo. Resolve ownership at pointerdown, while the
+    // combo still owns focus; the carrier can move focus before its input/change event.
+    const popupControl = (target) => {
+      const option = target?.closest?.('[role=option], .x-boundlist-item');
+      const popup = option?.closest?.('[role=listbox], .x-boundlist');
+      if (!popup) return null;
+      const isControl = (el) => /^(INPUT|SELECT|TEXTAREA)$/.test(el?.tagName ?? '');
+      if (popup.id) {
+        for (const owner of deepQueryAll(document, 'input, select, textarea, [role=combobox]')) {
+          const refs = `${owner.getAttribute('aria-owns') ?? ''} ${owner.getAttribute('aria-controls') ?? ''}`.split(/\s+/);
+          if (!refs.includes(popup.id)) continue;
+          const control = isControl(owner) ? owner : owner.querySelector('input, select, textarea');
+          if (isControl(control)) return control;
+        }
+      }
+      return isControl(document.activeElement) ? document.activeElement : null;
+    };
+    const gestureTypes = ['pointerdown', 'keydown', 'paste', 'drop'];
+    const trackGesture = (event) => {
+      if (!event.isTrusted) return;
+      lastGesture = Date.now();
+      gestureTarget = event.target ?? null;
+      gestureControl = popupControl(gestureTarget);
+    };
+    const sameGroup = (a, b) => a === b || (!!a && !!b && a.type === 'radio' && b.type === 'radio'
+      && !!a.name && a.name === b.name && (a.form ?? null) === (b.form ?? null));
+    const gestureOn = (el) => {
+      const target = gestureTarget;
+      if (!target || !el) return false;
+      if (sameGroup(target, el) || sameGroup(gestureControl, el)) return true;
+      const label = target.closest?.('label');
+      if (label) {
+        const forId = label.htmlFor || label.getAttribute?.('for');
+        const linked = label.control ?? (forId ? document.getElementById(forId) : null)
+          ?? label.querySelector?.('input, select, textarea');
+        if (sameGroup(linked, el)) return true;
+      }
+      if (target.closest?.('.x-form-trigger-wrap')?.contains?.(el)) return true;
+      if (target === document.body || target === document.documentElement || !target.contains?.(el)) return false;
+      return [...(target.querySelectorAll?.('input, select, textarea') ?? [])].every((x) => sameGroup(x, el));
+    };
+    const protectEdit = (event) => {
+      if (!event.isTrusted || Date.now() - lastGesture > 2000 || !gestureOn(event.target)) return;
+      const c = collectControls().find((x) => x.el === event.target || x.radios?.includes(event.target));
+      if (c) onEdit(fieldKey(c), c);
+    };
+    for (const type of gestureTypes) document.addEventListener(type, trackGesture, true);
+    document.addEventListener('input', protectEdit, true);
+    document.addEventListener('change', protectEdit, true);
+    return () => {
+      for (const type of gestureTypes) document.removeEventListener(type, trackGesture, true);
+      document.removeEventListener('input', protectEdit, true);
+      document.removeEventListener('change', protectEdit, true);
+    };
+  }
+
+  // The panel installs this guard in every frame for the whole AI apply, including frames
+  // whose answers are still to come or have already finished. Short answer() calls must not
+  // remove another frame's protection while the active frame is waiting for its server.
+  let answerEditSession = null;
+  function answerEdits(command = 'read', token) {
+    if (command === 'begin') {
+      answerEditSession?.release();
+      const questions = new Map();
+      const release = guardEdits((key, c) => questions.set(key, c.label ?? null));
+      answerEditSession = { questions, release, token };
+    }
+    if (!answerEditSession || answerEditSession.token !== token) return null;
+    const results = [...(answerEditSession?.questions ?? [])].map(([key, label]) => ({ key, label,
+      ok: false, protected: true, reason: 'you changed this question yourself while the AI answers went in; your answer stays' }));
+    if (command === 'end') {
+      answerEditSession?.release();
+      answerEditSession = null;
+    }
+    return results;
+  }
+
+  // ---------------------------------------------------------------------------------------------
   // Public API
 
   // Fills in rounds: each round re-reads the page, handles every step that now has a field, and
@@ -1054,18 +1153,14 @@
       return report;
     }
     const halt = (reason) => { report.halted = true; report.reason = reason; };
-    // A real user edit during a fill must survive even while the recorder is paused.
-    let lastGesture = -Infinity;
-    const gestureTypes = ['pointerdown', 'keydown', 'paste', 'drop'];
-    const trackGesture = (event) => { if (event.isTrusted) lastGesture = Date.now(); };
-    const protectEdit = (event) => {
-      if (!event.isTrusted || Date.now() - lastGesture > 2000) return;
-      const c = collectControls().find((x) => x.el === event.target || x.radios?.includes(event.target));
-      if (c) { skipKeys.add(fieldKey(c)); report.protectedKeys.push(fieldKey(c)); halt('An agent edit interrupted filling. Review before resuming.'); }
-    };
-    for (const type of gestureTypes) document.addEventListener(type, trackGesture, true);
-    document.addEventListener('input', protectEdit, true);
-    document.addEventListener('change', protectEdit, true);
+    // A real user edit during a fill must survive even while the recorder is paused: its field is
+    // protected (also from this fill's later rounds) and the fill stops. The guard stays on until
+    // the fill returns, so an edit during the wait before Continue stops that too.
+    const releaseEditGuard = guardEdits((key) => {
+      skipKeys.add(key);
+      if (!report.protectedKeys.includes(key)) report.protectedKeys.push(key);
+      halt(EDIT_HALT);
+    });
     try {
 
     for (let round = 0; round < maxRounds; round++) {
@@ -1147,7 +1242,7 @@
       for (const { step: planned, control: c, how, reworded } of pairs) {
         // A known field whose question reads differently now: answered, and the agent checks it.
         const step = reworded ? { ...planned, warn: [planned.warn, `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check the answer.`].filter(Boolean).join(' ') } : planned;
-        const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how };
+        const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how, standard: !!step.standard, manualOnly: !!step.manualOnly };
         // A question left as the page has it whose wording changed: what the page has may not fit
         // any more, so the agent checks it (Continue waits).
         const leftAlone = step.verifyOnly || step.ignore;
@@ -1189,8 +1284,9 @@
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
             report.checks.push({ ...item, note, ...describe(c) });
             handled.set(step.id, { status: 'needs', note });
-          // Still our default from an earlier fill: still the agent's to confirm.
-          } else if (step.warn && agreesWith(step, c)) {
+          // Review mode confirms every retained standard, including a differing carrier choice.
+          // Other defaults retain their existing confirmation behavior.
+          } else if (step.warn && (step.reviewRequired || agreesWith(step, c))) {
             report.checks.push({ ...item, note: step.warn, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.warn });
           } else handled.set(step.id, { status: null });
@@ -1336,6 +1432,10 @@
         // A blank repeater row is already sufficient: do not add a duplicate merely because
         // its fields have not been filled yet (or the agent went back to this step).
         if (a.unlessSelector && deepQueryAll(document, a.unlessSelector).length) { clicked.add(a.action); continue; }
+        // A helper that answers many questions at once (AmWINS' Default all answers to No) would
+        // reset an answer the agent gave on this page: not clicked while one is here (the rules
+        // answer the other questions one by one), and not counted as clicked either.
+        if (a.skipIfProtected && controls.some((c) => skippedField(c))) continue;
         if (report.halted || pageBusy()) return false;
         if (a.action === 'printSend' && controls.some((c) => /^(email|e mail|fax)$/.test(c.text) && hasValue(c))) {
           report.blocked.push({ id: a.action, why: 'Email or Fax is ticked; untick it to print' });
@@ -1504,29 +1604,45 @@
       // The last answer may still be redrawing part of the page (a new payment method reloads the
       // plan list): a Continue clicked meanwhile is lost. Let it finish first.
       if (serverBacked) await settle({ quietMs: 500, maxMs: 6000 });
-      const button = !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
-      if (button) {
-        report.advanced = oneLine(button.value || button.textContent).slice(0, 40);
-        // On one-address applications (AmWINS) the side panel waits for the questions to change.
-        report.signatureBefore = signature();
-        button.click();
+      // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
+      // the report says why. (Reproduced 2026-10-08: halted, and Continue clicked all the same.)
+      if (report.halted) {
+        if (!report.blockers.includes(report.reason)) report.blockers.push(report.reason);
+      } else {
+        const button = !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
+        if (button) {
+          const text = oneLine(button.value || button.textContent).slice(0, 40);
+          // On one-address applications (AmWINS) the side panel waits for the questions to change.
+          report.signatureBefore = signature();
+          button.click();
+          // Recorded once the click went out, never before it.
+          report.advanced = text;
+        }
       }
     }
     return report;
     } finally {
       hiddenOk = [];
       try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
-      for (const type of gestureTypes) document.removeEventListener(type, trackGesture, true);
-      document.removeEventListener('input', protectEdit, true);
-      document.removeEventListener('change', protectEdit, true);
+      releaseEditGuard();
     }
   }
 
   // Puts answers the agent accepted from the AI assistant (or that it was allowed to pick itself)
   // into their fields: [{ key, label, value, note }], `value` being one of the field's option
   // texts, 'checked'/'unchecked' for a checkbox, or text. Same apply-and-verify path as fill():
-  // an answer counts only once the page has settled and still shows it.
-  async function answer(answers, expectedSnapshots) {
+  // an answer counts only once the page has settled and still shows it. Returns one result per
+  // answer, in order. An agent edit while they go in marks every item of that question
+  // `protected: true`, and a question the agent edited that was not among the answers gets an item
+  // of its own after them (`protected: true`, `ok: false`): the panel protects those keys, and a
+  // protected item means the apply halted. Only the items survive the trip to the panel.
+  async function answer(answers, expectedSnapshots, guardToken) {
+    // A frameId can be reused after navigation. Only the document guarded for this apply may
+    // receive its later answers, even after earlier answers changed the original snapshot.
+    if (guardToken && answerEditSession?.token !== guardToken) {
+      return answers.map(a => ({ key: a.key, label: a.label, ok: false,
+        reason: 'the page or frame changed while applying the answers; request fresh suggestions' }));
+    }
     if (expectedSnapshots && !expectedSnapshots.includes(decisionSnapshot())) {
       return answers.map(a => ({ key: a.key, label: a.label, ok: false, reason: 'the page changed since the assistant evaluated it; request fresh suggestions' }));
     }
@@ -1536,7 +1652,17 @@
       return same.length > 1 ? same.find((c) => c.label === label) ?? null : same[0] ?? null;
     };
     const results = [];
+    // The agent at the page while the answers go in (the recorder is paused then, as during a
+    // fill): their edit keeps its question, and the answers still to come are not put in (they
+    // were chosen for the page as it was).
+    const editedQuestions = answerEditSession?.questions ?? new Map();
+    const edited = (key) => editedQuestions.has(key);
+    const releaseEditGuard = answerEditSession ? () => {} : guardEdits((key, c) => {
+      if (!edited(key)) editedQuestions.set(key, c.label ?? null);
+    });
+    try {
     for (const a of answers) {
+      if (editedQuestions.size) { results.push({ key: a.key, label: a.label, ok: false, reason: EDIT_HALT_ANSWERS }); continue; }
       const c = find(a.key, a.label);
       if (!c) { results.push({ key: a.key, label: a.label, ok: false, reason: 'the question is no longer on this page' }); continue; }
       if (a.expected) {
@@ -1559,15 +1685,24 @@
       if (result.ok) {
         const settled = await settle(serverBacked ? {} : { quietMs: 250, maxMs: 3000 });
         const fresh = find(a.key, a.label);
-        if (!settled) result = { ok: false, reason: 'the page did not settle after the answer' };
+        // The agent changed this very question while its answer went in: theirs stays, unmarked.
+        if (edited(a.key)) result = { ok: false, reason: 'you changed this question yourself while the answer went in; your answer stays' };
+        else if (!settled) result = { ok: false, reason: 'the page did not settle after the answer' };
         else if (!fresh) result = { ok: false, reason: 'the field disappeared after the answer; check the page' };
         else if (invalidControl(fresh) || !agreesWith(step, fresh)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
         else mark(fresh, 'ai', a.note ?? 'answer suggested by the AI assistant — check it');
       }
-      if (!result.ok) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `AI answer not accepted: ${result.reason}`); }
+      if (!result.ok && !edited(a.key)) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `AI answer not accepted: ${result.reason}`); }
       results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, reason: result.reason ?? null });
     }
+    for (const r of results) if (edited(r.key)) r.protected = true;
+    for (const [key, label] of editedQuestions) {
+      if (!results.some((r) => r.key === key)) results.push({ key, label, ok: false, protected: true, reason: 'you changed this question yourself while the AI answers went in; your answer stays' });
+    }
     return results;
+    } finally {
+      releaseEditGuard();
+    }
   }
 
   // Re-marks one field (e.g. an AI choice the agent rejected). Returns whether it was found.
@@ -1771,5 +1906,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 58, build: BUILD, fill, answer, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 61, build: BUILD, fill, answer, answerEdits, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

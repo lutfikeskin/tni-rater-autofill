@@ -4,7 +4,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, ownerIsDriver } from './util.js';
+import { STATES, ownerIsDriver, set } from './util.js';
 
 const ROWS = [1, 2, 3, 4];
 // The marital-status dropdowns have odd hierarchical names; positions on the page put them on
@@ -12,8 +12,60 @@ const ROWS = [1, 2, 3, 4];
 const MARITAL_FIELDS = ['marital_stat_1.0', 'marital_stat_1.1', 'marital_stat_1.2.0', 'marital_stat_1.2.1'];
 
 const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
-// Radius answers that mean the widest band (same words carriers/progressive.js maps to 500+).
-const LONG_HAUL = /unlimited|long|nation|otr|48|any/i;
+// Radius answers that mean the widest band (the carrier rules map them to "more than 500 miles"):
+// unlimited, long haul, nationwide, OTR, "48 states" / "lower 48", anywhere. Whole words only: a
+// bare "48" is 48 miles, and "any" must not be found inside "company".
+// "48 states" / "lower 48" name an area, and its 48 is not miles.
+const STATES_48 = /\b(?:(?:lower|all|continental|contiguous)[\s-]*48|48(?:[\s-]+(?:continental|contiguous|u\.?s\.?))?[\s-]+states?)\b/i;
+// The other words say how far in general; an explicit mileage beside them ("anywhere within 100
+// miles", "OTR up to 500 miles") is the answer.
+const LONG_HAUL_WORDS = /\b(?:unlimited|long(?:[\s-]*(?:haul|distance))?|nation(?:al|wide)?|otr|over[\s-]*the[\s-]*road|any(?:where)?)\b/i;
+export const LONG_HAUL = new RegExp(`${STATES_48.source}|${LONG_HAUL_WORDS.source}`, 'i');
+export const isLongHaul = (text) => parseRadius(String(text ?? '')).kind === 'long-haul';
+
+// Other distance units need an agent conversion; never treat their number as miles.
+const NON_MILE_UNITS = /^(k|km|kms|kilomet(?:er|re)s?|m|met(?:er|re)s?|cm|mm|ft|feet|foot|yds?|yards?|in|inch(?:es)?|nautical|nmi|nm)$/i;
+const MILE_UNIT = /^(miles?|mi)$/i;
+// A bare number can be followed by these radius descriptions, rather than a unit. With an
+// explicit mile unit, other prose may follow too; another distance unit is still unresolved.
+const RADIUS_PROSE = /^(radius|of|one|away|maximum|max|distance|round)$/i;
+const NOT_DISTANCE = /^(states?|hrs?|hours?|mins?|minutes?|days?|weeks?|counties|cities)$/i;
+
+/**
+ * The intake's radius box, read as a number of miles. The 48 in "48 states" / "lower 48" is
+ * geography, not mileage; read any other digits normally. A single mileage beats the other long-haul words ("anywhere within 100
+ * miles" is 100); without one, those words are long haul. A range ("100-500 miles", "100 miles to 500 miles", "100mi-500mi"), a
+ * non-mile unit ("250 km", "100 feet"), a mileage followed by another number, and text that isn't a distance
+ * give no mileage, and the normalizer asks the agent for it.
+ * @returns {{ miles: number|null, kind: 'missing'|'long-haul'|'miles'|'range'|'unit'|'text' }}
+ */
+export function parseRadius(v) {
+  let s = clean(v);
+  if (s == null) return { miles: null, kind: 'missing' };
+  if (STATES_48.test(s)) {
+    s = s.replace(new RegExp(STATES_48.source, 'gi'), '');
+    if (!/\d/.test(s)) return { miles: null, kind: 'long-haul' };
+  }
+  const read = readMiles(s);
+  if (!/\d/.test(s) && LONG_HAUL_WORDS.test(s)) return { miles: null, kind: 'long-haul' };
+  return read;
+}
+
+function readMiles(s) {
+  const digits = s.replace(/(\d),(?=\d{3}\b)/g, '$1');
+  const m = digits.match(/^\D*?(\d+(?:\.\d+)?)\s*\+?\s*(?:-?\s*(?:(?:in[\s-]+state|interstate)[\s-]+)?(miles?|mi)\b\.?\s*)?(?:(?:-|–|—|to|through|thru|and)\s*(\d+(?:\.\d+)?))?\s*(?:-\s*)?([a-z]+)?/i);
+  if (!m) return { miles: null, kind: 'text' };
+  const [, from, mileUnit, to, word] = m;
+  if (word && NOT_DISTANCE.test(word)) return { miles: null, kind: 'text' };
+  // After an explicit mile unit, 'in' introduces location prose; by itself it can mean inches.
+  const nonMileUnit = word && NON_MILE_UNITS.test(word) && !(mileUnit && /^in$/i.test(word));
+  if (word && (nonMileUnit || (!mileUnit && !MILE_UNIT.test(word) && !RADIUS_PROSE.test(word)))) return { miles: null, kind: 'unit' };
+  if (to != null) return { miles: null, kind: 'range' };
+  // One mileage only when no other number is left over ("100 miles / 500 miles" is not 100).
+  if (/\d/.test(digits.slice(m.index + m[0].length))) return { miles: null, kind: 'text' };
+  const miles = Math.round(Number(from));
+  return miles > 0 ? { miles, kind: 'miles' } : { miles: null, kind: 'text' };
+}
 
 export function clean(v) {
   if (v == null || typeof v !== 'string') return v ?? null;
@@ -152,6 +204,43 @@ const plain = (s) => String(s).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 export const NTL_WORDS = /\b(ntl|non[\s-]*tr[ua]ck(ing)?|bob[\s-]*tail(ing)?)\b/i;
 export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
 export const ntlCheckMessage = (line) => `The claims box mentions non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. AmWINS has no NTL option the filler knows: quote it by hand.`;
+
+// Words in the claims notes that answer the ownership question. Only the form's three answers
+// are taken as the answer; the others count as mentions, so "on a lease, truck owned" is not
+// read as owned.
+const OWNERSHIP_WORDS = /\b(owned|leased?|leasing|financed?|financing|loan)\b/gi;
+const OWNERSHIP_ANSWERS = { owned: 'Owned', leased: 'Leased', financed: 'Financed' };
+const NEGATION = /\b(not|no|never|without|none)\b|n't\b/i;
+const TRAILER_WORD = /\btrailers?\b/i;
+const ownershipLines = (text) => String(text ?? '').split('\n').filter((line) => new RegExp(OWNERSHIP_WORDS.source, 'i').test(line));
+
+/**
+ * The ownership answer written in the claims notes when the ownership box is blank ("Financed").
+ * Only an unambiguous note is taken: exactly one ownership word, which is one of owned / leased
+ * / financed, not negated in its sentence ("not leased" is not Leased) and with no trailer
+ * mention anywhere ("Trailer.\nFinanced." can describe the trailer; mixed units stay ambiguous). Any
+ * other mention is left to the agent with the lines quoted.
+ * @returns {{ value: string|null, lines: string } | null}  null when the notes say nothing about ownership
+ */
+export function ownershipFromNotes(notes) {
+  const text = String(notes ?? '');
+  const mentions = [...text.matchAll(OWNERSHIP_WORDS)];
+  if (!mentions.length) return null;
+  const lines = ownershipLines(text).join(' / ');
+  const unsettled = { value: null, lines };
+  if (mentions.length !== 1) return unsettled;
+  const [mention] = mentions;
+  const value = OWNERSHIP_ANSWERS[mention[1].toLowerCase()];
+  if (!value) return unsettled;
+  // The sentence holding the word: from the previous full stop, semicolon or line break to the next.
+  const start = Math.max(...[...text.slice(0, mention.index).matchAll(/[.;!?\n]/g)].map((m) => m.index + 1), 0);
+  const end = text.slice(mention.index).search(/[.;!?\n]/);
+  const sentence = text.slice(start, end < 0 ? undefined : mention.index + end);
+  // A trailer can be the subject of a separate ownership sentence or line. Keep trailer-only
+  // and mixed-unit notes unresolved rather than assigning their ownership to the vehicle.
+  if (NEGATION.test(sentence) || TRAILER_WORD.test(text)) return unsettled;
+  return { value, lines };
+}
 
 // "MD - 10123456789" -> { state: 'MD', number: 'MD10123456789' }: a leading state code tells us
 // the license state, but it stays in the number (agents enter it that way).
@@ -405,12 +494,13 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (record.vehicles.length > 1 && ops.licensePlate) info('plate.ambiguous', 'operations.licensePlate', 'The form has one license-plate box but lists several vehicles; the plate may belong to only one of them.');
 
   // --- Operations -----------------------------------------------------------------------------
-  if (ops.radius) {
-    const miles = toInt(ops.radius);
-    if (miles != null) ops.radiusMiles = miles;
-    // "Unlimited", long haul, OTR, 48 states: the carrier rules pick their widest band (500+).
-    else if (!LONG_HAUL.test(ops.radius)) check('radius.not-miles', 'operations.radius', `Radius is "${ops.radius}", not a number of miles. Raters usually want miles or a band (e.g. 500+).`);
-  } else check('radius.missing', 'operations.radius', 'No radius of operations.');
+  // "Unlimited", long haul, OTR, 48 states: no mileage; the carrier rules pick their widest band.
+  const radius = parseRadius(ops.radius);
+  ops.radiusMiles = radius.miles;
+  if (radius.kind === 'missing') check('radius.missing', 'operations.radius', 'No radius of operations.');
+  else if (radius.kind === 'range') check('radius.range', 'operations.radiusMiles', `Radius is "${ops.radius}", a range. Raters ask for the farthest one-way distance: enter it in miles.`);
+  else if (radius.kind === 'unit') check('radius.unit', 'operations.radiusMiles', `Radius is "${ops.radius}", not in miles. Convert it and enter the miles.`);
+  else if (radius.kind === 'text') check('radius.not-miles', 'operations.radius', `Radius is "${ops.radius}", not a number of miles. Raters usually want miles or a band (e.g. 500+).`);
   if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.');
   if (ops.filingsRequired && !ops.filingsWhich) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.');
   if (ops.hazmat) check('hazmat.yes', 'operations.hazmat', 'Hauls hazmat, tobacco or prescription drugs — confirm which, most raters treat these differently.');
@@ -456,9 +546,12 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     else if (/^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
     const notes = (record.claims.hasClaims == null ? lines : lines.slice(1)).filter(Boolean);
     record.claims.notes = notes.length ? notes.join('\n') : null;
-    // A blank ownership answer that turns up in the notes ("Financed") is the ownership answer.
-    const own = record.claims.notes?.match(/\b(owned|leased|financed)\b/i);
-    if (own && !ops.vehicleOwnership) ops.vehicleOwnership = own[1][0].toUpperCase() + own[1].slice(1).toLowerCase();
+    // A blank ownership answer that turns up in the notes ("Financed") is the ownership answer,
+    // when the note is unambiguous (ownershipFromNotes); otherwise the agent reads it. The box
+    // itself always wins over the notes.
+    const own = ops.vehicleOwnership ? null : ownershipFromNotes(record.claims.notes);
+    if (own?.value) ops.vehicleOwnership = own.value;
+    else if (own) check('ownership.notes', 'operations.vehicleOwnership', `The claims box mentions ownership ("${own.lines}") but doesn't settle it for the vehicles. Set Vehicle ownership (owned / leased / financed) yourself.`);
     // Non-trucking liability (NTL) is named only here: "NTL", "non-trucking" (also written "non
     // tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the agent
     // decides, and nothing is added until they set it to Yes.
@@ -488,4 +581,32 @@ export function parseEdit(kind, text) {
     case 'state': return s.toUpperCase();
     default: return s;
   }
+}
+
+// The scalars normalizeIntake derives from another field, recomputed after the agent corrects
+// the source in the panel (set first, then rederive). Only the source triggers it: an edit to
+// the derived field itself ("Radius (miles)") is the agent's value and is left as typed, also
+// when the source is edited afterwards (the panel passes the paths the agent edited as `keep`).
+const DERIVED = {
+  'operations.radius': ['operations.radiusMiles', (record) => parseRadius(record.operations?.radius).miles],
+  'applicant.yearEstablished': ['applicant.yearsInBusiness', (record, year) => {
+    const est = record.applicant?.yearEstablished;
+    return Number.isInteger(est) && est >= 1900 && est <= year ? year - est : null;
+  }],
+};
+
+/**
+ * @param {object} record  the client record, already holding the edit at `path`
+ * @param {string} path  the edited field
+ * @param {{ today?: Date, keep?: Set<string> }} [options]  keep: derived paths the agent set
+ *   directly, never recomputed
+ * @returns {string[]} the derived paths that were recomputed
+ */
+export function rederive(record, path, { today = new Date(), keep } = {}) {
+  const derived = DERIVED[path];
+  if (!derived) return [];
+  const [target, compute] = derived;
+  if (keep?.has(target)) return [];
+  set(record, target, compute(record, today.getFullYear()));
+  return [target];
 }
