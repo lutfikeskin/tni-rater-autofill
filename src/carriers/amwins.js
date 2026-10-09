@@ -335,8 +335,11 @@ export const amwins = {
     { selector: '#howLongWithCurrentCarrier', kind: 'choice', ignore: (r) => !r.applicant.dot, ...fact('How long with the current carrier', 'How long the insured has been with the current carrier isn\'t on the intake: answer it yourself.') },
     { label: '^can provide claim free loss run$', kind: 'bool', ...fact('Claim-free loss runs', 'Whether claim-free loss runs can be provided isn\'t on the intake: answer it yourself.') },
     { label: '^valued loss runs$', kind: 'bool', ...fact('Valued loss runs', 'Whether valued loss runs can be provided isn\'t on the intake: answer it yourself.') },
-    // No by default; Yes only when the intake reports claims (Yes opens the required Loss History).
-    { name: 'Any prior loss (default: No)', label: '^any prior loss$', kind: 'bool', source: 'derived', value: (r) => r.claims?.hasClaims === true },
+    // Preserve the intake's explicit claims answer; unknown history stays with the agent.
+    // Yes opens the required Loss History.
+    { name: 'Any prior loss', label: '^any prior loss$', kind: 'bool', source: 'derived', clientFact: true,
+      value: (r) => typeof r.claims?.hasClaims === 'boolean' ? r.claims.hasClaims : null,
+      note: (r) => typeof r.claims?.hasClaims === 'boolean' ? null : 'The intake doesn\'t answer the claims / violations question: answer prior loss yourself.' },
 
     // --- Drivers ---------------------------------------------------------------------------------
     // Names and license number first: they retitle the driver panel; gender, marital status and

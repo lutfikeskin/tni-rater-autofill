@@ -246,6 +246,24 @@ test('claims Yes: convictions are the agent\'s (a combined claims / violations Y
   for (const r of RECORDS()) assert.notEqual(named(buildPlan(r, amwins, {}), /convictions/i).value, true);
 });
 
+test('AmWINS prior loss preserves unknown claims and explicit Yes / No', () => {
+  for (const hasClaims of [null, undefined, 'unknown']) {
+    const plan = buildPlan(with_({ 'claims.hasClaims': hasClaims }), amwins, {});
+    const loss = named(plan, /^Any prior loss/);
+    agentsNote(loss);
+    assert.equal(loss.source, 'derived');
+    assert.equal(loss.manualOnly, true, `${hasClaims}: missing claim history is the agent's`);
+    assert.match(loss.note, /intake.*doesn.t answer|intake.*no.*answer/i);
+  }
+  for (const hasClaims of [true, false]) {
+    const loss = named(buildPlan(with_({ 'claims.hasClaims': hasClaims }), amwins, {}), /^Any prior loss/);
+    assert.equal(loss.value, hasClaims);
+    assert.equal(loss.note, null);
+    assert.equal(loss.manualOnly, false);
+    assert.equal(loss.source, 'derived');
+  }
+});
+
 test('attached equipment of $5,000 on the intake: entered, never "no equipment"', () => {
   const r = with_({ 'operations.equipVehicle': 5000 });
   const p = buildPlan(r, progressive, {});
