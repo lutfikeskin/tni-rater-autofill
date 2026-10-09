@@ -13,7 +13,7 @@ The [development handoff](docs/handoff-2026-10-09.md) records the merged audit w
 
 Agents install it from its private Chrome Web Store listing (see [docs/chrome-web-store.md](docs/chrome-web-store.md)). For development:
 
-1. Run `npm run package`, open `chrome://extensions` and turn on **Developer mode** (top right).
+1. Run `npm ci` once, then `npm run package`. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and pick `dist/tni-rater-autofill`. That copy has a fixed extension ID (`cbpjccegchfackokbiogplhdekblkccj`), so its settings, including the OpenAI key, survive removing and loading it again.
 3. Pin the extension, then click its icon to open the side panel.
 4. After the next `npm run package`, click the extension's reload button. Open carrier pages need no refresh: the fill scripts left in them are replaced on the next fill (each build is stamped), and the usage recorder when the panel next follows the tab. Reopen the side panel to get its new version.

@@ -66,6 +66,7 @@ const AGENT_ANSWERS = [
   ['Underwriting', /^vehicle leased$/i, 'input[name="vehicleLeased"][value="0"]', '0'],
 ];
 const manualFailures = [], agentAnswered = new Set();
+const answeredSteps = new Map();
 let reachedDeclaration = false;
 const atStep = () => mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), saves: window.__amwinsMock.saves }));
 const idlePanel = () => panel.waitForFunction(() => !document.querySelector('#fill').disabled && document.querySelector('#report .summary'), null, { timeout: 20000 });
@@ -83,6 +84,15 @@ for (let round = 0; round < 20; round++) {
     break;
   }
   if (!unresolved.length) continue; // next-page report may still be waiting behind the background save
+  // Save & Continue changes the carrier step before the panel publishes its next report.
+  // On slower runners, that old report can still list facts we just answered. Wait only
+  // for this recognized prior-step report; the bounded loop and every hold assertion stay active.
+  const previousStepReport = unresolved.every(label => {
+    const matches = AGENT_ANSWERS.filter(([step, re]) =>
+      step !== before.step && answeredSteps.get(step) < before.saves && re.test(label));
+    return matches.length > 0 && matches.every(([, , selector]) => agentAnswered.has(selector));
+  });
+  if (previousStepReport) continue;
   const remaining = [...AGENT_ANSWERS];
   const answers = unresolved.map(label => {
     const index = remaining.findIndex(([step, re]) => step === before.step && re.test(label));
@@ -135,6 +145,7 @@ for (let round = 0; round < 20; round++) {
     if (!await control.evaluate((el, want) => el.__harnessTrustedChange && el.value === want, value)) manualFailures.push(`No trusted agent change: ${selector}`);
     agentAnswered.add(selector);
   }
+  answeredSteps.set(before.step, before.saves);
   await idlePanel();
   // A trusted edit can schedule a follow-up fill; the explicit panel click is still the
   // ordinary resume action and must preserve every correction the recorder just observed.

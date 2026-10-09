@@ -31,10 +31,6 @@ jobs:
           if ($manifest.key) { throw 'The store ZIP must not contain the development key' }
           if ($manifest.version -ne $version) { throw 'Store version does not match source' }
           if (!(Test-Path (Join-Path $destination $manifest.side_panel.default_path))) { throw 'Missing side panel' }
-      - run: npm run mock:amwins
-      - run: npm run mock:amwins -- --reversed
-      - run: npm run e2e -- --fixtures
-      - run: npm run mock:luna
       - name: Packaged extension with the Node replay server
         shell: pwsh
         run: |
@@ -54,3 +50,7 @@ jobs:
           } finally {
             if (!$server.HasExited) { Stop-Process -Id $server.Id }
           }
+      - run: npm run mock:amwins
+      - run: npm run mock:amwins -- --reversed
+      - run: npm run e2e -- --fixtures
+      - run: npm run mock:luna
