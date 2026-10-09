@@ -528,6 +528,22 @@ test('learning: same-label AmWINS questions on two steps get no ready-to-paste r
   assert.match(other.rule, /^\{ label: 'owned trailers'/, 'a label on one step keeps its ready rule');
 });
 
+test('learning: one observation on a sibling step suppresses a qualifying label rule', () => {
+  for (const kind of ['select', 'text']) {
+    const events = Array.from({ length: 5 }, (_, i) => ({
+      id: `coverage-${i}`, session: `s${i}`, carrier: 'amwins', type: 'field_change',
+      page: '/application/businessauto', step: 'Coverage', label: 'Hired auto?', kind, by: 'agent',
+      ...(kind === 'select' ? { to: 'No' } : { matchesIntake: ['coverage.hiredAuto'] }),
+    }));
+    events.push({ ...events[0], id: 'vehicle', session: 'other', step: 'Vehicles', label: 'Hired auto', to: 'Yes', matchesIntake: [] });
+    const { suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
+    const list = kind === 'select' ? suggestions.standard : suggestions.mapping;
+    assert.equal(list.length, 1, 'only Coverage meets the support threshold');
+    assert.equal(list[0].rule, null, 'even a low-support sibling makes the label selector ambiguous');
+    assert.match(list[0].manualRule, /steps Coverage, Vehicles/);
+  }
+});
+
 // Codex on PR #56: two questions reading the same are two rows, each named by what tells them apart.
 test('the review names two questions reading the same apart', async () => {
   const { execFileSync } = await import('node:child_process');

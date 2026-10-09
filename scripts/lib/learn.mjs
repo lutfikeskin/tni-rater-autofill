@@ -207,6 +207,7 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
   const intakesOf = (list) => new Set(list.map((o) => intakeOf(o.session))).size;
   // A suggestion reports the support it qualified on, not every observation of its question.
   const support = (list) => ({ intakes: intakesOf(list), quotes: quotesOf(list) });
+  const observedSteps = new Map();
   for (const [key, obs] of byQuestion) {
     const [carrier] = key.split('|');
     // The question's wording as the page draws it (a layout's caption) over an event's, which can
@@ -219,6 +220,10 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     // the page's own chrome (a file button, a pager, a row's Delete), is no question to suggest a
     // rule for (the 2026-10-06 review listed "Browse" and "1 of 1").
     if (!first.q && (!textOf(first.label) || UI_CHROME.test(textOf(first.label)))) continue;
+    const selector = `${carrier}|${target({ ...first, field })}`;
+    const steps = observedSteps.get(selector) ?? new Set();
+    for (const o of obs) steps.add(o.step ?? '(no step)');
+    observedSteps.set(selector, steps);
     const isMapped = obs.some((o) => o.autofilled) || claimed({ ...first, ref: field });
     const base = { carrier, q: first.q, field, page: first.page, ...(first.step ? { step: first.step } : {}), label: first.label ?? '', intakes: intakesOf(obs), quotes: quotesOf(obs) };
     // Answers someone gave (autofill, the agent, the page on an answer): not one the page held
@@ -293,21 +298,14 @@ export function learn(events, { carriers = [], minIntakes = 5, threshold = 0.9 }
     }
   }
   // A question known only by its text (AmWINS) gets a rule by its label, which no step constrains:
-  // two steps' questions reading the same would get one selector, and pasting both could fill one
-  // step with the other's answer. Such suggestions get no ready rule, only a note naming the steps.
+  // two observed steps' questions reading the same would get one selector, even when only one has
+  // enough support for a suggestion. Such suggestions get no ready rule, only a note naming the steps.
   const pasted = [...suggestions.standard, ...suggestions.mapping, ...suggestions.pageAnswer].filter((s) => s.rule);
-  const bySelector = new Map();
   for (const s of pasted) {
-    const k = `${s.carrier}|${target(s)}`;
-    bySelector.set(k, [...(bySelector.get(k) ?? []), s]);
-  }
-  for (const group of bySelector.values()) {
-    const steps = [...new Set(group.map((s) => s.step ?? '(no step)'))];
+    const steps = [...(observedSteps.get(`${s.carrier}|${target(s)}`) ?? [])];
     if (steps.length < 2) continue;
-    for (const s of group) {
-      s.rule = null;
-      s.manualRule = `the same label on steps ${steps.join(', ')}: a label rule would match each step; write the rule by hand so it finds this step's question only`;
-    }
+    s.rule = null;
+    s.manualRule = `the same label on steps ${steps.join(', ')}: a label rule would match each step; write the rule by hand so it finds this step's question only`;
   }
   for (const list of Object.values(suggestions)) list.sort((a, b) => b.intakes - a.intakes || b.quotes - a.quotes);
   return { quotes: answers.size, intakes: new Set([...answers.keys()].map(intakeOf)).size, questions: byQuestion.size, suggestions };
