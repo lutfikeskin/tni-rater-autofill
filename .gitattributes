@@ -1,0 +1,6 @@
+# Keep source, fixtures and script fingerprints consistent across operating systems.
+* text=auto eol=lf
+*.pdf binary
+*.png binary
+*.jpg binary
+*.zip binary

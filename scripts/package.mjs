@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { zipDirectory } from './lib/zip.mjs';
 import { STAMPED, buildId, stampBuild, devManifest, PROVENANCE_FILE, stampProvenance } from './lib/package.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -53,7 +54,7 @@ const stage = path.join(root, 'dist', '.stage');
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.rmSync(out, { force: true });
 copy(stage, 'store');
-execFileSync('zip', ['-rq', '-X', out, ...INCLUDE, '-x', '*.DS_Store'], { cwd: stage, stdio: 'inherit' });
+fs.writeFileSync(out, zipDirectory(stage));
 fs.rmSync(stage, { recursive: true, force: true });
 // The unpacked copy (Load unpacked in chrome://extensions): the same, plus the fixed ID.
 const unpacked = path.join(root, 'dist', 'tni-rater-autofill');

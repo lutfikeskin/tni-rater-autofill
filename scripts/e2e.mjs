@@ -11,7 +11,7 @@
 //   npm run e2e -- --renumber   # every question renumbered, as Progressive did on 2026-10-07: the
 //                               # results must equal the baseline (questions are found by name/text)
 //
-// A local check: CI runs only the unit tests and packaging (docs/testing.md, since 2026-10-05).
+// Runs locally and in Windows CI; see docs/testing.md for the required checks.
 // Layouts: test/bakeoff/course-*.json, captures/progressive/*.json and the per-state layouts
 // npm run layouts builds (captures/progressive/generated/, git-ignored). Needs internet (the
 // replay page loads ExtJS from cdnjs) and Playwright's Chromium (npx playwright install chromium).
@@ -48,8 +48,9 @@ if (!layouts.length) { console.error('No layouts found.'); process.exit(1); }
 // The replay page needs the repo served over http (ES modules, fetch).
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.json': 'application/json', '.pdf': 'application/pdf', '.css': 'text/css', '.png': 'image/png' };
 const server = http.createServer((req, res) => {
-  const p = path.join(root, decodeURIComponent(new URL(req.url, 'http://x').pathname));
-  const file = p.endsWith('/') ? path.join(p, 'index.html') : p;
+  const pathname = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+  const p = path.join(root, pathname);
+  const file = pathname.endsWith('/') ? path.join(p, 'index.html') : p;
   if (!file.startsWith(root) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) { res.writeHead(404).end(); return; }
   res.writeHead(200, { 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream' });
   fs.createReadStream(file).pipe(res);

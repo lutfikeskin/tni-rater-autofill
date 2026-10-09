@@ -325,7 +325,7 @@ export async function main(args = process.argv.slice(2)) {
   return output;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     await main();
   } catch (error) {

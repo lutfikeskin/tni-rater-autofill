@@ -6,11 +6,14 @@ The extension fills supported fields, reports unresolved questions, and preserve
 
 For development, [AGENTS.md](AGENTS.md) and [CLAUDE.md](CLAUDE.md) contain the same short guidance. Use their task-specific links only when changing the corresponding system. The [architecture guide](docs/architecture.md) distinguishes implemented behavior from the project's remaining goals.
 
+Starting on a new Windows computer: follow [Windows development](docs/windows-development.md).
+The [development handoff](docs/handoff-2026-10-09.md) records the merged audit work and remaining limitations.
+
 ## Install
 
 Agents install it from its private Chrome Web Store listing (see [docs/chrome-web-store.md](docs/chrome-web-store.md)). For development:
 
-1. Run `npm run package`, open `chrome://extensions` and turn on **Developer mode** (top right).
+1. Run `npm ci` once, then `npm run package`. Open `chrome://extensions` and turn on **Developer mode** (top right).
 2. Click **Load unpacked** and pick `dist/tni-rater-autofill`. That copy has a fixed extension ID (`cbpjccegchfackokbiogplhdekblkccj`), so its settings, including the OpenAI key, survive removing and loading it again.
 3. Pin the extension, then click its icon to open the side panel.
 4. After the next `npm run package`, click the extension's reload button. Open carrier pages need no refresh: the fill scripts left in them are replaced on the next fill (each build is stamped), and the usage recorder when the panel next follows the tab. Reopen the side panel to get its new version.
@@ -134,7 +137,7 @@ npm run mock:amwins -- --headed  # watch it
 npm run e2e:extension    # needs npm run package and npm run replay (port 8792)
 ```
 
-The packaged extension itself in Chromium, its side panel opened as a page, on the same mock: loads the sample intake, clicks **Fill this page** once and checks that the panel goes through every step on its own (Save & Continue), stops at the declaration and never submits.
+The packaged extension itself in Chromium, its side panel opened as a page, on the same mock: loads the sample intake, verifies that missing client facts hold Continue, enters explicit synthetic agent answers through trusted browser input, and resumes filling. It checks retention after saves/reloads, stops at the declaration and never submits.
 
 ### Synthetic intake variations and AI controls
 
@@ -181,8 +184,9 @@ Updates reach agents through the Chrome Web Store; their usage logs go to TNI's 
 ## Development
 
 ```bash
-npm install
+npm ci
 npm test
+npm run package
 ```
 
-To try the fill engine without the extension, serve this folder (`python3 -m http.server 8791`) and open `test/mock-rater/index.html`. The side panel also opens directly at `sidepanel/sidepanel.html` in preview mode (loading and reviewing work there; filling doesn't).
+Use Node.js 22 (also used in CI). Packaging and vendoring run in Node without system `zip` or `cp` commands. To try the fill engine without the extension, run `npm run replay` and open `http://localhost:8792/test/mock-rater/`. The side panel also opens at `http://localhost:8792/sidepanel/sidepanel.html` in preview mode (loading and reviewing work there; filling doesn't).

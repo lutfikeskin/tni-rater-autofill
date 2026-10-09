@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
@@ -190,7 +191,7 @@ test('summary script turns a log into corrections and mapping candidates', async
   ] };
   const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'usage-')), 'log.json');
   fs.writeFileSync(file, JSON.stringify(log));
-  const out = JSON.parse(execFileSync(process.execPath, [new URL('../scripts/summarize-usage.mjs', import.meta.url).pathname, file, '--json'], { encoding: 'utf8' }));
+  const out = JSON.parse(execFileSync(process.execPath, [fileURLToPath(new URL('../scripts/summarize-usage.mjs', import.meta.url)), file, '--json'], { encoding: 'utf8' }));
   assert.equal(out.totals.intakes, 1);
   assert.match(out.corrections[0].changes[0], /"More than 500 miles" → "500 miles"/);
   assert.match(out.unmapped[0].what[0], /matches garaging\.city/);

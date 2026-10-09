@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { collectItems } from '../src/ai/common.js';
 import {
   DEFAULT_CASES_PATH,
@@ -15,6 +16,29 @@ import {
 } from '../scripts/ai-eval.mjs';
 
 const cases = readCases(DEFAULT_CASES_PATH);
+
+test('offline CLI runs from a checkout path containing spaces', () => {
+  const checkout = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ai eval checkout ')));
+  try {
+    fs.mkdirSync(path.join(checkout, 'scripts'));
+    fs.copyFileSync(new URL('../scripts/ai-eval.mjs', import.meta.url), path.join(checkout, 'scripts/ai-eval.mjs'));
+    fs.cpSync(new URL('../src/', import.meta.url), path.join(checkout, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(checkout, 'package.json'), JSON.stringify({ type: 'module' }));
+    const casesPath = path.join(checkout, 'synthetic cases.json');
+    const resultPath = path.join(checkout, 'saved result.json');
+    fs.writeFileSync(casesPath, JSON.stringify({ version: 1, cases }));
+    const saved = safeLiveResult(cases, cases.map(entry => ({ suggestions: entry.expected })));
+    fs.writeFileSync(resultPath, JSON.stringify(saved));
+    const output = JSON.parse(execFileSync(process.execPath,
+      [path.join(checkout, 'scripts/ai-eval.mjs'), '--cases', casesPath, '--score', resultPath],
+      { cwd: checkout, encoding: 'utf8' }));
+    assert.equal(output.aggregate.serviceErrors, 0);
+    assert.equal(output.aggregate.choiceAccuracy, 1);
+    assert.ok(output.cases.every(entry => entry.status === 'pass'));
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
 
 test('multiple supplied citations can match an expected evidence path without logging values', () => {
   const entry = cases[0];
