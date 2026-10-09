@@ -102,6 +102,21 @@ test('a name word is redacted only as a whole word; other terms wherever they ap
   assert.equal(r('USDOT1234567 vin=1FTBR3X87MKA12345x'), 'USDOT[client] vin=[client]x', 'numbers and VINs still match inside longer text');
 });
 
+test('machine control keys redact embedded name terms without changing natural-language labels', () => {
+  const redact = redactor(['Ann', 'Car', 'José']);
+  const ctx = { record: {}, filled: new Map(), redact, keySalt: 'quote-salt' };
+  for (const [key, redactedKey] of [['driverAnn1', 'driver[client]1'], ['ownerCar2', 'owner[client]2'], ['driverJosé3', 'driver[client]3']]) {
+    const change = { key, label: 'Annual mileage and Cargo', kind: 'text', before: '', after: '123', agent: true };
+    const event = fieldChangeEvent(change, ctx);
+    assert.match(event.key, new RegExp(`^${redactedKey.replace('[client]', '\\[client\\]')}#[0-9a-f]{8}$`));
+    assert.equal(event.label, change.label);
+    assert.equal(fieldChangeEvent(change, { ...ctx, keySalt: undefined }).key, null);
+    const [, fill] = fillEvents([{ filled: [{ key, label: change.label, controlKind: 'text' }] }], { ...ctx, carrier: 'amwins' });
+    assert.equal(fill.key, event.key, 'fill and change events identify the same redacted control');
+    assert.equal(fill.label, change.label);
+  }
+});
+
 test('a combo box keeps its value only when each side is one of its known options', () => {
   const choices = new Map([['2C1A', new Set(['Transit 150', 'Transit 250', 'Transit 350'])]]);
   const combo = (before, after, ctx = {}) => fieldChangeEvent({ key: '2C1A', q: '2C1A', label: 'Model', kind: 'select', combo: true, before, after, agent: true },
