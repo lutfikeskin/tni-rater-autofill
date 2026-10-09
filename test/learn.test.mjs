@@ -506,18 +506,89 @@ test('the review names one question once, whatever its number', () => {
   assert.equal(key({ carrier: 'amwins', page: '/application/businessauto', label: 'Gender' }), 'amwins|/application/businessauto|Gender', 'without an id: page and text, as before');
 });
 
+// Audit 2026-10-08 (finding 7): a one-address application's steps share a page, so two steps' rows
+// reading the same merged, and the recorder's names for the page's own controls ("Browse", "1 of 1"
+// in the 2026-10-06 review) came out as candidates. An event that names its step (PR 4's `step`)
+// keeps the steps apart; chrome and empty labels are no candidates.
+test('learning: an AmWINS event with a step is grouped by page, step and label; chrome labels are no candidates', () => {
+  const key = questionOf([]);
+  const gender = { carrier: 'amwins', page: '/application/businessauto', label: 'Gender' };
+  assert.equal(key({ ...gender, step: 'Drivers' }), 'amwins|/application/businessauto › Drivers|Gender', 'as built layouts name the step');
+  assert.notEqual(key({ ...gender, step: 'Drivers' }), key({ ...gender, step: 'Vehicles' }), 'two steps, two questions');
+  assert.equal(key(gender), 'amwins|/application/businessauto|Gender', 'without a step: as before');
+  const events = [];
+  for (let i = 0; i < 5; i++) {
+    const e = (label, to, step) => events.push({ id: `${i}-${label}`, t: `2026-10-06T10:0${i}:00Z`, session: `s${i}`, carrier: 'amwins', type: 'field_change', page: '/application/businessauto', step, label, kind: 'select', by: 'agent', to });
+    e('Browse', 'chosen', 'Insured Info');
+    e('1 of 1', '1', 'Drivers');
+    e('Delete Coverage', 'yes', 'Coverage');
+    e('', 'Yes', 'Vehicles');
+    e('Hired auto?', 'No', 'Coverage');
+  }
+  const { questions, suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
+  assert.equal(questions, 5, 'every answer is still an answer');
+  assert.deepEqual(suggestions.standard.map((s) => [s.label, s.step, s.answer]), [['Hired auto?', 'Coverage', 'No']], 'only the question is a candidate, with its step');
+  assert.match(suggestions.standard[0].rule, /^\{ label: 'hired auto'/, 'the rule still finds it by its label');
+});
+
+// Codex on PR #61: a label rule has no step, so two steps' questions reading the same would get one
+// selector and pasting both could fill one step with the other's answer: no ready rule, the steps named.
+test('learning: same-label AmWINS questions on two steps get no ready-to-paste rule', () => {
+  const events = [];
+  for (let i = 0; i < 5; i++) {
+    const e = (label, to, step) => events.push({ id: `${i}-${step}`, t: `2026-10-06T10:0${i}:00Z`, session: `s${i}`, carrier: 'amwins', type: 'field_change', page: '/application/businessauto', step, label, kind: 'select', by: 'agent', to });
+    e('Hired auto?', 'No', 'Coverage');
+    e('Hired auto?', 'Yes', 'Vehicles');
+    e('Owned trailers?', 'No', 'Vehicles');
+  }
+  const { suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
+  const hired = suggestions.standard.filter((s) => s.label === 'Hired auto?');
+  assert.deepEqual(hired.map((s) => [s.step, s.answer]).sort(), [['Coverage', 'No'], ['Vehicles', 'Yes']], 'both steps are still suggestions');
+  for (const s of hired) {
+    assert.equal(s.rule, null, 'no ready rule: its label selector would match both steps');
+    assert.match(s.manualRule, /steps (Coverage, Vehicles|Vehicles, Coverage)/, 'the steps are named');
+  }
+  const other = suggestions.standard.find((s) => s.label === 'Owned trailers?');
+  assert.match(other.rule, /^\{ label: 'owned trailers'/, 'a label on one step keeps its ready rule');
+});
+
+test('learning: one observation on a sibling step suppresses a qualifying label rule', () => {
+  for (const kind of ['select', 'text']) {
+    const events = Array.from({ length: 5 }, (_, i) => ({
+      id: `coverage-${i}`, session: `s${i}`, carrier: 'amwins', type: 'field_change',
+      page: '/application/businessauto', step: 'Coverage', label: 'Hired auto?', kind, by: 'agent',
+      ...(kind === 'select' ? { to: 'No' } : { matchesIntake: ['coverage.hiredAuto'] }),
+    }));
+    events.push({ ...events[0], id: 'vehicle', session: 'other', step: 'Vehicles', label: 'Hired auto', to: 'Yes', matchesIntake: [] });
+    const { suggestions } = learn(events, { carriers: noRules, minIntakes: 5 });
+    const list = kind === 'select' ? suggestions.standard : suggestions.mapping;
+    assert.equal(list.length, 1, 'only Coverage meets the support threshold');
+    assert.equal(list[0].rule, null, 'even a low-support sibling makes the label selector ambiguous');
+    assert.match(list[0].manualRule, /steps Coverage, Vehicles/);
+  }
+});
+
 // Codex on PR #56: two questions reading the same are two rows, each named by what tells them apart.
 test('the review names two questions reading the same apart', async () => {
   const { execFileSync } = await import('node:child_process');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
   fs.mkdirSync(path.join(dir, 'events'));
   const row = (id, key) => ({ id, t: at(1), session: 's', carrier: 'progressive', type: 'fill_field', page: 'BusinessOwnerInfo', q: id, key, label: 'City', result: 'filled', timing: { ms: 10, settleMs: 0, ajax: 0, revealed: 0, removed: 0, changed: 0 } });
-  fs.writeFileSync(path.join(dir, 'events', '2026-10-05.jsonl'), [row('284', 'ref:PrimaryBusinessAddressInput.City'), row('2B0', 'ref:BusinessOwnerHomeAddressInput.City')].map((e) => JSON.stringify(e)).join('\n'));
+  // Audit 2026-10-08 (finding 7): an agent's change to an autofilled field is a correction only when
+  // the value differs; re-entering the same value (446 of 502 such changes) is counted apart.
+  const change = (id, vsAutofill) => ({ id, t: at(2), session: 's', carrier: 'progressive', type: 'field_change', page: 'BusinessOwnerInfo', q: '284', key: 'ref:PrimaryBusinessAddressInput.City', label: 'City', kind: 'text', by: 'agent', autofilled: 'garaging.city', change: 'edited', vsAutofill });
+  // Codex on PR #61: a change is only logged when the value moved, so 'same' from another value is
+  // the autofilled answer put back (after a carrier overwrite), not a re-entry.
+  const changes = [{ ...change('c1', 'same'), change: 'entered' }, change('c2', 'same'), { ...change('c8', 'same'), kind: 'select', change: undefined, from: '$500K', to: '$1M' }, { ...change('c9', 'same'), kind: 'select', change: undefined, from: null, to: '$1M' }, change('c3', 'different'), change('c4', 'format'), change('c5', 'cleared'), { ...change('c6', 'different'), by: 'page' }, { ...change('c7', 'different'), autofilled: undefined }];
+  fs.writeFileSync(path.join(dir, 'events', '2026-10-05.jsonl'), [row('284', 'ref:PrimaryBusinessAddressInput.City'), row('2B0', 'ref:BusinessOwnerHomeAddressInput.City'), ...changes].map((e) => JSON.stringify(e)).join('\n'));
   const out = path.join(dir, 'review.md');
   execFileSync(process.execPath, [new URL('../scripts/review.mjs', import.meta.url).pathname, dir, '--all', '--out', out], { stdio: 'ignore' });
   const md = fs.readFileSync(out, 'utf8');
   assert.match(md, /progressive BusinessOwnerInfo "City" `PrimaryBusinessAddressInput\.City`/);
   assert.match(md, /progressive BusinessOwnerInfo "City" `BusinessOwnerHomeAddressInput\.City`/);
+  assert.match(md, /\| Autofilled answers the agent corrected \(a different, reformatted or cleared value\) \| 3 \|/, 'different, format and cleared by the agent on an autofilled field');
+  assert.match(md, /\| Autofilled answers the agent put back after they changed \(a carrier overwrite, or the agent's own edit\) \| 2 \|/, 'an edited text box and a select from another answer');
+  assert.match(md, /\| Autofilled answers the agent re-entered unchanged \(from an empty field; not corrections\) \| 2 \|/, 'a text box entered and a select from nothing');
 });
 
 // Codex on PR #56: two controls reading the same at once (Rates' cargo section and cargo row) stay two

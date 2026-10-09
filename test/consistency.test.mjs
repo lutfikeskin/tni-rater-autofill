@@ -6,6 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { EVENT_FIELDS, COMMON, RUN_FIELDS } from '../server/index.mjs';
 import { CARRIERS } from '../src/carriers.js';
@@ -106,6 +107,25 @@ test('committed fixtures and captures hold no client data', () => {
     const hits = findPii(read(f));
     assert.deepEqual(hits.slice(0, 5), [], `${f} looks like it holds client data`);
   }
+});
+
+// Audit 2026-10-08 (finding 14): raw captures live in ignored layouts/; 16 were committed the day
+// before the ignore rule and stayed tracked. Nothing under layouts/ may be tracked, and whatever is
+// gets the scanner too. The message names files and hit counts only, never what matched.
+test('no file under layouts/ is tracked in git', (t) => {
+  let tracked;
+  try {
+    tracked = execFileSync('git', ['ls-files', '-z', '--', 'layouts'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).split('\0').filter(Boolean);
+  } catch {
+    t.skip('git is not available here (a packaged copy, or no repository)');
+    return;
+  }
+  const report = tracked.map((f) => {
+    let hits = 0;
+    try { hits = findPii(read(f)).length; } catch { hits = -1; }
+    return `${f}${hits > 0 ? ` (${hits} possible client-data hit${hits === 1 ? '' : 's'})` : hits < 0 ? ' (unreadable)' : ''}`;
+  });
+  assert.deepEqual(report, [], `tracked under layouts/, which .gitignore reserves for raw captures: run git rm --cached on these:\n${report.join('\n')}`);
 });
 
 test('commands named in CLAUDE.md and the README exist', () => {

@@ -16,8 +16,10 @@
                        "Finish & save results" at the end
 
        Built from recorded structure only; no carrier HTML or code is copied. -->
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/classic/theme-classic/resources/theme-classic-all.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/ext-all.js"></script>
+  <!-- Pinned by digest (sha384 of the file as served on 2026-10-09): a changed CDN file fails to load
+       rather than run. The theme file only @imports theme-classic-all_1.css and _2.css, which SRI can't cover. -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/classic/theme-classic/resources/theme-classic-all.css" integrity="sha384-j3cnHQ5LsK0fZv5mIMOcJqy4Y1LqTc5SpHdvJlmB/xWi/TLiCGfs42R8tmzImG0O" crossorigin="anonymous">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/extjs/6.2.0/ext-all.js" integrity="sha384-bsqJqrw6VhSpaUjQxevNcAHID8V/fuk3k0gpmvE4P67kx2nh3DRhTOZ9PMb2q7yq" crossorigin="anonymous"></script>
   <script src="show-when.js"></script>
   <script src="units.js"></script>
   <style>
@@ -326,9 +328,17 @@
       r.actions.forEach((a) => done.actions.add(a.id));
       done.pages.add(window.replay.page);
       const how = (x) => (x.path?.startsWith(`${carrier?.id}.`) ? 'standard/computed' : 'intake');
+      // Which rule filled it, never the page's question number (--renumber shifts those): its name,
+      // the question id it was written for, and its intake path (a vehicle's row index included),
+      // but not the plan-index path a rule without id or path gets (it shifts when a rule is added).
+      const steps = new Map(plan.map((s) => [s.id, s]));
+      const ruleOf = (x) => {
+        const s = steps.get(x.stepId);
+        return s ? [s.name, s.q ?? '', /^[^.[]+\.q[^.[]*$/.test(s.path ?? '') ? '' : s.path ?? ''].join(' | ') : '';
+      };
       return {
         questions: before.length,
-        filled: r.filled.map((x) => ({ label: x.label, shown: x.shown, how: how(x) })),
+        filled: r.filled.map((x) => ({ label: x.label, shown: x.shown, how: how(x), rule: ruleOf(x) })),
         clicked: [...r.actions.map((a) => a.text), ...(r.advanced ? [r.advanced] : [])],
         noData: r.noData.map((x) => x.label + (x.note ? ` (${x.note})` : '')),
         failed: r.failed.map((x) => `${x.label}: ${x.reason}`),

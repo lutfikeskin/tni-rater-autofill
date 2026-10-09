@@ -256,6 +256,7 @@ const state = {
   autoTimer: null,
   autoPending: false,
   autoPaused: false,
+  pagePending: null, // a page the tab moved to while a fill ran: filled when that fill ends (runPendingPage)
   // Page layouts: the last one logged per quote and page (or vehicle/driver on its page), the
   // chain that logs them one at a time, the capture waiting for the page to be quiet, failures.
   lastLayouts: new Map(),
