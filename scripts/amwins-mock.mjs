@@ -5,8 +5,10 @@
 // rules the way the side panel does it (fill, Save & Continue when nothing is left, fill the next
 // step). Then every answer is checked against what TNI expects.
 //
-//   npm run mock:amwins             # exits 1 when an answer is wrong or a step stops
-//   npm run mock:amwins -- --headed # watch it
+//   npm run mock:amwins               # exits 1 when an answer is wrong or a step stops
+//   npm run mock:amwins -- --headed   # watch it
+//   npm run mock:amwins -- --reversed # Import Valid Records draws the rows in the other order:
+//                                     # each vehicle's answers must still land on its own row
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -88,11 +90,27 @@ const AGENT_ANSWERS = [
 ];
 const DECLARATION = /i declare/i;
 
+// --reversed: the mock draws the imported rows last VIN first (?import=reversed), and each
+// vehicle gets its own type and value, so an answer put on the row at the vehicle's position
+// would show. The rows' answers are then expected per row (data-id 2 holds the first vehicle).
+const reversed = process.argv.includes('--reversed');
+if (reversed) {
+  [['Box Truck', 45000], ['Cargo Van', 30000], ['Pickup Truck', 52000]].forEach(([type, value], i) => Object.assign(record.vehicles[i], { type, value }));
+}
+const ROW_ANSWERS = ['#vehiclesPanel [data-id="vin"]', '#vehiclesPanel [data-id="bodyType"]', '#marketValue'];
+const expected = !reversed ? EXPECT : [
+  ...EXPECT.filter(([sel]) => !ROW_ANSWERS.includes(sel)),
+  ...record.vehicles.flatMap((v, i) => {
+    const row = `#vehiclesPanel > .app-rp-section[data-id="${record.vehicles.length - 1 - i}"]`;
+    return [[`${row} [data-id="vin"]`, v.vin], [`${row} [data-id="bodyType"]`, v.type], [`${row} [data-id="costNew"]`, new RegExp(String(v.value).replace(/(\d)(\d{3})$/, '$1,?$2'))]];
+  }),
+];
+
 const browser = await chromium.launch({ headless: !headed });
 const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e.message)));
-await page.goto('file://' + path.join(root, 'test/fixtures/amwins/application.html'));
+await page.goto('file://' + path.join(root, 'test/fixtures/amwins/application.html') + (reversed ? '?import=reversed' : ''));
 await page.evaluate(PAGEKIT);
 
 const plan = buildPlan(record, amwins, {});
@@ -153,8 +171,8 @@ const actual = await page.evaluate((expect) => expect.map(([sel]) => {
   if (el.classList.contains('datepicker-input')) return el._pickerDate ?? '(not taken by the date picker)';
   if (el.tagName === 'SELECT') return el.selectedOptions[0]?.text.trim() ?? '';
   return el.value;
-}), EXPECT);
-const wrong = EXPECT.map(([sel, want], i) => ({ sel, want, got: actual[i] }))
+}), expected);
+const wrong = expected.map(([sel, want], i) => ({ sel, want, got: actual[i] }))
   .filter(({ want, got }) => (want instanceof RegExp ? !want.test(String(got)) : got !== want));
 const mock = await page.evaluate(() => window.__amwinsMock);
 await browser.close();
@@ -162,7 +180,7 @@ await browser.close();
 lines.push(`Filling time: ${(totalMs / 1000).toFixed(1)} s`);
 lines.push(`Steps seen: ${mock.steps.join(' → ')} · Save & Continue ×${mock.saves} · Import Data ×${mock.lookups}, Import Valid Records ×${mock.imports} · Default all No ×${mock.defaults} · Submit ${mock.submitted ? 'CLICKED' : 'never clicked'}`);
 if (errors.length) lines.push(`Page errors: ${errors.join(' | ')}`);
-lines.push('', wrong.length ? `${wrong.length} wrong answer(s):` : `All ${EXPECT.length} answers as expected.`);
+lines.push('', wrong.length ? `${wrong.length} wrong answer(s):` : `All ${expected.length} answers as expected${reversed ? ' (rows imported in reverse order)' : ''}.`);
 for (const w of wrong) lines.push(`  ${w.sel}: expected ${JSON.stringify(String(w.want))}, got ${JSON.stringify(w.got)}`);
 if (unfamiliar.length) lines.push(`${unfamiliar.length} question(s) left unfamiliar:`, ...unfamiliar.map((u) => `  ${u}`));
 if (stoppedAt) lines.push(`Stopped on ${stoppedAt} with something left that isn't the agent's.`);

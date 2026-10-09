@@ -14,8 +14,11 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 61 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 62 && globalThis.__raterKit.build === BUILD) return;
 
+  // Private to this document: no VIN or reversible VIN-derived token leaves the page.
+  // A carrier redraw keeps the acknowledgement; a new document requires another decision.
+  const extraRowKeys = new Map();
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
   // ai: an answer the AI assistant chose (accepted by the agent or auto-selected); check it.
@@ -379,8 +382,19 @@
     const used = new Set();
     const donePaths = new Set();
     const pairs = [];
+    // Steps with a witness whose unit's row isn't among the rows on the page (none or several
+    // read as the unit): left for the agent, named by unit (pairs.unwitnessed).
+    const unwitnessed = [];
+    // The rows a witness step chooses among: known questions, never unfamiliar ones, also while
+    // no unit's row is among them yet (the rows before an import) (pairs.witnessed).
+    const witnessed = new Set();
+    // Rows showing a witness (a VIN) no intake unit has: a vehicle on the quote the intake doesn't
+    // list. Never answered or changed; each row is a check for the agent (pairs.extraRows).
+    const extraRows = new Map();
     const page = currentPage();
     const steps = plan.map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
+    // Every witness value an intake unit claims (its VIN): a row reading as none of them isn't ours.
+    const wanted = new Set(steps.filter((s) => s.witness).map((s) => idText(s.witness.value)).filter(Boolean));
     const take = (s, c, how, reworded = false) => { used.add(c); donePaths.add(s.path); pairs.push({ step: s, control: c, how, reworded }); };
     const fits = (s, c) => !(c.kind === 'checkbox' && s.kind !== 'bool');
     const known = (s) => !!(s.field || s.ask?.length || (s.reC && s.pages?.length));
@@ -444,7 +458,22 @@
         c = s.each ? free[0] ?? null : free.length > 1 ? null : free[0] ?? null;
       } else if (onPage(s)) {
         how = 'selector';
-        if (s.selector) c = controls.find((x) => !used.has(x) && (safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector))));
+        if (s.selector) {
+          const all = controls.filter((x) => safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector)));
+          const matching = all.filter((x) => !used.has(x));
+          // A repeated question's rows (AmWINS' vehicle rows): the step's unit's row is the one
+          // whose witness (its VIN) reads as the unit's, never the row at the unit's position.
+          // No such row, or two, while rows are there: the unit is the agent's (unwitnessed).
+          if (s.witness) {
+            c = witnessRow(matching, s.witness);
+            if (!c && all.length) unwitnessed.push(s);
+            for (const x of all) {
+              witnessed.add(x);
+              const w = rowWitnessOf(x, s.witness);
+              if (w?.value && !wanted.has(w.value) && !extraRows.has(w.el)) extraRows.set(w.el, s.witness);
+            }
+          } else c = matching[0] ?? null;
+        }
         // A dropdown with no usable label, known by one of its options ("NO PRIOR").
         if (!c && s.withOption) { how = 'option'; c = controls.find((x) => !used.has(x) && optionsOf(x).some((o) => squash(o.text) === squash(s.withOption))); }
       }
@@ -463,7 +492,63 @@
         if (c) take(s, c, field === 'text' ? 'label' : 'name');
       }
     }
+    pairs.unwitnessed = unwitnessed;
+    pairs.witnessed = witnessed;
+    // Numbered by their place among the page's rows (by their witness controls), never by value.
+    const witnesses = steps.filter((s) => s.witness).map((s) => s.witness);
+    const rowWitnesses = [...new Set(controls.flatMap((x) => witnesses.some((w) => safeMatches(x.el, w.selector)) ? [x.el] : []))];
+    const identities = [...extraRows].map(([el, witness]) => JSON.stringify([
+      witness.selector, String(witness.path ?? '').replace(/\[\d+\]/g, '[]'), idText(el.value),
+    ]));
+    // A removed identity loses its acknowledgement, including a later re-addition of the same VIN.
+    // Without visible witness rows (another application step), absence proves no removal.
+    if (rowWitnesses.length) {
+      for (const identity of extraRowKeys.keys()) if (!identities.includes(identity)) extraRowKeys.delete(identity);
+    }
+    pairs.extraRows = [...extraRows].map(([el, witness], i) => {
+      const identity = identities[i];
+      const count = identities.filter((id) => id === identity).length;
+      // A duplicate's VIN cannot identify which row was reviewed. Keep its key on that DOM
+      // control through reordering; after a redraw each duplicate requires fresh confirmation.
+      if (extraRowKeys.get(identity)?.count !== count) {
+        extraRowKeys.set(identity, { count, key: `extra-row:${crypto.randomUUID()}`, rows: new WeakMap() });
+      }
+      const entry = extraRowKeys.get(identity);
+      if (count > 1 && !entry.rows.has(el)) entry.rows.set(el, `extra-row:${crypto.randomUUID()}`);
+      return { witness, position: rowWitnesses.indexOf(el) + 1, key: count === 1 ? entry.key : entry.rows.get(el) };
+    });
     return pairs;
+  }
+
+  // Letters and digits only, uppercase: how a witness value (a VIN) compares with the page's.
+  const idText = (v) => String(v ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  // The unit a witness path names ("vehicles[1].vin": vehicle 2), and what the witness is (VIN).
+  const unitName = (path) => { const m = String(path ?? '').match(/^(\w+?)s?\[(\d+)\]/); return m ? `${m[1]} ${Number(m[2]) + 1}` : 'this unit'; };
+  const witnessName = (w) => { const k = String(w.path ?? '').split('.').pop() ?? ''; return k.length <= 3 ? k.toUpperCase() : humanize(k); };
+
+  // Of the rows of a repeated question (one control each), the one whose row holds the step's
+  // witness: a control matching `witness.selector` (AmWINS' [data-id="vin"]) reading as
+  // `witness.value`. A control's row is its nearest ancestor holding a witness control, which
+  // must be the only one there (higher up is the whole panel). No row reading as the unit (the
+  // import hasn't landed, or rejected its VIN; the intake has no VIN for it), or two (two rows
+  // with one VIN), is no row: the unit stays the agent's.
+  function witnessRow(candidates, witness) {
+    const want = idText(witness.value);
+    if (!want) return null;
+    const rows = candidates.filter((x) => rowWitnessOf(x, witness)?.value === want);
+    return rows.length === 1 ? rows[0] : null;
+  }
+
+  // A control's row's witness control and what it reads (letters and digits), or null when the
+  // nearest ancestor holding a witness control holds two (the whole panel) or there is none.
+  function rowWitnessOf(x, witness) {
+    for (let p = x.el; p && p !== document; p = p.parentElement) {
+      let found;
+      try { found = [...p.querySelectorAll(witness.selector)]; } catch { return null; }
+      if (!found.length) continue;
+      return found.length === 1 ? { el: found[0], value: idText(found[0].value) } : null;
+    }
+    return null;
   }
 
   // The one row naming this vehicle best: at least two of its year, make and model as whole
@@ -1125,6 +1210,8 @@
     // panel re-rendering), or didn't keep the first time: given again, at most twice each.
     const retries = new Map();
     const refill = new Set();
+    // Helpers whose result never showed after their tries this fill: the agent's, not clicked again.
+    const exhausted = new Set();
     // A lookup box its helper has already used (the VIN list Import Data empties) isn't given again.
     const immediateAfter = new Set(actions.filter((a) => a.immediate).flatMap((a) => a.after));
     hiddenOk = plan.filter((s) => s.hidden && s.selector).map((s) => s.selector);
@@ -1180,7 +1267,8 @@
       const renamed = new Map(allPairs.renamed.map((r) => [r.control, r.step]));
       for (const [c, step] of renamed) flag(report.renamed, { label: c.label, key: fieldKey(c), name: step.name, field: step.field, now: c.ref ?? null });
       for (const c of controls) {
-        if (mapped.has(c) || skippedField(c)) continue;
+        // A row a witness step chooses among is a known question (its unit is named instead).
+        if (mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c)) continue;
         flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, ref: c.ref ?? null, controlKind: c.kind, required: c.required, ...describe(c) });
         mark(c, 'needs', renamed.has(c) ? `Looks like "${renamed.get(c).name}", but the carrier renamed this field: left for you.` : 'Unfamiliar question — left for you.');
       }
@@ -1401,13 +1489,54 @@
         const summaryAgrees = cargoSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
         accepted = !expanded && (retained || summaryAgrees);
       }
+      // `revealed`: the click showed its result: a question appeared, or an answer changed, since
+      // the snapshot taken as the button was clicked (a lookup's decoded values, the rows an
+      // import redraws, the registered names a USDOT check offers). A redraw of the same
+      // questions with the same answers is no result.
+      // A redraw that shows the result again unchanged (it was there before the click) counts too.
+      if (a.verify === 'revealed') {
+        const before = a.before ?? new Map();
+        const controls = collectControls();
+        accepted = [...controlSnapshot(controls)].some(([k, v]) => !before.has(k) || before.get(k) !== v)
+          || resultShown(a, assign(controls, plan));
+      }
+      // `{ appears }`: more of these on the page than before the click (any, when there were none).
+      if (a.verify?.appears) accepted = deepQueryAll(document, a.verify.appears).length > (a.before ?? 0);
       if (!accepted) {
         clicked.delete(a.action);
         report.invalidatedActions.push(a.action);
         report.actions = report.actions.filter((x) => x.id !== a.action);
         report.blocked.push({ id: a.action, why: 'result not verified yet' });
+        // A click whose result never showed is tried again, twice at most in one fill (the
+        // button is due again, being unclicked); then it stays the agent's, and they're told.
+        if (a.verify === 'revealed' || a.verify?.appears) {
+          if (retryOnce(`action:${a.action}`)) return true;
+          // Left to the agent for the rest of this fill (not clicked again), and the page's other
+          // questions still fill around it.
+          exhausted.add(a.action);
+          report.noData.push({ label: a.label ?? a.baseAction ?? a.action, path: a.path, name: a.name, key: null, q: null, controlKind: null,
+            note: 'Clicked three times, but the page never showed its result: do it yourself, then fill again.' });
+          return true;
+        }
       }
       return accepted;
+    }
+
+    // A helper's result already on the page (`shownBy`), for the unit's own value: the helper's
+    // fields show the intake's value, and this fill didn't type them (an older result would then
+    // be another value's). A click alone never counts.
+    function resultShown(a, pairs) {
+      const shown = a.shownBy;
+      if (!shown || !a.after.length) return false;
+      if (report.filled.some((x) => a.after.includes(x.path))) return false;
+      const agrees = (p) => pairs.some(({ step, control }) => step.path === p && step.value != null && !invalidControl(control) && agreesWith(step, control));
+      const present = (p) => pairs.some(({ step, control }) => step.path === p && !invalidControl(control) && (!shown.answered || hasValue(control)));
+      return a.after.every(agrees) && (shown.all.length ? shown.all.every(present) : shown.any.some(present));
+    }
+
+    // What the page's questions show, by question: the snapshot a `revealed` check compares with.
+    function controlSnapshot(controls) {
+      return new Map(controls.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
     }
 
     // A helper the agent must otherwise do by hand is open while the helpers it follows have run
@@ -1428,7 +1557,7 @@
         // A link verified by its going away that is back on its page (NTL removed by hand, then
         // asked for again) is due again.
         if (clicked.has(a.action) && a.verify === 'gone' && (!a.pages.length || a.pages.includes(currentPage())) && findButton(a)) clicked.delete(a.action);
-        if (clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;
+        if (clicked.has(a.action) || exhausted.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;
         // A blank repeater row is already sufficient: do not add a duplicate merely because
         // its fields have not been filled yet (or the agent went back to this step).
         if (a.unlessSelector && deepQueryAll(document, a.unlessSelector).length) { clicked.add(a.action); continue; }
@@ -1464,7 +1593,8 @@
           }
         }
         // Menu items ("Add Vehicle" under "Add") only show once their menu button is opened.
-        if (!button && !a.opener) continue;
+        const alreadyShown = a.verify === 'revealed' && resultShown(a, pairs);
+        if (!button && !a.opener && !alreadyShown) continue;
         const holds = actions.filter((h) => (a.heldBy ?? []).includes(h.baseAction) && holdOpen(h));
         // A page button that the carrier refuses while a required question is empty (Rates' bill
         // plan, SC 2026-10-07: clicked right after UM/UIM were cleared, and nothing opened).
@@ -1493,6 +1623,12 @@
           report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites' });
           continue;
         }
+        // Its result already shows (the agent ran the lookup before Fill): done, not clicked again.
+        if (alreadyShown) {
+          clicked.add(a.action);
+          report.actions.push({ id: a.action, text: 'already shown on the page', alreadyShown: true });
+          continue;
+        }
         if (!button) {
           const opener = !openersTried.has(a.action) && findButton({ text: a.opener });
           if (!opener) continue;
@@ -1503,7 +1639,10 @@
         }
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: oneLine(button.value || button.textContent).slice(0, 60) });
-        pendingAction = a;
+        // What the page shows as the button is clicked (the round's controls are older: answers
+        // have landed since): what a `revealed` / `appears` check compares with afterwards.
+        pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
+          : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length } : a;
         button.click();
         return true;
       }
@@ -1515,7 +1654,26 @@
     const stillHere = !report.navigatedTo && currentPage() === startPage;
     // Answers still waiting for another try when the fill ended are left for the agent, and so is
     // a field the page should have filled itself (emptyNote) but didn't.
-    for (const { step, control } of stillHere ? assign(collectControls(), plan) : []) {
+    const finalPairs = stillHere ? assign(collectControls(), plan) : [];
+    // A unit whose row the page's rows don't show (its VIN on none of them, or on two): its
+    // answers stay the agent's, once per unit, naming it and not its VIN.
+    for (const step of finalPairs.unwitnessed ?? []) {
+      const unit = unitName(step.witness.path);
+      if (report.noData.some((x) => x.unit === unit)) continue;
+      const why = step.witness.value == null ? `the intake has no ${witnessName(step.witness)} for ${unit}` : `the row for ${unit} (its ${witnessName(step.witness)}) wasn't found`;
+      report.noData.push({ label: unit.replace(/^\w/, (ch) => ch.toUpperCase()), path: step.witness.path, name: unit, unit, key: null, q: null, controlKind: null, note: `${why}; check the rows and answer its questions yourself.` });
+    }
+    // A row showing a VIN no intake vehicle has: an unintended vehicle may be on the quote. Left
+    // as it is (never removed or answered); Continue waits for the agent. Named by its place only.
+    for (const { witness, position, key } of finalPairs.extraRows ?? []) {
+      if (skipKeys.has(key)) continue;
+      const kind = String(witness.path ?? '').match(/^(\w+?)s?\[/)?.[1] ?? 'unit';
+      const label = `${kind.replace(/^\w/, (ch) => ch.toUpperCase())} row ${position || '?'} on the page`;
+      if (report.checks.some((x) => x.label === label)) continue;
+      report.checks.push({ label, path: null, name: label, key, q: null, controlKind: null,
+        note: `Its ${witnessName(witness)} matches no ${kind} on the intake. Remove it, or dismiss this check to confirm it belongs on this quote, before continuing.` });
+    }
+    for (const { step, control } of finalPairs) {
       if (step.emptyNote && !hasValue(control) && !skippedField(control)) {
         report.noData.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, note: step.emptyNote, ...describe(control) });
         handled.set(step.id, { status: 'needs', note: step.emptyNote });
@@ -1900,5 +2058,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 61, build: BUILD, fill, answer, answerEdits, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 62, build: BUILD, fill, answer, answerEdits, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

@@ -1982,7 +1982,8 @@ function unitArrival(carrier, from, page) {
 function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, intake = state.intake, revision = state.intakeRevision, active = state.active }) {
   const ctx = { tabId, carrier, page, run, intake, revision };
   const maps = tabMaps(tabId);
-  const clicked = frames.some((f) => (f.actions ?? []).length);
+  // A helper found already done on the page (alreadyShown) clicked nothing: no follow-up for it.
+  const clicked = frames.some((f) => (f.actions ?? []).some((a) => !a.alreadyShown));
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
   const doneKey = advanced?.stepKey ? stepScope(page, carrier, active) + advanced.stepKey : null;

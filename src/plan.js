@@ -112,6 +112,9 @@ function actionSteps(carrier, record, active) {
       needsPremium: !!resolve(a.needsPremium),
       needsRecalculation: !!resolve(a.needsRecalculation),
       verify: resolve(a.verify) ?? null,
+      // `shownBy`: the questions that show the helper's result (`all` of them, or `any`; with
+      // `answered`, each with an answer). Shown already for the unit's own value: done, unclicked.
+      shownBy: a.shownBy ? { all: (a.shownBy.all ?? []).map((p) => withIndex(p, active)), any: (a.shownBy.any ?? []).map((p) => withIndex(p, active)), answered: !!a.shownBy.answered } : null,
       scope: resolve(a.scope) ?? null,
       scopeIndex: resolve(a.scopeIndex),
       value: null,
@@ -244,6 +247,10 @@ function fieldSteps(rules, record, carrier, active) {
       search: typeof rule.search === 'function' ? rule.search(record, active) : rule.search ?? null,
       withOption: typeof rule.withOption === 'function' ? rule.withOption(record, active) : rule.withOption ?? null,
       value: value === undefined || value === '' ? null : value,
+      // Which row of a repeated question is this unit's: the one holding a control matching
+      // `selector` that reads as the unit's `value` (AmWINS' vehicle rows by their VIN). The path
+      // is resolved for the unit so the page kit can name it ("vehicle 2"); never its position.
+      witness: rule.witness ? { selector: rule.witness.selector, path: withIndex(rule.witness.path, active), value: get(record, withIndex(rule.witness.path, active)) ?? null } : null,
     };
   });
 }
