@@ -118,6 +118,8 @@ const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').
 // A trailer's attached equipment: the intake's amount when it gives one (not "N/A" or 0), else
 // none (TNI standard: "Trailer has no equipment").
 const trailerEquipment = (r) => (r.trailerInfo?.equipTrailer > 0 ? r.trailerInfo.equipTrailer : null);
+// "Trailer has no equipment": TNI's standard with no value on the intake; derived from a value.
+const trailerEquipmentSource = (r) => (r.trailerInfo?.equipTrailer == null ? 'standard' : 'derived');
 
 // TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
 // the driver took a course; then it's the agent's.
@@ -134,9 +136,10 @@ const radiusMiles = (r) => r.operations.radiusMiles ?? (/unlimited|long|nation|o
 const vehicleEquipment = (r) => (r.operations?.equipVehicle > 0 ? r.operations.equipVehicle : null);
 const equipmentOver = (r) => vehicleEquipment(r) > 2000;
 const equipment = (r) => (equipmentOver(r) ? null : '$0 to $2,000');
-// "Vehicle has no equipment": with no value on the intake it is TNI's standard (like the band);
-// a value on the intake (up to $2,000: Yes, more: No) is derived from it.
-const equipmentSource = (r) => (vehicleEquipment(r) == null ? 'standard' : 'derived');
+// "Vehicle has no equipment": with no value on the intake (blank or unreadable, such as N/A) it is
+// TNI's standard (like the band); a value on the intake ($0 to $2,000: Yes, more: No) is derived
+// from it.
+const equipmentSource = (r) => (r.operations?.equipVehicle == null ? 'standard' : 'derived');
 const equipmentNote = (r) => (equipmentOver(r) ? `The intake's attached equipment value is $${vehicleEquipment(r).toLocaleString('en-US')}: pick the band that covers it yourself.` : null);
 
 const cargo = (r) => {
@@ -170,8 +173,12 @@ const glNote = (r) => r.coverage.gl === true
 
 // Progressive's business type (and, for trucking, the type of trucker) for what the intake
 // calls the business. Expediters are "For Hire Trucking" / "Other For-Hire Trucking".
-const isExpediter = (r) => /expedit/i.test(r.operations.businessClass ?? '');
-const isFreightHauler = (r) => /^(?:general\s+)?freight\s+haul(?:er|ing)$/i.test((r.operations.businessClass ?? '').trim());
+// The classes the for-hire and business-type answers are written for; the same patterns gate
+// review mode (supportedClasses), so any other class gets both their notes and the review.
+const EXPEDITER = /expedit/i;
+const FREIGHT_HAULER = /^(?:general\s+)?freight\s+haul(?:er|ing)$/i;
+const isExpediter = (r) => EXPEDITER.test(r.operations.businessClass ?? '');
+const isFreightHauler = (r) => FREIGHT_HAULER.test((r.operations.businessClass ?? '').trim());
 const isGeneralFreight = (r) => isFreightHauler(r) && /general\s+freight/i.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
 const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHauler(r) ? 'General Freight Hauler' : (r.operations.businessClass ?? null);
 const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
@@ -321,7 +328,7 @@ export const progressive = {
   useGenericRules: false,
   // The business classes these rules were written and checked for (live for-hire expediter and
   // general freight hauler quotes). Any other class fills in review mode (plan.js supportedClass).
-  supportedClasses: [/expedit/i, /^(?:general\s+)?freight\s+haul(?:er|ing)$/i, { re: /general\s*freight/i, whatHaul: true }],
+  supportedClasses: [EXPEDITER, FREIGHT_HAULER],
   // Progressive pre-selects some answers (filings No, $750k CSL, manual payments, rental "Not
   // selected"). Those are replaced when ours differ; anything the agent changed is left alone.
   replaceChoices: true,
@@ -604,7 +611,7 @@ export const progressive = {
       { q: '2A65', source: 'derived', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this trailer travels for work', name: 'Trailer farthest one-way distance (as the vehicle)', kind: 'int', value: radiusMiles },
       { q: '2AD0', source: 'derived', clientFact: true, field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from the trailer ownership)', kind: 'choice', value: trailerLoanLease, note: trailerOwnershipNote },
       { q: '2AEE', source: 'standard', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this trailer in an accident or loss?', name: 'Trailer comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
-      { q: '2AFF', source: 'derived', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard, unless the intake gives an equipment value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
+      { q: '2AFF', source: trailerEquipmentSource, field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard when the intake gives no value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: '2AFC', source: 'derived', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },
       { q: '2B04', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
     ]).map((rule) => ({ ...rule, pageOnly: true })),
@@ -698,7 +705,7 @@ export const progressive = {
       { q: 'TR1FF2', source: 'standard', field: 'RentalInput.Limit', name: 'Trailer rental reimbursement (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
       { q: 'TR200F', source: 'standard', field: 'FireAndTheftInput.Deductible', name: 'Trailer fire / theft (standard: Not selected)', kind: 'choice', value: () => 'Not selected' },
       { q: 'TR2CE0', source: 'derived', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },
-      { q: 'TR2CE3', source: 'derived', field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard, unless the intake gives an equipment value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
+      { q: 'TR2CE3', source: trailerEquipmentSource, field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard when the intake gives no value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: 'TR2CE8', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
     ]).map((rule) => ({ ...rule, scope: 'trailer', pageOnly: true })),
 

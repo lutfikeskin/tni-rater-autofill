@@ -90,8 +90,10 @@ const convictionsNote = (r) => (r.claims?.hasClaims === true ? 'The intake repor
   : r.claims?.hasClaims === false ? null : 'The intake doesn\'t answer the claims / violations question: answer convictions / moving violations yourself.');
 
 // Permanently attached equipment: any value on the intake is the agent's (AmWINS asks Yes / No and
-// details); none is No.
+// details); none given is No, TNI's standard (as Progressive's "no equipment"), and an explicit $0
+// on the intake is No derived from it.
 const equipment = (r) => (r.operations?.equipVehicle > 0 ? null : false);
+const equipmentSource = (r) => (r.operations?.equipVehicle == null ? 'standard' : 'derived');
 const equipmentNote = (r) => (r.operations?.equipVehicle > 0 ? `The intake gives $${r.operations.equipVehicle.toLocaleString('en-US')} of attached equipment: answer it (and its details) yourself.` : null);
 
 // Owner's full name from their driver row when found (the owner box sometimes has only the first
@@ -369,7 +371,7 @@ export const amwins = {
     { selector: '#marketValue', path: 'vehicles[].value', name: 'Vehicle value', note: vehicleValueNote },
     { selector: dataId('usageType', VEHICLE), name: 'Usage type (For hire, for expediters / general freight)', kind: 'choice', source: 'derived', value: (r) => (isFreight(r) ? 'FOR HIRE' : null), note: freightNote('The usage type') },
     { selector: dataId('radius', VEHICLE), name: 'Radius', kind: 'int', source: 'derived', value: radius },
-    { name: 'Permanently attached equipment (No unless the intake gives a value)', label: '^permanently attached equipment', kind: 'bool', source: 'derived', clientFact: true, value: equipment, note: equipmentNote },
+    { name: 'Permanently attached equipment (standard: No unless the intake gives a value)', label: '^permanently attached equipment', kind: 'bool', source: equipmentSource, clientFact: true, value: equipment, note: equipmentNote },
 
     // --- Coverages -------------------------------------------------------------------------------
     { name: 'CSL liability limit', label: '^csl liability limit$', path: 'coverage.autoLiabLimit' },

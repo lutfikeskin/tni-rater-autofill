@@ -266,7 +266,7 @@ test('attached equipment of $5,000 on the intake: entered, never "no equipment"'
     assert.equal(byQ(q, '2CCE').note, null);
     // Codex on 2dcd1e8: no value on the intake is TNI's standard, not a client fact; a value up to
     // $2,000 on the intake is derived from it.
-    const blank = amount == null || amount === 0;
+    const blank = amount == null;
     assert.deepEqual([byQ(q, '2CE3').source, byQ(q, '2CE3').standard], blank ? ['standard', true] : ['derived', false], String(amount));
   }
   // Review mode makes the blank-intake answer a check item; the intake's $1,500 stays derived.
@@ -274,7 +274,23 @@ test('attached equipment of $5,000 on the intake: entered, never "no equipment"'
   assert.match(review(null).warn ?? '', /Review mode/);
   assert.equal(review(1500).warn ?? null, null);
   assert.equal(named(buildPlan(with_({ 'operations.equipVehicle': 1500 }), amwins, {}), /^Permanently attached equipment/).value, null, 'any amount on the intake is the agent\'s on AmWINS');
-  assert.equal(named(buildPlan(expediter(), amwins, {}), /^Permanently attached equipment/).value, false);
+  // Same pattern as 2CE3: no value on the intake is TNI's standard No; an explicit $0 is derived.
+  const blankAmwins = named(buildPlan(expediter(), amwins, {}), /^Permanently attached equipment/);
+  assert.deepEqual([blankAmwins.value, blankAmwins.source, blankAmwins.standard, blankAmwins.manualOnly], [false, 'standard', true, false]);
+  const zeroAmwins = named(buildPlan(with_({ 'operations.equipVehicle': 0 }), amwins, {}), /^Permanently attached equipment/);
+  assert.deepEqual([zeroAmwins.value, zeroAmwins.source, zeroAmwins.standard], [false, 'derived', false]);
+  assert.equal(named(buildPlan(with_({ 'operations.equipVehicle': 5000 }), amwins, {}), /^Permanently attached equipment/).source, 'derived');
+  assert.match(named(buildPlan(with_({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' }), amwins, {}), /^Permanently attached equipment/).warn ?? '', /Review mode/);
+  // Progressive trailer "no equipment" (2AFF): the same.
+  const trailer = (amount, extra = {}) => byQ(buildPlan(with_({ 'trailerInfo.equipTrailer': amount, ...extra }), progressive, { trailers: 0 }), '2AFF');
+  assert.deepEqual([trailer(null).value, trailer(null).source, trailer(null).standard], [true, 'standard', true]);
+  assert.deepEqual([trailer(0).value, trailer(0).source, trailer(0).standard], [true, 'derived', false]);
+  assert.deepEqual([trailer(3000).value, trailer(3000).source], [false, 'derived']);
+  assert.match(trailer(null, { 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' }).warn ?? '', /Review mode/);
+  assert.equal(trailer(3000, { 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' }).warn ?? null, null);
+  // Its Rates row (TR2CE3) too.
+  const rates = (amount) => buildPlan(with_({ 'trailerInfo.equipTrailer': amount }), progressive, { trailers: 0 }).find((x) => x.q === 'TR2CE3');
+  assert.deepEqual([rates(null).source, rates(null).standard, rates(2500).source, rates(2500).value], ['standard', true, 'derived', false]);
 });
 
 test('missing ownership: loan / lease, leased, not owned and additional interest are the agent\'s', () => {
@@ -367,8 +383,10 @@ test('supportedClass: expediter, freight hauler and general freight; a missing c
     // Codex on 2dcd1e8: AmWINS's freight answers (isFreight) need expediting or general freight.
     assert.equal(supportedClass(with_({ 'operations.businessClass': 'Freight Hauler', 'operations.whatHaul': 'Furniture' }), carrier), carrier === progressive, carrier.id);
     assert.equal(supportedClass(with_({ 'operations.businessClass': 'Freight Hauler', 'operations.whatHaul': 'General freight' }), carrier), true, carrier.id);
-    assert.equal(supportedClass(with_({ 'operations.businessClass': 'General Freight' }), carrier), true);
-    assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dry Van', 'operations.whatHaul': 'General freight' }), carrier), true, 'general freight on what they haul, as the freight helpers read it');
+    // Progressive's for-hire / business-type answers need an expediter or a freight hauler class;
+    // AmWINS's freight answers also read general freight on what they haul.
+    assert.equal(supportedClass(with_({ 'operations.businessClass': 'General Freight' }), carrier), carrier === amwins, carrier.id);
+    assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dry Van', 'operations.whatHaul': 'General freight' }), carrier), carrier === amwins, carrier.id);
     assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' }), carrier), false);
     assert.equal(supportedClass(with_({ 'operations.businessClass': null, 'operations.whatHaul': 'General freight' }), carrier), false, 'a missing class is unsupported');
     assert.equal(supportedClass(with_({ 'operations.businessClass': '' }), carrier), false);
@@ -387,6 +405,17 @@ test('AmWINS: review mode exactly when its freight answers are the agent\'s (one
     assert.equal(supportedClass(r, amwins), nature.note == null, `${cls} / ${haul}`);
     // Outside the class, the standards are check items.
     assert.equal(field(plan).filter((s) => s.standard).every((s) => /Review mode/.test(s.warn ?? '')), !supportedClass(r, amwins), `${cls} / ${haul}`);
+  }
+});
+
+test('Progressive: review mode exactly when its for-hire answer is the agent\'s (one predicate)', () => {
+  const classes = [['Expediter', 'Furniture'], ['Freight Hauler', 'Furniture'], ['General Freight Hauling', null], ['General Freight', null],
+    ['Dry Van', 'General freight'], ['Dump Truck', 'Gravel'], ['Box Truck', 'Expedited loads']];
+  for (const [cls, haul] of classes) {
+    const r = with_({ 'operations.businessClass': cls, 'operations.whatHaul': haul });
+    const plan = buildPlan(r, progressive, {});
+    assert.equal(supportedClass(r, progressive), byQ(plan, '2C1A').note == null, `${cls} / ${haul}`);
+    assert.equal(field(plan).filter((s) => s.standard).every((s) => /Review mode/.test(s.warn ?? '')), !supportedClass(r, progressive), `${cls} / ${haul}`);
   }
 });
 
