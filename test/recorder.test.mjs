@@ -44,6 +44,7 @@ class Document {
 
   // Headings (the recorder's stepKey) are asked for apart from the controls.
   querySelectorAll(selector) { return /^h1/.test(selector ?? '') ? [...(this.headings ?? [])] : [...this.body.controls]; }
+  getElementById(id) { return this.body.controls.find((c) => c.id === id) ?? null; }
   createTreeWalker() { return { currentNode: null, previousNode: () => false }; }
 }
 
@@ -416,4 +417,130 @@ test('field changes name the visible step headings, when the page has any', () =
   message = h.sent.filter((m) => m.event === 'field_changes').at(-1);
   assert.equal(message.step, 'Vehicles / Unit 1');
   assert.equal(message.changes[0].after, '5+');
+});
+
+// Codex reproduction (2026-10-08): a trusted change made while paused produced no event and
+// became the baseline, so the panel never protected it.
+test('an agent edit while paused is reported as theirs on resume; the extension\'s own answers are not', async () => {
+  const h = harness();
+  const years = select({ id: 'yrsInBusiness' });
+  const name = new Control('input', { id: 'name' });
+  h.append(years, name);
+  h.context.__raterRecorder.rebaseline();
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  // The fill types the name (no trusted event) and reveals a question; the agent picks the years
+  // and answers the revealed question meanwhile.
+  name.value = 'Example LLC';
+  h.emit('pointerdown', years, true);
+  years.value = '3';
+  h.emit('change', years, true);
+  const revealed = select({ id: 'radius' });
+  h.append(revealed);
+  h.emit('keydown', revealed, true);
+  revealed.value = '5+';
+  h.emit('change', revealed, true);
+  await Promise.resolve();
+  h.tick();
+  assert.equal(changes(h).length, 0, 'nothing is reported while paused');
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after, c.agent]),
+    [['field:yrsInBusiness', '', '3', true], ['field:radius', '', '5+', true]]);
+  assert.equal(h.sent.filter((m) => m.event === 'new_fields').length, 0, 'the fill answered what it revealed');
+  // The baseline moved on with the resume: a later change starts from what the fill typed.
+  name.value = 'Example Inc';
+  h.tick();
+  const later = changes(h).at(-1);
+  assert.deepEqual([later.key, later.before, later.after, later.agent], ['field:name', 'Example LLC', 'Example Inc', false]);
+});
+
+test('an untrusted change while paused, or a trusted one the page replaced, is not the agent\'s on resume', async () => {
+  const h = harness();
+  const notes = new Control('input', { id: 'notes', value: 'before' });
+  const years = select({ id: 'yrsInBusiness' });
+  h.append(notes, years);
+  h.context.__raterRecorder.rebaseline();
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  notes.value = 'by the page';
+  h.emit('input', notes, false);
+  h.emit('pointerdown', years, true);
+  years.value = '3';
+  h.emit('change', years, true);
+  years.value = '1'; // a page script changed it after the agent's pick
+  await Promise.resolve();
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  assert.equal(h.sent.filter((m) => m.event === 'field_changes').length, 0);
+  notes.value = 'after';
+  h.tick();
+  assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after, c.agent]), [['field:notes', 'by the page', 'after', false]]);
+});
+
+// Codex review (2026-10-09): Chromium fires trusted input/change for the kit's own .click() on a
+// radio or checkbox. While paused, such an event with no gesture before it is the fill's answer.
+test('while paused, a trusted change with no gesture before it is the fill\'s own click, not the agent\'s', async () => {
+  const h = harness();
+  const radius = select({ id: 'radius' });
+  const years = select({ id: 'yrsInBusiness' });
+  h.append(radius, years);
+  h.context.__raterRecorder.rebaseline();
+  h.emit('pointerdown', years, true); // an old gesture, before the fill started
+  h.advance(5_000);
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  radius.value = '5+';
+  h.emit('input', radius, true);
+  h.emit('change', radius, true);
+  await Promise.resolve();
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  assert.equal(h.sent.filter((m) => m.event === 'field_changes').length, 0, 'the fill\'s answer is not reported as the agent\'s');
+  // With a gesture just before it, the same change while paused is the agent's.
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  h.advance(1_000);
+  h.emit('pointerdown', years, true);
+  h.advance(500);
+  years.value = '3';
+  h.emit('input', years, true);
+  h.emit('change', years, true);
+  await Promise.resolve();
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after, c.agent]), [['field:yrsInBusiness', '', '3', true]]);
+});
+
+// Codex review on b62188f: an agent edit on one field starts a follow-up fill about 600 ms later;
+// the fill's click on another radio within the 2 s is not the agent's, the gesture was elsewhere.
+test('while paused, a trusted change counts only when the last gesture was on that control or its label', async () => {
+  const h = harness();
+  const years = select({ id: 'yrsInBusiness' });
+  const hazmatYes = new Control('input', { id: 'hazmatYes', name: 'hazmat', type: 'radio', value: 'Yes' });
+  const hazmatNo = new Control('input', { id: 'hazmatNo', name: 'hazmat', type: 'radio', value: 'No' });
+  hazmatYes.checked = false;
+  hazmatNo.checked = false;
+  h.append(years, hazmatYes, hazmatNo);
+  h.context.__raterRecorder.rebaseline();
+  // The agent picks the years; that change is reported at once, as theirs.
+  h.emit('pointerdown', years, true);
+  years.value = '3';
+  h.emit('change', years, true);
+  await Promise.resolve();
+  assert.deepEqual(changes(h).map((c) => [c.key, c.after, c.agent]), [['field:yrsInBusiness', '3', true]]);
+  // The follow-up fill starts and clicks the hazmat radio, which fires trusted input/change.
+  h.advance(600);
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  h.advance(200);
+  hazmatNo.checked = true;
+  h.emit('input', hazmatNo, true);
+  h.emit('change', hazmatNo, true);
+  await Promise.resolve();
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  assert.equal(changes(h).length, 1, 'the fill\'s radio click is not reported as the agent\'s');
+  // A gesture on the label of a radio in the group, then a change on the radio: the agent's.
+  const label = { tagName: 'LABEL', htmlFor: 'hazmatYes', getAttribute: () => null, closest() { return this; } };
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  h.advance(300);
+  h.emit('pointerdown', label, true);
+  hazmatNo.checked = false;
+  hazmatYes.checked = true;
+  h.emit('input', hazmatYes, true);
+  h.emit('change', hazmatYes, true);
+  await Promise.resolve();
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  assert.deepEqual(changes(h).slice(1).map((c) => [c.key, c.before, c.after, c.agent]), [['field:hazmat', 'No', 'Yes', true]]);
 });

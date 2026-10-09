@@ -182,7 +182,7 @@ test('progressive: intake answers are translated into Progressive wording', () =
   assert.equal(byQ('2CA7').value, 'Yes - Loan', 'loan/lease: "Financed" in the claims-box notes');
   const loan = (ownership) => buildPlan({ ...record, operations: { ...record.operations, vehicleOwnership: ownership } }, carrier, {}).find((s) => s.q === '2CA7').value;
   assert.equal(loan('Owned'), 'No');
-  assert.equal(loan(null), 'No');
+  assert.equal(loan(null), null, 'no ownership on the intake: the agent\'s (2026-10-09)');
   assert.equal(loan('Leased'), 'Yes - Lease');
   assert.equal(byQ('2CCE').value, '$0 to $2,000');
   assert.equal(byQ('216F').value, '$100000/$1000');
@@ -247,8 +247,9 @@ test('progressive: standard answers for follow-up questions', () => {
   assert.equal(byQ('215A').value, false, 'special cargo: no');
   assert.equal(byQ('216A').value, 'Consumer Goods', '"General freight hauler"');
   assert.equal(byQ('216B').value, 'Other Consumer Goods');
-  assert.equal(byQ('83').value, true);
-  assert.equal(byQ('A2').value, 'None');
+  // Continuous coverage and other business coverages aren't on the intake: the agent's (2026-10-09).
+  assert.equal(byQ('83').value, null);
+  assert.equal(byQ('A2').value, null);
   assert.equal(byQ('28C1').value, false);
   // Filings: "all vehicles on quote" and Federal only when the intake says filings are needed;
   // MCS-90 is ticked by the page with Federal, so it's left alone.
@@ -261,9 +262,10 @@ test('progressive: standard answers for follow-up questions', () => {
   // No USDOT and not getting one: "No"; the "belongs to the business" question only exists with one.
   const noDot = structuredClone(record);
   noDot.applicant.dot = null;
+  noDot.applicant.mcDotWithin60Days = false;
   assert.equal(byQ('1ED', noDot).value, 'No - and the customer will not have a USDOT number');
   assert.equal(byQ('20F', noDot).ignore, true);
-  assert.equal(byQ('20F').value, true, 'standard: the USDOT number belongs to the business');
+  assert.equal(byQ('20F').value, null, 'an attestation: the agent confirms the number is the business\'s (2026-10-09)');
   // Other freight descriptions aren't guessed.
   const other = structuredClone(record);
   other.operations.whatHaul = 'Auto parts';

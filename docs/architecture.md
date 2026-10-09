@@ -30,6 +30,7 @@ The client record lives in Chrome session storage. AI-enabled requests send unre
 
 - The reader extracts named fillable PDF fields, not general document understanding or handwriting.
 - Rules compute answers; the browser engine finds controls and checks whether values stick. Carrier acceptance is not semantic correctness.
+- Each rule declares its answer's `source` (intake, derived, standard, fact, attestation). Facts and attestations the intake lacks are never filled; standards are tagged in the panel and, for a business class outside the carrier's `supportedClasses` (review mode), become check items that hold Continue. See [intake and rules](intake-and-rules.md).
 - AI assists unresolved questions; it does not reliably audit all answers already filled by rules.
 - Feedback produces review material and candidate rules. There is no automatic model training or rule deployment.
 - Separate driver/vehicle records exist, but driver exclusion, per-vehicle coverage intent, and driver-to-vehicle relationships are not fully modeled.
