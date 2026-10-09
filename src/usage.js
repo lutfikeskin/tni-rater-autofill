@@ -125,12 +125,13 @@ function isComboPick(change, choices) {
  * Turns one field change seen on the rater page into a log event.
  * @param {{key, q, label, kind, combo?, before, after, agent}} change  from the page recorder (raw
  *   values); combo: a combo box, whose value may be typed text
- * @param {{record, filled: Map, redact: Function, labels?: Map, choices?: Map, keySalt?: string}} ctx
+ * @param {{record, filled: Map, redact: Function, labels?: Map, choices?: Map, keySalt?: string, step?: string}} ctx
  *   filled: field key -> what autofill put there; labels: field key -> question text as the fill
  *   engine read it (more reliable than the recorder's guess); choices: field key -> Set of a combo's
- *   options as the fill engine saw them; keySalt: the session's (see fieldKeyOf)
+ *   options as the fill engine saw them; keySalt: the session's (see fieldKeyOf); step: the
+ *   step of a one-address application (AmWINS) the recorder read, one of its names (see knownStep)
  */
-export function fieldChangeEvent(change, { record, filled, redact, labels, choices, keySalt }) {
+export function fieldChangeEvent(change, { record, filled, redact, labels, choices, keySalt, step }) {
   const ours = filled.get(change.key) ?? null;
   const typed = (change.combo && !isComboPick(change, choices))
     || LOOKS_TYPED.test(redact(change.before ?? '')) || LOOKS_TYPED.test(redact(change.after ?? ''));
@@ -143,6 +144,7 @@ export function fieldChangeEvent(change, { record, filled, redact, labels, choic
     kind,
     by: change.agent ? 'agent' : 'page',
     autofilled: ours ? ours.path : null,
+    ...stepOf(step, redact),
   };
   if (kind === 'text') {
     const before = String(change.before ?? '');
@@ -164,12 +166,45 @@ export function fieldChangeEvent(change, { record, filled, redact, labels, choic
   };
 }
 
+// The step of a one-address application (AmWINS: Insured Info, Vehicles, …), whose steps share
+// the page's address: pagekit's `stepKey` (the visible headings) on fill events and page layouts,
+// the recorder's reading of the same headings on field changes. Only a heading that is one of the
+// carrier's own step names (`layoutSteps`) is sent, as that name: a heading can name the insured,
+// and the tab may still show the previous client's quote, whose names the loaded intake's
+// redaction doesn't know (Codex on PR #65). Absent on carriers whose pages have names of their own (audit 2026-10-08).
+export const STEP_MAX = 120;
+export function knownStep(carrier, headings) {
+  const names = Array.isArray(carrier?.layoutSteps) ? carrier.layoutSteps : [];
+  for (const part of String(headings ?? '').split(' / ')) {
+    const hit = names.find((name) => name.toLowerCase() === oneLine(part).toLowerCase());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+// Bounded and redacted as well, though a known step name never needs it.
+const stepOf = (step, redact) => (step ? { step: redact(String(step)).slice(0, STEP_MAX) } : {});
+
+// The rule files whose text the `rules` fingerprint of a fill run covers (in this order), so a
+// review can tell which mappings and defaults a quote was filled with when a version number spans
+// several copies (audit 2026-10-08, finding 7). The panel fetches them from its own package. Every
+// module the plan, the record's normalization and the carriers import is here (test/usage.test.mjs
+// checks the import graph), since each one changes the answers a fill puts on the page.
+export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js'];
+export async function rulesHash(texts) {
+  return (await sha256Hex(texts.join('\n'))).slice(0, 12);
+}
+
 // Fill results, minus typed values (text boxes) and client names.
-export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt }) {
+//   run: one fill invocation's id, shared by its fill_run and fill_field events (and a fill_error);
+//   rules: the rule files' fingerprint (rulesHash); settings: the panel's filling switches in force
+//   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep).
+export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step }) {
   const all = (k) => frames.flatMap((f) => f[k] ?? []);
   const isChoice = (x) => x.controlKind && x.controlKind !== 'text';
+  const stepField = stepOf(step, redact);
   const events = [{
     type: 'fill_run', carrier, page, view, overwrite, auto, ms,
+    ...(run ? { run } : {}), ...(rules ? { rules } : {}), ...(settings ? { settings } : {}), ...stepField,
     fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0),
     rounds: Math.max(0, ...frames.map((f) => f.rounds ?? 0)),
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,
@@ -186,7 +221,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     renamed: all('renamed').slice(0, 12).map((x) => ({ name: redact(x.name), field: x.field ?? null, now: x.now ?? null })),
   }];
   const item = (result) => (x) => ({
-    type: 'fill_field', carrier, page, view, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
+    type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
     how: x.how ?? undefined,
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
     reason: x.reason ? redact(x.reason) : undefined,

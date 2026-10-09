@@ -5,6 +5,40 @@ import { GENERIC_RULES } from './rules.js';
 import { fieldInfo } from './schema.js';
 import { get, listOf } from './util.js';
 
+// Where a rule's answer comes from (Contract 2, docs/intake-and-rules.md):
+//   intake       a record path, no computed value (the default for a rule with `path` only)
+//   derived      computed from intake facts, with the evidence in the rule
+//   standard     a TNI coverage or workflow standard; the step is marked `standard`
+//   fact         a client fact the intake doesn't supply: never filled, left to the agent with a note
+//   attestation  something the agent must assert: never filled, left to the agent with a note
+// Every rule with a `value` declares one (test/provenance.test.mjs). Fact and attestation steps are
+// `manualOnly`: the AI assistant never suggests or picks them. So is a `clientFact` rule's step
+// (marital status, vehicle ownership, …) whenever the intake leaves it without an answer.
+export const SOURCES = ['intake', 'derived', 'standard', 'fact', 'attestation'];
+export const AGENT_SOURCES = ['fact', 'attestation'];
+
+// The business classes a carrier's rules were written and checked for (`supportedClasses`: regexes
+// on the intake's business class; one marked `whatHaul` is also tried on what they haul, as the
+// general-freight helpers do). Outside them the quote still fills, in review mode: every standard
+// answer becomes a check item (Continue waits) and the panel says so. A missing class is
+// unsupported. A carrier that declares no classes has no gate.
+export function supportedClass(record, carrier) {
+  const classes = carrier?.supportedClasses;
+  if (!classes?.length) return true;
+  const cls = String(record?.operations?.businessClass ?? '').trim();
+  if (!cls) return false;
+  const haul = String(record?.operations?.whatHaul ?? '').trim();
+  return classes.some((c) => {
+    const re = c instanceof RegExp ? c : c.re;
+    return re.test(cls) || (!(c instanceof RegExp) && c.whatHaul && haul && re.test(haul));
+  });
+}
+
+export function reviewWarn(record, carrier) {
+  const cls = String(record?.operations?.businessClass ?? '').trim() || 'not given';
+  return `Review mode: the business class "${cls}" isn't validated for ${carrier?.name ?? 'this carrier'}; confirm this standard answer.`;
+}
+
 /**
  * @param {object} record   client record from normalizeIntake()
  * @param {object|null} carrier  entry from CARRIERS
@@ -55,6 +89,9 @@ function actionSteps(carrier, record, active) {
       opener: a.opener ?? null,
       nudge: a.nudge ?? null,
       immediate: !!a.immediate,
+      // A helper that answers many questions at once: not clicked while an answer the agent gave
+      // is on the page (it would reset it).
+      skipIfProtected: !!a.skipIfProtected,
       after: (resolve(a.after) ?? []).map((p) => withIndex(p, active)),
       afterAny: (resolve(a.afterAny) ?? []).map((p) => withIndex(p, active)),
       unless: (resolve(a.unless) ?? []).map((p) => withIndex(p, active)),
@@ -90,6 +127,8 @@ function actionSteps(carrier, record, active) {
 const unitRows = (record) => (record.vehicles?.length ?? 0) > 1 || (record.trailers?.length ?? 0) > 0;
 
 function fieldSteps(rules, record, carrier, active) {
+  const review = !supportedClass(record, carrier);
+  const reviewNote = review ? reviewWarn(record, carrier) : null;
   const expanded = rules.flatMap((rule) => {
     if (rule.repeat) return (record[rule.repeat] ?? []).map((_, index) => ({ rule, active: { ...active, [rule.repeat]: index } }));
     // A per-vehicle question with several vehicles (or a vehicle and a trailer): a step for each
@@ -110,7 +149,18 @@ function fieldSteps(rules, record, carrier, active) {
       ? (list ? rule.path.replace('[]', `[${active[list] ?? 0}]`) : rule.path)
       : `${carrier?.id ?? 'carrier'}.q${rule.q ?? id}`;
     const info = rule.path ? fieldInfo(rule.path) : { label: rule.name ?? path, kind: 'text' };
-    const note = typeof rule.note === 'function' ? rule.note(record, active) : rule.note ?? null;
+    const name = rule.name ?? info.label;
+    // A rule with a path and no computed value reads the intake; the rest declare their source.
+    // A rule's source may depend on the record (a TNI standard when the intake is silent, derived
+    // when it answers).
+    const source = (typeof rule.source === 'function' ? rule.source(record, active) : rule.source) ?? (rule.path && rule.value === undefined ? 'intake' : null);
+    // A fact or attestation the intake doesn't supply is the agent's: never filled, whatever the
+    // rule's value says, with the rule's note or a plain one.
+    const agents = AGENT_SOURCES.includes(source);
+    const ruleNote = typeof rule.note === 'function' ? rule.note(record, active) : rule.note ?? null;
+    const note = agents ? ruleNote ?? `${name} isn't on the intake: answer it yourself.` : ruleNote;
+    const standard = source === 'standard';
+    const ruleWarn = typeof rule.warn === 'function' ? rule.warn(record, active) : rule.warn ?? null;
     let value = null;
     if (!note) {
       try {
@@ -120,6 +170,8 @@ function fieldSteps(rules, record, carrier, active) {
       }
     }
     const ignore = typeof rule.ignore === 'function' ? !!rule.ignore(record, active) : !!rule.ignore;
+    // The agent's, never the AI's: a fact or attestation, or a client fact the intake didn't answer.
+    const manualOnly = agents || (!!rule.clientFact && (value === null || value === undefined || value === ''));
     const scope = typeof rule.scope === 'function' ? rule.scope(record, active) : rule.scope ?? null;
     const scopeIndex = typeof rule.scopeIndex === 'function' ? rule.scopeIndex(record, active) : rule.scopeIndex;
     // Per-vehicle questions repeat once per vehicle, labelled "2021 MERCEDES-BENZ SPRINTER" (a
@@ -130,8 +182,16 @@ function fieldSteps(rules, record, carrier, active) {
     return {
       id,
       path,
-      name: rule.name ?? info.label,
+      name,
       kind: rule.kind ?? info.kind,
+      source,
+      // A TNI standard, not an intake fact: the panel tags it, and in review mode (an unvalidated
+      // business class) it is a check item.
+      standard,
+      // Review mode requires confirmation even when a retained carrier answer differs.
+      reviewRequired: standard && !!reviewNote,
+      // The agent's to answer: the report says so and the AI assistant leaves it (ai/common.js).
+      manualOnly,
       // The carrier's question id when the rule was written: only the rule's name (its path), never
       // how its field is found (Progressive renumbers questions). These find it (pagekit assign):
       q: rule.q ?? null,
@@ -173,7 +233,7 @@ function fieldSteps(rules, record, carrier, active) {
       // An ignored field the page fills itself (a lookup): flagged only if it stays empty.
       emptyNote: typeof rule.emptyNote === 'function' ? rule.emptyNote(record, active) : rule.emptyNote ?? null,
       // A default the agent should confirm: filled, but marked yellow with this note.
-      warn: typeof rule.warn === 'function' ? rule.warn(record, active) : rule.warn ?? null,
+      warn: standard && reviewNote ? [reviewNote, ruleWarn].filter(Boolean).join(' ') : ruleWarn,
       summaryAfter: typeof rule.summaryAfter === 'function' ? rule.summaryAfter(record, active) : rule.summaryAfter ?? null,
       choiceAliases: typeof rule.choiceAliases === 'function' ? rule.choiceAliases(record, active) : rule.choiceAliases ?? [],
       scope,

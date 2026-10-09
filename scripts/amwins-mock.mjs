@@ -21,14 +21,15 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
 const PAGEKIT = ['field-key.js', 'pagekit.js'].map(file => fs.readFileSync(path.join(root, 'src/content', file), 'utf8')).join('\n');
 
-// A synthetic client like the recorded quotes: an expediter with box trucks, no company name.
+// A synthetic client like the recorded quotes: an expediter with box trucks, no company name, and
+// (as on those intakes) no marital status, so the agent answers it here (AGENT_ANSWERS).
 // Three vehicles, as on the 2026-10-05 quote: the Coverages step asks its "Exclude …" boxes once
 // per vehicle, and every vehicle's row must be answered.
 const record = {
   applicant: { name: null, dot: '1234567', mc: 'MC-765432', owner1: 'SAMPLE', phone: '(402) 555-0100', email: 'client@example.test', yearsInBusiness: null, yearsExperience: 7, yearEstablished: null },
   garaging: { street: '1 Test Way', unit: null, city: 'Omaha', state: 'NE', zip: '68102' },
   operations: { businessClass: 'Expediter', whatHaul: 'General freight hauler', radius: 'Unlimited', radiusMiles: null, hazmat: false, filingsRequired: true, filingsWhich: 'Federal Liability Filing', vehicleOwnership: 'Owned' },
-  drivers: [{ first: 'SAMPLE A', middle: null, last: 'DRIVER', dob: '01/02/1968', licenseNumber: 'H1234567', licenseState: 'NE', maritalStatus: 'Married' }],
+  drivers: [{ first: 'SAMPLE A', middle: null, last: 'DRIVER', dob: '01/02/1968', licenseNumber: 'H1234567', licenseState: 'NE', maritalStatus: null }],
   vehicles: ['54DC4W1B5KS800000', '54DC4W1B5KS800001', '54DC4W1B5KS800002']
     .map((vin) => ({ type: 'Box Truck', year: 2019, make: 'ISUZU', model: 'NPR', vin, value: 45000 })),
   // AmWINS has no trailer section: the trailer is a line of the disclosure text (2026-10-08).
@@ -73,10 +74,20 @@ const EXPECT = [
   ['#remarks', 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nTrailer - 2015 GREAT DANE Dry Van - VIN 1GRAA0621FB700000 - $25K\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026'],
   ['#accept', false],
 ];
-// Left for the agent on purpose: the runner answers them as the agent would, then fills again
-// (the side panel never touches a field the agent changed). The declaration ends the run.
-// (none left since TNI gave standard answers for the current-carrier and loss-run questions)
-const AGENT_ANSWERS = [];
+// Left for the agent on purpose (facts the intake doesn't give, plan.js `source: 'fact'`, since
+// 2026-10-09): the runner answers them as the agent would, then fills again (the side panel never
+// touches a field the agent changed). [label regex, selector, value]; a radio group by its name,
+// value '1' Yes / '0' No. The declaration ends the run.
+const AGENT_ANSWERS = [
+  [/year business established/i, '#yearBusinessEstablished', String(new Date().getFullYear())],
+  [/how long with current carrier/i, '#howLongWithCurrentCarrier', '1 TO 2 YEARS'],
+  [/claim free loss run/i, 'radio:canProvideClaimFreeLossRun', '0'],
+  [/valued loss runs/i, 'radio:valuedLossRuns', '0'],
+  [/gender/i, '#driversPanel [data-id="gender"]', 'MALE'],
+  [/mar[it]+al status/i, '#driversPanel [data-id="martialStatus"]', 'MARRIED'],
+  [/licen[cs]e year/i, '#driversPanel [data-id="licenseYear"]', '1985'],
+  [/^vehicle leased$|leased to others/i, 'radio:vehicleLeased', '0'],
+];
 const DECLARATION = /i declare/i;
 
 // --reversed: the mock draws the imported rows last VIN first (?import=reversed), and each
@@ -126,8 +137,10 @@ for (let i = 0; i < 12; i++) {
   if (report.actions?.length) lines.push(`clicked: ${report.actions.map((a) => a.text).join(' · ')}`);
   lines.push(report.advanced ? `→ ${report.advanced}` : `stopped: ${report.blockers.join(' · ') || 'nothing left'}`, '');
   if (!report.advanced) {
-    const left = [...report.noData, ...report.unknown, ...report.failed, ...report.leftRequired];
-    if (left.some((x) => DECLARATION.test(x.label)) && left.every((x) => DECLARATION.test(x.label))) { reachedDeclaration = true; break; }
+    const all = [...report.noData, ...report.unknown, ...report.failed, ...report.leftRequired];
+    if (all.some((x) => DECLARATION.test(x.label)) && all.every((x) => DECLARATION.test(x.label))) { reachedDeclaration = true; break; }
+    // The agent's answers on the declaration's step (vehicles leased to others) come first.
+    const left = all.filter((x) => !DECLARATION.test(x.label));
     const answers = left.map((x) => [x, AGENT_ANSWERS.find(([re]) => re.test(x.label))]);
     if (!left.length || answers.some(([, a]) => !a)) { stoppedAt = step; break; }
     for (const [x, [, sel, value]] of answers) {

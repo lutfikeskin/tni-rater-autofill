@@ -54,16 +54,32 @@ export const EVENT_FIELDS = {
   layout_error: ['reason', 'error'],
   // pageChanged: the carrier probably changed the page; reworded: known fields whose question reads
   // differently; renamed: known questions whose data-model name isn't on the page (rule, names).
-  fill_run: ['overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
+  // run: one fill invocation, shared with its fill_field events; rules: the rule files'
+  // fingerprint; settings: the panel's filling switches; step: a one-address application's step
+  // (AmWINS). Their shapes are checked below (RUN_FIELDS): a malformed value refuses the event.
+  fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
-  fill_field: ['result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how'],
-  fill_error: ['auto', 'error'],
-  field_change: ['q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
+  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how'],
+  fill_error: ['run', 'rules', 'settings', 'auto', 'error'],
+  field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   problem_report: ['text'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
   // setting) acted on. Choices are option texts; typed text suggestions are never logged.
-  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'cached', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'],
-  ai_decision: ['model', 'policy', 'probability', 'support', 'evidenceProbability', 'q', 'label', 'controlKind', 'decision', 'choice', 'confidence', 'basis', 'intakePath', 'reason'],
+  ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'],
+  // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
+  ai_decision: ['model', 'policy', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
+};
+
+// The run-identity fields (audit 2026-10-08, finding 7; Contract 1): their exact shapes, since a
+// review joins events by them. An event with one of these present but malformed is refused, not
+// trimmed: a wrong run id or rules hash would join the wrong events.
+const SETTINGS_KEYS = ['autoAdvance', 'autoFollowUps', 'autoPages', 'overwrite'];
+export const RUN_FIELDS = {
+  run: (v) => typeof v === 'string' && /^[\w-]{8,64}$/.test(v),
+  rules: (v) => typeof v === 'string' && /^[0-9a-f]{6,16}$/.test(v),
+  settings: (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+    && Object.keys(v).length === SETTINGS_KEYS.length && SETTINGS_KEYS.every((k) => typeof v[k] === 'boolean'),
+  step: (v) => typeof v === 'string' && v.length <= 120,
 };
 
 export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
@@ -101,6 +117,12 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     const out = {};
     const allowed = new Set([...COMMON, ...keep]);
     for (const k of allowed) if (e[k] !== undefined) out[k] = e[k];
+    // Older page_layout events used null when no step was recognized. Keep only that legacy
+    // representation exempt; non-null steps still pass the ordinary shape check.
+    for (const [k, valid] of Object.entries(RUN_FIELDS)) {
+      if (k === 'step' && out.type === 'page_layout' && out.step === null) continue;
+      if (out[k] !== undefined && keep.includes(k) && !valid(out[k])) return { error: `${k} is not a valid ${k === 'settings' ? 'settings object' : k === 'step' ? 'step name' : k === 'run' ? 'run id' : 'rules hash'}` };
+    }
     // A re-upload of stored events (npm run push-logs) keeps what an earlier server dropped.
     const before = Array.isArray(e.dropped) ? e.dropped.filter((k) => typeof k === 'string' && DROPPED_NAME.test(k)) : [];
     const beforeMore = Number.isSafeInteger(e.droppedMore) && e.droppedMore > 0 ? e.droppedMore : 0;
@@ -111,6 +133,12 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     if (out.key != null && !(typeof out.key === 'string' && out.key.length <= 256)) drop('key');
     // Which tab and vehicle/driver/trailer (t1, t2:v0, t2:tr0): an order number and an index, nothing else.
     if (out.view !== undefined && !(typeof out.view === 'string' && /^t\d{1,3}(:(?:v|d|tr)\d{1,3})?$/.test(out.view))) drop('view');
+    // Historical AI evidence is a score, null (unavailable), or the original confidence enum.
+    // It never becomes a place to retain arbitrary text from an older/malformed client.
+    if (out.type === 'ai_decision') for (const k of ['probability', 'support', 'evidenceProbability', 'confidence']) {
+      if (out[k] !== undefined && !(out[k] === null || (typeof out[k] === 'number' && Number.isFinite(out[k]) && out[k] >= 0 && out[k] <= 1)
+        || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
+    }
     // Which copy and commit logged it (scripts/package.mjs): those values, nothing else in their place.
     if (out.channel !== undefined && !['store', 'unpacked', 'source'].includes(out.channel)) drop('channel');
     if (out.commit !== undefined && !(typeof out.commit === 'string' && /^[0-9a-f]{7,12}(\+dirty)?$/.test(out.commit))) drop('commit');

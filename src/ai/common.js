@@ -44,7 +44,20 @@ export function neverReason(item) {
 
 export function collectItems(frames) {
   const seen = new Set(), items = [], blocked = [];
-  for (const [group, status] of [['failed', 'failed'], ['unknown', 'unfamiliar'], ['noData', 'not_on_intake'], ['leftRequired', 'required']]) {
+  const groups = [['failed', 'failed'], ['unknown', 'unfamiliar'], ['noData', 'not_on_intake'], ['leftRequired', 'required']];
+  const restrictions = new Map();
+  // One control can be both invalid and missing an intake fact. Retain the strictest
+  // safety flags before report priority deduplicates those entries.
+  for (const [group] of groups) {
+    for (const x of frames.flatMap(f => f?.[group] ?? [])) {
+      const sig = `${x.key}|${x.label}`;
+      const flags = restrictions.get(sig) ?? { manualOnly: false, reviewOnly: false };
+      flags.manualOnly ||= x.manualOnly === true;
+      flags.reviewOnly ||= x.reviewOnly === true;
+      restrictions.set(sig, flags);
+    }
+  }
+  for (const [group, status] of groups) {
     for (const x of frames.flatMap(f => f?.[group] ?? [])) {
       const sig = `${x.key}|${x.label}`;
       if (!x.key || seen.has(sig)) continue;
@@ -54,9 +67,11 @@ export function collectItems(frames) {
       const item = { key: x.key, q: x.q ?? null, label: x.label ?? '', section: x.section || null,
         controlKind: x.controlKind ?? null, required: !!x.required, status, reason: x.reason ?? x.note ?? null,
         current: x.current ?? null, options, applyable: CHOICE_KINDS.has(x.controlKind) && options.length > 0,
-        reviewOnly: x.reviewOnly === true, manualOnly: x.manualOnly === true,
+        ...restrictions.get(sig),
         fieldType: x.fieldType ?? x.valueType ?? x.semanticType ?? null };
-      const why = x.reviewOnly ? 'lookup identity mismatch requires agent review' : neverReason(item)
+      // A client fact or attestation the rules leave to the agent (plan.js manualOnly): never the AI's.
+      const why = item.reviewOnly ? 'lookup identity mismatch requires agent review'
+        : item.manualOnly ? 'TNI leaves this client fact to the agent' : neverReason(item)
         || (!item.applyable ? 'The assistant needs visible choices; enter this answer on the page' : null)
         || (options.length > MAX_OPTIONS ? 'too many choices; narrow the list on the page first' : null);
       if (why) blocked.push({ ...item, why });

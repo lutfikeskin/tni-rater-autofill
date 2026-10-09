@@ -9,16 +9,17 @@ export const TNI_RULES = `
 
 ## General
 - The intake (the client's TNI Commercial Insurance Quote Application) is the source of truth for facts about the client. Never invent a fact the intake doesn't give.
-- Questions the intake doesn't cover use TNI's standard answers below. The page's own pre-selected answer is not always right: prefer the TNI rule.
+- Coverage and workflow questions the intake doesn't cover use TNI's standard answers below. The page's own pre-selected answer is not always right: prefer the TNI rule.
+- A fact about the client that the intake doesn't give (a driver's gender or marital status, the year they were first licensed, when the business was established, how long they have been with their current carrier, whether loss runs can be provided, whether they have other business coverages, whether their coverage has been continuous, who a vehicle is registered to) is the agent's: leave it. There is no standard answer for a client fact.
 - The agent decides: MVR and CLUE report orders, excluding a driver, anything the client must sign, attest or authorise, payment or bank details, and moving to another page.
 
 ## Named insured and business (BusinessOwnerInfo)
 - Currently insured with Progressive Commercial Auto: Yes only if the intake's current insurance is a Progressive commercial auto policy with a limit and an expiration date. A personal auto policy doesn't count.
-- Has a USDOT number: "Yes" if the intake has one. If not: "Not Yet…" if they'll have one within 60 days, otherwise "No…".
+- Has a USDOT number: "Yes" if the intake has one. If not, the intake's 60-day answer decides: "Not Yet…" when they'll have one within 60 days, "No…" when the intake says they won't; no answer there is the agent's.
 - A prior policy that expired before the application date does not establish current insurance. Preserve its dates and flag it for renewal/lapse review. Missing POP paperwork does not mean no prior policy: retain the policy details and explicitly disclose that the proof is unavailable.
-- USDOT number belongs to the customer's business: Yes only when the displayed lookup identity matches the applicant. A different registered business name requires agent review; do not select it or override the mismatch with AI.
+- USDOT number belongs to the customer's business, and whether it was obtained within the last 60 days: the agent's to confirm against the lookup; never selected. A different registered business name requires agent review; do not override the mismatch with AI.
 - Business name / business address: the USDOT-registered option, not "Enter a different…". Home address: always the first option offered. If that is "Enter a different address", type the whole address in the address box and pick Progressive's first suggestion.
-- Business structure: "Corporation or LLC / Non-Profit" when the company name ends in LLC, Inc, Corp or Co; otherwise "Individual / Sole Proprietor". Partnerships are never guessed.
+- Business structure: "Corporation or LLC / Non-Profit" when the company name ends in LLC, Inc, Corp or Co; "Individual / Sole Proprietor" when the intake has no company name. A company name without such a suffix is the agent's. Partnerships are never guessed.
 - Business type search list: preserve the intake's distinction between expediter and general freight hauler, using the mappings below. If the needed option is absent from the visible search results, leave it for review rather than choosing a different business type.
 - Business type: "For Hire Trucking" for expediters, then Type of Trucker "Other For-Hire Trucking". General freight haulers are "General Freight Hauler" (portal wording may be "General Freight Trucking"). Otherwise use the closest match to what the intake says the business does.
 - Owner name and date of birth from the intake; the owner is usually the driver with the same last name.
@@ -31,27 +32,27 @@ export const TNI_RULES = `
 - Garaging ZIP: the garaging address ZIP.
 - Farthest one-way distance: the intake's radius in miles. "Unlimited" or long haul is "More than 500 miles".
 - Business, personal or both: "Business Only" unless the intake says the vehicle is also for personal use.
-- Hauls goods for hire: Yes when the client has an MC number.
-- Loan or lease: "Yes - Loan" when the intake's vehicle ownership (or the claims-box notes) says financed, "Yes - Lease" when leased, otherwise No.
+- Hauls goods for hire: Yes for expediters and freight haulers (the business class); any other class is the agent's.
+- Loan or lease: "Yes - Loan" when the intake's vehicle ownership (or the claims-box notes) says financed, "Yes - Lease" when leased, No when owned. No ownership answer is the agent's.
 - Comprehensive / collision: Yes, $1,000 deductibles unless the intake asks for others.
-- Permanently attached equipment: "$0 to $2,000", and tick "Vehicle has no equipment" (standard). The vehicle value question that follows ("If this vehicle was sold today…") is the intake's vehicle value.
+- Permanently attached equipment: the intake's attached equipment value (vehicle). None, or up to $2,000: "$0 to $2,000" and tick "Vehicle has no equipment" (standard). More: no-equipment is No, the amount is entered, and the band is the agent's. The vehicle value question that follows ("If this vehicle was sold today…") is the intake's vehicle value.
 - On the vehicle list page, vehicles found by the USDOT lookup are listed; add the intake's vehicle with Add → Add Vehicle.
-- Vehicle registrant (NJ): Named insured. NJ safety equipment boxes (anti-lock brakes, traction control, 5 MPH bumpers, anti-theft devices): keep what the VIN lookup set.
+- Vehicle registrant (NJ): not on the intake; the agent answers it. NJ safety equipment boxes (anti-lock brakes, traction control, 5 MPH bumpers, anti-theft devices): keep what the VIN lookup set.
 - How long the insured or their hired driver has had the vehicle: not on the intake; the agent answers it.
 - Vehicle value: the intake's vehicle value. GVW, annual mileage, anti-lock brakes, driver-side airbag and anti-theft device come from the VIN lookup: keep Progressive's answers.
-- Trailers (after the vehicles: Add → Add Trailer, then the trailer tile): "Flatbed" is "Flatbed Trailer", "Dry Van" is "Dry Freight Trailer", "Reefer" is "Refrigerated Dry Freight"; Enclosed, Tanker, Lowboy, Step Deck and Other: the agent picks. On Add Trailer: the intake trailer's VIN, year, make and value; farthest distance as the vehicle's; loan or lease from the intake's trailer ownership (financed: "Yes - Loan", leased: "Yes - Lease", owned or not given: No; another answer such as Rented: the agent's); comprehensive / collision Yes; tick "Trailer has no equipment", unless the intake gives a trailer equipment value (then enter it as the equipment value).
+- Trailers (after the vehicles: Add → Add Trailer, then the trailer tile): "Flatbed" is "Flatbed Trailer", "Dry Van" is "Dry Freight Trailer", "Reefer" is "Refrigerated Dry Freight"; Enclosed, Tanker, Lowboy, Step Deck and Other: the agent picks. On Add Trailer: the intake trailer's VIN, year, make and value; farthest distance as the vehicle's; loan or lease from the intake's trailer ownership (financed: "Yes - Loan", leased: "Yes - Lease", owned: No; not given, or another answer such as Rented: the agent's); comprehensive / collision Yes; tick "Trailer has no equipment", unless the intake gives a trailer equipment value (then enter it as the equipment value).
 
 ## Drivers (AddDriver)
 - License state: the full state name. License number: letters and digits only, keeping a state prefix the intake writes ("IL - S123" is "ILS123").
-- Exclude this driver: No.
+- Exclude this driver: No for a driver listed on the intake; excluding a driver is the agent's decision.
 - Year CDL issued: the intake's CDL year; "Year is unknown" is the agent's.
 - Defensive driver discount: No, unless the intake's description box mentions a defensive driving course (then the agent answers it).
 - Accidents, claims or violations in the past 3 years: from the intake's claims answer (its first line; later lines in the claims box sometimes answer other questions).
 
 ## More about the business (MoreAboutBusiness)
 - Currently insured: Yes when the intake lists current insurance with a limit and an expiration that is not before the application date. An expired policy alone is not current coverage.
-- Continuous coverage: Yes. Current bodily injury limit and expiration: as written in the intake ("State Minimum" is "State Minimum or less").
-- Other coverages for the business: None. A coverage the intake doesn't mention means No: tick "None of the above" and leave the coverages unticked. Additional insured, waiver and blanket endorsement questions: leave as the page has them (0 / No).
+- Continuous coverage: not on the intake; the agent answers it. Current bodily injury limit and expiration: as written in the intake ("State Minimum" is "State Minimum or less").
+- Other coverages for the business: not on the intake; the agent answers it (the intake never asks, so an unmentioned coverage is not a No). Additional insured, waiver and blanket endorsement questions: leave as the page has them (0 / No).
 - State or federal filings required: Yes when the intake says filings are required.
 - ELD required: from the intake.
 
@@ -82,13 +83,13 @@ export const TNI_RULES = `
 - Start on the Commercial Lines dashboard: Auto, risk state = the garaging state, Open New Application.
 - Agency Information (agency name, contact name, phone, email: the agency's own), website, DBA and effective/expiration dates: leave as the page has them. Contact Information (the inspection contact): the client's name (the owner's full name) and office phone only; single contact stays Yes. Additional interest: No. Waiver type: NONE.
 - Named insured: the company name; with no company, the owner's full name. Owner name: the owner's full name. Garage address: same as mailing, and the garage street, city, state and ZIP boxes are the intake's garaging address.
-- Years in business: the intake's years in business, else its years under own authority (5 or more is "5+"). Year established blank on the intake: this year.
-- Entity type: LLC, CORPORATION (Inc/Corp) or SOLE PROPRIETOR. Nature of business: TRANSPORTATION. Retail/service operations: 0%. Non-profit: No.
-- Classification: "484122 - General freight trucking, long-distance, less-than-truckload (LTL)" (AmWINS lists several 484122 results; this exact one) for expediters and general freight haulers (cargo vans, box trucks); otherwise only a confident match for the intake's business. Description of operations: "Trucking for Hire - Other for hire trucking" for those, otherwise the intake's wording. Prior carrier: NO PRIOR for every prior year shown. Filing counts: skipped. DOT / MC numbers from the intake. With filings required: federal authority active for = the years under own authority; BMC-91 and MCS-90 Yes for a federal liability filing; BMC-32 Yes only for a cargo filing. How long with the current carrier: 1 TO 2 YEARS (only with a DOT number). Claim-free loss runs: No.
-- Drivers: gender MALE unless the name is clearly a woman's (then tell the agent); marital status from the intake (none on the intake: MARRIED, and the agent confirms it); year licensed = birth year + 17.
-- Vehicles: VIN list, Import Data, then Import Valid Records (that adds the vehicle: VIN, year, make, model, GVW from the VIN). Body type as on the intake (Van is Cargo Van), even when Import Data wrote something else; usage FOR HIRE; radius band from the intake ("Unlimited" is 201+ MILES); permanently attached equipment: No; vehicle value from the intake.
+- Years in business: the intake's years in business, else its years under own authority (5 or more is "5+"). Year established from the intake; blank there is the agent's.
+- Entity type from the company name: LLC, CORPORATION (Inc/Corp), or SOLE PROPRIETOR when there is no company name; a company name without a suffix is the agent's. Retail/service operations: 0%. Non-profit: No. Additional interest: No when the vehicles are owned; financed or leased vehicles likely have a lienholder or lessor, so it's the agent's.
+- Expediters and general freight haulers (cargo vans, box trucks): nature of business TRANSPORTATION, classification "484122 - General freight trucking, long-distance, less-than-truckload (LTL)" (AmWINS lists several 484122 results; this exact one), description of operations "Trucking for Hire - Other for hire trucking", vehicle usage FOR HIRE. Any other business class: all four are the agent's. Prior carrier: NO PRIOR for every prior year shown. Filing counts: skipped. DOT / MC numbers from the intake. With filings required: federal authority active for = the years under own authority; BMC-91 and MCS-90 Yes for a federal liability filing; BMC-32 Yes only for a cargo filing. How long with the current carrier, claim-free loss runs and valued loss runs: not on the intake; the agent's.
+- Drivers: gender and the year first licensed are not on the intake: the agent's. Marital status from the intake; none there is the agent's.
+- Vehicles: VIN list, Import Data, then Import Valid Records (that adds the vehicle: VIN, year, make, model, GVW from the VIN). Body type as on the intake (Van is Cargo Van), even when Import Data wrote something else; radius band from the intake ("Unlimited" is 201+ MILES); permanently attached equipment: No when the intake gives no equipment value, otherwise the agent's; vehicle value from the intake.
 - Coverages: CSL limit from the intake; liability auto symbol 6 only; medical payments $5,000; uninsured motorists Yes with $100K; comprehensive and collision $1,000; waiver of collision No; towing and labor $75; rental $40 day / $1,200 total; nothing excluded (every "Exclude …" box unticked). Personal Injury Protection (some states): No, because Medical Payments ($5,000) is offered and preferred.
-- Underwriting questions: General Information via "Default all answers to No"; the second section is always No (hazardous material from the intake). "Any other topics to disclose": Yes, with the disclosure details built from the intake (cargo, radius, proof of prior insurance).
+- Underwriting questions: General Information via "Default all answers to No"; the second section is No except what the intake answers: hazardous material from the intake; vehicles leased and vehicles not owned Yes when the intake's vehicle ownership is leased, No when owned or financed, the agent's when missing; convictions / moving violations No when the intake reports no claims or violations, otherwise the agent's (a combined claims / violations Yes is not a conviction). "Any other topics to disclose": Yes, with the disclosure details built from the intake (cargo, radius, trailers, proof of prior insurance).
 - Each step ends with Save & Continue once nothing is left for the agent. Never Save & Exit or Submit.
 - The declaration ("I declare that the information provided is true…") is always the agent's; the quote stops there.
 `.trim();
