@@ -341,7 +341,10 @@ export const progressive = {
   // `text` is a regex on the button's text, `token` a string in its id/href/onclick.
   // Never clicked, whatever a rule says: Continue, Next, Finish, Buy, Bind, Submit, Save.
   actions: [
-    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true },
+    // Done once the page shows the lookup's result (the registered names to pick, or the 60-day
+    // question when the number is new): a click without one is tried again, then the agent's.
+    // Already showing them for the number on the page (the agent verified it before Fill): done.
+    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] } },
     // Vehicle summary: "Add a Vehicle" for a vehicle not entered yet (its VIN lookup not done).
     // The vehicles found by the USDOT lookup are listed there too; ours is added with Add Vehicle,
     // which sits in the "Add" menu.
@@ -358,7 +361,9 @@ export const progressive = {
     { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
     // Two tiles matching (two reefer tiles) means it's the agent's pick.
     { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
-    { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle' },
+    // Done once the decoded vehicle shows (year, make, model, the safety boxes): same again.
+    // Already decoded for the VIN on the page (the agent looked it up before Fill): done.
+    { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle', verify: 'revealed', shownBy: { all: ['vehicles[].year', 'vehicles[].make', 'vehicles[].model'], answered: true } },
     // Trailers, once every vehicle is in: Add Trailer (in the "Add" menu) for the next intake
     // trailer not entered yet (the side panel moves the active trailer, see trailerList), its tile,
     // then its Add Trailer page. When the button can't be found the agent is told, so Continue

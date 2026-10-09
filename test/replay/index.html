@@ -122,7 +122,7 @@
           displayField: 'text', valueField: 'code', value: answers[key] ?? null,
           listeners: { blur: (c) => { if ((answers[key] ?? null) !== c.getValue()) answer(c.getValue(), c.getRawValue()); } } };
       }
-      return { ...common, xtype: 'dctinputstringfield', name: `string_${key}|`, maxLength: f.max, enforceMaxLength: !!f.max, value: answers[key] ?? '',
+      return { ...common, xtype: 'dctinputstringfield', name: `string_${key}|`, maxLength: f.max, enforceMaxLength: !!f.max, value: answers[key] ?? f.decoded ?? '',
         listeners: { blur: (c) => { if ((answers[key] ?? '') !== c.getValue()) answer(c.getValue()); } } };
     }
 
@@ -144,7 +144,36 @@
       window.replay.clicks.push({ page: window.replay.page, text, row: row ?? null, at: new Date().toISOString() });
       document.getElementById('status').textContent = `Clicked "${text}"${row ? ` (${row})` : ''}`;
       if (row && window.replay.fields.some((f) => f.showAfter === row)) window.replay.roundTrip();
+      if (!row && lookupOf(text)) window.replay.lookup(lookupOf(text));
     };
+
+    // The page's lookup buttons show their result after a round trip, as the carrier's do (a
+    // click that shows nothing isn't done, to the fill): Lookup VIN decodes the intake vehicle's
+    // year, make and model into fields the fill checks against the intake; Verify DOT draws the
+    // registered record's questions (its name and address to pick, whether the number belongs to
+    // the business), which a layout with the button shows only once it ran. Built from the
+    // recorded fields and the intake; no carrier response is copied.
+    const LOOKUPS = { vin: /^look ?up( vin)?$/i, dot: /^verify( us)?( ?dot)?( number)?$/i };
+    const lookupOf = (text) => Object.keys(LOOKUPS).find((k) => LOOKUPS[k].test(String(text ?? '').trim())) ?? null;
+    const dotResult = (f) => /usdot number belong/i.test(f.caption ?? '') || ((f.opts ?? []).some((o) => /^enter a different/i.test(o)) && !/home address/i.test(f.caption ?? ''));
+    window.replay.lookup = function lookup(kind) {
+      const r = window.replay;
+      const s = store(r.page);
+      (s.lookups ??= new Set()).add(kind);
+      if (kind === 'vin' && !r.fields.some((f) => f.decodedBy)) {
+        // The vehicle whose VIN is on the page (the replay repeats Add Vehicle once per vehicle);
+        // a page with no VIN entered decodes the first. A VIN no intake vehicle has decodes nothing.
+        const id = (x) => String(x ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const at = r.fields.findIndex((f) => !f.decodedBy && (/(^|\.)vin$/i.test(f.ref ?? '') || /^vin\b/i.test(f.caption ?? '')));
+        const typed = at < 0 ? '' : id(s.texts[idFor(r.fields[at], at).key]);
+        const vehicles = r.record?.vehicles ?? [];
+        const v = (typed ? vehicles.find((x) => id(x.vin) === typed) : vehicles[0]) ?? {};
+        r.fields = [...r.fields, ...[['Year', v.year], ['Make', v.make], ['Model', v.model]].map(([caption, value]) => ({ caption, kind: 'text', decodedBy: 'vin', decoded: value == null ? '' : String(value) }))];
+      }
+      r.roundTrip();
+    };
+    // A field a lookup draws is hidden until that lookup ran on this page (when the page has its button).
+    const awaitsLookup = (f) => f.revealedBy && !store(window.replay.page).lookups?.has(f.revealedBy);
 
     window.replay.render = function render() {
       const r = window.replay;
@@ -153,7 +182,7 @@
         renderTo: 'form', border: false, width: 600, defaults: { width: 580 },
         // `showAfter`: the question only appears once that row's button was clicked (cargo after "+").
         // `showWhen`: only while its trigger has an answer it was seen showing with (show-when.js).
-        items: r.fields.flatMap((f, i) => (f.showAfter && !r.clicks.some((c) => c.page === r.page && c.row === f.showAfter)
+        items: r.fields.flatMap((f, i) => (f.showAfter && !r.clicks.some((c) => c.page === r.page && c.row === f.showAfter) || awaitsLookup(f)
           || !replayShows(f, r.fields, (t, j) => store(r.page).texts[idFor(t, j).key] ?? (t.kind === 'checkbox' ? 'unchecked' : undefined)) ? [] : [
           { xtype: 'component', cls: 'caption', html: `${Ext.htmlEncode(captionOf(f) || '(no caption)')}${f.showWhen ? `<span class="tag">follow-up: ${Ext.htmlEncode(f.showWhen.caption)} = ${Ext.htmlEncode(f.showWhen.is.join(' / '))}</span>` : f.cond ? '<span class="tag">follow-up</span>' : ''}` },
           fieldConfig(f, i),
@@ -233,9 +262,11 @@
     function showPage(name) {
       $('page').value = name;
       $('page-title').textContent = name;
-      const fields = layout.pages[name].fields ?? [];
+      const buttons = layout.pages[name].buttons ?? [];
+      // With a Verify DOT button on the page, the registered record's questions wait for it.
+      const fields = (layout.pages[name].fields ?? []).map((f) => (buttons.some((b) => lookupOf(b.text) === 'dot') && dotResult(f) ? { ...f, revealedBy: 'dot' } : f));
       window.replay.applyDefaults(name, fields);
-      Object.assign(window.replay, { page: name, fields, pageButtons: layout.pages[name].buttons ?? [] });
+      Object.assign(window.replay, { page: name, fields, pageButtons: buttons });
       // The fill engine reads the page name from the URL, as on Progressive.
       const u = new URL(location.href);
       u.searchParams.set('pageName', name);

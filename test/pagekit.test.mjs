@@ -306,6 +306,7 @@ function harness({ ext = false, pathname = '/rater', search = '' } = {}) {
     document,
     location,
     URLSearchParams,
+    crypto,
     window: null,
     Node: { DOCUMENT_POSITION_FOLLOWING: 4 },
     NodeFilter: { SHOW_TEXT: 4, FILTER_REJECT: 2, FILTER_ACCEPT: 1 },
@@ -2508,6 +2509,464 @@ test('a question whose wording carries a date is not flagged as reworded when th
   assert.equal(accidents.children.find((r) => r.checked)?.value, 'No');
   assert.equal(defensive.children.find((r) => r.checked)?.value, 'No', 'defensive driver discount: standard No');
   assert.equal(report.unknown.length, 0);
+});
+
+// AmWINS' vehicle rows after Import Valid Records: each row shows a VIN, in the import's order,
+// not the intake's. A step with a `witness` takes the row whose VIN is its unit's; a unit whose
+// VIN is on no row (rejected by the import) or on two stays the agent's, named without its VIN.
+// (The harness matches simple selectors only, so the rows' controls are found by data-id alone.)
+function vehicleRows(h, vins) {
+  const panel = new FakeNode('div', { id: 'vehiclesPanel' });
+  const rows = vins.map((vin, i) => {
+    const row = new FakeNode('div', { className: 'app-rp-section', attrs: { 'data-id': String(i) } });
+    const box = new FakeNode('div');
+    const vinInput = makeInput({ ariaLabel: 'VIN', value: vin, attrs: { 'data-id': 'vin' } });
+    const body = makeInput({ ariaLabel: 'Body Type', attrs: { 'data-id': 'bodyType' } });
+    box.append(vinInput, body);
+    row.append(box);
+    panel.append(row);
+    return { row, vin: vinInput, body };
+  });
+  h.document.body.append(panel);
+  return rows;
+}
+const VINS = ['1FTBR3X87MKA00001', '1FTBR3X87MKA00002', '1FTBR3X87MKA00003'];
+const witnessPlan = (vins = VINS) => vins.flatMap((vin, i) => [
+  { id: `vin${i}`, selector: '[data-id="vin"]', path: `vehicles[${i}].vin`, kind: 'text', value: vin, trustPage: true, name: 'VIN', witness: { selector: '[data-id="vin"]', path: `vehicles[${i}].vin`, value: vin } },
+  { id: `body${i}`, selector: '[data-id="bodyType"]', path: `amwins.q${i}`, kind: 'text', value: ['Box Truck', 'Cargo Van', 'Pickup Truck'][i], name: 'Body type', witness: { selector: '[data-id="vin"]', path: `vehicles[${i}].vin`, value: vin } },
+]);
+
+test('rows in another order than the intake: each unit\'s answers land on the row with its VIN', async () => {
+  const h = harness();
+  const rows = vehicleRows(h, [VINS[2], VINS[1], VINS[0]]);
+  const report = await h.kit.fill(witnessPlan(), { maxRounds: 8 });
+  assert.deepEqual(rows.map((r) => r.body.value), ['Pickup Truck', 'Cargo Van', 'Box Truck']);
+  assert.equal(report.filled.length, 3, JSON.stringify(report.failed));
+  assert.equal(report.noData.length, 0);
+  assert.ok(!report.kept.some((x) => x.differs), 'the VIN the page shows is the intake\'s: kept, no flag');
+  assert.deepEqual(rows.map((r) => r.vin.value), [VINS[2], VINS[1], VINS[0]], 'trustPage: the page\'s VIN stays');
+  assert.equal(report.blockers.length, 0);
+});
+
+test('a VIN the import rejected has no row: that unit stays the agent\'s, named without its VIN; the others fill', async () => {
+  const h = harness();
+  const rows = vehicleRows(h, [VINS[0], VINS[2]]);
+  const plan = witnessPlan();
+  // A vehicle whose VIN isn't on the intake either: that is said instead.
+  plan.push({ id: 'body3', selector: '[data-id="bodyType"]', path: 'amwins.q3', kind: 'text', value: 'Van', name: 'Body type', witness: { selector: '[data-id="vin"]', path: 'vehicles[3].vin', value: null } });
+  const report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.deepEqual(rows.map((r) => r.body.value), ['Box Truck', 'Pickup Truck']);
+  assert.deepEqual(Array.from(report.noData, (x) => `${x.label}: ${x.note}`), [
+    'Vehicle 2: the row for vehicle 2 (its VIN) wasn\'t found; check the rows and answer its questions yourself.',
+    'Vehicle 4: the intake has no VIN for vehicle 4; check the rows and answer its questions yourself.',
+  ], 'one note per unit, no VIN in it');
+  assert.ok(!JSON.stringify(report.noData).includes(VINS[1]));
+  assert.ok(report.blockers.some((b) => /needs you: Vehicle 2/.test(b)), report.blockers.join(' | '));
+  assert.equal(report.failed.length, 0);
+});
+
+test('two rows with one VIN, or rows without VINs (before the import), give that unit no row', async () => {
+  let h = harness();
+  let rows = vehicleRows(h, [VINS[0], VINS[1], VINS[1]]);
+  let report = await h.kit.fill(witnessPlan(VINS.slice(0, 2)), { maxRounds: 6 });
+  assert.deepEqual(rows.map((r) => r.body.value), ['Box Truck', '', '']);
+  assert.deepEqual(Array.from(report.noData, (x) => x.label), ['Vehicle 2']);
+  // Rows not yet imported show no VIN: nothing is typed into any of them.
+  h = harness();
+  rows = vehicleRows(h, ['', '', '']);
+  report = await h.kit.fill(witnessPlan(), { maxRounds: 6 });
+  assert.deepEqual(rows.map((r) => r.body.value), ['', '', '']);
+  assert.deepEqual(Array.from(report.noData, (x) => x.label), ['Vehicle 1', 'Vehicle 2', 'Vehicle 3']);
+  // Without rows on the page (another step of the application) nothing is said.
+  h = harness();
+  report = await h.kit.fill(witnessPlan(), { maxRounds: 3 });
+  assert.equal(report.noData.length, 0);
+});
+
+test('a row showing a VIN the intake doesn\'t have: left as it is, one check naming its place, Continue held', async () => {
+  const h = harness();
+  const extra = '1FTBR3X87MKA00099';
+  const rows = vehicleRows(h, [VINS[0], VINS[1], VINS[2], extra]);
+  const report = await h.kit.fill(witnessPlan(), { maxRounds: 8 });
+  assert.deepEqual(rows.map((r) => r.body.value), ['Box Truck', 'Cargo Van', 'Pickup Truck', ''], 'the extra row is never answered');
+  assert.equal(rows[3].vin.value, extra, 'nor changed');
+  assert.equal(report.unknown.length, 0, 'its questions are known ones, not unfamiliar');
+  assert.equal(report.noData.length, 0);
+  assert.deepEqual(Array.from(report.checks, (x) => x.label), ['Vehicle row 4 on the page']);
+  assert.ok(!JSON.stringify(report.checks).includes('00099'), 'no client value in the check');
+  assert.ok(report.blockers.includes('check: Vehicle row 4 on the page'), report.blockers.join(' | '));
+  // A blank row next to the imported ones (not imported yet) is no vehicle: nothing to check.
+  const h2 = harness();
+  vehicleRows(h2, [VINS[0], VINS[1], VINS[2], '']);
+  const plain = await h2.kit.fill(witnessPlan(), { maxRounds: 8 });
+  assert.equal(plain.checks.length, 0);
+  assert.equal(plain.blockers.length, 0, plain.blockers.join(' | '));
+});
+
+test('extra-row acknowledgement survives redraw and reorder, holds Continue until confirmed', async () => {
+  const h = harness();
+  const extra = '1FTBR3X87MKA00099';
+  const rows = vehicleRows(h, [...VINS, extra]);
+  const next = addButton(h, 'Continue');
+  let advances = 0;
+  next.onclick = () => advances++;
+  const options = { maxRounds: 8, advance: { text: '^Continue$' } };
+  const held = await h.kit.fill(witnessPlan(), options);
+  const key = held.checks[0].key;
+  assert.ok(key, 'the check must expose a dismissible acknowledgement key');
+  assert.ok(!key.includes(extra), 'the key contains no VIN');
+  assert.equal(advances, 0);
+  rows[0].row.parentElement.remove();
+  const redrawn = vehicleRows(h, [extra, VINS[2], VINS[0], VINS[1]]);
+  const heldAgain = await h.kit.fill(witnessPlan(), options);
+  assert.equal(heldAgain.checks[0].key, key, 'same vehicle, new DOM and position');
+  assert.equal(advances, 0);
+  const accepted = await h.kit.fill(witnessPlan(), { ...options, skip: [key] });
+  assert.equal(accepted.checks.length, 0);
+  assert.equal(accepted.blockers.length, 0, accepted.blockers.join(' | '));
+  assert.equal(advances, 1);
+  assert.equal(redrawn[0].vin.value, extra);
+  assert.equal(redrawn[0].body.value, '', 'acknowledgement does not answer the extra vehicle');
+  redrawn[0].vin.value = '1FTBR3X87MKA00098';
+  const replaced = await h.kit.fill(witnessPlan(), { ...options, skip: [key] });
+  assert.equal(replaced.checks.length, 1);
+  assert.notEqual(replaced.checks[0].key, key, 'a replacement vehicle needs its own decision');
+  assert.equal(advances, 1);
+});
+
+test('extra-row acknowledgement is separate for duplicates and expires in a new document', async () => {
+  const extra = '1FTBR3X87MKA00099';
+  const h = harness();
+  const rows = vehicleRows(h, [...VINS, extra]);
+  const first = await h.kit.fill(witnessPlan(), { maxRounds: 8 });
+  const key = first.checks[0].key;
+  assert.ok(key);
+  rows[0].row.parentElement.remove();
+  vehicleRows(h, [...VINS, extra, extra]);
+  const duplicates = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip: [key] });
+  assert.equal(duplicates.checks.length, 2, 'a duplicate invalidates the earlier single-row decision');
+  const keys = Array.from(duplicates.checks, x => x.key);
+  assert.equal(new Set(keys).size, 2, 'each extra row has its own acknowledgement');
+  const partial = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip: [keys[0]] });
+  assert.equal(partial.checks.length, 1);
+  assert.equal(partial.checks[0].key, keys[1]);
+  const accepted = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip: keys });
+  assert.equal(accepted.checks.length, 0);
+  const fresh = harness();
+  vehicleRows(fresh, [...VINS, extra, extra]);
+  const newDocument = await fresh.kit.fill(witnessPlan(), { maxRounds: 8, skip: keys });
+  assert.equal(newDocument.checks.length, 2, 'old quote acknowledgements never apply in another document');
+  assert.ok(newDocument.checks.every(x => !keys.includes(x.key)));
+});
+
+test('extra-row acknowledgement expires after removal even if the same VIN returns', async () => {
+  const extra = '1FTBR3X87MKA00099';
+  const h = harness();
+  const rows = vehicleRows(h, [...VINS, extra]);
+  const first = await h.kit.fill(witnessPlan(), { maxRounds: 8 });
+  const skip = [first.checks[0].key];
+  rows[3].row.remove();
+  const removed = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip });
+  assert.equal(removed.checks.length, 0);
+  rows[0].row.parentElement.append(rows[3].row);
+  const returned = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip });
+  assert.equal(returned.checks.length, 1, 'returning vehicle requires a new decision');
+  assert.notEqual(returned.checks[0].key, skip[0]);
+});
+
+test('duplicate extra-row acknowledgement follows its DOM row and redraw needs fresh confirmation', async () => {
+  const extra = '1FTBR3X87MKA00099';
+  const h = harness();
+  const rows = vehicleRows(h, [...VINS, extra, extra]);
+  const first = await h.kit.fill(witnessPlan(), { maxRounds: 8 });
+  const skip = [first.checks[0].key];
+  const otherKey = first.checks[1].key;
+  const panel = rows[0].row.parentElement;
+  rows[3].row.remove();
+  panel.append(rows[3].row);
+  const reordered = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip });
+  assert.equal(reordered.checks.length, 1);
+  assert.equal(reordered.checks[0].label, 'Vehicle row 4 on the page', 'the unreviewed row is still blocked');
+  assert.equal(reordered.checks[0].key, otherKey);
+  panel.remove();
+  vehicleRows(h, [...VINS, extra, extra]);
+  const redrawn = await h.kit.fill(witnessPlan(), { maxRounds: 8, skip: [...skip, otherKey] });
+  assert.equal(redrawn.checks.length, 2, 'same-VIN duplicates cannot be identified across DOM replacement');
+});
+
+// A helper verified by what it shows: `revealed` (a question appeared or an answer changed since
+// the click) and `{ appears }` (more of a selector than before). Nothing shown: unclicked and
+// tried again, twice; then the agent is told to do it.
+const revealAction = (verify) => ({ id: 'look', kind: 'action', action: 'lookupVin:0', baseAction: 'lookupVin', path: 'action.lookupVin', name: 'Click lookupVin', text: '^look ?up( vin)?$', pages: [], after: [], afterActions: [], afterPages: [], unless: [], immediate: true, verify });
+
+test('verify revealed: a question appearing or an answer changing counts; a redraw of the same page does not', async () => {
+  let h = harness();
+  let vin = makeInput({ id: 'vin', ariaLabel: 'VIN', value: VINS[0] });
+  h.document.body.append(vin);
+  let button = addButton(h, 'Lookup VIN');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; h.document.body.append(makeInput({ id: 'year', ariaLabel: 'Year', value: '2022' })); };
+  let report = await h.kit.fill([revealAction('revealed')], { maxRounds: 4 });
+  assert.deepEqual(Array.from(report.actions, (a) => a.id), ['lookupVin:0']);
+  assert.equal(button._clicks, 1);
+  assert.equal(report.blockers.length, 0);
+  // A changed answer (the decoded weight) counts too.
+  h = harness();
+  const weight = makeInput({ id: 'gvw', ariaLabel: 'Gross vehicle weight', value: '' });
+  h.document.body.append(weight);
+  button = addButton(h, 'Lookup VIN');
+  button.onclick = () => { weight.value = '14500'; };
+  report = await h.kit.fill([revealAction('revealed')], { maxRounds: 4 });
+  assert.deepEqual(Array.from(report.actions, (a) => a.id), ['lookupVin:0']);
+  // The same questions redrawn with the same answers: no result. Three clicks, then the agent's,
+  // and the page's other questions still fill around it.
+  h = harness();
+  vin = makeInput({ id: 'vin', ariaLabel: 'VIN', value: VINS[0] });
+  const zip = makeInput({ id: 'zip', ariaLabel: 'Zip code where the vehicle is located' });
+  h.document.body.append(vin, zip);
+  button = addButton(h, 'Lookup VIN');
+  button.onclick = () => {
+    button._clicks = (button._clicks ?? 0) + 1;
+    const fresh = makeInput({ id: 'vin', ariaLabel: 'VIN', value: vin.value });
+    h.document.body.replaceChild(fresh, vin);
+    vin = fresh;
+  };
+  report = await h.kit.fill([revealAction('revealed'), { id: 'zip', selector: '#zip', path: 'garaging.zip', kind: 'text', value: '21000', name: 'ZIP' }], { maxRounds: 8 });
+  assert.equal(button._clicks, 3, 'clicked, and tried twice more');
+  assert.equal(report.actions.length, 0);
+  assert.equal(zip.value, '21000', 'the rest of the page fills around the helper left to the agent');
+  assert.equal(report.filled.length, 1);
+  assert.ok(report.blockers.includes('button: lookupVin:0'), report.blockers.join(' | '));
+  assert.deepEqual(Array.from(report.noData, (x) => [x.label, x.note]), [['lookupVin', 'Clicked three times, but the page never showed its result: do it yourself, then fill again.']]);
+  assert.ok(report.invalidatedActions.includes('lookupVin:0'));
+});
+
+// A lookup the agent ran before Fill (Codex on PR #66): its result already shows for the VIN on
+// the page, so it is done without a click; a click alone never counts.
+const shownPlan = (vin) => [
+  { id: 'vin', selector: '#vin', path: 'vehicles[0].vin', kind: 'text', value: vin, name: 'VIN' },
+  { id: 'year', selector: '#year', path: 'vehicles[0].year', kind: 'text', value: '2022', name: 'Year', verifyOnly: true },
+  { id: 'make', selector: '#make', path: 'vehicles[0].make', kind: 'text', value: 'Freightliner', name: 'Make', verifyOnly: true },
+  { id: 'model', selector: '#model', path: 'vehicles[0].model', kind: 'text', value: 'Cascadia', name: 'Model', verifyOnly: true },
+  { ...revealAction('revealed'), after: ['vehicles[0].vin'], shownBy: { all: ['vehicles[0].year', 'vehicles[0].make', 'vehicles[0].model'], any: [], answered: true } },
+];
+const decodedPage = (h, { vin = VINS[0], year = '2022', make = 'FREIGHTLINER', model = 'CASCADIA', yearAttrs = {} } = {}) => {
+  const els = {
+    vin: makeInput({ id: 'vin', ariaLabel: 'VIN', value: vin }),
+    year: makeInput({ id: 'year', ariaLabel: 'Year', value: year, attrs: yearAttrs }),
+    make: makeInput({ id: 'make', ariaLabel: 'Make', value: make }),
+    model: makeInput({ id: 'model', ariaLabel: 'Model', value: model }),
+  };
+  h.document.body.append(els.vin, els.year, els.make, els.model);
+  return els;
+};
+
+test('verify revealed: a lookup already shown for the VIN on the page is done without a click', async () => {
+  const h = harness();
+  decodedPage(h);
+  const button = addButton(h, 'Lookup VIN');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; };
+  const report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
+  assert.equal(button._clicks ?? 0, 0, 'not clicked again');
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, a.alreadyShown]), [['lookupVin:0', true]]);
+  assert.equal(report.blockers.length, 0, report.blockers.join(' | '));
+  assert.equal(report.noData.length, 0);
+});
+
+// A verified result doesn't require the helper's button to remain clickable afterwards.
+for (const buttonState of ['absent', 'disabled']) {
+  test(`verify revealed: an already-shown lookup with its button ${buttonState} records completion before Continue`, async () => {
+    const h = harness();
+    decodedPage(h);
+    if (buttonState === 'disabled') {
+      const lookup = addButton(h, 'Lookup VIN');
+      lookup.disabled = true;
+      lookup.onclick = () => { throw new Error('a disabled lookup must never be clicked'); };
+    }
+    const next = addButton(h, 'Continue');
+    next.onclick = () => { next._clicks = (next._clicks ?? 0) + 1; };
+    const report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8, advance: { text: '^Continue$' } });
+    assert.deepEqual(Array.from(report.actions, (a) => [a.id, a.alreadyShown]), [['lookupVin:0', true]], 'kept for the origin unit and later helper prerequisites');
+    assert.equal(report.blockers.length, 0, report.blockers.join(' | '));
+    assert.equal(report.advanced, 'Continue');
+    assert.equal(next._clicks, 1);
+  });
+}
+
+test('verify revealed: an absent lookup with a shown result still waits for its prerequisites', async () => {
+  const h = harness();
+  decodedPage(h);
+  const plan = shownPlan(VINS[0]);
+  plan.at(-1).afterActions = ['required-helper'];
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { throw new Error('Continue must wait for the prerequisite'); };
+  const report = await h.kit.fill(plan, { maxRounds: 8, advance: { text: '^Continue$' } });
+  assert.equal(report.actions.length, 0);
+  assert.ok(report.blockers.some((b) => /required-helper clicked/.test(b)), report.blockers.join(' | '));
+  assert.equal(report.advanced, undefined);
+});
+
+test('verify revealed: an already-shown decode that is not the intake vehicle is named for the agent', async () => {
+  // The agent looked up another VIN, then typed this one without looking it up again: the lookup
+  // counts as shown, but the decoded make that isn't the intake's is flagged for the agent.
+  const h = harness();
+  decodedPage(h, { make: 'VOLVO' });
+  addButton(h, 'Lookup VIN');
+  const report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
+  assert.deepEqual(Array.from(report.actions, (a) => a.id), ['lookupVin:0']);
+  assert.deepEqual(Array.from(report.failed, (x) => [x.label, x.reason]), [['Make', 'The looked-up value differs from the intake. Check the VIN.']]);
+});
+
+test('verify revealed: a decoded vehicle that is not this VIN\'s, or not decoded yet, is still clicked', async () => {
+  // The fill typed the VIN (the box was empty): the year/make/model already on the page are no
+  // result for it. The click that redraws them unchanged is no result either.
+  let h = harness();
+  let els = decodedPage(h, { vin: '' });
+  let button = addButton(h, 'Lookup VIN');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; els.year.value = els.year.value; };
+  let report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
+  assert.equal(els.vin.value, VINS[0]);
+  assert.equal(button._clicks, 3, 'clicked, and tried twice more');
+  assert.equal(report.actions.length, 0);
+  assert.ok(report.blockers.some((b) => b.startsWith('button: lookupVin:0')), report.blockers.join(' | '));
+  assert.deepEqual(Array.from(report.noData, (x) => x.label), ['lookupVin']);
+  // Model not decoded yet: clicked, and the decoded model is its result.
+  h = harness();
+  els = decodedPage(h, { model: '' });
+  button = addButton(h, 'Lookup VIN');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; els.model.value = 'CASCADIA'; };
+  report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
+  assert.equal(button._clicks, 1);
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, !!a.alreadyShown]), [['lookupVin:0', false]]);
+  assert.equal(report.blockers.length, 0, report.blockers.join(' | '));
+});
+
+test('verify revealed: a USDOT already verified for the number on the page is done without a click', async () => {
+  const dotPlan = [
+    { id: 'dot', selector: '#dot', path: 'applicant.dot', kind: 'text', value: '1234567', name: 'USDOT' },
+    { id: 'belongs', selector: '#belongs', path: 'progressive.q20F', kind: 'text', value: null, name: 'USDOT belongs to the business' },
+    { ...revealAction('revealed'), action: 'verifyDot', baseAction: 'verifyDot', path: 'action.verifyDot', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], shownBy: { all: [], any: ['progressive.q20F'], answered: false } },
+  ];
+  // The record's question shows: done, unclicked.
+  let h = harness();
+  h.document.body.append(makeInput({ id: 'dot', ariaLabel: 'USDOT number', value: '1234567' }), makeInput({ id: 'belongs', ariaLabel: 'Does this USDOT Number belong to the business?' }));
+  let button = addButton(h, 'Verify');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; };
+  let report = await h.kit.fill(dotPlan, { maxRounds: 8 });
+  assert.equal(button._clicks ?? 0, 0);
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, a.alreadyShown]), [['verifyDot', true]]);
+  // No record question yet: clicked, and the question it shows is its result.
+  h = harness();
+  h.document.body.append(makeInput({ id: 'dot', ariaLabel: 'USDOT number', value: '1234567' }));
+  button = addButton(h, 'Verify');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; h.document.body.append(makeInput({ id: 'belongs', ariaLabel: 'Does this USDOT Number belong to the business?' })); };
+  report = await h.kit.fill(dotPlan, { maxRounds: 8 });
+  assert.equal(button._clicks, 1);
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, !!a.alreadyShown]), [['verifyDot', false]]);
+});
+
+test('verify revealed: a click that redraws the result unchanged counts when it shows for this VIN', async () => {
+  // Before the click the year showed a stale error (not a result yet); the redraw clears it and
+  // shows the same decoded vehicle.
+  const h = harness();
+  const els = decodedPage(h, { yearAttrs: { 'aria-invalid': 'true' } });
+  const button = addButton(h, 'Lookup VIN');
+  button.onclick = () => {
+    button._clicks = (button._clicks ?? 0) + 1;
+    const fresh = makeInput({ id: 'year', ariaLabel: 'Year', value: els.year.value });
+    h.document.body.replaceChild(fresh, els.year);
+    els.year = fresh;
+  };
+  const report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
+  assert.equal(button._clicks, 1, 'clicked once, and its result accepted');
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, !!a.alreadyShown]), [['lookupVin:0', false]]);
+  assert.ok(!report.blockers.includes('button: lookupVin:0'), report.blockers.join(' | '));
+});
+
+test('verify { appears }: more matching elements than before the click, or any when there were none', async () => {
+  let h = harness();
+  let button = addButton(h, 'Lookup VIN');
+  button.onclick = () => h.document.body.append(makeInput({ id: 'year', ariaLabel: 'Year', value: '2022', attrs: { 'data-id': 'decoded' } }));
+  let report = await h.kit.fill([revealAction({ appears: '[data-id="decoded"]' })], { maxRounds: 4 });
+  assert.deepEqual(Array.from(report.actions, (a) => a.id), ['lookupVin:0']);
+  h = harness();
+  h.document.body.append(makeInput({ id: 'row0', ariaLabel: 'Row', attrs: { 'data-id': 'decoded' } }));
+  button = addButton(h, 'Lookup VIN');
+  button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; };
+  report = await h.kit.fill([revealAction({ appears: '[data-id="decoded"]' })], { maxRounds: 8 });
+  assert.equal(button._clicks, 3);
+  assert.equal(report.actions.length, 0);
+  assert.ok(report.blockers.includes('button: lookupVin:0'));
+  assert.equal(report.noData.length, 1);
+});
+
+
+test('the real USDOT plan recognizes an already shown no-record result', async () => {
+  const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+  h.document.body.append(makeInput({ id: 'dot', ariaLabel: "USDOT Number associated with the customer's business:", value: '1234567', attrs: { fieldref: 'USDOTInput.NumberCollection' } }));
+  const question = 'Did the customer obtain their USDOT Number within the last 60 days?';
+  const yes = makeInput({ name: 'sixtyDay', type: 'radio', value: 'Yes', checked: true, attrs: { fieldref: 'USDOTInput.SixtyDayQuestion' } });
+  const no = makeInput({ name: 'sixtyDay', type: 'radio', value: 'No', attrs: { fieldref: 'USDOTInput.SixtyDayQuestion' } });
+  h.document.body.append(radioGroup(question, yes, no));
+  const button = addButton(h, 'Verify DOT');
+  let clicks = 0;
+  button.onclick = () => clicks++;
+  const record = { applicant: { dot: '1234567' }, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive).filter((s) => s.path === 'applicant.dot' || s.q === '21E' || s.action === 'verifyDot');
+  assert.equal(plan.length, 3, 'the real plan supplies DOT, its no-record result and helper');
+  const report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(clicks, 0, 'matching DOT with an already visible result needs no retry');
+  assert.deepEqual(Array.from(report.actions, (a) => [a.id, a.alreadyShown]), [['verifyDot', true]]);
+  assert.ok(!report.blockers.some((b) => b.startsWith('button: verifyDot')), 'the completed lookup creates no helper blocker');
+  assert.equal(report.noData.length, 1, 'the intake still does not prove the 60-day attestation');
+  assert.equal(report.noData[0].manualOnly, true, 'that attestation remains with the agent, despite the visible lookup result');
+});
+
+test('extra-row acknowledgement survives an unrelated step with no visible witnesses', async () => {
+  const h = harness({ pathname: '/application/businessauto' });
+  const rows = vehicleRows(h, [...VINS, '1FTBR3X87MKA00099']);
+  const elsewhere = makeInput({ id: 'otherStep', ariaLabel: 'Other step answer' });
+  elsewhere._visible = false;
+  h.document.body.append(elsewhere);
+  const plan = [...witnessPlan(), { id: 'other', selector: '#otherStep', path: 'workflow.other', kind: 'text', value: 'done' }];
+  const first = await h.kit.fill(plan, { maxRounds: 8 });
+  const skip = [first.checks[0].key];
+  assert.equal((await h.kit.fill(plan, { maxRounds: 8, skip })).checks.length, 0);
+  for (const row of rows) { row.vin._visible = false; row.body._visible = false; }
+  elsewhere._visible = true;
+  const otherStep = await h.kit.fill(plan, { maxRounds: 8, skip });
+  assert.equal(otherStep.checks.length, 0);
+  assert.equal(elsewhere.value, 'done');
+  for (const row of rows) { row.vin._visible = true; row.body._visible = true; }
+  elsewhere._visible = false;
+  const returned = await h.kit.fill(plan, { maxRounds: 8, skip });
+  assert.equal(returned.checks.length, 0, 'the unchanged extra vehicle remains acknowledged');
+  assert.equal(returned.blockers.length, 0, returned.blockers.join(' | '));
+  const held = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(held.checks[0].key, skip[0], 'the opaque key survives the step change');
+});
+
+test('one intake vehicle value targets its VIN behind an extra quote row with the real AmWINS plan', async () => {
+  const h = harness({ pathname: '/application/businessauto' });
+  const extra = '1FTBR3X87MKA00099';
+  const rows = vehicleRows(h, [extra, VINS[0]]);
+  const values = rows.map(({ row }, i) => {
+    const value = makeInput({ id: i === 0 ? 'marketValue' : 'costNew1', ariaLabel: 'Vehicle value', attrs: { 'data-id': 'costNew' } });
+    // This small DOM replay handles simple selectors. Support the real descendant selector
+    // here so the expanded carrier plan is exercised unchanged, including its first-row id.
+    value.matches = (selector) => selector === '#vehiclesPanel [data-id="costNew"]' || matchesSelector(value, selector);
+    row.children[0].append(value);
+    return value;
+  });
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [{ vin: VINS[0], value: 45000 }], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, amwins).filter((s) => s.path === 'vehicles[0].value' && s.witness);
+  assert.equal(plan.length, 1);
+  assert.equal(plan[0].witness.value, VINS[0]);
+  const report = await h.kit.fill(plan, { maxRounds: 8 });
+  assert.equal(values[1].value, '45000', 'the matching later vehicle gets its value');
+  assert.equal(values[0].value, '', 'the unmatched first row is untouched');
+  assert.equal(rows[0].vin.value, extra);
+  assert.equal(report.noData.length, 0, 'the vehicle row was found');
+  assert.equal(report.checks.length, 1, 'the extra vehicle still requires review');
 });
 
 // Answer provenance (plan.js `source`): a standard answer is reported as such, so the panel can tag

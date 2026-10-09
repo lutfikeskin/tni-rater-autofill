@@ -221,11 +221,14 @@
       if (pending.some((p) => p.result.status === 'found')) lookup.classList.add('show');
     });
   });
+  // ?import=reversed (scripts/amwins-mock.mjs --reversed): the rows are drawn in the other
+  // order than the VIN list, as the site may; a row chosen by its position then shows.
+  const importOrder = new URLSearchParams(location.search).get('import');
   lookup?.querySelector('.import')?.addEventListener('click', () => {
     state.imports++;
     // The rows are redrawn from the imported data: answers typed on the row before are gone.
     later(200, () => {
-      pending.forEach(({ vin, result }, index) => {
+      (importOrder === 'reversed' ? [...pending].reverse() : pending).forEach(({ vin, result }, index) => {
         if (result.status !== 'found') return;
         while (!row(index)) addRow('vehicles');
         for (const id of ['usageType', 'radius', 'bodyType', 'costNew']) setRow(id, '', index);
