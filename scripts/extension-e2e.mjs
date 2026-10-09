@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // The real extension (dist/tni-rater-autofill, rebuilt by npm run package) in Chromium, its side
 // panel opened as a page, on the AmWINS mock (test/fixtures/amwins, served by npm run replay on
-// port 8792): loads the sample intake, clicks Fill this page once and checks that the panel goes
-// through every step by itself (Save & Continue), stops at the declaration and never submits.
+// port 8792): loads the sample intake, verifies missing client facts hold Save & Continue,
+// supplies explicit synthetic agent answers using trusted browser controls, then resumes from
+// the panel. Checks retained answers after reloads, stops at the declaration and never submits.
 // Usage events go to a throwaway local usage server (server/index.mjs on a temporary folder), set
 // as the panel's Server before it opens: the harness fails if anything is sent to the production
 // usage server, or if the intake_loaded event doesn't reach the local one.
@@ -51,18 +52,111 @@ await panel.click('#tab-fill').catch(() => {});
 await panel.waitForTimeout(500);
 console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#fill-hint'));
 await panel.click('#fill');
-for (let i = 0; i < 60; i++) {
-  await panel.waitForTimeout(1000);
-  const step = await mock.evaluate(() => window.__amwinsMock && JSON.stringify({ steps: window.__amwinsMock.steps, saves: window.__amwinsMock.saves, submitted: window.__amwinsMock.submitted }));
-  if (i % 3 === 0) console.log(i, step);
-  if (step && JSON.parse(step).steps.includes('Underwriting')) { await panel.waitForTimeout(4000); break; }
+// These are explicit synthetic agent answers for this workflow test, not facts inferred from
+// the PDF. Never dismiss a review item or inject protected keys to make navigation succeed.
+const AGENT_ANSWERS = [
+  ['Insured Info', /^has additional interest$/i, 'input[name="hasAdditionalInterest"][value="0"]', '0'],
+  ['Insured Info', /^valued loss runs$/i, 'input[name="valuedLossRuns"][value="0"]', '0'],
+  ['Insured Info', /^how long with current carrier$/i, '#howLongWithCurrentCarrier', '1 TO 2 YEARS'],
+  ['Insured Info', /^can provide claim free loss run$/i, 'input[name="canProvideClaimFreeLossRun"][value="0"]', '0'],
+  ...[0, 1].flatMap(row => [
+    ['Drivers', /^gender$/i, `#driversPanel .app-rp-section[data-id="${row}"] [data-id="gender"]`, row ? 'FEMALE' : 'MALE'],
+    ['Drivers', /^license year/i, `#driversPanel .app-rp-section[data-id="${row}"] [data-id="licenseYear"]`, row ? '2013' : '2006'],
+  ]),
+  ['Underwriting', /^vehicle leased$/i, 'input[name="vehicleLeased"][value="0"]', '0'],
+];
+const manualFailures = [], agentAnswered = new Set();
+let reachedDeclaration = false;
+const atStep = () => mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), saves: window.__amwinsMock.saves }));
+const idlePanel = () => panel.waitForFunction(() => !document.querySelector('#fill').disabled && document.querySelector('#report .summary'), null, { timeout: 20000 });
+for (let round = 0; round < 20; round++) {
+  await idlePanel();
+  await mock.waitForTimeout(1500); // the carrier's background save/reload and next-page fill
+  if (await panel.locator('#fill').isDisabled()) continue;
+  const before = await atStep();
+  const needs = await panel.locator('#report .need .row-text b').allTextContents();
+  const unresolved = needs.filter(label => !/i declare/i.test(label));
+  console.log('Step:', before.step, 'saves:', before.saves, 'needs:', unresolved.join(', '));
+  if (before.step === 'Underwriting' && needs.some(label => /i declare/i.test(label))
+    && !unresolved.length && AGENT_ANSWERS.every(([, , selector]) => agentAnswered.has(selector))) {
+    reachedDeclaration = true;
+    break;
+  }
+  if (!unresolved.length) continue; // next-page report may still be waiting behind the background save
+  const remaining = [...AGENT_ANSWERS];
+  const answers = unresolved.map(label => {
+    const index = remaining.findIndex(([step, re]) => step === before.step && re.test(label));
+    return index < 0 ? null : remaining.splice(index, 1)[0];
+  });
+  if (!answers.length || answers.some(answer => !answer)) {
+    manualFailures.push(`Unexpected unresolved questions on ${before.step}: ${unresolved.join(', ')}`);
+    break;
+  }
+  // The agent has not answered yet: the blank facts must remain unresolved and Continue held.
+  await mock.waitForTimeout(1000);
+  const held = await atStep();
+  if (held.step !== before.step || held.saves !== before.saves) {
+    manualFailures.push(`Continue ran before the agent answered ${before.step}`);
+    break;
+  }
+  for (const [, , selector, value] of answers) {
+    const control = mock.locator(selector);
+    const blank = await control.evaluate(el => el.type === 'radio'
+      ? ![...document.querySelectorAll(`input[name="${el.name}"]`)].some(r => r.checked) : !el.value);
+    if (!blank) manualFailures.push(`Manual fact was filled before the agent answered: ${selector}`);
+    // Observe the real native event: selectOption() dispatches a synthetic change and cannot
+    // establish the recorder's trusted agent-answer provenance, so use keyboard selection.
+    await control.evaluate(el => {
+      el.__harnessTrustedChange = false;
+      el.addEventListener('change', event => { if (event.isTrusted) el.__harnessTrustedChange = true; });
+    });
+    if (await control.evaluate(el => el.type === 'radio')) await control.check();
+    else if (await control.evaluate(el => el.tagName === 'SELECT')) {
+      const prefix = await control.evaluate((el, want) => {
+        const labels = [...el.options].map(option => option.text.trim());
+        const label = [...el.options].find(option => option.value === want)?.text.trim();
+        if (!label) return null;
+        for (let n = 1; n <= label.length; n++) {
+          const candidate = label.slice(0, n);
+          if (labels.filter(text => text.toLowerCase().startsWith(candidate.toLowerCase())).length === 1) return candidate;
+        }
+        return null;
+      }, value);
+      if (!prefix) throw new Error(`Synthetic answer has no unique keyboard prefix: ${selector}`);
+      await control.focus();
+      await control.pressSequentially(prefix); // native select type-ahead works in headless macOS Chromium
+      await control.press('Tab');
+    } else {
+      await control.click();
+      await control.press('ControlOrMeta+A');
+      await control.pressSequentially(value);
+      await control.press('Tab');
+    }
+    if (!await control.evaluate((el, want) => el.__harnessTrustedChange && el.value === want, value)) manualFailures.push(`No trusted agent change: ${selector}`);
+    agentAnswered.add(selector);
+  }
+  await idlePanel();
+  // A trusted edit can schedule a follow-up fill; the explicit panel click is still the
+  // ordinary resume action and must preserve every correction the recorder just observed.
+  await panel.click('#fill');
 }
+for (const [, , selector] of AGENT_ANSWERS) if (!agentAnswered.has(selector)) manualFailures.push(`Manual hold wasn't exercised: ${selector}`);
+if (manualFailures.length) console.log('MANUAL:', manualFailures.join('; '));
 // Every step's answers must survive the site's background save and reload (it redraws all
 // steps from what was saved): read them once the last reload has landed.
 await mock.waitForTimeout(2500);
 const kept = await mock.evaluate(() => {
   const v = (sel) => { const el = document.querySelector(sel); if (!el) return '(missing)'; if (el.type === 'checkbox') return el.checked; if (el.classList.contains('datepicker-input')) return el._pickerDate ?? ''; return el.tagName === 'SELECT' ? el.selectedOptions[0]?.text.trim() ?? '' : el.value; };
   return {
+    additionalInterest: document.querySelector('input[name="hasAdditionalInterest"]:checked')?.value,
+    valuedLossRuns: document.querySelector('input[name="valuedLossRuns"]:checked')?.value,
+    claimFreeLossRuns: document.querySelector('input[name="canProvideClaimFreeLossRun"]:checked')?.value,
+    currentCarrier: v('#howLongWithCurrentCarrier'),
+    licenseYear: v('#driversPanel .app-rp-section[data-id="0"] [data-id="licenseYear"]'),
+    secondLicenseYear: v('#driversPanel .app-rp-section[data-id="1"] [data-id="licenseYear"]'),
+    secondGender: v('#driversPanel .app-rp-section[data-id="1"] [data-id="gender"]'),
+    vehicleLeased: document.querySelector('input[name="vehicleLeased"]:checked')?.value,
+    declaration: v('#accept'),
     entityType: v('#entityType'), yrsInBusiness: v('#yrsInBusiness'), mailingState: v('#mailingState'), natureOfBusiness: v('#natureOfBusiness'), ownerDob: v('#ownerDob'),
     driverFirst: v('#driversPanel [data-id="firstName"]'), driverDob: v('#driversPanel [data-id="dateOfBirth"]'), gender: v('#driversPanel [data-id="gender"]'),
     usage: v('#vehiclesPanel [data-id="usageType"]'), bodyType: v('#vehiclesPanel [data-id="bodyType"]'),
@@ -71,8 +165,8 @@ const kept = await mock.evaluate(() => {
   };
 });
 // The sample intake: Illinois, vehicle 1 a Van (Cargo Van on AmWINS).
-const EXACT = { prior0: 'NO PRIOR', prior1: 'NO PRIOR', prior2: 'NO PRIOR', mailingState: 'Illinois', bodyType: 'Cargo Van', medicalPayment: '$5,000', towing: '$75', usage: 'FOR HIRE', natureOfBusiness: 'TRANSPORTATION' };
-const lost = Object.entries(kept).filter(([k, x]) => x === '' || x === false || x === '(missing)' || x === 'State' || (k in EXACT && x !== EXACT[k])).map(([k]) => k);
+const EXACT = { additionalInterest: '0', valuedLossRuns: '0', claimFreeLossRuns: '0', currentCarrier: '1 TO 2 YEARS', licenseYear: '2006', secondLicenseYear: '2013', gender: 'MALE', secondGender: 'FEMALE', vehicleLeased: '0', prior0: 'NO PRIOR', prior1: 'NO PRIOR', prior2: 'NO PRIOR', mailingState: 'Illinois', bodyType: 'Cargo Van', medicalPayment: '$5,000', towing: '$75', usage: 'FOR HIRE', natureOfBusiness: 'TRANSPORTATION' };
+const lost = Object.entries(kept).filter(([k, x]) => k !== 'declaration' && (x == null || x === '' || x === false || x === '(missing)' || x === 'State' || (k in EXACT && x !== EXACT[k]))).map(([k]) => k);
 console.log('Kept after the reloads:', JSON.stringify(kept));
 if (lost.length) console.log('LOST:', lost.join(', '));
 
@@ -97,6 +191,6 @@ console.log(`Usage: ${received.length} events to the local server (${[...new Set
 if (toProduction.length) console.log('TO PRODUCTION:', toProduction.join('; '));
 const usageOk = !toProduction.length && received.includes('intake_loaded');
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = usageOk && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? 'OK: one click filled every step up to the declaration, going back a step stays there, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one.' : 'FAILED: answers lost in the site\'s reload, the panel did not go through every step by itself, or it pushed the agent forward after Prev.');
+const ok = usageOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, declaration and Submit stayed untouched, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one.' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, or Prev did not stay put.');
 process.exit(ok ? 0 : 1);
