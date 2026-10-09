@@ -2644,6 +2644,17 @@ test('verify revealed: a lookup already shown for the VIN on the page is done wi
   assert.equal(report.noData.length, 0);
 });
 
+test('verify revealed: an already-shown decode that is not the intake vehicle is named for the agent', async () => {
+  // The agent looked up another VIN, then typed this one without looking it up again: the lookup
+  // counts as shown, but the decoded make that isn't the intake's is flagged for the agent.
+  const h = harness();
+  decodedPage(h, { make: 'VOLVO' });
+  addButton(h, 'Lookup VIN');
+  const report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
+  assert.deepEqual(Array.from(report.actions, (a) => a.id), ['lookupVin:0']);
+  assert.deepEqual(Array.from(report.failed, (x) => [x.label, x.reason]), [['Make', 'The looked-up value differs from the intake. Check the VIN.']]);
+});
+
 test('verify revealed: a decoded vehicle that is not this VIN\'s, or not decoded yet, is still clicked', async () => {
   // The fill typed the VIN (the box was empty): the year/make/model already on the page are no
   // result for it. The click that redraws them unchanged is no result either.

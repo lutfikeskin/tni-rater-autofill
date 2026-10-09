@@ -175,7 +175,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     filled: all('filled').length, kept: all('kept').length, noData: all('noData').length,
     failed: all('failed').length, leftRequired: all('leftRequired').length,
     unknown: all('unknown').length,
-    clicked: all('actions').map((a) => a.id),
+    clicked: all('actions').filter((a) => !a.alreadyShown).map((a) => a.id),
     blockers: all('blockers').length,
     // Why the page wasn't continued: "differs: Zip code", "button: recalculate", … (no values).
     blockerList: all('blockers').slice(0, 12).map((b) => redact(String(b)).slice(0, 120)),
