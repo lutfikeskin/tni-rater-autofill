@@ -40,7 +40,8 @@ test('fill events carry only fields the server keeps (nothing silently dropped)'
   assert.deepEqual(Object.keys(RUN_FIELDS).sort(), ['rules', 'run', 'settings', 'step']);
   for (const f of ['run', 'rules', 'settings', 'step']) assert.ok(EVENT_FIELDS.fill_run.includes(f), `fill_run keeps ${f}`);
   for (const f of ['run', 'step']) assert.ok(EVENT_FIELDS.fill_field.includes(f), `fill_field keeps ${f}`);
-  assert.ok(EVENT_FIELDS.fill_error.includes('run') && EVENT_FIELDS.field_change.includes('step'));
+  for (const f of ['run', 'rules', 'settings']) assert.ok(EVENT_FIELDS.fill_error.includes(f), `fill_error keeps ${f} without a fill_run result`);
+  assert.ok(EVENT_FIELDS.field_change.includes('step'));
 });
 
 // Audit 2026-10-08: field changes too, text and choice alike.
@@ -59,10 +60,16 @@ test('field change events carry only fields the server keeps', () => {
   }
 });
 
-// Audit 2026-10-08, finding 12: fields no event builder emits any more are not kept either.
-test('the server allowlist carries no legacy AI field names', () => {
-  const names = new Set(Object.values(EVENT_FIELDS).flat());
-  for (const legacy of ['probability', 'support', 'evidenceProbability', 'confidence', 'cached']) assert.ok(!names.has(legacy), `${legacy} is still in the allowlist`);
+// Earlier AI clients emitted decision scores; current builders omit them, but ingestion must
+// retain valid historical evidence without expanding the fields accepted on other event types.
+test('legacy AI evidence is accepted only on decisions and current clients do not emit it', () => {
+  const builder = read('sidepanel/sidepanel.js').match(/function aiDecisionEvent[\s\S]*?\n}/)[0];
+  for (const legacy of ['probability', 'support', 'evidenceProbability', 'confidence']) {
+    assert.ok(EVENT_FIELDS.ai_decision.includes(legacy));
+    assert.doesNotMatch(builder, new RegExp(`\\b${legacy}\\s*:`), `current decisions omit ${legacy}`);
+    for (const [type, fields] of Object.entries(EVENT_FIELDS)) if (type !== 'ai_decision') assert.ok(!fields.includes(legacy), `${type} does not accept ${legacy}`);
+  }
+  assert.ok(!Object.values(EVENT_FIELDS).flat().includes('cached'));
 });
 
 // The store's Privacy practices tab asks why for each permission (docs/chrome-web-store.md has the text).

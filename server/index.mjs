@@ -60,13 +60,14 @@ export const EVENT_FIELDS = {
   fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
   fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how'],
-  fill_error: ['run', 'auto', 'error'],
+  fill_error: ['run', 'rules', 'settings', 'auto', 'error'],
   field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   problem_report: ['text'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
   // setting) acted on. Choices are option texts; typed text suggestions are never logged.
   ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'],
-  ai_decision: ['model', 'policy', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
+  // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
+  ai_decision: ['model', 'policy', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
 };
 
 // The run-identity fields (audit 2026-10-08, finding 7; Contract 1): their exact shapes, since a
@@ -132,6 +133,12 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     if (out.key != null && !(typeof out.key === 'string' && out.key.length <= 256)) drop('key');
     // Which tab and vehicle/driver/trailer (t1, t2:v0, t2:tr0): an order number and an index, nothing else.
     if (out.view !== undefined && !(typeof out.view === 'string' && /^t\d{1,3}(:(?:v|d|tr)\d{1,3})?$/.test(out.view))) drop('view');
+    // Historical AI evidence is a score, null (unavailable), or the original confidence enum.
+    // It never becomes a place to retain arbitrary text from an older/malformed client.
+    if (out.type === 'ai_decision') for (const k of ['probability', 'support', 'evidenceProbability', 'confidence']) {
+      if (out[k] !== undefined && !(out[k] === null || (typeof out[k] === 'number' && Number.isFinite(out[k]) && out[k] >= 0 && out[k] <= 1)
+        || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
+    }
     // Which copy and commit logged it (scripts/package.mjs): those values, nothing else in their place.
     if (out.channel !== undefined && !['store', 'unpacked', 'source'].includes(out.channel)) drop('channel');
     if (out.commit !== undefined && !(typeof out.commit === 'string' && /^[0-9a-f]{7,12}(\+dirty)?$/.test(out.commit))) drop('commit');

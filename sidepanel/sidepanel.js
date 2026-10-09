@@ -1117,7 +1117,7 @@ function agentEdited(page, key) {
   return !!keys && (keys.has(key) || keys.has(String(key ?? '').match(/^(.+)#\d+$/)?.[1]));
 }
 
-const fillOptions = (carrier, extra = {}) => ({
+const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checked) => ({
   replaceChoices: !!carrier.replaceChoices,
   // Carriers whose pages never wait on a server per answer are filled a round at a time.
   batch: !!carrier.batch,
@@ -1126,7 +1126,7 @@ const fillOptions = (carrier, extra = {}) => ({
   doneSteps: [...state.doneSteps].filter((s) => s.startsWith(stepScope(pageOf(state.tab?.url), carrier))).map((s) => s.slice(stepScope(pageOf(state.tab?.url), carrier).length)),
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
-  advance: $('auto-advance').checked && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
+  advance: autoAdvance && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
   // Add NTL done on this intake's quote survives a panel reload (its removal hold depends on it).
   doneActions: [...state.doneActions, ...(state.intake?.ntlAdded ? ['addNtl'] : [])],
   visitedPages: [...state.visitedPages],
@@ -1170,7 +1170,7 @@ function staleFill(ctx) { return state.intake !== ctx.intake || state.intakeRevi
 // Automatic work and panel reports belong only to the fill still shown in the panel.
 function fillCurrent(ctx) { return !staleFill(ctx) && state.tab?.id === ctx.tabId; }
 function noteStaleFill(ctx) {
-  if (!ctx.carrier.practice) usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run, auto: ctx.auto, error: 'stale: intake changed during the fill', ...ctx.ids });
+  logFillError(ctx, 'stale: intake changed during the fill');
   const note = h('p', { class: 'error' }, 'The intake changed while this page was being filled: the page may hold the earlier intake\'s answers. Check it, then Fill this page again.');
   if (ctx.auto === true) $('report').append(note); else $('report').replaceChildren(note);
 }
@@ -1187,6 +1187,12 @@ function logFill(ctx, frames, results, started) {
   }));
 }
 function fillErrorText(ctx, e) { return redactor(redactionTerms(ctx.intake.record))(String(e?.message ?? e)).slice(0, 200); }
+// A rejected fill has no fill_run result to carry its rule version and switches.
+function logFillError(ctx, error) {
+  if (ctx.carrier.practice) return;
+  usage.log({ type: 'fill_error', carrier: ctx.carrier.id, page: ctx.page, run: ctx.run,
+    rules: rulesVersion ?? undefined, settings: ctx.settings, auto: ctx.auto, error: fillErrorText(ctx, error), ...ctx.ids });
+}
 
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
   if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || state.tab?.carrier?.stopPages?.[page]) return;
@@ -1210,8 +1216,8 @@ async function autoFill(page) {
   const started = Date.now();
   let assistFrames = null;
   let followUp = false;
-  await tellRecorder('pause', tabId);
   try {
+    await tellRecorder('pause', tabId);
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     if (!fillCurrent(ctx)) return;
@@ -1219,7 +1225,9 @@ async function autoFill(page) {
     ctx.active = { ...state.active };
     const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
     const skip = [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])];
-    const options = fillOptions(carrier, { overwrite: false, skip, keepMarks: true });
+    // Honor the latest switch after preparation, and log the same value used by the kit.
+    ctx.settings.autoAdvance = !!$('auto-advance').checked;
+    const options = fillOptions(carrier, { overwrite: false, skip, keepMarks: true }, ctx.settings.autoAdvance);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
@@ -1245,7 +1253,7 @@ async function autoFill(page) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
     // The message may quote the page, so it's redacted with the origin intake.
-    if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, run: ctx.run, auto: true, error: fillErrorText(ctx, e), ...ctx.ids });
+    logFillError(ctx, e);
     if (!fillCurrent(ctx)) return;
     $('report').append(h('p', { class: 'error' }, 'Automatic filling paused after an error. Review the page, then click Fill this page to retry.'));
   } finally {
@@ -1766,15 +1774,17 @@ async function fillPage({ auto = false } = {}) {
   let assistFrames = null;
   let followUp = false;
   // Our own fills aren't the agent's changes: pause the recorder while filling.
-  await ensureRecorder();
-  await tellRecorder('pause', tabId);
   try {
+    await ensureRecorder();
+    await tellRecorder('pause', tabId);
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     if (!fillCurrent(ctx)) return;
     // The agent's edits on this page as the fill's tab holds them (retiring AI picks may just
     // have released some), never the tab in front.
-    const options = fillOptions(carrier, { overwrite, skip: [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])] });
+    // Honor the latest switch after preparation, and log the same value used by the kit.
+    ctx.settings.autoAdvance = !!$('auto-advance').checked;
+    const options = fillOptions(carrier, { overwrite, skip: [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])] }, ctx.settings.autoAdvance);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -1793,7 +1803,7 @@ async function fillPage({ auto = false } = {}) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
     // The message may quote the page, so it's redacted with the origin intake.
-    if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, run: ctx.run, auto, error: fillErrorText(ctx, e), ...ctx.ids });
+    logFillError(ctx, e);
     if (!fillCurrent(ctx)) return;
     $('report').replaceChildren(h('p', { class: 'error' }, `Couldn't fill this page: ${e.message}`));
   } finally {

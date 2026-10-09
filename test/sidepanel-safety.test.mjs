@@ -77,7 +77,7 @@ function extractFunction(name) {
         // Agent-edit scoping is shared by many functions: bring its helpers along.
         if (name !== 'agentEdited' && /\bagentEdited\(/.test(source)) source += `\n${extractFunction('agentEdited')}`;
         // So are a fill's context and its tab's maps (fillContext, rememberFill).
-        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'stepOfResults']) {
+        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'logFillError', 'stepOfResults']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
@@ -2689,13 +2689,13 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
     overwrite: { checked: false }, 'auto-advance': { checked: true }, 'auto-followups': { checked: true }, 'auto-pages': { checked: false },
     fill: { disabled: false, textContent: '' }, report: { children: [], replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); } },
   };
-  const seen = { plan: null, logged: [], rendered: 0, layouts: 0, persistedKeys: [], persistedActions: [], afterFill: [] };
+  const seen = { plan: null, logged: [], rendered: 0, layouts: 0, persistedKeys: [], persistedActions: [], afterFill: [], options: null };
   const context = {
     state, URL, crypto, Date, rulesVersion: rules, $: (id) => ui[id], pageOf: (url) => new URL(url).pathname, onQuotePage: () => true, showStopPage() {},
     clearTimeout() {}, setTimeout: () => 1, pickListItem: async () => {},
     buildPlan: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
-    fillOptions: () => ({}), ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
-    runKit: async () => { markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
+    fillOptions: () => ({}), pendingAi: () => [], ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
+    runKit: async (tabId, carrier, func, args) => { seen.options = args[1]; markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
     fillEvents, knownStep, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
     renderReport: () => { seen.rendered++; }, renderSite() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
     viewOf: () => 't1', usage: { currentSession: () => ({ id: `session-${state.intake.id}`, intakeId: state.intake.id, keySalt: 'salt' }), log: (...events) => seen.logged.push(...events) },
@@ -3221,4 +3221,56 @@ test('failed session expiry blocks reads and writes and retries initialization s
   t.context.chrome.storage.local.remove = remove;
   assert.deepEqual(Array.from(await t.context.stores.doneActionsStore.get('A', 7)), []);
   assert.equal(t.localData.tabRecordsSession, t.sessionData.tabRecordsSession);
+});
+
+// The last Auto-advance choice before kit execution is the effective switch, including a
+// change while list verification or AI retirement was pending. AI approval remains a hold.
+test('manual and automatic fills log the Auto-advance switch used after async preparation', async () => {
+  for (const auto of [false, true]) for (const waitAt of ['pickListItem', 'retireAiOrigins']) for (const enabled of [false, true]) {
+    const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/, layoutSteps: amwins.layoutSteps } });
+    const start = SIDEPANEL.indexOf('const fillOptions =');
+    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+    t.ui['auto-advance'].checked = !enabled;
+    t.context[waitAt] = async () => { await Promise.resolve(); t.ui['auto-advance'].checked = enabled; };
+    const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
+    await t.started;
+    assert.equal(!!t.seen.options.advance, enabled, `${auto}/${waitAt}: latest setting controls the kit`);
+    t.release(t.results);
+    await run;
+    assert.equal(t.seen.logged.find((e) => e.type === 'fill_run').settings.autoAdvance, enabled);
+  }
+  const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+  t.context.pendingAi = () => [{ approved: false }];
+  const run = t.context.fillPage();
+  await t.started;
+  assert.equal(t.seen.options.advance, null, 'the enabled switch cannot bypass the pending AI approval hold');
+  t.release(t.results);
+  await run;
+  assert.equal(t.seen.logged.find((e) => e.type === 'fill_run').settings.autoAdvance, true, 'telemetry records the switch; approval still gates continuation');
+});
+
+test('failed manual and automatic fills retain bounded run metadata without a result event or client text', async () => {
+  for (const auto of [false, true]) for (const operation of ['runKit', 'retireAiOrigins', 'recorder']) {
+    const t = fillHarness();
+    t.context[operation === 'recorder' ? (auto ? 'tellRecorder' : 'ensureRecorder') : operation] = async (cmd) => {
+      if (cmd === 'resume') return;
+      throw new Error('A value could not be filled');
+    };
+    await (auto ? t.context.autoFill('/quote-A') : t.context.fillPage());
+    assert.equal(t.state.filling, false);
+    assert.equal(t.seen.logged.length, 1, `${auto}/${operation}: rejected invocation has one diagnostic event`);
+    const [error] = t.seen.logged;
+    assert.deepEqual(JSON.parse(JSON.stringify({ type: error.type, rules: error.rules, settings: error.settings, auto: error.auto, error: error.error })), {
+      type: 'fill_error', rules: 'abcdef012345', settings: { autoAdvance: true, autoFollowUps: true, autoPages: false, overwrite: false }, auto, error: '[client] could not be filled',
+    });
+    assert.match(error.run, /^[0-9a-f-]{36}$/);
+    assert.deepEqual([error.session, error.intakeId], ['session-intake-A', 'intake-A']);
+    assert.doesNotMatch(JSON.stringify(error), /A value/);
+  }
+  const t = fillHarness({ rules: null });
+  t.context.runKit = async () => { throw new Error('A value failed'); };
+  await t.context.fillPage();
+  assert.equal(t.seen.logged[0].rules, undefined, 'unknown rule fingerprint is never fabricated');
 });

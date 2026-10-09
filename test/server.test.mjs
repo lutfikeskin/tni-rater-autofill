@@ -273,7 +273,7 @@ test('run-identity fields are kept as sent and a malformed one refuses the event
   assert.deepEqual([rows[0].run, rows[0].rules, rows[0].settings, rows[0].step], ['e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', '0123456789ab', settings, 'Vehicles']);
   assert.deepEqual([rows[1].run, rows[1].step, rows[2].run, rows[3].step], ['e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', 'Vehicles', 'e3a4a4e0-3c1d-4d1b-9a4b-0f8d1c2b3a45', 'Drivers']);
   assert.deepEqual([rows[4].run, rows[4].dropped], [undefined, ['run']]);
-  for (const legacy of ['probability', 'support', 'evidenceProbability', 'confidence', 'cached']) assert.ok(!Object.values(EVENT_FIELDS).flat().includes(legacy));
+  assert.ok(!Object.values(EVENT_FIELDS).flat().includes('cached'), 'no client emitted this obsolete suggestion field');
 });
 
 // Legacy layouts explicitly wrote null for an unrecognized AmWINS step; queued/re-uploaded
@@ -297,4 +297,44 @@ test('legacy page-layout null steps are accepted while malformed non-null and ru
   });
   const rows = stored(dataDir);
   assert.deepEqual(rows.map((x) => x.step), [null, 'Vehicles', undefined]);
+});
+
+test('failed runs retain rule/settings identity and reject malformed metadata like successful runs', async () => {
+  const dataDir = tmp();
+  const settings = { autoAdvance: false, autoFollowUps: true, autoPages: false, overwrite: false };
+  await withServer({ dataDir }, async ({ post }) => {
+    const result = await (await post({ events: [
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-123', rules: '0123456789ab', settings, error: 'safe error' }),
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-124', rules: 'client name', settings, error: 'safe error' }),
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-125', settings: { ...settings, client: 'must not persist' }, error: 'safe error' }),
+      ev({ type: 'fill_error', filled: undefined, run: 'failed-run-126', settings: { ...settings, autoAdvance: 'yes' }, error: 'safe error' }),
+    ] })).json();
+    assert.equal(result.accepted, 1);
+    assert.deepEqual(result.rejected.map((x) => x.index), [1, 2, 3]);
+  });
+  assert.deepEqual([stored(dataDir)[0].rules, stored(dataDir)[0].settings, stored(dataDir)[0].dropped], ['0123456789ab', settings, undefined]);
+  assert.doesNotMatch(JSON.stringify(stored(dataDir)), /client name|must not persist/);
+});
+
+test('legacy AI decision evidence survives older-client uploads and historical reuploads in its original bounded shapes', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const result = await (await post({ events: [
+      ev({ type: 'ai_decision', filled: undefined, probability: 0.99, support: 0.98, evidenceProbability: 0.97, confidence: 0.96 }),
+      ev({ type: 'ai_decision', filled: undefined, confidence: 'high' }),
+      ev({ type: 'ai_decision', filled: undefined, probability: 0, support: null, evidenceProbability: 0, confidence: 0, dropped: ['someOtherField'] }),
+      ev({ type: 'ai_decision', filled: undefined, probability: 'client name', support: { text: 'client name' }, evidenceProbability: 2, confidence: 'client name' }),
+      ev({ type: 'ai_decision', filled: undefined, probability: -1, support: 1, evidenceProbability: 1, confidence: 'medium' }),
+    ] })).json();
+    assert.equal(result.accepted, 5);
+  });
+  const rows = stored(dataDir);
+  assert.deepEqual(['probability', 'support', 'evidenceProbability', 'confidence'].map((k) => rows[0][k]), [0.99, 0.98, 0.97, 0.96]);
+  assert.equal(rows[0].dropped, undefined);
+  assert.equal(rows[1].confidence, 'high');
+  assert.deepEqual(['probability', 'support', 'evidenceProbability', 'confidence'].map((k) => rows[2][k]), [0, null, 0, 0]);
+  assert.deepEqual(rows[2].dropped, ['someOtherField']);
+  assert.deepEqual(rows[3].dropped, ['probability', 'support', 'evidenceProbability', 'confidence']);
+  assert.deepEqual([rows[4].probability, rows[4].support, rows[4].evidenceProbability, rows[4].confidence], [undefined, 1, 1, 'medium']);
+  assert.doesNotMatch(JSON.stringify(rows), /client name/);
 });
