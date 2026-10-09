@@ -2750,12 +2750,13 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
         if (scenario.startsWith('transport failure') && /\.answer\(/.test(String(func))) throw new Error('Transport unavailable after answer');
         return results.filter(Boolean);
       },
-      tellRecorder: async () => {}, persistAiPending: async () => {}, persistAgentKeys: () => {},
+      tellRecorder: async () => {}, persistAiPending: async () => {},
+      agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => [], set: async () => {} },
       usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set() };
     const source = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
     const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
-      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'agentEdited', 'editScope', 'stepScope'];
+      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'stepScope'];
     vm.runInNewContext(functions.map(name => {
       const match = source.match(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
       assert.ok(match, name);

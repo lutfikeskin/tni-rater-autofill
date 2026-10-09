@@ -204,6 +204,7 @@ const state = {
   notesRetry: null, // that intake again, when the settings changed meanwhile
   tabSessions: new Map(),
   agentKeys: new Map(),
+  agentKeysEpoch: 0, // explicit Clear invalidates late guarded-edit writes
   filling: false,
   autoTimer: null,
   autoPending: false,
@@ -364,6 +365,38 @@ function persistAgentKeys() {
   return agentKeysQueue;
 }
 
+// A paused recorder may resume after the panel moved to another tab/intake/entity. Guarded
+// edits still belong to the captured origin, whose tab snapshot may already have been saved.
+// Merge only field keys into that origin's ledger; never persist a label, answer or snapshot.
+function persistGuardedEdits(origin, editedKeys) {
+  const additions = editedKeys.filter(key => typeof key === 'string' && key);
+  if (!additions.length || origin.epoch !== state.agentKeysEpoch) return Promise.resolve();
+  const merge = (pages) => {
+    if (!pages) return;
+    const keys = pages.get(origin.page) ?? new Set();
+    for (const key of additions) keys.add(key);
+    pages.set(origin.page, keys);
+  };
+  merge(origin.keys);
+  if (usage.currentSession()?.intakeId === origin.scope) {
+    merge(state.tab?.id === origin.tabId ? state.agentKeys : state.tabSessions?.get(origin.tabId)?.agentKeys);
+  }
+  if (!origin.scope || !Number.isInteger(origin.tabId)) return Promise.resolve();
+  const keys = [...origin.keys.get(origin.page)];
+  const task = agentKeysQueue.then(async () => {
+    if (origin.epoch !== state.agentKeysEpoch) return;
+    const existing = await agentKeysStore.get();
+    if (origin.epoch !== state.agentKeysEpoch) return;
+    const matches = record => record.scope === origin.scope && record.tabId === origin.tabId && record.page === origin.page;
+    const merged = new Set(existing.filter(matches).flatMap(record => record.keys ?? []).filter(key => typeof key === 'string' && key));
+    for (const key of keys) merged.add(key);
+    await agentKeysStore.set([...existing.filter(record => !matches(record)),
+      { scope: origin.scope, tabId: origin.tabId, page: origin.page, keys: [...merged] }]);
+  });
+  agentKeysQueue = task.catch(() => {});
+  return agentKeysQueue;
+}
+
 async function restoreAgentKeys(tabId) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId)) return;
@@ -378,6 +411,7 @@ async function restoreAgentKeys(tabId) {
 }
 
 function clearAgentKeys() {
+  state.agentKeysEpoch = (state.agentKeysEpoch ?? 0) + 1;
   const task = agentKeysQueue.then(() => agentKeysStore.set([]));
   agentKeysQueue = task.catch(() => {});
   doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.clear()).catch(() => {});
@@ -568,7 +602,8 @@ async function loadFile(file) {
   await store.set('session', usage.startSession(summary.intakeId));
   await persistAiPending();
   await restoreAiPending();
-  await clearAgentKeys();
+  // Replacing an intake keeps opaque edit/helper records under their original fingerprint.
+  // Explicit Clear forgets them and invalidates any still-running guarded edit writes.
   usage.log({ type: 'intake_loaded', ...summary });
   uploadNow();
   await save();
@@ -2236,6 +2271,8 @@ async function applyAi(list, ctx, decision) {
     && ctx.contextKey === assistContextKey(state.intake?.record, state.active)
     && (ctx.run === undefined || ctx.run === state.aiRun);
   const entries = [...state.aiCache].filter(([, x]) => list.includes(x));
+  const editOrigin = { scope: usage.currentSession()?.intakeId, tabId: ctx.tabId,
+    page: editScope(ctx.page, ctx.carrier), keys: state.agentKeys, epoch: state.agentKeysEpoch };
   let dispatched = false, prepared = false, guarding = false;
   const guardToken = crypto.randomUUID();
   state.filling = true;
@@ -2319,7 +2356,7 @@ async function applyAi(list, ctx, decision) {
     await readEdits('end');
     guarding = false;
     const sameContext = isCurrent();
-    const keys = sameContext ? state.agentKeys.get(editScope(ctx.page)) ?? new Set() : null;
+    const keys = sameContext ? state.agentKeys.get(editOrigin.page) ?? new Set() : null;
     // The agent's own edits while the answers went in (also on a control the carrier redrew, which
     // the recorder cannot match on resume): a later fill keeps them, as after a fill.
     const protectedKeys = results.filter(r => r.protected).map(r => r.key);
@@ -2345,11 +2382,8 @@ async function applyAi(list, ctx, decision) {
       }
       if (sameContext && !ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
     }
-    if (sameContext) {
-      for (const key of protectedKeys) keys.add(key);
-      state.agentKeys.set(editScope(ctx.page), keys);
-      if (protectedKeys.length) persistAgentKeys();
-    }
+    if (sameContext) state.agentKeys.set(editOrigin.page, keys);
+    await persistGuardedEdits(editOrigin, protectedKeys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
     const after = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
     for (const x of list) if (x.done) {
@@ -2370,12 +2404,7 @@ async function applyAi(list, ctx, decision) {
         const frames = await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('end', t), [guardToken]);
         // Even a failed answer transport must preserve edits the still-live guards caught.
         const edited = frames.flatMap(frame => frame.result ?? []).filter(item => item?.protected);
-        if (isCurrent() && edited.length) {
-          const keys = state.agentKeys.get(editScope(ctx.page)) ?? new Set();
-          for (const item of edited) keys.add(item.key);
-          state.agentKeys.set(editScope(ctx.page), keys);
-          persistAgentKeys();
-        }
+        await persistGuardedEdits(editOrigin, edited.map(item => item.key));
       } catch { /* a removed or navigating frame no longer has live listeners */ }
     }
     if (prepared && !dispatched) for (const x of list) x.done = null;
