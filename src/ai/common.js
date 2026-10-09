@@ -1,4 +1,4 @@
-// Shared intake scoping and field restrictions for Luna assistance.
+// Shared intake scoping and field restrictions for the AI assistant (Claude).
 // Exact answers, calculations and page execution remain in code.
 import { TNI_RULES } from './tni-rules.js';
 import { priorPolicyExpired } from '../util.js';

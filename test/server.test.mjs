@@ -62,10 +62,10 @@ test('keeps only known event types and fields', async () => {
   assert.deepEqual(layout.fields[1].options, ['50 miles']);
 });
 
-test('keeps bounded Luna usage counters and drops unrelated fields', async () => {
+test('keeps bounded assistant usage counters and drops unrelated fields', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {
-    const r = await (await post({ events: [ev({ type: 'ai_suggest', model: 'gpt-6-luna', items: 2,
+    const r = await (await post({ events: [ev({ type: 'ai_suggest', model: 'claude-haiku-5-5', items: 2,
       modelCalls: 2, reasoningTokens: 31, cachedTokens: 9, cacheWriteTokens: 4,
       clientName: 'should not be stored' })] })).json();
     assert.equal(r.accepted, 1);

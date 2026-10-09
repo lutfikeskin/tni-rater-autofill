@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { assistContextKey } from '../src/ai/common.js';
-import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
+import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/claude.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
 import { amwins } from '../src/carriers/amwins.js';
 
@@ -187,7 +187,7 @@ test('a halted fill persists the pause, clears pending work, and protects keys',
 });
 
 test('a rejected automatic choice keeps blocking until manual change or explicit confirmation', () => {
-  const sig = '1\nQuote\ngpt-6-luna\nluna-v1\ncontext\nitem';
+  const sig = '1\nQuote\nclaude-haiku-5-5\nclaude-evidence-v1\ncontext\nitem';
   const state = { aiCache: new Map([[sig, { done: 'auto', rejected: true, key: 'optional-choice' }]]) };
   const context = { state, aiDecisionBlocks: undefined };
   vm.runInNewContext(`${extractFunction('aiDecisionBlocks')}\n${extractFunction('pendingAi')}`, context);
@@ -200,7 +200,7 @@ test('a rejected automatic choice keeps blocking until manual change or explicit
 });
 
 test('a persisted manual correction is protected after the panel reloads', () => {
-  const sig = '1\nQuote\ngpt-6-luna\nluna-v1\ncontext\nitem';
+  const sig = '1\nQuote\nclaude-haiku-5-5\nclaude-evidence-v1\ncontext\nitem';
   const state = { aiCache: new Map([[sig, { key: 'optional-choice', manual: true }]]) };
   const context = { state };
   vm.runInNewContext(`${extractFunction('aiDecisionBlocks')}\n${extractFunction('aiSettledOnPage')}`, context);
@@ -534,7 +534,7 @@ test('retired assistant decisions retain their hold and require current-answer r
   await context.restoreAiPending();
   const restored = [...state.aiCache.values()][0];
   assert.equal(restored.retired, true);
-  assert.equal(restored.autoOk, false, 'old model verification cannot qualify as Luna verification');
+  assert.equal(restored.autoOk, false, 'old model verification cannot qualify as Claude verification');
   assert.equal(restored.rejected, true, 'explicit confirmation or a manual correction is required');
   assert.equal(context.pendingAi(1, 'Quote').length, 1);
   const sender = { frameId: 0, documentId: 'doc-0' };
@@ -544,7 +544,7 @@ test('retired assistant decisions retain their hold and require current-answer r
   assert.equal(context.pendingAi(1, 'Quote').length, 0);
 });
 
-test('current Luna decisions and completed retired corrections retain their review state', async () => {
+test('current Claude decisions and completed retired corrections retain their review state', async () => {
   const base = { scope: 'intake', tabId: 1, page: 'Quote', contextHash: 'context', key: 'choice', done: 'auto' };
   const records = [{ ...base, model: DEFAULT_MODEL, policy: POLICY_VERSION, itemHash: 'current' },
     { ...base, model: 'retired-model', policy: 'retired-policy', itemHash: 'manual', manual: true },
@@ -561,7 +561,7 @@ test('current Luna decisions and completed retired corrections retain their revi
   assert.equal(current.autoOk, true);
   assert.equal(manual.manual, true);
   assert.equal(confirmed.confirmed, true);
-  assert.equal(context.pendingAi(1, 'Quote').length, 1, 'only the unresolved Luna answer blocks');
+  assert.equal(context.pendingAi(1, 'Quote').length, 1, 'only the unresolved Claude answer blocks');
 });
 
 test('safety metadata changes invalidate cached choice fingerprints', () => {
@@ -839,7 +839,7 @@ function makeAiActionHarness({ rejected = false } = {}) {
     key: 'choice', label: 'Choice', choice: 'No', controlKind: 'select',
     section: 'Quote', options: ['Yes', 'No'], current: 'No', done: 'auto',
     autoOk: true, approved: false, rejected, manual: false, confirmed: false,
-    dismissed: false, leave: false, applyable: true, provider: 'luna', evidenceSources: [],
+    dismissed: false, leave: false, applyable: true, provider: 'claude', evidenceSources: [],
     model: 'synthetic-model', policy: 'synthetic-policy', basis: 'intake',
     intakePath: 'record.client', confidence: 0.9, checks: [], tip: '',
   };
@@ -992,7 +992,7 @@ test('dispatched answers retain durable holds across intake, cache and transport
     const record = {}, intake = { record }, url = 'https://example.test/quote';
     const x = { key: 'choice', label: 'Choice', controlKind: 'radio', choice: 'No', autoOk: true };
     const quoteHash = JSON.stringify(url);
-    const sig = ['1', '/quote', 'gpt-6-luna', 'policy', 'context', 'item', quoteHash].join('\n');
+    const sig = ['1', '/quote', 'claude-haiku-5-5', 'policy', 'context', 'item', quoteHash].join('\n');
     const field = { key: x.key, label: x.label, current: '' };
     const pre = [{ frameId: 0, documentId: 'doc-0', result: JSON.stringify(['Quote', [field]]) }];
     const after = [{ ...pre[0], result: JSON.stringify(['Quote', [{ ...field, current: 'No' }]]) }];
@@ -1004,7 +1004,7 @@ test('dispatched answers retain durable holds across intake, cache and transport
     const started = new Promise(resolve => { entered = resolve; });
     const settlement = new Promise((resolve, reject) => { release = resolve; fail = reject; });
     const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, aiSafeText: String,
-      DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy', pageOf: value => new URL(value).pathname,
+      DEFAULT_MODEL: 'claude-haiku-5-5', POLICY_VERSION: 'policy', pageOf: value => new URL(value).pathname,
       usage: { currentSession: () => scope ? { intakeId: scope } : null },
       aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
       aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
@@ -1111,13 +1111,13 @@ test('stale retirement snapshots cannot remove a replacement intake or cached de
 
 test('reloading an intake drops settled ledger entries without losing unresolved holds', async () => {
   const record = {}, scope = 'same-intake';
-  const manualSig = '1\n/quote\ngpt-6-luna\npolicy\ncontext\nmanual';
-  const pendingSig = '1\n/quote\ngpt-6-luna\npolicy\ncontext\npending';
+  const manualSig = '1\n/quote\nclaude-haiku-5-5\npolicy\ncontext\nmanual';
+  const pendingSig = '1\n/quote\nclaude-haiku-5-5\npolicy\ncontext\npending';
   const manual = { key: 'manual', label: 'Manual', choice: 'Yes', done: 'auto', manual: true };
   const pending = { key: 'pending', label: 'Pending', choice: 'No', done: 'auto' };
   const state = { intake: { record }, tabSessions: new Map(), layoutPending: null, aiCache: new Map([[manualSig, manual], [pendingSig, pending]]) };
   let stored = [];
-  const context = { state, doneRestored: new Set(), DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
+  const context = { state, doneRestored: new Set(), DEFAULT_MODEL: 'claude-haiku-5-5', POLICY_VERSION: 'policy',
     aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
     aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
     usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
@@ -1320,7 +1320,7 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   assert.deepEqual([...back.state.doneActions].sort(), ['lookupVin:0', 'trailerEntered:0'], 'tab 7 kept');
 });
 
-test('a Luna request waiting for a follow-up fill belongs to its tab', async () => {
+test('a Claude request waiting for a follow-up fill belongs to its tab', async () => {
   const h = harness();
   h.state.tab = { ...quoteTab(1, 'CoveragesRates'), carrier: { id: 'progressive' } };
   h.state.assistPage = 'CoveragesRates';
@@ -1376,8 +1376,8 @@ function assistHarness({ suggest, cfg = {} } = {}) {
     aiRun: 0, aiCache: new Map(), agentKeys: new Map(), filling: false };
   const context = {
     state, assistContextKey, pageOf: (url) => new URL(url).searchParams.get('pageName'), h: node, $: () => report,
-    aiSettings: async () => ({ on: true, apiKey: 'synthetic', model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
-    PROVIDERS: { luna: { name: 'Luna', policy: 'synthetic-policy' } },
+    aiSettings: async () => ({ on: true, apiKey: 'synthetic', model: 'claude-haiku-5-5', provider: 'claude', auto: false, ...cfg }),
+    PROVIDERS: { claude: { name: 'Claude', policy: 'synthetic-policy' } },
     collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
     aiSettledOnPage: () => false, aiFingerprint: (v) => JSON.stringify(v), aiItemFingerprint: (x) => `${x.key}|${x.label}`,
     aiCacheSignature: (x) => JSON.stringify(x), runKit: async () => [{ frameId: 0, result: 'snapshot' }],
@@ -1400,7 +1400,7 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   } });
   await t.context.runAssist([{}], t.ctx);
   const text = JSON.stringify(t.holder().children);
-  assert.match(text, /Luna: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
+  assert.match(text, /Claude: it answered after the tab or page changed, so nothing was applied\. Click Fill this page to ask again\./);
   assert.doesNotMatch(text, /Asking/);
   assert.equal(t.rendered.length, 0, 'stale suggestions are never shown as current');
   assert.equal(t.state.aiCache.size, 0, 'nor cached');
@@ -1414,7 +1414,7 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   assert.equal(fresh.logged[0].error, undefined);
 });
 
-test('Luna waits for the follow-up fill of a helper it clicked, and is not asked about a page the fill left', async () => {
+test('Claude waits for the follow-up fill of a helper it clicked, and is not asked about a page the fill left', async () => {
   const asked = [];
   const state = { assistPage: null, tab: { id: 1 }, tabSessions: new Map() };
   const context = { state, runAssist: (frames, ctx) => asked.push(ctx.page) };
@@ -1435,10 +1435,10 @@ test('Luna waits for the follow-up fill of a helper it clicked, and is not asked
   assert.equal(state.assistPage, null, 'the visible tab is untouched');
   assert.equal(other.assistPage, 'CoveragesRates', 'its own tab waits');
   context.assistAfterFill([{}], { tabId: 1, page: 'CoveragesRates' }, false);
-  assert.deepEqual(asked, ['CoveragesRates'], 'Luna is not asked about a tab in the background');
+  assert.deepEqual(asked, ['CoveragesRates'], 'Claude is not asked about a tab in the background');
 });
 
-test('the follow-up fill a Luna request waited for asks it, even with nothing unfamiliar left', async () => {
+test('the follow-up fill a Claude request waited for asks it, even with nothing unfamiliar left', async () => {
   const run = async (followUp) => {
     const frames = [{ fields: 2, filled: [], actions: [], unknown: [], noData: [{ key: 'k', label: 'Cargo limit' }], halted: false }];
     const rendered = [], assisted = [];
@@ -1470,12 +1470,12 @@ function claimsHarness() {
   class AssistError extends Error {}
   const context = {
     state, AssistError, Date, redactor: () => (s) => s, redactionTerms: () => [], claimsTruncated: (text) => /LONG/.test(text ?? ''),
-    aiSettings: async () => ({ on: !state.offline, apiKey: 'k', model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, apiKey: 'k', model: 'claude-haiku-5-5' }),
     reviewNotes: async (record, cfg, opts) => {
       requests.push({ record, opts, reply: t.reply });
       const reply = t.reply;
       await new Promise((resolve) => gates.push(resolve));
-      if (reply === 'fail') throw new AssistError('Luna took too long. Nothing was applied.');
+      if (reply === 'fail') throw new AssistError('Claude took too long. Nothing was applied.');
       return { warnings: [{ code: 'ai.ntl', level: 'check', path: 'coverage.ntl', msg: 'x' }], lines: 1, flagged: 1, tokensIn: 5, tokensOut: 1, modelCalls: 1, reasoningTokens: 0, cachedTokens: 2, cacheWriteTokens: 1 };
     },
     usage: { log: (e) => logs.push(e) }, save: async () => {}, render: () => {},
@@ -1488,7 +1488,7 @@ function claimsHarness() {
 }
 const claimsIntake = (text) => ({ record: { claims: { text }, coverage: { cargo: true, ntl: null } }, warnings: [{ code: 'other', level: 'check' }], done: [] });
 
-test('Luna reads the claims box once per intake, visibly fails, and retries on a settings change', async () => {
+test('Claude reads the claims box once per intake, visibly fails, and retries on a settings change', async () => {
   const t = claimsHarness();
   const intake = claimsIntake('Leased on, needs coverage off dispatch');
   t.state.intake = intake;
@@ -1513,7 +1513,7 @@ test('Luna reads the claims box once per intake, visibly fails, and retries on a
   await t.answer();
   assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-review-failed', 'check']]);
   assert.match(failing.warnings[1].msg, /Read it yourself/);
-  assert.equal(t.logs.at(-1).error, 'Luna took too long. Nothing was applied.');
+  assert.equal(t.logs.at(-1).error, 'Claude took too long. Nothing was applied.');
   await t.review();
   assert.equal(t.requests.length, 2, 'not retried on every panel reload');
   // A settings change tries again; the failure item is replaced in place (checked marks are by position).
@@ -1542,8 +1542,8 @@ test('a settings change during a review runs it again, an edit during it discard
   assert.equal(intake.notesReview.done, true);
   assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.claims-reviewed', 'ai.ntl']);
 
-  // The agent edits the claims box while Luna reads the old text: that answer is dropped, the
-  // new text is read. Setting NTL itself (not sent to Luna) doesn't count as a change.
+  // The agent edits the claims box while Claude reads the old text: that answer is dropped, the
+  // new text is read. Setting NTL itself (not sent to Claude) doesn't count as a change.
   t = claimsHarness();
   const edited = claimsIntake('Needs physical damage');
   t.state.intake = edited;
@@ -1566,7 +1566,7 @@ test('a settings change during a review runs it again, an edit during it discard
   await untouched.settle();
   ntlOnly.record.coverage.ntl = true;
   await untouched.answer();
-  assert.equal(untouched.requests.length, 1, 'setting NTL is not a change to what Luna read');
+  assert.equal(untouched.requests.length, 1, 'setting NTL is not a change to what Claude read');
   assert.equal(ntlOnly.notesReview.done, true);
 
   // A request for an intake that was replaced meanwhile: no result and nothing logged.
@@ -1585,8 +1585,8 @@ test('a settings change during a review runs it again, an edit during it discard
   }
 });
 
-// Codex on PR #22: an edit after a finished review is read again; Luna's old items are replaced in place.
-test('the claims box is reviewed again after the agent edits what Luna read', async () => {
+// Codex on PR #22: an edit after a finished review is read again; Claude's old items are replaced in place.
+test('the claims box is reviewed again after the agent edits what Claude read', async () => {
   const t = claimsHarness();
   const intake = claimsIntake('Needs physical damage');
   t.state.intake = intake;
@@ -1598,7 +1598,7 @@ test('the claims box is reviewed again after the agent edits what Luna read', as
   assert.equal(t.requests.length, 1, 'unchanged: not read again');
   intake.record.coverage.ntl = true;
   await t.review({ retry: true });
-  assert.equal(t.requests.length, 1, 'setting NTL is not a change to what Luna read');
+  assert.equal(t.requests.length, 1, 'setting NTL is not a change to what Claude read');
   intake.record.claims.text = 'Needs physical damage\nNeeds hired auto';
   t.review({ retry: true });
   await t.answer();
@@ -1608,8 +1608,8 @@ test('the claims box is reviewed again after the agent edits what Luna read', as
   assert.deepEqual(intake.done, [1]);
 });
 
-// Codex on PR #22: an edit retires Luna's old items even when no new review can run.
-test('editing what Luna read retires its items at once, also with the assistant off', async () => {
+// Codex on PR #22: an edit retires Claude's old items even when no new review can run.
+test('editing what Claude read retires its items at once, also with the assistant off', async () => {
   const t = claimsHarness();
   const intake = claimsIntake('Needs physical damage');
   t.state.intake = intake;
@@ -1647,7 +1647,7 @@ test('the long-claims-box item stays while the box is still too long, and isn\'t
 });
 
 // Codex on PR #22: the intake's own NTL item and the checked long-box / failed-review items follow
-// claims-box edits; Luna's NTL flag holds Rates; a done Add NTL survives a panel reload.
+// claims-box edits; Claude's NTL flag holds Rates; a done Add NTL survives a panel reload.
 test('claims-box edits keep the NTL, long-box and failed-review items current', () => {
   const ntlCheckMessage = (line) => `NTL: ${line}`;
   const ntlMention = (text) => String(text ?? '').split('\n').find((l) => /\bntl\b|bobtail/i.test(l))?.trim() || null;
@@ -1672,7 +1672,7 @@ test('claims-box edits keep the NTL, long-box and failed-review items current', 
   assert.deepEqual(fresh.warnings.map((w) => [w.code, w.level]), [['coverage.ntl', 'check']], 'an NTL mention added after load is asked');
 });
 
-test('Luna\'s NTL flag holds Rates until superseded, and a done Add NTL survives a panel reload', async () => {
+test('Claude\'s NTL flag holds Rates until superseded, and a done Add NTL survives a panel reload', async () => {
   const t = claimsHarness();
   const intake = claimsIntake('Needs bobtale coverage');
   t.state.intake = intake;
@@ -1711,7 +1711,7 @@ test('agent edits are protected per vehicle on vehicle pages and per page elsewh
 // Codex on PR #21: a retired AI pick's protected key is removed from the vehicle it was made on.
 test('a retired AI pick is unprotected in its own vehicle scope, not the active one', async () => {
   const carrier = { vehiclePages: ['MostCommonVehicles', 'AddVehicle'], driverPage: 'AddDriver' };
-  const sig = '1\nAddVehicle\ngpt-6-luna\npolicy\ncontext\nitem\nquote-a';
+  const sig = '1\nAddVehicle\nclaude-haiku-5-5\npolicy\ncontext\nitem\nquote-a';
   const pick = { key: '2CA7', done: 'auto', quoteHash: 'quote-a', editScope: 'AddVehicle|v0' };
   const state = { tab: { id: 1, url: 'https://rater.test/a', carrier }, intake: {}, active: { vehicles: 1, drivers: 0 },
     aiCache: new Map([[sig, pick]]), agentKeys: new Map([['AddVehicle|v0', new Set(['2CA7'])], ['AddVehicle|v1', new Set(['2CA7'])]]) };
@@ -2212,7 +2212,7 @@ test('after an intake is loaded, only a tab opened since may give its first page
   assert.match(SIDEPANEL, /chrome\.tabs\.onCreated\.addListener\(\(tab\) => \{ if \(state\.layoutHold\) state\.layoutNewTabs\.add\(tab\.id\); inheritQuoteState\(tab\); \}\)/);
 });
 
-test('after Luna\'s picks go in (with the recorder paused), the page\'s layout is asked for', () => {
+test('after Claude\'s picks go in (with the recorder paused), the page\'s layout is asked for', () => {
   const body = extractFunction('applyAi');
   assert.match(body, /await tellRecorder\('resume', ctx\.tabId\);\s+state\.filling = false;[\s\S]{0,400}if \(dispatched && state\.tab\?\.id === ctx\.tabId\) scheduleLayout\(ctx\.page, 'changed'\);/);
 });
@@ -2256,7 +2256,7 @@ test('an automatic fill readies its tab for layouts only when it went through', 
   assert.equal(await run(async () => [{ result: { fields: 1, filled: [], actions: [], unknown: [] } }]), true);
 });
 
-test('Luna\'s picks ask for a layout only while their tab is still the one followed', () => {
+test('Claude\'s picks ask for a layout only while their tab is still the one followed', () => {
   assert.match(extractFunction('applyAi'), /if \(dispatched && state\.tab\?\.id === ctx\.tabId\) scheduleLayout\(ctx\.page, 'changed'\);/);
 });
 
@@ -2299,7 +2299,7 @@ test('a page whose last question goes away logs its empty layout, so the questio
 
 // 2026-10-05: Progressive showed DeclinationNotice after Business Owner Info (the client already
 // has a commercial auto policy with Progressive). The quote stops there: nothing filled, nothing
-// clicked, Luna not asked, and the agent is told why.
+// clicked, Claude not asked, and the agent is told why.
 function stopHarness(page = 'DeclinationNotice') {
   const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
   const box = () => ({ hidden: false, className: '', children: [], replaceChildren(...next) { this.children = next; } });
@@ -2331,7 +2331,7 @@ function stopHarness(page = 'DeclinationNotice') {
   return { state, context, ui, logged, kits, timers, carrier, arrive, stops: () => logged.filter((e) => e.type === 'fill_run') };
 }
 
-test('on a carrier stop page nothing is filled, clicked or scheduled, manual or automatic, and Luna is not asked', async () => {
+test('on a carrier stop page nothing is filled, clicked or scheduled, manual or automatic, and Claude is not asked', async () => {
   const t = stopHarness();
   await t.context.fillPage({ auto: 'page' });
   await t.context.fillPage();
@@ -2346,7 +2346,7 @@ test('on a carrier stop page nothing is filled, clicked or scheduled, manual or 
   await t.context.fillPage({ auto: 'page' });
   assert.equal(t.state.pagePending, null);
   t.state.filling = false;
-  // Luna's suggestions (asking or applying) are never current on the stop page.
+  // Claude's suggestions (asking or applying) are never current on the stop page.
   const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: 'DeclinationNotice' };
   assert.equal(t.context.aiActionCurrent(ctx, []), false);
   // The panel says why, prominently, outside the fill report (Clear marks empties that).

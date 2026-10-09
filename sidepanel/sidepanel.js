@@ -9,7 +9,7 @@ import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex, rules
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
-import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated } from '../src/ai/luna.js';
+import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated } from '../src/ai/claude.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes } from '../src/ai/providers.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
@@ -246,8 +246,8 @@ const state = {
   // Steps already continued from, keyed by stepScope (AmWINS steps, Progressive's per-vehicle pages).
   doneSteps: new Set(),
   advanceRetried: new Set(), // steps whose lost Continue was clicked a second time (once each)
-  assistPage: null, // a page whose Luna request waits for a helper's follow-up fill (per tab, like the above)
-  notesAsking: null, // the intake whose claims box Luna is reading now
+  assistPage: null, // a page whose Claude request waits for a helper's follow-up fill (per tab, like the above)
+  notesAsking: null, // the intake whose claims box Claude is reading now
   notesRetry: null, // that intake again, when the settings changed meanwhile
   tabSessions: new Map(),
   agentKeys: new Map(),
@@ -284,7 +284,7 @@ const state = {
   // Which screen shows: Settings over everything; otherwise the start screen or the quote, on
   // its Check intake or Fill pages step.
   settingsOpen: false,
-  // The Luna controls are available from the brain button even while the Settings screen is
+  // The Claude controls are available from the brain button even while the Settings screen is
   // hidden. Keep the opening trigger so Escape and the close button return focus
   // to the control the agent used.
   agentPopoverOpen: false,
@@ -379,7 +379,7 @@ async function restoreAiPending() {
     if (state.aiCache.has(sig)) continue;
     const retired = x.model !== DEFAULT_MODEL || x.policy !== POLICY_VERSION;
     state.aiCache.set(sig, {
-      ...x, restored: true, retired, provider: 'luna', pendingScope: x.scope,
+      ...x, restored: true, retired, provider: 'claude', pendingScope: x.scope,
       pendingLabel: x.label, pendingChoice: x.choice, done: 'auto', approved: !!x.approved,
       rejected: !!x.rejected || (retired && !x.approved && !x.manual && !x.confirmed),
       manual: !!x.manual, confirmed: !!x.confirmed, tip: '', checks: [], leave: false,
@@ -766,9 +766,9 @@ function setStep(step) {
 
 function openSettings(focusId = null) {
   // The assistant connection fields live in the agent popover now. Setup notices still call
-  // openSettings('ai-openai-key'), so route those requests to the visible controls instead of
+  // openSettings('ai-anthropic-key'), so route those requests to the visible controls instead of
   // opening a Settings screen whose fields may be hidden behind the popover.
-  if (focusId === 'ai-openai-key' || focusId === 'ai-model') {
+  if (focusId === 'ai-anthropic-key' || focusId === 'ai-model') {
     state.settingsOpen = false;
     showScreen();
     openAgentPopover({ trigger: state.agentPopoverTrigger || $('agent-btn'), focusId });
@@ -888,7 +888,7 @@ function fieldRow(path, label, kind, flagged, layout = 'row') {
     const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
     usage.log({ type: 'intake_edit', path, kind, change: before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
     await save();
-    // Luna read the claims box against the form's coverages: an edit to either is read again.
+    // Claude read the claims box against the form's coverages: an edit to either is read again.
     if (path === 'claims.text') claimsTextEdited(state.intake);
     if (path === 'claims.text' || (path.startsWith('coverage.') && path !== 'coverage.ntl')) reviewClaimsBox({ retry: true });
   });
@@ -1289,7 +1289,7 @@ async function autoFill(page) {
     followUp = afterFill(frames, ctx);
     const hasWarnings = frames.some((f) => f.unknown?.length);
     const current = fillCurrent(ctx);
-    // The fill whose helper this follows up held Luna back for it.
+    // The fill whose helper this follows up held Claude back for it.
     if (current && (state.autoPaused || hasWarnings || state.assistPage === page)) { renderReport(frames); assistFrames = frames; }
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings) {
@@ -1697,7 +1697,7 @@ function showReviewMode() {
 
 // Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client
 // already has a commercial auto policy with Progressive). Nothing is filled or clicked there,
-// automatically or on request, and Luna isn't asked; the panel says why above both steps (outside
+// automatically or on request, and Claude isn't asked; the panel says why above both steps (outside
 // the fill report, which Clear marks empties) and the page is the agent's. The carrier's reason is
 // said of this client only once the tab is shown to be this intake's quote (stopPageIsOurs).
 function showStopPage() {
@@ -1998,7 +1998,7 @@ function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, i
   return clicked && !moved && !state.autoPaused && $('auto-followups').checked;
 }
 
-// Luna is asked once the page has stopped changing: after the last follow-up fill of a helper
+// Claude is asked once the page has stopped changing: after the last follow-up fill of a helper
 // chain (cargo "+", Add a commodity), and never about a page the fill has just left
 // (2026-10-05: asked while the cargo follow-up still ran, its answer came back stale).
 function assistAfterFill(frames, ctx, followUp) {
@@ -2253,22 +2253,22 @@ async function capturePage() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// Luna assistant: after a fill, suggests answers for the questions left for the agent.
+// Claude assistant: after a fill, suggests answers for the questions left for the agent.
 // Verified choices can be applied automatically, but Continue waits for explicit agent review.
 
 async function aiSettings() {
   return settingsFrom(await usage.settings());
 }
 
-// Luna reads the claims box once per intake (reviewNotes in src/ai/luna.js): lines that may name
+// Claude reads the claims box once per intake (reviewNotes in src/ai/claude.js): lines that may name
 // non-trucking liability, ask for a coverage change or say how long the business has run (when
 // that differs from the intake) become Check intake items, and the tab
 // count goes up (the panel doesn't switch steps under the agent). Flags only; the agent decides.
 // Logged as counts, never the text. A review that failed says so on Check intake and is tried
 // again when the assistant settings change (`retry`), not on every panel reload. What it read
-// (the claims box and the form's coverages) must still be the intake's when Luna answers;
+// (the claims box and the form's coverages) must still be the intake's when Claude answers;
 // otherwise the answer is dropped and the box read again.
-// Luna's claims-box items for a text the agent has since edited become info notes, in place
+// Claude's claims-box items for a text the agent has since edited become info notes, in place
 // (warnings are marked checked by position).
 // The claims box text changed: the intake's own NTL item follows it (updated, re-asked, or retired
 // when NTL is no longer mentioned), and a checked long-box or failed-review item is asked again,
@@ -2295,7 +2295,7 @@ function supersedeClaimsItems(intake) {
   intake.warnings.forEach((w, i) => {
     if (['ai.ntl', 'ai.coverage-change', 'ai.years-in-business'].includes(w.code) || (w.code === 'ai.claims-truncated' && !truncated)) {
       if (w.code === 'ai.ntl' && intake.record.claims) intake.record.claims.aiNtl = false;
-      intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box since edited: ${w.msg}` };
+      intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Claude item, for a claims box since edited: ${w.msg}` };
     }
   });
 }
@@ -2308,7 +2308,7 @@ function claimsContext(record) {
 async function reviewClaimsBox({ retry = false } = {}) {
   const intake = state.intake;
   // A finished review stands while what it read is unchanged (older records didn't keep that).
-  // Once the agent has edited it, Luna's items for the old text are retired right away, whether or
+  // Once the agent has edited it, Claude's items for the old text are retired right away, whether or
   // not a new review can run now (assistant off, no key, a failure).
   if (intake?.notesReview?.done && intake.notesReview.context != null && intake.notesReview.context !== claimsContext(intake.record)) {
     supersedeClaimsItems(intake);
@@ -2338,21 +2338,21 @@ async function reviewClaimsBox({ retry = false } = {}) {
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls, reasoningTokens: result.reasoningTokens,
         cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens, ...(changed ? { error: 'Answer discarded: the claims box or coverages changed.' } : {}) });
       if (changed) { again = true; return; }
-      // Warnings are marked checked by position: an earlier failure, or Luna's items from a claims
+      // Warnings are marked checked by position: an earlier failure, or Claude's items from a claims
       // box the agent has since edited, are replaced in place, never removed.
-      if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Luna reviewed the claims box after an earlier failure.' };
+      if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Claude reviewed the claims box after an earlier failure.' };
       supersedeClaimsItems(intake);
       // One long-claims-box item, kept from an earlier review.
       const kept = intake.warnings.some((w) => w.code === 'ai.claims-truncated');
       intake.warnings.push(...result.warnings.filter((w) => !(kept && w.code === 'ai.claims-truncated')));
-      // Luna's NTL flag holds Progressive's Rates until the agent answers it, like an NTL mention.
+      // Claude's NTL flag holds Progressive's Rates until the agent answers it, like an NTL mention.
       if (result.warnings.some((w) => w.code === 'ai.ntl') && intake.record.claims) intake.record.claims.aiNtl = true;
       intake.notesReview = { done: true, model: cfg.model, flagged: result.warnings.length, context: read };
     } catch (e) {
       if (state.intake !== intake) return;
       const msg = e instanceof AssistError ? e.message : 'The claims-box review failed.';
       usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
-      if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Luna couldn't review the claims box. Read it yourself for coverage requests, such as non-trucking liability (NTL) or a different limit." });
+      if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Claude couldn't review the claims box. Read it yourself for coverage requests, such as non-trucking liability (NTL) or a different limit." });
       intake.notesReview = { failed: true, model: cfg.model };
     }
     await save();
@@ -2390,7 +2390,7 @@ async function runAssist(frames, ctx) {
   }
   if (head) head.before(holder); else $('report').append(holder);
   if (!cfg.apiKey) {
-    holder.append(h('p', { class: 'muted small' }, `${provider.name} needs an OpenAI API key. Add it in Agent options.`));
+    holder.append(h('p', { class: 'muted small' }, `${provider.name} needs an Anthropic API key. Add it in Agent options.`));
     return;
   }
   const run = ++state.aiRun;
@@ -2661,7 +2661,7 @@ async function applyAi(list, ctx, decision) {
     }
     await tellRecorder('resume', ctx.tabId);
     state.filling = false;
-    // The recorder was paused while Luna's picks went in, so it won't report the questions they
+    // The recorder was paused while Claude's picks went in, so it won't report the questions they
     // revealed or hid: ask for the page's layout, if that tab is still the one followed (a job
     // is built from the followed tab, and checks the page).
     if (dispatched && state.tab?.id === ctx.tabId) scheduleLayout(ctx.page, 'changed');
@@ -2776,7 +2776,7 @@ function renderAi(holder, suggestions, ctx) {
   };
   const why = (x) => [
     x.evidenceSources?.length ? `cited evidence: ${x.evidenceSources.map(source => source.basis === 'intake' ? source.path : 'TNI rule').join(', ')}` : null,
-    'Luna evidence check passed · agent review required',
+    'Claude evidence check passed · agent review required',
   ].filter(Boolean).join(' · ');
   const answer = (x) => (x.controlKind === 'text' ? `typing “${x.choice}”` : `“${x.choice}”`);
   // What goes on an item: the suggestion and its buttons, or what happened to it.
@@ -2858,18 +2858,18 @@ function wireAgentPopover() {
 function wireAi() {
   const save = async patch => {
     state.aiRun++;
-    if (Object.hasOwn(patch, 'lunaKey')) {
+    if (Object.hasOwn(patch, 'claudeKey')) {
       for (const [key, value] of state.aiCache) if (!value.done) state.aiCache.delete(key);
     }
     // Keep pending approvals; their cache keys remain bound to the original model and context.
     await usage.saveSettings(patch);
     await renderAiSettings();
-    // Luna just turned on or got a key: read the open intake's claims box if not done yet.
+    // Claude just turned on or got a key: read the open intake's claims box if not done yet.
     reviewClaimsBox({ retry: true });
   };
   $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
-  $('ai-auto').addEventListener('change', (e) => save({ lunaAuto: e.target.checked }));
-  $('ai-openai-key').addEventListener('change', (e) => save({ lunaKey: e.target.value.trim() }));
+  $('ai-auto').addEventListener('change', (e) => save({ claudeAuto: e.target.checked }));
+  $('ai-anthropic-key').addEventListener('change', (e) => save({ claudeKey: e.target.value.trim() }));
 }
 
 async function renderAiSettings() {
@@ -2880,7 +2880,7 @@ async function renderAiSettings() {
   $('ai-auto').checked = cfg.auto;
   $('ai-auto').disabled = !cfg.on || !provider.automatic;
   $('ai-auto-option').hidden = !provider.automatic;
-  if (document.activeElement !== $('ai-openai-key')) $('ai-openai-key').value = saved.lunaKey || '';
+  if (document.activeElement !== $('ai-anthropic-key')) $('ai-anthropic-key').value = saved.claudeKey || '';
   $('ai-model').disabled = true;
   $('ai-model').placeholder = provider.defaultModel;
   if (document.activeElement !== $('ai-model')) $('ai-model').value = cfg.model;
@@ -2936,7 +2936,7 @@ async function renderHealth({ n, agent, serverUrl, up }) {
   // Things the agent fixes (one card, a button each) and things that need nothing from them.
   const setup = [
     !agent && { title: 'Add your initials', text: 'So your quotes are counted as yours.', button: 'Add', go: () => openSettings('agent') },
-    ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: `They're turned on, but no ${PROVIDERS[ai.provider].keyLabel} is set.`, button: 'Add key', go: () => openSettings('ai-openai-key') },
+    ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: `They're turned on, but no ${PROVIDERS[ai.provider].keyLabel} is set.`, button: 'Add key', go: () => openSettings('ai-anthropic-key') },
     up.state === 'off' && { title: 'Usage log has no server', text: 'Nothing is recorded centrally (Export log only).', button: 'Set up', go: () => openSettings('server-url') },
   ].filter(Boolean);
   // Events that can't even be saved here are lost: that comes first.

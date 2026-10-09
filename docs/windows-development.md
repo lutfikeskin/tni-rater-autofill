@@ -35,9 +35,9 @@ If PowerShell blocks `npm.ps1` or `npx.ps1` under its execution policy, use
 `npm.cmd` and `npx.cmd` in those commands. No policy change is needed.
 
 `npm ci` restores the locked dependencies, including the ZIP library used by
-packaging. The two PDF.js runtime files are already committed in `lib/`;
-`npm run vendor` is only for deliberately refreshing them after a dependency
-update. Do not copy `node_modules` from the Mac.
+packaging. The two PDF.js runtime files and the bundled Anthropic SDK are
+already committed in `lib/`; `npm run vendor` is only for deliberately
+refreshing them after a dependency update. Do not copy `node_modules` from the Mac.
 
 ## Load and develop the extension
 
@@ -50,7 +50,7 @@ update. Do not copy `node_modules` from the Mac.
    and reopen its side panel.
 
 The fixed development extension ID does not transfer settings between computers.
-Enter your initials, server preference and optional OpenAI API key on the new
+Enter your initials, server preference and optional Anthropic API key on the new
 machine. Unit tests, browser mocks and fixture replays require no API key or
 production server credentials. Real AI use and production log access need their
 own credentials; never commit them. The log CLI accepts `RATER_SERVER`,
@@ -66,10 +66,10 @@ npm run mock:amwins
 npm run mock:amwins -- --reversed
 npm run e2e -- --fixtures
 npm run e2e -- --fixtures --renumber
-npm run mock:luna
+npm run mock:claude
 ```
 
-Luna needs the package built above. Some fixture assets come from pinned CDNs,
+The Claude mock needs the package built above. Some fixture assets come from pinned CDNs,
 so browser installation and those replays need internet access.
 
 The packaged extension check also needs the replay server. In one terminal:
@@ -92,7 +92,7 @@ on another port, use `npm run replay -- --port 8791`; the extension test require
 
 ## What a clone contains
 
-Source, vendored PDF.js, lockfile, scrubbed fixtures, the two small sample intake
+Source, vendored PDF.js and Anthropic SDK, lockfile, scrubbed fixtures, the two small sample intake
 PDFs, replay baselines and project guidance are tracked. The current development
 context is in [the handoff](handoff-2026-10-09.md); it does not depend on ignored
 review reports from the Mac. `dist/` is rebuilt by packaging.

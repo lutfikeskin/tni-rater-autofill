@@ -214,7 +214,7 @@ const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT numb
 // while its new questions are open).
 // An NTL mention in the claims box the agent hasn't answered yet (Yes or No) is not a No: Rates
 // waits for it like for NTL itself.
-// Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl).
+// Claude's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl).
 const ntlUndecided = (r) => r.coverage.ntl == null && (!!ntlMention(r.claims?.text) || r.claims?.aiNtl === true);
 const notNtl = (r) => r.coverage.ntl !== true && !ntlUndecided(r);
 const ourBillPlan = (r) => r.coverage.gl !== true && notNtl(r);
@@ -438,7 +438,7 @@ export const progressive = {
       : null),
   },
   // Pages where Progressive has stopped the quote. Nothing is filled or clicked there (not even on
-  // Fill this page) and Luna isn't asked: the panel shows the note and the page is the agent's.
+  // Fill this page) and Claude isn't asked: the panel shows the note and the page is the agent's.
   // DeclinationNotice follows Business Owner Info when the customer already has a Progressive
   // commercial auto policy (2026-10-05; text and buttons only).
   stopPages: {

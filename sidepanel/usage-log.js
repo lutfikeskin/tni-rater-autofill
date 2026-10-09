@@ -37,7 +37,9 @@ export async function settings() {
 }
 export async function migrateAssistantSettings() {
   const saved = await settings();
-  const obsolete = ['aiKey', 'jevKey', 'jevModel', 'aiProvider', 'aiAuto'];
+  // lunaKey / lunaAuto: the OpenAI (GPT-6 Luna) assistant, replaced by Claude on 2026-10-09. Its
+  // key is never sent to another provider, and automatic picks are opted into again for Claude.
+  const obsolete = ['aiKey', 'jevKey', 'jevModel', 'aiProvider', 'aiAuto', 'lunaKey', 'lunaAuto'];
   if (!obsolete.some(key => Object.hasOwn(saved, key))) return saved;
   const clean = { ...saved };
   for (const key of obsolete) delete clean[key];

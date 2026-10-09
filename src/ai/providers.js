@@ -1,16 +1,16 @@
-import * as luna from './luna.js';
+import * as claude from './claude.js';
 
 export const PROVIDERS = Object.freeze({
-  luna: { name: 'GPT-6 Luna', company: 'OpenAI', keyLabel: 'OpenAI API key', keySetting: 'lunaKey',
-    autoSetting: 'lunaAuto', defaultModel: luna.DEFAULT_MODEL, policy: luna.POLICY_VERSION,
-    suggest: luna.suggest, reviewNotes: luna.reviewNotes, automatic: true },
+  claude: { name: 'Claude Haiku 5.5', company: 'Anthropic', keyLabel: 'Anthropic API key', keySetting: 'claudeKey',
+    autoSetting: 'claudeAuto', defaultModel: claude.DEFAULT_MODEL, policy: claude.POLICY_VERSION,
+    suggest: claude.suggest, reviewNotes: claude.reviewNotes, automatic: true },
 });
 
 export function settingsFrom(saved = {}) {
-  // Dedicated Luna settings only: obsolete provider credentials are never reused.
-  return { provider: 'luna', on: saved.aiOn === true, auto: saved.lunaAuto === true,
-    apiKey: saved.lunaKey || '', model: luna.DEFAULT_MODEL };
+  // Dedicated Claude settings only: obsolete provider credentials are never reused.
+  return { provider: 'claude', on: saved.aiOn === true, auto: saved.claudeAuto === true,
+    apiKey: saved.claudeKey || '', model: claude.DEFAULT_MODEL };
 }
 
-export const suggest = (items, context, config, opts) => luna.suggest(items, context, config, opts);
-export const reviewNotes = (record, config, opts) => luna.reviewNotes(record, config, opts);
+export const suggest = (items, context, config, opts) => claude.suggest(items, context, config, opts);
+export const reviewNotes = (record, config, opts) => claude.reviewNotes(record, config, opts);

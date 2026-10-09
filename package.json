@@ -3,7 +3,9 @@
   "version": "0.9.9",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "description": "Chrome extension that fills Progressive and GEICO rater pages from a TNI quote application PDF",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
@@ -21,7 +23,7 @@
     "e2e": "node scripts/e2e.mjs",
     "mock:amwins": "node scripts/amwins-mock.mjs",
     "test:intakes": "node scripts/intake-mocks.mjs",
-    "mock:luna": "node scripts/luna-mock.mjs",
+    "mock:claude": "node scripts/claude-mock.mjs",
     "ai:eval": "node scripts/ai-eval.mjs",
     "e2e:extension": "node scripts/extension-e2e.mjs",
     "pull": "node scripts/logs-pull.mjs",
@@ -30,6 +32,8 @@
     "fixtures:progressive": "node scripts/refresh-fixtures.mjs"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "0.128.0",
+    "esbuild": "0.28.2",
     "fflate": "0.8.3",
     "pdfjs-dist": "^4.10.38",
     "playwright": "^1.63.0"

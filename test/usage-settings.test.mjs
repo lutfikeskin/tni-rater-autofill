@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-test('assistant upgrade removes obsolete credentials without changing Luna or quote settings', async () => {
-  let saved = { aiOn: true, lunaKey: 'synthetic-openai', lunaAuto: true, autoAdvance: false, agent: 'agent',
+test('assistant upgrade removes obsolete credentials without changing Claude or quote settings', async () => {
+  let saved = { aiOn: true, claudeKey: 'synthetic-anthropic', claudeAuto: true, lunaKey: 'synthetic-openai', lunaAuto: true, autoAdvance: false, agent: 'agent',
     aiKey: 'synthetic-legacy', jevKey: 'synthetic-retired', jevModel: 'retired-model', aiProvider: 'jev', aiAuto: true };
   let writes = 0;
   globalThis.chrome = { runtime: { getManifest: () => ({ version: 'test' }) }, storage: { local: {
@@ -11,7 +11,7 @@ test('assistant upgrade removes obsolete credentials without changing Luna or qu
   try {
     const usage = await import('../sidepanel/usage-log.js');
     assert.deepEqual(await usage.migrateAssistantSettings(), {
-      aiOn: true, lunaKey: 'synthetic-openai', lunaAuto: true, autoAdvance: false, agent: 'agent',
+      aiOn: true, claudeKey: 'synthetic-anthropic', claudeAuto: true, autoAdvance: false, agent: 'agent',
     });
     assert.equal(writes, 1);
     await usage.migrateAssistantSettings();

@@ -3121,7 +3121,7 @@ test('an invalid retained client fact stays manual-only across duplicate report 
   assert.equal(yes.checked, true, 'the retained page value is preserved');
   assert.ok(report.blockers.length, 'the agent still must resolve the invalid/missing fact');
   const ai = collectItems([report]);
-  assert.deepEqual(ai.items.map((x) => x.label), ['Synthetic unfamiliar choice'], 'only the unrelated choice may reach Luna');
+  assert.deepEqual(ai.items.map((x) => x.label), ['Synthetic unfamiliar choice'], 'only the unrelated choice may reach the model');
   assert.equal(ai.blocked.length, 1);
   assert.equal(ai.blocked[0].manualOnly, true);
   assert.match(ai.blocked[0].why, /client fact.*agent/);

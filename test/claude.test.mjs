@@ -2,50 +2,76 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectItems, AssistError, LEAVE } from '../src/ai/common.js';
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
-  DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes } from '../src/ai/luna.js';
+  DEFAULT_MODEL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes } from '../src/ai/claude.js';
 import { settingsFrom } from '../src/ai/providers.js';
 
 const context = { carrier: 'geico', page: 'operations', active: { drivers: 0, vehicles: 0 },
   record: { operations: { hazPlacard: false }, drivers: [{ licenseNumber: 'private-identifier' }, { name: 'inactive-person' }], vehicles: [] } };
 const items = collectItems([{ unknown: [{ key: 'haz', label: 'Hazardous materials requiring placards?', controlKind: 'select', options: ['Yes', 'No'], current: '' }] }]).items;
-const envelope = data => ({ status: 'completed', model: DEFAULT_MODEL,
-  output: [{ type: 'reasoning', summary: [] }, { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify(data) }] }],
-  usage: { input_tokens: 100, output_tokens: 30 } });
+// A Messages API response: an (empty, by default) thinking block before the structured answer.
+const envelope = data => ({ id: 'msg_synthetic', type: 'message', role: 'assistant', model: DEFAULT_MODEL,
+  content: [{ type: 'thinking', thinking: '', signature: 'synthetic' }, { type: 'text', text: JSON.stringify(data) }],
+  stop_reason: 'end_turn', stop_sequence: null, usage: { input_tokens: 100, output_tokens: 30 } });
+const claimsEnvelope = ({ lines, businessTime = { line: 'none', years: -1, since: -1 } }) => envelope({ lines, businessTime });
 const answer = (body, overrides = {}) => {
-  const state = JSON.parse(body.input[0].content);
+  const state = JSON.parse(body.messages[0].content);
   const source = Object.keys(state.sources).find(k => state.sources[k].path === 'operations.hazPlacard');
   return envelope({ decisions: { f1: { option: 'o1', sourceIds: [source], explanation: 'The intake explicitly says No.', missingInformation: [], conflicts: [], ...overrides } } });
 };
 const questions = count => Array.from({ length: count }, (_, i) => ({ ...items[0], id: `f${i + 1}`, key: `haz${i + 1}` }));
 const groupAnswer = (body, leave = false) => {
-  const state = JSON.parse(body.input[0].content);
+  const state = JSON.parse(body.messages[0].content);
   const source = Object.keys(state.sources).find(k => state.sources[k].path === 'operations.hazPlacard');
   return envelope({ decisions: Object.fromEntries(Object.keys(state.fields).map(id => [id, {
     option: leave ? LEAVE : 'o1', sourceIds: leave ? [] : [source], explanation: 'Explicit No.', missingInformation: [], conflicts: [],
   }])) });
 };
-const groupCheck = body => envelope({ decisions: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).proposed)
+const groupCheck = body => envelope({ decisions: Object.fromEntries(Object.keys(JSON.parse(body.messages[0].content).proposed)
   .map(id => [id, { supported: true }])) });
 
-test('Luna requests fixed reasoning model and strict schema without tools or provider storage', () => {
+test('Claude requests a fixed model with structured output, low effort and no tools or sampling overrides', () => {
   const body = buildRequest(items, context), wire = JSON.stringify(body);
-  assert.equal(body.model, DEFAULT_MODEL);
-  assert.equal(body.store, false);
-  assert.equal(body.reasoning.effort, 'low');
-  assert.equal(body.text.verbosity, 'low');
-  assert.equal(body.max_output_tokens, 4096);
-  assert.equal(body.temperature, undefined);
-  assert.equal(body.top_p, undefined);
-  assert.equal(body.text.format.strict, true);
-  assert.equal(body.text.format.schema.additionalProperties, false);
-  assert.equal(body.tools, undefined);
+  assert.deepEqual(Object.keys(body).sort(), ['max_tokens', 'messages', 'model', 'output_config', 'system']);
+  assert.equal(body.model, 'claude-haiku-5-5');
+  assert.equal(body.max_tokens, 16000);
+  assert.deepEqual(Object.keys(body.output_config).sort(), ['effort', 'format']);
+  assert.equal(body.output_config.effort, 'low');
+  assert.equal(body.output_config.format.type, 'json_schema');
+  assert.equal(body.thinking, undefined, 'adaptive thinking is the default and stays on');
+  assert.equal(body.messages.length, 1);
+  assert.equal(body.messages[0].role, 'user');
+  assert.equal(body.output_config.format.schema.additionalProperties, false);
   assert.equal(wire.includes('private-identifier'), false);
   assert.equal(wire.includes('inactive-person'), false);
-  assert.deepEqual(body.text.format.schema.properties.decisions.properties.f1.properties.option.enum, ['o0', 'o1', LEAVE]);
-  assert.deepEqual(body.text.format.schema.properties.decisions.properties.f1.properties.sourceIds, { $ref: '#/$defs/citations' });
-  assert.deepEqual(body.text.format.schema.$defs.citations.items.enum, [...Object.keys(JSON.parse(body.input[0].content).sources), LEAVE]);
-  assert.equal(body.text.format.schema.$defs.citations.maxItems, 4);
-  assert.match(body.instructions, /Missing information is never evidence of No/);
+  assert.deepEqual(body.output_config.format.schema.properties.decisions.properties.f1.properties.option.enum, ['o0', 'o1', LEAVE]);
+  assert.deepEqual(body.output_config.format.schema.properties.decisions.properties.f1.properties.sourceIds, { $ref: '#/$defs/citations' });
+  assert.deepEqual(body.output_config.format.schema.$defs.citations.items.enum, [...Object.keys(JSON.parse(body.messages[0].content).sources), LEAVE]);
+  // Claude's structured outputs reject maxItems; code checks the four-citation bound (shortList).
+  assert.equal(wire.includes('maxItems'), false);
+  assert.match(body.system, /Missing information is never evidence of No/);
+  assert.match(body.system, /cite at most four/);
+});
+
+// Claude's structured outputs allow at most 16 union-typed fields (anyOf or type arrays) per request.
+const unions = schema => JSON.stringify(schema).match(/"anyOf"|"type":\[/g)?.length ?? 0;
+test('request schemas use no union types and every object is closed', () => {
+  const body = buildRequest(questions(12), context);
+  const notes = buildNotesReview({ coverage: {}, claims: { text: Array.from({ length: 25 }, (_, i) => `Line ${i} about the truck`).join('\n') } }).body;
+  const first = buildRequest(items, context), checked = buildVerification(parseResponse(answer(first), items, first), context);
+  for (const { output_config: { format: { schema } } } of [body, notes, checked]) {
+    assert.equal(unions(schema), 0);
+    const objects = [];
+    (function walk(x) { if (x && typeof x === 'object') { if (x.type === 'object') objects.push(x); Object.values(x).forEach(walk); } })(schema);
+    assert.ok(objects.length && objects.every(x => x.additionalProperties === false && x.required.length === Object.keys(x.properties).length));
+  }
+});
+
+test('a decision citing more than four sources, or listing more than four notes, fails closed', () => {
+  const body = buildRequest(items, context), state = JSON.parse(body.messages[0].content);
+  const id = Object.keys(state.sources)[0];
+  for (const override of [{ sourceIds: Array(5).fill(id) }, { missingInformation: ['a', 'b', 'c', 'd', 'e'] }, { conflicts: ['a', 'b', 'c', 'd', 'e'] }]) {
+    assert.throws(() => parseResponse(answer(body, override), items, body), AssistError);
+  }
 });
 
 test('explicit No becomes eligible only after evidence verification, without fabricated confidence', () => {
@@ -108,7 +134,7 @@ test('invalid choices, extra decisions and malformed types fail closed', () => {
 
 test('multiple citations remain visible without attributing support to the first intake path', () => {
   const body = buildRequest(items, { ...context, record: { ...context.record, operations: { hazPlacard: false, notes: 'Explicitly no placarded hauling.' } } });
-  const state = JSON.parse(body.input[0].content);
+  const state = JSON.parse(body.messages[0].content);
   const ids = Object.keys(state.sources).filter(id => state.sources[id].basis === 'intake');
   const [x] = parseResponse(answer(body, { sourceIds: ids }), items, body);
   assert.equal(x.intakePath, null);
@@ -116,17 +142,23 @@ test('multiple citations remain visible without attributing support to the first
   assert.deepEqual(x.evidenceSources.map(x => x.path), ['operations.hazPlacard', 'operations.notes']);
 });
 
-test('incomplete, refused, wrong-model and tool-call responses never yield an answer', () => {
-  const body = buildRequest(items, context), good = answer(body);
-  for (const json of [{ ...good, status: 'incomplete' }, { ...good, model: 'other-model' },
-    { ...good, output: [{ type: 'function_call', arguments: '{}' }] },
-    { ...good, output: [{ type: 'message', role: 'assistant', content: [{ type: 'refusal', refusal: 'private-input' }] }] },
-    { ...good, output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'invalid' }] }] }]) {
+test('cut-off, refused, wrong-model and tool-call responses never yield an answer', () => {
+  const body = buildRequest(items, context), good = answer(body), text = good.content[1];
+  assert.equal(responseData({ ...good, content: [text] }).decisions.f1.option, 'o1', 'no thinking block is fine too');
+  for (const json of [{ ...good, stop_reason: 'max_tokens' }, { ...good, stop_reason: 'tool_use' }, { ...good, stop_reason: 'pause_turn' },
+    { ...good, model: 'other-model' }, { ...good, role: 'user' }, { ...good, type: 'error' }, null,
+    { ...good, content: [{ type: 'tool_use', id: 't', name: 'x', input: {} }] },
+    { ...good, content: [text, text] }, { ...good, content: [] },
+    { ...good, content: [{ type: 'text', text: 'invalid' }] }]) {
     assert.throws(() => responseData(json), AssistError);
   }
+  // A refusal is HTTP 200 with stop_reason refusal; its content (which may echo input) is never shown.
+  assert.throws(() => responseData({ ...good, stop_reason: 'refusal', content: [{ type: 'text', text: 'private-input' }] }),
+    error => /declined/.test(error.message) && !error.message.includes('private'));
+  assert.throws(() => responseData({ ...good, stop_reason: 'max_tokens' }), /cut off/);
 });
 
-test('restricted fields cannot be submitted directly to Luna', () => {
+test('restricted fields cannot be submitted directly to Claude', () => {
   for (const label of ['Driver exclusions?', 'Order MVR?', 'Signature authorization']) {
     assert.throws(() => buildRequest([{ ...items[0], label }], context), AssistError);
   }
@@ -135,9 +167,10 @@ test('restricted fields cannot be submitted directly to Luna', () => {
 test('second evidence check rejects unsupported choices and mismatched schemas', () => {
   const body = buildRequest(items, context), parsed = parseResponse(answer(body), items, body);
   const check = buildVerification(parsed, context);
-  assert.match(check.instructions, /Missing facts, conflicts/);
-  assert.equal(check.max_output_tokens, 2048);
-  assert.equal(JSON.parse(check.input[0].content).proposed.f1.answer, 'No');
+  assert.match(check.system, /Missing facts, conflicts/);
+  assert.equal(check.max_tokens, 16000);
+  assert.equal(check.output_config.effort, 'low');
+  assert.equal(JSON.parse(check.messages[0].content).proposed.f1.answer, 'No');
   const [unsupported] = verifyResponse(envelope({ decisions: { f1: { supported: false } } }), parsed);
   assert.equal(unsupported.leave, true);
   assert.equal(unsupported.choice, null);
@@ -170,11 +203,11 @@ test('twelve questions need two calls with complete facts and deduplicated verif
     priorInsurance: [{ carrier: 'Synthetic Mutual', expiration: '2020-01-01' }] } };
   const result = await suggest(fields, ctx, { apiKey: 'synthetic' }, { call: async ({ body }) => {
     calls.push(body);
-    return JSON.parse(body.input[0].content).fields ? groupAnswer(body) : groupCheck(body);
+    return JSON.parse(body.messages[0].content).fields ? groupAnswer(body) : groupCheck(body);
   } });
   assert.equal(result.modelCalls, 2);
   assert.equal(result.suggestions.length, 12);
-  const first = JSON.parse(calls[0].input[0].content), second = JSON.parse(calls[1].input[0].content);
+  const first = JSON.parse(calls[0].messages[0].content), second = JSON.parse(calls[1].messages[0].content);
   assert.equal(first.intake, undefined, 'facts are not duplicated in the first request');
   assert.equal(Object.keys(first.fields).length, 12);
   const source = path => Object.values(first.sources).find(x => x.path === path);
@@ -201,7 +234,7 @@ test('twelve questions need two calls with complete facts and deduplicated verif
 test('more than twelve questions are grouped and abstention skips verification calls', async () => {
   const sizes = [];
   const result = await suggest(questions(13), context, { apiKey: 'synthetic' }, { call: async ({ body }) => {
-    const state = JSON.parse(body.input[0].content);
+    const state = JSON.parse(body.messages[0].content);
     assert.equal(state.proposed, undefined);
     sizes.push(Object.keys(state.fields).length);
     return groupAnswer(body, true);
@@ -217,7 +250,7 @@ test('oversized groups split without truncating any source or visible option', a
   const fields = questions(12).map(x => ({ ...x, options })), bodies = [];
   const result = await suggest(fields, context, { apiKey: 'synthetic' }, { call: async ({ body }) => {
     bodies.push(body);
-    const state = JSON.parse(body.input[0].content);
+    const state = JSON.parse(body.messages[0].content);
     assert.ok(JSON.stringify(body).length <= 48000);
     for (const field of Object.values(state.fields)) assert.deepEqual(Object.values(field.options), options);
     assert.equal(Object.values(state.sources).find(x => x.path === 'operations.hazPlacard').value, false);
@@ -225,14 +258,14 @@ test('oversized groups split without truncating any source or visible option', a
   } });
   assert.ok(bodies.length > 1);
   assert.equal(result.suggestions.length, 12);
-  assert.deepEqual(bodies.flatMap(body => Object.keys(JSON.parse(body.input[0].content).fields)), fields.map(x => x.id));
+  assert.deepEqual(bodies.flatMap(body => Object.keys(JSON.parse(body.messages[0].content).fields)), fields.map(x => x.id));
 });
 
 test('shared citation definitions retain exact choices and split at the API total enum limit', async () => {
   const options = Array.from({ length: 254 }, (_, i) => `Option ${i}`), fields = questions(12).map(x => ({ ...x, options }));
   const sizes = [];
   const result = await suggest(fields, context, { apiKey: 'synthetic' }, { call: async ({ body }) => {
-    const schema = body.text.format.schema, state = JSON.parse(body.input[0].content);
+    const schema = body.output_config.format.schema, state = JSON.parse(body.messages[0].content);
     const properties = schema.properties.decisions.properties;
     sizes.push(Object.keys(properties).length);
     let enumValues = schema.$defs.citations.items.enum.length;
@@ -266,10 +299,10 @@ test('groups also split for the largest legal verification while every request s
   const sizes = [];
   const result = await suggest(fields, ctx, { apiKey: 'synthetic' }, { call: async ({ body }) => {
     assert.ok(JSON.stringify(body).length <= 48000);
-    const state = JSON.parse(body.input[0].content);
+    const state = JSON.parse(body.messages[0].content);
     if (state.proposed) return groupCheck(body);
     sizes.push(Object.keys(state.fields).length);
-    const json = groupAnswer(body), decisions = JSON.parse(json.output[1].content[0].text).decisions;
+    const json = groupAnswer(body), decisions = JSON.parse(json.content[1].text).decisions;
     const ids = Object.keys(state.sources).filter(id => state.sources[id].path.startsWith('operations.note'));
     for (const [id, decision] of Object.entries(decisions)) {
       const offset = (Number(id.slice(1)) - 1) * 4;
@@ -294,68 +327,81 @@ test('an invalid or individually oversized later question stops before all paid 
   }
 });
 
-test('incomplete verification fails closed without spending again on a higher output cap', async () => {
+test('a cut-off verification fails closed without spending again on a higher output cap', async () => {
   const bodies = [];
   await assert.rejects(suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => {
     bodies.push(body);
-    return bodies.length === 1 ? answer(body) : { ...groupCheck(body), status: 'incomplete' };
-  } }), /incomplete/);
-  assert.deepEqual(bodies.map(x => x.max_output_tokens), [4096, 2048]);
+    return bodies.length === 1 ? answer(body) : { ...groupCheck(body), stop_reason: 'max_tokens' };
+  } }), /cut off/);
+  assert.deepEqual(bodies.map(x => x.max_tokens), [16000, 16000]);
 });
 
-test('usage counters ignore malformed values and reasoning is already included in output tokens', async () => {
+test('usage counters add cached input back, ignore malformed values, and count thinking within output', async () => {
   let calls = 0;
   const result = await suggest(items, context, { apiKey: 'synthetic' }, { call: async ({ body }) => {
     const json = ++calls === 1 ? answer(body) : groupCheck(body);
-    json.usage = calls === 1 ? { input_tokens: 100, output_tokens: 50,
-      input_tokens_details: { cached_tokens: 80, cache_write_tokens: 10 }, output_tokens_details: { reasoning_tokens: 20 } }
-      : { input_tokens: '100', output_tokens: -5,
-        input_tokens_details: { cached_tokens: Infinity, cache_write_tokens: NaN }, output_tokens_details: { reasoning_tokens: '20' } };
+    json.usage = calls === 1 ? { input_tokens: 10, output_tokens: 50, cache_read_input_tokens: 80, cache_creation_input_tokens: 10 }
+      : { input_tokens: '100', output_tokens: -5, cache_read_input_tokens: Infinity, cache_creation_input_tokens: NaN };
     return json;
   } });
   assert.equal(result.tokensIn, 100);
   assert.equal(result.tokensOut, 50);
-  assert.equal(result.reasoningTokens, 20);
+  assert.equal(result.reasoningTokens, 0);
   assert.equal(result.cachedTokens, 80);
   assert.equal(result.cacheWriteTokens, 10);
   assert.equal(result.modelCalls, 2);
 });
 
-test('Luna settings ignore legacy providers and use only Luna opt-in fields', () => {
-  const legacy = { aiOn: true, aiAuto: true, aiKey: 'legacy', jevKey: 'typesafe', jevModel: 'jev-old', lunaKey: 'openai' };
+test('Claude settings ignore obsolete providers and use only Claude opt-in fields', () => {
+  const legacy = { aiOn: true, aiAuto: true, aiKey: 'legacy', jevKey: 'typesafe', jevModel: 'jev-old', lunaKey: 'openai', lunaAuto: true, claudeKey: 'anthropic' };
   assert.deepEqual(settingsFrom(legacy), {
-    provider: 'luna', on: true, auto: false, apiKey: 'openai', model: DEFAULT_MODEL,
+    provider: 'claude', on: true, auto: false, apiKey: 'anthropic', model: DEFAULT_MODEL,
   });
-  assert.deepEqual(settingsFrom({ ...legacy, lunaAuto: true, aiProvider: 'jev' }), {
-    provider: 'luna', on: true, auto: true, apiKey: 'openai', model: DEFAULT_MODEL,
+  assert.deepEqual(settingsFrom({ ...legacy, claudeAuto: true, aiProvider: 'jev' }), {
+    provider: 'claude', on: true, auto: true, apiKey: 'anthropic', model: DEFAULT_MODEL,
   });
-  assert.deepEqual(settingsFrom({ aiProvider: 'jev', jevKey: 'typesafe', jevModel: 'jev-old' }), {
-    provider: 'luna', on: false, auto: false, apiKey: '', model: DEFAULT_MODEL,
-  });
-  assert.equal(settingsFrom({ aiProvider: 'luna', aiKey: 'legacy', jevKey: 'typesafe' }).apiKey, '');
-  assert.equal(settingsFrom({ lunaKey: 'openai', lunaAuto: 'true' }).auto, false);
+  assert.deepEqual(settingsFrom({ aiProvider: 'luna', lunaKey: 'openai', lunaAuto: true }), {
+    provider: 'claude', on: false, auto: false, apiKey: '', model: DEFAULT_MODEL,
+  }, 'an OpenAI key is never sent to Anthropic');
+  assert.equal(settingsFrom({ claudeKey: 'anthropic', claudeAuto: 'true' }).auto, false);
 });
 
-test('HTTP integration sends the key only to OpenAI and hides provider errors', async () => {
-  let calls = 0;
-  const body = buildRequest(items, context);
+// The SDK's own request, with a test fetch: Response objects, as the browser's fetch returns.
+const reply = (status, json, headers = {}) => new Response(JSON.stringify(json), { status, headers: { 'content-type': 'application/json', ...headers } });
+test('HTTP integration sends the key only to Anthropic, retries what the SDK retries, and hides provider errors', async () => {
+  const body = buildRequest(items, context), seen = [];
   const fetchImpl = async (url, init) => {
-    assert.equal(url, API_URL);
-    assert.equal(init.headers.authorization, 'Bearer synthetic');
-    assert.equal(JSON.parse(init.body).store, false);
-    calls++;
-    if (calls === 1) return { status: 429, ok: false, headers: { get: () => '0' } };
-    return { status: 200, ok: true, json: async () => answer(body) };
+    const headers = new Headers(init.headers);
+    seen.push({ url: String(url), key: headers.get('x-api-key'), version: headers.get('anthropic-version'),
+      browser: headers.get('anthropic-dangerous-direct-browser-access'), auth: headers.get('authorization'), body: JSON.parse(init.body) });
+    return seen.length === 1 ? reply(429, { type: 'error', error: { type: 'rate_limit_error', message: 'slow down' } }, { 'retry-after-ms': '1' })
+      : reply(200, answer(body));
   };
-  assert.equal((await callModel({ apiKey: 'synthetic', body, fetchImpl, sleep: async () => {} })).model, DEFAULT_MODEL);
-  assert.equal(calls, 2);
-  const refused = async () => ({ ok: false, status: 401, json: () => { throw new Error('echoed-private-input'); } });
-  await assert.rejects(callModel({ apiKey: 'synthetic', body, fetchImpl: refused }), error =>
-    /OpenAI API key was refused/.test(error.message) && !error.message.includes('private'));
-  await assert.rejects(callModel({ body, fetchImpl }), /needs an OpenAI API key/);
+  const message = await callModel({ apiKey: 'synthetic', body, fetchImpl });
+  assert.equal(message.model, DEFAULT_MODEL);
+  assert.equal(parseResponse(message, items, body)[0].choice, 'No');
+  assert.equal(seen.length, 2, 'one retry after a 429');
+  for (const x of seen) {
+    assert.equal(x.url, 'https://api.anthropic.com/v1/messages');
+    assert.deepEqual([x.key, x.version, x.browser, x.auth], ['synthetic', '2023-06-01', 'true', null]);
+    assert.deepEqual(x.body, body);
+  }
+  // Error bodies can echo the request: only the status picks the message.
+  const failing = (status) => async () => reply(status, { type: 'error', error: { type: 'x', message: 'echoed-private-input' } });
+  for (const [status, text] of [[401, /Anthropic API key was refused/], [400, /could not review/], [404, /unavailable/], [402, /billing/]]) {
+    await assert.rejects(callModel({ apiKey: 'synthetic', body, fetchImpl: failing(status) }),
+      error => error instanceof AssistError && text.test(error.message) && !error.message.includes('private'), String(status));
+  }
+  let tries = 0;
+  await assert.rejects(callModel({ apiKey: 'synthetic', body, fetchImpl: async () => { tries++; return reply(529, { type: 'error', error: { type: 'overloaded_error', message: 'x' } }, { 'retry-after-ms': '1' }); } }), /overloaded/);
+  assert.equal(tries, 3, 'two retries, then the agent is told');
+  await assert.rejects(callModel({ apiKey: 'synthetic', body, fetchImpl: async () => { throw new TypeError('network down'); } }), /Cannot reach Claude/);
+  await assert.rejects(callModel({ apiKey: 'synthetic', body, timeoutMs: 20,
+    fetchImpl: (url, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))) }), /took too long/);
+  await assert.rejects(callModel({ body, fetchImpl }), /needs an Anthropic API key/);
 });
 
-// Synthetic claims box. PR #17 moved from Jev to Luna: flags only, one call, nothing applied.
+// Synthetic claims box. PR #17 moved from Jev to Luna (OpenAI), and 2026-10-09 to Claude: flags only, one call, nothing applied.
 test('claims-box review: one strict call with two flags per line, redacted, flags only', async () => {
   const record = { coverage: { autoLiability: 'Yes', autoLiabLimit: '$750k CSL', cargo: true, ntl: null },
     claims: { text: 'No\nWants $1M liability instead. Leased on with Sample Carrier, needs coverage off dispatch\nFinanced\nFinanced\nno bobtail' } };
@@ -363,21 +409,20 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   const review = buildNotesReview(record, { redact: (line) => line.replace('Sample Carrier', '[client]') });
   const { body } = review;
   assert.equal(body.model, DEFAULT_MODEL);
-  assert.equal(body.store, false);
-  assert.equal(body.reasoning.effort, 'low');
-  assert.equal(body.max_output_tokens, 2048);
+  assert.equal(body.max_tokens, 16000);
+  assert.equal(body.output_config.effort, 'low');
+  assert.equal(body.output_config.format.type, 'json_schema');
   assert.equal(body.temperature, undefined);
-  assert.equal(body.text.format.name, 'claims_review');
-  assert.equal(body.text.format.strict, true);
-  const state = JSON.parse(body.input[0].content);
+  assert.deepEqual(body.output_config.format.schema.required, ['lines', 'businessTime']);
+  const state = JSON.parse(body.messages[0].content);
   assert.deepEqual(Object.keys(state.claimsBox), ['l0', 'l1', 'l2', 'l3']);
   assert.match(state.claimsBox.l1, /\[client\]/, 'names are replaced before the request');
-  assert.doesNotMatch(body.input[0].content, /Sample Carrier/);
+  assert.doesNotMatch(body.messages[0].content, /Sample Carrier/);
   assert.deepEqual(state.formCoverage, { autoLiability: 'Yes', autoLiabLimit: '$750k CSL', cargo: true }, 'the form coverage, not the agent-set NTL');
-  assert.deepEqual(body.text.format.schema.properties.lines.required, ['l0', 'l1', 'l2', 'l3']);
+  assert.deepEqual(body.output_config.format.schema.properties.lines.required, ['l0', 'l1', 'l2', 'l3']);
   assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'nothing to read');
 
-  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange, businessYears: null, businessSince: null }])) });
+  const flags = (values) => claimsEnvelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
   // coverageChange means a change other than NTL (NTL has its own flag).
   const json = flags([[false, true], [true, false], [false, false], [false, false]]);
   const results = parseNotesReview(json, review);
@@ -401,10 +446,10 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   const mixed = buildNotesReview({ coverage: {}, claims: { text: 'No\nNeeds NTL and physical damage' } });
   assert.deepEqual(notesWarnings(parseNotesReview(flags([[true, true]]), mixed), mixed).map((w) => w.code), ['ai.coverage-change'],
     'the NTL is the intake\'s item; the physical damage request is still flagged');
-  assert.match(JSON.parse(JSON.stringify(mixed.body)).instructions, /other than non-trucking liability \(that is the ntl question\)/);
+  assert.match(JSON.parse(JSON.stringify(mixed.body)).system, /other than non-trucking liability \(that is the ntl question\)/);
 
   assert.throws(() => parseNotesReview(flags([[false, true]]), review), AssistError, 'a missing line fails the whole review');
-  assert.throws(() => parseNotesReview(envelope({ lines: { l0: { ntl: 'yes', coverageChange: false, businessYears: null, businessSince: null }, l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null }, l2: { ntl: false, coverageChange: false, businessYears: null, businessSince: null }, l3: { ntl: false, coverageChange: false, businessYears: null, businessSince: null } } }), review), AssistError);
+  assert.throws(() => parseNotesReview(claimsEnvelope({ lines: { l0: { ntl: 'yes', coverageChange: false }, l1: { ntl: false, coverageChange: false }, l2: { ntl: false, coverageChange: false }, l3: { ntl: false, coverageChange: false } } }), review), AssistError);
   assert.throws(() => parseNotesReview({ ...json, model: 'other-model' }, review), AssistError, 'an unexpected model fails');
 
   let sent;
@@ -414,14 +459,14 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.equal(done.lines, 4);
   assert.equal(done.modelCalls, 1);
   assert.equal(done.tokensIn, 100);
-  const cached = await reviewNotes(record, { apiKey: 'k' }, { call: async () => ({ ...json, usage: { input_tokens: 100, output_tokens: 5,
-    input_tokens_details: { cached_tokens: 60, cache_write_tokens: 40 }, output_tokens_details: { reasoning_tokens: 3 } } }) });
-  assert.deepEqual([cached.cachedTokens, cached.cacheWriteTokens, cached.reasoningTokens], [60, 40, 3], 'the same usage counters as page reviews');
+  const cached = await reviewNotes(record, { apiKey: 'k' }, { call: async () => ({ ...json, usage: { input_tokens: 0, output_tokens: 5,
+    cache_read_input_tokens: 60, cache_creation_input_tokens: 40 } }) });
+  assert.deepEqual([cached.tokensIn, cached.cachedTokens, cached.cacheWriteTokens, cached.reasoningTokens], [100, 60, 40, 0], 'the same usage counters as page reviews');
   const none = await reviewNotes({ coverage: {}, claims: { text: '' } }, { apiKey: 'k' }, { call: async () => { throw new Error('no call expected'); } });
   assert.equal(none.modelCalls, 0);
 });
 
-// Codex on PR #22: Progressive's NTL section is unvalidated: its questions never reach Luna.
+// Codex on PR #22: Progressive's NTL section is unvalidated: its questions never reach the model.
 test('non-trucking liability questions stay with the agent', () => {
   const { items, blocked } = collectItems([{ unknown: [
     { key: 'ntl1', label: 'Does the customer operate under dispatch?', section: 'Non-Trucking Liability', controlKind: 'radio', options: ['Yes', 'No'] },
@@ -435,14 +480,14 @@ test('non-trucking liability questions stay with the agent', () => {
 // Codex on PR #22: counts are lines, not cards; a long claims box says what wasn't read.
 test('claims-box review counts flagged lines and says when the box was too long to read whole', async () => {
   const mixed = { coverage: {}, claims: { text: 'No\nNeeds bobtail and physical damage\nFinanced' } };
-  const two = (body) => envelope({ lines: { l0: { ntl: true, coverageChange: true, businessYears: null, businessSince: null }, l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null } } });
+  const two = (body) => claimsEnvelope({ lines: { l0: { ntl: true, coverageChange: true }, l1: { ntl: false, coverageChange: false } } });
   const done = await reviewNotes(mixed, { apiKey: 'k' }, { call: async ({ body }) => two(body) });
   assert.deepEqual(done.warnings.map((w) => w.code), ['ai.coverage-change'], 'the intake quotes the bobtail line');
   assert.equal(done.flagged, 1);
   assert.equal(done.lines, 2);
   assert.ok(done.warnings.every((w) => !('line' in w)), 'no extra fields on the intake items');
   const long = { coverage: {}, claims: { text: Array.from({ length: 25 }, (_, i) => `Line number ${i + 1} about the truck`).join('\n') } };
-  const all = await reviewNotes(long, { apiKey: 'k' }, { call: async ({ body }) => envelope({ lines: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).claimsBox).map((id) => [id, { ntl: false, coverageChange: false, businessYears: null, businessSince: null }])) }) });
+  const all = await reviewNotes(long, { apiKey: 'k' }, { call: async ({ body }) => claimsEnvelope({ lines: Object.fromEntries(Object.keys(JSON.parse(body.messages[0].content).claimsBox).map((id) => [id, { ntl: false, coverageChange: false }])) }) });
   assert.equal(all.lines, 20);
   assert.deepEqual(all.warnings.map((w) => [w.code, w.level]), [['ai.claims-truncated', 'check']]);
   assert.match(all.warnings[0].msg, /first 20 lines only/);
@@ -450,7 +495,7 @@ test('claims-box review counts flagged lines and says when the box was too long 
 
 // Codex on PR #22: a later "NTL" line isn't the quoted "Does not want NTL"; "GL" alone is read.
 test('claims-box review: only the quoted line\'s own sentences are the intake\'s, and short coverage words are read', () => {
-  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange, businessYears: null, businessSince: null }])) });
+  const flags = (values) => claimsEnvelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
   const review = buildNotesReview({ coverage: {}, claims: { text: 'No\nDoes not want NTL\nNTL' } });
   assert.deepEqual(review.lines, ['Does not want NTL', 'NTL']);
   assert.deepEqual(review.quotedFragments, ['Does not want NTL']);
@@ -460,37 +505,40 @@ test('claims-box review: only the quoted line\'s own sentences are the intake\'s
   assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'a bare No is still nothing to read');
 });
 
-// WA run 2026-10-09: year established blank, "in Biz for 3+ years" in the claims box. Luna copies
-// the stated years (or start year); code compares them with the intake's and tells the agent.
+// WA run 2026-10-09: year established blank, "in Biz for 3+ years" in the claims box. Claude copies
+// the stated years (or start year) once for the box; code compares them with the intake's and tells the agent.
 test('claims-box review: a stated time in business the intake lacks or contradicts is a check item', async () => {
   const today = new Date('2026-10-09');
   const record = (applicant) => ({ applicant, coverage: {}, claims: { text: '1 AF in 2024\nin Biz for 3+ years' } });
-  const answer = (l1) => envelope({ lines: {
-    l0: { ntl: false, coverageChange: false, businessYears: null, businessSince: null },
-    l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, ...l1 } } });
+  const lines = { l0: { ntl: false, coverageChange: false }, l1: { ntl: false, coverageChange: false } };
+  const answer = (businessTime) => claimsEnvelope({ lines, businessTime: { line: 'l1', years: -1, since: -1, ...businessTime } });
   const blank = buildNotesReview(record({ yearsInBusiness: null, yearsExperience: null }), { today });
-  const schema = blank.body.text.format.schema.properties.lines.properties.l0;
-  assert.deepEqual(schema.required, ['ntl', 'coverageChange', 'businessYears', 'businessSince']);
-  assert.deepEqual(schema.properties.businessYears.type, ['integer', 'null']);
-  assert.match(blank.body.instructions, /Do not calculate/);
+  const schema = blank.body.output_config.format.schema;
+  assert.deepEqual(schema.properties.lines.properties.l0.required, ['ntl', 'coverageChange']);
+  assert.deepEqual(schema.properties.businessTime.required, ['line', 'years', 'since']);
+  assert.deepEqual(schema.properties.businessTime.properties.line.enum, ['l0', 'l1', 'none']);
+  assert.equal(schema.properties.businessTime.properties.years.type, 'integer', 'no nullable union: -1 is "not stated"');
+  assert.match(blank.body.system, /do not calculate/);
 
-  const items = notesWarnings(parseNotesReview(answer({ businessYears: 3 }), blank), blank);
+  const items = notesWarnings(parseNotesReview(answer({ years: 3 }), blank), blank);
   assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.years-in-business', 'applicant.yearsInBusiness', 'check']]);
   assert.match(items[0].msg, /"in Biz for 3\+ years" \(3 years\).*blank on the intake.*New Venture/);
   // A start year: code counts the years.
-  assert.match(notesWarnings(parseNotesReview(answer({ businessSince: 2021 }), blank), blank)[0].msg, /\(5 years\)/);
+  assert.match(notesWarnings(parseNotesReview(answer({ since: 2021 }), blank), blank)[0].msg, /\(5 years\)/);
   // The intake agrees: nothing to say; it disagrees: say both.
   const three = buildNotesReview(record({ yearsInBusiness: 3 }), { today });
-  assert.deepEqual(notesWarnings(parseNotesReview(answer({ businessYears: 3 }), three), three), []);
+  assert.deepEqual(notesWarnings(parseNotesReview(answer({ years: 3 }), three), three), []);
   const one = buildNotesReview(record({ yearsInBusiness: null, yearsExperience: 1 }), { today });
-  assert.match(notesWarnings(parseNotesReview(answer({ businessYears: 3 }), one), one)[0].msg, /but the intake gives 1/);
-  // Nothing stated: no item.
+  assert.match(notesWarnings(parseNotesReview(answer({ years: 3 }), one), one)[0].msg, /but the intake gives 1/);
+  // Nothing stated: no item, whether no line or no number is given.
   assert.deepEqual(notesWarnings(parseNotesReview(answer({}), blank), blank), []);
-  // Out-of-range answers fail the review.
-  for (const bad of [{ businessYears: -1 }, { businessYears: 2.5 }, { businessYears: 101 }, { businessSince: 2027 }, { businessSince: 1900 }, { businessYears: '3' }]) {
+  assert.deepEqual(notesWarnings(parseNotesReview(claimsEnvelope({ lines }), blank), blank), []);
+  // Out-of-range or malformed answers fail the review.
+  for (const bad of [{ years: -2 }, { years: 2.5 }, { years: 101 }, { since: 2027 }, { since: 1900 }, { years: '3' }, { line: 'l9' }, { line: null }, { extra: 1 }]) {
     assert.throws(() => parseNotesReview(answer(bad), blank), AssistError, JSON.stringify(bad));
   }
-  const done = await reviewNotes(record({ yearsInBusiness: null }), { apiKey: 'k' }, { today, call: async () => answer({ businessYears: 3 }) });
+  assert.throws(() => parseNotesReview(envelope({ lines }), blank), AssistError, 'businessTime is required');
+  const done = await reviewNotes(record({ yearsInBusiness: null }), { apiKey: 'k' }, { today, call: async () => answer({ years: 3 }) });
   assert.deepEqual(done.warnings.map((w) => w.code), ['ai.years-in-business']);
   assert.equal(done.flagged, 1);
 });

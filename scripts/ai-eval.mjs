@@ -1,18 +1,18 @@
 #!/usr/bin/env node
-// Offline scoring and opt-in live evaluation for Luna.
+// Offline scoring and opt-in live evaluation for Claude (Haiku 5.5).
 //
 // Offline scoring:
 //   node scripts/ai-eval.mjs --score result.json
 // Live evaluation (never run implicitly):
-//   OPENAI_API_KEY=... node scripts/ai-eval.mjs --live
-//   OPENAI_API_KEY=... node scripts/ai-eval.mjs --live --out result.json
+//   ANTHROPIC_API_KEY=... node scripts/ai-eval.mjs --live
+//   ANTHROPIC_API_KEY=... node scripts/ai-eval.mjs --live --out result.json
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { collectItems } from '../src/ai/common.js';
-import { DEFAULT_MODEL, suggest as suggestLuna } from '../src/ai/luna.js';
+import { DEFAULT_MODEL, suggest as suggestClaude } from '../src/ai/claude.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const DEFAULT_CASES_PATH = path.join(ROOT, 'test/ai-eval/cases.json');
@@ -93,9 +93,9 @@ export function providerContext(entry) {
   return clone(entry.context);
 }
 
-function lunaConfig(env = process.env) {
-  const apiKey = env.OPENAI_API_KEY;
-  if (!apiKey) fail('Missing OPENAI_API_KEY; live evaluation is opt-in and requires that environment variable.');
+function claudeConfig(env = process.env) {
+  const apiKey = env.ANTHROPIC_API_KEY;
+  if (!apiKey) fail('Missing ANTHROPIC_API_KEY; live evaluation is opt-in and requires that environment variable.');
   return { apiKey, model: DEFAULT_MODEL };
 }
 
@@ -115,7 +115,7 @@ function safeSuggestion(item, suggestion) {
 export function safeLiveResult(entries, providerCases) {
   return {
     version: 1,
-    provider: 'luna',
+    provider: 'claude',
     cases: entries.map((entry, index) => {
       const run = providerCases[index] ?? {};
       const suggestions = Array.isArray(run.suggestions) ? run.suggestions : [];
@@ -132,7 +132,7 @@ export function safeLiveResult(entries, providerCases) {
 }
 
 export async function runProvider(entries, { env = process.env, clock = performance } = {}) {
-  const config = lunaConfig(env);
+  const config = claudeConfig(env);
   const runs = [];
   for (const entry of entries) {
     const started = clock.now();
@@ -140,7 +140,7 @@ export async function runProvider(entries, { env = process.env, clock = performa
       const collected = collectItems([{ unknown: providerItems(entry) }]);
       const blocked = collected.blocked.map(item => ({ ...item, choice: null, leave: true, basis: 'none', intakePath: null }));
       const result = collected.items.length
-        ? await suggestLuna(collected.items, providerContext(entry), config)
+        ? await suggestClaude(collected.items, providerContext(entry), config)
         : { suggestions: [], tokensIn: 0, tokensOut: 0 };
       const suggestions = [...blocked, ...(Array.isArray(result?.suggestions) ? result.suggestions : [])];
       runs.push({
@@ -301,7 +301,7 @@ export function parseArgs(args) {
   const scorePath = valueAfter(args, '--score');
   const casesPath = valueAfter(args, '--cases') ?? DEFAULT_CASES_PATH;
   const outPath = valueAfter(args, '--out');
-  if (args.includes('--provider')) fail('--provider is no longer supported; Luna is the only live evaluator.');
+  if (args.includes('--provider')) fail('--provider is no longer supported; Claude is the only live evaluator.');
   if (live === Boolean(scorePath)) fail('Choose exactly one mode: --live or --score <saved-result.json>.');
   if (!live && outPath) fail('--out is only valid with --live.');
   return { live, scorePath, casesPath, outPath };

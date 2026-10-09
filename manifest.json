@@ -21,7 +21,7 @@
     "https://*.progressive.com/*",
     "https://*.geico.com/*",
     "https://*.amwinsadmittedplacement.com/*",
-    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
     "https://usage-server-production.up.railway.app/*",
     "http://localhost/*",
     "http://127.0.0.1/*"

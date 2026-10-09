@@ -23,6 +23,9 @@ test('offline CLI runs from a checkout path containing spaces', () => {
     fs.mkdirSync(path.join(checkout, 'scripts'));
     fs.copyFileSync(new URL('../scripts/ai-eval.mjs', import.meta.url), path.join(checkout, 'scripts/ai-eval.mjs'));
     fs.cpSync(new URL('../src/', import.meta.url), path.join(checkout, 'src'), { recursive: true });
+    // src/ai/claude.js loads the vendored Anthropic SDK.
+    fs.mkdirSync(path.join(checkout, 'lib'));
+    fs.copyFileSync(new URL('../lib/anthropic-sdk.mjs', import.meta.url), path.join(checkout, 'lib/anthropic-sdk.mjs'));
     fs.writeFileSync(path.join(checkout, 'package.json'), JSON.stringify({ type: 'module' }));
     const casesPath = path.join(checkout, 'synthetic cases.json');
     const resultPath = path.join(checkout, 'saved result.json');
@@ -93,7 +96,7 @@ test('evaluation inputs retain current choices and use bounded controls', () => 
   }
 });
 
-test('safety-boundary fields are blocked before Luna sees them', () => {
+test('safety-boundary fields are blocked before Claude sees them', () => {
   const boundary = cases.find(entry => entry.id === 'safety-boundary');
   const collected = collectItems([{ unknown: providerItems(boundary) }]);
   assert.deepEqual(collected.items, []);
@@ -112,7 +115,7 @@ test('saved safe results score choices, abstentions and evidence paths', () => {
     cacheWriteTokens: 3,
   })));
   const report = scoreResult(result, cases);
-  assert.equal(report.provider, 'luna');
+  assert.equal(report.provider, 'claude');
   assert.equal(report.aggregate.choiceAccuracy, 1);
   assert.equal(report.aggregate.abstentionCorrectness, 1);
   assert.equal(report.aggregate.falsePositiveSuggestions, 0);
@@ -222,7 +225,7 @@ test('reasoning tokens are reported separately from output tokens', () => {
 });
 
 test('missing, errored and unanswered runs are never counted as model abstentions', () => {
-  const missing = scoreResult({ version: 1, provider: 'luna', cases: [] }, cases);
+  const missing = scoreResult({ version: 1, provider: 'claude', cases: [] }, cases);
   assert.equal(missing.aggregate.serviceErrors, cases.length);
   assert.equal(missing.aggregate.unanswered, 0);
   assert.equal(missing.aggregate.correctChoices, 0);
@@ -250,7 +253,7 @@ test('scoring flags false positives and evidence mismatches without exposing cas
     suggestions: entry.expected.map(expected => ({ ...expected, choice: expected.choice === null ? 'Yes' : expected.choice, intakePath: 'invented.path' })),
   })));
   const report = scoreResult(result, cases);
-  assert.equal(report.provider, 'luna');
+  assert.equal(report.provider, 'claude');
   assert.ok(report.aggregate.falsePositiveSuggestions > 0);
   assert.equal(report.aggregate.abstentionCorrectness, 0);
   assert.equal(report.aggregate.evidencePathMatchRate, 0);
@@ -258,7 +261,7 @@ test('scoring flags false positives and evidence mismatches without exposing cas
   assert.equal(Object.hasOwn(report, 'raw'), false);
 });
 
-test('live mode is explicit and Luna is the only evaluator', () => {
+test('live mode is explicit and Claude is the only evaluator', () => {
   assert.deepEqual(parseArgs(['--score', 'saved.json']), {
     live: false,
     scorePath: 'saved.json',
@@ -295,7 +298,7 @@ test('safe result output omits provider explanations, prompts and credentials', 
     tokensOut: 1,
   }]);
   const serialized = JSON.stringify(safe);
-  assert.doesNotMatch(serialized, /raw intake prompt|OPENAI_API_KEY|secret/i);
+  assert.doesNotMatch(serialized, /raw intake prompt|OPENAI_API_KEY|ANTHROPIC_API_KEY|secret/i);
   assert.deepEqual(Object.keys(safe.cases[0]).sort(), ['id', 'status', 'suggestions', 'timingMs', 'usage']);
   assert.deepEqual(Object.keys(safe.cases[0].suggestions[0]).sort(), ['basis', 'choice', 'key']);
 });

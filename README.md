@@ -1,6 +1,6 @@
 # TNI Rater Autofill
 
-A Chrome extension that reads a client's **TNI Commercial Insurance Quote Application** (the fillable PDF) and fills Progressive, AmWINS, and generic GEICO rater fields from it. Optional AI assistance from OpenAI GPT-6 Luna helps choose among the carrier's existing radio, select and checkbox options when the rules leave a choice unresolved.
+A Chrome extension that reads a client's **TNI Commercial Insurance Quote Application** (the fillable PDF) and fills Progressive, AmWINS, and generic GEICO rater fields from it. Optional AI assistance from Anthropic's Claude Haiku 5.5 helps choose among the carrier's existing radio, select and checkbox options when the rules leave a choice unresolved.
 
 The extension fills supported fields, reports unresolved questions, and preserves agent corrections. It can use carrier-specific Continue or Save & Continue actions when enabled and no review blockers remain; it never binds, buys, or submits the application. Some carrier defaults replace prefilled choices, so review the result.
 
@@ -14,7 +14,7 @@ The [development handoff](docs/handoff-2026-10-09.md) records the merged audit w
 Agents install it from its private Chrome Web Store listing (see [docs/chrome-web-store.md](docs/chrome-web-store.md)). For development:
 
 1. Run `npm ci` once, then `npm run package`. Open `chrome://extensions` and turn on **Developer mode** (top right).
-2. Click **Load unpacked** and pick `dist/tni-rater-autofill`. That copy has a fixed extension ID (`cbpjccegchfackokbiogplhdekblkccj`), so its settings, including the OpenAI key, survive removing and loading it again.
+2. Click **Load unpacked** and pick `dist/tni-rater-autofill`. That copy has a fixed extension ID (`cbpjccegchfackokbiogplhdekblkccj`), so its settings, including the Anthropic key, survive removing and loading it again.
 3. Pin the extension, then click its icon to open the side panel.
 4. After the next `npm run package`, click the extension's reload button. Open carrier pages need no refresh: the fill scripts left in them are replaced on the next fill (each build is stamped), and the usage recorder when the panel next follows the tab. Reopen the side panel to get its new version.
 5. Under **Usage log**, enter your initials. **Server** defaults to TNI's central collection server. For local development, set it to `http://localhost:8787` and start `npm run server`.
@@ -32,15 +32,15 @@ Agents install it from its private Chrome Web Store listing (see [docs/chrome-we
 
 ### AI assistant
 
-Click the **brain** in the side panel, expand **Connection**, and enter your **OpenAI API key**. Click outside the field to save, then turn on **Assistant enabled**. The key stays in this device's extension settings and is never included in usage logs. Luna uses the fixed `gpt-6-luna` model.
+Click the **brain** in the side panel, expand **Connection**, and enter your **Anthropic API key** (from the Claude Console). Click outside the field to save, then turn on **Assistant enabled**. The key stays in this device's extension settings and is never included in usage logs. Claude uses the fixed `claude-haiku-5-5` model. An OpenAI key saved for the earlier GPT-6 Luna assistant is removed on update and never sent to Anthropic.
 
-The rules run first. Luna receives unresolved choice questions, the carrier's actual options, active driver/vehicle context, intake facts and carrier-scoped TNI rules. It proposes a visible option or leaves it for the agent. Luna can explain a suggestion, but it never types names, identifiers, dates, amounts or other free-text answers.
+The rules run first. Claude receives unresolved choice questions, the carrier's actual options, active driver/vehicle context, intake facts and carrier-scoped TNI rules. It proposes a visible option or leaves it for the agent. Claude can explain a suggestion, but it never types names, identifiers, dates, amounts or other free-text answers.
 
-**Use this answer** applies a suggestion (marked **purple**); **No thanks** dismisses it. Cited sources must exist and a second Luna call checks evidence support. This does not prove correctness. Ambiguous or unsupported choices stay unresolved. Report orders, exclusions, signatures, payment/billing fields and typed identifiers are agent-owned. **Apply verified choices automatically** is separately opt-in and requires Luna's evidence check. Automatic picks block Continue until approval; rejecting one keeps the hold until you change the field or explicitly confirm its current answer. Pending holds survive panel reloads. Saved choices from a retired assistant remain holds for manual review. Architecture, limits and evaluation scaffold: [docs/ai-assistant.md](docs/ai-assistant.md).
+**Use this answer** applies a suggestion (marked **purple**); **No thanks** dismisses it. Cited sources must exist and a second Claude call checks evidence support. This does not prove correctness. Ambiguous or unsupported choices stay unresolved. Report orders, exclusions, signatures, payment/billing fields and typed identifiers are agent-owned. **Apply verified choices automatically** is separately opt-in and requires Claude's evidence check. Automatic picks block Continue until approval; rejecting one keeps the hold until you change the field or explicitly confirm its current answer. Pending holds survive panel reloads. Saved choices from a retired assistant remain holds for manual review. Architecture, limits and evaluation scaffold: [docs/ai-assistant.md](docs/ai-assistant.md).
 
-Luna's policy v4 request budget is optimized for bounded review: `gpt-6-luna` uses low reasoning, low text verbosity, up to 12 eligible fields per adaptive request, a 4,096-token choice response cap, and a 2,048-token verification cap. The combined request state and schema stays under 48,000 characters while preserving the complete evidence set needed for the decision. The first call carries the complete fact/rule sources once; the verification call carries the scoped intake and cited evidence. The same local answer cache is used, with no extended paid API cache configuration. These are request-budget limits, not a claim about actual billed tokens, live latency, or live accuracy.
+Claude's requests go through the official Anthropic SDK (bundled into `lib/` by `npm run vendor`) with structured output, low effort and Haiku 5.5's default adaptive thinking: up to 12 eligible fields per request, two calls (choice, then evidence check), and a 16,000-token cap per response. The combined request state and schema stays under 48,000 characters while preserving the complete evidence set needed for the decision. The first call carries the complete fact/rule sources once; the verification call carries the scoped intake and cited evidence. These are request bounds, not a claim about actual billed tokens, live latency, or live accuracy.
 
-The loaded intake record is kept in Chrome's session storage and cleared when Chrome closes or you click **Clear**. Filled answers go into the carrier's website. With assistance on, unresolved questions and their option texts, relevant TNI rules and the active intake facts are sent to OpenAI with your key. Identifier fields are removed and the client's names, dates of birth, street, city, ZIP, contact and ID numbers are replaced by `[client]` where they appear as written in the intake's fields, in the claims box and notes too (written another way there, such as 1/2/1980 for 01/02/1980, they may still be sent); the garaging state, business class and operations answers, coverage choices, vehicle details, the driver's license state and CDL, and the prior carrier still go in clear ([docs/ai-assistant.md](docs/ai-assistant.md) lists them). Separately, redacted usage events are queued locally and uploaded to TNI's server.
+The loaded intake record is kept in Chrome's session storage and cleared when Chrome closes or you click **Clear**. Filled answers go into the carrier's website. With assistance on, unresolved questions and their option texts, relevant TNI rules and the active intake facts are sent to Anthropic with your key. Identifier fields are removed and the client's names, dates of birth, street, city, ZIP, contact and ID numbers are replaced by `[client]` where they appear as written in the intake's fields, in the claims box and notes too (written another way there, such as 1/2/1980 for 01/02/1980, they may still be sent); the garaging state, business class and operations answers, coverage choices, vehicle details, the driver's license state and CDL, and the prior carrier still go in clear ([docs/ai-assistant.md](docs/ai-assistant.md) lists them). Separately, redacted usage events are queued locally and uploaded to TNI's server.
 
 ## Setting up a carrier: page captures
 
@@ -146,14 +146,14 @@ npm run test:intakes -- --workers 6
 npm run test:intakes -- --carrier amwins --cases 03,09,69,71,97
 npm run test:intakes -- --carrier progressive --lookup-check --cases 51,73,74,75,76,77,78,79,80,81,82
 npm run package
-npm run mock:luna
+npm run mock:claude
 ```
 
 The intake runner reads the actual PDFs in `dist/synthetic-intakes` (or `--pool <folder>`), checks retained answers against the pool manifest, and writes JSON reports and screenshots under a temporary output folder (`--out <folder>` overrides it). The pool stays outside source control. VIN/DOT responses come from its lookup fixtures; no real carrier lookups are made. The mock's exact GVW of 9,000 is a synthetic decoder response, not a weight inferred from a real VIN.
 
 AmWINS exercises the five application steps, including repeated drivers/vehicles and save/reload. A review stop is recorded before the runner continues to inspect later pages; it is not counted as automatic progress. FAO rebuilds captured pages individually. It does **not** establish full quote navigation, backend acceptance, or real lookup reliability. Missing questions and truncated business-type search results are reported as unsupported, alongside existing replay failures such as address autocomplete. Passing the selected assertions is not complete carrier coverage.
 
-The AI runner uses the packaged extension with controlled Luna responses. It checks suggestion acceptance, approval before Continue, preservation of manual edits, and response reuse. It blocks live AI requests and central uploads; it does not measure Luna's live accuracy or latency. Suggestions are cached per intake and active driver/vehicle, and late responses after a context change are discarded.
+The AI runner uses the packaged extension with controlled Claude responses. It checks suggestion acceptance, approval before Continue, preservation of manual edits, and response reuse. It blocks live AI requests and central uploads; it does not measure Claude's live accuracy or latency. Suggestions are cached per intake and active driver/vehicle, and late responses after a context change are discarded.
 
 ## Hosting
 
@@ -171,14 +171,14 @@ Updates reach agents through the Chrome Web Store; their usage logs go to TNI's 
 | `src/carriers.js`, `src/carriers/` | Per-carrier domains and exact mappings (Progressive in `carriers/progressive.js`) |
 | `src/plan.js` | Resolves values into fill steps; builds the capture redaction list |
 | `src/content/pagekit.js` | Runs inside the rater page: find fields, fill, put in AI answers, highlight, capture |
-| `src/ai/` | AI assistant: Luna request/response checks and TNI's rules as the model reads them (`tni-rules.js`) |
+| `src/ai/` | AI assistant: Claude request/response checks and TNI's rules as the model reads them (`tni-rules.js`) |
 | `captures/` | Page layouts captured from real quotes (no client data) |
 | `src/usage.js`, `sidepanel/usage-log.js`, `src/content/recorder.js` | Usage log: event building, local storage/export, page recorder |
 | `server/` | Usage collection server |
 | `scripts/` | Review tools: `learn-rules`, `build-layouts`, `summarize-usage`, `find-intake` (shared code in `scripts/lib/`) |
 | `test/replay/` | Replay test pages built from layout files |
 | `test/tools/` | Capture snippets for following a live quote without the extension |
-| `lib/` | pdf.js, vendored (MV3 can't load remote code). Refresh with `npm run vendor`. |
+| `lib/` | pdf.js and the Anthropic SDK (bundled into one module), vendored (MV3 can't load remote code). Refresh with `npm run vendor`. |
 | `icons/`, `scripts/package.mjs` | Store icons; `npm run package` builds the Web Store zip in `dist/` |
 
 ## Development

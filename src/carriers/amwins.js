@@ -88,7 +88,7 @@ const ownerFull = (r) => {
 
 // Years in business: the intake's years in business, else its years under own authority; neither
 // is TNI's standard 0, a new venture established this year (2026-10-09). Check intake warns
-// (years-in-business.default), and Luna points out a claims-box line saying how long it has run.
+// (years-in-business.default), and Claude points out a claims-box line saying how long it has run.
 const businessYears = (r) => r.applicant.yearsInBusiness ?? r.applicant.yearsExperience ?? null;
 const yearsInBusiness = (r) => {
   const n = businessYears(r) ?? 0;

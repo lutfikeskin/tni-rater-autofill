@@ -29,7 +29,7 @@ export function stampProvenance(text, { channel, commit }) {
 }
 
 // The unpacked copy (Load unpacked) gets a fixed extension ID through this public key, so its
-// settings (the agent's OpenAI key among them) survive removing and loading it again, from any
+// settings (the agent's Anthropic key among them) survive removing and loading it again, from any
 // folder. Only the public half: Chrome needs nothing else for an unpacked extension. Never in the
 // store zip: the Chrome Web Store refuses a manifest with a key and gives its own ID.
 export const DEV_KEY = 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAr8PERxTmrlU9kI7ekp0/yiAtNNZDXioK/SAqXCvMioK80wbfdItULEKpQ979/bcqcEuS83yugqAdMigTwhHAAyFCMDLzAY8G8jx0QiY8F/I8/SRezncn7K9QnFNzyTa2a2YtuuLUkUiAxwmo3w0CUK5gAAclVI8bCfeHnWbK0RHQXPw6R1ktfm3e+Z8U2++oy/4ytgEMhyVi0Jt0GoXkTymjoPUpGgRTEW5mRxuG7uZXVH/LbiW5RbYtpLfvzyZ0SmvY4w2lG6z91saRDN1qVeaL+Fx14nmeNo3WLsIZT5eSYrCHt+qX8wjff9zHY0r5O2GRvAp0Kw9Yyp4UDPKSyQIDAQAB';

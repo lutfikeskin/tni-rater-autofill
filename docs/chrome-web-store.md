@@ -40,13 +40,13 @@ the store refuses a version it already has.
      can't be reached, so what happened isn't lost before it's uploaded (no client details beyond what an agent
      types into a problem report)."
    - Host permissions: "foragentsonly.com / progressive.com / amwinsadmittedplacement.com /
-     geico.com: the carrier quote pages it fills. api.openai.com: Luna suggestions for unresolved
-     choice questions, with the agent's own OpenAI key.
+     geico.com: the carrier quote pages it fills. api.anthropic.com: Claude suggestions for unresolved
+     choice questions, with the agent's own Anthropic API key.
      usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, no client
      details beyond what an agent types into a problem report).
      localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
-     page, sent to OpenAI when the AI assistant is on). TNI's compliance owner should confirm
+     page, sent to Anthropic when the AI assistant is on). TNI's compliance owner should confirm
      these answers.
 4. **Distribution** → Visibility: *Private* (domain or trusted testers) or *Unlisted*.
 5. **Submit for review**. Reviews usually take from a few hours to a few days; the dashboard
@@ -58,7 +58,7 @@ Send them the listing link (dashboard → *Store listing* → view). In Chrome: 
 pin the extension → click it to open the side panel. Then, once each:
 
 - **Usage log → Your initials**. The usage log goes to TNI's server by itself (see hosting.md).
-- **Agent options** → enter the agent's OpenAI API key, then tick *Assistant enabled*. Leave
+- **Agent options** → enter the agent's Anthropic API key, then tick *Assistant enabled*. Leave
   *Apply verified choices automatically* off for the first weeks of the pilot.
 
 ## 5. Updates
@@ -70,9 +70,14 @@ Chrome updates installed copies by itself within a few hours of approval.
 
 ## API keys for the pilot
 
-Configure OpenAI access through TNI's account and enter the agent's key under **Agent options**.
-Check available account controls for access and spending before a wider rollout. Live quality and
-latency testing requires an OpenAI key and explicit evaluation approval.
+Create keys in TNI's Anthropic organization (Claude Console) and enter the agent's key under
+**Agent options**. Check the Console's workspace spend limits and the organization's data retention
+before a wider rollout. Live quality and latency testing requires an Anthropic key
+(`ANTHROPIC_API_KEY`) and explicit evaluation approval.
+
+The update that moved the assistant from OpenAI to Anthropic changed a host permission
+(`api.openai.com` to `api.anthropic.com`); Chrome may ask agents to accept it, and an agent who
+used the OpenAI assistant enters an Anthropic key again.
 
 ## Store listing text (paste as is)
 
@@ -94,7 +99,7 @@ What it does
 • Fills one page at a time, checks that each answer was kept by the carrier's page, and marks every field: filled, needs you, or couldn't fill.
 • Moves to the next step only when nothing is left for you, and never binds, buys, submits or signs anything.
 • Leaves MVR/CLUE orders, declarations and bank/card details to you. Some coverage and exclusion answers use programmed defaults; review them for this client's circumstances.
-• Optional AI tips (with your own OpenAI key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
+• Optional AI tips (with your own Anthropic API key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
 
 Privacy
 The application stays on your computer for the session. To improve the extension, a usage log (which fields were filled, what you changed afterwards, problems you report) is sent to TNI's server; client names, numbers and what you type into the quote are not included. A problem report is sent as you type it, with values from the loaded application, if one is loaded, replaced only where they appear exactly as written there, so don't type client details into it.
