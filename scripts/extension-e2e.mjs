@@ -51,6 +51,7 @@ console.log('site:', await panel.textContent('#site'));
 await panel.click('#tab-fill').catch(() => {});
 await panel.waitForTimeout(500);
 console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#fill-hint'));
+await panel.bringToFront();
 await panel.click('#fill');
 // These are explicit synthetic agent answers for this workflow test, not facts inferred from
 // the PDF. Never dismiss a review item or inject protected keys to make navigation succeed.
@@ -69,7 +70,7 @@ const manualFailures = [], agentAnswered = new Set();
 const answeredSteps = new Map();
 let reachedDeclaration = false;
 const atStep = () => mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), saves: window.__amwinsMock.saves }));
-const idlePanel = () => panel.waitForFunction(() => !document.querySelector('#fill').disabled && document.querySelector('#report .summary'), null, { timeout: 20000 });
+const idlePanel = () => panel.waitForFunction(() => !document.querySelector('#fill').disabled && document.querySelector('#report .summary'), null, { timeout: 20000, polling: 100 });
 const recorderContext = await sw.evaluate(async url => {
   const tab = (await chrome.tabs.query({})).find(tab => tab.url === url);
   const { session } = await chrome.storage.session.get('session');
@@ -95,21 +96,26 @@ const acknowledgedEdit = async key => {
   }
 };
 const resumeFromPanel = async () => {
+  // The harness opens the side panel as a browser tab. Native clicks need that surface
+  // in front on Windows, just as the agent would focus the real side panel to resume.
+  await panel.bringToFront();
   await idlePanel();
   const oldSummary = await panel.locator('#report .summary').elementHandle();
   const deadline = Date.now() + 15000;
+  let lastTimeout;
   try {
     // Automatic follow-ups do not always disable Fill or replace the report. A click while
     // one is running is ignored. An accepted ordinary Fill removes this summary before it
     // runs; observing that removal also catches a fill that starts and finishes very quickly.
     while (await oldSummary.evaluate(node => node.isConnected)) {
       const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new Error('The panel did not accept Fill after the recorder acknowledged the agent answers.');
+      if (remaining <= 0) throw new Error('The panel did not accept Fill after the recorder acknowledged the agent answers.', { cause: lastTimeout });
       try {
         await panel.click('#fill', { timeout: Math.min(1000, remaining) });
-        await panel.waitForFunction(node => !node.isConnected, oldSummary, { timeout: Math.min(250, Math.max(1, deadline - Date.now())) });
+        await panel.waitForFunction(node => !node.isConnected, oldSummary, { timeout: Math.min(250, Math.max(1, deadline - Date.now())), polling: 50 });
       } catch (error) {
         if (error.name !== 'TimeoutError') throw error;
+        lastTimeout = error;
       }
     }
     await idlePanel();
@@ -154,6 +160,7 @@ for (let round = 0; round < 20; round++) {
     manualFailures.push(`Continue ran before the agent answered ${before.step}`);
     break;
   }
+  await mock.bringToFront();
   for (const [, , selector, value] of answers) {
     const key = await recordedKey(selector);
     const control = mock.locator(selector);
