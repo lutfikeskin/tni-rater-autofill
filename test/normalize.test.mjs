@@ -217,6 +217,36 @@ test('ownership from the claims notes: one plain word is the answer, anything el
   assert.equal(ownershipFromNotes(null), null);
 });
 
+test('split trailer ownership notes never become vehicle ownership on either carrier', () => {
+  const read = (notes, ownership = '') => normalizeIntake({ ...raw, veh_ownership: ownership, claims_details: `No\n${notes}` });
+  const targets = (r) => {
+    const p = buildPlan(r, progressive);
+    const a = buildPlan(r, amwins);
+    return [p.find((s) => s.q === '2CA7').value, ...a.filter((s) => /^Vehicles (leased|not owned)|^Additional interest/.test(s.name ?? '')).map((s) => s.value)];
+  };
+  const missingTargets = targets(read('New venture').record);
+  for (const notes of ['Trailer.\nFinanced.', 'Trailer:\nLeased.', 'Trailer. Financed.', 'Financed.\nTrailer.', 'Dry van trailer\nOwned', 'Trailer.\nTruck.\nFinanced.', 'Trailer present.\nTruck financed.']) {
+    const { record: r, warnings } = read(notes);
+    assert.equal(r.operations.vehicleOwnership, null, notes);
+    assert.equal(r.claims.notes, notes, 'the agent keeps the complete subject and ownership text');
+    const check = warnings.find((w) => w.code === 'ownership.notes');
+    assert.equal(check?.path, 'operations.vehicleOwnership');
+    assert.equal(check?.level, 'check');
+    assert.match(check?.msg ?? '', /doesn't settle it for the vehicles/);
+    assert.deepEqual(targets(r), missingTargets, `${notes}: neither carrier receives an inferred vehicle fact`);
+  }
+  for (const notes of ['Financed', 'Truck financed.', 'Truck.\nFinanced.', 'No claims in 3 years\nVehicle financed.']) {
+    const { record: r, warnings } = read(notes);
+    assert.equal(r.operations.vehicleOwnership, 'Financed', `${notes}: safe existing inference preserved`);
+    assert.equal(buildPlan(r, progressive).find((s) => s.q === '2CA7').value, 'Yes - Loan');
+    assert.ok(!warnings.some((w) => w.code === 'ownership.notes'));
+  }
+  const answered = read('Trailer.\nFinanced.', 'Leased');
+  assert.equal(answered.record.operations.vehicleOwnership, 'Leased', 'the explicit vehicle box wins');
+  assert.equal(buildPlan(answered.record, progressive).find((s) => s.q === '2CA7').value, 'Yes - Lease');
+  assert.ok(!answered.warnings.some((w) => w.code === 'ownership.notes'));
+});
+
 // Audit 2026-10-08: a panel edit set one field and left what was derived from it stale.
 test('rederive recomputes a derived value from its edited source, never the other way round', () => {
   const today = { today: new Date('2026-09-30') };

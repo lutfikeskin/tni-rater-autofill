@@ -210,14 +210,13 @@ const OWNERSHIP_WORDS = /\b(owned|leased?|leasing|financed?|financing|loan)\b/gi
 const OWNERSHIP_ANSWERS = { owned: 'Owned', leased: 'Leased', financed: 'Financed' };
 const NEGATION = /\b(not|no|never|without|none)\b|n't\b/i;
 const TRAILER_WORD = /\btrailers?\b/i;
-const TRUCK_WORD = /\b(trucks?|vehicles?|vans?|tractors?|units?|pickups?)\b/i;
 const ownershipLines = (text) => String(text ?? '').split('\n').filter((line) => new RegExp(OWNERSHIP_WORDS.source, 'i').test(line));
 
 /**
  * The ownership answer written in the claims notes when the ownership box is blank ("Financed").
  * Only an unambiguous note is taken: exactly one ownership word, which is one of owned / leased
- * / financed, not negated in its sentence ("not leased" is not Leased) and not about the trailer
- * ("Trailer leased. Truck owned." names two units; "leased trailer" names the wrong one). Any
+ * / financed, not negated in its sentence ("not leased" is not Leased) and with no trailer
+ * mention anywhere ("Trailer.\nFinanced." can describe the trailer; mixed units stay ambiguous). Any
  * other mention is left to the agent with the lines quoted.
  * @returns {{ value: string|null, lines: string } | null}  null when the notes say nothing about ownership
  */
@@ -235,8 +234,9 @@ export function ownershipFromNotes(notes) {
   const start = Math.max(...[...text.slice(0, mention.index).matchAll(/[.;!?\n]/g)].map((m) => m.index + 1), 0);
   const end = text.slice(mention.index).search(/[.;!?\n]/);
   const sentence = text.slice(start, end < 0 ? undefined : mention.index + end);
-  if (NEGATION.test(sentence) || TRAILER_WORD.test(sentence)) return unsettled;
-  if (TRAILER_WORD.test(text) && TRUCK_WORD.test(text)) return unsettled;
+  // A trailer can be the subject of a separate ownership sentence or line. Keep trailer-only
+  // and mixed-unit notes unresolved rather than assigning their ownership to the vehicle.
+  if (NEGATION.test(sentence) || TRAILER_WORD.test(text)) return unsettled;
   return { value, lines };
 }
 
