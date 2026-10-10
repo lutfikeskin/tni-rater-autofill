@@ -438,9 +438,12 @@ test('Undo after Mark done gives the field back only while the agent hasn\'t ans
   await context.undoMarkDone(item, '200F', 1, 'Rates');
   assert.deepEqual([...state.agentKeys.get('Rates')], ['200F'], 'answered on the page since: the agent\'s edit stays protected');
   item.dataset.settled = 'marked';
+  Object.assign(parts['.need-note'], { hidden: false, children: ['✓ Marked done'] });
   await context.undoMarkDone(item, '200F', 1, 'Rates');
   assert.deepEqual([...state.agentKeys.get('Rates')], []);
   assert.deepEqual([parts['.mark-done'].hidden, item.dataset.settled, counted], [false, undefined, 1]);
+  // Open again: its note is empty and hidden ("Answer these on the page" is said once, above).
+  assert.deepEqual([parts['.need-note'].hidden, parts['.need-note'].children.length], [true, 0]);
 });
 
 test('each item left for the agent has a labelled Mark done bound to its field and page', () => {
@@ -451,7 +454,7 @@ test('each item left for the agent has a labelled Mark done bound to its field a
   const visit = (node) => {
     if (Array.isArray(node)) return node.forEach(visit);
     if (!node || typeof node !== 'object') return;
-    if (node.tag === 'button') buttons.push(node);
+    if (node.tag === 'button' && /\bmark-done\b/.test(node.props.class)) buttons.push(node);
     visit(node.children);
   };
   visit(box.children);
@@ -460,6 +463,116 @@ test('each item left for the agent has a labelled Mark done bound to its field a
   assert.ok(buttons.every((b) => b.children[0] === 'Mark done'));
   buttons.forEach((button) => button.props.onclick());
   assert.deepEqual(clicks, [['200F', 7, 'Rates'], ['failed', 7, 'Rates'], ['missing', 7, 'Rates']]);
+});
+
+// Design review, good-to-have #3: step 3 listed what's left by kind, so its order changed between
+// fills and didn't follow the page. It follows the page now (pagekit `order`, within a frame;
+// frames in the order given), whatever kind each item is; an item with no field on the page comes
+// last, as it came. "Answer these on the page" is said once, above the items, not on each.
+test('step 3 lists what is left in the page order of its fields, and says once to answer them on the page', () => {
+  const { context, box } = reportHarness({ tab: { id: 7, url: 'Rates' } });
+  context.renderReport([
+    { fields: 7, filled: [], actions: [],
+      unknown: [{ key: 'u', label: 'Unfamiliar', order: 5 }, { key: 'z', label: 'No place' }],
+      failed: [{ key: 'f', label: 'Failed', reason: 'invalid', order: 1 }],
+      noData: [{ key: null, label: 'Helper', note: 'Click it yourself.' }, { key: 'n', label: 'Missing', order: 3 }],
+      leftRequired: [{ key: 'r', label: 'Required', order: 4 }],
+      kept: [{ key: 'k', label: 'Differs', differs: true, order: 2 }, { key: 'same', label: 'Kept', order: 0 }],
+      checks: [{ key: 'c', label: 'Check', note: 'Check it.', order: 0 }] },
+    { fields: 1, filled: [], actions: [], noData: [{ key: 'g', label: 'Other frame', order: 0 }] },
+  ]);
+  const cards = box.children.filter((c) => c?.props?.class === 'need');
+  const labelOf = (card) => card.children[0].children[1].children[0].children[0];
+  assert.deepEqual(cards.map(labelOf), ['Check', 'Failed', 'Differs', 'Missing', 'Required', 'Unfamiliar', 'Other frame', 'No place', 'Helper']);
+  const say = box.children.filter((c) => /\bneeds-say\b/.test(c?.props?.class ?? ''));
+  assert.deepEqual(say.map((c) => c.children[0]), ['Answer these on the page.']);
+  assert.ok(box.children.indexOf(say[0]) < box.children.indexOf(cards[0]), 'above the items');
+  assert.doesNotMatch(JSON.stringify(cards), /Answer it on the page/);
+  const notes = cards.map((card) => card.children.at(-1));
+  assert.ok(notes.every((note) => note.props.class === 'need-note' && note.props.hidden === true && !note.children.length), 'each note empty and hidden while open');
+  // Nothing left: nothing to say.
+  context.renderReport([{ fields: 1, filled: [{ label: 'A', key: 'a', shown: 'x' }], kept: [], failed: [], noData: [], leftRequired: [], actions: [] }]);
+  assert.equal(box.children.some((c) => /\bneeds-say\b/.test(c?.props?.class ?? '')), false);
+});
+
+test('"Answer these on the page" goes once nothing is left, and comes back when an item opens again', () => {
+  const need = () => ({ classList: { set: new Set(['need']), contains(c) { return this.set.has(c); } } });
+  const items = [need(), need()];
+  const say = { hidden: false };
+  const report = { children: items, querySelector: (sel) => (sel === '.needs-say' ? say : null) };
+  const entry = { key: 'k', fields: 2, left: 2 };
+  const context = { state: { reportFor: entry }, $: () => report, renderSteps() {}, announce() {}, continueNote: () => null };
+  vm.runInNewContext(extractFunction('recount'), context);
+  items.forEach((n) => n.classList.set.add('resolved'));
+  context.recount();
+  assert.equal(say.hidden, true);
+  items[0].classList.set.delete('resolved');
+  context.recount();
+  assert.equal(say.hidden, false);
+});
+
+test('each item with a field has a labelled Show on page bound to its field, tab, page and carrier', () => {
+  const calls = [];
+  const carrier = { id: 'progressive', world: 'MAIN' };
+  const { context, box } = reportHarness({ tab: { id: 7, url: 'Rates', carrier } }, { showOnPage: (item, x, ...rest) => calls.push([x.key, x.label, ...rest]) });
+  context.renderReport([{ fields: 2, unknown: [{ key: '200F', label: 'Vehicle field', order: 0 }], noData: [{ key: null, label: 'Helper', note: 'Click it yourself.' }] }]);
+  const buttons = [];
+  const visit = (node) => {
+    if (Array.isArray(node)) return node.forEach(visit);
+    if (!node || typeof node !== 'object') return;
+    if (node.tag === 'button' && /\bshow-on-page\b/.test(node.props.class)) buttons.push(node);
+    visit(node.children);
+  };
+  visit(box.children);
+  assert.deepEqual(buttons.map((b) => [b.props['aria-label'], b.children[0]]), [['Show Vehicle field on the page', 'Show on page']], 'none for an item without a field');
+  buttons[0].props.onclick();
+  assert.deepEqual(calls, [['200F', 'Vehicle field', 7, 'Rates', carrier]]);
+});
+
+// Show on page only scrolls and flashes the field (pagekit reveal), in whichever frame of the
+// item's own tab has it; it is never sent to another tab or page.
+test('Show on page asks every frame of the item\'s own tab to reveal its field, and says when none has it', async () => {
+  const carrier = { id: 'progressive', world: 'MAIN' };
+  const state = { tab: { id: 7, url: 'Rates', carrier }, filling: false };
+  const runs = [];
+  let frames = [{ frameId: 0, result: false }, { frameId: 3, result: true }];
+  const said = [];
+  const timers = [];
+  const where = { hidden: true, textContent: '' };
+  const item = { querySelector: (sel) => (sel === '.need-where' ? where : null) };
+  const context = { state, pageOf: (u) => u, announce: (t) => said.push(t),
+    runKit: async (...args) => { runs.push(args); if (frames instanceof Error) throw frames; return frames; },
+    setTimeout: (fn) => timers.push(fn), clearTimeout() {} };
+  vm.runInNewContext(extractFunction('showOnPage'), context);
+  const x = { key: '200F', label: 'Vehicle field' };
+  // Another tab or page, or an item without a field: nothing is asked of any page.
+  await context.showOnPage(item, x, 8, 'Rates', carrier);
+  await context.showOnPage(item, x, 7, 'OldPage', carrier);
+  await context.showOnPage(item, { key: null, label: 'Helper' }, 7, 'Rates', carrier);
+  assert.equal(runs.length, 0);
+  await context.showOnPage(item, x, 7, 'Rates', carrier);
+  assert.equal(runs.length, 1);
+  const [tabId, kitCarrier, func, args] = runs[0];
+  assert.deepEqual([tabId, kitCarrier, [...args]], [7, carrier, ['200F', 'Vehicle field']]);
+  assert.deepEqual([where.hidden, where.textContent, said.length], [true, '', 0], 'found in a frame: nothing to say');
+  // What runs in each frame: the kit's reveal, nothing else of it. A kit without it finds nothing.
+  const seen = [];
+  context.__raterKit = { reveal: (...a) => { seen.push(a); return true; }, fill: () => { throw new Error('never fills'); }, answer: () => { throw new Error('never answers'); } };
+  assert.equal(func('200F', 'Vehicle field'), true);
+  assert.deepEqual(seen, [['200F', 'Vehicle field']]);
+  context.__raterKit = {};
+  assert.equal(func('200F', 'Vehicle field'), false);
+  // No frame has it: said on the item and announced, for a few seconds.
+  frames = [{ frameId: 0, result: false }];
+  await context.showOnPage(item, x, 7, 'Rates', carrier);
+  assert.deepEqual([where.hidden, where.textContent], [false, 'Not on the page now (it may be in a closed section).']);
+  assert.deepEqual(said, ['Not on the page now (it may be in a closed section).']);
+  timers.at(-1)();
+  assert.deepEqual([where.hidden, where.textContent], [true, '']);
+  // The page navigating meanwhile: not found either.
+  frames = new Error('Frame was removed');
+  await context.showOnPage(item, x, 7, 'Rates', carrier);
+  assert.equal(where.hidden, false);
 });
 
 // Live run 2026-10-09: with automatic filling on, the agent moved to AmWINS' Vehicles step (same

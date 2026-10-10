@@ -788,6 +788,52 @@ test('unfamiliar required controls warn in yellow without blocking known fields 
   assert.equal(helper._clicked, true);
 });
 
+// Design review 2026-10-10: a TNI standard (gender MALE, None of the above: an assumption, not an
+// intake fact) is marked apart from intake answers; a standard the agent must confirm stays amber.
+test('a TNI standard gets its own mark, an intake answer the filled green, and a standard to confirm the check color', async () => {
+  const h = harness();
+  const name = makeInput({ id: 'name', ariaLabel: 'Business Name' });
+  const gender = new SelectNode([{ text: '', value: '' }, { text: 'MALE', value: 'M' }, { text: 'FEMALE', value: 'F' }], { id: 'gender', ariaLabel: 'Gender' });
+  const marital = new SelectNode([{ text: '', value: '' }, { text: 'SINGLE', value: 'S' }, { text: 'MARRIED', value: 'M' }], { id: 'marital', ariaLabel: 'Marital Status' });
+  h.document.body.append(name, gender, marital);
+  const plan = [
+    { id: 'n', selector: '#name', path: 'x.name', name: 'Business name', kind: 'text', value: 'Synthetic Hauling' },
+    { id: 'g', selector: '#gender', path: 'x.gender', name: 'Gender', kind: 'choice', value: 'MALE', standard: true },
+    { id: 'm', selector: '#marital', path: 'x.marital', name: 'Marital status', kind: 'choice', value: 'SINGLE', standard: true, reviewRequired: true, warn: 'Review mode: confirm this standard answer.' },
+  ];
+  const report = await h.kit.fill(plan, { maxRounds: 4 });
+  assert.equal(report.filled.length, 3);
+  assert.equal(name.getAttribute('data-rater-autofill'), 'filled');
+  assert.equal(name.style.outline, '2px solid #16a34a');
+  assert.equal(name.getAttribute('title'), 'Rater Autofill: filled from intake: Business name');
+  assert.equal(gender.getAttribute('data-rater-autofill'), 'standard');
+  assert.equal(gender.style.outline, '2px solid #2f6fd6');
+  assert.equal(gender.getAttribute('title'), 'Rater Autofill: TNI standard answer, not from the intake: Gender');
+  assert.equal(marital.getAttribute('data-rater-autofill'), 'needs', 'a standard to confirm is a check item');
+  assert.equal(marital.style.outline, '2px dashed #d97706');
+  assert.equal(marital.getAttribute('title'), 'Rater Autofill: Review mode: confirm this standard answer.');
+  // A follow-up fill that keeps the marks leaves them as they were (the answers already in), and
+  // the standard to confirm is still a check.
+  const again = await h.kit.fill(plan, { maxRounds: 2, keepMarks: true });
+  assert.equal(again.filled.length, 0);
+  assert.equal(name.style.outline, '2px solid #16a34a');
+  assert.equal(gender.style.outline, '2px solid #2f6fd6');
+  assert.equal(marital.style.outline, '2px dashed #d97706');
+  assert.equal(h.kit.clear(), 3);
+  assert.equal(gender.style.outline, '');
+  assert.equal(gender.getAttribute('data-rater-autofill'), null);
+});
+
+test('the side panel key shows the page marks in the page kit colors', () => {
+  const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
+  const colors = [...PAGEKIT.match(/const COLORS = \{([^}]*)\}/)[1].matchAll(/(\w+): '(#[0-9a-f]{6})'/gi)];
+  assert.deepEqual(colors.map(([, status]) => status).sort(), ['ai', 'failed', 'filled', 'needs', 'standard']);
+  for (const [, status, hex] of colors) {
+    assert.equal(css.match(new RegExp(`--mark-${status}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1].toLowerCase(), hex.toLowerCase(), status);
+    assert.match(css, new RegExp(`\\.mark\\.${status} \\{[^}]*var\\(--mark-${status}\\)`), status);
+  }
+});
+
 test('repeated question ids without a vehicle hint stay yellow, and a hint picks the right row', async () => {
   const h = harness({ ext: true });
   const first = addExtText(h, 'U', '3C01', { caption: '2021 FORD TRANSIT 350', row: '8_1' });
@@ -1770,6 +1816,81 @@ test('AI banner lists pending selections at the bottom of the page and markKey r
   assert.equal(h.kit.markKey(key, 'Tows for others', 'needs', 'AI choice rejected'), true);
   assert.equal(field.getAttribute('data-rater-autofill'), 'needs');
   assert.equal(h.kit.markKey('nope', 'x', 'needs', 'n'), false);
+});
+
+// Design review, good-to-have #3: step 3 listed what's left by kind (unfamiliar, failed, missing,
+// …), so its order changed between fills and didn't follow the page. Each item carries its
+// field's place on the page, read at the end of the fill (a question revealed above the others
+// counts); an item without a field (a helper to click by hand) has none.
+test('report items carry the place of their field on the page, in document order', async () => {
+  const h = harness();
+  const first = makeInput({ id: 'first', ariaLabel: 'Unfamiliar one' });
+  const checked = makeInput({ id: 'checked', ariaLabel: 'Filled with a check' });
+  const missing = makeInput({ id: 'missing', ariaLabel: 'Missing answer' });
+  const bad = new SelectNode([{ text: '', value: '' }, { text: 'Yes', value: 'y' }, { text: 'No', value: 'n' }], { id: 'bad', ariaLabel: 'Bad choice' });
+  const required = makeInput({ id: 'required', ariaLabel: 'Required unfamiliar', required: true });
+  h.document.body.append(first, checked, missing, bad, required);
+  // Answering one draws a new question above them all.
+  checked.addEventListener('change', () => {
+    if (h.document.getElementById('revealed')) return;
+    const revealed = makeInput({ id: 'revealed', ariaLabel: 'Revealed above' });
+    revealed.parentElement = h.document.body;
+    revealed.ownerDocument = h.document;
+    h.document.body.children.unshift(revealed);
+  });
+  const report = await h.kit.fill([
+    { id: 'checked', selector: '#checked', path: 'a', kind: 'text', value: 'x', warn: 'Check it.' },
+    { id: 'missing', selector: '#missing', path: 'b', kind: 'text', value: null },
+    { id: 'bad', selector: '#bad', path: 'c', kind: 'choice', value: 'Maybe' },
+    { id: 'tile', kind: 'action', action: 'tile', label: 'Vehicle tile', text: 'Add vehicle', pages: [], after: [], afterActions: [], afterPages: [], unless: [], missing: 'Click the vehicle tile yourself.' },
+  ], { maxRounds: 6 });
+  const at = (list, label) => list.find((x) => x.label === label)?.order;
+  assert.deepEqual([at(report.unknown, 'Revealed above'), at(report.unknown, 'Unfamiliar one'), at(report.checks, 'Filled with a check'),
+    at(report.noData, 'Missing answer'), at(report.failed, 'Bad choice'), at(report.leftRequired, 'Required unfamiliar'), at(report.unknown, 'Required unfamiliar')],
+  [0, 1, 2, 3, 4, 5, 5]);
+  const tile = report.noData.find((x) => x.label === 'Vehicle tile');
+  assert.ok(tile, 'the helper is left for the agent');
+  assert.equal('order' in tile, false, 'a helper has no field on the page');
+});
+
+// "Show on page" in step 3 (good-to-have #3): the field comes into view and its mark is ringed for
+// a moment, then put back as it was. Nothing on the page changes: no value, no click, no focus,
+// no event.
+test('reveal scrolls a field into view and rings its mark briefly, changing nothing on the page', async () => {
+  const h = harness();
+  const field = new SelectNode([{ text: '', value: '' }, { text: 'Yes', value: 'y' }], { id: 'tow', ariaLabel: 'Tows for others' });
+  const closed = makeInput({ id: 'closed', ariaLabel: 'In a section closed since' });
+  h.document.body.append(field, closed);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const keyOf = (label) => report.unknown.find((x) => x.label === label).key;
+  const outline = field.style.outline;
+  assert.ok(outline, 'marked by the fill');
+  field.style.boxShadow = 'inset 0 0 1px red';
+  const scrolled = [];
+  const touched = [];
+  field.scrollIntoView = (options) => scrolled.push(options);
+  field.focus = () => touched.push('focus');
+  field.click = () => touched.push('click');
+  field.dispatchEvent = (event) => { touched.push(event.type); return true; };
+  assert.equal(h.kit.reveal(keyOf('Tows for others'), 'Tows for others'), true);
+  assert.deepEqual(scrolled.map((o) => ({ ...o })), [{ block: 'center' }]);
+  assert.match(field.style.boxShadow, /^0 0 0 4px /);
+  assert.equal(field.style.outline, outline, 'its mark stays');
+  // Shown again while ringed: what was there before is still what comes back.
+  h.kit.reveal(keyOf('Tows for others'), 'Tows for others');
+  await new Promise((r) => setTimeout(r, 1600));
+  assert.equal(field.style.boxShadow, 'inset 0 0 1px red');
+  // A shadow the page sets meanwhile is the page's: left as it is.
+  h.kit.reveal(keyOf('Tows for others'), 'Tows for others');
+  field.style.boxShadow = 'page shadow';
+  await new Promise((r) => setTimeout(r, 1600));
+  assert.equal(field.style.boxShadow, 'page shadow');
+  assert.deepEqual([field.value, touched], ['', []], 'no value, click, focus or event');
+  // Not on screen now (a section closed since the fill) or not on the page: not found here.
+  closed._visible = false;
+  assert.equal(h.kit.reveal(keyOf('In a section closed since'), 'In a section closed since'), false);
+  assert.equal(h.kit.reveal('nope', 'x'), false);
+  assert.equal(closed.style.boxShadow, undefined);
 });
 
 test('home address box: whole address typed, first suggestion picked, ZIP/city then checked', async () => {

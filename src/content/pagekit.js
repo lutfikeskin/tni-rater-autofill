@@ -1,5 +1,5 @@
 // Injected into rater pages (every frame) by the side panel. Classic script, no imports.
-// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, aiBanner, capture, clear, … }.
+// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, aiBanner, capture, clear, … }.
 //
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
 // page already filled alone.
@@ -14,15 +14,19 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 64 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 65 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
   const extraRowKeys = new Map();
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
-  // ai: an answer the AI assistant chose (accepted by the agent or auto-selected); check it.
-  const COLORS = { filled: '#16a34a', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed' };
+  // filled: an intake answer (or one worked out from it); standard: a TNI standard answer (plan
+  // step `standard`: an assumption such as gender MALE, not a fact from the intake); ai: an answer
+  // the AI assistant chose (accepted by the agent or auto-selected); check it. The side panel's key
+  // uses the same colors (sidepanel.css --mark-*).
+  const COLORS = { filled: '#16a34a', standard: '#2f6fd6', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed' };
+  const SOLID_MARKS = new Set(['filled', 'standard', 'ai']);
   const STATE_NAMES = {
     AL: 'alabama', AK: 'alaska', AZ: 'arizona', AR: 'arkansas', CA: 'california', CO: 'colorado', CT: 'connecticut',
     DE: 'delaware', DC: 'district of columbia', FL: 'florida', GA: 'georgia', HI: 'hawaii', ID: 'idaho', IL: 'illinois',
@@ -948,7 +952,7 @@
         el.dataset.raPrevTitle = el.getAttribute('title') ?? '';
       }
       el.setAttribute(MARK, status);
-      el.style.outline = `2px ${status === 'filled' || status === 'ai' ? 'solid' : 'dashed'} ${COLORS[status]}`;
+      el.style.outline = `2px ${SOLID_MARKS.has(status) ? 'solid' : 'dashed'} ${COLORS[status]}`;
       el.style.outlineOffset = '1px';
       if (note) el.setAttribute('title', `Rater Autofill: ${note}`);
     }
@@ -1248,6 +1252,9 @@
     const serverBacked = !!ext();
     let pendingAction = null;
     let progressed = false; // did the last round fill or click anything?
+    // The questions the last round read (in document order): where the items are on the page
+    // when a helper has opened the next page by the end of the fill.
+    let roundControls = [];
     const halt = (reason) => { report.halted = true; report.reason = reason; };
     const thisFill = { report, halt };
     running = thisFill;
@@ -1271,6 +1278,7 @@
     for (let round = 0; round < maxRounds; round++) {
       report.rounds = round + 1;
       const controls = collectControls();
+      roundControls = controls;
       report.fields = Math.max(report.fields, controls.length);
       if (report.halted) break;
       const allPairs = assign(controls, plan);
@@ -1450,7 +1458,10 @@
             }
           }
           report.filled.push({ ...item, shown: result.shown });
-          handled.set(step.id, { status: 'filled', note: `filled from intake: ${step.name}` });
+          // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
+          handled.set(step.id, step.standard
+            ? { status: 'standard', note: `TNI standard answer, not from the intake: ${step.name}` }
+            : { status: 'filled', note: `filled from intake: ${step.name}` });
           if (step.warn) {
             report.checks.push({ ...item, note: step.warn, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.warn });
@@ -1757,6 +1768,22 @@
     }
     // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
     report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findIndex((x) => x.id === b.id) === i);
+    // Where each item's field is on the page (`order`: its place among the page's questions, in
+    // document order), so the side panel lists what's left in the page's order, whichever kind
+    // of item it is. Read once, from the page as it is now (as the last round read it when a
+    // helper opened the next page). An item with no field there (a helper, a unit without its row,
+    // a field gone since) gets none: the panel lists it last.
+    const placeOf = new Map();
+    (stillHere ? controls : roundControls).forEach((c, i) => {
+      const key = fieldKey(c);
+      if (!placeOf.has(`${key}|${c.label}`)) placeOf.set(`${key}|${c.label}`, i);
+      if (!placeOf.has(key)) placeOf.set(key, i);
+    });
+    for (const x of [report.unknown, report.failed, report.noData, report.leftRequired, report.kept, report.checks].flat()) {
+      // Rows of one question share a key; their labels tell them apart.
+      const at = x.key == null ? undefined : placeOf.get(`${x.key}|${x.label}`) ?? placeOf.get(x.key);
+      if (at !== undefined) x.order = at;
+    }
     // Anything the agent should look at before moving on.
     // The carrier probably changed this page: a known field renamed, or most of its questions
     // unfamiliar at once. Continue waits for the agent, and the panel says so.
@@ -1909,6 +1936,35 @@
     const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
     if (c) mark(c, status, note);
     return !!c;
+  }
+
+  // "Show on page" in the side panel: brings the field `key` into view (`label` tells rows of one
+  // question apart, as in markKey) and rings its mark for 1.5 s, then puts back what was there.
+  // It reads and scrolls only: no value is changed, nothing is clicked or focused, and no event is
+  // sent to the page. Returns whether this frame has the field on screen (one in a closed section
+  // isn't).
+  const ringed = new Map(); // a ringed element -> { prev: its own box-shadow, ring, timer }
+  function reveal(key, label) {
+    const same = collectControls().filter((c) => fieldKey(c) === key);
+    const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
+    if (!c) return false;
+    const targets = highlightTargets(c);
+    targets[0]?.scrollIntoView?.({ block: 'center' });
+    for (const el of targets) {
+      const was = ringed.get(el);
+      if (was) clearTimeout(was.timer);
+      const prev = was ? was.prev : el.style.boxShadow ?? '';
+      // In the color of its mark (blue when it has none), wider than the mark's outline.
+      el.style.boxShadow = `0 0 0 4px ${el.style.outlineColor || '#2563eb'}`;
+      // As the browser reads it back, to tell it from a shadow the page sets meanwhile.
+      const ring = el.style.boxShadow;
+      const timer = setTimeout(() => {
+        ringed.delete(el);
+        if (el.style.boxShadow === ring) el.style.boxShadow = prev;
+      }, 1500);
+      ringed.set(el, { prev, ring, timer });
+    }
+    return true;
   }
 
   // A small note at the bottom of the rater page listing what the AI selected and still needs
@@ -2089,5 +2145,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 64, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 65, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

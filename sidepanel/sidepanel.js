@@ -1931,6 +1931,9 @@ function recount() {
   // Settled since the fill: the panel's Continue is a click away now, never on its own.
   entry.settled = !left && entry.left > 0;
   entry.left = left;
+  // "Answer these on the page" only while some are open.
+  const say = $('report').querySelector('.needs-say');
+  if (say) say.hidden = !left;
   $('report').querySelector('.continue-note')?.replaceWith(continueNote(entry));
   renderSteps();
   announce(left ? `${left} left for you on this page.` : 'Nothing is left for you on this page.');
@@ -2440,9 +2443,33 @@ async function undoMarkDone(item, key, tabId, page) {
   item.classList.remove('resolved');
   delete item.dataset.settled;
   item.querySelector('.mark-done').hidden = false;
-  item.querySelector('.need-note').replaceChildren('Answer it on the page.');
+  // Open again: the note is empty ("Answer these on the page" is said once, above the items).
+  const note = item.querySelector('.need-note');
+  note.replaceChildren();
+  note.hidden = true;
   item.querySelector('.mark-done').focus();
   recount();
+}
+
+// "Show on page" on an item left for the agent: the carrier page scrolls to its field and the
+// field's mark flashes (pagekit reveal), in whichever frame has it. Nothing is filled, clicked or
+// focused there. Only on the item's own tab and page, as for Mark done. A field the page doesn't
+// show now (in a closed section, or gone) is said on the item for a few seconds.
+async function showOnPage(item, x, tabId, page, carrier) {
+  if (!x.key || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
+  let found = false;
+  try {
+    const frames = await runKit(tabId, carrier, (key, label) => globalThis.__raterKit?.reveal?.(key, label) === true, [x.key, x.label ?? null]);
+    found = frames.some((f) => f.result === true);
+  } catch { /* the page is navigating */ }
+  const where = item.querySelector('.need-where');
+  if (!where) return;
+  clearTimeout(where.hideTimer);
+  where.hidden = found;
+  where.textContent = found ? '' : 'Not on the page now (it may be in a closed section).';
+  if (found) return;
+  announce(where.textContent);
+  where.hideTimer = setTimeout(() => { where.hidden = true; where.textContent = ''; }, 6000);
 }
 
 // An item left for the agent that is settled now: answered on the page ('answered') or marked
@@ -2509,7 +2536,6 @@ function renderReport(frames, ctx = {}) {
   // A field of another step (pagekit otherStep: AmWINS' prior carriers, filled again while hidden)
   // isn't this step's: left out of its list and count (live run 2026-10-09).
   const filled = all('filled').filter((x) => !x.otherStep);
-  const failed = all('failed');
   const kept = all('kept').filter((x) => !x.otherStep);
   const fields = frames.reduce((n, f) => n + (f.fields ?? 0), 0);
   const tabId = ctx.tabId ?? state.tab?.id;
@@ -2531,15 +2557,22 @@ function renderReport(frames, ctx = {}) {
     return;
   }
   const unknownKeys = new Set(all('unknown').map((x) => x.key));
-  const needs = [
-    ...all('unknown').map((x) => ({ ...x, mark: 'needs', why: `Unfamiliar question${x.required ? ' (required)' : ''}: no TNI rule for it yet.` })),
-    ...failed.map((x) => ({ ...x, mark: 'failed', why: `Couldn't fill: ${x.reason}` })),
-    ...all('noData').map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
-    ...all('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
-    ...kept.filter((x) => x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
+  // Each item with its frame's place among the page's frames (pagekit's `order` counts within one).
+  const framed = (k) => frames.flatMap((f, frame) => (f[k] ?? []).map((x) => ({ ...x, frame })));
+  const items = [
+    ...framed('unknown').map((x) => ({ ...x, mark: 'needs', why: `Unfamiliar question${x.required ? ' (required)' : ''}: no TNI rule for it yet.` })),
+    ...framed('failed').map((x) => ({ ...x, mark: 'failed', why: `Couldn't fill: ${x.reason}` })),
+    ...framed('noData').map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
+    ...framed('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
+    ...framed('kept').filter((x) => !x.otherStep && x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
     // Defaults filled for the agent to confirm (e.g. marital status missing on the intake).
-    ...all('checks').map((x) => ({ ...x, mark: 'needs', why: x.note })),
+    ...framed('checks').map((x) => ({ ...x, mark: 'needs', why: x.note })),
   ];
+  // In the order of their fields on the page, the same on every fill, whatever kind each item is
+  // (pagekit `order`: the field's place in its frame; frames in the order the page gave them). An
+  // item with no field on the page (a helper, a unit without its row) comes last, as it came.
+  const onPage = (x) => Number.isInteger(x.order);
+  const needs = [...items.filter(onPage).sort((a, b) => a.frame - b.frame || a.order - b.order), ...items.filter((x) => !onPage(x))];
   const waiting = all('blocked');
   const advanced = frames.find((f) => f.advanced)?.advanced;
   // A page note may depend on the intake (Progressive's Rates for an NTL quote).
@@ -2549,14 +2582,20 @@ function renderReport(frames, ctx = {}) {
     const label = x.label || x.name;
     const done = x.key ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page',
       'aria-label': `Mark ${label} done`, onclick: () => markDone(item, x.key, tabId, page) }, 'Mark done') : null;
+    // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
+    const show = x.key ? h('button', { class: 'link small show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
+      'aria-label': `Show ${label} on the page`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
     const item = h('div', { class: 'need', tabindex: '-1', dataset: { need: `${x.key}|${x.label}`, key: x.key ?? '' } },
       h('div', { class: 'need-head' },
         h('span', { class: `mark ${x.mark}` }),
-        h('div', { class: 'row-text' }, h('b', {}, label), h('span', {}, x.why)),
+        h('div', { class: 'row-text' }, h('b', {}, label), h('span', {}, x.why), show,
+          show ? h('span', { class: 'need-where', hidden: true }) : null),
         done),
       x.options?.length && x.mark === 'failed' ? h('div', { class: 'options' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null,
       h('div', { class: 'ai-slot' }),
-      h('div', { class: 'need-note' }, 'Answer it on the page.'));
+      // Empty while the item is open ("Answer these on the page" is said once, above the items):
+      // what settled it, once it is (settleNeed).
+      h('div', { class: 'need-note', hidden: true }));
     return item;
   };
   // Answers an earlier pass on this page filled (a follow-up pass, after the VIN lookup or a
@@ -2624,11 +2663,14 @@ function renderReport(frames, ctx = {}) {
     pageChanged ? h('p', { class: 'card bad' }, pageChanged) : null,
     // The AI's messages and its approval card go here, above the items (runAssist).
     h('div', { class: 'needs-head', hidden: true }),
+    // Said once for all the items (hidden by recount once none is open).
+    needs.length ? h('p', { class: 'needs-say muted small' }, 'Answer these on the page.') : null,
     ...needs.map(need),
     waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Buttons waiting'), h('span', { class: 'muted' }, waiting.map((x) => `${x.id.replace(/:\d+$/, '')}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`).join('; '))) : null,
-    // The marks on the page (pagekit.js COLORS).
+    // The marks on the page (pagekit.js COLORS, the same colors: sidepanel.css --mark-*).
     h('div', { class: 'legend' },
       h('span', {}, h('span', { class: 'mark filled' }), 'Filled'),
+      h('span', { title: 'Filled with a TNI standard answer, not a fact from the intake' }, h('span', { class: 'mark standard' }), 'TNI standard'),
       h('span', {}, h('span', { class: 'mark needs' }), 'Needs you'),
       h('span', {}, h('span', { class: 'mark failed' }), "Couldn't fill"),
       h('span', {}, h('span', { class: 'mark ai' }), 'AI answer')),
@@ -3396,8 +3438,9 @@ function renderAi(holder, suggestions, ctx) {
     if (slot) {
       slot.replaceChildren(...(content ? [content] : []));
       const byAgent = ['answered', 'marked'].includes(item.dataset.settled);
-      // "Answer it on the page" only while nothing (AI or agent) has answered it.
-      if (!byAgent) item.querySelector('.need-note').hidden = !!x.done || (!!content && !x.leave && x.applyable && !x.dismissed && !x.rejected && !x.error);
+      // The note under an item says only what the agent settled (answered on the page, marked
+      // done): the AI's word is in its slot, and "Answer these on the page" is said once above.
+      if (!byAgent) item.querySelector('.need-note').hidden = true;
       // An AI answer the agent accepted or approved settles the item; one waiting for approval
       // (or rejected, or not taken by the page) is still theirs.
       if (!byAgent) {

@@ -38,6 +38,15 @@
   --ai-line: #d9cbf7;
   --ai-faint-line: #e4dafb;
   --ai-soft: #f5f1ff;
+  /* The marks the page kit puts on the carrier page (pagekit.js COLORS; a test keeps them equal):
+     step 3's key shows exactly these. Standard is a TNI standard answer, not an intake fact. */
+  --mark-filled: #16a34a;
+  --mark-standard: #2f6fd6;
+  --mark-standard-ink: #1f56b0;
+  --mark-standard-soft: #eef4fd;
+  --mark-needs: #d97706;
+  --mark-failed: #dc2626;
+  --mark-ai: #7c3aed;
   --focus: #005aa9;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -275,7 +284,8 @@ details.section[open] > summary { font-weight: 600; color: var(--ink-strong); }
 .review-mode b { font-size: 12.5px; font-weight: 600; color: var(--ink-strong); }
 .review-mode p { font-size: 12px; color: var(--ink-secondary); }
 .pending-note { font-size: 12px; color: var(--warning-ink); background: var(--warning-soft); border-radius: var(--radius-sm); padding: 6px 8px; }
-.tag.standard { margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 10.5px; font-weight: 600; vertical-align: middle; color: var(--warning-ink); background: var(--warning-soft); border: 1px solid var(--warning-line); }
+/* The page's TNI standard mark, as a tag on the answer. */
+.tag.standard { margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 10.5px; font-weight: 600; vertical-align: middle; color: var(--mark-standard-ink); background: var(--mark-standard-soft); border: 1px solid var(--mark-standard); }
 
 /* What was filled (step 2) */
 .filled-report { display: grid; gap: 8px; }
@@ -293,11 +303,12 @@ details.section[open] > summary { font-weight: 600; color: var(--ink-strong); }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 4px 2px; font-size: 11.5px; color: var(--ink-secondary); }
 .legend span { display: flex; gap: 5px; align-items: center; }
 .mark { flex: 0 0 auto; width: 10px; height: 10px; border: 2px dashed; border-radius: 2px; }
-/* As the page kit marks the page (pagekit.js COLORS: filled answers in green). */
-.mark.filled { border: 2px solid var(--success); }
-.mark.needs { border-color: var(--warning); }
-.mark.failed { border-color: var(--signal); }
-.mark.ai { border: 2px solid var(--ai); }
+/* As the page kit marks the page (pagekit.js mark): solid for an answer in, dashed for one left. */
+.mark.filled { border: 2px solid var(--mark-filled); }
+.mark.standard { border: 2px solid var(--mark-standard); }
+.mark.needs { border-color: var(--mark-needs); }
+.mark.failed { border-color: var(--mark-failed); }
+.mark.ai { border: 2px solid var(--mark-ai); }
 .agent-page { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--signal-line); border-radius: var(--radius-lg); background: var(--signal-soft); color: var(--signal-dark); font-size: 12px; }
 .stop-page b { font-size: 13.5px; font-weight: 600; text-wrap: pretty; }
 .stop-page .link { justify-self: start; color: var(--signal-dark); }
@@ -308,6 +319,7 @@ p.agent-page { font-weight: 600; }
 .need-head .row-text b { overflow-wrap: anywhere; }
 .need-note { font-size: 12px; color: var(--ink-secondary); }
 .mark-done { flex-shrink: 0; padding: 0 10px; font-size: 12px; }
+.show-on-page { justify-self: start; }
 /* Settled since the fill (answered on the page, marked done, an AI answer accepted). */
 .need.resolved { background: var(--surface-sunken); border-color: var(--border-soft); }
 .need.resolved .row-text b { color: var(--ink-secondary); }

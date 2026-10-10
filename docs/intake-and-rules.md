@@ -34,7 +34,7 @@ Every carrier rule with a `value` declares where its answer comes from ([test/pr
 | --- | --- | --- |
 | `intake` | A record path, no computed value | Filled from the intake |
 | `derived` | Computed from intake facts, with the evidence in the rule | Filled; may carry its own `warn` or `note` (a missing fact gives a note, never a guess); its step's `from` names the intake answers read, shown on the PDF |
-| `standard` | A TNI coverage or workflow standard | Filled and marked `standard: true`; the panel's fill report tags it "standard" |
+| `standard` | A TNI coverage or workflow standard | Filled and marked `standard: true`; the carrier page marks it blue (an intake answer is green) and the panel's fill report tags it "standard" |
 | `fact` | A client fact the intake doesn't supply (loss runs, current-carrier tenure, the year licensed without a readable date of birth, other business coverages when the intake has general liability, …) | Never filled: `value: null`, `manualOnly: true` (the AI assistant leaves it) and the rule's `note` (else "<name> isn't on the intake: answer it yourself") |
 | `attestation` | Something the agent must assert (the USDOT number belongs to the business, it was obtained within 60 days) | Never filled, as `fact` |
 
