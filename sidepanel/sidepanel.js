@@ -2594,6 +2594,7 @@ const FILLED_SHOWN = 6;
 // The groups of "Answers on this page", in the order shown (renderReport).
 const ANSWER_GROUPS = {
   intake: 'From the intake',
+  edited: 'Your edits',
   standard: 'TNI standard',
   page: 'Already on the page',
   clicked: 'Clicked',
@@ -2719,20 +2720,23 @@ function renderReport(frames, ctx = {}) {
   // out from; a TNI standard (not an intake fact) is tagged instead (plan.js source), also when an
   // earlier pass filled it or the page already had it. No link while the PDF isn't kept.
   const pdfHere = !!(state.pdfBytes || state.intake?.pdfKept);
-  const source = ({ label, standard, path, from }) => {
+  // An answer filled from a field the agent set or corrected in the panel (client details, a Check
+  // intake button such as Use Female): the agent's, not the client's (also openPdf's `edited`).
+  const editedBy = (path, from) => [path, ...(from ?? [])].some((p) => p && state.intake?.agentEdited?.includes(p));
+  const source = ({ label, standard, path, from, edited }) => {
     const place = !standard && pdfHere && state.intake && (from || path) ? sourcePlace(from ?? path, state.intake) : null;
     if (!place) return null;
     const where = pdfPageSaid(place.page, 'p. ') || 'PDF';
     return h('button', { type: 'button', class: 'link src',
-      title: from ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake',
-      'aria-label': `${where}: ${label}, ${from ? 'worked out from the intake' : 'from the intake'}`,
+      title: edited ? 'Show what the intake said before your edit' : from ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake',
+      'aria-label': `${where}: ${label}, ${edited ? 'your edit' : from ? 'worked out from the intake' : 'from the intake'}`,
       onclick: () => openPdf({ path, from, label, kind: 'filled' }) }, where);
   };
   const doneRows = [
     // `key`/`field`: the field and its label on the page, for checking the answer is still there
     // (checkAnswers); `kind`: which group of "Answers on this page" it goes in.
-    ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null })),
-    ...earlier.map((x) => ({ label: x.label || x.name, value: maps.filled.get(x.key).shown || 'filled', standard: !!(x.standard || maps.filled.get(x.key).standard), path: maps.filled.get(x.key).path, from: fromOf.get(x.stepId), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: maps.filled.get(x.key).shown ? x.key : null, field: x.label ?? null })),
+    ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null })),
+    ...earlier.map((x) => ({ label: x.label || x.name, value: maps.filled.get(x.key).shown || 'filled', standard: !!(x.standard || maps.filled.get(x.key).standard), path: maps.filled.get(x.key).path, from: fromOf.get(x.stepId), edited: editedBy(maps.filled.get(x.key).path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: maps.filled.get(x.key).shown ? x.key : null, field: x.label ?? null })),
     ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
     ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: !!x.standard, group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page' })),
     ...all('skipped').map((x) => ({ label: x.label, value: 'yours (not filled)', kind: 'yours' })),
@@ -2763,7 +2767,7 @@ function renderReport(frames, ctx = {}) {
   const entry = { key, tabId, page, fields, filled: count, left: needs.length, waiting: waiting.length, advanced: advanced ?? null, held, at: Date.now(), auto: !!ctx.auto };
   // "Answers on this page", grouped by where each came from, in this order. A row whose answer the
   // page shows differently now is marked once the list is opened (checkAnswers).
-  const kindOf = (row) => row.kind ?? (row.standard ? 'standard' : 'intake');
+  const kindOf = (row) => row.kind ?? (row.edited ? 'edited' : row.standard ? 'standard' : 'intake');
   const listed = Object.keys(ANSWER_GROUPS).flatMap((kind) => doneRows.filter((row) => kindOf(row) === kind));
   const rowNode = (row) => h('div', { class: 'kv', dataset: row.key ? { key: row.key, field: row.field ?? '', value: row.value, step: row.stepId ?? '' } : {} },
     h('span', {}, row.label, row.standard && kindOf(row) !== 'standard' ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'standard') : null),

@@ -333,6 +333,22 @@ test('fill report tags standards that an earlier pass filled or the page already
     '# Already on the page', ['Waiver', true], ['Middle', false]]);
 });
 
+// PR #72 audit: the AmWINS gender the agent chose (Use Female / Keep Male, or client details) was
+// listed under From the intake. An answer filled from a field the agent set is theirs: Your edits.
+test('fill report lists answers filled from the agent\'s edits under Your edits', () => {
+  const state = { tab: { id: 1, url: 'https://example.test/?pageName=Drivers' }, intake: { agentEdited: ['drivers[0].gender', 'applicant.yearsInBusiness'], record: {} } };
+  const { context, filled } = reportHarness(state, { pageOf: () => 'Drivers' });
+  context.renderReport([{ fields: 4, kept: [], failed: [], noData: [], leftRequired: [], actions: [],
+    filled: [{ label: 'First name', shown: 'Ann', path: 'drivers[0].first', stepId: 's1' },
+      { label: 'Gender', shown: 'FEMALE', stepId: 's2' },
+      { label: 'Years in business', shown: '3', path: 'applicant.yearsInBusiness', stepId: 's3' },
+      { label: 'Year licensed', shown: '1997', stepId: 's4', standard: true }] }],
+  { plan: [{ id: 's2', from: ['drivers[0].gender'] }, { id: 's4', from: ['drivers[0].dob'] }] });
+  const more = filled.children.find((c) => c?.tag === 'details');
+  const rows = answerList(more.children[1]).map((row) => (typeof row === 'string' ? row : row.children[0].children[0]));
+  assert.deepEqual(rows, ['# From the intake', 'First name', '# Your edits', 'Gender', 'Years in business', '# TNI standard', 'Year licensed']);
+});
+
 // Live review 2026-10-09: 38 filled rows pushed step 3 off screen. The first six show; the rest on
 // request.
 test('fill report lists the first six answers filled, the rest behind Show all', () => {
