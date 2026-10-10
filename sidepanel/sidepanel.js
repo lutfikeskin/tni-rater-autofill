@@ -983,7 +983,7 @@ async function agentEdit(path, after, kind) {
   // Luna read the claims box against the form's coverages (NTL and GL are its own questions):
   // an edit to either is read again; a driver's first name, for the gender check, likewise.
   if (path === 'claims.text') claimsTextEdited(state.intake);
-  if (path === 'claims.text' || (path.startsWith('coverage.') && !['coverage.ntl', 'coverage.gl'].includes(path))) reviewClaimsBox({ retry: true });
+  if (path === 'claims.text' || (path.startsWith('coverage.') && !['coverage.ntl', 'coverage.gl', 'coverage.hasGl'].includes(path))) reviewClaimsBox({ retry: true });
   if (/^drivers\[\d+\]\.first$/.test(path)) reviewDriverGender({ retry: true });
 }
 
@@ -1147,7 +1147,7 @@ function onRecorderMessage(msg, sender) {
         for (const id of [...state.doneActions]) if (id === a.id || id.startsWith(`${a.id}:`)) state.doneActions.delete(id);
         persistDoneActions();
       }
-      if (state.tab.carrier?.trailerPage || state.tab.carrier?.driverPage) unitArrival(state.tab.carrier, samePage(msg.from), samePage(msg.page));
+      if (state.tab.carrier?.trailerPage || state.tab.carrier?.driverPage || state.tab.carrier?.vehicleList) unitArrival(state.tab.carrier, samePage(msg.from), samePage(msg.page));
     }
     // Setting "Fill each new page as soon as it opens": fill right away (the fill itself waits
     // for the page to settle first).
@@ -1359,8 +1359,9 @@ async function stopFill() {
   $('fill-stop').disabled = true;
   renderSteps();
   try {
+    // With the fill's run id: a fill that hasn't begun in a frame yet halts as it starts there.
     await chrome.scripting.executeScript({ target: { tabId: f.tabId, allFrames: true }, world: worldFor(f.carrier),
-      func: () => globalThis.__raterKit?.stop?.() ?? false });
+      func: (run) => globalThis.__raterKit?.stop?.(run) ?? false, args: [f.run] });
   } catch { /* the page is navigating: the fill ends anyway */ }
 }
 
@@ -1414,6 +1415,9 @@ async function autoFill(page) {
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto: true });
   await pickListItem(carrier, page, ctx);
   if (staleFill(ctx) || state.tab?.id !== tabId) return;
+  // A fill the agent started while the list was read (Fill this page, Looks right) goes first;
+  // this one follows it rather than running beside it.
+  if (state.filling) { state.autoPending = true; return; }
   state.filling = true;
   state.autoPending = false;
   const started = Date.now();
@@ -1451,14 +1455,18 @@ async function autoFill(page) {
     const rendered = current && (newStep || held || state.autoPaused || hasWarnings || state.assistPage === page);
     if (rendered) { renderReport(frames, { ...ctx, plan }); assistFrames = frames; }
     if (current && (newStep || held)) showFinish({ auto: true });
-    const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
-    if (n || hasWarnings) {
+    // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
+    const added = frames.flatMap((f) => f.filled).filter((x) => !x.otherStep);
+    const n = added.length + frames.reduce((k, f) => k + (f.actions?.length ?? 0), 0);
+    if (n || hasWarnings || frames.some((f) => f.filled.length)) {
       logFill(ctx, frames, results, started);
       if (n && current && !rendered && reportShown()) {
-        const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${frames.flatMap((f) => f.filled).map((x) => x.label).join(' · ')}`);
+        const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${added.map((x) => x.label).join(' · ')}`);
         $('report').append(note);
-        // Step 2's count includes them.
-        state.reportFor.filled = (state.reportFor.filled ?? 0) + frames.reduce((k, f) => k + f.filled.length, 0);
+        // Step 2's count includes them, and so does Answers on this page's.
+        state.reportFor.filled = (state.reportFor.filled ?? 0) + added.length;
+        const said = $('filled-report').querySelector?.('.answers-count');
+        if (said) said.textContent = said.textContent.replace(/^\d+ filled/, `${state.reportFor.filled} filled`);
         renderSteps();
         announce(`Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically.`);
       }
@@ -2206,7 +2214,13 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     // have released some), never the tab in front.
     // Honor the latest switch after preparation, and log the same value used by the kit.
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
-    const options = fillOptions(carrier, { overwrite, skip: [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])], ...(confirmed ? { confirmed } : {}) }, ctx.settings.autoAdvance);
+    // Stopped while the panel prepared: the kit isn't asked to fill at all.
+    if (state.fillingFor?.run === ctx.run && state.fillingFor.stopping) {
+      tabMaps(tabId).autoPaused = true;
+      fillProblem(ctx, 'You stopped the fill. Nothing was filled or clicked.', 'notice');
+      return;
+    }
+    const options = fillOptions(carrier, { overwrite, skip: [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])], ...(confirmed ? { confirmed } : {}), run: ctx.run }, ctx.settings.autoAdvance);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -2293,12 +2307,15 @@ async function verifyListed(carrier, page, ctx = { tabId: state.tab?.id, intake:
   } catch { return; }
   if (!shown || !fillCurrent(ctx)) return;
   const showsVins = shown.slice(0, vehicles.length).some(Boolean);
-  // A vehicle the list shows by its VIN is on the quote, however it got there (the agent's own
-  // VIN lookup included): Add Vehicle is never clicked for it again (live run 2026-10-10: the
-  // automatic fill added the same vehicle a second time). A VIN not shown proves nothing.
+  // A vehicle back from its own pages (vehicleReturned, unitArrival) that the list now shows by
+  // its VIN is on the quote, however it got there (the agent's own VIN lookup included): Add
+  // Vehicle is never clicked for it again (live run 2026-10-10: the automatic fill added the same
+  // vehicle a second time). The VIN alone isn't enough: the list also shows the vehicles the USDOT
+  // lookup found, which aren't on the quote until added (audit 2026-10-10). A VIN not shown
+  // proves nothing.
   if (carrier.vehicleList === page) {
     vehicles.forEach((v, i) => {
-      if (v.length >= 11 && shown[i]) for (const id of [`lookupVin:${i}`, `addVehicle:${i}`]) state.doneActions.add(id);
+      if (v.length >= 11 && shown[i] && state.doneActions.has(`vehicleReturned:${i}`)) for (const id of [`lookupVin:${i}`, `addVehicle:${i}`]) state.doneActions.add(id);
     });
   }
   trailers.forEach((v, i) => {
@@ -2341,6 +2358,12 @@ function unitArrival(carrier, from, page) {
   for (const [unitPage, listPage, list, marker] of [[carrier?.driverPage, carrier?.driverList, 'drivers', 'driverEntered'], [carrier?.trailerPage, carrier?.trailerList, 'trailers', 'trailerEntered']]) {
     if (!unitPage || from !== unitPage || page !== listPage) continue;
     state.doneActions.add(`${marker}:${state.active[list] ?? 0}`);
+    persistDoneActions();
+  }
+  // Back on the vehicle list from the active vehicle's pages: only a mark that it may be on the
+  // quote; the list showing its VIN decides (verifyListed).
+  if (carrier?.vehicleList && page === carrier.vehicleList && carrier.vehiclePages?.includes(from)) {
+    state.doneActions.add(`vehicleReturned:${state.active.vehicles ?? 0}`);
     persistDoneActions();
   }
 }
@@ -2574,20 +2597,23 @@ const ANSWER_GROUPS = {
   standard: 'TNI standard',
   page: 'Already on the page',
   clicked: 'Clicked',
-  yours: 'Left for you',
+  yours: 'Yours (not filled)',
 };
 
 // Whether the page still shows the answers the fill put in (pagekit readBack: reads only). A row
 // whose field shows something else now (the carrier's server, or the agent) says what; one whose
 // field isn't on the page now (a closed section) is left as it was. Only for the page in front.
-async function checkAnswers(body, tabId, page, carrier) {
+// `plan`: the fill's plan, so the kit judges each answer as fill does (readBack `agrees`).
+async function checkAnswers(body, tabId, page, carrier, plan = []) {
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   const rows = [...body.querySelectorAll('.kv[data-key]')];
   if (!rows.length) return;
-  const items = rows.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null }));
+  const items = rows.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null, stepId: row.dataset.step || null }));
+  const ids = new Set(items.map((x) => x.stepId).filter(Boolean));
+  const steps = (plan ?? []).filter((s) => ids.has(String(s.id)));
   let frames;
   try {
-    frames = await runKit(tabId, carrier, (asked) => globalThis.__raterKit?.readBack?.(asked) ?? [], [items]);
+    frames = await runKit(tabId, carrier, (asked, filledBy) => globalThis.__raterKit?.readBack?.(asked, filledBy) ?? [], [items, steps]);
   } catch { return; /* the page is navigating */ }
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   const now = new Map(frames.flatMap((f) => Array.isArray(f.result) ? f.result : []).map((x) => [`${x.key}|${x.label ?? ''}`, x]));
@@ -2596,8 +2622,9 @@ async function checkAnswers(body, tabId, page, carrier) {
   for (const row of rows) {
     const x = now.get(`${row.dataset.key}|${row.dataset.field}`) ?? now.get(`${row.dataset.key}|`);
     if (!x) continue;
-    // An unticked box we left unticked reads back 'unchecked' (and empty): the same answer.
-    const differs = loose(x.shown) !== loose(row.dataset.value);
+    // The kit's word first (an address the page rewrote in its own format is the same answer);
+    // without it, the text. An unticked box we left unticked reads back 'unchecked' (and empty).
+    const differs = x.agrees === true ? false : loose(x.shown) !== loose(row.dataset.value);
     row.classList.toggle('changed', differs);
     const note = row.querySelector('.kv-now');
     note.hidden = !differs;
@@ -2644,12 +2671,12 @@ function renderReport(frames, ctx = {}) {
   const framed = (k) => frames.flatMap((f, frame) => (f[k] ?? []).map((x) => ({ ...x, frame })));
   const items = [
     ...framed('unknown').map((x) => ({ ...x, mark: 'needs', why: `Unfamiliar question${x.required ? ' (required)' : ''}: no TNI rule for it yet.` })),
-    ...framed('failed').map((x) => ({ ...x, mark: 'failed', why: `Couldn't fill: ${x.reason}` })),
-    ...framed('noData').map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
+    ...framed('failed').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'failed', why: `Couldn't fill: ${x.reason}` })),
+    ...framed('noData').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
     ...framed('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
     ...framed('kept').filter((x) => !x.otherStep && x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
     // Defaults filled for the agent to confirm (e.g. marital status missing on the intake).
-    ...framed('checks').map((x) => ({ ...x, mark: 'needs', why: x.note })),
+    ...framed('checks').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: x.note })),
   ];
   // In the order of their fields on the page, the same on every fill, whatever kind each item is
   // (pagekit `order`: the field's place in its frame; frames in the order the page gave them). An
@@ -2664,10 +2691,10 @@ function renderReport(frames, ctx = {}) {
   const need = (x) => {
     const label = x.label || x.name;
     const done = x.key ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page',
-      'aria-label': `Mark ${label} done`, onclick: () => markDone(item, x.key, tabId, page) }, 'Mark done') : null;
+      'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page) }, 'Mark done') : null;
     // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
     const show = x.key ? h('button', { class: 'link small show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
-      'aria-label': `Show ${label} on the page`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
+      'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
     const item = h('div', { class: 'need', tabindex: '-1', dataset: { need: `${x.key}|${x.label}`, key: x.key ?? '' } },
       h('div', { class: 'need-head' },
         h('span', { class: `mark ${x.mark}` }),
@@ -2698,7 +2725,7 @@ function renderReport(frames, ctx = {}) {
     const where = pdfPageSaid(place.page, 'p. ') || 'PDF';
     return h('button', { type: 'button', class: 'link src',
       title: from ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake',
-      'aria-label': `${label}: ${from ? 'worked out from the intake' : 'from the intake'}${pdfPageSaid(place.page, ', page ')}`,
+      'aria-label': `${where}: ${label}, ${from ? 'worked out from the intake' : 'from the intake'}`,
       onclick: () => openPdf({ path, from, label, kind: 'filled' }) }, where);
   };
   const doneRows = [
@@ -2738,7 +2765,7 @@ function renderReport(frames, ctx = {}) {
   // page shows differently now is marked once the list is opened (checkAnswers).
   const kindOf = (row) => row.kind ?? (row.standard ? 'standard' : 'intake');
   const listed = Object.keys(ANSWER_GROUPS).flatMap((kind) => doneRows.filter((row) => kindOf(row) === kind));
-  const rowNode = (row) => h('div', { class: 'kv', dataset: row.key ? { key: row.key, field: row.field ?? '', value: row.value } : {} },
+  const rowNode = (row) => h('div', { class: 'kv', dataset: row.key ? { key: row.key, field: row.field ?? '', value: row.value, step: row.stepId ?? '' } : {} },
     h('span', {}, row.label, row.standard && kindOf(row) !== 'standard' ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'standard') : null),
     h('span', {}, row.value),
     source(row),
@@ -2753,13 +2780,17 @@ function renderReport(frames, ctx = {}) {
     ? h('button', { type: 'button', class: 'link small show-all', onclick: function () {
       const rest = nodesOf(listed.slice(FILLED_SHOWN));
       this.replaceWith(...rest);
-      rest.find((n) => n.classList.contains('kv'))?.querySelector('button')?.focus();
-      checkAnswers(body, tabId, page, carrier);
+      // Focus stays in the list: the first new row's link, or the row itself when it has none.
+      const first = rest.find((n) => n.classList.contains('kv'));
+      const target = first?.querySelector('button') ?? first;
+      if (target && target === first) target.tabIndex = -1;
+      target?.focus();
+      checkAnswers(body, tabId, page, carrier, ctx.plan);
     } }, `Show all ${listed.length}`)
     : null;
   const body = h('div', { class: 'more-body' }, nodesOf(listed.slice(0, FILLED_SHOWN)), more);
   // Open when Continue waits for the agent's check: the answers are what they check.
-  const filledNodes = doneRows.length ? [h('details', { class: 'more answers', open: !!held, ontoggle: function () { if (this.open) checkAnswers(body, tabId, page, carrier); } },
+  const filledNodes = doneRows.length ? [h('details', { class: 'more answers', open: !!held, ontoggle: function () { if (this.open) checkAnswers(body, tabId, page, carrier, ctx.plan); } },
     h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'Answers on this page'), h('span', { class: 'small muted answers-count' }, `${count} filled`)),
     body)] : [];
   const nodes = [
@@ -3081,7 +3112,7 @@ function reviewIntake(opts) {
 
 // A check card's own buttons (Luna's GL and driver-gender items): set the field as the agent's
 // edit, then mark the item checked. Only these fields and values: the item is stored data.
-const CHOICE_FIELDS = [[/^coverage\.gl$/, [true]], [/^drivers\[\d+\]\.gender$/, ['FEMALE', 'MALE']]];
+const CHOICE_FIELDS = [[/^coverage\.hasGl$/, [true]], [/^drivers\[\d+\]\.gender$/, ['FEMALE', 'MALE']]];
 async function applyCheckChoice(i, choice) {
   const w = state.intake?.warnings[i];
   if (!w || !w.choices?.some((c) => c.label === choice.label && c.path === choice.path && c.value === choice.value)) return;

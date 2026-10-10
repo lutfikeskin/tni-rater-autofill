@@ -363,13 +363,15 @@ test('fill report lists a question asked as several boxes once, with the boxes t
 // read-only). One the page shows differently now says what it shows; spacing and punctuation
 // aside, and one whose field isn't on the page now is left alone. Only for the page in front.
 test('answers on this page mark an answer the page shows differently now', async () => {
-  const row = (key, field, value) => {
-    const r = { dataset: { key, field, value }, changed: false, now: { hidden: true, textContent: '' } };
+  const row = (key, field, value, step = '') => {
+    const r = { dataset: { key, field, value, step }, changed: false, now: { hidden: true, textContent: '' } };
     r.classList = { toggle: (name, on) => { r.changed = on; }, contains: () => r.changed };
     r.querySelector = () => r.now;
     return r;
   };
-  const rows = [row('phone', 'Phone', '(312) 555-0100'), row('limit', 'Limit', '$1,000,000'), row('box', 'Box', 'checked'), row('gone', 'Gone', 'x'), row('off', 'Off', 'unchecked'), row('text', 'Text', 'Main St')];
+  const rows = [row('phone', 'Phone', '(312) 555-0100'), row('limit', 'Limit', '$1,000,000'), row('box', 'Box', 'checked'), row('gone', 'Gone', 'x'), row('off', 'Off', 'unchecked'), row('text', 'Text', 'Main St'),
+    // The Google suggestion picked; the page then keeps the street only (the kit says it agrees).
+    row('addr', 'Address', '5001 Sheridan Street Davenport, IA, USA', '7')];
   const count = { textContent: '30 filled' };
   const body = { querySelectorAll: () => rows, closest: () => ({ querySelector: () => count }) };
   const asked = [];
@@ -380,12 +382,15 @@ test('answers on this page mark an answer the page shows differently now', async
       asked.push(JSON.parse(JSON.stringify(args)));
       return [{ result: [{ key: 'phone', label: 'Phone', shown: '3125550100', empty: false }, { key: 'limit', label: 'Limit', shown: '$500,000', empty: false }] },
         { result: [{ key: 'box', label: 'Box', shown: 'unchecked', empty: true }, { key: 'off', label: 'Off', shown: 'unchecked', empty: true },
-          { key: 'text', label: 'Text', shown: '', empty: true }] }];
+          { key: 'text', label: 'Text', shown: '', empty: true }, { key: 'addr', label: 'Address', shown: '5001 Sheridan St', empty: false, agrees: true }] }];
     },
   };
   vm.runInNewContext(extractFunction('checkAnswers'), context);
-  await context.checkAnswers(body, 1, 'Quote', { id: 'progressive' });
-  assert.deepEqual(asked[0][0].map((x) => x.key), ['phone', 'limit', 'box', 'gone', 'off', 'text']);
+  const plan = [{ id: 7, kind: 'address-suggest', value: '5001 Sheridan Street Davenport, IA, USA' }, { id: 8, kind: 'text', value: 'other' }];
+  await context.checkAnswers(body, 1, 'Quote', { id: 'progressive' }, plan);
+  assert.deepEqual(asked[0][0].map((x) => x.key), ['phone', 'limit', 'box', 'gone', 'off', 'text', 'addr']);
+  assert.deepEqual(asked[0][1].map((s) => s.id), [7], 'only the steps of the rows asked about');
+  assert.equal(rows[6].changed, false, 'an address the page wrote its own way is the same answer');
   assert.equal(rows[0].changed, false, 'the page formatting a phone number is the same answer');
   assert.equal(rows[1].changed, true);
   assert.equal(rows[1].now.textContent, 'Now on the page: $500,000');
@@ -514,7 +519,7 @@ test('each item left for the agent has a labelled Mark done bound to its field a
   };
   visit(box.children);
   assert.equal(buttons.length, 3);
-  assert.deepEqual(buttons.map((b) => b.props['aria-label']), ['Mark Vehicle field done', 'Mark Rejected done', 'Mark Missing done']);
+  assert.deepEqual(buttons.map((b) => b.props['aria-label']), ['Mark done: Vehicle field', 'Mark done: Rejected', 'Mark done: Missing']);
   assert.ok(buttons.every((b) => b.children[0] === 'Mark done'));
   buttons.forEach((button) => button.props.onclick());
   assert.deepEqual(clicks, [['200F', 7, 'Rates'], ['failed', 7, 'Rates'], ['missing', 7, 'Rates']]);
@@ -579,7 +584,7 @@ test('each item with a field has a labelled Show on page bound to its field, tab
     visit(node.children);
   };
   visit(box.children);
-  assert.deepEqual(buttons.map((b) => [b.props['aria-label'], b.children[0]]), [['Show Vehicle field on the page', 'Show on page']], 'none for an item without a field');
+  assert.deepEqual(buttons.map((b) => [b.props['aria-label'], b.children[0]]), [['Show on page: Vehicle field', 'Show on page']], 'none for an item without a field');
   buttons[0].props.onclick();
   assert.deepEqual(calls, [['200F', 'Vehicle field', 7, 'Rates', carrier]]);
 });
@@ -1660,19 +1665,33 @@ test('a list read for one tab is not applied after the agent switched tabs', asy
 });
 
 // Live run 2026-10-10: the agent ran the VIN lookup on Add Vehicle themselves, and on Vehicle
-// Summary the automatic fill clicked Add Vehicle for the same vehicle again. A vehicle the list
-// shows by its VIN is on the quote: no Add Vehicle for it, with or without a trailer on the intake.
-test('a vehicle the summary lists by its VIN counts as added, however it got there', async () => {
-  const carrier = { trailerList: 'VehicleSummary', vehicleList: 'VehicleSummary' };
+// Summary the automatic fill clicked Add Vehicle for the same vehicle again. A vehicle back from
+// its own pages that the list shows by its VIN is on the quote: no Add Vehicle for it. The VIN
+// alone isn't enough (audit 2026-10-10): the list also shows the vehicles the USDOT lookup found,
+// which are added only with Add Vehicle.
+test('a vehicle back from its pages that the summary lists by its VIN counts as added', async () => {
+  const carrier = { trailerList: 'VehicleSummary', vehicleList: 'VehicleSummary', vehiclePages: ['MostCommonVehicles', 'AddVehicle'] };
   const record = { vehicles: [{ vin: '1XPWD40X1DD000001' }, { vin: '1FTBR3X87MKA00002' }], trailers: [], drivers: [] };
   const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 0 }, doneActions: new Set() };
   const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
-    runKit: async () => [{ result: [true, false] }] };
-  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+    runKit: async () => [{ result: [true, true] }] };
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  // Both VINs shown (the USDOT lookup's list), neither vehicle's page visited: still to add.
   await context.pickListItem(carrier, 'VehicleSummary');
-  assert.deepEqual([...state.doneActions].sort(), ['addVehicle:0', 'lookupVin:0']);
-  assert.equal(state.active.vehicles, 1, 'the second vehicle, not on the list, is the one to add');
-  // Both listed: nothing left to add.
+  assert.deepEqual([...state.doneActions], []);
+  assert.equal(state.active.vehicles, 0);
+  // The agent added the first one themselves (its VIN lookup on Add Vehicle) and came back.
+  context.unitArrival(carrier, 'AddVehicle', 'VehicleSummary');
+  context.unitArrival(carrier, 'DriverSummary', 'VehicleSummary');
+  await context.pickListItem(carrier, 'VehicleSummary');
+  assert.deepEqual([...state.doneActions].sort(), ['addVehicle:0', 'lookupVin:0', 'vehicleReturned:0']);
+  assert.equal(state.active.vehicles, 1, 'the second vehicle is the one to add');
+  // Back from the second one's pages, but the list doesn't show its VIN: proves nothing.
+  context.runKit = async () => [{ result: [true, false] }];
+  context.unitArrival(carrier, 'AddVehicle', 'VehicleSummary');
+  await context.pickListItem(carrier, 'VehicleSummary');
+  assert.ok(!state.doneActions.has('addVehicle:1') && !state.doneActions.has('lookupVin:1'));
+  // Shown now: added.
   context.runKit = async () => [{ result: [true, true] }];
   await context.pickListItem(carrier, 'VehicleSummary');
   assert.ok(state.doneActions.has('lookupVin:1') && state.doneActions.has('addVehicle:1'));
@@ -3743,6 +3762,29 @@ test('Check answers before Continue reaches the kit as hold and is never logged'
   assert.equal(t.seen.options.hold, true);
 });
 
+// Audit 2026-10-10: Stop while the panel still prepared (recorder, AI retirement) was lost and the
+// fill ran. The kit isn't asked to fill, the pause holds, and the report says so.
+test('Stop pressed before the kit is asked to fill means no fill at all', async () => {
+  const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
+  let kitCalls = 0;
+  t.context.runKit = async () => { kitCalls++; return []; };
+  t.context.retireAiOrigins = async () => { t.state.fillingFor.stopping = true; };
+  await t.context.fillPage();
+  assert.equal(kitCalls, 0);
+  assert.equal(t.state.autoPaused, true, "automatic filling stays paused");
+  assert.deepEqual(t.seen.problems.map((p) => p.text), ['You stopped the fill. Nothing was filled or clicked.']);
+  assert.equal(t.state.filling, false);
+  // The fill's run id goes to the kit, so a Stop that reaches a frame first still counts.
+  const u = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', u.context);
+  const run = u.context.fillPage();
+  await u.started;
+  assert.match(u.seen.options.run, /^[0-9a-f-]{36}$/);
+  u.release(u.results);
+  await run;
+});
+
 test('an automatic fill held for the agent\'s check shows its report', async () => {
   const t = fillHarness({ carrier: { id: 'progressive', advance: /Continue/ } });
   t.state.reportFor = { filled: 0 };
@@ -4252,10 +4294,10 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   const el = (tag, props = {}, ...children) => ({ tag, props, children: children.flat().filter((c) => c != null && c !== false) });
   const nodes = {};
   const $ = (id) => (nodes[id] ??= { id, hidden: false, textContent: '', replaceChildren(...kids) { this.kids = kids; }, focus() {} });
-  const record = { coverage: { gl: null }, drivers: [{ first: 'Maria' }, { first: 'John' }] };
+  const record = { coverage: { gl: null, hasGl: null }, drivers: [{ first: 'Maria' }, { first: 'John' }] };
   const intake = { record, agentEdited: [], done: [], warnings: [
     { code: 'other', level: 'check', path: 'applicant.name', msg: 'other' },
-    { code: 'ai.gl', level: 'check', path: 'coverage.gl', msg: 'Luna: the claims box mentions general liability: "Has GL".', choices: GL_CHOICES.map((c) => ({ ...c })) },
+    { code: 'ai.gl', level: 'check', path: 'coverage.hasGl', msg: 'Luna: the claims box mentions general liability: "Has GL".', choices: GL_CHOICES.map((c) => ({ ...c })) },
     { code: 'ai.driver-gender', level: 'check', path: 'drivers[0].gender', msg: 'Gender is filled Male.', choices: genderChoices(0) },
     { code: 'ai.driver-gender', level: 'check', path: 'drivers[1].gender', msg: 'Gender is filled Male.', choices: genderChoices(1) },
   ] };
@@ -4291,21 +4333,23 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   calls.length = 0;
   sandbox.renderWarnings();
   await buttons(cards()[1])[1].props.onclick();
-  assert.equal(record.coverage.gl, null, 'Not GL leaves the record alone');
+  assert.equal(record.coverage.hasGl, null, 'Not GL leaves the record alone');
   assert.deepEqual([...intake.done].sort(), [1, 2, 3]);
   intake.done = intake.done.filter((d) => d !== 1);
   await sandbox.applyCheckChoice(1, intake.warnings[1].choices[0]);
-  assert.equal(record.coverage.gl, true, 'Client has GL sets coverage.gl');
-  assert.ok(intake.agentEdited.includes('coverage.gl'));
+  assert.equal(record.coverage.hasGl, true, 'Client has GL sets coverage.hasGl');
+  assert.equal(record.coverage.gl, null, 'and asks for no GL quote (audit 2026-10-10)');
+  assert.ok(intake.agentEdited.includes('coverage.hasGl'));
   assert.ok(!calls.some((c) => c[0] === 'reviewClaimsBox'), 'GL is not form coverage Luna compares with: no re-read');
 
   // Stored items are data: a choice not on the item, another field or another value does nothing.
   const before = JSON.stringify(record);
   intake.done = [];
   await sandbox.applyCheckChoice(2, { label: 'Use Female', path: 'drivers[1].gender', value: 'FEMALE' });
-  intake.warnings.push({ code: 'ai.gl', level: 'check', path: 'coverage.gl', msg: 'x', choices: [{ label: 'Set', path: 'applicant.name', value: 'X' }, { label: 'Bad', path: 'coverage.gl', value: 'yes' }] });
+  intake.warnings.push({ code: 'ai.gl', level: 'check', path: 'coverage.hasGl', msg: 'x', choices: [{ label: 'Set', path: 'applicant.name', value: 'X' }, { label: 'Bad', path: 'coverage.hasGl', value: 'yes' }, { label: 'Request', path: 'coverage.gl', value: true }] });
   await sandbox.applyCheckChoice(4, intake.warnings[4].choices[0]);
   await sandbox.applyCheckChoice(4, intake.warnings[4].choices[1]);
+  await sandbox.applyCheckChoice(4, intake.warnings[4].choices[2]);
   assert.equal(JSON.stringify(record), before);
   assert.deepEqual([...intake.done], []);
 });

@@ -376,7 +376,8 @@ export const amwins = {
     // (none without a readable date of birth). Marital status from the intake; none there is the
     // agent's (until 2026-10-09 MARRIED, flagged to confirm).
     { selector: dataId('gender', DRIVER), name: 'Gender (standard: MALE unless set in client details)', kind: 'choice',
-      source: (r, a) => (genderSet(r, a) == null ? 'standard' : 'derived'), value: gender, note: genderNote },
+      // A value set but not MALE or FEMALE is the agent's to pick, never the AI's (a fact).
+      source: (r, a) => (genderSet(r, a) == null ? 'standard' : gender(r, a) == null ? 'fact' : 'derived'), value: gender, note: genderNote },
     { selector: dataId('martialStatus', DRIVER), name: 'Marital status', kind: 'choice', path: 'drivers[].maritalStatus', clientFact: true },
     { selector: dataId('licenseYear', DRIVER), name: 'Year licensed (standard: birth year + 17)',
       source: (r, a) => (birthYear(r, a) == null ? 'fact' : 'standard'), value: licenseYear, note: licenseYearNote },

@@ -58,6 +58,7 @@ const FIELDS = {
   'coverage.reeferBreakdown': ['reefer_breakdown'],
   // Not a form field: only the claims box names it.
   'coverage.ntl': ['claims_details'],
+  'coverage.hasGl': ['claims_details'],
   claims: ['claims_details'],
 };
 FIELDS['priorInsurance[0]'] = FIELDS.priorInsurance;

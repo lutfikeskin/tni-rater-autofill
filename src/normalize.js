@@ -361,6 +361,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       reeferBreakdown: yesNo(raw.reefer_breakdown),
       // Not on the form: only the agent sets it, after reading the claims box.
       ntl: null,
+      // The client already has general liability elsewhere (not a GL request: that's `gl`). Not on
+      // the form either: the agent sets it, after Luna flags the claims box.
+      hasGl: null,
     },
     claims: { text: cleanMultiline(raw.claims_details), hasClaims: null, notes: null },
     crossSell: [

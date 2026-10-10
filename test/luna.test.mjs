@@ -497,8 +497,9 @@ test('claims-box review: a stated time in business the intake lacks or contradic
 });
 
 // Maintainer 2026-10-10: Progressive's other business coverages are None of the above unless the
-// intake says the client has GL (coverage.gl). Luna flags a claims-box line about GL; code quotes
-// that line (one it sent) and offers a button that sets coverage.gl as the agent's edit.
+// client has GL. Luna flags a claims-box line about GL; code quotes that line (one it sent) and
+// offers a button that sets coverage.hasGl as the agent's edit: the client has GL, which is not a
+// request to quote GL (coverage.gl; audit 2026-10-10).
 test('claims-box review: a general liability mention the form lacks is a check item with its own buttons', async () => {
   const text = 'Financed\nAlso has general liability with another agency, wants it quoted';
   const lines = (gl) => envelope({ lines: { l0: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false },
@@ -511,10 +512,11 @@ test('claims-box review: a general liability mention the form lacks is a check i
   assert.match(review.body.instructions, /other than non-trucking liability \(that is the ntl question\) and general liability/);
 
   const items = notesWarnings(parseNotesReview(lines(true), review), review);
-  assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.gl', 'coverage.gl', 'check']]);
+  assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.gl', 'coverage.hasGl', 'check']]);
   assert.match(items[0].msg, /mentions general liability: "Also has general liability with another agency, wants it quoted"/);
   assert.match(items[0].msg, /None of the above.*left to you/);
-  assert.deepEqual(items[0].choices, [{ label: 'Client has GL', path: 'coverage.gl', value: true }, { label: 'Not GL' }]);
+  assert.doesNotMatch(items[0].msg, /GL limit|Requested coverage/, 'not a GL request');
+  assert.deepEqual(items[0].choices, [{ label: 'Client has GL', path: 'coverage.hasGl', value: true }, { label: 'Not GL' }]);
   assert.deepEqual(notesWarnings(parseNotesReview(lines(false), review), review), [], 'no mention: nothing');
   // GL already ticked on the form: nothing to ask.
   const ticked = buildNotesReview({ coverage: { gl: true }, claims: { text } });
@@ -555,6 +557,11 @@ test('driver names: only first names are sent, the answer is a bounded guess, li
   assert.deepEqual(NAME_GUESSES, ['likely_female', 'likely_male', 'unclear']);
   assert.match(review.body.instructions, /untrusted data/);
   assert.equal(buildNameReview({ drivers: [{ first: 'Ann', gender: 'FEMALE' }] }), null, 'nothing to ask');
+  // A first-name box that may hold the surname sends nothing for that driver (audit 2026-10-10).
+  for (const d of [{ first: 'Smith, Jane', last: null }, { first: 'SMITH JANE', last: '' }, { first: 'Lopez', last: 'Lopez' }]) {
+    assert.equal(buildNameReview({ drivers: [d] }), null, d.first);
+  }
+  assert.deepEqual(buildNameReview({ drivers: [{ first: 'Smith, Jane' }, { first: 'Mary Ann', last: 'Lee' }] }).names, { d1: 'Mary' });
 
   const reply = (d0, d1 = 'likely_male') => envelope({ drivers: { d0, d1 } });
   const items = nameWarnings(parseNameReview(reply('likely_female'), review), review, record);

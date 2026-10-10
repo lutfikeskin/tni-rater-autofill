@@ -188,10 +188,13 @@ const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHaul
 const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
 const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration && !priorPolicyExpired(r, p));
 // Other business coverages (MoreAboutBusiness): TNI's standard is none (2026-10-10), unless the
-// intake openly says the customer has general liability; then every one of them is the agent's.
-const hasGl = (r) => r.coverage?.gl === true;
+// customer has general liability: the agent marked that they have it (coverage.hasGl, from the
+// claims box), or the intake asks for GL (coverage.gl, Requested coverage: whether they have it now
+// is then unknown). Then every one of them is the agent's.
+const hasGl = (r) => r.coverage?.hasGl === true || r.coverage?.gl === true;
+const glWhy = (r) => (r.coverage?.hasGl === true ? 'You marked that the client has general liability' : 'The intake asks for general liability');
 const otherCoverage = (rule, standard, note) => ({ ...rule, source: (r) => (hasGl(r) ? 'fact' : 'standard'),
-  value: () => standard, note: (r) => (hasGl(r) ? note : null) });
+  value: () => standard, note: (r) => (hasGl(r) ? `${glWhy(r)}: ${note}` : null) });
 const OTHER_GROUP = { AA: 'Other business coverages', A7: 'Other business coverages', A8: 'Other business coverages', A9: 'Other business coverages',
   B2: 'Other business coverages (Progressive bundle)', AF: 'Other business coverages (Progressive bundle)', B0: 'Other business coverages (Progressive bundle)' };
 // Once For Hire Trucking reveals this question, the agency workflow uses this subtype.
@@ -557,25 +560,24 @@ export const progressive = {
       // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer
       // currently insured ("more than a year is always Yes"); otherwise the agent's. Yes reveals the
       // current BI limit (95; live run 2026-10-10: left blank until the agent answered this).
-      { q: '83', source: (r) => (currentlyInsured(r) ? 'derived' : 'attestation'), field: 'MoreBusinessInput.HasContinuousCoverage', ask: 'Has the customer had continuous coverage?', name: 'Continuous coverage (Yes when currently insured)', kind: 'bool',
+      { q: '83', source: (r) => (currentlyInsured(r) ? 'standard' : 'attestation'), field: 'MoreBusinessInput.HasContinuousCoverage', ask: 'Has the customer had continuous coverage?', name: 'Continuous coverage (Yes when currently insured)', kind: 'bool',
         value: (r) => (currentlyInsured(r) ? true : null),
         note: (r) => (currentlyInsured(r) ? null : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
       { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', ignore: (r) => !currentlyInsured(r) },
       { q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', ignore: (r) => !currentlyInsured(r) },
       // Other business coverages: TNI's standard None (2026-10-10; the agent's from 2026-10-09),
-      // unless the intake says the customer has general liability (coverage.gl Yes): then all of
-      // them are the agent's. The radio version (A2: General Liability / Business Owner's Policy /
+      // unless the customer has general liability (hasGl): then all of them are the agent's. The radio version (A2: General Liability / Business Owner's Policy /
       // None) and the checkbox version (IN, PA: two groups, each with its own "None of the above",
       // ticked, and the coverages themselves unticked).
       otherCoverage({ q: 'A2', field: 'MoreBusinessInput.OtherBusinessCoverages', ask: 'Does the customer have other coverages for the business?', name: 'Other business coverages (standard: None unless the intake has general liability)', kind: 'choice' },
-        'None', 'The intake says the customer has general liability: answer the other business coverages yourself.'),
+        'None', 'answer the other business coverages yourself.'),
       otherCoverage({ q: 'AA', field: 'MoreBusinessInputNonShredded.OtherBusinessCoveragesNoneInd', ask: 'None of the above', each: true, name: 'Other coverages: None of the above', group: OTHER_GROUP.AA, kind: 'bool' },
-        true, 'The intake says the customer has general liability: tick the other business coverages that apply yourself.'),
+        true, 'tick the other business coverages that apply yourself.'),
       otherCoverage({ q: 'B2', field: 'MoreBusinessInputNonShredded.ProgressiveBundleNoneInd', ask: 'None of the above', each: true, name: 'Other coverages: None of the above', group: OTHER_GROUP.B2, kind: 'bool' },
-        true, 'The intake says the customer has general liability: tick the other business coverages that apply yourself.'),
+        true, 'tick the other business coverages that apply yourself.'),
       ...[['A7', 'Business Owners Policy'], ['A8', 'General Liability'], ['A9', 'Workers\' Compensation'], ['AF', 'Business Owners Policy'], ['B0', 'General Liability']]
         .map(([q, ask]) => otherCoverage({ q, ask, each: true, name: `Other coverage: ${ask}`, group: OTHER_GROUP[q], kind: 'bool' },
-          false, `The intake says the customer has general liability: tick ${ask} yourself if they have it.`)),
+          false, `tick ${ask} yourself if they have it.`)),
       { q: 'B7', field: 'MoreBusinessInput.AdditionalInsuredCount', ask: 'Number of Named Additional Insureds', name: 'Named additional insured count (preserve prefilled value)', ignore: true },
       { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
       { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },

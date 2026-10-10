@@ -10,7 +10,7 @@ export const TNI_RULES = `
 ## General
 - The intake (the client's TNI Commercial Insurance Quote Application) is the source of truth for facts about the client. Never invent a fact the intake doesn't give.
 - Coverage and workflow questions the intake doesn't cover use TNI's standard answers below. The page's own pre-selected answer is not always right: prefer the TNI rule.
-- A fact about the client that the intake doesn't give (a driver's marital status, when the business was established, how long they have been with their current carrier, whether loss runs can be provided, who a vehicle is registered to) is the agent's: leave it. There is no standard answer for a client fact, except these TNI standards: a driver's gender is MALE unless the client details set it; the year first licensed is the birth year + 17; continuous coverage is Yes when the intake shows the customer currently insured; other business coverages are "None" / "None of the above" unless the intake says the customer has general liability.
+- A fact about the client that the intake doesn't give (a driver's marital status, when the business was established, how long they have been with their current carrier, whether loss runs can be provided, who a vehicle is registered to) is the agent's: leave it. There is no standard answer for a client fact, except these TNI standards: a driver's gender is MALE unless the client details set it; the year first licensed is the birth year + 17; continuous coverage is Yes when the intake shows the customer currently insured; other business coverages are "None" / "None of the above" unless the customer has general liability (the agent marked it) or the intake asks for general liability.
 - The agent decides: MVR and CLUE report orders, excluding a driver, anything the client must sign, attest or authorise, payment or bank details, and moving to another page.
 
 ## Named insured and business (BusinessOwnerInfo)
@@ -52,7 +52,7 @@ export const TNI_RULES = `
 ## More about the business (MoreAboutBusiness)
 - Currently insured: Yes when the intake lists current insurance with a limit and an expiration that is not before the application date. An expired policy alone is not current coverage.
 - Continuous coverage: Yes when the customer is currently insured (as above; TNI: more than a year is always Yes); otherwise the agent answers it. Current bodily injury limit and expiration: as written in the intake ("State Minimum" is "State Minimum or less").
-- Other coverages for the business: TNI standard "None" (the checkbox version: "None of the above" ticked in each group, the coverages unticked), unless the intake says the customer has general liability; then the agent answers all of them. Additional insured, waiver and blanket endorsement questions: leave as the page has them (0 / No).
+- Other coverages for the business: TNI standard "None" (the checkbox version: "None of the above" ticked in each group, the coverages unticked), unless the customer has general liability (the agent marked it) or the intake asks for general liability; then the agent answers all of them. Additional insured, waiver and blanket endorsement questions: leave as the page has them (0 / No).
 - State or federal filings required: Yes when the intake says filings are required.
 - ELD required: from the intake.
 

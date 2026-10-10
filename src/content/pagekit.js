@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 67 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 68 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -1086,8 +1086,12 @@
   // The fill running in this frame (its report and how to halt it): the side panel reads how many
   // answers are in so far, and its Stop halts it the way an agent edit does (no Continue after).
   let running = null;
+  // Fills the agent stopped before they began here (`run`: the panel's id for the fill; Stop can
+  // come while the panel still prepares, before fill() starts): such a fill halts as it starts.
+  const stoppedRuns = new Set();
   function progress() { return running ? { filled: running.report.filled.length } : null; }
-  function stop() {
+  function stop(run = null) {
+    if (run != null && (!running || running.run !== run)) stoppedRuns.add(run);
     if (!running) return false;
     running.halt(STOP_HALT);
     return true;
@@ -1207,7 +1211,7 @@
   // `hold` (the panel's "Check answers before Continue"): Continue is clicked only when `confirmed`
   // is the page's `receipt()` as the agent approved it (Looks right) and still is; otherwise the
   // report says `held`: 'check' (not approved yet) or 'changed' (the page changed since).
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], hold = false, confirmed = null } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], hold = false, confirmed = null, run = null } = {}) {
     // An agent edit protects its field. A plain name saved by an older build (field-key v2)
     // protects every row key made from it (name#<row>): it could have been any row's edit.
     const skipKeys = new Set(skip);
@@ -1269,8 +1273,10 @@
         return !pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path) ? [] : [{ previous, pair }];
       });
     };
-    const thisFill = { report, halt };
+    const thisFill = { report, halt, run };
     running = thisFill;
+    // Stopped by the agent before it began (the panel was still preparing): nothing is done.
+    if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
     const settled = await settle({ quietMs: 400, maxMs: 15000 });
     // Stopped while the page settled: nothing was done.
     if (!settled || report.halted) {
@@ -1809,7 +1815,9 @@
       ...report.failed.map((x) => `failed: ${called(x)}`),
       ...report.leftRequired.map((x) => `required: ${called(x)}`),
       ...report.kept.filter((x) => x.differs).map((x) => `differs: ${called(x)}`),
-      ...report.checks.map((x) => `check: ${called(x)}`),
+      // Another step's hidden fields (otherStep: AmWINS' prior carriers, filled again on every
+      // step) are confirmed on their own step, not again on each later one (audit 2026-10-10).
+      ...report.checks.filter((x) => !x.otherStep).map((x) => `check: ${called(x)}`),
       ...report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
       ...(report.halted ? [report.reason] : []),
     ];
@@ -1999,14 +2007,18 @@
   // reveal). Returns [{ key, label, shown, empty }] for each one this frame has; one not found here
   // is left out. `shown` is in the form of fill's `shown`: the option text of a list or choice,
   // 'checked'/'unchecked' for a checkbox, the text in a box ('' when nothing is picked or typed).
+  // `steps`: the plan steps that filled them (an item's `stepId`): `agrees` then says whether the
+  // field still holds that answer the way fill judges it (agreesWith: an address the page wrote
+  // in its own format, a ZIP+4, a reformatted amount still agree), null without its step.
   // It reads only: no event, focus, click, value change or mark change.
-  function readBack(items) {
+  function readBack(items, steps = []) {
     const controls = collectControls();
     const out = [];
-    for (const { key, label } of items ?? []) {
+    for (const { key, label, stepId = null } of items ?? []) {
       const same = controls.filter((c) => fieldKey(c) === key);
       const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
-      if (c) out.push({ key, label, shown: shownNow(c), empty: !hasValue(c) });
+      const step = stepId == null ? null : (steps ?? []).find((s) => String(s.id) === String(stepId));
+      if (c) out.push({ key, label, shown: shownNow(c), empty: !hasValue(c), agrees: step ? !!agreesWith(step, c) : null });
     }
     return out;
   }
@@ -2018,7 +2030,12 @@
   // It reads only, and no value leaves the page: only the fingerprint does.
   function receipt() {
     if (window !== window.top) return null;
-    const text = collectControls().filter((c) => !otherStep(c.el)).map((c) => `${fieldKey(c)}\u0001${c.label ?? ''}\u0001${shownNow(c)}`).join('\u0002');
+    // The page as the agent sees it, inside a fill or not: a fill also reads collapsed fields it
+    // has rules for (hiddenOk: AmWINS' prior carriers), which the agent's Looks right didn't.
+    const fillHidden = hiddenOk;
+    let controls;
+    try { hiddenOk = []; controls = collectControls(); } finally { hiddenOk = fillHidden; }
+    const text = controls.filter((c) => !otherStep(c.el)).map((c) => `${fieldKey(c)}\u0001${c.label ?? ''}\u0001${shownNow(c)}`).join('\u0002');
     // cyrb53: a 53-bit string hash (an equality check, not a secret).
     let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
     for (let i = 0; i < text.length; i++) {
@@ -2215,5 +2232,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 67, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 68, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

@@ -153,6 +153,7 @@ const NOT_MAPPED = {
     'coverage.glLimit': 'AmWINS Business Auto has no general liability section',
     'coverage.reeferBreakdown': 'no reefer breakdown question on the Business Auto application',
     'coverage.ntl': 'AmWINS has no known NTL option',
+    'coverage.hasGl': 'AmWINS Business Auto has no other-coverages question',
     'claims.text': 'the claims box is read by the intake reader into hasClaims and notes',
   },
 };
@@ -381,7 +382,9 @@ test('AmWINS driver gender and year licensed: TNI standards, the agent\'s gender
   }
   const odd = gender(buildPlan(with_({ 'drivers.0.gender': 'X' }), amwins, {}));
   assert.equal(odd.value, null, 'neither MALE nor FEMALE: the agent picks');
-  assert.ok(odd.note);
+  // ... never the AI (audit 2026-10-10): a fact, kept from Luna.
+  assert.deepEqual([odd.source, odd.manualOnly], ['fact', true]);
+  agentsNote(odd);
   for (const dob of [null, '1980', 'unknown']) {
     const y = year(buildPlan(with_({ 'drivers.0.dob': dob }), amwins, {}));
     assert.equal(y.source, 'fact', String(dob));
@@ -398,7 +401,9 @@ test('AmWINS driver gender and year licensed: TNI standards, the agent\'s gender
 
 test('Progressive continuous coverage: Yes when currently insured, otherwise the agent\'s', () => {
   const insured = byQ(buildPlan(expediter(), progressive, {}), '83');
-  assert.deepEqual([insured.value, insured.source, insured.manualOnly], [true, 'derived', false]);
+  // TNI's assumption, not an intake fact (audit 2026-10-10): tagged standard, no PDF link.
+  assert.deepEqual([insured.value, insured.source, insured.standard, insured.manualOnly], [true, 'standard', true, false]);
+  assert.equal(insured.from ?? null, null);
   for (const prior of [[], [{ type: 'Commercial Auto', carrier: 'Other', limit: '$500k CSL', expiration: '01/01/2020' }]]) {
     const step = byQ(buildPlan(with_({ priorInsurance: prior, 'applicant.applicationDate': '10/01/2026' }), progressive, {}), '83');
     assert.deepEqual([step.source, step.manualOnly], ['attestation', true], 'no current insurance: the agent answers it');
@@ -415,12 +420,18 @@ test('Progressive other business coverages: None of the above unless the intake 
   assert.equal(byQ(p, 'A8').group, 'Other business coverages');
   assert.equal(byQ(p, 'B2').group, byQ(p, 'B0').group);
   assert.notEqual(byQ(p, 'B2').group, byQ(p, 'AA').group, 'two groups, each with its own None of the above');
-  const gl = buildPlan(with_({ 'coverage.gl': true }), progressive, {});
+  // GL asked for on the form (whether they have it now is unknown), or the agent marked that the
+  // client has it (Luna's claims-box card: coverage.hasGl, not a GL request): the agent's.
+  const asked = buildPlan(with_({ 'coverage.gl': true }), progressive, {});
+  const has = buildPlan(with_({ 'coverage.hasGl': true }), progressive, {});
   for (const q of ['A2', 'AA', 'B2', 'A7', 'A8', 'A9', 'AF', 'B0']) {
-    assert.equal(byQ(gl, q).source, 'fact', q);
-    assert.equal(byQ(gl, q).manualOnly, true, q);
-    agentsNote(byQ(gl, q));
-    assert.match(byQ(gl, q).note, /general liability/);
+    for (const gl of [asked, has]) {
+      assert.equal(byQ(gl, q).source, 'fact', q);
+      assert.equal(byQ(gl, q).manualOnly, true, q);
+      agentsNote(byQ(gl, q));
+    }
+    assert.match(byQ(asked, q).note, /^The intake asks for general liability: /);
+    assert.match(byQ(has, q).note, /^You marked that the client has general liability: /);
   }
 });
 
@@ -544,6 +555,12 @@ test('a derived answer names the intake answers it was worked out from', () => {
   for (const s of [...amw, ...prog]) {
     if (s.source !== 'derived' || s.value == null || s.value === '') assert.equal(s.from ?? null, null, s.name);
   }
-  // Evidence only: tracing never changes the answer.
-  assert.deepEqual(buildPlan(expediter(), amwins, { drivers: 0, vehicles: 0 }).map((s) => s.value), amw.map((s) => s.value));
+  // Evidence only: tracing never changes the record it reads (audit 2026-10-10: two traced plans
+  // compared with each other couldn't show that), so every later step sees the intake as it is.
+  for (const carrier of [amwins, progressive]) {
+    const rec = expediter();
+    const before = structuredClone(rec);
+    buildPlan(rec, carrier, { drivers: 0, vehicles: 0, trailers: 0 });
+    assert.deepEqual(rec, before, carrier.id);
+  }
 });

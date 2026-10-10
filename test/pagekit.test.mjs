@@ -1930,7 +1930,15 @@ test('readBack reports what each field shows now, row by row, and changes nothin
     { key: keys.get('Empty box'), label: 'Empty box', shown: '', empty: true },
     { key: keys.get('2019 ISUZU NPR HD'), label: '2019 ISUZU NPR HD', shown: '30000', empty: false },
     { key: keys.get('2021 FORD TRANSIT 350'), label: '2021 FORD TRANSIT 350', shown: '45000', empty: false },
-  ], 'the unknown key is left out');
+  ].map((x) => ({ ...x, agrees: null })), 'the unknown key is left out; no steps, no judgement');
+  // With the steps that filled them, the kit judges as fill does (audit 2026-10-10): an address the
+  // page wrote in its own format agrees; a box holding something else doesn't.
+  const steps = [
+    { id: 'addr', kind: 'address-suggest', value: '5001 Sheridan Street Davenport, IA, USA' },
+    { id: 'dot', kind: 'text', value: '7654321' },
+  ];
+  const judged = h.kit.readBack([{ ...ask('USDOT number'), stepId: 'addr' }, { ...ask('USDOT number'), stepId: 'dot' }, { ...ask('Empty box'), stepId: 'addr' }, { ...ask('Tows for others'), stepId: 'gone' }], steps);
+  assert.deepEqual(JSON.parse(JSON.stringify(judged.map((x) => x.agrees))), [true, false, false, null]);
   assert.deepEqual(values(), before, 'no value or mark changed');
   assert.deepEqual(touched, [], 'no click, focus or event');
 });
@@ -3430,6 +3438,51 @@ test('with hold, Continue waits for the receipt the agent approved, and a change
   assert.equal(approved.held, undefined);
   assert.equal(approved.advanced, 'Continue');
   assert.equal(clicks, 1);
+});
+
+// Audit 2026-10-10: a fill also reads collapsed fields it has rules for (`hidden`: AmWINS' prior
+// carriers); Looks right's receipt, taken outside a fill, didn't. The receipt is the page as the
+// agent sees it either way, so Looks right can continue such a page.
+test('the receipt is the same inside a fill and out when a hidden rule\'s field is collapsed', async () => {
+  const h = harness({ ext: true, search: '?pageName=Synthetic' });
+  addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+  const prior = makeInput({ id: 'prior', ariaLabel: 'Prior carrier', value: 'NO PRIOR' });
+  prior._visible = false;
+  h.document.body.append(prior);
+  const button = addButton(h, 'Continue');
+  let clicks = 0;
+  button.onclick = () => { clicks++; };
+  const plan = [
+    { id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' },
+    { id: 'prior', selector: '#prior', hidden: true, kind: 'text', value: 'NO PRIOR', name: 'Prior carrier', standard: true, source: 'standard' },
+  ];
+  const options = { maxRounds: 3, advance: { text: 'Continue' }, hold: true };
+  assert.equal((await h.kit.fill(plan, options)).held, 'check');
+  const approved = await h.kit.fill(plan, { ...options, confirmed: h.kit.receipt() });
+  assert.equal(approved.held, undefined);
+  assert.equal(clicks, 1);
+});
+
+// Audit 2026-10-10: Stop pressed while the panel still prepared (before fill() began here) was
+// lost, and the fill ran to the end and could click Continue. Stop with the fill's run id is kept
+// until that fill starts, which then halts at once; another fill isn't affected.
+test('a Stop for a fill that hasn\'t begun here halts it as it starts', async () => {
+  const h = harness({ ext: true, search: '?pageName=Synthetic' });
+  const { input } = addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+  const button = addButton(h, 'Continue');
+  let clicks = 0;
+  button.onclick = () => { clicks++; };
+  const plan = [{ id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' }];
+  assert.equal(h.kit.stop('run-1'), false, 'no fill running here yet');
+  const stopped = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' }, run: 'run-1' });
+  assert.equal(stopped.halted, true);
+  assert.equal(stopped.reason, 'You stopped the fill. Nothing more was filled or clicked.');
+  assert.equal(clicks, 0);
+  assert.equal(input.value, '', 'nothing filled');
+  const next = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' }, run: 'run-2' });
+  assert.equal(next.halted, false);
+  assert.equal(next.advanced, 'Continue');
+  assert.equal(input.value, 'wanted');
 });
 
 test('without hold, a done page continues as before; receipt reads only', async () => {

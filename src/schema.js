@@ -93,6 +93,7 @@ export const SECTIONS = [
     ['coverage.cargoLimit', 'Cargo limit', 'money'],
     ['coverage.cargoDeductible', 'Cargo deductible', 'money'],
     ['coverage.gl', 'General liability', 'bool'],
+    ['coverage.hasGl', 'Already has general liability (claims box)', 'bool'],
     ['coverage.glLimit', 'GL limit', 'choice'],
     ['coverage.reeferBreakdown', 'Reefer breakdown', 'bool'],
     ['coverage.ntl', 'Non-trucking liability (NTL)', 'bool'],

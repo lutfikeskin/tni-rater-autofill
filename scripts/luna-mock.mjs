@@ -529,10 +529,11 @@ try {
   await genderCard.getByRole('button', { name: 'Use Female', exact: true }).click();
   await panel.waitForFunction(async () => {
     const { intake } = await chrome.storage.session.get('intake');
-    return intake.record.coverage.gl === true && intake.record.drivers[0].gender === 'FEMALE';
+    return intake.record.coverage.hasGl === true && intake.record.drivers[0].gender === 'FEMALE';
   }, null, { timeout: 15000 });
   const edited = await savedIntake();
-  verify('the buttons are the agent\'s edits', ['coverage.gl', 'drivers[0].gender'].every((p) => edited.agentEdited.includes(p)), true);
+  verify('the buttons are the agent\'s edits', ['coverage.hasGl', 'drivers[0].gender'].every((p) => edited.agentEdited.includes(p)), true);
+  verify('Client has GL asks for no GL quote', edited.record.coverage.gl === true, false);
   verify('both items are checked', await panel.locator('#warnings .warn-card', { hasText: /general liability|woman's name/ }).count(), 0);
   await panel.waitForTimeout(500);
   verify('confirming GL does not read the claims box again', claimsRequests, claimsBeforeChoice);
@@ -567,7 +568,7 @@ try {
   const offIntake = await savedIntake();
   verify('assistance off: no claims or name check is sent', claimsRequests + namesRequests, offBefore);
   verify('assistance off: no GL or gender item', await panel.locator('#warnings .warn-card', { hasText: /general liability|woman's name/ }).count(), 0);
-  verify('assistance off: GL and gender stay as the intake has them', offIntake.record.coverage.gl !== true && offIntake.record.drivers.every((d) => d.gender == null), true);
+  verify('assistance off: GL and gender stay as the intake has them', offIntake.record.coverage.gl !== true && offIntake.record.coverage.hasGl !== true && offIntake.record.drivers.every((d) => d.gender == null), true);
   verify('no unrecognized provider host was contacted', unexpectedProviderHosts.size, 0);
   verify('nothing was submitted', await mock.evaluate(() => window.__amwinsMock.submitted), false);
   verify('browser errors', errors.length, 0);
