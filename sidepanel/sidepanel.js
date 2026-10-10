@@ -1265,6 +1265,10 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
   advance: autoAdvance && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
+  // "Check answers before Continue": Continue only for the page as the agent approved it (Looks
+  // right passes its receipt as `confirmed`). Kept on this computer, not in the usage log.
+  hold: !!$('check-continue')?.checked,
+  confirmed: null,
   // Add NTL done on this intake's quote survives a panel reload (its removal hold depends on it).
   doneActions: [...state.doneActions, ...(state.intake?.ntlAdded ? ['addNtl'] : [])],
   visitedPages: [...state.visitedPages],
@@ -1436,15 +1440,17 @@ async function autoFill(page) {
     rememberFill(frames, ctx);
     followUp = afterFill(frames, ctx);
     const hasWarnings = frames.some((f) => f.unknown?.length);
+    // Held for the agent's check (Check answers before Continue): Looks right is in its report.
+    const held = frames.some((f) => f.held);
     const current = fillCurrent(ctx);
     // The page showed another step than the panel knew (the recorder's step came late): a new
     // step, with a report of its own, as above.
     const step = carrier.layoutSteps ? stepOfResults(carrier, results) : null;
     const newStep = !!step && step !== stepBefore && !state.reports.has(reportKey(tabId, page, carrier, ctx.active, step));
     // The fill whose helper this follows up held Luna back for it.
-    const rendered = current && (newStep || state.autoPaused || hasWarnings || state.assistPage === page);
+    const rendered = current && (newStep || held || state.autoPaused || hasWarnings || state.assistPage === page);
     if (rendered) { renderReport(frames, { ...ctx, plan }); assistFrames = frames; }
-    if (current && newStep) showFinish({ auto: true });
+    if (current && (newStep || held)) showFinish({ auto: true });
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings) {
       logFill(ctx, frames, results, started);
@@ -2149,7 +2155,8 @@ async function runKit(tabId, carrier, func, args = [], frameIds) {
 }
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
-async function fillPage({ auto = false } = {}) {
+// `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
+async function fillPage({ auto = false, confirmed = null } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
   if (state.intake && state.tab?.carrier?.stopPages?.[pageOf(state.tab.url)]) { showStopPage(); return; }
   // A new page that opens while the previous one is still finishing its fill is filled right
@@ -2167,7 +2174,8 @@ async function fillPage({ auto = false } = {}) {
   clearTimeout(state.autoTimer);
   const { id: tabId, carrier } = state.tab;
   const page = pageOf(state.tab.url);
-  const overwrite = auto ? false : $('overwrite').checked;
+  // Looks right never replaces anything: the page is continued as the agent approved it.
+  const overwrite = auto || confirmed ? false : $('overwrite').checked;
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite });
@@ -2198,7 +2206,7 @@ async function fillPage({ auto = false } = {}) {
     // have released some), never the tab in front.
     // Honor the latest switch after preparation, and log the same value used by the kit.
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
-    const options = fillOptions(carrier, { overwrite, skip: [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])] }, ctx.settings.autoAdvance);
+    const options = fillOptions(carrier, { overwrite, skip: [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])], ...(confirmed ? { confirmed } : {}) }, ctx.settings.autoAdvance);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -2503,11 +2511,26 @@ function answeredOnPage(page, keys) {
 // Step 3's last word: whether Continue was clicked, is the panel's to click, or the agent's.
 // `settled`: what was left has been settled since the fill; the panel's Continue then waits for
 // Fill this page again.
-function continueNote({ advanced, left, waiting, page, settled }, carrier = state.tab?.carrier) {
+// `held`: the fill found the page done but held Continue for the agent's check ('check'), or the
+// page changed after they clicked Looks right ('changed'). With Check answers before Continue on,
+// Looks right takes the place of Fill again and continue.
+function continueNote({ advanced, left, waiting, page, settled, held, tabId }, carrier = state.tab?.carrier) {
   const holding = left || waiting;
   const autoAdvance = !!carrier?.advance && $('auto-advance').checked && !carrier.advance.exceptPages?.includes(page);
+  const check = autoAdvance && !!$('check-continue')?.checked;
+  const looksRight = !advanced && !holding && (held || (check && settled))
+    ? h('button', { type: 'button', class: 'primary continue-fill looks-right', onclick: function () { this.disabled = true; lookRight(tabId ?? state.tab?.id, page, carrier, this); } }, 'Looks right, continue')
+    : null;
   const [title, text] = advanced
     ? ['Continue clicked', `Clicked "${advanced}" for you. Nothing is submitted or bound.`]
+    : held === 'changed' && !holding
+      ? ['The page changed', 'It changed after you clicked Looks right. Check the answers again, or click Continue on the page yourself.']
+    : held && !holding
+      ? ['Check the answers', 'Look over Answers on this page, then click Looks right. Never Bind or Submit.']
+    : check && holding
+      ? ['Then check and continue', 'Once nothing above is left, check the answers and click Looks right. Never Bind or Submit.']
+    : check && settled && !holding
+      ? ['Ready to check', 'Nothing left for you. Check the answers, then click Looks right. Nothing is submitted or bound.']
     : !autoAdvance
       ? [holding ? 'Then click Continue on the page' : 'Ready for Continue', carrier?.advance && $('auto-advance').checked
         ? 'Click Continue on this page yourself. Nothing is submitted or bound.'
@@ -2520,7 +2543,27 @@ function continueNote({ advanced, left, waiting, page, settled }, carrier = stat
           ? ['Ready for Continue', 'Nothing left for you. Fill again to click Continue, or click it yourself. Nothing is submitted or bound.']
           : ['Ready for Continue', 'Nothing left for you. If the page doesn’t move on, click Continue. Nothing is submitted or bound.'];
   return h('div', { class: 'continue-note' }, h('b', {}, title), h('span', {}, text),
-    !advanced && !holding && settled && autoAdvance ? h('button', { type: 'button', class: 'primary continue-fill', onclick: () => fillPage() }, 'Fill again and continue') : null);
+    looksRight ?? (!advanced && !holding && settled && autoAdvance ? h('button', { type: 'button', class: 'primary continue-fill', onclick: () => fillPage() }, 'Fill again and continue') : null));
+}
+
+// Looks right: the agent approved the page as it stands now. Its receipt (pagekit receipt: a
+// fingerprint of every answer on the page, no values) goes with a fill that clicks Continue only
+// if the page still matches it then; a page that changed meanwhile is held again. Only for the page
+// in front, and never while a fill runs.
+async function lookRight(tabId, page, carrier, button = null) {
+  const again = () => { if (button) button.disabled = false; };
+  if (state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) { again(); return; }
+  let confirmed = null;
+  try {
+    const frames = await runKit(tabId, carrier, () => globalThis.__raterKit?.receipt?.() ?? null, []);
+    confirmed = frames.find((f) => f.frameId === 0)?.result ?? null;
+  } catch { /* the page is navigating */ }
+  if (!confirmed || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) {
+    again();
+    if (!confirmed) announce('Couldn’t read the page. Try Looks right again.');
+    return;
+  }
+  await fillPage({ confirmed });
 }
 
 // What's filled is listed in step 2: the first few, then the rest on request.
@@ -2688,7 +2731,9 @@ function renderReport(frames, ctx = {}) {
       + (renamedNames ? ', and ' + renamedNames + " moved to a field the extension doesn't know" : '')
       + ". They're left for you and Continue waits. Please report it (a Capture page layout helps)."
     : null;
-  const entry = { key, tabId, page, fields, filled: count, left: needs.length, waiting: waiting.length, advanced: advanced ?? null, at: Date.now(), auto: !!ctx.auto };
+  // Held for the agent's check (Check answers before Continue): the top frame's word.
+  const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
+  const entry = { key, tabId, page, fields, filled: count, left: needs.length, waiting: waiting.length, advanced: advanced ?? null, held, at: Date.now(), auto: !!ctx.auto };
   // "Answers on this page", grouped by where each came from, in this order. A row whose answer the
   // page shows differently now is marked once the list is opened (checkAnswers).
   const kindOf = (row) => row.kind ?? (row.standard ? 'standard' : 'intake');
@@ -2713,7 +2758,8 @@ function renderReport(frames, ctx = {}) {
     } }, `Show all ${listed.length}`)
     : null;
   const body = h('div', { class: 'more-body' }, nodesOf(listed.slice(0, FILLED_SHOWN)), more);
-  const filledNodes = doneRows.length ? [h('details', { class: 'more answers', ontoggle: function () { if (this.open) checkAnswers(body, tabId, page, carrier); } },
+  // Open when Continue waits for the agent's check: the answers are what they check.
+  const filledNodes = doneRows.length ? [h('details', { class: 'more answers', open: !!held, ontoggle: function () { if (this.open) checkAnswers(body, tabId, page, carrier); } },
     h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'Answers on this page'), h('span', { class: 'small muted answers-count' }, `${count} filled`)),
     body)] : [];
   const nodes = [
@@ -2737,7 +2783,7 @@ function renderReport(frames, ctx = {}) {
   ].filter((node) => node != null && node !== false);
   putReport(entry, nodes, filledNodes);
   renderSteps();
-  if (state.reportFor === entry) announce(`Filled ${count} answer${count === 1 ? '' : 's'}. ${needs.length ? `${needs.length} left for you.` : 'Nothing is left for you.'}`);
+  if (state.reportFor === entry) announce(`Filled ${count} answer${count === 1 ? '' : 's'}. ${needs.length ? `${needs.length} left for you.` : held ? 'Check the answers, then click Looks right.' : 'Nothing is left for you.'}`);
 }
 
 async function clearMarks() {
@@ -3669,6 +3715,9 @@ function wireUsage() {
   $('auto-followups').addEventListener('change', (e) => usage.saveSettings({ autoFollowUps: e.target.checked }));
   $('auto-pages').addEventListener('change', (e) => usage.saveSettings({ autoPages: e.target.checked }));
   $('auto-advance').addEventListener('change', (e) => { usage.saveSettings({ autoAdvance: e.target.checked }); renderSite(); });
+  // Saved with the other switches but never logged (fillContext's settings are the four the
+  // usage server knows).
+  $('check-continue').addEventListener('change', (e) => usage.saveSettings({ checkBeforeContinue: e.target.checked }));
   $('server-url').addEventListener('change', async (e) => {
     const v = e.target.value.trim();
     // Blank means "no server" (export only); anything else must be an http(s) URL.
@@ -4092,6 +4141,7 @@ async function init() {
   $('auto-followups').checked = saved.autoFollowUps ?? true;
   $('auto-pages').checked = saved.autoPages ?? false;
   $('auto-advance').checked = saved.autoAdvance ?? true;
+  $('check-continue').checked = saved.checkBeforeContinue ?? false;
   uploadNow();
   render();
   renderUsage();

@@ -3394,6 +3394,61 @@ test('an answer the carrier rewrites during the wait before Continue fails, and 
   assert.equal(input.getAttribute('data-rater-autofill'), 'failed');
 });
 
+// Check answers before Continue (the panel's `hold`): a done page is held for the agent; Looks
+// right sends the page's receipt as they saw it, and Continue is clicked only while the page still
+// matches it. A page changed since is held again, with no click.
+test('with hold, Continue waits for the receipt the agent approved, and a changed page is held again', async () => {
+  const h = harness({ ext: true, search: '?pageName=Synthetic' });
+  addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+  // A question the plan has no rule for, already answered on the page (not a blocker).
+  const other = addExtText(h, 'b', '1235', { ref: 'Test.other', caption: 'Other question', value: 'carrier' });
+  const button = addButton(h, 'Continue');
+  let clicks = 0;
+  button.onclick = () => { clicks++; };
+  const plan = [{ id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' }];
+  const options = { maxRounds: 3, advance: { text: 'Continue' }, hold: true };
+
+  const first = await h.kit.fill(plan, options);
+  assert.equal(first.held, 'check', 'done, and waiting for the agent');
+  assert.equal(clicks, 0);
+  assert.equal(first.advanced, undefined);
+  assert.deepEqual(Array.from(first.filled, (x) => x.key), ['ref:Test.foo']);
+  assert.ok(!first.blockers.length, 'held is not a blocker: nothing is left for the agent');
+
+  // The agent approved it; the carrier changed an answer before the click.
+  const seen = h.kit.receipt();
+  assert.match(seen, /^r1-[0-9a-z]+$/);
+  assert.equal(h.kit.receipt(), seen, 'the same page, the same receipt');
+  other.cmp.setValue('changed by the carrier');
+  assert.notEqual(h.kit.receipt(), seen);
+  const changed = await h.kit.fill(plan, { ...options, confirmed: seen });
+  assert.equal(changed.held, 'changed');
+  assert.equal(clicks, 0, 'no Continue for a page the agent did not see');
+
+  // Approved again as it is now: Continue.
+  const approved = await h.kit.fill(plan, { ...options, confirmed: h.kit.receipt() });
+  assert.equal(approved.held, undefined);
+  assert.equal(approved.advanced, 'Continue');
+  assert.equal(clicks, 1);
+});
+
+test('without hold, a done page continues as before; receipt reads only', async () => {
+  const h = harness({ ext: true, search: '?pageName=Synthetic' });
+  const { input } = addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+  const button = addButton(h, 'Continue');
+  let clicks = 0;
+  button.onclick = () => { clicks++; };
+  const plan = [{ id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' }];
+  const before = input.value;
+  h.kit.receipt();
+  assert.equal(input.value, before, 'receipt changes nothing');
+  assert.equal(input.getAttribute('data-rater-autofill'), null);
+  const report = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' } });
+  assert.equal(report.held, undefined);
+  assert.equal(report.advanced, 'Continue');
+  assert.equal(clicks, 1);
+});
+
 test('an agent edit while AI answers go in protects that question and stops the remaining answers', async () => {
   const h = harness();
   const pick = (id, label, options) => new SelectNode([{ text: 'Select one', value: '' }, ...options], { id, ariaLabel: label });

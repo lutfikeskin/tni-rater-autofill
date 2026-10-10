@@ -1,5 +1,5 @@
 // Injected into rater pages (every frame) by the side panel. Classic script, no imports.
-// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, readBack, aiBanner, capture, clear, … }.
+// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, readBack, receipt, aiBanner, capture, clear, … }.
 //
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
 // page already filled alone.
@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 66 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 67 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -1204,7 +1204,10 @@
   // `doneSteps`: steps of a one-address application (stepKey) already continued from: a step the
   // agent goes back to is theirs, never continued again.
   // `stopPages`: pages where the carrier has stopped the quote: nothing is filled or clicked there.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [] } = {}) {
+  // `hold` (the panel's "Check answers before Continue"): Continue is clicked only when `confirmed`
+  // is the page's `receipt()` as the agent approved it (Looks right) and still is; otherwise the
+  // report says `held`: 'check' (not approved yet) or 'changed' (the page changed since).
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], hold = false, confirmed = null } = {}) {
     // An agent edit protects its field. A plain name saved by an older build (field-key v2)
     // protects every row key made from it (name#<row>): it could have been any row's edit.
     const skipKeys = new Set(skip);
@@ -1840,7 +1843,10 @@
           report.blockers.push(`failed: ${called(item)}`);
         }
         const button = !changed.length && !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
-        if (button) {
+        // The agent checks the answers first: Continue only for the page as they approved it.
+        const approved = !hold || (confirmed != null && confirmed === receipt());
+        if (button && !approved) report.held = confirmed == null ? 'check' : 'changed';
+        if (button && approved) {
           const text = oneLine(button.value || button.textContent).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           report.signatureBefore = signature();
@@ -2003,6 +2009,26 @@
       if (c) out.push({ key, label, shown: shownNow(c), empty: !hasValue(c) });
     }
     return out;
+  }
+
+  // The page's answers as they stand, as one short fingerprint (top frame only, where Continue is;
+  // null elsewhere): every question's key, label and what it shows (shownNow), but not another
+  // step's hidden fields (otherStep: AmWINS' prior carriers, filled again on every step). The panel
+  // takes it when the agent clicks Looks right and the fill compares it before Continue (`hold`).
+  // It reads only, and no value leaves the page: only the fingerprint does.
+  function receipt() {
+    if (window !== window.top) return null;
+    const text = collectControls().filter((c) => !otherStep(c.el)).map((c) => `${fieldKey(c)}\u0001${c.label ?? ''}\u0001${shownNow(c)}`).join('\u0002');
+    // cyrb53: a 53-bit string hash (an equality check, not a secret).
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return `r1-${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
   }
 
   function shownNow(c) {
@@ -2189,5 +2215,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 66, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 67, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

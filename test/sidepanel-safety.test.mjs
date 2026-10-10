@@ -3717,6 +3717,104 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
   assert.equal(t.seen.logged.find((e) => e.type === 'fill_run').settings.autoAdvance, true, 'telemetry records the switch; approval still gates continuation');
 });
 
+// Check answers before Continue: the switch reaches the kit as `hold`, Looks right's receipt as
+// `confirmed` (with nothing replaced), and the switch is never in the usage log (the server takes
+// exactly the four filling switches).
+test('Check answers before Continue reaches the kit as hold and is never logged', async () => {
+  const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+  t.ui['check-continue'] = { checked: true };
+  t.ui.overwrite.checked = true;
+  let run = t.context.fillPage();
+  await t.started;
+  assert.equal(t.seen.options.hold, true);
+  assert.equal(t.seen.options.confirmed, null);
+  assert.equal(t.seen.options.overwrite, true, 'a plain manual fill keeps the overwrite switch');
+  t.release(t.results);
+  await run;
+  const run1 = t.seen.logged.find((e) => e.type === 'fill_run');
+  assert.deepEqual(Object.keys(run1.settings).sort(), ['autoAdvance', 'autoFollowUps', 'autoPages', 'overwrite']);
+  // Looks right.
+  run = t.context.fillPage({ confirmed: 'r1-seen' });
+  await run;
+  assert.equal(t.seen.options.confirmed, 'r1-seen');
+  assert.equal(t.seen.options.overwrite, false, 'Looks right replaces nothing');
+  assert.equal(t.seen.options.hold, true);
+});
+
+test('an automatic fill held for the agent\'s check shows its report', async () => {
+  const t = fillHarness({ carrier: { id: 'progressive', advance: /Continue/ } });
+  t.state.reportFor = { filled: 0 };
+  const run = t.context.autoFill('/quote-A');
+  await t.started;
+  t.release([{ frameId: 0, result: { ...t.results[0].result, held: 'check' } }]);
+  await run;
+  assert.equal(t.seen.rendered, 1, 'Looks right is in the report, not behind a follow-up note');
+});
+
+function continueHarness(switches = {}) {
+  const ui = { 'auto-advance': { checked: true }, 'check-continue': { checked: false }, ...switches };
+  const calls = [];
+  const context = {
+    state: { tab: { id: 7, url: 'Quote' } }, $: (id) => ui[id],
+    h: (tag, props, ...children) => ({ tag, props, children }),
+    fillPage: (o) => calls.push(['fillPage', o]), lookRight: (...a) => calls.push(['lookRight', ...a.slice(0, 2)]),
+  };
+  vm.runInNewContext(extractFunction('continueNote'), context);
+  const carrier = { advance: { text: 'Continue' } };
+  const note = (entry) => {
+    const n = context.continueNote({ page: 'Quote', tabId: 7, left: 0, waiting: 0, ...entry }, carrier);
+    const button = n.children[2];
+    return { title: n.children[0].children[0], button: button?.children?.[0] ?? null, click: () => button.props.onclick.call({ disabled: false }) };
+  };
+  return { note, calls, ui };
+}
+
+test('Continue\'s note asks for Looks right while Continue waits for the agent\'s check', () => {
+  const { note, calls, ui } = continueHarness({ 'check-continue': { checked: true } });
+  const held = note({ held: 'check' });
+  assert.deepEqual([held.title, held.button], ['Check the answers', 'Looks right, continue']);
+  held.click();
+  assert.deepEqual(calls.at(-1), ['lookRight', 7, 'Quote']);
+  assert.deepEqual([note({ held: 'changed' }).title, note({ held: 'changed' }).button], ['The page changed', 'Looks right, continue']);
+  assert.deepEqual([note({ left: 2 }).title, note({ left: 2 }).button], ['Then check and continue', null], 'nothing to approve while items are left');
+  assert.deepEqual([note({ settled: true }).title, note({ settled: true }).button], ['Ready to check', 'Looks right, continue']);
+  assert.deepEqual([note({ advanced: 'Continue', held: null }).title, note({ advanced: 'Continue' }).button], ['Continue clicked', null]);
+  // Switch off: as before.
+  ui['check-continue'].checked = false;
+  assert.deepEqual([note({ settled: true }).title, note({ settled: true }).button], ['Ready for Continue', 'Fill again and continue']);
+  assert.equal(note({}).button, null);
+});
+
+test('Looks right sends the top frame\'s receipt with a fill, only for the page in front', async () => {
+  const calls = [];
+  const said = [];
+  let frames = [{ frameId: 3, result: 'r1-frame' }, { frameId: 0, result: 'r1-top' }];
+  const context = {
+    state: { tab: { id: 7, url: 'Quote' }, filling: false }, pageOf: (url) => url, announce: (t) => said.push(t),
+    runKit: async (...a) => { calls.push(['runKit', a[0]]); return frames; },
+    fillPage: async (o) => { calls.push(['fillPage', o]); },
+  };
+  vm.runInNewContext(extractFunction('lookRight'), context);
+  const button = { disabled: true };
+  await context.lookRight(7, 'Quote', {}, button);
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['runKit', 7], ['fillPage', { confirmed: 'r1-top' }]]);
+  // The page couldn't be read: the button is back and nothing is filled.
+  calls.length = 0;
+  frames = [{ frameId: 0, result: null }];
+  await context.lookRight(7, 'Quote', {}, button);
+  assert.deepEqual(calls.map((c) => c[0]), ['runKit']);
+  assert.equal(button.disabled, false);
+  assert.equal(said.length, 1);
+  // Another page in front, or a fill running: nothing read or filled.
+  calls.length = 0;
+  await context.lookRight(7, 'Drivers', {}, button);
+  context.state.filling = true;
+  await context.lookRight(7, 'Quote', {}, button);
+  assert.deepEqual(calls, []);
+});
+
 test('failed manual and automatic fills retain bounded run metadata without a result event or client text', async () => {
   for (const auto of [false, true]) for (const operation of ['runKit', 'retireAiOrigins', 'recorder']) {
     const t = fillHarness();
