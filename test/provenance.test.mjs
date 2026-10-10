@@ -47,6 +47,8 @@ const RECORDS = () => [
   expediter(),
   with_({ 'applicant.dot': null, 'applicant.name': null, 'operations.vehicleOwnership': 'Leased', 'claims.hasClaims': true, 'operations.equipVehicle': 5000 }),
   with_({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel', 'trailerInfo.ownership': null, 'drivers.0.maritalStatus': null, 'applicant.yearEstablished': null }),
+  // General liability on the intake, no current insurance, no date of birth, a gender set by the agent.
+  with_({ 'coverage.gl': true, priorInsurance: [], 'drivers.0.dob': null, 'drivers.0.gender': 'FEMALE' }),
 ];
 
 test('every rule that computes an answer declares a valid source', () => {
@@ -119,6 +121,7 @@ const NOT_MAPPED = {
     'operations.movingState': 'not asked by Progressive',
     'operations.licensePlate': 'not asked by Progressive',
     'drivers[].maritalStatus': 'Progressive\'s commercial driver page does not ask it',
+    'drivers[].gender': 'Progressive\'s commercial driver page does not ask it',
     'trailerInfo.hitch': 'not asked by Progressive',
     'trailerInfo.interchange': 'trailer interchange is not mapped (no live quote has asked it)',
     'trailerInfo.interchangeLimit': 'trailer interchange is not mapped (no live quote has asked it)',
@@ -138,8 +141,8 @@ const NOT_MAPPED = {
     'operations.hazPlacard': 'AmWINS asks about transporting hazardous material (operations.hazmat)',
     'operations.movingState': 'not asked on the Business Auto application',
     'operations.licensePlate': 'not asked on the Business Auto application',
-    'drivers[].cdl': 'AmWINS has no CDL question; the license year is the agent\'s',
-    'drivers[].cdlYear': 'AmWINS has no CDL question; the license year is the agent\'s',
+    'drivers[].cdl': 'AmWINS has no CDL question; the license year is TNI\'s birth year + 17',
+    'drivers[].cdlYear': 'AmWINS has no CDL question; the license year is TNI\'s birth year + 17',
     'trailerInfo.ownership': 'AmWINS has no trailer section (the trailer is a disclosure line)',
     'trailerInfo.hitch': 'AmWINS has no trailer section',
     'trailerInfo.interchange': 'AmWINS has no trailer section',
@@ -341,15 +344,15 @@ test('business structure: a suffix is a corporation, no company is a sole propri
   agentsNote(structure('Synthetic Expediter', amwins));
 });
 
-test('facts the intake lacks are left to the agent: Progressive attestations, AmWINS driver and loss-run questions', () => {
+test('facts the intake lacks are left to the agent: Progressive attestations, AmWINS loss-run questions', () => {
   const p = buildPlan(expediter(), progressive, {});
-  for (const q of ['21E', '20F', '83', 'A2', 'AA', 'B2', 'A7', 'A8', 'A9', 'AF', 'B0', '2C97']) {
+  for (const q of ['21E', '20F', '2C97']) {
     assert.ok(AGENT_SOURCES.includes(byQ(p, q).source), `q${q} is the agent's`);
     agentsNote(byQ(p, q));
   }
   assert.match(byQ(p, '20F').note, /belong/i);
   const a = buildPlan(with_({ 'drivers.0.maritalStatus': null, 'applicant.yearEstablished': null }), amwins, {});
-  for (const re of [/^Gender/, /^Year licensed/, /^How long with the current carrier/, /^Claim-free loss runs/, /^Valued loss runs/]) {
+  for (const re of [/^How long with the current carrier/, /^Claim-free loss runs/, /^Valued loss runs/]) {
     const step = named(a, re);
     assert.equal(step.source, 'fact', step.name);
     agentsNote(step);
@@ -361,6 +364,64 @@ test('facts the intake lacks are left to the agent: Progressive attestations, Am
   const given = buildPlan(expediter(), amwins, {});
   assert.equal(bySel(given, '#driversPanel [data-id="martialStatus"]').value, 'Married', 'the intake\'s marital status is filled');
   assert.equal(bySel(given, '#yearBusinessEstablished').value, 2019);
+});
+
+// TNI 2026-10-10 (reversing 2026-10-09): gender MALE unless the agent set it, year licensed birth
+// year + 17; continuous coverage Yes when currently insured; other business coverages none unless
+// the intake has general liability.
+test('AmWINS driver gender and year licensed: TNI standards, the agent\'s gender when set', () => {
+  const gender = (plan) => bySel(plan, '#driversPanel [data-id="gender"]');
+  const year = (plan) => bySel(plan, '#driversPanel [data-id="licenseYear"]');
+  const std = buildPlan(expediter(), amwins, {});
+  assert.deepEqual([gender(std).value, gender(std).source, gender(std).standard, gender(std).manualOnly], ['MALE', 'standard', true, false]);
+  assert.deepEqual([year(std).value, year(std).source, year(std).standard], ['1997', 'standard', true], '01/02/1980: 1980 + 17');
+  for (const [set, want] of [['FEMALE', 'FEMALE'], ['female', 'FEMALE'], ['MALE', 'MALE']]) {
+    const g = gender(buildPlan(with_({ 'drivers.0.gender': set }), amwins, {}));
+    assert.deepEqual([g.value, g.source, g.standard], [want, 'derived', false], set);
+  }
+  const odd = gender(buildPlan(with_({ 'drivers.0.gender': 'X' }), amwins, {}));
+  assert.equal(odd.value, null, 'neither MALE nor FEMALE: the agent picks');
+  assert.ok(odd.note);
+  for (const dob of [null, '1980', 'unknown']) {
+    const y = year(buildPlan(with_({ 'drivers.0.dob': dob }), amwins, {}));
+    assert.equal(y.source, 'fact', String(dob));
+    agentsNote(y);
+    assert.match(y.note, /date of birth/);
+  }
+  // Two drivers: each row its own.
+  const two = expediter();
+  two.drivers.push({ first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'NJ7654321', licenseState: 'NJ', cdl: false, cdlYear: null, maritalStatus: 'Single', gender: 'FEMALE' });
+  const second = buildPlan(two, amwins, { drivers: 1 });
+  assert.equal(second.find((s) => /^Gender/.test(s.name) && /data-id="1"/.test(s.selector)).value, 'FEMALE');
+  assert.equal(second.find((s) => /^Year licensed/.test(s.name) && /data-id="1"/.test(s.selector)).value, '2012');
+});
+
+test('Progressive continuous coverage: Yes when currently insured, otherwise the agent\'s', () => {
+  const insured = byQ(buildPlan(expediter(), progressive, {}), '83');
+  assert.deepEqual([insured.value, insured.source, insured.manualOnly], [true, 'derived', false]);
+  for (const prior of [[], [{ type: 'Commercial Auto', carrier: 'Other', limit: '$500k CSL', expiration: '01/01/2020' }]]) {
+    const step = byQ(buildPlan(with_({ priorInsurance: prior, 'applicant.applicationDate': '10/01/2026' }), progressive, {}), '83');
+    assert.deepEqual([step.source, step.manualOnly], ['attestation', true], 'no current insurance: the agent answers it');
+    agentsNote(step);
+  }
+});
+
+test('Progressive other business coverages: None of the above unless the intake has general liability', () => {
+  const p = buildPlan(expediter(), progressive, {});
+  assert.deepEqual([byQ(p, 'A2').value, byQ(p, 'A2').source], ['None', 'standard']);
+  for (const q of ['AA', 'B2']) assert.deepEqual([byQ(p, q).value, byQ(p, q).source, byQ(p, q).standard], [true, 'standard', true], q);
+  for (const q of ['A7', 'A8', 'A9', 'AF', 'B0']) assert.deepEqual([byQ(p, q).value, byQ(p, q).source], [false, 'standard'], q);
+  assert.equal(byQ(p, 'AA').group, 'Other business coverages');
+  assert.equal(byQ(p, 'A8').group, 'Other business coverages');
+  assert.equal(byQ(p, 'B2').group, byQ(p, 'B0').group);
+  assert.notEqual(byQ(p, 'B2').group, byQ(p, 'AA').group, 'two groups, each with its own None of the above');
+  const gl = buildPlan(with_({ 'coverage.gl': true }), progressive, {});
+  for (const q of ['A2', 'AA', 'B2', 'A7', 'A8', 'A9', 'AF', 'B0']) {
+    assert.equal(byQ(gl, q).source, 'fact', q);
+    assert.equal(byQ(gl, q).manualOnly, true, q);
+    agentsNote(byQ(gl, q));
+    assert.match(byQ(gl, q).note, /general liability/);
+  }
 });
 
 test('AmWINS years in business blank on the intake: TNI\'s standard 0 years, established this year', () => {
@@ -457,4 +518,32 @@ test('review mode: every standard step is a check item naming the class and carr
   const missing = with_({ 'operations.businessClass': null });
   assert.equal(reviewWarn(missing, progressive), 'Review mode: the business class "not given" isn\'t validated for Progressive; confirm this standard answer.');
   assert.ok(field(buildPlan(missing, progressive, {})).filter((s) => s.standard).every((s) => /"not given"/.test(s.warn)));
+});
+
+// Live review 2026-10-09: a derived answer had no link to the intake. Each one carries the intake
+// answers its rule read (`from`), so the panel can mark them on the PDF; blanks it looked at are
+// left out.
+test('a derived answer names the intake answers it was worked out from', () => {
+  const amw = buildPlan(expediter(), amwins, { drivers: 0, vehicles: 0 });
+  const dot = amw.find((s) => s.name === 'DOT number');
+  assert.equal(dot.source, 'derived');
+  assert.deepEqual(dot.from, ['applicant.dot']);
+  const street = amw.find((s) => s.name === 'Garage street');
+  assert.deepEqual(street.from, ['garaging.street'], 'the blank unit it looked at is left out');
+  const prog = buildPlan(expediter(), progressive, { drivers: 0, vehicles: 0, trailers: 0 });
+  const dob = prog.find((s) => s.name === 'Owner date of birth');
+  assert.ok(dob.from.includes('drivers[0].dob'), 'the owner\'s date of birth, found through the driver list');
+  assert.ok(!dob.from.includes('drivers[0].middle'));
+  // The rule looks through every driver for the owner: only the owner's row is evidence.
+  const two = expediter();
+  two.drivers.push({ first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'NJ7654321', licenseState: 'NJ', cdl: false, cdlYear: null, maritalStatus: 'Single' });
+  const ownerName = buildPlan(two, amwins, { drivers: 0, vehicles: 0 }).find((s) => s.name === 'Owner full name');
+  assert.ok(ownerName.from.includes('drivers[0].first') && ownerName.from.includes('applicant.owner1'));
+  assert.ok(!ownerName.from.some((p) => p.startsWith('drivers[1]')), ownerName.from.join());
+  // Only derived answers that fill something: an intake answer is its own source.
+  for (const s of [...amw, ...prog]) {
+    if (s.source !== 'derived' || s.value == null || s.value === '') assert.equal(s.from ?? null, null, s.name);
+  }
+  // Evidence only: tracing never changes the answer.
+  assert.deepEqual(buildPlan(expediter(), amwins, { drivers: 0, vehicles: 0 }).map((s) => s.value), amw.map((s) => s.value));
 });

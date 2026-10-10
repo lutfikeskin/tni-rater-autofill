@@ -1,5 +1,5 @@
 // Injected into rater pages (every frame) by the side panel. Classic script, no imports.
-// Exposes globalThis.__raterKit = { fill, answer, markKey, aiBanner, capture, clear }.
+// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, aiBanner, capture, clear, … }.
 //
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
 // page already filled alone.
@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 62 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 64 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -217,6 +217,8 @@
   // Selectors of rules allowed to fill a field that isn't on screen (set while a fill runs): a
   // question the page adds to an earlier step of a one-address application after it was left.
   let hiddenOk = [];
+  // In a step section that isn't the one on screen (AmWINS' .form-tab, hidden).
+  const otherStep = (el) => { const tab = el?.closest?.('.form-tab'); return !!tab && !isVisible(tab); };
 
   function collectControls() {
     const out = [];
@@ -1074,6 +1076,18 @@
   const EDIT_HALT = 'An agent edit interrupted filling. Review before resuming.';
   // Why the AI answers after such an edit are not put in.
   const EDIT_HALT_ANSWERS = 'an agent edit interrupted applying the answers; review the page, then request fresh suggestions';
+  // Why a fill stops when the agent clicks Stop in the side panel.
+  const STOP_HALT = 'You stopped the fill. Nothing more was filled or clicked.';
+
+  // The fill running in this frame (its report and how to halt it): the side panel reads how many
+  // answers are in so far, and its Stop halts it the way an agent edit does (no Continue after).
+  let running = null;
+  function progress() { return running ? { filled: running.report.filled.length } : null; }
+  function stop() {
+    if (!running) return false;
+    running.halt(STOP_HALT);
+    return true;
+  }
 
   // The recorder is paused while the kit puts answers in (a fill, an AI apply), so a real edit by
   // the agent has to be caught here: a trusted input/change within 2 s of a trusted gesture (a
@@ -1234,12 +1248,16 @@
     const serverBacked = !!ext();
     let pendingAction = null;
     let progressed = false; // did the last round fill or click anything?
-    if (!await settle({ quietMs: 400, maxMs: 15000 })) {
-      report.halted = true;
-      report.reason = 'The page is still waiting on its server. Review and retry.';
+    const halt = (reason) => { report.halted = true; report.reason = reason; };
+    const thisFill = { report, halt };
+    running = thisFill;
+    const settled = await settle({ quietMs: 400, maxMs: 15000 });
+    // Stopped while the page settled: nothing was done.
+    if (!settled || report.halted) {
+      if (!settled) halt('The page is still waiting on its server. Review and retry.');
+      if (running === thisFill) running = null;
       return report;
     }
-    const halt = (reason) => { report.halted = true; report.reason = reason; };
     // A real user edit during a fill must survive even while the recorder is paused: its field is
     // protected (also from this fill's later rounds) and the fill stops. The guard stays on until
     // the fill returns, so an edit during the wait before Continue stops that too.
@@ -1330,7 +1348,10 @@
       for (const { step: planned, control: c, how, reworded } of pairs) {
         // A known field whose question reads differently now: answered, and the agent checks it.
         const step = reworded ? { ...planned, warn: [planned.warn, `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check the answer.`].filter(Boolean).join(' ') } : planned;
-        const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how, standard: !!step.standard, manualOnly: !!step.manualOnly };
+        const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how, standard: !!step.standard, manualOnly: !!step.manualOnly,
+          // A field another step of a one-address application holds (AmWINS keeps every step's
+          // section in the page, hidden): filled again here, but not this step's question.
+          ...(step.hidden && otherStep(c.el) ? { otherStep: true } : {}) };
         // A question left as the page has it whose wording changed: what the page has may not fit
         // any more, so the agent checks it (Continue waits).
         const leftAlone = step.verifyOnly || step.ignore;
@@ -1366,7 +1387,10 @@
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
         const differs = isChoice && replaceChoices && !agreesWith(step, c);
         const legacyHold = mayHoldLegacyEdit(c) && !refill.has(step.id);
-        if (legacyHold || (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+        // An unticked box that should stay unticked already has its answer (live run 2026-10-09:
+        // every unticked box was "filled" again on each pass).
+        const answered = hasValue(c) || (c.kind === 'checkbox' && step.value === false && !c.el.checked);
+        if (legacyHold || (!overwrite && answered && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
@@ -1783,6 +1807,7 @@
       hiddenOk = [];
       try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
       releaseEditGuard();
+      if (running === thisFill) running = null;
     }
   }
 
@@ -2064,5 +2089,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 62, build: BUILD, fill, answer, answerEdits, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 64, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

@@ -187,6 +187,13 @@ const isGeneralFreight = (r) => isFreightHauler(r) && /general\s+freight/i.test(
 const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHauler(r) ? 'General Freight Hauler' : (r.operations.businessClass ?? null);
 const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
 const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration && !priorPolicyExpired(r, p));
+// Other business coverages (MoreAboutBusiness): TNI's standard is none (2026-10-10), unless the
+// intake openly says the customer has general liability; then every one of them is the agent's.
+const hasGl = (r) => r.coverage?.gl === true;
+const otherCoverage = (rule, standard, note) => ({ ...rule, source: (r) => (hasGl(r) ? 'fact' : 'standard'),
+  value: () => standard, note: (r) => (hasGl(r) ? note : null) });
+const OTHER_GROUP = { AA: 'Other business coverages', A7: 'Other business coverages', A8: 'Other business coverages', A9: 'Other business coverages',
+  B2: 'Other business coverages (Progressive bundle)', AF: 'Other business coverages (Progressive bundle)', B0: 'Other business coverages (Progressive bundle)' };
 // Once For Hire Trucking reveals this question, the agency workflow uses this subtype.
 const truckerType = (r) => (isExpediter(r) ? 'Other For-Hire Trucking' : null);
 // LLC / Inc / Corp in the company name means a corporation; no company name means a sole proprietor
@@ -427,6 +434,20 @@ export const progressive = {
   // Same for drivers: the AddDriver page marks its driver entered once filled.
   driverList: 'DriverSummary',
   driverPage: 'AddDriver',
+  // The quote's steps in order, for the side panel's page strip ("Step 3 of 7"), each with its
+  // pages: the 2026-10-01 walkthrough (docs/progressive-live-observations.md) and the carrier
+  // notes above. Filings shows only when filings are asked for. A page in none of them (SaveQuote,
+  // Quote, AdditionalDetails: where they fall wasn't recorded) gets no step number.
+  quoteSteps: [
+    // NoHit (the owner not verified) and DeclinationNotice (a stop) follow Business Owner Info.
+    { name: 'Business', pages: ['BusinessOwnerInfo', 'BECAPopup', 'NoHit', 'DeclinationNotice'] },
+    { name: 'Vehicles', pages: ['MostCommonVehicles', 'AddVehicle', 'VehicleSummary', ...TRAILER_PAGES] },
+    { name: 'Drivers', pages: ['AddDriver', 'DriverSummary'] },
+    { name: 'More about business', pages: ['MoreAboutBusiness'] },
+    { name: 'Filings', pages: ['Filings'] },
+    { name: 'Rates', pages: ['CoveragesRates', 'ChangePaymentPlan'] },
+    { name: 'Print', pages: ['PrintEmailFax', 'PrintEmailFaxConfirm'] },
+  ],
   // Pages that need the agent whatever the intake says; the side panel says so at the top.
   agentPages: {
     // Chrome opens the PDF only for the agent's own click (see the actions above).
@@ -533,22 +554,28 @@ export const progressive = {
     ...onPage('MoreAboutBusiness', [
       { q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
       { q: '81', source: 'derived', field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
-      // Not on the intake (a lapse is invisible there): the agent's (2026-10-09).
-      { q: '83', source: 'attestation', field: 'MoreBusinessInput.HasContinuousCoverage', ask: 'Has the customer had continuous coverage?', name: 'Continuous coverage', kind: 'bool',
-        note: 'Whether the customer has had continuous coverage isn\'t on the intake: answer it yourself.' },
+      // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer
+      // currently insured ("more than a year is always Yes"); otherwise the agent's. Yes reveals the
+      // current BI limit (95; live run 2026-10-10: left blank until the agent answered this).
+      { q: '83', source: (r) => (currentlyInsured(r) ? 'derived' : 'attestation'), field: 'MoreBusinessInput.HasContinuousCoverage', ask: 'Has the customer had continuous coverage?', name: 'Continuous coverage (Yes when currently insured)', kind: 'bool',
+        value: (r) => (currentlyInsured(r) ? true : null),
+        note: (r) => (currentlyInsured(r) ? null : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
       { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', ignore: (r) => !currentlyInsured(r) },
       { q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', ignore: (r) => !currentlyInsured(r) },
-      // The intake never asks what other coverages the business has: the agent's (2026-10-09; until
-      // then "None" was asserted). The checkbox version (IN) the same: both "None of the above" boxes
-      // and the coverages themselves.
-      { q: 'A2', source: 'fact', field: 'MoreBusinessInput.OtherBusinessCoverages', ask: 'Does the customer have other coverages for the business?', name: 'Other business coverages', kind: 'choice',
-        note: 'The customer\'s other business coverages aren\'t on the intake: answer it yourself.' },
-      { q: 'AA', source: 'fact', field: 'MoreBusinessInputNonShredded.OtherBusinessCoveragesNoneInd', ask: 'None of the above', each: true, name: 'Other coverages: None of the above', kind: 'bool',
-        note: 'The customer\'s other business coverages aren\'t on the intake: tick what applies yourself.' },
-      { q: 'B2', source: 'fact', field: 'MoreBusinessInputNonShredded.ProgressiveBundleNoneInd', ask: 'None of the above', each: true, name: 'Other coverages: None of the above', kind: 'bool',
-        note: 'The customer\'s other business coverages aren\'t on the intake: tick what applies yourself.' },
+      // Other business coverages: TNI's standard None (2026-10-10; the agent's from 2026-10-09),
+      // unless the intake says the customer has general liability (coverage.gl Yes): then all of
+      // them are the agent's. The radio version (A2: General Liability / Business Owner's Policy /
+      // None) and the checkbox version (IN, PA: two groups, each with its own "None of the above",
+      // ticked, and the coverages themselves unticked).
+      otherCoverage({ q: 'A2', field: 'MoreBusinessInput.OtherBusinessCoverages', ask: 'Does the customer have other coverages for the business?', name: 'Other business coverages (standard: None unless the intake has general liability)', kind: 'choice' },
+        'None', 'The intake says the customer has general liability: answer the other business coverages yourself.'),
+      otherCoverage({ q: 'AA', field: 'MoreBusinessInputNonShredded.OtherBusinessCoveragesNoneInd', ask: 'None of the above', each: true, name: 'Other coverages: None of the above', group: OTHER_GROUP.AA, kind: 'bool' },
+        true, 'The intake says the customer has general liability: tick the other business coverages that apply yourself.'),
+      otherCoverage({ q: 'B2', field: 'MoreBusinessInputNonShredded.ProgressiveBundleNoneInd', ask: 'None of the above', each: true, name: 'Other coverages: None of the above', group: OTHER_GROUP.B2, kind: 'bool' },
+        true, 'The intake says the customer has general liability: tick the other business coverages that apply yourself.'),
       ...[['A7', 'Business Owners Policy'], ['A8', 'General Liability'], ['A9', 'Workers\' Compensation'], ['AF', 'Business Owners Policy'], ['B0', 'General Liability']]
-        .map(([q, ask]) => ({ q, source: 'fact', ask, each: true, name: `Other coverage: ${ask}`, kind: 'bool', note: `Whether the customer has ${ask} coverage isn't on the intake: tick it yourself if they do.` })),
+        .map(([q, ask]) => otherCoverage({ q, ask, each: true, name: `Other coverage: ${ask}`, group: OTHER_GROUP[q], kind: 'bool' },
+          false, `The intake says the customer has general liability: tick ${ask} yourself if they have it.`)),
       { q: 'B7', field: 'MoreBusinessInput.AdditionalInsuredCount', ask: 'Number of Named Additional Insureds', name: 'Named additional insured count (preserve prefilled value)', ignore: true },
       { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
       { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },

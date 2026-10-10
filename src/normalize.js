@@ -6,10 +6,10 @@
 
 import { STATES, noPriorInsurance, ownerIsDriver, set } from './util.js';
 
-const ROWS = [1, 2, 3, 4];
+export const ROWS = [1, 2, 3, 4];
 // The marital-status dropdowns have odd hierarchical names; positions on the page put them on
 // driver rows 1-4 in this order.
-const MARITAL_FIELDS = ['marital_stat_1.0', 'marital_stat_1.1', 'marital_stat_1.2.0', 'marital_stat_1.2.1'];
+export const MARITAL_FIELDS = ['marital_stat_1.0', 'marital_stat_1.1', 'marital_stat_1.2.0', 'marital_stat_1.2.1'];
 
 const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
 // Radius answers that mean the widest band (the carrier rules map them to "more than 500 miles"):
@@ -300,6 +300,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     return digits;
   };
 
+  // The form row (1-4) each driver, vehicle and trailer was read from: blank rows are skipped, so
+  // drivers[1] can be the form's row 3 (the panel shows an answer where it is on the PDF).
+  const rows = { drivers: [], vehicles: [], trailers: [] };
   const record = {
     applicant: {
       name: txt('company_name'),
@@ -413,6 +416,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       first: txt(`drv_first_${n}`), middle: null, last: txt(`drv_last_${n}`), dob: null, licenseNumber: null,
       licenseState: txt(`drv_state_${n}`), cdl: yesNo(raw[`drv_cdl_${n}`]), cdlYear: toInt(raw[`drv_cdl_yr_${n}`]),
       maritalStatus: txt(MARITAL_FIELDS[i]),
+      // Not on the intake (schema NOT_ON_INTAKE): the agent's to set.
+      gender: null,
     };
     const rawDob = txt(`drv_dob_${n}`);
     const rawLic = txt(`drv_lic_${n}`);
@@ -450,6 +455,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     if (d.cdl && !d.cdlYear) check('cdl-year.missing', p('cdlYear'), `${who}: has a CDL but no year it was issued.`);
     if (d.cdl === false && d.cdlYear) check('cdl-year.without-cdl', p('cdlYear'), `${who}: marked no CDL but a CDL year is filled in.`);
     record.drivers.push(d);
+    rows.drivers.push(n);
   });
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
   if (a.ownerDrives && a.owner1) {
@@ -485,6 +491,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       } else check('vin.missing', p('vin'), `${what}: no VIN.`);
       if (!u.type) check('vehicle-type.missing', p('type'), `${what}: ${label.toLowerCase()} type not selected.`);
       record[list].push(u);
+      rows[list].push(n);
     });
   };
   units('veh', 'vehicles', 'Vehicle');
@@ -578,7 +585,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (unknown.length) info('form.unknown-fields', '', `The PDF has filled fields this tool doesn't read yet: ${unknown.join(', ')}.`);
 
   const filled = Object.values(raw).filter((v) => v === true || (typeof v === 'string' && clean(v) != null)).length;
-  return { record, warnings, stats: { fields: Object.keys(raw).length, filled } };
+  return { record, warnings, stats: { fields: Object.keys(raw).length, filled }, rows };
 }
 
 // Parses a value typed into the review panel, according to the field's kind.

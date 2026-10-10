@@ -2046,6 +2046,31 @@ test('a default to confirm (warn) is filled, flagged yellow and holds Continue u
   assert.ok(next._clicked, 'dismissed (or changed) by the agent: Continue');
 });
 
+// Live review 2026-10-09: a long fill had no way to stop it. The panel's Stop halts it the way an
+// agent edit does: what is in stays, nothing more is filled, and Continue isn't clicked.
+test('Stop halts a running fill after the answer going in; progress counts what is in', async () => {
+  const h = harness();
+  const a = makeInput({ id: 'a', ariaLabel: 'First' });
+  const b = makeInput({ id: 'b', ariaLabel: 'Second' });
+  const c = makeInput({ id: 'c', ariaLabel: 'Third' });
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  h.document.body.append(a, b, c);
+  let during = null;
+  b.addEventListener('change', () => { during = h.kit.progress(); assert.equal(h.kit.stop(), true); });
+  assert.equal(h.kit.progress(), null, 'no fill running');
+  assert.equal(h.kit.stop(), false, 'nothing to stop');
+  const steps = [['a', 'one'], ['b', 'two'], ['c', 'three']].map(([id, value]) => ({ id, selector: `#${id}`, path: `x.${id}`, kind: 'text', value }));
+  const report = await h.kit.fill(steps, { maxRounds: 3, advance: { text: '^continue$' } });
+  assert.equal(during?.filled, 1);
+  assert.equal(a.value, 'one');
+  assert.equal(c.value, '', 'nothing after Stop is filled');
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.ok(!next._clicked, 'Continue is not clicked');
+  assert.equal(h.kit.progress(), null, 'the fill is over');
+});
+
 test('batch mode answers every visible question in one round and still checks each answer', async () => {
   const h = harness();
   const a = makeInput({ id: 'a', ariaLabel: 'First' });
