@@ -2525,6 +2525,46 @@ function continueNote({ advanced, left, waiting, page, settled }, carrier = stat
 
 // What's filled is listed in step 2: the first few, then the rest on request.
 const FILLED_SHOWN = 6;
+// The groups of "Answers on this page", in the order shown (renderReport).
+const ANSWER_GROUPS = {
+  intake: 'From the intake',
+  standard: 'TNI standard',
+  page: 'Already on the page',
+  clicked: 'Clicked',
+  yours: 'Left for you',
+};
+
+// Whether the page still shows the answers the fill put in (pagekit readBack: reads only). A row
+// whose field shows something else now (the carrier's server, or the agent) says what; one whose
+// field isn't on the page now (a closed section) is left as it was. Only for the page in front.
+async function checkAnswers(body, tabId, page, carrier) {
+  if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
+  const rows = [...body.querySelectorAll('.kv[data-key]')];
+  if (!rows.length) return;
+  const items = rows.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null }));
+  let frames;
+  try {
+    frames = await runKit(tabId, carrier, (asked) => globalThis.__raterKit?.readBack?.(asked) ?? [], [items]);
+  } catch { return; /* the page is navigating */ }
+  if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
+  const now = new Map(frames.flatMap((f) => Array.isArray(f.result) ? f.result : []).map((x) => [`${x.key}|${x.label ?? ''}`, x]));
+  // Spacing, case and punctuation aside: a phone number the page formats on blur is the same.
+  const loose = (s) => String(s ?? '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+  for (const row of rows) {
+    const x = now.get(`${row.dataset.key}|${row.dataset.field}`) ?? now.get(`${row.dataset.key}|`);
+    if (!x) continue;
+    // An unticked box we left unticked reads back 'unchecked' (and empty): the same answer.
+    const differs = loose(x.shown) !== loose(row.dataset.value);
+    row.classList.toggle('changed', differs);
+    const note = row.querySelector('.kv-now');
+    note.hidden = !differs;
+    note.textContent = differs ? `Now on the page: ${x.shown || 'empty'}` : '';
+  }
+  const changed = rows.filter((row) => row.classList.contains('changed')).length;
+  const said = body.closest('details')?.querySelector('.answers-count');
+  if (said) said.textContent = said.textContent.replace(/ · \d+ changed$/, '') + (changed ? ` · ${changed} changed` : '');
+  if (changed) announce(`${changed} answer${changed === 1 ? '' : 's'} on the page changed since the fill.`);
+}
 
 // After a fill: step 2 lists what was filled (each answer from the intake with where it is on the
 // PDF, a derived one with the answers it was worked out from); step 3 lists everything left for the
@@ -2619,11 +2659,13 @@ function renderReport(frames, ctx = {}) {
       onclick: () => openPdf({ path, from, label, kind: 'filled' }) }, where);
   };
   const doneRows = [
-    ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true })),
-    ...earlier.map((x) => ({ label: x.label || x.name, value: maps.filled.get(x.key).shown || 'filled', standard: !!(x.standard || maps.filled.get(x.key).standard), path: maps.filled.get(x.key).path, from: fromOf.get(x.stepId), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true })),
-    ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id })),
-    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: !!x.standard, group: groupOf.get(x.stepId), stepId: x.stepId })),
-    ...all('skipped').map((x) => ({ label: x.label, value: 'yours (not filled)' })),
+    // `key`/`field`: the field and its label on the page, for checking the answer is still there
+    // (checkAnswers); `kind`: which group of "Answers on this page" it goes in.
+    ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null })),
+    ...earlier.map((x) => ({ label: x.label || x.name, value: maps.filled.get(x.key).shown || 'filled', standard: !!(x.standard || maps.filled.get(x.key).standard), path: maps.filled.get(x.key).path, from: fromOf.get(x.stepId), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: maps.filled.get(x.key).shown ? x.key : null, field: x.label ?? null })),
+    ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
+    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: !!x.standard, group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page' })),
+    ...all('skipped').map((x) => ({ label: x.label, value: 'yours (not filled)', kind: 'yours' })),
   ].reduce((rows, row) => {
     // One question asked as several boxes (plan.js `group`: AmWINS' auto symbols): one row, the
     // question and the boxes ticked, where the first box was (live run 2026-10-09: nine rows).
@@ -2647,16 +2689,33 @@ function renderReport(frames, ctx = {}) {
       + ". They're left for you and Continue waits. Please report it (a Capture page layout helps)."
     : null;
   const entry = { key, tabId, page, fields, filled: count, left: needs.length, waiting: waiting.length, advanced: advanced ?? null, at: Date.now(), auto: !!ctx.auto };
-  const rows = doneRows.map((row) => h('div', { class: 'kv' },
-    h('span', {}, row.label, row.standard ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'standard') : null),
+  // "Answers on this page", grouped by where each came from, in this order. A row whose answer the
+  // page shows differently now is marked once the list is opened (checkAnswers).
+  const kindOf = (row) => row.kind ?? (row.standard ? 'standard' : 'intake');
+  const listed = Object.keys(ANSWER_GROUPS).flatMap((kind) => doneRows.filter((row) => kindOf(row) === kind));
+  const rowNode = (row) => h('div', { class: 'kv', dataset: row.key ? { key: row.key, field: row.field ?? '', value: row.value } : {} },
+    h('span', {}, row.label, row.standard && kindOf(row) !== 'standard' ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'standard') : null),
     h('span', {}, row.value),
-    source(row)));
-  const more = rows.length > FILLED_SHOWN
-    ? h('button', { type: 'button', class: 'link small show-all', onclick: function () { this.replaceWith(...rows.slice(FILLED_SHOWN)); rows[FILLED_SHOWN].querySelector('button')?.focus(); } }, `Show all ${rows.length}`)
+    source(row),
+    row.key ? h('span', { class: 'kv-now', hidden: true }) : null);
+  // Each group's heading goes before its first row: the first rows shown, the rest behind Show all.
+  const firstOfGroup = (row) => { const i = listed.indexOf(row); return i === 0 || kindOf(listed[i - 1]) !== kindOf(row); };
+  const nodesOf = (rows) => rows.flatMap((row) => [
+    firstOfGroup(row) ? h('p', { class: 'answers-group' }, ANSWER_GROUPS[kindOf(row)]) : null,
+    rowNode(row),
+  ].filter(Boolean));
+  const more = listed.length > FILLED_SHOWN
+    ? h('button', { type: 'button', class: 'link small show-all', onclick: function () {
+      const rest = nodesOf(listed.slice(FILLED_SHOWN));
+      this.replaceWith(...rest);
+      rest.find((n) => n.classList.contains('kv'))?.querySelector('button')?.focus();
+      checkAnswers(body, tabId, page, carrier);
+    } }, `Show all ${listed.length}`)
     : null;
-  const filledNodes = doneRows.length ? [h('details', { class: 'more' },
-    h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'See what was filled'), h('span', { class: 'small muted' }, `${count} answer${count === 1 ? '' : 's'}`)),
-    h('div', { class: 'more-body' }, rows.slice(0, FILLED_SHOWN), more))] : [];
+  const body = h('div', { class: 'more-body' }, nodesOf(listed.slice(0, FILLED_SHOWN)), more);
+  const filledNodes = doneRows.length ? [h('details', { class: 'more answers', ontoggle: function () { if (this.open) checkAnswers(body, tabId, page, carrier); } },
+    h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'Answers on this page'), h('span', { class: 'small muted answers-count' }, `${count} filled`)),
+    body)] : [];
   const nodes = [
     agentPage ? h('p', { class: 'agent-page' }, agentPage) : null,
     frames.some((f) => f.halted) ? h('p', { class: 'card bad' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then fill again.`) : null,

@@ -287,9 +287,13 @@ function reportHarness(state, extra = {}) {
     putReport(entry, nodes, filledNodes) { box.replaceChildren(...nodes); filled.replaceChildren(...filledNodes); state.reportFor = entry; },
     ...extra,
   };
-  vm.runInNewContext(extractFunction('renderReport') + extractFunction('continueNote') + extractFunction('pdfPageSaid'), context);
+  vm.runInNewContext(ANSWER_GROUPS_SRC + extractFunction('renderReport') + extractFunction('continueNote') + extractFunction('pdfPageSaid'), context);
   return { context, box, filled };
 }
+const ANSWER_GROUPS_SRC = SIDEPANEL.match(/^const ANSWER_GROUPS = \{[^}]*\};/m)[0].replace('const ', 'var ');
+// "Answers on this page" (step 2): its group headings and rows, in order.
+const answerList = (body) => body.children.flat(2).filter(Boolean).filter((n) => n.tag !== 'button')
+  .map((n) => (n.props.class === 'answers-group' ? `# ${n.children[0]}` : n));
 
 test('fill report omits absent sections without rendering null text', () => {
   const { context, box } = reportHarness({ tab: { id: 1, url: 'https://example.test/?pageName=AddVehicle' } }, { pageOf: () => 'AddVehicle' });
@@ -307,7 +311,8 @@ test('fill report counts answers an earlier pass on the page filled', () => {
     kept: [{ label: 'VIN', key: 'ref:RiskInput.VIN' }, { label: 'Annual Mileage', key: 'ref:RiskInput.AnnualMileage' }] }]);
   const text = JSON.stringify(filled.children);
   const more = filled.children.find((c) => c?.tag === 'details');
-  assert.equal(more.children[0].children[2].children[0], '1 answer', 'the count matches what we filled');
+  assert.equal(more.children[0].children[1].children[0], 'Answers on this page');
+  assert.equal(more.children[0].children[2].children[0], '1 filled', 'the count matches what we filled');
   assert.equal(context.state.reportFor.filled, 1, 'and so does step 2');
   assert.match(text, /1FTBR3X87MKA12345/);
   assert.match(text, /left as the page had it/, 'a value the page had itself is still said so');
@@ -322,8 +327,10 @@ test('fill report tags standards that an earlier pass filled or the page already
     kept: [{ label: 'Defensive driver', key: 'earlier-std' }, { label: 'First name', key: 'earlier-intake' },
       { label: 'Waiver', key: 'page-std', standard: true }, { label: 'Middle', key: 'page-intake' }] }]);
   const more = filled.children.find((c) => c?.tag === 'details');
-  const rows = more.children[1].children.flat().filter(Boolean).map((row) => [row.children[0].children[0], !!row.children[0].children[1]]);
-  assert.deepEqual(rows, [['Defensive driver', true], ['First name', false], ['Waiver', true], ['Middle', false]]);
+  // Grouped by source: a standard under its heading, one the page already had tagged.
+  const rows = answerList(more.children[1]).map((row) => (typeof row === 'string' ? row : [row.children[0].children[0], !!row.children[0].children[1]]));
+  assert.deepEqual(rows, ['# From the intake', ['First name', false], '# TNI standard', ['Defensive driver', false],
+    '# Already on the page', ['Waiver', true], ['Middle', false]]);
 });
 
 // Live review 2026-10-09: 38 filled rows pushed step 3 off screen. The first six show; the rest on
@@ -333,7 +340,7 @@ test('fill report lists the first six answers filled, the rest behind Show all',
   context.renderReport([{ fields: 9, kept: [], failed: [], noData: [], leftRequired: [], actions: [],
     filled: Array.from({ length: 9 }, (_, i) => ({ label: `Q${i}`, key: `k${i}`, shown: 'x' })) }]);
   const body = filled.children[0].children[1];
-  assert.equal(body.children[0].length, 6);
+  assert.deepEqual(answerList(body).map((n) => (typeof n === 'string' ? n : n.children[0].children[0])), ['# From the intake', 'Q0', 'Q1', 'Q2', 'Q3', 'Q4', 'Q5']);
   assert.equal(body.children[1].tag, 'button');
   assert.equal(body.children[1].children[0], 'Show all 9');
 });
@@ -347,9 +354,57 @@ test('fill report lists a question asked as several boxes once, with the boxes t
     // An earlier step's field, filled again while hidden (pagekit otherStep): not this step's.
     filled: [{ stepId: 9, label: 'Medical payment', key: 'm', shown: '$5,000', standard: true }, ...boxes, { stepId: 8, label: '', name: 'Prior carrier 1', key: 'p', shown: 'NO PRIOR', otherStep: true }] }],
   { plan: [0, 1, 2, 3].map((id) => ({ id, group: 'Liability coverage auto symbol', value: id === 2 })) });
-  const rows = filled.children[0].children[1].children[0].map((row) => [row.children[0].children[0], row.children[1].children[0]]);
-  assert.deepEqual(JSON.parse(JSON.stringify(rows)), [['Medical payment', '$5,000'], ['Liability coverage auto symbol', '6']]);
+  const rows = answerList(filled.children[0].children[1]).map((row) => (typeof row === 'string' ? row : [row.children[0].children[0], row.children[1].children[0]]));
+  assert.deepEqual(JSON.parse(JSON.stringify(rows)), ['# TNI standard', ['Medical payment', '$5,000'], ['Liability coverage auto symbol', '6']]);
   assert.equal(context.state.reportFor.filled, 2);
+});
+
+// Answers on this page, opened: each filled answer is read back from the page (pagekit readBack,
+// read-only). One the page shows differently now says what it shows; spacing and punctuation
+// aside, and one whose field isn't on the page now is left alone. Only for the page in front.
+test('answers on this page mark an answer the page shows differently now', async () => {
+  const row = (key, field, value) => {
+    const r = { dataset: { key, field, value }, changed: false, now: { hidden: true, textContent: '' } };
+    r.classList = { toggle: (name, on) => { r.changed = on; }, contains: () => r.changed };
+    r.querySelector = () => r.now;
+    return r;
+  };
+  const rows = [row('phone', 'Phone', '(312) 555-0100'), row('limit', 'Limit', '$1,000,000'), row('box', 'Box', 'checked'), row('gone', 'Gone', 'x'), row('off', 'Off', 'unchecked'), row('text', 'Text', 'Main St')];
+  const count = { textContent: '30 filled' };
+  const body = { querySelectorAll: () => rows, closest: () => ({ querySelector: () => count }) };
+  const asked = [];
+  const said = [];
+  const context = {
+    state: { tab: { id: 1, url: 'Quote' } }, pageOf: (url) => url, announce: (text) => said.push(text),
+    runKit: async (tabId, carrier, fn, args) => {
+      asked.push(JSON.parse(JSON.stringify(args)));
+      return [{ result: [{ key: 'phone', label: 'Phone', shown: '3125550100', empty: false }, { key: 'limit', label: 'Limit', shown: '$500,000', empty: false }] },
+        { result: [{ key: 'box', label: 'Box', shown: 'unchecked', empty: true }, { key: 'off', label: 'Off', shown: 'unchecked', empty: true },
+          { key: 'text', label: 'Text', shown: '', empty: true }] }];
+    },
+  };
+  vm.runInNewContext(extractFunction('checkAnswers'), context);
+  await context.checkAnswers(body, 1, 'Quote', { id: 'progressive' });
+  assert.deepEqual(asked[0][0].map((x) => x.key), ['phone', 'limit', 'box', 'gone', 'off', 'text']);
+  assert.equal(rows[0].changed, false, 'the page formatting a phone number is the same answer');
+  assert.equal(rows[1].changed, true);
+  assert.equal(rows[1].now.textContent, 'Now on the page: $500,000');
+  assert.equal(rows[2].now.textContent, 'Now on the page: unchecked');
+  assert.equal(rows[4].changed, false, 'a box we left unticked is still our answer');
+  assert.equal(rows[5].now.textContent, 'Now on the page: empty', 'a box the page cleared');
+  assert.equal(rows[3].changed, false, 'not on the page now: left alone');
+  assert.equal(count.textContent, '30 filled · 3 changed');
+  assert.equal(said.length, 1);
+  // Opened again once the agent put it back: no longer said changed.
+  context.runKit = async () => [{ result: [{ key: 'limit', label: 'Limit', shown: '$1,000,000', empty: false }] }];
+  await context.checkAnswers(body, 1, 'Quote', { id: 'progressive' });
+  assert.equal(rows[1].changed, false);
+  assert.equal(rows[1].now.hidden, true);
+  assert.equal(count.textContent, '30 filled · 2 changed', 'the box and the box cleared: not read again');
+  // Another page in front: nothing read.
+  context.state.tab.url = 'Drivers';
+  context.runKit = async () => assert.fail('reads only the page in front');
+  await context.checkAnswers(body, 1, 'Quote', { id: 'progressive' });
 });
 
 // A derived answer (plan.js `from`) links to the intake answers it was worked out from; a TNI
@@ -365,19 +420,19 @@ test('fill report links each answer to its source on the intake PDF', () => {
     { stepId: 1, label: 'Company', path: 'applicant.name', shown: 'X' },
     { stepId: 2, label: 'Waiver', path: 'amwins.q9', shown: 'NONE', standard: true }] };
   context.renderReport([frame], { plan: [{ id: 0, from: ['applicant.dot'] }] });
-  const rows = filled.children[0].children[1].children[0];
-  const links = rows.map((row) => row.children[2]);
+  const answerRows = () => answerList(filled.children[0].children[1]).filter((n) => typeof n !== 'string');
+  const links = answerRows().map((row) => row.children[2]);
   assert.equal(links[0].children[0], 'PDF', 'a one-page intake: no page number');
   state.intake.places.pages = [{}, {}];
   context.renderReport([frame], { plan: [{ id: 0, from: ['applicant.dot'] }] });
-  assert.equal(filled.children[0].children[1].children[0][0].children[2].children[0], 'p. 1', 'several pages: which one');
+  assert.equal(answerRows()[0].children[2].children[0], 'p. 1', 'several pages: which one');
   links[0].props.onclick();
   assert.deepEqual(JSON.parse(JSON.stringify(opened)), [{ path: 'amwins.q4', from: ['applicant.dot'], label: 'DOT number', kind: 'filled' }]);
   assert.equal(links[1], null, 'a path the PDF has no field for: no link');
   assert.equal(links[2], null, 'a standard: tagged, no link');
   state.intake.pdfKept = false;
   context.renderReport([frame], { plan: [{ id: 0, from: ['applicant.dot'] }] });
-  assert.equal(filled.children[0].children[1].children[0][0].children[2], null, 'no PDF kept: no link');
+  assert.equal(answerRows()[0].children[2], null, 'no PDF kept: no link');
 });
 
 // FL live run, 2026-10-07: the cargo commodity list has no caption, and the panel showed a

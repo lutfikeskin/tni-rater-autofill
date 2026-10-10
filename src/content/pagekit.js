@@ -1,5 +1,5 @@
 // Injected into rater pages (every frame) by the side panel. Classic script, no imports.
-// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, aiBanner, capture, clear, … }.
+// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, readBack, aiBanner, capture, clear, … }.
 //
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
 // page already filled alone.
@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 65 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 66 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -1256,6 +1256,16 @@
     // when a helper has opened the next page by the end of the fill.
     let roundControls = [];
     const halt = (reason) => { report.halted = true; report.reason = reason; };
+    // Answers this fill gave that their field no longer shows (a later server response rewrote or
+    // cleared them), each with its question as `pairs` read it. A field the agent edited, and a
+    // lookup box its helper has used, don't count.
+    const changedSinceFilled = (pairs) => {
+      const consumed = consumedPaths();
+      return report.filled.flatMap((previous) => {
+        const pair = pairs.find(({ step }) => step.id === previous.stepId);
+        return !pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path) ? [] : [{ previous, pair }];
+      });
+    };
     const thisFill = { report, halt };
     running = thisFill;
     const settled = await settle({ quietMs: 400, maxMs: 15000 });
@@ -1324,10 +1334,7 @@
           handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
         }
       }
-      const consumed = consumedPaths();
-      for (const previous of [...report.filled]) {
-        const pair = allPairs.find(({ step }) => step.id === previous.stepId);
-        if (!pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path)) continue;
+      for (const { previous, pair } of changedSinceFilled(allPairs)) {
         if (retryOnce(pair.step.id)) {
           report.filled = report.filled.filter((x) => x !== previous);
           handled.delete(pair.step.id);
@@ -1818,7 +1825,21 @@
       if (report.halted) {
         if (!report.blockers.includes(report.reason)) report.blockers.push(report.reason);
       } else {
-        const button = !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
+        // The carrier may have rewritten an answer during that wait (a late server response). An
+        // answer whose field no longer shows it is the agent's to check (no retry here): it moves
+        // to `failed`, is marked, and Continue waits.
+        const now = collectControls();
+        const changed = changedSinceFilled(assign(now, plan));
+        for (const { previous, pair } of changed) {
+          const item = { ...previous, reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
+          const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(pair.control);
+          if (at >= 0) item.order = at;
+          report.filled = report.filled.filter((x) => x !== previous);
+          report.failed.push(item);
+          mark(pair.control, 'failed', 'the carrier changed this answer after it was filled');
+          report.blockers.push(`failed: ${called(item)}`);
+        }
+        const button = !changed.length && !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
         if (button) {
           const text = oneLine(button.value || button.textContent).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
@@ -1965,6 +1986,29 @@
       ringed.set(el, { prev, ring, timer });
     }
     return true;
+  }
+
+  // What fields show now, so the side panel can check answers against the page: `items` is
+  // [{ key, label }] (keys as fill reports them; `label` tells rows of one question apart, as in
+  // reveal). Returns [{ key, label, shown, empty }] for each one this frame has; one not found here
+  // is left out. `shown` is in the form of fill's `shown`: the option text of a list or choice,
+  // 'checked'/'unchecked' for a checkbox, the text in a box ('' when nothing is picked or typed).
+  // It reads only: no event, focus, click, value change or mark change.
+  function readBack(items) {
+    const controls = collectControls();
+    const out = [];
+    for (const { key, label } of items ?? []) {
+      const same = controls.filter((c) => fieldKey(c) === key);
+      const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
+      if (c) out.push({ key, label, shown: shownNow(c), empty: !hasValue(c) });
+    }
+    return out;
+  }
+
+  function shownNow(c) {
+    if (c.kind === 'checkbox') return (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) ? 'checked' : 'unchecked';
+    if (c.kind === 'text') return c.el.value || (c.cmp ? String(cmpValue(c.cmp, c.el) ?? '') : '');
+    return selectedText(c) ?? '';
   }
 
   // A small note at the bottom of the rater page listing what the AI selected and still needs
@@ -2145,5 +2189,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 65, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 66, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();

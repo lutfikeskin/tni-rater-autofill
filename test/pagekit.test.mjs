@@ -1893,6 +1893,48 @@ test('reveal scrolls a field into view and rings its mark briefly, changing noth
   assert.equal(closed.style.boxShadow, undefined);
 });
 
+// The side panel reads back what the page shows for answers it lists. Reading changes nothing:
+// no value, mark, click, focus or event.
+test('readBack reports what each field shows now, row by row, and changes nothing on the page', () => {
+  const h = harness({ ext: true });
+  const text = makeInput({ id: 'dot', ariaLabel: 'USDOT number', value: '1234567' });
+  const list = new SelectNode([{ text: 'Select one', value: '' }, { text: 'Yes', value: 'y' }, { text: 'No', value: 'n' }], { id: 'tow', ariaLabel: 'Tows for others', value: 'n' });
+  const ticked = makeInput({ id: 'federal', ariaLabel: 'Federal filing', type: 'checkbox', checked: true });
+  const unticked = makeInput({ id: 'state', ariaLabel: 'State filing', type: 'checkbox' });
+  const blank = makeInput({ id: 'blank', ariaLabel: 'Empty box' });
+  h.document.body.append(text, list, ticked, unticked, blank);
+  // Rows of one question: one key, told apart by their labels.
+  const first = addExtText(h, 'U', '3C01', { caption: '2021 FORD TRANSIT 350', value: '45000' });
+  const second = addExtText(h, 'P', '3C01', { caption: '2019 ISUZU NPR HD', value: '30000' });
+  const keys = new Map(h.kit.signature().split('\n').map((line) => line.split('|')).map(([key, label]) => [label, key]));
+  assert.equal(keys.get('2021 FORD TRANSIT 350'), keys.get('2019 ISUZU NPR HD'), 'the rows share a key');
+  const elements = [text, list, ticked, unticked, blank, first.input, second.input];
+  const touched = [];
+  for (const el of elements) {
+    el.focus = () => touched.push('focus');
+    el.click = () => touched.push('click');
+    el.dispatchEvent = (event) => { touched.push(event.type); return true; };
+  }
+  const values = () => elements.map((el) => [el.value, el.checked, el.getAttribute('data-rater-autofill'), el.style.outline]);
+  const before = values();
+  const ask = (label) => ({ key: keys.get(label), label });
+  const read = h.kit.readBack([
+    ask('USDOT number'), ask('Tows for others'), ask('Federal filing'), ask('State filing'), ask('Empty box'),
+    ask('2019 ISUZU NPR HD'), ask('2021 FORD TRANSIT 350'), { key: 'not-on-this-page', label: 'Elsewhere' },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(read)), [
+    { key: keys.get('USDOT number'), label: 'USDOT number', shown: '1234567', empty: false },
+    { key: keys.get('Tows for others'), label: 'Tows for others', shown: 'No', empty: false },
+    { key: keys.get('Federal filing'), label: 'Federal filing', shown: 'checked', empty: false },
+    { key: keys.get('State filing'), label: 'State filing', shown: 'unchecked', empty: true },
+    { key: keys.get('Empty box'), label: 'Empty box', shown: '', empty: true },
+    { key: keys.get('2019 ISUZU NPR HD'), label: '2019 ISUZU NPR HD', shown: '30000', empty: false },
+    { key: keys.get('2021 FORD TRANSIT 350'), label: '2021 FORD TRANSIT 350', shown: '45000', empty: false },
+  ], 'the unknown key is left out');
+  assert.deepEqual(values(), before, 'no value or mark changed');
+  assert.deepEqual(touched, [], 'no click, focus or event');
+});
+
 test('home address box: whole address typed, first suggestion picked, ZIP/city then checked', async () => {
   const h = harness({ search: '?pageName=BusinessOwnerInfo' });
   const address = makeInput({ id: `f_U${'A'.repeat(32)}2A9_1_1`, ariaLabel: 'Home Address' });
@@ -3303,6 +3345,53 @@ test('an agent edit during the wait before Continue stops the Continue and is a 
   assert.ok(report.blockers.includes(report.reason), `blockers: ${report.blockers.join(' | ')}`);
   assert.deepEqual([...report.protectedKeys], ['ref:Test.foo']);
   assert.equal(input.value, 'the agent\'s answer');
+});
+
+// A late server response during the wait before Continue rewrote an answer the fill had given: the
+// answer is the agent's to check (no retry), and Continue is not clicked.
+test('an answer the carrier rewrites during the wait before Continue fails, and Continue waits', async () => {
+  const run = async (rewriteAt) => {
+    const h = harness({ ext: true, search: '?pageName=Synthetic' });
+    addExtText(h, 'b', '1233', { ref: 'Test.earlier', caption: 'Earlier question', value: 'kept' });
+    const { input, cmp } = addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+    const button = addButton(h, 'Continue');
+    let clicks = 0;
+    button.onclick = () => { clicks++; };
+    // Every settle builds an observer; the last one is the wait before Continue.
+    let settles = 0;
+    h.context.MutationObserver = class {
+      constructor() { if (++settles === rewriteAt) setTimeout(() => cmp.setValue('carrier value'), 10); }
+      observe() {}
+      disconnect() {}
+    };
+    const plan = [
+      { id: 'earlier', q: '1233', field: 'Test.earlier', path: 'test.earlier', name: 'Earlier question', ask: ['Earlier question'], kind: 'text', value: 'kept' },
+      { id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' },
+    ];
+    const report = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' } });
+    return { report, clicks, settles, input };
+  };
+  // Nothing changes: the answer stays filled and Continue is clicked.
+  const control = await run(0);
+  assert.equal(control.clicks, 1);
+  assert.equal(control.report.advanced, 'Continue');
+  assert.deepEqual(Array.from(control.report.filled, (x) => x.key), ['ref:Test.foo']);
+  assert.equal(control.input.value, 'wanted');
+  // The carrier rewrites it during that last wait.
+  const { report, clicks, settles, input } = await run(control.settles);
+  assert.equal(settles, control.settles);
+  assert.equal(clicks, 0, 'no Continue over a changed answer');
+  assert.equal(report.advanced, undefined);
+  assert.equal(report.halted, false);
+  assert.equal(input.value, 'carrier value', 'not given again');
+  assert.equal(report.filled.length, 0);
+  const failed = report.failed.find((x) => x.key === 'ref:Test.foo');
+  assert.ok(failed, 'moved to failed');
+  assert.equal(failed.reason, 'The carrier changed this answer after it was filled; check it.');
+  assert.equal(failed.label, 'Synthetic question');
+  assert.equal(failed.order, 1, 'its place on the page, after the earlier question');
+  assert.ok(report.blockers.includes('failed: Synthetic question'), `blockers: ${report.blockers.join(' | ')}`);
+  assert.equal(input.getAttribute('data-rater-autofill'), 'failed');
 });
 
 test('an agent edit while AI answers go in protects that question and stops the remaining answers', async () => {
