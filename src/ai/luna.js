@@ -287,8 +287,9 @@ export function buildNotesReview(record, { redact = (s) => s, today = new Date()
   const lines = [...new Set(noteLines(record?.claims?.text).map(redact))];
   if (!lines.length) return null;
   const ids = lines.map((_, i) => `l${i}`);
-  // NTL and GL are Luna's own questions (ntl, generalLiability), not form coverage to compare with.
-  const { ntl, gl, ...formCoverage } = record.coverage ?? {};
+  // NTL and GL (asked for, or had: hasGl) are Luna's own questions (ntl, generalLiability), not
+  // form coverage to compare with.
+  const { ntl, gl, hasGl, ...formCoverage } = record.coverage ?? {};
   const integerOrNull = { type: ['integer', 'null'] };
   const flags = object({ ntl: { type: 'boolean' }, coverageChange: { type: 'boolean' }, businessYears: integerOrNull, businessSince: integerOrNull, generalLiability: { type: 'boolean' } });
   const body = request(object({ lines: object(Object.fromEntries(ids.map(id => [id, flags]))) }),

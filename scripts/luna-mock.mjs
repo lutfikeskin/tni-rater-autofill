@@ -149,7 +149,8 @@ try {
     await panel.locator('#quote').waitFor({ state: 'visible' });
     // With Luna on and its key set, the panel reads the new intake's claims box: let that save
     // first, or it would write over the fixture edit below.
-    if (await panel.evaluate(async () => { const { settings } = await chrome.storage.local.get('settings'); return !!(settings?.aiOn && settings?.lunaKey); })) {
+    const reviewed = await panel.evaluate(async () => { const { settings } = await chrome.storage.local.get('settings'); return !!(settings?.aiOn && settings?.lunaKey); });
+    if (reviewed) {
       await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake?.notesReview, null, { timeout: 15000 });
       verify('a new intake gets one claims-box review', claimsRequests - claimsBefore, 1);
       // And its drivers' first names, also saved before the fixture edit below.
@@ -170,6 +171,11 @@ try {
     await panel.waitForFunction((prefix) => chrome.tabs.query({ active: true, currentWindow: true })
       .then(([tab]) => tab?.url?.startsWith(prefix)), `${base}/test/fixtures/amwins/`);
     await panel.locator('#fill:not(:disabled)').waitFor({ state: 'visible' });
+    // The reopened panel reads the intake back from storage with its keys in another order. That
+    // is no edit: the claims box isn't sent again, and no review result is saved over a fixture
+    // edit made after this (Windows smoke 2026-10-10: the missing-years edit was saved over, and
+    // Years in Business was filled 5+).
+    if (reviewed) verify('reopening the panel does not read the claims box again', claimsRequests - claimsBefore, 1);
     phase = 'fixture-ready';
   };
   const loadPdfMissingYears = async () => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
-import { assistContextKey } from '../src/ai/common.js';
+import { assistContextKey, stableJson } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
 import { amwins } from '../src/carriers/amwins.js';
@@ -1879,7 +1879,7 @@ function claimsHarness() {
   const state = { intake: null, notesAsking: null, notesRetry: null };
   class AssistError extends Error {}
   const context = {
-    state, AssistError, Date, redactor: () => (s) => s, redactionTerms: () => [], claimsTruncated: (text) => /LONG/.test(text ?? ''),
+    state, AssistError, Date, stableJson, redactor: () => (s) => s, redactionTerms: () => [], claimsTruncated: (text) => /LONG/.test(text ?? ''),
     aiSettings: async () => ({ on: !state.offline, apiKey: 'k', model: 'gpt-6-luna' }),
     reviewNotes: async (record, cfg, opts) => {
       requests.push({ record, opts, reply: t.reply });
@@ -1932,6 +1932,45 @@ test('Luna reads the claims box once per intake, visibly fails, and retries on a
   await t.answer();
   assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-reviewed', 'info'], ['ai.ntl', 'check']]);
   assert.deepEqual(failing.done, [0]);
+});
+
+// Windows smoke on PR #72 (mock:luna, 2026-10-10): chrome.storage gives objects back with their
+// keys sorted. The panel reopening on the same intake took that order for a coverage edit, retired
+// Luna's items, sent the claims box again and saved the intake over a change made meanwhile.
+test('reopening the panel on a reviewed intake neither re-reads the claims box nor retires its items', async () => {
+  const t = claimsHarness();
+  const intake = { record: { claims: { text: 'Leased on, needs coverage off dispatch' },
+    coverage: { autoLiability: 'Yes', autoLiabLimit: '$1M CSL', cargo: true, cargoLimit: 100000, gl: false, glLimit: null, ntl: null, hasGl: null } },
+  warnings: [{ code: 'other', level: 'check' }], done: [] };
+  t.state.intake = intake;
+  const first = t.review();
+  await t.answer();
+  await first;
+  assert.equal(t.requests.length, 1);
+  // What chrome.storage.session hands the reopened panel: the same values, keys in sorted order.
+  const sortedKeys = (v) => (Array.isArray(v) ? v.map(sortedKeys) : v && typeof v === 'object'
+    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortedKeys(v[k])])) : v);
+  const reopened = sortedKeys(JSON.parse(JSON.stringify(intake)));
+  assert.notEqual(JSON.stringify(reopened.record.coverage), JSON.stringify(intake.record.coverage), 'the round trip reorders the keys');
+  t.state.intake = reopened;
+  // Not awaited: a request sent again would wait for its answer.
+  t.review();
+  for (let i = 0; i < 5; i++) await t.settle();
+  assert.equal(t.requests.length, 1, 'the box is not sent again');
+  assert.equal(JSON.stringify(sortedKeys(reopened.notesReview)), JSON.stringify(sortedKeys(intake.notesReview)), 'the review stands');
+  assert.deepEqual(reopened.warnings.map((w) => w.code), ['other', 'ai.ntl'], 'Luna\'s item is not retired');
+  // Client has GL answers Luna's own question: no change to the box either.
+  reopened.record.coverage.hasGl = true;
+  t.review();
+  for (let i = 0; i < 5; i++) await t.settle();
+  assert.equal(t.requests.length, 1, 'Client has GL is no coverage edit');
+  // A real coverage edit still counts.
+  reopened.record.coverage.cargoLimit = 50000;
+  t.review();
+  await t.settle();
+  assert.equal(t.requests.length, 2, 'an edited coverage is read again');
+  assert.equal(reopened.warnings[1].code, 'ai.claims-superseded');
+  await t.answer();
 });
 
 // Codex on PR #22.

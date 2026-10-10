@@ -9,7 +9,7 @@ import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
-import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
+import { collectItems, AssistError, assistContextKey, stableJson } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated, firstNameOf } from '../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../src/ai/providers.js';
 
@@ -2972,9 +2972,13 @@ function supersedeClaimsItems(intake) {
 }
 
 function claimsContext(record) {
-  // NTL and GL are not sent as form coverage (Luna's own questions): setting them isn't a change.
-  const { ntl, gl, ...coverage } = record.coverage ?? {};
-  return JSON.stringify([record.claims?.text ?? null, coverage]);
+  // NTL and GL (asked for or had) are not sent as form coverage (Luna's own questions): setting
+  // them isn't a change.
+  const { ntl, gl, hasGl, ...coverage } = record.coverage ?? {};
+  // In key order (stableJson): otherwise every reopen took the saved intake for an edit, Luna's
+  // claims-box items were retired, the box was sent again, and the intake saved over any change
+  // made meanwhile.
+  return stableJson([record.claims?.text ?? null, coverage]);
 }
 
 async function reviewClaimsBox({ retry = false } = {}) {
