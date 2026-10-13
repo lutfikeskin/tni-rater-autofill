@@ -5,7 +5,7 @@ import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
-import { intakeSummary, fieldChangeEvent, fillEvents, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
+import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
@@ -291,6 +291,23 @@ const state = {
   agentPopoverTrigger: null,
   step: 'check',
 };
+
+// Crashes nothing in the panel caught (an exception, a promise nobody awaited) go in the usage log,
+// so a review sees what the agent only saw as a panel that stopped: each message once while the
+// panel is open, at most 20, with the page it happened on. Practice pages log nothing, as usual.
+const loggedCrashes = new Set();
+function logCrash(err) {
+  try {
+    if (state.tab?.carrier?.practice) return;
+    const redact = state.intake ? redactor(redactionTerms(state.intake.record)) : (x) => x;
+    const event = clientErrorEvent(err, { where: 'panel', redact });
+    if (loggedCrashes.has(event.error) || loggedCrashes.size >= 20) return;
+    loggedCrashes.add(event.error);
+    usage.log({ ...event, carrier: state.tab?.carrier?.id ?? null, page: state.tab?.url ? pageOf(state.tab.url) : null });
+  } catch { /* logging a crash must never crash */ }
+}
+globalThis.addEventListener?.('error', (e) => logCrash(e.error ?? e.message));
+globalThis.addEventListener?.('unhandledrejection', (e) => logCrash(e.reason));
 
 function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);

@@ -75,6 +75,9 @@ export const EVENT_FIELDS = {
   fill_error: ['run', 'rules', 'settings', 'auto', 'error'],
   field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   problem_report: ['text'],
+  // An error nothing in the panel caught: where (panel), its message (redacted, 300 characters)
+  // and up to four frames inside the extension's own files.
+  client_error: ['where', 'error', 'stack'],
   // AI assistant: one per request to the model, one per suggestion the agent (or the auto-select
   // setting) acted on. Choices are option texts; typed text suggestions are never logged.
   ai_suggest: ['model', 'ms', 'items', 'suggested', 'leave', 'autoOk', 'blocked', 'error', 'tokensIn', 'tokensOut', 'modelCalls', 'reasoningTokens', 'cachedTokens', 'cacheWriteTokens'],
@@ -152,6 +155,12 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     if (out.type === 'ai_decision') for (const k of ['probability', 'support', 'evidenceProbability', 'confidence']) {
       if (out[k] !== undefined && !(out[k] === null || (typeof out[k] === 'number' && Number.isFinite(out[k]) && out[k] >= 0 && out[k] <= 1)
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
+    }
+    // A crash: where, a bounded message, and frames inside the extension's files only.
+    if (out.type === 'client_error') {
+      if (out.where !== undefined && out.where !== 'panel') drop('where');
+      if (out.error !== undefined && !(typeof out.error === 'string' && out.error.length <= 300)) drop('error');
+      if (out.stack !== undefined && !(Array.isArray(out.stack) && out.stack.length <= 4 && out.stack.every((x) => typeof x === 'string' && x.length <= 160 && /^[\w./-]+:\d+:\d+$/.test(x)))) drop('stack');
     }
     // Which copy and commit logged it (scripts/package.mjs): those values, nothing else in their place.
     if (out.channel !== undefined && !['store', 'unpacked', 'source'].includes(out.channel)) drop('channel');

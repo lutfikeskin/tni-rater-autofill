@@ -3663,3 +3663,24 @@ for (const clearedScope of ['A', 'B']) test(`Clear ${clearedScope} ${clearedScop
   else assert.deepEqual(t.localData.agentEditedKeys[0].keys.sort(), ['earlier-A', 'even-later-A', 'trusted-A'], 'Clear B never invalidates A\'s captured origin');
   assert.equal(t.localData.tabRecordsSession, 'browser-session', 'integration keeps the shared browser-session marker');
 });
+
+test('a panel crash is logged once per message, at most 20, never on a practice page', () => {
+  const logged = [];
+  const state = { tab: { carrier: { id: 'progressive' }, url: 'https://x.test/q?pageName=AddVehicle' }, intake: null };
+  const sandbox = { state, loggedCrashes: new Set(), usage: { log: (e) => logged.push(e) }, redactor: () => (x) => x, redactionTerms: () => [],
+    pageOf: () => 'AddVehicle', clientErrorEvent: (err, { where }) => ({ type: 'client_error', where, error: String(err?.message ?? err) }) };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('logCrash'), sandbox);
+  sandbox.logCrash(new Error('boom'));
+  sandbox.logCrash(new Error('boom'));
+  assert.deepEqual(JSON.parse(JSON.stringify(logged)), [{ type: 'client_error', where: 'panel', error: 'boom', carrier: 'progressive', page: 'AddVehicle' }]);
+  for (let i = 0; i < 30; i++) sandbox.logCrash(new Error(`e${i}`));
+  assert.equal(logged.length, 20);
+  state.tab.carrier.practice = true;
+  sandbox.loggedCrashes.clear();
+  sandbox.logCrash(new Error('practice'));
+  assert.equal(logged.length, 20, 'practice pages log nothing');
+  sandbox.usage.log = () => { throw new Error('storage full'); };
+  state.tab.carrier.practice = false;
+  assert.doesNotThrow(() => sandbox.logCrash(new Error('again')), 'logging a crash never throws');
+});

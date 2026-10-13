@@ -9,7 +9,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms } from '../src/plan.js';
-import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep } from '../src/usage.js';
+import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep, clientErrorEvent } from '../src/usage.js';
 
 const bytes = new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url)));
 const raw = await readIntakeFields(pdfjs, bytes.slice());
@@ -294,4 +294,16 @@ test('fill events carry their run, the rules fingerprint, the settings in force 
   };
   ['src/plan.js', 'src/normalize.js', 'src/carriers.js'].forEach(visit);
   assert.deepEqual([...reached].sort(), [...RULE_FILES].sort());
+});
+
+test('a panel crash is logged redacted, with frames from the extension only', () => {
+  const err = new Error('Cannot read properties of null (reading \'record\') for Vera');
+  err.stack = `Error: x\n    at fill (chrome-extension://abcdefghijklmnopabcdefghijklmnop/sidepanel/sidepanel.js:1240:7)\n    at https://carrier.example/app.js:1:1\n    at chrome-extension://abcdefghijklmnopabcdefghijklmnop/src/usage.js:30:2`;
+  assert.deepEqual(clientErrorEvent(err, { where: 'panel', redact: redactor(['Vera']) }),
+    { type: 'client_error', where: 'panel', error: 'Cannot read properties of null (reading \'record\') for [client]', stack: ['sidepanel/sidepanel.js:1240:7', 'src/usage.js:30:2'] });
+  // A rejected promise can carry anything: a string, nothing, an object without a stack.
+  assert.equal(clientErrorEvent('plain text', { where: 'panel' }).error, 'plain text');
+  assert.equal(clientErrorEvent(undefined, { where: 'panel' }).error, 'unknown error');
+  assert.equal(clientErrorEvent({ message: 'm' }, { where: 'panel' }).stack, undefined);
+  assert.equal(clientErrorEvent(new Error('x'.repeat(400)), { where: 'panel' }).error.length, 300);
 });

@@ -99,6 +99,16 @@ export function redactor(terms) {
 // ---------------------------------------------------------------------------------------------
 // Events
 
+// An error nothing in the panel caught (an exception, a promise nobody awaited): what it said,
+// redacted and bounded, and where in the extension's own files it came from (paths inside the
+// extension only, never a page's).
+const OWN_FRAME = /chrome-extension:\/\/[^/]+\/([\w./-]+:\d+:\d+)/;
+export function clientErrorEvent(err, { where, redact = (x) => x } = {}) {
+  const message = err?.message ?? (typeof err === 'string' ? err : String(err ?? 'unknown error'));
+  const stack = String(err?.stack ?? '').split('\n').map((line) => line.match(OWN_FRAME)?.[1]).filter(Boolean).slice(0, 4);
+  return { type: 'client_error', where, error: redact(String(message)).slice(0, 300), ...(stack.length ? { stack } : {}) };
+}
+
 // The control, not only its question: a question repeated per vehicle row (`<q>@<row>`) or a
 // field without a question id keeps its own key, the same one in fill and change events. A
 // data-model name (`ref:<name>`, Duck Creek's) is the carrier's, never the client's, and is kept as
