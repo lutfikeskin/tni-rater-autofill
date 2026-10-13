@@ -134,8 +134,11 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
   }
 
   const runs = events.filter((e) => e.type === 'fill_run');
+  // Software defects show in test runs too: page changes, the extension's clicks, errors, dropped
+  // fields and problem reports count every run of the period, a test run's marked as one.
+  const allRuns = periodAll.filter((e) => e.type === 'fill_run');
   const changed = new Map();
-  for (const r of runs) {
+  for (const r of allRuns) {
     if (r.pageChanged) tally(changed, `${r.carrier} ${r.page}: page looked changed`);
     if (r.reworded > 0) tally(changed, `${r.carrier} ${r.page}: ${r.reworded} known question(s) reworded`);
     for (const name of r.renamed ?? []) tally(changed, `${r.carrier} ${r.page}: renamed ${mask(typeof name === 'string' ? name : JSON.stringify(name))}`);
@@ -144,20 +147,20 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
   // What the extension itself clicked: helpers (`clicked`) and continuation (`advanced`). Any that
   // reads as a restricted action (submit, bind, buy, …) is a safety finding; expected none.
   const actions = new Map();
-  for (const r of runs) {
+  for (const r of allRuns) {
     for (const c of r.clicked ?? []) tally(actions, `helper ${String(typeof c === 'string' ? c : JSON.stringify(c)).replace(/:\d+$/, '')}`);
     if (r.advanced) tally(actions, `advance "${typeof r.advanced === 'string' ? r.advanced : JSON.stringify(r.advanced)}"`);
   }
   const restricted = [...actions].filter(([a]) => RESTRICTED.test(a.replace(/^helper /, '').replace(/^advance /, '')));
 
   const fillErrors = new Map();
-  for (const e of events.filter((x) => x.type === 'fill_error')) tally(fillErrors, `${build(e)} · ${where(e)}: ${mask(e.error)}`);
+  for (const e of periodAll.filter((x) => x.type === 'fill_error')) tally(fillErrors, `${build(e)} · ${where(e)}: ${mask(e.error)}`);
   const layoutErrors = new Map();
-  for (const e of events.filter((x) => x.type === 'layout_error')) tally(layoutErrors, `${build(e)} · ${where(e)}: ${mask(e.error ?? e.kind)}`);
+  for (const e of periodAll.filter((x) => x.type === 'layout_error')) tally(layoutErrors, `${build(e)} · ${where(e)}: ${mask(e.error ?? e.kind)}`);
 
   const dropped = new Map();
   let droppedLast = null;
-  for (const e of events.filter((x) => x.dropped?.length)) {
+  for (const e of periodAll.filter((x) => x.dropped?.length)) {
     for (const f of e.dropped) tally(dropped, `${e.type}.${f}`);
     if (!droppedLast || receivedAt(e) > droppedLast) droppedLast = receivedAt(e);
   }
@@ -175,11 +178,11 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
 
   // Problem reports with their build and the fill around them (5 minutes either side, same quote).
   const near = (r, e) => e.session === r.session && Math.abs(Date.parse(e.t) - Date.parse(r.t)) <= 5 * 60 * 1000;
-  const problems = events.filter((e) => e.type === 'problem_report').map((r) => {
+  const problems = periodAll.filter((e) => e.type === 'problem_report').map((r) => {
     const around = all.filter((e) => near(r, e));
     const lastRun = around.filter((e) => e.type === 'fill_run' && e.page === r.page && e.t <= r.t).at(-1);
     return {
-      t: r.t, agent: r.agent ?? null, version: r.v ?? null, channel: r.channel ?? null, commit: r.commit ?? null, carrier: r.carrier ?? null, page: r.page ?? null, session: r.session ?? null,
+      t: r.t, test: testSessions.has(r.session), agent: r.agent ?? null, version: r.v ?? null, channel: r.channel ?? null, commit: r.commit ?? null, carrier: r.carrier ?? null, page: r.page ?? null, session: r.session ?? null,
       text: String(r.text ?? '').trim(),
       fillRuns: around.filter((e) => e.type === 'fill_run').length,
       fillErrors: around.filter((e) => e.type === 'fill_error').map((e) => mask(e.error)),
@@ -237,6 +240,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     donePercent: carrierQuotes ? Math.round((allDone / carrierQuotes) * 100) : null,
     medianMinutesDone: med([...perQuote.values()].filter((q) => q.done).map((q) => (q.last - q.first) / 60000)),
     problemReportsPer10Quotes: per(events.filter((e) => e.type === 'problem_report').length * 10, inPeriod.size),
+    problemReportsInTestRuns: periodAll.filter((e) => e.type === 'problem_report' && testSessions.has(e.session)).length,
     aiRequests: asks.length,
     aiErrorPercent: asks.length ? Math.round((asks.filter((a) => a.error).length / asks.length) * 100) : null,
     restrictedActions: [...actions].filter(([a]) => RESTRICTED.test(a.replace(/^helper /, '').replace(/^advance /, ''))).reduce((x, [, c]) => x + c, 0),
@@ -283,7 +287,7 @@ export function markdown(s) {
     `| Answers filled by the rules, per quote | ${k.filledPerQuote ?? '—'} |`,
     `| Autofilled answers the agent corrected, per 100 filled (another value or cleared; reformatted apart: ${k.reformatted}) | ${k.correctedPer100Filled ?? '—'} (${k.corrected}) |`,
     `| Left to the agent per quote: ${Object.keys(k.leftPerQuote).join(' / ') || '—'} | ${Object.values(k.leftPerQuote).join(' / ') || '—'} |`,
-    `| Problem reports per 10 quotes | ${k.problemReportsPer10Quotes ?? '—'} |`,
+    `| Problem reports per 10 quotes (plus ${k.problemReportsInTestRuns} in test runs) | ${k.problemReportsPer10Quotes ?? '—'} |`,
     `| AI requests · error rate | ${k.aiRequests} · ${k.aiErrorPercent ?? '—'}% |`,
     `| Restricted actions by the extension (must be 0) | ${k.restrictedActions} |`, '');
   L.push('## Builds', '', 'Which version and copy logged the period (store: Web Store zip, unpacked: the development package, source: repository files). A problem seen only on older builds may already be fixed.', '');
@@ -311,7 +315,7 @@ export function markdown(s) {
   L.push('', '## Problem reports', '', 'With the build that logged each and the fill around it (same quote, 5 minutes either side). Check the build against the fixes made since before treating one as open.', '');
   if (!s.problems.length) L.push('None.');
   s.problems.forEach((p, i) => {
-    L.push(`${i + 1}. ${p.t.slice(0, 16).replace('T', ' ')} · ${p.agent ?? '?'} · ${p.version ?? '?'} ${p.channel ?? ''}${p.commit ? ` ${p.commit}` : ''} · ${p.carrier ?? '?'} ${p.page ?? '?'}`);
+    L.push(`${i + 1}. ${p.t.slice(0, 16).replace('T', ' ')}${p.test ? ' · test run' : ''} · ${p.agent ?? '?'} · ${p.version ?? '?'} ${p.channel ?? ''}${p.commit ? ` ${p.commit}` : ''} · ${p.carrier ?? '?'} ${p.page ?? '?'}`);
     L.push(`   > ${p.text.replace(/\n+/g, '\n   > ')}`);
     const run = p.lastRun ? `last fill here: ${p.lastRun.filled ?? '?'} filled, ${p.lastRun.unknown ?? '?'} unfamiliar, ${p.lastRun.advanced ? 'continued' : 'did not continue'}${p.lastRun.blockers.length ? `; held by ${p.lastRun.blockers.slice(0, 4).join('; ')}` : ''}` : 'no fill on this page just before';
     L.push(`   Around it: ${p.fillRuns} fill runs; ${run}${p.fillErrors.length ? `; fill errors: ${p.fillErrors.join('; ')}` : ''}.`);

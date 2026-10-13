@@ -86,7 +86,8 @@ test('signals leaves test runs out: listed fingerprints and intakes marked as a 
   const listed = signals(events, { since: '2026-10-06', testIntakes: ['abcdef'] });
   assert.equal(listed.quotes, 1);
   assert.equal(listed.kpis.testRunsLeftOut, 1);
-  assert.ok(listed.problems.every((p) => p.session !== 'old'));
+  // A problem report in a test run is still listed, marked as one.
+  assert.ok(listed.problems.every((p) => p.session !== 'old' || p.test));
   events.find((e) => e.session === 'new' && e.type === 'intake_loaded').test = true;
   assert.equal(signals(events, { since: '2026-10-06', testIntakes: ['abcdef'] }).quotes, 0);
 });
