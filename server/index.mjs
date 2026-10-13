@@ -81,7 +81,11 @@ export const EVENT_FIELDS = {
   // (AmWINS). Their shapes are checked below (RUN_FIELDS): a malformed value refuses the event.
   fill_run: ['run', 'rules', 'settings', 'step', 'overwrite', 'auto', 'ms', 'fields', 'rounds', 'filled', 'kept', 'noData', 'failed', 'leftRequired', 'unknown', 'clicked', 'blockers', 'blockerList', 'advanced', 'pageChanged', 'reworded', 'renamed'],
   // how: what found the field (field = data-model name, text, option, selector, label, name).
-  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how'],
+  // source: where the answer comes from (plan.js); standard, manualOnly, review: a TNI standard,
+  // the agent's only, a review-mode answer the agent confirms.
+  fill_field: ['run', 'step', 'result', 'q', 'key', 'label', 'path', 'controlKind', 'shown', 'reason', 'options', 'timing', 'how', 'source', 'standard', 'manualOnly', 'review'],
+  // The agent dismissed a "needs you" item (×): the question, and why it needed them.
+  check_dismissed: ['q', 'key', 'label', 'mark'],
   fill_error: ['run', 'rules', 'settings', 'auto', 'error'],
   field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
   problem_report: ['text'],
@@ -167,6 +171,9 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
     }
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
+    if (out.source !== undefined && !['intake', 'derived', 'standard', 'fact', 'attestation'].includes(out.source)) drop('source');
+    for (const k of ['standard', 'manualOnly', 'review']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
+    if (out.type === 'check_dismissed' && out.mark !== undefined && !(out.mark === null || (typeof out.mark === 'string' && /^[a-z-]{1,20}$/.test(out.mark)))) drop('mark');
     if (out.install !== undefined && !(typeof out.install === 'string' && /^[0-9a-f-]{36}$/.test(out.install))) drop('install');
     if (out.platform !== undefined && !(out.platform && typeof out.platform === 'object' && !Array.isArray(out.platform) && Object.keys(out.platform).every((k) => ['os', 'chrome'].includes(k))
       && (out.platform.os === null || (typeof out.platform.os === 'string' && out.platform.os.length <= 20))

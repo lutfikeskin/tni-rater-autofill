@@ -5,7 +5,7 @@ import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
-import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
+import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey } from '../src/ai/common.js';
@@ -2119,8 +2119,14 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
   }
 }
 
-async function ignoreReview(key, tabId, page) {
+async function ignoreReview(key, tabId, page, x = null) {
   if (!key || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
+  // Which question the agent waved through, and why it needed them: the review sees what was
+  // dismissed, not only what was filled.
+  if (x && state.intake && !state.tab?.carrier?.practice) {
+    usage.log({ ...checkDismissedEvent(x, { redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }),
+      carrier: state.tab.carrier?.id ?? null, page, view: viewOf(tabId, page, state.tab.carrier) });
+  }
   const keys = state.agentKeys.get(editScope(page)) ?? new Set();
   keys.add(key);
   state.agentKeys.set(editScope(page), keys);
@@ -2166,7 +2172,7 @@ function renderReport(frames) {
     h('div', { class: 'need-head' },
       h('span', { class: `mark ${x.mark}` }),
       h('div', { class: 'row-text' }, h('b', {}, x.label || x.name), h('span', {}, x.why)),
-      x.key ? h('button', { class: 'ignore-review', type: 'button', title: 'Ignore this question and continue', 'aria-label': `Ignore ${x.label || x.name} and continue`, onclick: () => ignoreReview(x.key, tabId, page) }, '×') : null),
+      x.key ? h('button', { class: 'ignore-review', type: 'button', title: 'Ignore this question and continue', 'aria-label': `Ignore ${x.label || x.name} and continue`, onclick: () => ignoreReview(x.key, tabId, page, x) }, '×') : null),
     x.options?.length && x.mark === 'failed' ? h('div', { class: 'options' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null,
     h('div', { class: 'ai-slot' }),
     h('div', { class: 'need-note' }, 'Answer it on the page.'));
