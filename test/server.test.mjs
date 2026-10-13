@@ -442,3 +442,19 @@ test('a page layout keeps the page\'s messages, bounded', async () => {
   assert.equal(long.messages, undefined);
   assert.deepEqual(long.dropped, ['messages']);
 });
+
+test('keeps an intake marked as a test run, and only a yes/no mark', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'intake_marked', filled: undefined, carrier: undefined, page: undefined, test: true }),
+      ev({ type: 'intake_loaded', filled: undefined, carrier: undefined, page: undefined, state: 'FL', test: true }),
+      ev({ type: 'intake_loaded', filled: undefined, carrier: undefined, page: undefined, state: 'FL', test: 'yes' }),
+    ] });
+  });
+  const [marked, loaded, odd] = stored(dataDir);
+  assert.equal(marked.test, true);
+  assert.equal(loaded.test, true);
+  assert.equal(odd.test, undefined);
+  assert.deepEqual(odd.dropped, ['test']);
+});

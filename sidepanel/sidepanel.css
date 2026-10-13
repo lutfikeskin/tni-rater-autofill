@@ -162,6 +162,8 @@ svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width:
 .quote-head { flex: 0 0 auto; padding: 16px 20px 0; display: grid; gap: 12px; }
 .client-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
 .client-title { min-width: 0; }
+.test-run { display: inline-flex; align-items: center; gap: 6px; margin-top: 2px; cursor: pointer; }
+.test-run input { margin: 0; }
 .client-head h2 { font-size: 16px; font-weight: 600; letter-spacing: -0.02em; color: var(--ink-strong); overflow-wrap: anywhere; }
 .client-actions { display: flex; gap: 12px; flex-shrink: 0; padding-top: 4px; }
 .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 3px; background: var(--border-soft); border-radius: var(--radius-lg); }
