@@ -103,18 +103,26 @@ test('a name word is redacted only as a whole word; other terms wherever they ap
   assert.equal(r('USDOT1234567 vin=1FTBR3X87MKA12345x'), 'USDOT[client] vin=[client]x', 'numbers and VINs still match inside longer text');
 });
 
-test('machine control keys redact embedded name terms without changing natural-language labels', () => {
-  const redact = redactor(['Ann', 'Car', 'José']);
+test('control keys: data-model names kept whole, other ids redacted like prose', () => {
+  // Maintainer, 2026-10-13: log quality over redaction. A name word redacted inside a data-model
+  // name ("HasContinuousCo[client]ge") split the question in every report.
+  const redact = redactor(['Ann', 'Car', 'José', 'Vera', '1FTBR3X87MKA12345']);
   const ctx = { record: {}, filled: new Map(), redact, keySalt: 'quote-salt' };
-  for (const [key, redactedKey] of [['driverAnn1', 'driver[client]1'], ['ownerCar2', 'owner[client]2'], ['driverJosé3', 'driver[client]3']]) {
-    const change = { key, label: 'Annual mileage and Cargo', kind: 'text', before: '', after: '123', agent: true };
-    const event = fieldChangeEvent(change, ctx);
-    assert.match(event.key, new RegExp(`^${redactedKey.replace('[client]', '\\[client\\]')}#[0-9a-f]{8}$`));
-    assert.equal(event.label, change.label);
-    assert.equal(fieldChangeEvent(change, { ...ctx, keySalt: undefined }).key, null);
-    const [, fill] = fillEvents([{ filled: [{ key, label: change.label, controlKind: 'text' }] }], { ...ctx, carrier: 'amwins' });
+  const keyOf = (key) => fieldChangeEvent({ key, label: 'Annual mileage and Cargo', kind: 'text', before: '', after: '123', agent: true }, ctx);
+  for (const key of ['ref:MoreBusinessInput.HasContinuousCoverage', 'ref:RiskInput.CarrierCode@2', 'driverAnn1', 'ownerCar2', 'comprehensiveDeductibleExclude#1']) {
+    const event = keyOf(key);
+    assert.equal(event.key, key, `${key} is kept as it is`);
+    assert.equal(event.label, 'Annual mileage and Cargo');
+    const [, fill] = fillEvents([{ filled: [{ key, label: event.label, controlKind: 'text' }] }], { ...ctx, carrier: 'progressive' });
+    assert.equal(fill.key, key, 'fill and change events identify the same control');
+  }
+  // A whole client word or a number in an id is still redacted, with a digest to keep controls apart.
+  for (const [key, shown] of [['owner_Ann', 'owner_[client]'], ['vin_1FTBR3X87MKA12345', 'vin_[client]'], ['José-3', '[client]-3']]) {
+    const event = keyOf(key);
+    assert.match(event.key, new RegExp(`^${shown.replace('[client]', '\\[client\\]')}#[0-9a-f]{8}$`));
+    assert.equal(fieldChangeEvent({ key, label: 'x', kind: 'text', before: '', after: '1', agent: true }, { ...ctx, keySalt: undefined }).key, null);
+    const [, fill] = fillEvents([{ filled: [{ key, label: 'x', controlKind: 'text' }] }], { ...ctx, carrier: 'amwins' });
     assert.equal(fill.key, event.key, 'fill and change events identify the same redacted control');
-    assert.equal(fill.label, change.label);
   }
 });
 
