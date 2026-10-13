@@ -505,3 +505,16 @@ test('keeps why an answer was given, and a dismissed check, in their shapes only
   assert.deepEqual([odd.source, odd.standard], [undefined, undefined]);
   assert.deepEqual([dismissed.type, dismissed.label, dismissed.mark], ['check_dismissed', 'Liability', 'check']);
 });
+
+test('a problem report keeps the fill it is about, in its shapes', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'problem_report', filled: undefined, text: 'stuck on Rates', view: 't1', run: 'run-1234-abcd', blockerList: ['button: recalculate'], since: 90 }),
+      ev({ type: 'problem_report', filled: undefined, text: 'x', blockerList: 'oops', since: -1 }),
+    ] });
+  });
+  const [ok, odd] = stored(dataDir);
+  assert.deepEqual([ok.view, ok.run, ok.blockerList, ok.since], ['t1', 'run-1234-abcd', ['button: recalculate'], 90]);
+  assert.deepEqual([odd.blockerList, odd.since], [undefined, undefined]);
+});

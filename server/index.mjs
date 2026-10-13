@@ -88,7 +88,9 @@ export const EVENT_FIELDS = {
   check_dismissed: ['q', 'key', 'label', 'mark'],
   fill_error: ['run', 'rules', 'settings', 'auto', 'error'],
   field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
-  problem_report: ['text'],
+  // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
+  // many seconds before the report).
+  problem_report: ['text', 'run', 'step', 'blockerList', 'since'],
   // An error nothing in the panel caught: where (panel), its message (redacted, 300 characters)
   // and up to four frames inside the extension's own files.
   client_error: ['where', 'error', 'stack'],
@@ -171,6 +173,10 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
     }
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
+    if (out.type === 'problem_report') {
+      if (out.blockerList !== undefined && !(Array.isArray(out.blockerList) && out.blockerList.length <= 12 && out.blockerList.every((b) => typeof b === 'string' && b.length <= 120))) drop('blockerList');
+      if (out.since !== undefined && !(Number.isSafeInteger(out.since) && out.since >= 0)) drop('since');
+    }
     if (out.source !== undefined && !['intake', 'derived', 'standard', 'fact', 'attestation'].includes(out.source)) drop('source');
     for (const k of ['standard', 'manualOnly', 'review']) if (out[k] !== undefined && out.type === 'fill_field' && typeof out[k] !== 'boolean') drop(k);
     if (out.type === 'check_dismissed' && out.mark !== undefined && !(out.mark === null || (typeof out.mark === 'string' && /^[a-z-]{1,20}$/.test(out.mark)))) drop('mark');

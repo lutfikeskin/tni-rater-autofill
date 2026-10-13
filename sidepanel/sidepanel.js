@@ -270,6 +270,9 @@ const state = {
   // Page layouts: the last one logged per quote and page (or vehicle/driver on its page), the
   // chain that logs them one at a time, the capture waiting for the page to be quiet, failures.
   lastLayouts: new Map(),
+  // The last fill on each tab and page ("<tab>|<page>" -> { run, at, step, blockers }), so a
+  // problem report names the fill it is about.
+  lastRuns: new Map(),
   layoutChain: Promise.resolve(),
   layoutTimer: null,
   layoutPending: null,
@@ -719,6 +722,19 @@ async function loadFile(file) {
   render();
   refreshTab();
   reviewClaimsBox();
+}
+
+// What a problem report is about: the tab's vehicle, driver or trailer (`view`), and the last fill
+// on that tab and page within half an hour (its `run`, `step`, what held Continue, and how long ago
+// in seconds), so the review joins the agent's words to what the fill did.
+function problemContext(tab, page) {
+  if (!tab?.id || !page || !state.intake) return {};
+  const last = state.lastRuns?.get(`${tab.id}|${page}`);
+  const fresh = last && Date.now() - last.at <= 30 * 60 * 1000;
+  return {
+    ...(tab.carrier ? { view: viewOf(tab.id, page, tab.carrier) } : {}),
+    ...(fresh ? { run: last.run, ...(last.step ? { step: last.step } : {}), blockerList: last.blockers, since: Math.round((Date.now() - last.at) / 1000) } : {}),
+  };
 }
 
 // The agent's settings, logged whole: when an intake is loaded, when the panel opens on a saved
@@ -1286,6 +1302,9 @@ function stepOfResults(carrier, results) { return knownStep(carrier, results.fin
 // The events of a fill, redacted with the intake it filled from.
 function logFill(ctx, frames, results, started) {
   if (ctx.carrier.practice) return;
+  const redact = redactor(redactionTerms(ctx.intake.record));
+  state.lastRuns?.set(`${ctx.tabId}|${ctx.page}`, { run: ctx.run, at: Date.now(), step: stepOfResults(ctx.carrier, results),
+    blockers: frames.flatMap((f) => f.blockers ?? []).slice(0, 6).map((b) => redact(String(b)).slice(0, 120)) });
   usage.log(...fillEvents(frames, {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
@@ -3077,7 +3096,8 @@ function wireUsage() {
     const text = $('problem-text').value.trim();
     if (!text) return;
     const redact = state.intake ? redactor(redactionTerms(state.intake.record)) : (x) => x;
-    usage.log({ type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page: state.tab?.url ? pageOf(state.tab.url) : null, text: redact(text).slice(0, 1000) });
+    const page = state.tab?.url ? pageOf(state.tab.url) : null;
+    usage.log({ type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, text: redact(text).slice(0, 1000), ...problemContext(state.tab, page) });
     $('problem-text').value = '';
     $('problem-form').hidden = true;
     $('usage-note').textContent = 'Thanks — saved with the usage log.';

@@ -3744,3 +3744,20 @@ test('dismissing a needs-you item logs which question and why, keyed like fill e
   await sandbox.ignoreReview('2B9D', 7, 'Rates', { key: '2B9D', label: 'Distance', mark: 'needs' });
   assert.equal(logged.length, 1, 'practice pages log nothing');
 });
+
+test('a problem report names the fill it is about: view, run, step and what held Continue', () => {
+  let now = 1_000_000;
+  const state = { intake: { record: {} }, lastRuns: new Map([['7|Rates', { run: 'run-1234-abcd', at: now - 90_000, step: undefined, blockers: ['button: recalculate'] }]]) };
+  const sandbox = { state, viewOf: () => 't1', Date: { now: () => now }, Math };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('problemContext'), sandbox);
+  const tab = { id: 7, carrier: { id: 'progressive' } };
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), { view: 't1', run: 'run-1234-abcd', blockerList: ['button: recalculate'], since: 90 });
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'AddVehicle'))), { view: 't1' }, 'no fill on that page: only where');
+  now += 31 * 60 * 1000;
+  assert.equal(sandbox.problemContext(tab, 'Rates').run, undefined, 'a fill half an hour old is not what the report is about');
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), { view: 't1' });
+  state.intake = null;
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
+  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
+});
