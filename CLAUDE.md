@@ -24,6 +24,7 @@ Start with the relevant source. Read the matching document when the task affects
 | Intake parsing, mappings, defaults, applicability, or state/vehicle/coverage exceptions | [Intake and rules](docs/intake-and-rules.md) |
 | Live controls, page changes, helper actions, navigation, or fill verification | [Browser filling](docs/browser-filling.md) |
 | Learning from new fields, corrections, exceptions, layouts, or usage events | [Learning](docs/learning.md) |
+| The weekly review of agents' runs, or implementing the fixes it approved | Skills [weekly-review](.claude/skills/weekly-review/SKILL.md), then [apply-review-fixes](.claude/skills/apply-review-fixes/SKILL.md) |
 | A reported wrong answer, failed fill, or live-run problem | [Corrections](docs/corrections.md) |
 | Adding a carrier or expanding supported carrier scenarios | [New carriers](docs/new-carrier.md) |
 | AI suggestions, prompts, validation, caching, or approval | [AI assistance](docs/ai-assistant.md) |
