@@ -39,6 +39,18 @@ const LOGIN = /\/(auth\/)?login\b|\/login\//i;
 // fingerprints the reviewer listed (`testIntakes`, full or leading hex).
 const isTest = (e, testIntakes) => e.test === true || (!!e.intakeId && [...testIntakes].some((id) => e.intakeId.startsWith(id)));
 
+// The sessions that are test runs: an intake loaded as one (marked before, `test` on
+// intake_loaded) or listed (`testIntakes`), and the agent's latest mark in the panel
+// (intake_marked: marked, or unmarked after). Shared with the review (scripts/review.mjs).
+export function testSessionsOf(all, testIntakes = []) {
+  const tests = new Set([...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean));
+  const out = new Set(all.filter((e) => e.type === 'intake_loaded' && e.session && isTest(e, tests)).map((e) => e.session));
+  const marks = new Map();
+  for (const e of all) if (e.type === 'intake_marked' && e.session) marks.set(e.session, e.test === true);
+  for (const [session, test] of marks) (test ? out.add(session) : out.delete(session));
+  return out;
+}
+
 /**
  * @param {object[]} all  every event (loadEvents), for which sessions are quotes
  * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>}} opts  since: ISO
@@ -46,8 +58,7 @@ const isTest = (e, testIntakes) => e.test === true || (!!e.intakeId && [...testI
  */
 export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {}) {
   const from = since ? new Date(since).toISOString() : null;
-  const tests = new Set([...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean));
-  const testSessions = new Set(all.filter((e) => e.type === 'intake_loaded' && e.session && isTest(e, tests)).map((e) => e.session));
+  const testSessions = testSessionsOf(all, testIntakes);
   const periodAll = from ? all.filter((e) => receivedAt(e) >= from) : all;
   // Test runs are left out of everything below, and counted.
   const events = periodAll.filter((e) => !testSessions.has(e.session));
@@ -180,9 +191,10 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
   const near = (r, e) => e.session === r.session && Math.abs(Date.parse(e.t) - Date.parse(r.t)) <= 5 * 60 * 1000;
   const problems = periodAll.filter((e) => e.type === 'problem_report').map((r) => {
     const around = all.filter((e) => near(r, e));
-    const lastRun = around.filter((e) => e.type === 'fill_run' && e.page === r.page && e.t <= r.t).at(-1);
+    // The fill the report names (`run`, since the panel sends it), else the last one on its page.
+    const lastRun = (r.run && all.find((e) => e.type === 'fill_run' && e.run === r.run)) ?? around.filter((e) => e.type === 'fill_run' && e.page === r.page && e.t <= r.t).at(-1);
     return {
-      t: r.t, test: testSessions.has(r.session), agent: r.agent ?? null, version: r.v ?? null, channel: r.channel ?? null, commit: r.commit ?? null, carrier: r.carrier ?? null, page: r.page ?? null, session: r.session ?? null,
+      t: r.t, test: testSessions.has(r.session), agent: r.agent ?? null, view: r.view ?? null, run: r.run ?? null, version: r.v ?? null, channel: r.channel ?? null, commit: r.commit ?? null, carrier: r.carrier ?? null, page: r.page ?? null, session: r.session ?? null,
       text: String(r.text ?? '').trim(),
       fillRuns: around.filter((e) => e.type === 'fill_run').length,
       fillErrors: around.filter((e) => e.type === 'fill_error').map((e) => mask(e.error)),
@@ -246,6 +258,49 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     restrictedActions: [...actions].filter(([a]) => RESTRICTED.test(a.replace(/^helper /, '').replace(/^advance /, ''))).reduce((x, [, c]) => x + c, 0),
   };
 
+  // Crashes in the panel (client_error), by build and message; test runs too.
+  const crashes = new Map();
+  for (const e of periodAll.filter((x) => x.type === 'client_error')) tally(crashes, `${build(e)} · ${mask(e.error)}${e.stack?.[0] ? ` @ ${e.stack[0]}` : ''}`);
+
+  // The settings in force for each quote: its last agent_settings; how many quotes had each on.
+  const lastSettings = new Map();
+  for (const e of events) if (e.type === 'agent_settings' && inPeriod.has(e.session) && e.values) lastSettings.set(e.session, e.values);
+  const settingsOn = new Map();
+  for (const v of lastSettings.values()) for (const [k, x] of Object.entries(v)) tally(settingsOn, typeof x === 'boolean' ? (x ? `${k} on` : `${k} off`) : `${k}: ${x}`);
+
+  // Buttons the agents clicked themselves, per quote; checks they dismissed; where answers came from.
+  const clicks = new Map();
+  for (const e of events.filter((x) => x.type === 'agent_click')) {
+    const k = `${e.carrier} ${e.page}${e.step ? ` › ${e.step}` : ''}: "${mask(e.text)}"`;
+    (clicks.get(k) ?? clicks.set(k, new Set()).get(k)).add(e.session);
+  }
+  const dismissed = new Map();
+  for (const e of events.filter((x) => x.type === 'check_dismissed')) {
+    const k = `${e.carrier} ${e.page}: "${mask(e.label)}" (${e.mark ?? '?'})`;
+    (dismissed.get(k) ?? dismissed.set(k, new Set()).get(k)).add(e.session);
+  }
+  const sources = new Map();
+  const sourceOnce = new Set();
+  for (const e of events.filter((x) => x.type === 'fill_field' && x.result === 'filled' && x.source)) {
+    const once = `${e.session}|${e.page}|${e.view ?? ''}|${e.key ?? e.q ?? ''}`;
+    if (sourceOnce.has(once)) continue;
+    sourceOnce.add(once);
+    tally(sources, `${e.source}${e.review ? ' (review mode)' : ''}`);
+  }
+  const platforms = new Map();
+  for (const e of events.filter((x) => x.type === 'intake_loaded' && inPeriod.has(x.session) && x.platform)) tally(platforms, `${e.platform.os ?? '?'} · Chrome ${e.platform.chrome ?? '?'}`);
+
+  // Events lost on the way: what a computer's log dropped (usage_lost), and gaps in each install's
+  // numbers (`seq`) among the events received.
+  const lostLocally = periodAll.filter((e) => e.type === 'usage_lost').reduce((x, e) => x + (Number(e.count) || 0), 0);
+  const bySeq = new Map();
+  for (const e of all) if (e.install && Number.isSafeInteger(e.seq)) (bySeq.get(e.install) ?? bySeq.set(e.install, []).get(e.install)).push(e.seq);
+  let missing = 0;
+  for (const list of bySeq.values()) {
+    const sorted = [...new Set(list)].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i++) missing += sorted[i] - sorted[i - 1] - 1;
+  }
+
   const versions = [...new Set([...builds.values()].map((b) => b.version))].sort(byVersion);
   return {
     since: from,
@@ -270,6 +325,13 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     dropped: { fields: top(dropped, n), last: droppedLast },
     ai: [...ai].sort((a, b) => byVersion(b[0], a[0])).map(([b, a]) => ({ build: b, requests: a.requests, errors: top(a.errors, 5), decisions: Object.fromEntries(a.decisions) })),
     problems,
+    crashes: top(crashes, n),
+    settings: { quotes: lastSettings.size, on: top(settingsOn, 30) },
+    agentClicks: [...clicks].map(([k, s2]) => [k, s2.size]).sort((a, b) => b[1] - a[1]).slice(0, n),
+    dismissed: [...dismissed].map(([k, s2]) => [k, s2.size]).sort((a, b) => b[1] - a[1]).slice(0, n),
+    sources: top(sources, 10),
+    platforms: top(platforms, 10),
+    lost: { locally: lostLocally, installs: bySeq.size, missingInSeq: missing },
   };
 }
 
@@ -307,6 +369,13 @@ export function markdown(s) {
   L.push('## What held Continue', '', `Blockers at the end of fill runs, by the number of quotes they held.`, '', ...list(s.blockers, ' quotes'), '');
   L.push('## Restricted actions by the extension', '', s.restricted.length ? '**Safety finding: the extension clicked something that reads as a restricted action.**' : 'None: every click the extension made was a helper or a continuation.', ...(s.restricted.length ? list(s.restricted, ' runs') : []), '', `Its clicks: ${s.actions.map(([a, c]) => `${a} ×${c}`).join(', ') || 'none'}.`, '');
   L.push('## Signs a carrier changed a page', '', ...list(s.pageChanges, ' runs'), '');
+  L.push('## Panel crashes', '', 'Errors nothing in the panel caught (client_error), by build; test runs included. Each one is a finding.', '', ...list(s.crashes), '');
+  L.push('## Settings in force', '', `The last agent_settings of each quote (${s.settings.quotes} quotes reported one).`, '', ...list(s.settings.on, ' quotes'), '');
+  L.push('## Buttons agents clicked themselves', '', 'By the number of quotes: a helper the extension has (Recalculate, Print, Lookup VIN) clicked by hand is one it didn\'t do.', '', ...list(s.agentClicks, ' quotes'), '');
+  L.push('## Checks agents dismissed', '', 'Needs-you items waved through with ×, by the number of quotes.', '', ...list(s.dismissed, ' quotes'), '');
+  L.push('## Where filled answers came from', '', ...list(s.sources), '');
+  L.push('## Platforms', '', ...list(s.platforms, ' quotes'), '');
+  L.push('## Events lost on the way', '', `${s.lost.locally} dropped by full logs on agents' computers (usage_lost); ${s.lost.missingInSeq} missing from the numbering of ${s.lost.installs} install(s) (events never received, or not yet).`, '');
   L.push('## Fill errors', '', ...list(s.fillErrors), '', '## Layout errors', '', ...list(s.layoutErrors), '');
   L.push('## Fields the usage server dropped', '', s.dropped.fields.length ? `Last on ${s.dropped.last?.slice(0, 16).replace('T', ' ')} UTC (a server older than the extension; see docs/hosting.md).` : '', ...list(s.dropped.fields), '');
   L.push('## AI assistant by build', '');
@@ -315,7 +384,7 @@ export function markdown(s) {
   L.push('', '## Problem reports', '', 'With the build that logged each and the fill around it (same quote, 5 minutes either side). Check the build against the fixes made since before treating one as open.', '');
   if (!s.problems.length) L.push('None.');
   s.problems.forEach((p, i) => {
-    L.push(`${i + 1}. ${p.t.slice(0, 16).replace('T', ' ')}${p.test ? ' · test run' : ''} · ${p.agent ?? '?'} · ${p.version ?? '?'} ${p.channel ?? ''}${p.commit ? ` ${p.commit}` : ''} · ${p.carrier ?? '?'} ${p.page ?? '?'}`);
+    L.push(`${i + 1}. ${p.t.slice(0, 16).replace('T', ' ')}${p.test ? ' · test run' : ''}${p.view ? ` · ${p.view}` : ''} · ${p.agent ?? '?'} · ${p.version ?? '?'} ${p.channel ?? ''}${p.commit ? ` ${p.commit}` : ''} · ${p.carrier ?? '?'} ${p.page ?? '?'}`);
     L.push(`   > ${p.text.replace(/\n+/g, '\n   > ')}`);
     const run = p.lastRun ? `last fill here: ${p.lastRun.filled ?? '?'} filled, ${p.lastRun.unknown ?? '?'} unfamiliar, ${p.lastRun.advanced ? 'continued' : 'did not continue'}${p.lastRun.blockers.length ? `; held by ${p.lastRun.blockers.slice(0, 4).join('; ')}` : ''}` : 'no fill on this page just before';
     L.push(`   Around it: ${p.fillRuns} fill runs; ${run}${p.fillErrors.length ? `; fill errors: ${p.fillErrors.join('; ')}` : ''}.`);

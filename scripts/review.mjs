@@ -21,6 +21,7 @@ import { loadEvents, quoteSessions } from './lib/events.mjs';
 import { loadLayouts, report as coverageReport } from './coverage.mjs';
 import { receivedAt, uncoveredQuestions } from './lib/daily.mjs';
 import { questionOf } from './lib/learn.mjs';
+import { signals, testSessionsOf } from './lib/signals.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -44,11 +45,18 @@ const all = loadEvents(inputs);
 // Compared as full ISO times: gh's run times have no milliseconds, the server's receipts do.
 const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOString() : since;
 const recent = from ? all.filter((e) => receivedAt(e) >= from) : all;
+// Test runs: intakes marked as a test, and the fingerprints in reviews/test-intakes.txt when
+// there is one (scripts/lib/signals.mjs). Their events leave the numbers and the usage summary.
+const testFile = path.join(root, 'reviews', 'test-intakes.txt');
+const testIntakes = fs.existsSync(testFile) ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
+const tests = testSessionsOf(all, testIntakes);
+// The agents' work in the period: everything but test runs (problem reports keep them, marked).
+const live = recent.filter((e) => !tests.has(e.session));
 
 // The existing review scripts, on the period's events (summary) or all events (learn, layouts).
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
 const recentFile = path.join(tmp, 'recent.jsonl');
-fs.writeFileSync(recentFile, recent.map((e) => JSON.stringify(e)).join('\n') + '\n');
+fs.writeFileSync(recentFile, live.map((e) => JSON.stringify(e)).join('\n') + '\n');
 const run = (script, scriptArgs) => {
   try {
     return execFileSync(process.execPath, [path.join(root, 'scripts', script), ...scriptArgs], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -59,7 +67,7 @@ const run = (script, scriptArgs) => {
     return `(${script} failed: ${String(e.stderr || e.message).trim().split('\n')[0]})`;
   }
 };
-const summary = recent.length ? run('summarize-usage.mjs', [recentFile]) : '(no events in this period)';
+const summary = live.length ? run('summarize-usage.mjs', [recentFile]) : '(no events in this period)';
 const learn = run('learn-rules.mjs', inputs).replace(/^# /m, '### ');
 const layouts = run('build-layouts.mjs', inputs);
 const transitions = run('transitions.mjs', inputs);
@@ -68,32 +76,32 @@ const captures = fs.existsSync(path.join(root, 'layouts')) ? run('captures.mjs',
 fs.rmSync(tmp, { recursive: true, force: true });
 
 // --- Numbers for the top of the report ------------------------------------------------------
-// Quotes: intakes loaded in this period that went to a carrier's page (whenever they did).
+// The weekly numbers come from the signals report (scripts/lib/signals.mjs), so the two agree:
+// per quote (a page filled twenty times counts once), test runs left out (intakes marked as a test,
+// and the fingerprints in reviews/test-intakes.txt when there is one).
+const week = signals(all, { since: from, testIntakes });
+// Quotes: intakes loaded in this period that went to a carrier's page (whenever they did), not test runs.
 const quoting = quoteSessions(all);
-const quotes = new Set(recent.filter((e) => e.type === 'intake_loaded' && quoting.has(e.session)).map((e) => e.session));
+const quotes = new Set(recent.filter((e) => e.type === 'intake_loaded' && quoting.has(e.session) && !tests.has(e.session)).map((e) => e.session));
 const agents = [...new Set(recent.map((e) => e.agent).filter(Boolean))];
-const states = count(recent.filter((e) => e.type === 'intake_loaded' && quoting.has(e.session)).map((e) => e.state ?? '?'));
-const fills = recent.filter((e) => e.type === 'fill_run');
+const states = count(recent.filter((e) => e.type === 'intake_loaded' && quotes.has(e.session)).map((e) => e.state ?? '?'));
 const sum = (list, k) => list.reduce((n, e) => n + (Number(e[k]) || 0), 0);
-const filled = sum(fills, 'filled');
-const leftover = sum(fills, 'unknown') + sum(fills, 'failed') + sum(fills, 'noData') + sum(fills, 'leftRequired');
 // An agent's change to an autofilled field counts as a correction only when the value differs
-// (`vsAutofill`: different, format, or cleared). Most such changes end on the autofilled value (446
+// (`vsAutofill`: different or cleared; reformatted is counted apart, as in the signals report). Most such changes end on the autofilled value (446
 // of 502 in the data to 2026-10-08); a change is only logged when the value moved, so one of those
 // came from another value. From an empty one (a combo opened and closed, a box retyped) it is a
 // re-entry; from another answer (a select's `from`, a text box `edited`) the agent put the autofilled
 // answer back after it changed, often a carrier overwriting it (an answer-retention problem), or
 // after their own edit: counted apart, never as a no-op. The log keeps no typed text, so a text
 // box's `edited` is all that says it held something.
-const agentChanges = recent.filter((e) => e.type === 'field_change' && e.by === 'agent' && e.autofilled);
-const corrections = agentChanges.filter((e) => ['different', 'format', 'cleared'].includes(e.vsAutofill)).length;
+const agentChanges = live.filter((e) => e.type === 'field_change' && e.by === 'agent' && e.autofilled);
 const heldAnother = (e) => (e.kind === 'text' ? e.change === 'edited' : e.from != null && e.from !== '');
 const restoredAutofill = agentChanges.filter((e) => e.vsAutofill === 'same' && heldAnother(e)).length;
 const sameAsAutofill = agentChanges.filter((e) => e.vsAutofill === 'same' && !heldAnother(e)).length;
 
 // --- AI assistant -----------------------------------------------------------------------------
-const asks = recent.filter((e) => e.type === 'ai_suggest');
-const decisions = recent.filter((e) => e.type === 'ai_decision');
+const asks = live.filter((e) => e.type === 'ai_suggest');
+const decisions = live.filter((e) => e.type === 'ai_decision');
 // One row per question, whatever its number (Progressive renumbered them on 2026-10-07), named
 // by its page and text.
 const questionKey = questionOf(all);
@@ -118,6 +126,8 @@ const aiRows = [...byQuestion.entries()]
   .sort((a, b) => (b.yes + b.no) - (a.yes + a.no));
 
 const problems = recent.filter((e) => e.type === 'problem_report');
+// Which build and quote each report came from: a report from a build older than a fix may be done.
+const buildOf = (e) => `${e.v ?? '?'}${e.channel ? ` ${e.channel}` : ''}${e.commit ? ` ${e.commit}` : ''}`;
 // Questions without a rule: different ones (a question per page, whatever its number, row or
 // product), and the ones first seen in this period.
 const uncovered = uncoveredQuestions(all, from);
@@ -129,10 +139,13 @@ p(`# Rater Autofill review ${today}`, '');
 p(`Period: ${since ? `since ${since}` : 'all data'} · ${recent.length} events (${all.length} in total) · ${quotes.size} quotes · agents: ${agents.join(', ') || '—'}`, '');
 p('## At a glance', '');
 p('| | |', '| --- | --- |');
-p(`| Quotes started | ${quotes.size}${Object.keys(states).length ? ` (${Object.entries(states).map(([s, n]) => `${s} ${n}`).join(', ')})` : ''} |`);
-p(`| Fields filled by the rules | ${filled} |`);
-p(`| Fields left for the agent (yellow/red/amber) | ${leftover} |`);
-p(`| Autofilled answers the agent corrected (a different, reformatted or cleared value) | ${corrections} |`);
+const k = week.kpis;
+p(`| Quotes started | ${quotes.size}${Object.keys(states).length ? ` (${Object.entries(states).map(([s, n]) => `${s} ${n}`).join(', ')})` : ''}${k.testRunsLeftOut ? ` · ${k.testRunsLeftOut} test run(s) left out` : ''} |`);
+p(`| Builds | ${week.builds.map((b) => `${b.version} ${b.channel}: ${b.quotes} quote${b.quotes === 1 ? '' : 's'}`).join(' · ') || '—'} |`);
+p(`| Quotes done (reached the carrier's final page) | ${k.donePercent ?? '—'}% |`);
+p(`| Answers filled by the rules, per quote | ${k.filledPerQuote ?? '—'} |`);
+p(`| Left to the agent per quote (each question once per quote): ${Object.keys(k.leftPerQuote).join(' / ') || '—'} | ${Object.values(k.leftPerQuote).join(' / ') || '—'} |`);
+p(`| Autofilled answers the agent corrected (another value or cleared) · reformatted | ${k.corrected} · ${k.reformatted} |`);
 p(`| Autofilled answers the agent put back after they changed (a carrier overwrite, or the agent's own edit) | ${restoredAutofill} |`);
 p(`| Autofilled answers the agent re-entered unchanged (from an empty field; not corrections) | ${sameAsAutofill} |`);
 p(`| AI requests | ${asks.length}${asks.length ? ` (${asks.filter((a) => a.error).length} errors, median ${median(asks.filter((a) => !a.error).map((a) => a.ms))} ms)` : ''} |`);
@@ -161,7 +174,7 @@ else {
 
 // --- Speed: how long each answer takes, and which answers change nothing else ---------------
 p('## Speed', '');
-const timed = recent.filter((e) => e.type === 'fill_field' && e.result === 'filled' && e.timing);
+const timed = live.filter((e) => e.type === 'fill_field' && e.result === 'filled' && e.timing);
 if (!timed.length) p('No timing yet (recorded from version 0.3.5 on).', '');
 else {
   const byQ = new Map();
@@ -193,7 +206,7 @@ else {
 
 p('## Problem reports', '');
 if (!problems.length) p('None.', '');
-else p(...problems.map((e) => `- ${e.t?.slice(0, 16).replace('T', ' ')} · ${e.agent ?? '?'} · ${e.page ?? '?'}: ${String(e.text ?? '').trim().replace(/\n+/g, '\n  ')}`), '');
+else p(...problems.map((e) => `- ${e.t?.slice(0, 16).replace('T', ' ')} · ${e.agent ?? '?'} · ${buildOf(e)}${tests.has(e.session) ? ' · test run' : ''} · ${e.page ?? '?'}: ${String(e.text ?? '').trim().replace(/\n+/g, '\n  ')}`), '');
 
 // Questions met on live pages that no rule claims (or, for AmWINS, that the mock lacks).
 const { markdown: coverageMd } = coverageReport(loadLayouts(inputs));
@@ -213,7 +226,7 @@ fs.writeFileSync(out, lines.join('\n'));
 if (opt('summary')) {
   fs.writeFileSync(opt('summary'), JSON.stringify({
     since,
-    problems: problems.map((e) => ({ t: e.t, receivedAt: e.receivedAt ?? null, agent: e.agent ?? null, page: e.page ?? null, text: e.text ?? '' })),
+    problems: problems.map((e) => ({ t: e.t, receivedAt: e.receivedAt ?? null, agent: e.agent ?? null, page: e.page ?? null, build: buildOf(e), test: tests.has(e.session), text: e.text ?? '' })),
     newQuestions: uncovered.new,
     uncoveredTotal: uncovered.total,
   }, null, 1));

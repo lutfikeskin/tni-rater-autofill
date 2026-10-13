@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { markdown, mask, signals } from '../scripts/lib/signals.mjs';
+import { markdown, mask, signals, testSessionsOf } from '../scripts/lib/signals.mjs';
 
 // Two quotes on two builds: what each left, held and reported.
 function week() {
@@ -90,4 +90,41 @@ test('signals leaves test runs out: listed fingerprints and intakes marked as a 
   assert.ok(listed.problems.every((p) => p.session !== 'old' || p.test));
   events.find((e) => e.session === 'new' && e.type === 'intake_loaded').test = true;
   assert.equal(signals(events, { since: '2026-10-06', testIntakes: ['abcdef'] }).quotes, 0);
+});
+
+test('the agent\'s latest test mark wins, and the new events are digested', () => {
+  const events = week();
+  const at = (s) => new Date(Date.parse('2026-10-06T12:40:00Z') + s * 1000).toISOString();
+  const add = (x) => events.push({ id: crypto.randomUUID(), t: at(events.length), receivedAt: at(events.length), v: '0.9.9', carrier: 'progressive', ...x });
+  // Marked as a test, then unmarked: not a test. Marked once: a test.
+  add({ session: 'new', type: 'intake_marked', test: true });
+  add({ session: 'new', type: 'intake_marked', test: false });
+  add({ session: 'old', type: 'intake_marked', test: true });
+  const tests = testSessionsOf(events);
+  assert.deepEqual([tests.has('new'), tests.has('old')], [false, true]);
+  // Crashes, settings, the agent's clicks, dismissed checks, provenance, platform, lost events.
+  add({ session: 'new', type: 'client_error', where: 'panel', error: 'Cannot read properties of null', stack: ['sidepanel/sidepanel.js:12:5'] });
+  add({ session: 'new', type: 'agent_settings', reason: 'intake', values: { autoAdvance: false, aiOn: true, uploads: 'central' } });
+  add({ session: 'new', type: 'agent_click', page: 'CoveragesRates', text: 'Recalculate' });
+  add({ session: 'new', type: 'check_dismissed', page: 'AddVehicle', label: 'GVW', mark: 'needs' });
+  add({ session: 'new', type: 'fill_field', page: 'AddVehicle', key: '2CCC', result: 'filled', source: 'standard', review: true });
+  add({ session: 'new', type: 'usage_lost', count: 4 });
+  for (const [seq, install] of [[1, 'a'], [2, 'a'], [5, 'a'], [1, 'b']]) add({ session: 'new', type: 'page_view', page: 'X', seq, install });
+  events.find((e) => e.session === 'new' && e.type === 'intake_loaded').platform = { os: 'Windows', chrome: 141 };
+  // A report naming its fill run is joined to that run, wherever it was.
+  events.find((e) => e.session === 'new' && e.type === 'fill_run' && e.page === 'CoveragesRates').run = 'run-rates-1';
+  add({ session: 'new', type: 'problem_report', page: 'BusinessOwnerInfo', text: 'stuck on Rates', run: 'run-rates-1', view: 't1' });
+  const s = signals(events, { since: '2026-10-06' });
+  assert.equal(s.crashes.length, 1);
+  assert.match(s.crashes[0][0], /Cannot read properties of null @ sidepanel\/sidepanel\.js:12:5/);
+  assert.deepEqual(s.settings.on.map(([k]) => k).sort(), ['aiOn on', 'autoAdvance off', 'uploads: central']);
+  assert.deepEqual(s.agentClicks, [['progressive CoveragesRates: "Recalculate"', 1]]);
+  assert.deepEqual(s.dismissed, [['progressive AddVehicle: "GVW" (needs)', 1]]);
+  assert.deepEqual(s.sources, [['standard (review mode)', 1]]);
+  assert.deepEqual(s.platforms, [['Windows · Chrome 141', 1]]);
+  assert.deepEqual(s.lost, { locally: 4, installs: 2, missingInSeq: 2 });
+  const report = s.problems.find((p) => p.text === 'stuck on Rates');
+  assert.equal(report.run, 'run-rates-1');
+  assert.equal(report.lastRun.advanced, 'Continue', 'joined to the run it names, not the last fill on its page');
+  assert.match(markdown(s), /## Panel crashes[\s\S]*## Settings in force[\s\S]*## Buttons agents clicked themselves/);
 });
