@@ -272,3 +272,34 @@ test('a reply whose body never arrives is given up too, and the next upload stil
     assert.deepEqual([await usage.count(), requests.length, usage.lastUpload().state], [0, 1, 'ok'], 'the queue is not held');
   }
 });
+
+test('every event names its install; a full log says how many oldest events it dropped', async () => {
+  const data = {};
+  globalThis.chrome = {
+    storage: { local: {
+      get: async (key) => ({ [key]: structuredClone(data[key]) }),
+      set: async (items) => { Object.assign(data, structuredClone(items)); },
+    } },
+    runtime: { getManifest: () => ({ version: 'test' }) },
+  };
+  const { MAX_EVENTS } = await import('../src/usage.js');
+  try {
+    const log = await import('../sidepanel/usage-log.js?install=1');
+    await log.log({ type: 'page_view', page: 'A' });
+    await log.log({ type: 'page_view', page: 'B' });
+    const install = data.usageInstall;
+    assert.match(install, /^[0-9a-f-]{36}$/);
+    assert.deepEqual(data.usageLog.map((e) => e.install), [install, install], 'one id for this copy, kept');
+    // The queue is full: the oldest go, and how many is logged in their place.
+    data.usageLog = Array.from({ length: MAX_EVENTS }, (_, i) => ({ id: `old-${i}`, type: 'page_view', seq: i + 1 }));
+    await log.log({ type: 'page_view', page: 'C' }, { type: 'page_view', page: 'D' });
+    assert.equal(data.usageLog.length, MAX_EVENTS);
+    const lost = data.usageLog.at(-1);
+    assert.deepEqual([lost.type, lost.count, lost.install], ['usage_lost', 3, install]);
+    assert.deepEqual(data.usageLog.slice(-3, -1).map((e) => e.page), ['C', 'D']);
+    assert.equal(data.usageLog[0].id, 'old-3');
+    assert.equal(data.usageSeq, lost.seq, 'the loss has its own number');
+  } finally {
+    delete globalThis.chrome;
+  }
+});

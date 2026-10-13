@@ -54,10 +54,14 @@ export function startupError({ host, token }) {
 }
 
 // Event type -> fields kept. Anything else in an event is dropped.
-export const COMMON = ['id', 't', 'v', 'channel', 'commit', 'agent', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page', 'view'];
+// install: a random id for one copy of the extension on one computer (with seq: gaps show loss).
+export const COMMON = ['id', 't', 'v', 'channel', 'commit', 'agent', 'install', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page', 'view'];
 export const EVENT_FIELDS = {
   // test: the agent marked this intake as a test run before (on this computer).
-  intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings', 'test'],
+  // platform: the computer's system and Chrome's major version.
+  intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings', 'test', 'platform'],
+  // Events the computer's log dropped (full, oldest first): how many.
+  usage_lost: ['count'],
   intake_closed: ['reason'],
   // The agent marked the loaded intake as a test run, or unmarked it.
   intake_marked: ['test'],
@@ -163,6 +167,11 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
     }
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
+    if (out.install !== undefined && !(typeof out.install === 'string' && /^[0-9a-f-]{36}$/.test(out.install))) drop('install');
+    if (out.platform !== undefined && !(out.platform && typeof out.platform === 'object' && !Array.isArray(out.platform) && Object.keys(out.platform).every((k) => ['os', 'chrome'].includes(k))
+      && (out.platform.os === null || (typeof out.platform.os === 'string' && out.platform.os.length <= 20))
+      && (out.platform.chrome === null || (Number.isSafeInteger(out.platform.chrome) && out.platform.chrome > 0 && out.platform.chrome < 1000)))) drop('platform');
+    if (out.type === 'usage_lost' && out.count !== undefined && !(Number.isSafeInteger(out.count) && out.count > 0)) drop('count');
     if (out.type === 'agent_settings') {
       const v = out.values;
       const ok = !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length <= 12

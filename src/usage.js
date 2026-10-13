@@ -99,6 +99,19 @@ export function redactor(terms) {
 // ---------------------------------------------------------------------------------------------
 // Events
 
+// The computer's system and Chrome's major version, for problems seen on one platform only
+// (agents run Windows; the extension is built on a Mac). From navigator.userAgentData where Chrome
+// gives it, else the user agent string.
+export function platformOf(nav = globalThis.navigator) {
+  const ua = String(nav?.userAgent ?? '');
+  const data = nav?.userAgentData;
+  const brand = data?.brands?.find((b) => /^(Google Chrome|Chromium)$/.test(b.brand))?.version ?? ua.match(/Chrome\/(\d+)/)?.[1];
+  const raw = data?.platform || ua.match(/Windows|Mac OS X|CrOS|Android|Linux/)?.[0] || null;
+  const os = { 'Mac OS X': 'macOS', CrOS: 'Chrome OS' }[raw] ?? raw;
+  const chrome = Number.parseInt(brand ?? '', 10);
+  return { os: os ? String(os).slice(0, 20) : null, chrome: Number.isFinite(chrome) ? chrome : null };
+}
+
 // The agent's settings, all of them each time (`values`), so the one in force at any moment is the
 // last event before it: the filling switches as the panel shows them (defaults: follow-ups and
 // Continue on, filling on arrival and replacing answers off), the AI assistant (on, applying
