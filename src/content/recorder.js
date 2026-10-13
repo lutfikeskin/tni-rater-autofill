@@ -10,7 +10,7 @@
 // control remains a compatibility fallback for widgets which do not emit those events.
 
 (() => {
-  const VERSION = 6;
+  const VERSION = 7;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
@@ -401,6 +401,19 @@
     trustedImmediate.clear();
     rebaseline();
   }
+
+  // Buttons and links the agent clicks themselves (Continue, Recalculate, Print, a lookup): the
+  // review sees a helper the extension didn't click and a Continue the agent pressed. The
+  // extension's own clicks are untrusted and never reported. Only the button's text (60
+  // characters) and the step on screen.
+  const BUTTONS = 'a, button, [role=button], input[type=button], input[type=submit], .x-btn';
+  listen('click', (e) => {
+    if (!isCurrent() || !e.isTrusted) return;
+    const el = e.target?.closest?.(BUTTONS);
+    if (!el) return;
+    const text = oneLine(el.value || el.textContent).slice(0, 60);
+    if (text) send({ event: 'agent_click', page, step: stepKey(), text });
+  });
 
   const timer = setInterval(tick, TICK_MS);
 

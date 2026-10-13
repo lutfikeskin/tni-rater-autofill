@@ -3761,3 +3761,9 @@ test('a problem report names the fill it is about: view, run, step and what held
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
   assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
 });
+
+test('the agent\'s own button clicks are logged redacted, with a known step only', () => {
+  const body = extractFunction('onRecorderMessage');
+  assert.match(body, /if \(msg\.event === 'agent_click'\) \{[\s\S]{0,400}log\(\{ type: 'agent_click', carrier, page, view: viewOf\(sender\.tab\.id, page\), \.\.\.\(step \? \{ step \} : \{\}\), text: redactor\(redactionTerms\(state\.intake\.record\)\)/);
+  assert.match(body, /knownStep\(state\.tab\.carrier, msg\.step\)/);
+});

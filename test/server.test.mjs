@@ -518,3 +518,16 @@ test('a problem report keeps the fill it is about, in its shapes', async () => {
   assert.deepEqual([ok.view, ok.run, ok.blockerList, ok.since], ['t1', 'run-1234-abcd', ['button: recalculate'], 90]);
   assert.deepEqual([odd.blockerList, odd.since], [undefined, undefined]);
 });
+
+test('keeps a button the agent clicked: its text, bounded', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'agent_click', filled: undefined, page: 'CoveragesRates', view: 't1', text: 'Recalculate' }),
+      ev({ type: 'agent_click', filled: undefined, page: 'CoveragesRates', text: 'x'.repeat(61) }),
+    ] });
+  });
+  const [ok, long] = stored(dataDir);
+  assert.deepEqual([ok.type, ok.text, ok.view], ['agent_click', 'Recalculate', 't1']);
+  assert.equal(long.text, undefined);
+});

@@ -311,7 +311,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 6);
+  assert.equal(h.context.__raterRecorder.version, 7);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -374,12 +374,12 @@ test('an ExtJS combo is reported as a combo, so its typed text is not logged as 
 test('an older recorder is replaced, so changes carry what the current one reports', () => {
   const h = harness();
   const disposed = [];
-  // A version-5 recorder still installed in the page (it didn't report new messages).
+  // A version-6 recorder still installed in the page (it didn't report the agent's clicks).
   h.context.__raterRecorder.dispose();
-  h.context.__raterRecorder = { version: 5, rebaseline() {}, dispose() { disposed.push(5); } };
+  h.context.__raterRecorder = { version: 6, rebaseline() {}, dispose() { disposed.push(6); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
-  assert.deepEqual(disposed, [5]);
-  assert.equal(h.context.__raterRecorder.version, 6);
+  assert.deepEqual(disposed, [6]);
+  assert.equal(h.context.__raterRecorder.version, 7);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {
@@ -566,4 +566,15 @@ test('a new error or validation message is reported once, without its text', () 
   h.document.messages = [{ textContent: 'Hidden', getClientRects: () => [] }];
   h.tick();
   assert.equal(h.sent.filter((m) => m.event === 'new_messages').length, 1);
+});
+
+test('a button the agent clicks is reported by its text; the extension\'s own clicks are not', () => {
+  const h = harness();
+  const button = { value: '', textContent: '  Recalculate  ', closest: (sel) => (/button/.test(sel) ? button : null) };
+  h.emit('click', button, true);
+  h.emit('click', button, false);
+  h.emit('click', { closest: () => null }, true);
+  const clicks = h.sent.filter((m) => m.event === 'agent_click');
+  assert.deepEqual(clicks.map((m) => m.text), ['Recalculate'], 'one trusted click on a button; nothing for an untrusted click or one on no button');
+  assert.ok(clicks[0].page);
 });
