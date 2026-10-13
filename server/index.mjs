@@ -61,7 +61,8 @@ export const EVENT_FIELDS = {
   intake_edit: ['path', 'kind', 'change', 'warnings'],
   warning_checked: ['code', 'path', 'checked'],
   page_view: ['from', 'fields'],
-  page_layout: ['context', 'fields', 'buttons', 'reason', 'step'],
+  // messages: what the page said about the answers (validation, errors, help), redacted by the panel.
+  page_layout: ['context', 'fields', 'buttons', 'reason', 'step', 'messages'],
   // A page layout the panel couldn't record (why it was asked for, and the error's first words).
   layout_error: ['reason', 'error'],
   // pageChanged: the carrier probably changed the page; reworded: known fields whose question reads
@@ -156,6 +157,8 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
       if (out[k] !== undefined && !(out[k] === null || (typeof out[k] === 'number' && Number.isFinite(out[k]) && out[k] >= 0 && out[k] <= 1)
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
     }
+    // A page's messages: at most 40 lines of at most 200 characters.
+    if (out.messages !== undefined && !(Array.isArray(out.messages) && out.messages.length <= 40 && out.messages.every((m) => typeof m === 'string' && m.length <= 200))) drop('messages');
     // A crash: where, a bounded message, and frames inside the extension's files only.
     if (out.type === 'client_error') {
       if (out.where !== undefined && out.where !== 'panel') drop('where');

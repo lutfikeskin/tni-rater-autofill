@@ -10,7 +10,7 @@
 // control remains a compatibility fallback for widgets which do not emit those events.
 
 (() => {
-  const VERSION = 5;
+  const VERSION = 6;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
@@ -261,9 +261,17 @@
     return headings.map((el) => oneLine(el.textContent)).filter(Boolean).slice(0, 4).join(' / ') || undefined;
   };
 
+  // Error and validation messages on screen, as pagekit's capture reads them. When one appears that
+  // wasn't there (a Continue the carrier refused: "This field is required"), the panel records the
+  // page's layout again, which carries the messages. Only that one appeared is sent, never its text.
+  const MESSAGES = '[role=alert], .x-form-error-msg, .x-form-invalid-under, [class*="error-message"], [class*="validation-message"], [class*="help-block"]';
+  const messages = () => new Set([...(document.querySelectorAll?.(MESSAGES) ?? [])]
+    .filter((el) => el.getClientRects?.().length).map((el) => oneLine(el.textContent)).filter(Boolean));
+
   let paused = false;
   let page = pageKey();
   let prev = snapshot();
+  let prevMessages = messages();
 
   function send(msg) {
     if (!isCurrent()) return;
@@ -332,6 +340,9 @@
     const appeared = [...cur.keys()].filter((k) => !prev.has(k));
     const removed = [...prev.keys()].filter((k) => !cur.has(k));
     prev = cur;
+    const shown = messages();
+    const newMessages = [...shown].some((m) => !prevMessages.has(m));
+    prevMessages = shown;
     if (changes.length) send({ event: 'field_changes', page, step: stepKey(), changes });
     // A trusted value event is valid for one snapshot only. This also drops controls that were
     // replaced by a redraw before the poll, keeping an old element from authorizing later edits.
@@ -343,6 +354,7 @@
     // Questions that went away (hidden, disabled or removed by an answer): the panel records the
     // page's layout again, so both sides of a follow-up question are seen.
     if (removed.length) send({ event: 'removed_fields', page, keys: removed });
+    if (newMessages) send({ event: 'new_messages', page });
   }
 
   // Only the top frame reports page switches; embedded frames (ads, trackers) would be noise.
@@ -351,6 +363,7 @@
     trustedImmediate.clear();
     if (isTop) send({ event: 'page_view', page: nowPage, from: page, fields: cur.size, title: document.title });
     page = nowPage;
+    prevMessages = messages();
   }
 
   // After a pause (autofill running) the page may have moved on; report that, then start fresh.
@@ -362,6 +375,7 @@
     const cur = snapshot();
     if (pageKey() !== page) pageChanged(pageKey(), cur);
     prev = cur;
+    prevMessages = messages();
     trustedPending.clear();
     trustedImmediate.clear();
   }

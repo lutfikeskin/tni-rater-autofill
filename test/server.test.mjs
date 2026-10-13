@@ -428,3 +428,17 @@ test('keeps a panel crash with its bounded message and extension frames only', a
   assert.deepEqual([bad.where, bad.error, bad.stack], [undefined, undefined, undefined]);
   assert.deepEqual(bad.dropped.sort(), ['error', 'stack', 'where']);
 });
+
+test('a page layout keeps the page\'s messages, bounded', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'page_layout', filled: undefined, fields: [], messages: ['This field is required'] }),
+      ev({ type: 'page_layout', filled: undefined, fields: [], messages: ['x'.repeat(201)] }),
+    ] });
+  });
+  const [ok, long] = stored(dataDir);
+  assert.deepEqual(ok.messages, ['This field is required']);
+  assert.equal(long.messages, undefined);
+  assert.deepEqual(long.dropped, ['messages']);
+});
