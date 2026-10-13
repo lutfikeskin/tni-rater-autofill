@@ -9,7 +9,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms } from '../src/plan.js';
-import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep, clientErrorEvent } from '../src/usage.js';
+import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep, clientErrorEvent, agentSettingsEvent } from '../src/usage.js';
 
 const bytes = new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url)));
 const raw = await readIntakeFields(pdfjs, bytes.slice());
@@ -306,4 +306,17 @@ test('a panel crash is logged redacted, with frames from the extension only', ()
   assert.equal(clientErrorEvent(undefined, { where: 'panel' }).error, 'unknown error');
   assert.equal(clientErrorEvent({ message: 'm' }, { where: 'panel' }).stack, undefined);
   assert.equal(clientErrorEvent(new Error('x'.repeat(400)), { where: 'panel' }).error.length, 300);
+});
+
+test('the agent\'s settings event has every setting, defaults included, and never the AI key', () => {
+  const central = 'https://central.example';
+  assert.deepEqual(agentSettingsEvent({}, { reason: 'intake', centralServer: central }), { type: 'agent_settings', reason: 'intake', values: {
+    autoFollowUps: true, autoAdvance: true, autoPages: false, overwrite: false, aiOn: false, aiAuto: false, aiKey: false, uploads: 'central' } });
+  const e = agentSettingsEvent({ autoAdvance: false, autoPages: true, aiOn: true, lunaAuto: true, lunaKey: 'sk-secret', serverUrl: 'http://localhost:8787' },
+    { overwrite: true, reason: 'changed', changed: 'aiKey', centralServer: central });
+  assert.deepEqual(e.values, { autoFollowUps: true, autoAdvance: false, autoPages: true, overwrite: true, aiOn: true, aiAuto: true, aiKey: true, uploads: 'other' });
+  assert.equal(e.changed, 'aiKey');
+  assert.ok(!JSON.stringify(e).includes('sk-secret'), 'never the key');
+  assert.equal(agentSettingsEvent({ serverUrl: '' }, { reason: 'opened', centralServer: central }).values.uploads, 'off');
+  assert.equal(agentSettingsEvent({ serverUrl: central }, { reason: 'opened', centralServer: central }).values.uploads, 'central');
 });

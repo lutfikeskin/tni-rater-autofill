@@ -1123,7 +1123,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
     $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }),
     normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
-    store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, uploadNow() {},
+    store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
     'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile'].map(extractFunction).join('\n'), context);
@@ -3036,7 +3036,7 @@ test('a Continue that did not take after its retry pauses automatic filling, tel
 test('the fill hint says Continue is clicked for the agent only while that setting is on and the carrier has an advance pattern', () => {
   const body = extractFunction('renderSite');
   assert.match(body, /: carrier && \$\('auto-advance'\)\.checked && carrier\.advance \? 'Nothing is submitted or bound\. Continue is clicked for you once nothing on a page is left for you; review each page\\'s report\.'\s+: carrier \? 'Nothing is submitted\. Review the page, then click Next yourself\.'/);
-  assert.match(extractFunction('wireUsage'), /\$\('auto-advance'\)\.addEventListener\('change', \(e\) => \{ usage\.saveSettings\(\{ autoAdvance: e\.target\.checked \}\); renderSite\(\); \}\);/, 'the hint follows the switch');
+  assert.match(extractFunction('wireUsage'), /\$\('auto-advance'\)\.addEventListener\('change', async \(e\) => \{ const saving = usage\.saveSettings\(\{ autoAdvance: e\.target\.checked \}\); renderSite\(\); await saving; logSettings\('changed', 'autoAdvance'\); \}\);/, 'the hint follows the switch');
 });
 
 // Audit 2026-10-08, finding 11: a problem report waited for the next minute's upload, which the
@@ -3465,7 +3465,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
         if (/\.answer\(/.test(String(func))) { answerStarted(); return pending; }
         return [frame];
       },
-      pruneAgentRecords: async () => [], testIntakes: { get: async () => [] },
+      pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {},
       readIntakeFields: async () => ({ synthetic: true }), normalizeIntake: () => ({ record: nextRecord, warnings: [] }),
       intakeSummary: async () => ({ intakeId: nextFingerprint }), pdfjs: {},
       cancelLayouts() {}, holdLayouts() {}, resetViews() {}, discardAiSuggestions() {}, uploadNow() {},
@@ -3555,7 +3555,7 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
       doneActionsQueue: Promise.resolve(), doneRestored: new Set(),
       doneActionsStore: { get: async (id, tab) => memory.get(`${id}|${tab}`) ?? [],
         set: async (id, tab, ids) => { memory.set(`${id}|${tab}`, [...ids]); } },
-      $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] },
+      $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {},
       normalizeIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
       store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
       discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
@@ -3716,4 +3716,14 @@ test('marking a test run remembers the PDF on this computer and logs it once per
   // A test PDF loaded again carries the mark on intake_loaded.
   assert.match(SIDEPANEL, /const test = \(await testIntakes\.get\(\)\)\.includes\(summary\.intakeId\);/);
   assert.match(SIDEPANEL, /usage\.log\(\{ type: 'intake_loaded', \.\.\.summary, \.\.\.\(test \? \{ test: true \} : \{\}\) \}\);/);
+});
+
+test('the agent\'s settings are logged whole: on load, on opening, and on each change', () => {
+  assert.match(extractFunction('loadFile'), /usage\.log\(\{ type: 'intake_loaded'[^\n]*\n\s+await logSettings\('intake'\);/);
+  const wiring = extractFunction('wireUsage');
+  for (const [id, name] of [['auto-followups', 'autoFollowUps'], ['auto-pages', 'autoPages'], ['auto-advance', 'autoAdvance'], ['overwrite', 'overwrite']]) {
+    assert.match(wiring, new RegExp(`\\$\\('${id}'\\)\\.addEventListener\\('change'[^\\n]*logSettings\\('changed', '${name}'\\)`), `${id} logs its change`);
+  }
+  assert.match(extractFunction('wireAi'), /await usage\.saveSettings\(patch\);\s+logSettings\('changed'/);
+  assert.match(SIDEPANEL, /if \(state\.intake && usage\.currentSession\(\)\) logSettings\('opened'\);/);
 });

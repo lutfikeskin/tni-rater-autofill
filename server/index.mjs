@@ -61,6 +61,8 @@ export const EVENT_FIELDS = {
   intake_closed: ['reason'],
   // The agent marked the loaded intake as a test run, or unmarked it.
   intake_marked: ['test'],
+  // The agent's settings, all of them each time (values: booleans and where usage goes).
+  agent_settings: ['reason', 'changed', 'values'],
   intake_edit: ['path', 'kind', 'change', 'warnings'],
   warning_checked: ['code', 'path', 'checked'],
   page_view: ['from', 'fields'],
@@ -161,6 +163,14 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
     }
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
+    if (out.type === 'agent_settings') {
+      const v = out.values;
+      const ok = !!v && typeof v === 'object' && !Array.isArray(v) && Object.keys(v).length <= 12
+        && Object.entries(v).every(([k, x]) => /^[a-zA-Z]{1,24}$/.test(k) && (typeof x === 'boolean' || (k === 'uploads' && ['central', 'other', 'off'].includes(x))));
+      if (v !== undefined && !ok) drop('values');
+      if (out.reason !== undefined && !['intake', 'opened', 'changed'].includes(out.reason)) drop('reason');
+      if (out.changed !== undefined && !(typeof out.changed === 'string' && /^[a-zA-Z,]{1,60}$/.test(out.changed))) drop('changed');
+    }
     // A page's messages: at most 40 lines of at most 200 characters.
     if (out.messages !== undefined && !(Array.isArray(out.messages) && out.messages.length <= 40 && out.messages.every((m) => typeof m === 'string' && m.length <= 200))) drop('messages');
     // A crash: where, a bounded message, and frames inside the extension's files only.

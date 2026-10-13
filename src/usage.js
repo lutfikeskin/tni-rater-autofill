@@ -99,6 +99,24 @@ export function redactor(terms) {
 // ---------------------------------------------------------------------------------------------
 // Events
 
+// The agent's settings, all of them each time (`values`), so the one in force at any moment is the
+// last event before it: the filling switches as the panel shows them (defaults: follow-ups and
+// Continue on, filling on arrival and replacing answers off), the AI assistant (on, applying
+// choices automatically, whether a key is set: never the key), and where usage goes (`central`,
+// `other`: a test server, `off`). `reason`: intake (loaded), opened (the panel on a saved
+// intake) or changed (`changed` names the setting).
+export function agentSettingsEvent(saved = {}, { overwrite = false, reason, changed, centralServer } = {}) {
+  const url = saved.serverUrl;
+  return {
+    type: 'agent_settings', reason, ...(changed ? { changed } : {}),
+    values: {
+      autoFollowUps: saved.autoFollowUps ?? true, autoAdvance: saved.autoAdvance ?? true, autoPages: saved.autoPages ?? false, overwrite: !!overwrite,
+      aiOn: saved.aiOn === true, aiAuto: saved.lunaAuto === true, aiKey: !!saved.lunaKey,
+      uploads: url === '' ? 'off' : url === undefined || url === centralServer ? 'central' : 'other',
+    },
+  };
+}
+
 // An error nothing in the panel caught (an exception, a promise nobody awaited): what it said,
 // redacted and bounded, and where in the extension's own files it came from (paths inside the
 // extension only, never a page's).
