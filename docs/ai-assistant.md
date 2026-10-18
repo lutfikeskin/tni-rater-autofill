@@ -59,6 +59,8 @@ Usage includes `ai_suggest` (model, timing, counts, provider usage, errors) and 
 
 ## Proposed work, not current capabilities
 
+The [Decisions API replacement evaluation](decisions-api-evaluation.md) assesses a faster endpoint, evidence-preserving choices and a visible-answer audit. It is a proposal, not an implemented replacement or a live performance result.
+
 Potential extensions include confirmed extraction of free-text requests, a final requested-versus-entered check, AI-drafted rule proposals for human review, promoting repeatedly verified choices to deterministic rules, and centrally managed provider access. These are not committed milestones or permission to expand a task. Validate each against actual quote correctness, not acceptance rate alone.
 
 ## Related code and tests
