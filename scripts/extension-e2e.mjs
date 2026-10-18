@@ -47,7 +47,6 @@ await panel.waitForTimeout(1000);
 await panel.setInputFiles('#file', 'test/fixtures/sample-intake.pdf');
 await panel.waitForTimeout(2500);
 console.log('site:', await panel.textContent('#site'));
-await panel.click('#tab-fill').catch(() => {});
 await panel.waitForTimeout(500);
 console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#fill-hint'));
 await panel.click('#fill');

@@ -184,6 +184,15 @@ export const amwins = {
   layoutUrl: /\/application\/businessauto/i,
   // One address for every step: a layout also names its step (the visible step heading).
   layoutSteps: true,
+  // The application's steps in order (its step tabs), for the side panel's progress bar. The step
+  // on screen is told by its heading, which the page kit reads with each fill and layout.
+  steps: [
+    { name: 'Insured Info', heading: /^insured info$/i },
+    { name: 'Drivers', heading: /^drivers$/i },
+    { name: 'Vehicles', heading: /^vehicles$/i },
+    { name: 'Coverages', heading: /^coverages?$/i },
+    { name: 'Underwriting', heading: /^underwriting$/i },
+  ],
   // No answer waits on the server (timing of the first three quotes: 0 of 294 answers sent a
   // request): fill a round of answers at a time.
   batch: true,

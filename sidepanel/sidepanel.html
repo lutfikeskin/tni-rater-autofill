@@ -16,26 +16,27 @@
       <path d="m9.5 3-.5 2a7 7 0 0 0-1.5.9l-2-.6-2.5 4.4 1.5 1.4a8 8 0 0 0 0 1.8L3 14.3l2.5 4.4 2-.6A7 7 0 0 0 9 19l.5 2h5l.5-2a7 7 0 0 0 1.5-.9l2 .6 2.5-4.4-1.5-1.4a8 8 0 0 0 0-1.8L21 9.7l-2.5-4.4-2 .6A7 7 0 0 0 15 5l-.5-2Z"/>
       <circle cx="12" cy="12" r="3"/>
     </symbol>
-    <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
-    <symbol id="upload" viewBox="0 0 24 24"><path d="M12 16V4m-4 4 4-4 4 4M4 16v4h16v-4"/></symbol>
-    <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
-    <symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
-    <symbol id="arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
   </svg>
 
   <header class="top">
     <img class="top-logo" src="logo.png" alt="">
     <h1 class="brand-text"><strong>Truckers National</strong><span>Rater Autofill</span></h1>
     <span class="top-right">
-      <button type="button" id="settings-btn" class="icon-btn settings-btn" aria-label="Settings" title="Settings" aria-expanded="false"><svg aria-hidden="true"><use href="#gear"/></svg><span id="settings-dot" class="dot" hidden></span></button>
-      <button type="button" id="agent-btn" class="icon-btn brain-btn" aria-label="Open agent options" aria-haspopup="dialog" aria-expanded="false" aria-controls="agent-popover" title="Agent options"><svg aria-hidden="true"><use href="#brain"/></svg></button>
+      <button type="button" id="settings-btn" class="icon-btn settings-btn" aria-label="Settings" title="Settings" aria-expanded="false" aria-controls="settings"><svg aria-hidden="true"><use href="#gear"/></svg><span id="settings-dot" class="dot" hidden></span></button>
+      <button type="button" id="agent-btn" class="icon-btn brain-btn" aria-label="Assistant settings" title="Assistant settings" aria-controls="assistant"><svg aria-hidden="true"><use href="#brain"/></svg></button>
     </span>
   </header>
 
+  <!-- The rater page the panel works on and its step in the quote, or what to open -->
   <div class="carrier-row">
-    <img id="site-logo" class="rater-logo" alt="" hidden>
-    <span id="site" class="site">…</span>
-    <span id="site-caption" class="carrier-caption" hidden></span>
+    <div class="carrier-line">
+      <img id="site-logo" class="rater-logo" alt="" hidden>
+      <span id="site" class="site">…</span>
+      <span id="site-page" class="site-page" hidden></span>
+      <span id="site-hint" class="site-hint" hidden></span>
+      <span id="site-caption" class="carrier-caption" hidden></span>
+    </div>
+    <div id="site-track" class="site-track" role="img" hidden></div>
   </div>
 
   <!-- 1. No intake loaded: setup notices, drop zone, what happens next -->
@@ -47,86 +48,149 @@
     </div>
     <section id="load" class="drop" tabindex="0">
       <input id="file" type="file" accept="application/pdf,.pdf" hidden>
-      <div class="upload-mark"><svg aria-hidden="true"><use href="#upload"/></svg></div>
       <div><h3 class="drop-title">Drop your intake PDF here</h3><p class="drop-hint">or choose a file from your computer</p></div>
-      <button type="button" id="choose" class="primary">Choose a PDF <svg aria-hidden="true"><use href="#arrow"/></svg></button>
+      <button type="button" id="choose" class="primary big">Choose a PDF</button>
     </section>
-    <p class="privacy-line"><svg aria-hidden="true"><use href="#lock"/></svg>Stays on this computer. Cleared when Chrome closes.</p>
+    <p class="privacy-line">Stays on this computer. Cleared when Chrome closes.</p>
     <div id="load-error" class="card bad" role="alert" hidden></div>
     <div id="next-steps" class="steps">
       <div class="eyebrow">What happens next</div>
       <ol class="steps-list">
         <li class="step"><span class="num">1</span><div><b>Check the intake</b><p>Review anything missing or incorrect.</p></div></li>
-        <li class="step"><span class="num">2</span><div><b>Fill the rater page</b><p>Open Progressive, GEICO or AmWINS,<br>then click Fill this page.</p></div></li>
-        <li class="step"><span class="num">3</span><div><b>You’re in control</b><p>Review what’s left and continue yourself.<br>Nothing is submitted for you.</p></div></li>
+        <li class="step"><span class="num">2</span><div><b>Fill the rater page</b><p>Open Progressive, GEICO or AmWINS, then click Fill this page.</p></div></li>
+        <li class="step"><span class="num">3</span><div><b>You’re in control</b><p>Review what’s left and continue yourself. Nothing is submitted for you.</p></div></li>
       </ol>
     </div>
   </main>
 
-  <!-- 2. Intake loaded: client, two steps -->
+  <!-- 2. Intake loaded: the client, then three steps on one screen -->
   <section id="quote" class="quote" hidden>
-    <div class="quote-head">
-      <div class="client-head">
-        <div class="client-title">
-          <h2 id="client-name"></h2>
-          <p id="client-meta" class="small muted"></p>
-        </div>
-        <span class="client-actions">
-          <button type="button" id="replace" class="link small">Change file</button>
-          <button type="button" id="clear-client" class="link small subtle">Clear</button>
-        </span>
+    <div class="client-head">
+      <div class="client-title">
+        <h2 id="client-name"></h2>
+        <p id="client-meta" class="small muted"></p>
       </div>
-      <div class="tabs" role="tablist">
-        <button type="button" id="tab-check" class="tab" role="tab"><span id="check-num" class="num warn">!</span>Check intake</button>
-        <button type="button" id="tab-fill" class="tab" role="tab"><span class="num brand">2</span>Fill pages</button>
-      </div>
-      <!-- A carrier stop page (showStopPage): kept above both steps, outside the fill report. -->
-      <div id="stop-note" hidden></div>
+      <button type="button" id="open-pdf" class="ghost pdf-btn" title="Open the intake PDF"><span class="pdf-glyph" aria-hidden="true">PDF</span>Intake</button>
+      <button type="button" id="file-menu-btn" class="ghost more-btn" aria-label="File options" aria-expanded="false" aria-controls="file-menu">⋯</button>
+    </div>
+    <div id="file-menu" class="file-menu" hidden>
+      <button type="button" id="replace" class="ghost">Change file</button>
+      <button type="button" id="clear-client" class="ghost danger">Clear this client</button>
     </div>
 
-    <main id="check-pane" class="screen" hidden>
-      <div id="check-notices" class="notices"></div>
-      <p id="check-intro" class="muted"></p>
-      <div id="check-done" class="card good" hidden>
-        <div class="card-title">All items checked.</div>
-        <div class="small">Open the quote page on the rater, then fill it.</div>
-        <button type="button" id="go-fill" class="primary">Go to Fill pages</button>
-      </div>
-      <div id="warnings" class="warn-cards"></div>
-      <details id="details" class="card details">
-        <summary><span class="arrow">›</span><span class="grow">All client details</span><span id="details-count" class="small muted"></span></summary>
-        <div id="sections"></div>
-      </details>
-    </main>
+    <main id="quote-main" class="screen steps-screen">
+      <!-- A carrier stop page (showStopPage): kept above the steps, outside the fill report. -->
+      <div id="stop-note" hidden></div>
+      <div id="quote-notices" class="notices"></div>
 
-    <main id="fill-pane" class="screen" hidden>
-      <div id="fill-notices" class="notices"></div>
-      <div id="pickers" class="pickers"></div>
-      <button type="button" id="fill" class="primary big">Fill this page</button>
-      <p id="fill-hint" class="small muted center"></p>
-      <div id="report"></div>
-      <button type="button" id="unmark" class="link small subtle">Clear the marks on the page</button>
+      <section id="step-check" class="step-card">
+        <button type="button" id="check-toggle" class="step-head" aria-expanded="true" aria-controls="check-body">
+          <span id="check-num" class="step-num">1</span>
+          <span class="step-title">Check the intake</span>
+          <span id="check-sum" class="step-sum"></span>
+          <span id="check-arrow" class="step-arrow" aria-hidden="true">˅</span>
+        </button>
+        <div id="check-body" class="step-body">
+          <p id="check-intro" class="step-note"></p>
+          <div id="warnings" class="warn-cards"></div>
+          <details id="details" class="details">
+            <summary><span class="arrow">›</span><span class="grow">All client details</span><span id="details-count" class="small muted"></span></summary>
+            <div id="sections"></div>
+          </details>
+        </div>
+      </section>
+
+      <section id="step-fill" class="step-card">
+        <div class="step-head">
+          <span id="fill-num" class="step-num">2</span>
+          <span class="step-title">Fill this page</span>
+          <span id="fill-sum" class="step-sum"></span>
+        </div>
+        <div id="fill-waiting" class="step-body indent" hidden>
+          <p id="fill-waiting-text" class="step-note"></p>
+          <div class="rater-logos">
+            <img src="assets/raters/progressive.svg" alt="Progressive">
+            <img src="assets/raters/geico.gif" alt="GEICO">
+            <img src="assets/raters/amwins.svg" alt="AmWINS">
+          </div>
+        </div>
+        <div id="fill-stopped" class="step-body indent step-note" hidden>Nothing to fill. This rater stopped the quote.</div>
+        <div id="fill-body" class="step-body">
+          <div id="pickers" class="pickers"></div>
+          <div id="checks-pending" class="pending-note" hidden></div>
+          <div id="filled-report"></div>
+          <div class="fill-actions">
+            <button type="button" id="fill" class="primary big">Fill this page</button>
+            <button type="button" id="unmark" class="link small subtle" hidden>Clear the marks on the page</button>
+          </div>
+          <p id="fill-hint" class="small muted center"></p>
+        </div>
+      </section>
+
+      <section id="step-finish" class="step-card">
+        <div class="step-head">
+          <span id="finish-num" class="step-num">3</span>
+          <span class="step-title">Finish this page</span>
+          <span id="finish-sum" class="step-sum"></span>
+        </div>
+        <div id="finish-body" class="step-body" hidden>
+          <div id="report"></div>
+          <div id="continue-note" class="continue-note" hidden><b id="continue-title"></b><span id="continue-text"></span></div>
+        </div>
+      </section>
     </main>
   </section>
 
-  <!-- 3. Settings -->
+  <!-- 3. The intake PDF, opened from Intake or from a check -->
+  <section id="pdf-view" class="pdf-view" hidden>
+    <div class="pdf-bar">
+      <button type="button" id="pdf-back" class="ghost">‹ Back</button>
+      <span id="pdf-name" class="pdf-name"></span>
+      <button type="button" id="pdf-tab" class="link small">Open in new tab</button>
+    </div>
+    <div id="pdf-hint" class="pdf-hint" hidden><span id="pdf-hint-text" class="grow"></span><button type="button" id="pdf-refocus" class="link small">Zoom to it</button></div>
+    <main id="pdf-scroll" class="pdf-scroll"><div id="pdf-page" class="pdf-page"></div></main>
+    <div class="pdf-foot">
+      <button type="button" id="pdf-prev" class="ghost pdf-nav" aria-label="Previous page">‹</button>
+      <span id="pdf-count" class="small muted"></span>
+      <button type="button" id="pdf-next" class="ghost pdf-nav" aria-label="Next page">›</button>
+      <span class="grow"></span>
+      <div class="zoom">
+        <button type="button" id="pdf-zoom-out" aria-label="Zoom out">−</button>
+        <button type="button" id="pdf-zoom-fit" title="Fit the page width"></button>
+        <button type="button" id="pdf-zoom-in" aria-label="Zoom in">+</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4. Settings -->
   <main id="settings" class="screen" hidden>
     <div class="settings-head">
       <h2>Settings</h2>
-      <button type="button" id="settings-done" class="link small">Done</button>
+      <button type="button" id="settings-done" class="primary">Done</button>
     </div>
-    <div class="card form">
+    <div class="card setting-card">
       <div class="eyebrow">Filling</div>
-      <label class="opt filling-option"><span><b>Fill new questions as they appear</b><span>Some answers open more questions on the page.</span></span><input type="checkbox" role="switch" class="plain-switch" id="auto-followups" checked></label>
-      <label class="opt filling-option"><span><b>Click Continue when the page is done</b><span>Only when nothing is left for you. Never Bind or Submit.</span></span><input type="checkbox" role="switch" class="plain-switch" id="auto-advance" checked></label>
-      <label class="opt filling-option"><span><b>Fill each page as soon as it opens</b><span>Skips pressing Fill this page.</span></span><input type="checkbox" role="switch" class="plain-switch" id="auto-pages"></label>
-      <label class="opt filling-option"><span><b>Replace answers already on the page</b><span>Off keeps what the rater filled, e.g. from a DOT lookup.</span></span><input type="checkbox" role="switch" class="plain-switch" id="overwrite"></label>
+      <label class="opt"><span><b>Fill new questions as they appear</b><span>Some answers open more questions on the page.</span></span><input type="checkbox" role="switch" class="plain-switch" id="auto-followups" checked></label>
+      <label class="opt"><span><b>Click Continue when the page is done</b><span>Only when nothing is left for you. Never Bind or Submit.</span></span><input type="checkbox" role="switch" class="plain-switch" id="auto-advance" checked></label>
+      <label class="opt"><span><b>Fill each page as soon as it opens</b><span>Skips pressing Fill this page.</span></span><input type="checkbox" role="switch" class="plain-switch" id="auto-pages"></label>
+      <label class="opt"><span><b>Replace answers already on the page</b><span>Off keeps what the rater filled, e.g. from a DOT lookup.</span></span><input type="checkbox" role="switch" class="plain-switch" id="overwrite"></label>
     </div>
-    <button type="button" id="settings-agent" class="agent-settings-link" aria-haspopup="dialog" aria-expanded="false" aria-controls="agent-popover"><svg aria-hidden="true"><use href="#brain"/></svg><span><b id="settings-agent-name">GPT-6 Luna assistant</b><span>Manage your agent from the brain icon.</span></span><svg aria-hidden="true"><use href="#arrow"/></svg></button>
-    <div id="usage" class="card form">
+    <div id="assistant" class="card setting-card">
+      <div id="ai-title" class="eyebrow">GPT-6 Luna assistant</div>
+      <label class="opt"><span><b>Assistant enabled</b><span>Suggest answers for questions left for me.</span></span><input id="ai-on" type="checkbox" role="switch" class="plain-switch"></label>
+      <label id="ai-auto-option" class="opt"><span><b>Apply verified choices automatically</b><span>Evidence-checked choices are marked purple; you approve them before Continue.</span></span><input id="ai-auto" type="checkbox" role="switch" class="plain-switch"></label>
+      <div class="assistant-key">
+        <p id="ai-note" class="small" aria-live="polite"></p>
+        <button type="button" id="ai-key-link" class="link small">Set the OpenAI API key (Advanced)</button>
+        <p id="ai-privacy" class="small muted"></p>
+        <p class="eyebrow model-line"><span id="ai-model-name">GPT-6 Luna · OpenAI</span> · <span id="ai-model">gpt-6-luna</span></p>
+      </div>
+    </div>
+    <div id="usage" class="card setting-card">
       <div class="eyebrow">Usage log</div>
       <p class="small muted">While an intake is loaded, how the extension is used on rater pages is recorded to improve it: which fields it filled, what you changed afterwards, and problems you report. Client names, numbers and anything you type are never recorded.</p>
-      <label class="field-row">Your initials<input id="agent" type="text" maxlength="6" autocomplete="off"></label>
+      <label class="field-row">Your initials<input id="agent" type="text" maxlength="6" autocomplete="off" placeholder="e.g. JK"></label>
       <p id="upload-status" class="small"></p>
       <p id="usage-count" class="small muted"></p>
       <p id="usage-note" class="small muted" aria-live="polite"></p>
@@ -134,43 +198,37 @@
     <details id="advanced" class="advanced">
       <summary class="eyebrow">Advanced (for setup)</summary>
       <div class="advanced-body">
-        <label class="field-row">Server<input id="server-url" type="url" placeholder="https://usage-server-production.up.railway.app" autocomplete="off"></label>
-        <label class="field-row">Token<input id="server-token" type="password" placeholder="if the server needs one" autocomplete="off"></label>
-        <label class="field-row">Scenario<input id="capture-scenario" type="text" placeholder="e.g. FL van, hazmat yes/no" autocomplete="off" maxlength="60"></label>
-        <label class="field-row">Note<input id="capture-note" type="text" placeholder="what you just changed (kept on this computer)" autocomplete="off" maxlength="200"></label>
+        <div class="advanced-group">
+          <label class="field-stack">OpenAI API key<input id="ai-openai-key" type="password" placeholder="Paste your key" autocomplete="off"></label>
+          <p class="small muted">For the GPT-6 Luna assistant. Saved on this device, never in the usage log.</p>
+        </div>
+        <label class="field-stack">Server<input id="server-url" type="url" placeholder="https://usage-server-production.up.railway.app" autocomplete="off"></label>
+        <label class="field-stack">Token<input id="server-token" type="password" placeholder="if the server needs one" autocomplete="off"></label>
+        <label class="field-stack">Scenario<input id="capture-scenario" type="text" placeholder="e.g. FL van, hazmat yes/no" autocomplete="off" maxlength="60"></label>
+        <label class="field-stack">Note<input id="capture-note" type="text" placeholder="what you just changed (kept on this computer)" autocomplete="off" maxlength="200"></label>
         <div class="actions wrap">
           <button type="button" id="capture" class="ghost small-btn" title="Alt+Shift+C while the panel is open">Capture page layout</button>
           <button type="button" id="upload-usage" class="ghost small-btn">Upload now</button>
           <button type="button" id="export-usage" class="ghost small-btn">Export log</button>
-          <button type="button" id="clear-usage" class="ghost small-btn">Clear log</button>
+          <button type="button" id="clear-usage" class="ghost small-btn danger">Clear log</button>
         </div>
       </div>
     </details>
     <p id="version" class="eyebrow"></p>
   </main>
 
-  <section id="agent-popover" class="agent-popover" role="dialog" aria-modal="false" aria-labelledby="agent-title" tabindex="-1" hidden>
-    <div class="popover-head"><h2 id="agent-title">Agent options</h2><button type="button" id="close-agent" class="icon-btn" aria-label="Close agent options"><svg aria-hidden="true"><use href="#close"/></svg></button></div>
-    <div class="selected-agent"><span class="agent-avatar"><svg aria-hidden="true"><use href="#brain"/></svg></span><div><div class="agent-name"><b id="agent-name">GPT-6 Luna</b> <span>Current agent</span></div><p><span id="agent-provider">OpenAI</span> · <span id="agent-model">gpt-6-luna</span></p></div><svg class="selected-check" aria-hidden="true"><use href="#check"/></svg></div>
-    <label class="agent-option option"><span><b>Assistant enabled</b><small>Suggest answers for questions left for me.</small></span><input id="ai-on" type="checkbox" role="switch" class="plain-switch"></label>
-    <div id="agent-status" class="agent-status" aria-live="polite"><span class="status-dot"></span><p id="ai-note"></p></div>
-    <label id="ai-auto-option" class="auto-option option"><span><b>Apply verified choices automatically</b><small>Evidence-checked choices are marked purple; you approve them before Continue.</small></span><input id="ai-auto" type="checkbox" role="switch" class="plain-switch"></label>
-    <details id="ai-connection" class="connection"><summary>Connection &amp; model <svg aria-hidden="true"><use href="#arrow"/></svg></summary><div class="connection-body">
-      <label id="luna-key-row" class="field-stack">OpenAI API key<input id="ai-openai-key" type="password" placeholder="OpenAI API key" autocomplete="off"></label>
-      <label class="field-stack">Model<input id="ai-model" type="text" value="gpt-6-luna" disabled readonly></label>
-    </div></details>
-    <p id="ai-privacy" class="agent-note">Relevant intake facts and TNI rules are sent to OpenAI with your key. Missing facts stay unanswered. Keys are saved on this device.</p>
-  </section>
-
   <footer class="foot">
+    <div id="problem-form" class="problem" hidden>
+      <textarea id="problem-text" rows="3" placeholder="What went wrong on this page? (Don't include client names or numbers.)"></textarea>
+      <div class="actions end">
+        <button type="button" id="cancel-problem" class="ghost small-btn">Cancel</button>
+        <button type="button" id="send-problem" class="primary small-btn">Save report</button>
+      </div>
+    </div>
     <div class="foot-row">
       <button type="button" id="report-problem" class="link small">Report a problem</button>
       <span id="recording" class="recording" title="How this extension is used on rater pages is recorded (no client details). See Settings, Usage log." hidden><span class="rec-dot">●</span> Recording usage</span>
       <span id="foot-version" class="eyebrow"></span>
-    </div>
-    <div id="problem-form" class="problem" hidden>
-      <textarea id="problem-text" rows="3" placeholder="What went wrong on this page? (Don't include client names or numbers.)"></textarea>
-      <button type="button" id="send-problem" class="ghost small-btn">Save report</button>
     </div>
   </footer>
 

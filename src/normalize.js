@@ -194,9 +194,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   }
 
   const warnings = [];
-  // `code` names the kind of problem without any client data, for the usage log.
-  const check = (code, path, msg) => warnings.push({ code, path, level: 'check', msg });
-  const info = (code, path, msg) => warnings.push({ code, path, level: 'info', msg });
+  // `code` names the kind of problem without any client data, for the usage log. `field`: the
+  // form field it was read from, when one is (the side panel shows it in the PDF).
+  const check = (code, path, msg, field) => warnings.push({ code, path, level: 'check', msg, ...(field ? { field } : {}) });
+  const info = (code, path, msg, field) => warnings.push({ code, path, level: 'info', msg, ...(field ? { field } : {}) });
   const txt = (k) => clean(raw[k]);
   const year = today.getFullYear();
 
@@ -205,7 +206,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     const s = txt(k);
     if (s == null) return null;
     const digits = s.replace(/^(us\s*dot|dot|mc|mx)\b/i, '').replace(/\D/g, '');
-    if (!pattern.test(digits)) { check('id.invalid', path, `${label} "${s}" doesn't look like a valid number.`); return s; }
+    if (!pattern.test(digits)) { check('id.invalid', path, `${label} "${s}" doesn't look like a valid number.`, k); return s; }
     return digits;
   };
 
@@ -281,34 +282,34 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (txt('fein')) {
     const d = txt('fein').replace(/\D/g, '');
     if (d.length === 9) a.fein = `${d.slice(0, 2)}-${d.slice(2)}`;
-    else { a.fein = txt('fein'); check('fein.invalid', 'applicant.fein', `FEIN "${a.fein}" should be 9 digits.`); }
+    else { a.fein = txt('fein'); check('fein.invalid', 'applicant.fein', `FEIN "${a.fein}" should be 9 digits.`, 'fein'); }
   }
   const est = toInt(raw.year_established);
   if (est != null) {
     if (est >= 1900 && est <= year) { a.yearEstablished = est; a.yearsInBusiness = year - est; }
-    else check('year-established.invalid', 'applicant.yearEstablished', `Year established "${txt('year_established')}" isn't a valid year.`);
+    else check('year-established.invalid', 'applicant.yearEstablished', `Year established "${txt('year_established')}" isn't a valid year.`, 'year_established');
   }
   if (txt('phone_number')) {
     a.phone = toPhone(raw.phone_number);
-    if (!a.phone) { a.phone = txt('phone_number'); check('phone.invalid', 'applicant.phone', `Phone "${a.phone}" isn't a 10-digit US number.`); }
+    if (!a.phone) { a.phone = txt('phone_number'); check('phone.invalid', 'applicant.phone', `Phone "${a.phone}" isn't a 10-digit US number.`, 'phone_number'); }
   }
-  if (a.email && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(a.email)) check('email.invalid', 'applicant.email', `Email "${a.email}" looks malformed.`);
+  if (a.email && !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(a.email)) check('email.invalid', 'applicant.email', `Email "${a.email}" looks malformed.`, 'email');
   if (!a.dot && !a.mc && a.mcDotWithin60Days === true) {
-    info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
+    info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.', 'mc_dot_60days');
   }
-  if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
+  if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`, 'years_experience');
 
   // --- Garaging address -----------------------------------------------------------------------
   const addr = parseAddress(raw.garaging_address);
   if (addr) {
     const { confident, ...parts } = addr;
     record.garaging = parts;
-    if (!addr.state || !addr.zip) check('address.unparsed', 'garaging.street', `Couldn't split the garaging address "${txt('garaging_address')}" into street / city / state / ZIP — fill those in.`);
-    else if (!addr.city) check('address.no-city', 'garaging.city', `Couldn't tell where the street ends and the city starts in "${txt('garaging_address')}".`);
-    else if (!confident) check('address.no-commas', 'garaging.city', `Address had no commas; split it as street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}". Confirm.`);
+    if (!addr.state || !addr.zip) check('address.unparsed', 'garaging.street', `Couldn't split the garaging address "${txt('garaging_address')}" into street / city / state / ZIP — fill those in.`, 'garaging_address');
+    else if (!addr.city) check('address.no-city', 'garaging.city', `Couldn't tell where the street ends and the city starts in "${txt('garaging_address')}".`, 'garaging_address');
+    else if (!confident) check('address.no-commas', 'garaging.city', `Address had no commas; split it as street "${[addr.street, addr.unit].filter(Boolean).join(' ')}", city "${addr.city}". Confirm.`, 'garaging_address');
   } else {
     record.garaging = { street: null, unit: null, city: null, state: null, zip: null };
-    check('address.missing', 'garaging.street', 'No garaging address on the form.');
+    check('address.missing', 'garaging.street', 'No garaging address on the form.', 'garaging_address');
   }
 
   // --- Drivers --------------------------------------------------------------------------------
@@ -327,38 +328,38 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
 
     if (rawDob) {
       d.dob = toDate(rawDob);
-      if (!d.dob) { d.dob = rawDob; check('dob.invalid', p('dob'), `${who}: date of birth "${rawDob}" isn't a valid MM/DD/YYYY date.`); }
+      if (!d.dob) { d.dob = rawDob; check('dob.invalid', p('dob'), `${who}: date of birth "${rawDob}" isn't a valid MM/DD/YYYY date.`, `drv_dob_${n}`); }
       else {
         const age = year - Number(d.dob.slice(6));
-        if (age < 18 || age > 90) check('dob.unusual-age', p('dob'), `${who}: date of birth ${d.dob} gives age ~${age}. Typo?`);
+        if (age < 18 || age > 90) check('dob.unusual-age', p('dob'), `${who}: date of birth ${d.dob} gives age ~${age}. Typo?`, `drv_dob_${n}`);
       }
-    } else check('dob.missing', p('dob'), `${who}: no date of birth.`);
+    } else check('dob.missing', p('dob'), `${who}: no date of birth.`, `drv_dob_${n}`);
 
     if (rawLic) {
       const lic = parseLicense(rawLic);
       d.licenseNumber = lic.number;
       if (lic.state && !d.licenseState) d.licenseState = lic.state;
       if (lic.state && d.licenseState && lic.state !== d.licenseState) {
-        check('license.state-mismatch', p('licenseState'), `${who}: license box says ${lic.state} but DL state dropdown says ${d.licenseState}.`);
+        check('license.state-mismatch', p('licenseState'), `${who}: license box says ${lic.state} but DL state dropdown says ${d.licenseState}.`, `drv_lic_${n}`);
       }
-    } else check('license.missing', p('licenseNumber'), `${who}: no driver's license number.`);
-    if (!d.licenseState) check('license-state.missing', p('licenseState'), `${who}: no license state.`);
+    } else check('license.missing', p('licenseNumber'), `${who}: no driver's license number.`, `drv_lic_${n}`);
+    if (!d.licenseState) check('license-state.missing', p('licenseState'), `${who}: no license state.`, `drv_state_${n}`);
     if (rawLic && plain(rawLic) !== rawLic.toUpperCase()) {
-      info('license.cleaned', p('licenseNumber'), `${who}: license number written as "${rawLic}", entered as ${d.licenseNumber} (letters and digits only).`);
+      info('license.cleaned', p('licenseNumber'), `${who}: license number written as "${rawLic}", entered as ${d.licenseNumber} (letters and digits only).`, `drv_lic_${n}`);
     }
 
     if (d.first && /\s/.test(d.first)) {
-      check('name.multi-word-first', p('first'), `${who}: first-name box has more than one word ("${d.first}"). Check the license for which part is the middle name.`);
+      check('name.multi-word-first', p('first'), `${who}: first-name box has more than one word ("${d.first}"). Check the license for which part is the middle name.`, `drv_first_${n}`);
     }
-    if (!d.first || !d.last) check('name.missing-part', p(d.first ? 'last' : 'first'), `${who}: missing ${d.first ? 'last' : 'first'} name.`);
-    if (d.cdl && !d.cdlYear) check('cdl-year.missing', p('cdlYear'), `${who}: has a CDL but no year it was issued.`);
-    if (d.cdl === false && d.cdlYear) check('cdl-year.without-cdl', p('cdlYear'), `${who}: marked no CDL but a CDL year is filled in.`);
+    if (!d.first || !d.last) check('name.missing-part', p(d.first ? 'last' : 'first'), `${who}: missing ${d.first ? 'last' : 'first'} name.`, d.first ? `drv_last_${n}` : `drv_first_${n}`);
+    if (d.cdl && !d.cdlYear) check('cdl-year.missing', p('cdlYear'), `${who}: has a CDL but no year it was issued.`, `drv_cdl_yr_${n}`);
+    if (d.cdl === false && d.cdlYear) check('cdl-year.without-cdl', p('cdlYear'), `${who}: marked no CDL but a CDL year is filled in.`, `drv_cdl_yr_${n}`);
     record.drivers.push(d);
   });
-  if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
+  if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.', 'drv_first_1');
   if (a.ownerDrives && a.owner1) {
     if (!record.drivers.some((d) => ownerIsDriver(a.owner1, d))) {
-      check('drivers.owner-not-listed', 'drivers', `Owner drives, but "${a.owner1}" isn't in the driver list.`);
+      check('drivers.owner-not-listed', 'drivers', `Owner drives, but "${a.owner1}" isn't in the driver list.`, 'drv_first_1');
     }
   }
 
@@ -377,62 +378,62 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       const what = [rawYear, u.make, u.model].filter(Boolean).join(' ') || `${label} ${n}`;
       if (rawYear) {
         u.year = toInt(rawYear);
-        if (!u.year || u.year < 1950 || u.year > year + 1) { u.year = rawYear; check('vehicle-year.invalid', p('year'), `${what}: year "${rawYear}" doesn't look right.`); }
+        if (!u.year || u.year < 1950 || u.year > year + 1) { u.year = rawYear; check('vehicle-year.invalid', p('year'), `${what}: year "${rawYear}" doesn't look right.`, `${prefix}_year_${n}`); }
       }
       if (rawValue) {
         u.value = toMoney(rawValue);
-        if (u.value == null) { u.value = rawValue; check('vehicle-value.invalid', p('value'), `${what}: value "${rawValue}" isn't a dollar amount.`); }
+        if (u.value == null) { u.value = rawValue; check('vehicle-value.invalid', p('value'), `${what}: value "${rawValue}" isn't a dollar amount.`, `${prefix}_value_${n}`); }
       }
       if (u.vin) {
         const problem = vinProblem(u.vin);
-        if (problem) check('vin.invalid', p('vin'), `${what}: VIN ${u.vin} ${problem}.`);
-      } else check('vin.missing', p('vin'), `${what}: no VIN.`);
-      if (!u.type) check('vehicle-type.missing', p('type'), `${what}: ${label.toLowerCase()} type not selected.`);
+        if (problem) check('vin.invalid', p('vin'), `${what}: VIN ${u.vin} ${problem}.`, `${prefix}_vin_${n}`);
+      } else check('vin.missing', p('vin'), `${what}: no VIN.`, `${prefix}_vin_${n}`);
+      if (!u.type) check('vehicle-type.missing', p('type'), `${what}: ${label.toLowerCase()} type not selected.`, `${prefix}_type_${n}`);
       record[list].push(u);
     });
   };
   units('veh', 'vehicles', 'Vehicle');
   units('trl', 'trailers', 'Trailer');
-  if (!record.vehicles.length) check('vehicles.none', 'vehicles', 'No vehicles listed.');
+  if (!record.vehicles.length) check('vehicles.none', 'vehicles', 'No vehicles listed.', 'veh_year_1');
   // A semi trailer needs something to pull it: a truck tractor (or a pickup for a hotshot flatbed).
   // An intake listing one with only vans or box trucks has likely mistyped a vehicle (TN 2026-10-08).
   const semiTrailer = record.trailers.find((t) => /^(dry van|reefer|flatbed|tanker|lowboy|step deck)$/i.test(t.type ?? ''));
   if (semiTrailer && record.vehicles.length && !record.vehicles.some((v) => /^(semi truck|pickup truck)$/i.test(v.type ?? ''))) {
-    check('vehicle-type.no-tractor', 'vehicles[0].type', `The intake lists a ${semiTrailer.type} trailer, but no vehicle is a Semi Truck (or Pickup Truck) to pull it (vehicle types: ${record.vehicles.map((v) => v.type ?? 'none').join(', ')}). Check the vehicle types.`);
+    check('vehicle-type.no-tractor', 'vehicles[0].type', `The intake lists a ${semiTrailer.type} trailer, but no vehicle is a Semi Truck (or Pickup Truck) to pull it (vehicle types: ${record.vehicles.map((v) => v.type ?? 'none').join(', ')}). Check the vehicle types.`, 'veh_type_1');
   }
-  if (record.vehicles.length > 1 && ops.licensePlate) info('plate.ambiguous', 'operations.licensePlate', 'The form has one license-plate box but lists several vehicles; the plate may belong to only one of them.');
+  if (record.vehicles.length > 1 && ops.licensePlate) info('plate.ambiguous', 'operations.licensePlate', 'The form has one license-plate box but lists several vehicles; the plate may belong to only one of them.', 'license_plate');
 
   // --- Operations -----------------------------------------------------------------------------
   if (ops.radius) {
     const miles = toInt(ops.radius);
     if (miles != null) ops.radiusMiles = miles;
     // "Unlimited", long haul, OTR, 48 states: the carrier rules pick their widest band (500+).
-    else if (!LONG_HAUL.test(ops.radius)) check('radius.not-miles', 'operations.radius', `Radius is "${ops.radius}", not a number of miles. Raters usually want miles or a band (e.g. 500+).`);
-  } else check('radius.missing', 'operations.radius', 'No radius of operations.');
-  if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.');
-  if (ops.filingsRequired && !ops.filingsWhich) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.');
-  if (ops.hazmat) check('hazmat.yes', 'operations.hazmat', 'Hauls hazmat, tobacco or prescription drugs — confirm which, most raters treat these differently.');
+    else if (!LONG_HAUL.test(ops.radius)) check('radius.not-miles', 'operations.radius', `Radius is "${ops.radius}", not a number of miles. Raters usually want miles or a band (e.g. 500+).`, 'avg_radius');
+  } else check('radius.missing', 'operations.radius', 'No radius of operations.', 'avg_radius');
+  if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.', 'eld_brand');
+  if (ops.filingsRequired && !ops.filingsWhich) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.', 'filings_which');
+  if (ops.hazmat) check('hazmat.yes', 'operations.hazmat', 'Hauls hazmat, tobacco or prescription drugs — confirm which, most raters treat these differently.', 'haul_hazmat');
 
   // --- Current insurance ----------------------------------------------------------------------
   const prior = {
     type: txt('ins_type_1'), carrier: txt('ins_carrier_1'), limit: txt('ins_limit_1'), expiration: toDate(raw.ins_exp_1),
   };
-  if (txt('ins_exp_1') && !prior.expiration) { prior.expiration = txt('ins_exp_1'); check('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`); }
+  if (txt('ins_exp_1') && !prior.expiration) { prior.expiration = txt('ins_exp_1'); check('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`, 'ins_exp_1'); }
   // "NO POP" (no proof of prior), "None", "No prior": the client has no current insurance.
   const noPrior = /^(no\s*(pop|prior|insurance|ins|coverage)|none|n\/?a)\b/i.test(prior.carrier ?? '') && !prior.limit && !prior.expiration;
-  if (noPrior) info('prior.none', 'priorInsurance', `Current insurance says "${prior.carrier}": treated as not currently insured.`);
+  if (noPrior) info('prior.none', 'priorInsurance', `Current insurance says "${prior.carrier}": treated as not currently insured.`, 'ins_carrier_1');
   if (!noPrior && (prior.type || prior.carrier || prior.limit || prior.expiration)) {
     record.priorInsurance.push(prior);
-    if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
+    if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.', 'ins_type_1');
     const missing = [
       ['type', prior.type], ['carrier', prior.carrier], ['limit', prior.limit], ['expiration', prior.expiration],
     ].filter(([, value]) => !value).map(([name]) => name);
-    if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance is missing ${missing.join(', ')}; confirm the policy details before quoting.`);
+    if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance is missing ${missing.join(', ')}; confirm the policy details before quoting.`, { type: 'ins_type_1', carrier: 'ins_carrier_1', limit: 'ins_limit_1', expiration: 'ins_exp_1' }[missing[0]]);
     if (prior.expiration && /^\d{2}\/\d{2}\/\d{4}$/.test(prior.expiration)) {
       const [mm, dd, yyyy] = prior.expiration.split('/').map(Number);
       const expiry = Date.UTC(yyyy, mm - 1, dd);
       const current = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-      if (expiry < current) check('prior-expiration.expired', 'priorInsurance[0].expiration', `Current policy expiration ${prior.expiration} is before today; use the intake date and have an agent review it.`);
+      if (expiry < current) check('prior-expiration.expired', 'priorInsurance[0].expiration', `Current policy expiration ${prior.expiration} is before today; use the intake date and have an agent review it.`, 'ins_exp_1');
     }
   }
 
@@ -440,9 +441,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const cargo = parseLimitDeductible(raw.cargo_limit_ded);
   record.coverage.cargoLimit = cargo.limit;
   record.coverage.cargoDeductible = cargo.deductible;
-  if (record.coverage.cargo && !cargo.limit) check('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.');
-  if (record.coverage.autoLiability === 'Yes' && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
-  if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'Wants general liability but no limit chosen.');
+  if (record.coverage.cargo && !cargo.limit) check('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.', 'cargo_limit_ded');
+  if (record.coverage.autoLiability === 'Yes' && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.', 'auto_liab_limit');
+  if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'Wants general liability but no limit chosen.', 'gen_liab_limit');
 
   // --- Claims box -----------------------------------------------------------------------------
   // Clients use this box for answers to other questions too. A leading yes/no answers the claims
@@ -461,10 +462,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     // tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the agent
     // decides, and nothing is added until they set it to Yes.
     const ntlLine = ntlMention(claims);
-    if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
-  } else check('claims.blank', 'claims.text', 'Claims question left blank.');
+    if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine), 'claims_details');
+  } else check('claims.blank', 'claims.text', 'Claims question left blank.', 'claims_details');
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
-    check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.');
+    check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.', 'veh_ownership');
   }
 
   const unknown = Object.keys(raw).filter((k) => !KNOWN_FIELDS.has(k) && clean(raw[k]) != null && raw[k] !== false);

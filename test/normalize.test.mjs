@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { readIntakeFields } from '../src/intake.js';
+import { readIntakeFields, readFieldPlaces } from '../src/intake.js';
 import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
@@ -13,6 +13,27 @@ const fixture = new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake
 const raw = await readIntakeFields(pdfjs, fixture);
 const { record, warnings } = normalizeIntake(raw, { today: new Date('2026-09-30') });
 const msgs = warnings.map((w) => `${w.path}: ${w.msg}`).join('\n');
+
+// The side panel's "See in PDF" link: a check names the form field it was read from, and the
+// field's place on the page comes from the PDF itself.
+test('checks name the form field they were read from, which the PDF places on a page', async () => {
+  const places = await readFieldPlaces(pdfjs, new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url))));
+  assert.deepEqual(Object.keys(places['dot_number']), ['page', 'rect']);
+  assert.equal(places['dot_number'].page, 0);
+  assert.equal(places['dot_number'].rect.length, 4);
+  const { warnings } = normalizeIntake(raw);
+  const vin = warnings.find((w) => w.code === 'vin.invalid');
+  assert.equal(vin.path, 'vehicles[1].vin');
+  assert.equal(vin.field, 'veh_vin_2', 'the second vehicle row of the form, not a guess from the value');
+  for (const w of warnings) if (w.field) assert.ok(places[w.field], `${w.code}: ${w.field} is a field of the form`);
+  // Every field a check can name is on the form (rows 1-4 for drivers, vehicles and trailers).
+  const src = fs.readFileSync(new URL('../src/normalize.js', import.meta.url), 'utf8');
+  const named = [...src.matchAll(/, '([a-z][a-z_0-9]*)'\);|: '(ins_[a-z_0-9]+)'/g)].map((m) => m[1] ?? m[2]);
+  const rows = [...src.matchAll(/`((?:drv|\$\{prefix\})_[a-z_]+_)\$\{n\}`/g)].map((m) => m[1]);
+  assert.ok(named.length > 20 && rows.length > 10);
+  const all = [...named, ...rows.flatMap((r) => (r.startsWith('$') ? ['veh_', 'trl_'].map((p) => r.replace('${prefix}_', p)) : [r]).flatMap((x) => [1, 2, 3, 4].map((n) => x + n)))];
+  assert.deepEqual(all.filter((f) => !places[f]), []);
+});
 
 test('business details are cleaned up', () => {
   assert.equal(record.applicant.name, 'Sample Expedite LLC');

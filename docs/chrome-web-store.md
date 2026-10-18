@@ -54,7 +54,7 @@ Send them the listing link (dashboard → *Store listing* → view). In Chrome: 
 pin the extension → click it to open the side panel. Then, once each:
 
 - **Usage log → Your initials**. The usage log goes to TNI's server by itself (see hosting.md).
-- **Agent options** → enter the agent's OpenAI API key, then tick *Assistant enabled*. Leave
+- **Settings (gear icon) → Advanced (for setup)** → enter the agent's OpenAI API key, then turn on *Assistant enabled* in the GPT-6 Luna assistant card. Leave
   *Apply verified choices automatically* off for the first weeks of the pilot.
 
 ## 5. Updates
@@ -64,7 +64,7 @@ Chrome updates installed copies by itself within a few hours of approval.
 
 ## API keys for the pilot
 
-Configure OpenAI access through TNI's account and enter the agent's key under **Agent options**.
+Configure OpenAI access through TNI's account and enter the agent's key under **Settings → Advanced (for setup)**.
 Check available account controls for access and spending before a wider rollout. Live quality and
 latency testing requires an OpenAI key and explicit evaluation approval.
 

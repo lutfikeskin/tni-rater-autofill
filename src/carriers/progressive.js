@@ -289,6 +289,19 @@ export const progressive = {
   world: 'MAIN',
   // Only the quote flow is filled automatically (not the home or quote-search pages).
   autoFillUrl: /\/Express\/Default\.aspx/i,
+  // The quote's steps in order, for the side panel's progress bar: its pages (pageName) as they
+  // follow one another in the 2026-10-01 walkthrough (docs/progressive-live-observations.md) and
+  // the recorded quotes (test/fixtures/progressive). A page repeats per vehicle, trailer or driver;
+  // popups and pages shown only sometimes (BECAPopup, NoHit, Filings) belong to the step they come
+  // in. A page not listed shows no bar.
+  steps: [
+    { name: 'Business', pages: ['BusinessOwnerInfo', 'BECAPopup', 'DeclinationNotice'] },
+    { name: 'Vehicles', pages: ['MostCommonVehicles', 'AddVehicle', 'VehicleSummary', 'MostCommonTrailers', 'AddTrailer'] },
+    { name: 'Drivers', pages: ['AddDriver', 'DriverSummary', 'NoHit'] },
+    { name: 'More about the business', pages: ['MoreAboutBusiness', 'Filings'] },
+    { name: 'Rates', pages: ['CoveragesRates', 'ChangePaymentPlan'] },
+    { name: 'Print and finish', pages: ['PrintEmailFax', 'PrintEmailFaxConfirm', 'SaveQuote', 'AdditionalDetails'] },
+  ],
   // Live Progressive questions are mapped explicitly below. Generic label fallbacks can
   // turn an unvalidated field (especially optional contact or GL fields) into an assertion.
   useGenericRules: false,

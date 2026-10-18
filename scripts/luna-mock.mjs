@@ -109,12 +109,16 @@ try {
       .then(([tab]) => tab?.url?.startsWith(prefix)), `${base}/test/fixtures/amwins/`);
     await panel.waitForFunction(() => document.querySelector('#site')?.textContent.includes('AmWINS'));
   };
+  // Clear this client sits behind the client row's ⋯ menu.
+  const clearClient = async () => {
+    if (await panel.locator('#quote').isHidden()) return;
+    if (await panel.locator('#file-menu').isHidden()) await panel.locator('#file-menu-btn').click();
+    await panel.locator('#clear-client').click();
+    await panel.locator('#home').waitFor({ state: 'visible' });
+  };
   const loadPdf = async () => {
     phase = 'load-pdf';
-    if (await panel.locator('#clear-client').isVisible()) {
-      await panel.locator('#clear-client').click();
-      await panel.locator('#home').waitFor({ state: 'visible' });
-    }
+    await clearClient();
     const claimsBefore = claimsRequests;
     await panel.setInputFiles('#file', path.join(root, 'test/fixtures/sample-intake.pdf'));
     await panel.locator('#quote').waitFor({ state: 'visible' });
@@ -131,7 +135,6 @@ try {
       await chrome.storage.session.set({ intake });
     });
     await panel.reload();
-    await panel.locator('#tab-fill').click();
     // The panel reload completes before its async tab refresh on some Chromium/Linux runs.
     // Wait for the active fixture and an enabled Fill control, which are the production
     // conditions needed by the following AI request.
@@ -151,7 +154,6 @@ try {
       await chrome.storage.session.set({ intake });
     });
     await panel.reload();
-    await panel.locator('#tab-fill').click();
   };
   const keyboardSelect = async (locator, value, delayMs = 0) => {
     let indexes;
@@ -202,9 +204,14 @@ try {
     // them for Playwright's native select actions while keeping the real page structure intact.
     await mock.evaluate(() => document.querySelectorAll('#priorCarrierPanel > .app-rp-section .card-body').forEach((body) => { body.style.display = ''; }));
   };
+  // The assistant's controls are on the Settings screen.
   const openAgent = async () => {
-    await panel.locator('#agent-btn').click();
-    await panel.locator('#agent-popover').waitFor({ state: 'visible' });
+    if (await panel.locator('#settings').isHidden()) await panel.locator('#settings-btn').click();
+    await panel.locator('#assistant').waitFor({ state: 'visible' });
+  };
+  const closeAgent = async () => {
+    await panel.locator('#settings-done').click();
+    await panel.locator('#settings').waitFor({ state: 'hidden' });
   };
   const savedSettings = () => panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings);
   const fillAndWait = async () => {
@@ -254,7 +261,6 @@ try {
       approved: false, rejected: false, manual: false, confirmed: false, snapshotHash: null, confidence: null }],
   }), { scope: legacyScope, tabId: legacyTabId });
   await panel.reload();
-  await panel.locator('#tab-fill').click();
   await panel.locator('#fill').click();
   await panel.locator('.ai-approve').waitFor({ timeout: 30000 });
   verify('retired automatic decision requires explicit review', await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true }).count(), 1);
@@ -267,7 +273,6 @@ try {
   await keyboardSelect(mock.locator('#mockLunaChoice'), 'Yes');
   await panel.waitForFunction(async () => (await chrome.storage.local.get('aiPendingDecisions')).aiPendingDecisions?.some(x => x.key === 'mockLunaChoice' && x.manual) === true);
   await panel.reload();
-  await panel.locator('#tab-fill').click();
   await panel.locator('#fill').click();
   await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
   verify('manual upgrade correction releases the retired hold', await panel.locator('.ai-approve').count(), 0);
@@ -285,13 +290,13 @@ try {
   await panel.locator('#fill').click();
   await panel.getByText(/GPT-6 Luna needs an OpenAI API key/).waitFor();
   verify('Luna never reuses legacy or TypeSafe keys', requests + claimsRequests, 0);
-  await panel.locator('#fill-notices').getByRole('button', { name: 'Add key', exact: true }).click();
+  await panel.locator('#quote-notices').getByRole('button', { name: 'Add key', exact: true }).click();
   await panel.locator('#ai-openai-key').waitFor({ state: 'visible' });
   verify('missing OpenAI key focuses its dedicated field', await panel.evaluate(() => document.activeElement.id), 'ai-openai-key');
   verify('automatic selection is visible for Luna', await panel.locator('#ai-auto-option').isVisible(), true);
   verify('Luna defaults automatic selection off despite legacy aiAuto', await panel.locator('#ai-auto').isChecked(), false);
   verify('Luna automatic selection is enabled when assistance is on', await panel.locator('#ai-auto').isDisabled(), false);
-  verify('Luna model remains fixed', await panel.locator('#ai-model').isDisabled(), true);
+  verify('Luna model remains fixed', await panel.locator('#ai-model').evaluate((el) => el.tagName !== 'INPUT' && el.textContent), 'gpt-6-luna');
   await panel.locator('#ai-openai-key').fill('synthetic-openai');
   await panel.locator('#ai-openai-key').press('Tab');
   await panel.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.lunaKey === 'synthetic-openai');
@@ -300,15 +305,14 @@ try {
   verify('adding the key reviews the open intake\'s claims box', claimsRequests, 1);
   verify('OpenAI key save stays in the dedicated Luna field', await panel.evaluate(async () =>
     (await chrome.storage.local.get('settings')).settings.lunaKey === 'synthetic-openai'), true);
-  await panel.locator('#agent-btn').click();
-  await panel.locator('#agent-popover').waitFor({ state: 'visible' });
+  await openAgent();
   await panel.screenshot({ path: path.join(out, 'luna-settings.png'), fullPage: true, animations: 'disabled' });
   await panel.setViewportSize({ width: 320, height: 600 });
   verify('Luna settings fit a narrow side panel', await panel.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await panel.screenshot({ path: path.join(out, 'luna-settings-narrow.png'), fullPage: true, animations: 'disabled' });
   await panel.setViewportSize({ width: 420, height: 900 });
   // With Luna's independent toggle still off, keep the normal suggestion workflow available.
-  await panel.locator('#close-agent').click();
+  await closeAgent();
   await panel.locator('#fill').click();
   const manual = panel.getByRole('button', { name: 'Use this answer', exact: true });
   await manual.waitFor({ timeout: 30000 });
@@ -323,7 +327,7 @@ try {
   await panel.locator('#ai-auto').check();
   await waitSetting('lunaAuto', true);
   verify('Luna auto setting is stored independently', (await savedSettings()).lunaAuto, true);
-  await panel.locator('#close-agent').click();
+  await closeAgent();
   await openMock(); await loadPdf();
   phase = 'automatic-approval';
   verify('follow-up automation stays off for the explicit approval flow', await panel.locator('#auto-followups').isChecked(), false);
@@ -340,7 +344,6 @@ try {
   verify('Luna automatic review has no confidence percentage', !aiText.includes('%') && !aiText.includes('confidence'), true);
   await panel.waitForFunction(async () => (await chrome.storage.local.get('aiPendingDecisions')).aiPendingDecisions?.length > 0);
   await panel.reload();
-  await panel.locator('#tab-fill').click();
   await installSnapshotVariation({ firstReversed: true });
   // Re-scan the unchanged page so the restored pending record gets its approval card rendered;
   // aiSettledOnPage prevents a second provider request for the restored choice.
@@ -380,7 +383,6 @@ try {
   }
   verify('manual correction clears the durable rejected hold', corrected, true);
   await panel.reload();
-  await panel.locator('#tab-fill').click();
   await panel.locator('#fill').click();
   await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
   verify('manual correction survives a panel reload', await mock.locator('#mockLunaChoice').inputValue(), 'Yes');
@@ -395,17 +397,13 @@ try {
   await openAgent();
   await panel.locator('#ai-auto').uncheck();
   await waitSetting('lunaAuto', false);
-  await panel.locator('#close-agent').click();
+  await closeAgent();
   await panel.evaluate(async () => {
     const { settings } = await chrome.storage.local.get('settings');
     await chrome.storage.local.set({ settings: { ...settings, autoAdvance: false } });
   });
   await panel.reload();
-  await panel.locator('#tab-fill').click();
-  if (await panel.locator('#clear-client').isVisible()) {
-    await panel.locator('#clear-client').click();
-    await panel.locator('#home').waitFor({ state: 'visible' });
-  }
+  await clearClient();
   await openMock();
   await addThreePriorRows();
   // Generate the dependent rows before the intake loads so this setup selection is the page

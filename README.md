@@ -19,8 +19,8 @@ Agents install it from its private Chrome Web Store listing (see [docs/chrome-we
 ## Using it
 
 1. Drop the client's intake PDF into the side panel.
-2. Work through **Check before quoting**. These are things the form got wrong or left ambiguous, such as an address with no commas, a VIN that fails its check digit, answers typed into the claims box, or a missing vehicle ownership answer. Edit any value in the sections below; your edits are what gets filled.
-3. Open the rater page and click **Fill this page**. If the client has several drivers or vehicles, pick which one the current page is about first.
+2. Work through step 1, **Check the intake**. These are things the form got wrong or left ambiguous, such as an address with no commas, a VIN that fails its check digit, answers typed into the claims box, or a missing vehicle ownership answer. Fix the value if needed, then click **Looks right now**; **See in PDF** opens the intake at that field. Edit any value under **All client details**; your edits are what gets filled. You can fill pages before every check is done. **Intake** opens the PDF itself; **⋯** holds Change file and Clear this client.
+3. Open the rater page (the strip under the header shows the rater, the page and, on Progressive and AmWINS, which step of the quote it is) and click **Fill this page** (step 2). If the client has several drivers or vehicles, pick which one the current page is about first. Step 2 then lists what was filled; step 3, **Finish this page**, lists what's left for you and who clicks Continue.
 4. Look at the marks on the page:
    - **green**: filled by a rule, using intake data or a programmed standard
    - **amber dashed**: needs you (not on the intake, or required by the rater)
@@ -29,7 +29,7 @@ Agents install it from its private Chrome Web Store listing (see [docs/chrome-we
 
 ### AI assistant
 
-Click the **brain** in the side panel, expand **Connection**, and enter your **OpenAI API key**. Click outside the field to save, then turn on **Assistant enabled**. The key stays in this device's extension settings and is never included in usage logs. Luna uses the fixed `gpt-6-luna` model.
+Open **Settings** (the gear at the top right of the side panel), open **Advanced (for setup)** and enter your **OpenAI API key**. Click outside the field to save, then turn on **Assistant enabled** in the **GPT-6 Luna assistant** card (the brain next to the gear opens that card, and is blue while the assistant is on). The key stays in this device's extension settings and is never included in usage logs. Luna uses the fixed `gpt-6-luna` model.
 
 The rules run first. Luna receives unresolved choice questions, the carrier's actual options, active driver/vehicle context, intake facts and carrier-scoped TNI rules. It proposes a visible option or leaves it for the agent. Luna can explain a suggestion, but it never types names, identifiers, dates, amounts or other free-text answers.
 

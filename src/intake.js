@@ -19,3 +19,20 @@ export async function readIntakeFields(pdfjs, bytes) {
     await doc.destroy();
   }
 }
+
+// Where each form field sits in the PDF: field name -> { page (0-based), rect: [x1, y1, x2, y2] in
+// PDF points }, from its first widget. The side panel shows a check's field in the PDF with it.
+export async function readFieldPlaces(pdfjs, bytes) {
+  const doc = await pdfjs.getDocument({ data: bytes, isEvalSupported: false }).promise;
+  try {
+    const objects = (await doc.getFieldObjects()) ?? {};
+    const places = {};
+    for (const [name, widgets] of Object.entries(objects)) {
+      const w = widgets.find((x) => x.type && Number.isInteger(x.page) && x.rect?.length === 4);
+      if (w) places[name] = { page: w.page, rect: w.rect.map((n) => Math.round(n * 10) / 10) };
+    }
+    return places;
+  } finally {
+    await doc.destroy();
+  }
+}

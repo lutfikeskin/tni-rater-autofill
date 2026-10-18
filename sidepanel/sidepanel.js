@@ -1,5 +1,5 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
-import { readIntakeFields } from '../src/intake.js';
+import { readIntakeFields, readFieldPlaces } from '../src/intake.js';
 import { normalizeIntake, parseEdit, ntlMention, ntlCheckMessage } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
@@ -228,15 +228,18 @@ const state = {
   // per page and set of questions, so a refill doesn't ask again.
   aiRun: 0,
   aiCache: new Map(),
-  // Which screen shows: Settings over everything; otherwise the start screen or the quote, on
-  // its Check intake or Fill pages step.
+  // Which screen shows: Settings over everything; otherwise the start screen, or the quote (its
+  // three steps) or its intake PDF.
   settingsOpen: false,
-  // The Luna controls are available from the brain button even while the Settings screen is
-  // hidden. Keep the opening trigger so Escape and the close button return focus
-  // to the control the agent used.
-  agentPopoverOpen: false,
-  agentPopoverTrigger: null,
-  step: 'check',
+  pdfOpen: false,
+  // Step 1 (Check the intake) open or folded to its one line.
+  checkOpen: true,
+  // The tab and page the fill report (steps 2 and 3) is about, and its counts; the steps show it
+  // only while that page is the one followed.
+  reportAt: null,
+  // The step heading the page kit last read (a fill or a layout) on a one-address application
+  // (AmWINS), with its tab and page: { tabId, page, key }.
+  stepSeen: null,
 };
 
 function h(tag, props = {}, ...children) {
@@ -524,12 +527,15 @@ async function loadFile(file) {
   }
   let raw;
   let bytes;
+  let places;
   try {
     bytes = new Uint8Array(await file.arrayBuffer());
     raw = await readIntakeFields(pdfjs, bytes.slice());
   } catch (e) {
     return showLoadError(`Couldn't read that PDF (${e.message}).`);
   }
+  // Where the fields sit only serves See in PDF: never a reason to refuse the intake.
+  try { places = await readFieldPlaces(pdfjs, bytes.slice()); } catch { places = {}; }
   if (!Object.keys(raw).length) {
     return showLoadError('This PDF has no fillable fields — it may be a scan or a printed-and-signed copy. Only the fillable TNI quote application is supported so far.');
   }
@@ -553,10 +559,17 @@ async function loadFile(file) {
   cancelLayouts();
   holdLayouts();
   resetViews();
-  state.intake = { ...result, fileName: file.name, done: [] };
-  // Start on Check intake when something on the intake needs a look, else straight on Fill.
-  state.step = result.warnings.some((w) => w.level === 'check') ? 'check' : 'fill';
+  state.intake = { ...result, fileName: file.name, done: [], places };
+  // Check the intake starts open when something on it needs a look.
+  state.checkOpen = result.warnings.some((w) => w.level === 'check');
   state.settingsOpen = false;
+  state.pdfOpen = false;
+  setFileMenu(false);
+  // The previous client's fill report and PDF go with it.
+  state.reportAt = null;
+  $('report').replaceChildren();
+  $('filled-report').replaceChildren();
+  await keepPdf(bytes);
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
   state.filled = new Map();
   state.doneActions = new Set();
@@ -599,64 +612,34 @@ function render() {
   $('client-meta').textContent = [STATES[st] ?? st, n('drivers', 'driver'), n('vehicles', 'vehicle')].filter(Boolean).join(' · ');
   $('client-meta').title = `${fileName} · ${stats.filled} answers`;
   $('details-count').textContent = `${stats.filled} answers`;
+  $('pdf-name').textContent = fileName;
   renderWarnings();
   renderSections();
   renderPickers();
   renderSite();
 }
 
-// Agent options can open without leaving the current quote.
-function closeAgentPopover({ restore = true } = {}) {
-  $('agent-popover').hidden = true;
-  $('agent-btn').setAttribute('aria-expanded', 'false');
-  $('settings-agent').setAttribute('aria-expanded', 'false');
-  state.agentPopoverOpen = false;
-  const trigger = state.agentPopoverTrigger || $('agent-btn');
-  state.agentPopoverTrigger = null;
-  if (restore) trigger.focus();
-}
-
-function openAgentPopover({ trigger = $('agent-btn'), focusId = null } = {}) {
-  state.agentPopoverTrigger = trigger;
-  state.agentPopoverOpen = true;
-  $('agent-popover').hidden = false;
-  $('agent-btn').setAttribute('aria-expanded', 'true');
-  $('settings-agent').setAttribute('aria-expanded', 'true');
-  if (focusId) $('ai-connection').open = true;
-  const target = focusId ? $(focusId) : $('ai-on');
-  target.focus();
-  target.scrollIntoView({ block: 'nearest' });
-}
-
-// Settings over everything; otherwise the start screen, or the quote on one of its two steps.
+// Settings over everything; otherwise the start screen, or the quote (its steps or its PDF).
 function showScreen() {
   const has = !!state.intake;
+  const pdf = has && state.pdfOpen;
   $('settings').hidden = !state.settingsOpen;
   $('home').hidden = state.settingsOpen || has;
-  $('quote').hidden = state.settingsOpen || !has;
+  $('quote').hidden = state.settingsOpen || !has || pdf;
+  $('pdf-view').hidden = state.settingsOpen || !pdf;
   $('settings-btn').setAttribute('aria-expanded', String(state.settingsOpen));
-  $('check-pane').hidden = state.step !== 'check';
-  $('fill-pane').hidden = state.step !== 'fill';
-  $('tab-check').setAttribute('aria-selected', String(state.step === 'check'));
-  $('tab-fill').setAttribute('aria-selected', String(state.step === 'fill'));
+  $('settings-btn').title = $('settings-btn').ariaLabel = state.settingsOpen ? 'Close settings' : 'Settings';
 }
 
-function setStep(step) {
-  state.step = step;
-  showScreen();
+// Step 1 open or folded to its one line.
+function setCheckOpen(open) {
+  state.checkOpen = open;
+  $('check-body').hidden = !open;
+  $('check-toggle').setAttribute('aria-expanded', String(open));
+  $('check-arrow').textContent = open ? '˅' : '›';
 }
 
 function openSettings(focusId = null) {
-  // The assistant connection fields live in the agent popover now. Setup notices still call
-  // openSettings('ai-openai-key'), so route those requests to the visible controls instead of
-  // opening a Settings screen whose fields may be hidden behind the popover.
-  if (focusId === 'ai-openai-key' || focusId === 'ai-model') {
-    state.settingsOpen = false;
-    showScreen();
-    openAgentPopover({ trigger: state.agentPopoverTrigger || $('agent-btn'), focusId });
-    return;
-  }
-  closeAgentPopover({ restore: false });
   state.settingsOpen = true;
   showScreen();
   if (!focusId) return;
@@ -665,33 +648,41 @@ function openSettings(focusId = null) {
   $(focusId).scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
-// Check intake: one card per thing to check, with its field to fix and Mark as checked.
+// Step 1, Check the intake: one card per thing to check, with its field to fix, Looks right now,
+// and the place on the PDF when the check names the form field it was read from.
 function renderWarnings() {
-  const { warnings, done } = state.intake;
+  const { warnings, done, places } = state.intake;
   const checks = warnings.map((w, i) => [w, i]).filter(([w]) => w.level === 'check');
   const infos = warnings.filter((w) => w.level === 'info');
   const open = checks.filter(([, i]) => !done.includes(i)).length;
-  $('check-num').textContent = open ? String(open) : '✓';
-  $('check-num').className = `num ${open ? 'warn' : 'good'}`;
-  $('check-intro').hidden = !open;
-  $('check-intro').replaceChildren(h('b', {}, `${open} thing${open === 1 ? '' : 's'}`), ' on the intake looked wrong or missing. Fix the value if needed, then mark it checked.');
-  $('check-done').hidden = !!open;
-  $('check-done').querySelector('.card-title').textContent = checks.length ? `All ${checks.length} item${checks.length === 1 ? '' : 's'} checked.` : 'Nothing on the intake looked wrong.';
+  $('check-num').textContent = open ? '1' : '✓';
+  $('check-num').className = `step-num ${open ? 'brand' : 'good'}`;
+  $('check-sum').textContent = open ? `${open} to check` : checks.length ? 'All checked' : 'Nothing to check';
+  $('check-sum').className = `step-sum ${open ? 'warn' : 'good'}`;
+  $('check-intro').textContent = open
+    ? 'These looked wrong or missing on the intake. Fix the value if needed. You can fill pages before you finish.'
+    : checks.length ? `All ${checks.length} item${checks.length === 1 ? '' : 's'} checked.` : 'Nothing on the intake looked wrong.';
   const editable = (path) => path && /\.|\]$/.test(path) && fieldInfo(path).label !== path;
   const cards = checks.map(([w, i]) => {
-    const label = editable(w.path) ? fieldInfo(w.path).label : 'Item';
-    if (done.includes(i)) {
-      return h('div', { class: 'checked-row' }, h('b', {}, '✓'), h('span', { class: 'grow' }, `${label} checked`),
-        h('button', { type: 'button', class: 'link small', onclick: () => toggleDone(i, false) }, 'Undo'));
-    }
     const info = editable(w.path) ? fieldInfo(w.path) : null;
+    const title = info ? info.label : w.msg;
+    if (done.includes(i)) {
+      return h('div', { class: 'checked-row' }, h('span', { class: 'tick', 'aria-hidden': 'true' }, '✓'), h('span', { class: 'grow', title: w.msg }, `${title}`),
+        h('button', { type: 'button', class: 'link small', 'aria-label': `Undo: ${title}`, onclick: () => toggleDone(i, false) }, 'Undo'));
+    }
+    const place = w.field ? places?.[w.field] : null;
     return h('div', { class: 'warn-card' },
-      h('div', { class: 'warn-msg' }, w.msg),
-      info ? fieldRow(w.path, info.label, info.kind, true, 'stack') : w.path ? h('button', { type: 'button', class: 'link small', onclick: () => jumpTo(w.path) }, 'Show in client details') : null,
-      h('button', { type: 'button', class: 'ghost', onclick: () => toggleDone(i, true) }, 'Mark as checked'));
+      h('div', { class: 'row-text' }, h('b', {}, title), info ? h('span', {}, w.msg) : null),
+      info ? fieldRow(w.path, info.label, info.kind, true, 'stack') : null,
+      h('div', { class: 'warn-actions' },
+        h('button', { type: 'button', class: 'ghost', onclick: () => toggleDone(i, true) }, 'Looks right now'),
+        place ? h('button', { type: 'button', class: 'link small', onclick: () => openPdf({ field: w.field, label: info ? info.label : 'this item' }) }, `See in PDF, page ${place.page + 1}`)
+          : !info && w.path ? h('button', { type: 'button', class: 'link small', onclick: () => jumpTo(w.path) }, 'Show in client details') : null));
   });
   $('warnings').replaceChildren(...cards,
     ...(infos.length ? [h('details', { class: 'cleanup' }, h('summary', { class: 'small muted' }, `Cleanup notes (${infos.length})`), h('ul', {}, infos.map((w) => h('li', {}, w.msg))))] : []));
+  $('step-check').dataset.active = String(!!open && state.checkOpen);
+  setCheckOpen(state.checkOpen);
 }
 
 async function toggleDone(i, isDone) {
@@ -701,8 +692,11 @@ async function toggleDone(i, isDone) {
   if (isDone) done.add(i); else done.delete(i);
   state.intake.done = [...done];
   await save();
+  // The last check done: the step folds to its one line.
+  if (isDone && !state.intake.warnings.some((x, j) => x.level === 'check' && !done.has(j))) state.checkOpen = false;
   renderWarnings();
   renderSections();
+  renderSteps();
 }
 
 function openFlags(prefix) {
@@ -763,16 +757,20 @@ function fieldRow(path, label, kind, flagged, layout = 'row') {
     if (path === 'claims.text' || (path.startsWith('coverage.') && path !== 'coverage.ntl')) reviewClaimsBox({ retry: true });
   });
   if (layout === 'stack') {
-    // On a check card the same field may also be open in the client details: keep one id.
+    // On a check card the same field may also be open in the client details: keep one id. The
+    // card's title names the field.
     input.removeAttribute('id');
+    input.classList.add('warn-input');
+    input.setAttribute('aria-label', label);
     input.addEventListener('change', () => renderSections());
-    return h('label', { class: 'field-stack' }, label, input);
+    return input;
   }
   return h('div', { class: `field${flagged ? ' flagged' : ''}${value == null ? ' empty' : ''}`, dataset: { path } },
     h('label', { for: id }, label), input);
 }
 
 function jumpTo(path) {
+  if (!state.checkOpen) { state.checkOpen = true; renderWarnings(); }
   $('details').open = true;
   const info = fieldInfo(path);
   const sectionId = info.section?.id ?? SECTIONS.find((s) => s.id === path || s.list === path)?.id;
@@ -862,6 +860,7 @@ async function refreshTab() {
   // A recorder already in the page (the panel was closed or reloaded, or another tab was in
   // front) doesn't announce the page again: ask for its layout here.
   scheduleLayout(pageOf(state.tab?.url), 'arrived');
+  if (state.tab?.carrier?.layoutSteps) readStep();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -967,6 +966,8 @@ function onRecorderMessage(msg, sender) {
     scheduleLayout(layoutPage, 'appeared');
   }
   if (msg.event === 'removed_fields') scheduleLayout(layoutPage, 'removed');
+  // Another step of a one-address application shows other questions: the bar follows it.
+  if ((msg.event === 'new_fields' || msg.event === 'removed_fields') && state.tab.carrier?.layoutSteps) readStep();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1080,7 +1081,7 @@ async function autoFill(page) {
     followUp = afterFill(frames, { carrier, page });
     const hasWarnings = frames.some((f) => f.unknown?.length);
     // The fill whose helper this follows up held Luna back for it.
-    if (state.autoPaused || hasWarnings || state.assistPage === page) { renderReport(frames); assistFrames = frames; }
+    if (state.autoPaused || hasWarnings || state.assistPage === page) { renderReport(frames, { tabId, page }); assistFrames = frames; }
     const n = frames.reduce((k, f) => k + f.filled.length + (f.actions?.length ?? 0), 0);
     if (n || hasWarnings) {
       if (!carrier.practice) usage.log(...fillEvents(frames, { carrier: carrier.id, page, view, overwrite: false, auto: true, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }));
@@ -1101,6 +1102,8 @@ async function autoFill(page) {
   }
   // The page moved on to a stop page while this ran: its card stays on top of this fill's report.
   if (state.tab?.carrier?.stopPages?.[pageOf(state.tab?.url)]) showStopPage();
+  // A new report: steps 2 and 3 show its counts.
+  if (assistFrames) renderSteps();
   runPendingPage();
   if (assistFrames) assistAfterFill(assistFrames, { tabId, page, carrier }, followUp);
 }
@@ -1186,6 +1189,11 @@ async function captureLayout(job, reason) {
     // On a one-address application, which step (Insured Info, Vehicles, …): otherwise every step
     // would look like one page whose questions come and go.
     const step = carrier.layoutSteps ? top.step || null : undefined;
+    // The step on screen, for the progress bar under the header.
+    if (step && (state.stepSeen?.tabId !== tabId || state.stepSeen.page !== page || state.stepSeen.key !== step)) {
+      state.stepSeen = { tabId, page, key: step };
+      if (state.tab?.id === tabId) renderSite();
+    }
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
@@ -1367,6 +1375,70 @@ function rememberFill(frames) {
   }
 }
 
+const NO_ACCESS = "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page.";
+
+// Progressive names its pages in ?pageName= (BusinessOwnerInfo), shown as words. Other carriers'
+// addresses aren't page names: no page is named for them.
+function pageTitle(page) {
+  if (!page || !/^[A-Za-z][A-Za-z0-9]*$/.test(page)) return '';
+  return page.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+}
+
+// A one-address application (AmWINS): read the step on screen from its heading (the page kit's
+// stepKey) for the progress bar, a moment after the tab is followed or its questions change (a
+// new step shows other questions). Fills and layouts read it too.
+let stepTimer = null;
+function readStep(tries = 0) {
+  // One read waiting is enough: it reads the page as it is when it runs.
+  if (stepTimer) return;
+  stepTimer = setTimeout(async () => {
+    stepTimer = null;
+    const { id: tabId, carrier, url } = state.tab ?? {};
+    // Like every other script the panel puts in a rater page, only while an intake is loaded.
+    if (!inExtension || !state.intake || !tabId || !carrier?.layoutSteps) return;
+    const page = pageOf(url);
+    let read;
+    try {
+      const results = await runKit(tabId, carrier, () => (globalThis.__raterKit.busy() ? { busy: true } : { key: globalThis.__raterKit.step() }));
+      read = results.find((r) => r.frameId === 0)?.result;
+    } catch { return; /* the page is navigating */ }
+    if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
+    // Still saving or loading (Save & Continue): the next step isn't drawn yet.
+    if (read?.busy) { if (tries < 20) readStep(tries + 1); return; }
+    const key = read?.key || null;
+    if (state.stepSeen?.tabId === tabId && state.stepSeen.page === page && state.stepSeen.key === key) return;
+    state.stepSeen = { tabId, page, key };
+    renderSite();
+  }, 400);
+}
+
+// Where the page is in the carrier's quote (`steps`, in order): Progressive by its page name, a
+// one-address application (AmWINS) by the step heading last read on this tab and page. A page the
+// carrier's steps don't name gets no bar.
+function quoteStep(carrier, page) {
+  const steps = carrier?.steps;
+  if (!steps?.length || !page) return null;
+  const byPage = steps.findIndex((s) => s.pages?.includes(page));
+  if (byPage >= 0) return { at: byPage, steps, by: 'page' };
+  const seen = state.stepSeen;
+  const headings = seen?.key && seen.tabId === state.tab?.id && seen.page === page ? seen.key.split(' / ') : [];
+  const byHeading = steps.findIndex((s) => s.heading && headings.some((x) => s.heading.test(x.trim())));
+  return byHeading >= 0 ? { at: byHeading, steps, by: 'heading' } : null;
+}
+
+// One segment per step: the steps before this one, this one (darker once it's filled), the rest.
+// It says where the page is in the quote, not that the steps before it are complete.
+function renderTrack(step, page) {
+  const track = $('site-track');
+  track.hidden = !step;
+  if (!step) { track.replaceChildren(); return; }
+  const filled = !!state.reportAt?.filled && reportHere(page);
+  track.style.gridTemplateColumns = `repeat(${step.steps.length}, minmax(0, 1fr))`;
+  track.setAttribute('aria-label', `Step ${step.at + 1} of ${step.steps.length}: ${step.steps[step.at].name}`);
+  track.replaceChildren(...step.steps.map((s, i) => h('span', { title: s.name, class: i < step.at ? 'before' : i === step.at ? (filled ? 'here filled' : 'here') : '' })));
+}
+
+// The strip under the header: the rater and its page and step, or what to open.
 function renderSite() {
   const site = $('site');
   const logo = $('site-logo');
@@ -1376,11 +1448,24 @@ function renderSite() {
   const noAccess = inExtension && state.tab && !state.tab.url;
   // Retain the carrier text as an image-error fallback and for the panel harness.
   site.textContent = !inExtension ? 'Preview only' : carrier ? carrier.name : noAccess ? 'No access to this page' : 'Not a rater page';
+  const page = pageOf(state.tab?.url);
+  const step = carrier && onQuotePage() ? quoteStep(carrier, page) : null;
   caption.textContent = [
-    carrier ? (carrier.practice ? 'Practice page' : 'Commercial auto') : null,
+    carrier?.practice ? 'Practice' : null,
     state.tab?.background ? 'In background' : null,
+    step ? `Step ${step.at + 1} of ${step.steps.length}` : null,
   ].filter(Boolean).join(' · ');
   caption.hidden = !caption.textContent;
+  // Progressive's page by its name; a one-address application's by its step.
+  const pageName = !carrier || !onQuotePage() ? '' : step?.by === 'heading' ? step.steps[step.at].name : pageTitle(page);
+  $('site-page').textContent = pageName;
+  $('site-page').hidden = !pageName;
+  renderTrack(step, page);
+  $('site-hint').textContent = !inExtension ? 'Filling works in the Chrome extension.'
+    : noAccess ? "The extension can't read this page."
+    : !carrier ? 'Open Progressive, GEICO or AmWINS to fill.'
+    : !onQuotePage() ? 'Open or start a quote.' : '';
+  $('site-hint').hidden = !$('site-hint').textContent;
   const paths = {
     progressive: 'assets/raters/progressive.svg',
     geico: 'assets/raters/geico.gif',
@@ -1427,12 +1512,81 @@ function renderSite() {
     ? 'Filling works when this runs as the Chrome extension.'
     : stopped ? 'Nothing on this page is filled or clicked.'
     : carrier && state.tab.background ? 'Working on the quote tab in the background. Fill this page fills that tab; go back to it to review.'
-    : carrier ? 'Nothing is submitted. Review the page, then click Next yourself.'
-      : noAccess
-        ? "The browser isn't letting the extension read this page. Allow the extension on this site (click its icon in the toolbar or check its site access in the extensions page), then reload the page."
-        : 'Open a Progressive, GEICO or AmWINS quote page to fill it.';
+    : carrier ? 'Fills what it can. Nothing is submitted for you.'
+      : noAccess ? NO_ACCESS : 'Open a Progressive, GEICO or AmWINS quote page to fill it.';
   showStopPage();
+  renderSteps();
 }
+
+// The fill report is about the page followed now: the same tab and page, and on a one-address
+// application (AmWINS) the same step, when both its step and the one on screen are known.
+function reportHere(page) {
+  const r = state.reportAt;
+  if (!r || r.tabId !== state.tab?.id || r.page !== page) return false;
+  const seen = state.stepSeen?.tabId === r.tabId && state.stepSeen.page === page ? state.stepSeen.key : null;
+  return !r.step || !seen || r.step === seen;
+}
+
+// Steps 2 and 3 follow the page the panel works on: waiting for a rater page, ready to fill, or
+// filled (what was filled, then what's left for the agent and who clicks Continue); a carrier's
+// stop page stops both. A fill report shows only while its own tab and page are the ones followed.
+function renderSteps() {
+  if (!state.intake) return;
+  const carrier = state.tab?.carrier;
+  const page = pageOf(state.tab?.url);
+  const noAccess = inExtension && state.tab && !state.tab.url;
+  const stopped = !!carrier?.stopPages?.[page];
+  const waiting = !inExtension || !carrier;
+  const r = state.reportAt;
+  const here = reportHere(page) && !stopped;
+  const filled = here && !!r.filled;
+  const { warnings, done } = state.intake;
+  const open = warnings.filter((w, i) => w.level === 'check' && !done.includes(i)).length;
+
+  $('fill-waiting').hidden = !waiting;
+  $('fill-waiting-text').textContent = !inExtension ? 'Filling works when this runs as the Chrome extension.'
+    : noAccess ? NO_ACCESS : 'Open the client’s quote on one of these raters. This step starts when you’re on its page.';
+  $('fill-stopped').hidden = waiting || !stopped;
+  $('fill-body').hidden = waiting || stopped;
+  const fill = $('step-fill');
+  fill.dataset.state = waiting ? 'waiting' : stopped ? 'stopped' : filled ? 'filled' : 'ready';
+  fill.dataset.idle = String(waiting);
+  fill.dataset.active = String(!waiting && !stopped && !filled);
+  $('fill-num').textContent = filled ? '✓' : '2';
+  $('fill-num').className = `step-num${filled ? ' good' : waiting || stopped ? '' : ' brand'}`;
+  $('fill-sum').textContent = waiting ? 'Waiting' : stopped ? 'Stopped' : filled ? `${r.filledCount} filled` : '';
+  $('fill-sum').className = `step-sum${filled ? ' good' : stopped ? ' bad' : ''}`;
+  $('checks-pending').hidden = !open || filled;
+  $('checks-pending').textContent = `${open} intake ${open === 1 ? 'item isn’t' : 'items aren’t'} checked yet. You can still fill.`;
+  $('filled-report').hidden = !filled;
+  // Marks stay on a page filled in this tab, also after its report gave way to another page's.
+  $('unmark').hidden = waiting || stopped || !(filled || state.autoPages.has(page));
+
+  const left = filled ? r.needs : 0;
+  $('finish-body').hidden = !here;
+  const finish = $('step-finish');
+  finish.dataset.idle = String(!filled);
+  finish.dataset.active = String(filled && !!left);
+  $('finish-num').textContent = filled && !left ? '✓' : '3';
+  $('finish-num').className = `step-num${!filled ? '' : left ? ' brand' : ' good'}`;
+  $('finish-sum').textContent = !filled ? '' : left ? `${left} left for you` : 'Nothing left';
+  $('finish-sum').className = `step-sum ${left ? 'warn' : 'good'}`;
+  // Who clicks Continue: the panel (setting "Click Continue when the page is done", only with
+  // nothing left for the agent, never Bind or Submit), or the agent.
+  const autoAdvance = $('auto-advance').checked && !!carrier?.advance;
+  const nextFills = $('auto-followups').checked || $('auto-pages').checked;
+  const [title, text] = r?.advanced
+    ? [`Clicked “${r.advanced}”`, nextFills ? 'The next step is filled when it shows.' : 'Press Fill this page on the next step.']
+    : autoAdvance
+      ? [left ? 'Then Continue' : 'Continue', $('auto-followups').checked
+        ? 'Once nothing is left for you on this page, the panel clicks Continue. It never clicks Bind or Submit.'
+        : 'Once nothing is left for you, press Fill this page again and the panel clicks Continue. It never clicks Bind or Submit.']
+      : ['Then click Continue on the page', `Click Continue on the rater page yourself, then ${$('auto-pages').checked ? 'the next page fills as it opens' : 'press Fill this page on the next one'}.`];
+  $('continue-note').hidden = !filled;
+  $('continue-title').textContent = title;
+  $('continue-text').textContent = text;
+}
+
 
 // Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client
 // already has a commercial auto policy with Progressive). Nothing is filled or clicked there,
@@ -1488,7 +1642,10 @@ async function fillPage({ auto = false } = {}) {
   // The carrier's portal pages outside a quote (Progressive's home / quote search) are never
   // filled, and the AI isn't asked about them.
   if (!onQuotePage()) {
-    if (!auto) $('report').replaceChildren(h('p', { class: 'muted center' }, 'This is the portal, not a quote page. Open or start a quote, then fill.'));
+    if (!auto) {
+      state.reportAt = { tabId: state.tab.id, page: pageOf(state.tab.url), filled: false };
+      $('report').replaceChildren(h('p', { class: 'muted center' }, 'This is the portal, not a quote page. Open or start a quote, then fill.'));
+    }
     return;
   }
   if (!auto) state.autoPaused = false;
@@ -1503,6 +1660,7 @@ async function fillPage({ auto = false } = {}) {
   const overwrite = auto ? false : $('overwrite').checked;
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
+  state.reportAt = { tabId, page, filled: false };
   $('report').replaceChildren(h('p', { class: 'muted small center' }, 'Filling one answer at a time: the page checks each answer with its server. Keep this tab open.'));
   const started = Date.now();
   let assistFrames = null;
@@ -1517,6 +1675,11 @@ async function fillPage({ auto = false } = {}) {
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
     rememberFill(frames);
+    // AmWINS' progress bar: the step this fill read, or after its Continue the next one's heading.
+    if (carrier.layoutSteps) {
+      if (frames.some((f) => f.advanced)) readStep();
+      else state.stepSeen = { tabId, page, key: frames.find((f) => f.stepKey)?.stepKey ?? null };
+    }
     state.autoPages.add(page);
     followUp = afterFill(frames, { carrier, page });
     recordLayout(page);
@@ -1524,7 +1687,9 @@ async function fillPage({ auto = false } = {}) {
       carrier: carrier.id, page, view, overwrite, auto, ms: Date.now() - started, redact: redactor(redactionTerms(state.intake.record)),
       keySalt: usage.currentSession()?.keySalt,
     }));
-    renderReport(frames);
+    renderReport(frames, { tabId, page });
+    // One address for every step (AmWINS): the report is about the step this fill was on.
+    if (carrier.layoutSteps && state.reportAt) state.reportAt.step = frames.find((f) => f.stepKey)?.stepKey ?? null;
     assistFrames = frames;
   } catch (e) {
     state.autoPaused = true;
@@ -1680,12 +1845,20 @@ async function watchNextStep(carrier, page, before, doneKey = null) {
     await new Promise((r) => setTimeout(r, 300));
     if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || !state.intake) return;
     let now = null;
+    let heading = null;
     try {
       // While the page saves / reloads (its loading overlay) the step isn't ready yet.
-      const results = await runKit(tabId, carrier, () => (globalThis.__raterKit.busy() ? null : globalThis.__raterKit.signature()));
-      now = results.find((r) => r.frameId === 0)?.result ?? null;
+      const results = await runKit(tabId, carrier, () => (globalThis.__raterKit.busy() ? null : { sig: globalThis.__raterKit.signature(), step: globalThis.__raterKit.step() }));
+      const top = results.find((r) => r.frameId === 0)?.result ?? null;
+      now = top?.sig ?? null;
+      heading = top?.step || null;
     } catch { return; }
     if (now != null && now !== before && now === last) {
+      // The next step is drawn: the progress bar shows it before its fill starts.
+      if (carrier.layoutSteps && heading) {
+        state.stepSeen = { tabId, page, key: heading };
+        renderSite();
+      }
       if (state.filling) state.pagePending = page;
       else fillPage({ auto: 'page' });
       return;
@@ -1710,18 +1883,21 @@ async function ignoreReview(key, tabId, page) {
   await fillPage();
 }
 
-// After a fill: a summary card, then one list of everything left for the agent on this page
-// (each item with its × and, once the AI has looked, its suggestion), then what was filled.
-function renderReport(frames) {
+// After a fill: what was filled goes in step 2 (#filled-report); step 3 (#report) gets the page's
+// notes, then one list of everything left for the agent on this page (each item with its × and,
+// once the AI has looked, its suggestion), then the key to the marks on the page. `at`: the tab and
+// page the fill ran on (the tab may have moved on since).
+function renderReport(frames, at = { tabId: state.tab?.id, page: pageOf(state.tab?.url) }) {
   const all = (k) => frames.flatMap((f) => f[k] ?? []);
   const filled = all('filled');
   const failed = all('failed');
   const kept = all('kept');
   const fields = frames.reduce((n, f) => n + (f.fields ?? 0), 0);
+  const { tabId, page } = at;
+  state.reportAt = { tabId, page, filled: false };
+  // Step 2 first: the tests' stand-in for $ gives every id the same box, and step 3 wins there.
+  $('filled-report').replaceChildren();
   const box = $('report');
-  const tabId = state.tab?.id;
-  const page = pageOf(state.tab?.url);
-  box.className = 'report';
   // A page of tiles only (Most Common Vehicles) has no fields but may still need the agent.
   if (!fields && !all('actions').length && !all('noData').length) {
     const halted = frames.find((f) => f.halted);
@@ -1743,7 +1919,6 @@ function renderReport(frames) {
   // A page note may depend on the intake (Progressive's Rates for an NTL quote).
   const pageNote = state.tab?.carrier?.agentPages?.[page];
   const agentPage = typeof pageNote === 'function' ? pageNote(state.intake?.record ?? {}) : pageNote;
-  const pct = fields ? Math.round(((fields - needs.length) / fields) * 100) : 100;
   const need = (x) => h('div', { class: 'need', dataset: { need: `${x.key}|${x.label}` } },
     h('div', { class: 'need-head' },
       h('span', { class: `mark ${x.mark}` }),
@@ -1770,25 +1945,25 @@ function renderReport(frames) {
       + (renamedNames ? ', and ' + renamedNames + " moved to a field the extension doesn't know" : '')
       + ". They're left for you and Continue waits. Please report it (a Capture page layout helps)."
     : null;
+  const filledCount = filled.length + earlier.length;
+  state.reportAt = { tabId, page, filled: true, filledCount, fields, needs: needs.length, advanced: advanced ?? null };
+  $('filled-report').replaceChildren(...[
+    doneRows.length ? h('details', { class: 'more' },
+      h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'See what was filled'), h('span', { class: 'small' }, `${filledCount} of ${fields}`)),
+      h('div', { class: 'more-body' }, doneRows.map(([k, v]) => h('div', { class: 'kv' }, h('span', {}, k), h('span', {}, v))))) : null,
+  ].filter((node) => node != null && node !== false));
   box.replaceChildren(...[
     agentPage ? h('p', { class: 'agent-page' }, agentPage) : null,
     frames.some((f) => f.halted) ? h('p', { class: 'card bad' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then click Fill this page to retry.`) : null,
     pageChanged ? h('p', { class: 'card bad' }, pageChanged) : null,
-    h('div', { class: 'card summary' },
-      h('div', { class: 'summary-line' }, h('b', {}, `Filled ${filled.length + earlier.length} of ${fields} questions`),
-        h('span', { class: 'small muted' }, advanced ? `Clicked "${advanced}"` : needs.length ? `${needs.length} need${needs.length === 1 ? 's' : ''} you` : 'Nothing left for you')),
-      h('div', { class: 'bar' }, h('div', { style: `width: ${pct}%` })),
-      h('div', { class: 'legend' },
-        h('span', {}, h('span', { class: 'mark filled' }), 'Filled'),
-        h('span', {}, h('span', { class: 'mark needs' }), 'Needs you'),
-        h('span', {}, h('span', { class: 'mark failed' }), "Couldn't fill"),
-        h('span', {}, h('span', { class: 'mark ai' }), 'AI answer'))),
     needs.length ? h('div', { class: 'eyebrow needs-head' }, 'Needs you on this page') : null,
     ...needs.map(need),
     waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Buttons waiting'), h('span', { class: 'muted' }, waiting.map((x) => `${x.id.replace(/:\d+$/, '')}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`).join('; '))) : null,
-    doneRows.length ? h('details', { class: 'more' },
-      h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'See what was filled'), h('span', { class: 'small muted' }, String(filled.length + earlier.length))),
-      h('div', { class: 'more-body' }, doneRows.map(([k, v]) => h('div', { class: 'kv' }, h('span', {}, k), h('span', {}, v))))) : null,
+    h('div', { class: 'legend', 'aria-label': 'Marks on the page' },
+      h('span', {}, h('span', { class: 'mark filled' }), 'Filled'),
+      h('span', {}, h('span', { class: 'mark needs' }), 'Needs you'),
+      h('span', {}, h('span', { class: 'mark failed' }), "Couldn't fill"),
+      h('span', {}, h('span', { class: 'mark ai' }), 'Assistant')),
   ].filter((node) => node != null && node !== false));
 }
 
@@ -1796,6 +1971,9 @@ async function clearMarks() {
   if (!state.tab?.carrier) return;
   await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit.clear());
   $('report').replaceChildren();
+  $('filled-report').replaceChildren();
+  state.reportAt = null;
+  renderSite();
 }
 
 // A developer's capture of the page as it is now, for writing rules and mock pages (docs/learning.md):
@@ -2028,7 +2206,7 @@ async function runAssist(frames, ctx) {
   }
   if (head) head.before(holder); else $('report').append(holder);
   if (!cfg.apiKey) {
-    holder.append(h('p', { class: 'muted small' }, `${provider.name} needs an OpenAI API key. Add it in Agent options.`));
+    holder.append(h('p', { class: 'muted small' }, `${provider.name} needs an OpenAI API key. Add it in Settings.`));
     return;
   }
   const run = ++state.aiRun;
@@ -2420,29 +2598,6 @@ function renderAi(holder, suggestions, ctx) {
   ].filter(Boolean));
 }
 
-function wireAgentPopover() {
-  const button = $('agent-btn');
-  const popover = $('agent-popover');
-  const settingsTrigger = $('settings-agent');
-  button.addEventListener('click', (e) => {
-    if (state.agentPopoverOpen) closeAgentPopover();
-    else openAgentPopover({ trigger: e.currentTarget });
-  });
-  $('close-agent').addEventListener('click', () => closeAgentPopover());
-  settingsTrigger.addEventListener('click', (e) => openAgentPopover({ trigger: e.currentTarget }));
-  const outside = target => !popover.contains(target) && !button.contains(target) && !settingsTrigger.contains(target);
-  for (const event of ['pointerdown', 'focusin']) {
-    document.addEventListener(event, (e) => {
-      if (state.agentPopoverOpen && outside(e.target)) closeAgentPopover({ restore: false });
-    });
-  }
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || !state.agentPopoverOpen) return;
-    e.preventDefault();
-    closeAgentPopover();
-  });
-}
-
 function wireAi() {
   const save = async patch => {
     state.aiRun++;
@@ -2458,6 +2613,8 @@ function wireAi() {
   $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
   $('ai-auto').addEventListener('change', (e) => save({ lunaAuto: e.target.checked }));
   $('ai-openai-key').addEventListener('change', (e) => save({ lunaKey: e.target.value.trim() }));
+  // The key lives under Advanced (for setup): the assistant card links to it.
+  $('ai-key-link').addEventListener('click', () => openSettings('ai-openai-key'));
 }
 
 async function renderAiSettings() {
@@ -2469,18 +2626,16 @@ async function renderAiSettings() {
   $('ai-auto').disabled = !cfg.on || !provider.automatic;
   $('ai-auto-option').hidden = !provider.automatic;
   if (document.activeElement !== $('ai-openai-key')) $('ai-openai-key').value = saved.lunaKey || '';
-  $('ai-model').disabled = true;
-  $('ai-model').placeholder = provider.defaultModel;
-  if (document.activeElement !== $('ai-model')) $('ai-model').value = cfg.model;
+  // The model is fixed (DEFAULT_MODEL): shown, not edited.
+  $('ai-title').textContent = `${provider.name} assistant`;
+  $('ai-model-name').textContent = `${provider.name} · ${provider.company}`;
+  $('ai-model').textContent = cfg.model;
+  // The brain at the top is blue while the assistant is on, and says whether it's ready.
   $('agent-btn').dataset.on = String(cfg.on);
   $('agent-btn').title = cfg.on
     ? (cfg.apiKey ? `${provider.name} assistant on · ${cfg.model}` : `${provider.name} assistant on · ${provider.keyLabel} needed`)
     : `${provider.name} assistant off`;
-  $('settings-agent-name').textContent = `${provider.name} assistant`;
-  $('agent-name').textContent = provider.name;
-  $('agent-provider').textContent = provider.company;
-  $('agent-model').textContent = cfg.model;
-  $('agent-status').dataset.on = String(cfg.on);
+  $('ai-note').dataset.on = String(cfg.on);
   $('ai-note').textContent = !cfg.on ? 'Off · Turn on when you need help.' : !cfg.apiKey ? `On, but needs ${provider.keyLabel}.` : `On · ${cfg.model}${cfg.auto ? ' · picks answers, you approve them before Continue' : ' · suggestions only'}`;
   $('ai-privacy').textContent = `Relevant intake facts, page context and TNI rules are sent to ${provider.company} with your key. Keys are saved on this device. Missing facts stay unanswered. Report orders, exclusions, signatures and payment fields stay with you.`;
   renderUsage();
@@ -2524,7 +2679,7 @@ async function renderHealth({ n, agent, serverUrl, up }) {
   // Things the agent fixes (one card, a button each) and things that need nothing from them.
   const setup = [
     !agent && { title: 'Add your initials', text: 'So your quotes are counted as yours.', button: 'Add', go: () => openSettings('agent') },
-    ai.on && !ai.apiKey && { title: 'AI suggestions need a key', text: `They're turned on, but no ${PROVIDERS[ai.provider].keyLabel} is set.`, button: 'Add key', go: () => openSettings('ai-openai-key') },
+    ai.on && !ai.apiKey && { title: 'The assistant needs a key', text: `It's turned on, but no ${PROVIDERS[ai.provider].keyLabel} is set.`, button: 'Add key', go: () => openSettings('ai-openai-key') },
     up.state === 'off' && { title: 'Usage log has no server', text: 'Nothing is recorded centrally (Export log only).', button: 'Set up', go: () => openSettings('server-url') },
   ].filter(Boolean);
   const info = up.state === 'error'
@@ -2539,12 +2694,8 @@ async function renderHealth({ n, agent, serverUrl, up }) {
     info ? h('div', { class: 'notice' }, h('div', { class: 'row-text' }, h('b', {}, info.title), h('span', {}, info.text))) : null,
   ].filter(Boolean);
   $('home-notices').replaceChildren(...cards());
-  $('check-notices').replaceChildren(...cards());
-  $('fill-notices').replaceChildren(...cards());
+  $('quote-notices').replaceChildren(...cards());
   $('settings-dot').hidden = !setup.length;
-  // The welcome text is for a panel that's ready to use.
-  $('intro').hidden = !!setup.length;
-  $('next-steps').hidden = !!setup.length;
 }
 
 async function uploadNow() {
@@ -2553,9 +2704,9 @@ async function uploadNow() {
 }
 
 function wireUsage() {
-  $('auto-followups').addEventListener('change', (e) => usage.saveSettings({ autoFollowUps: e.target.checked }));
-  $('auto-pages').addEventListener('change', (e) => usage.saveSettings({ autoPages: e.target.checked }));
-  $('auto-advance').addEventListener('change', (e) => usage.saveSettings({ autoAdvance: e.target.checked }));
+  $('auto-followups').addEventListener('change', (e) => { usage.saveSettings({ autoFollowUps: e.target.checked }); renderSteps(); });
+  $('auto-pages').addEventListener('change', (e) => { usage.saveSettings({ autoPages: e.target.checked }); renderSteps(); });
+  $('auto-advance').addEventListener('change', (e) => { usage.saveSettings({ autoAdvance: e.target.checked }); renderSteps(); });
   $('server-url').addEventListener('change', async (e) => {
     const v = e.target.value.trim();
     // Blank means "no server" (export only); anything else must be an http(s) URL.
@@ -2590,6 +2741,10 @@ function wireUsage() {
     $('problem-form').hidden = !$('problem-form').hidden;
     if (!$('problem-form').hidden) $('problem-text').focus();
   });
+  $('cancel-problem').addEventListener('click', () => {
+    $('problem-form').hidden = true;
+    $('report-problem').focus();
+  });
   $('send-problem').addEventListener('click', () => {
     const text = $('problem-text').value.trim();
     if (!text) return;
@@ -2603,18 +2758,185 @@ function wireUsage() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// The intake PDF, viewed in the panel. Kept with the intake in the browser session (cleared when
+// Chrome closes), never logged or uploaded.
+
+const PDF_ZOOMS = [1, 1.5, 2, 3]; // 1 fits the page to the panel's width
+const pdfView = { bytes: null, doc: null, page: 0, zoom: 1, mark: null, run: 0, task: null };
+
+function toBase64(bytes) {
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(text);
+}
+
+// A new intake's PDF replaces the last one; null when the client is cleared.
+async function keepPdf(bytes) {
+  pdfView.doc?.then((doc) => doc.destroy()).catch(() => {});
+  Object.assign(pdfView, { bytes, doc: null, page: 0, zoom: 1, mark: null });
+  try {
+    if (bytes) await store.set('intakePdf', toBase64(bytes));
+    else await store.remove('intakePdf');
+  } catch { /* too big for the session store: viewable until the panel closes */ }
+}
+
+function pdfDoc() {
+  pdfView.doc ??= (async () => {
+    if (!pdfView.bytes) {
+      const saved = await store.get('intakePdf');
+      if (!saved) return null;
+      pdfView.bytes = Uint8Array.from(atob(saved), (c) => c.charCodeAt(0));
+    }
+    return pdfjs.getDocument({ data: pdfView.bytes.slice(), isEvalSupported: false }).promise;
+  })();
+  pdfView.doc.catch(() => { pdfView.doc = null; });
+  return pdfView.doc;
+}
+
+// From Intake: the first page, fitted. From a check: its field's page, zoomed in, the field marked.
+function openPdf({ field = null, label = null } = {}) {
+  const place = field ? state.intake?.places?.[field] : null;
+  pdfView.page = place ? place.page : 0;
+  pdfView.zoom = place ? 2 : 1;
+  pdfView.mark = place ? { ...place, label } : null;
+  state.pdfOpen = true;
+  showScreen();
+  $('pdf-back').focus();
+  renderPdf({ focus: true });
+}
+
+function closePdf() {
+  if (!state.pdfOpen) return;
+  pdfView.task?.cancel();
+  state.pdfOpen = false;
+  showScreen();
+  $('open-pdf').focus();
+}
+
+// `focus`: scroll to the marked field (or the top); `keep`: keep the middle of the view in place.
+async function renderPdf({ focus = false, keep = false } = {}) {
+  const run = ++pdfView.run;
+  const scroll = $('pdf-scroll');
+  const middle = keep && scroll.scrollWidth ? {
+    x: (scroll.scrollLeft + scroll.clientWidth / 2) / scroll.scrollWidth,
+    y: (scroll.scrollTop + scroll.clientHeight / 2) / scroll.scrollHeight,
+  } : null;
+  // The first page of a session takes a moment (pdf.js starts its worker).
+  if (!$('pdf-page').querySelector('canvas')) $('pdf-page').replaceChildren(h('p', { class: 'pdf-msg' }, 'Opening the PDF…'));
+  const doc = await pdfDoc().catch(() => null);
+  if (run !== pdfView.run) return;
+  const count = doc?.numPages ?? 0;
+  pdfView.page = Math.min(Math.max(pdfView.page, 0), Math.max(count - 1, 0));
+  $('pdf-count').textContent = count ? `${pdfView.page + 1} / ${count}` : '';
+  $('pdf-prev').disabled = !count || pdfView.page === 0;
+  $('pdf-next').disabled = !count || pdfView.page >= count - 1;
+  $('pdf-zoom-out').disabled = !count || pdfView.zoom <= PDF_ZOOMS[0];
+  $('pdf-zoom-in').disabled = !count || pdfView.zoom >= PDF_ZOOMS.at(-1);
+  $('pdf-zoom-fit').disabled = !count;
+  $('pdf-zoom-fit').textContent = `${Math.round(pdfView.zoom * 100)}%`;
+  $('pdf-tab').disabled = !count;
+  const mark = count && pdfView.mark?.page === pdfView.page ? pdfView.mark : null;
+  $('pdf-hint').hidden = !mark;
+  if (mark) $('pdf-hint-text').replaceChildren('Showing ', h('b', {}, mark.label), ` on page ${mark.page + 1}`);
+  if (!doc) {
+    $('pdf-page').replaceChildren(h('p', { class: 'pdf-msg' }, "This intake's PDF isn't kept on this computer any more. Load the file again to see it here."));
+    return;
+  }
+  const page = await doc.getPage(pdfView.page + 1);
+  if (run !== pdfView.run) return;
+  const fit = Math.max(scroll.clientWidth - 28, 120) / page.getViewport({ scale: 1 }).width;
+  const viewport = page.getViewport({ scale: fit * pdfView.zoom });
+  const ratio = window.devicePixelRatio || 1;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.floor(viewport.width * ratio);
+  canvas.height = Math.floor(viewport.height * ratio);
+  const sheet = h('div', { class: 'pdf-sheet' }, canvas);
+  sheet.style.width = canvas.style.width = `${Math.floor(viewport.width)}px`;
+  sheet.style.height = canvas.style.height = `${Math.floor(viewport.height)}px`;
+  pdfView.task?.cancel();
+  // ENABLE: the form's answers are drawn from their appearance in the PDF, as Chrome shows them.
+  const task = page.render({ canvasContext: canvas.getContext('2d'), viewport, transform: ratio === 1 ? null : [ratio, 0, 0, ratio, 0, 0], annotationMode: pdfjs.AnnotationMode.ENABLE });
+  pdfView.task = task;
+  try { await task.promise; } catch (e) {
+    if (e?.name !== 'RenderingCancelledException' && run === pdfView.run) $('pdf-page').replaceChildren(h('p', { class: 'pdf-msg' }, `Couldn't show this page (${e.message}). Open it in a new tab instead.`));
+    return;
+  }
+  if (run !== pdfView.run) return;
+  let box = null;
+  if (mark) {
+    const [x1, y1, x2, y2] = viewport.convertToViewportRectangle(mark.rect);
+    box = h('div', { class: 'pdf-mark' });
+    Object.assign(box.style, { left: `${Math.min(x1, x2)}px`, top: `${Math.min(y1, y2)}px`, width: `${Math.abs(x2 - x1)}px`, height: `${Math.abs(y2 - y1)}px` });
+    sheet.append(box);
+  }
+  $('pdf-page').replaceChildren(sheet);
+  if (middle) {
+    scroll.scrollLeft = middle.x * scroll.scrollWidth - scroll.clientWidth / 2;
+    scroll.scrollTop = middle.y * scroll.scrollHeight - scroll.clientHeight / 2;
+  } else if (focus && box) {
+    const view = scroll.getBoundingClientRect();
+    const at = box.getBoundingClientRect();
+    scroll.scrollTop += at.top - view.top - (scroll.clientHeight - at.height) / 2;
+    scroll.scrollLeft += at.left - view.left - Math.max(14, (scroll.clientWidth - at.width) / 2);
+  } else if (focus) {
+    scroll.scrollTop = 0;
+    scroll.scrollLeft = 0;
+  }
+}
+
+function zoomPdf(zoom) {
+  if (!zoom || zoom === pdfView.zoom) return;
+  pdfView.zoom = zoom;
+  renderPdf({ keep: true });
+}
+
+// The whole PDF in Chrome's own viewer, in a new tab (the panel keeps following the quote tab).
+async function openPdfInTab() {
+  await pdfDoc().catch(() => null);
+  if (!pdfView.bytes) return;
+  const url = URL.createObjectURL(new Blob([pdfView.bytes], { type: 'application/pdf' }));
+  if (inExtension) chrome.tabs.create({ url });
+  else window.open(url, '_blank', 'noopener');
+}
+
+function setFileMenu(open) {
+  $('file-menu').hidden = !open;
+  $('file-menu-btn').setAttribute('aria-expanded', String(open));
+}
+
+// ---------------------------------------------------------------------------------------------
 // Wiring
 
 function wire() {
   const drop = $('load');
   $('choose').addEventListener('click', (e) => { e.stopPropagation(); $('file').click(); });
   drop.addEventListener('click', () => $('file').click());
-  $('settings-btn').addEventListener('click', () => { closeAgentPopover({ restore: false }); state.settingsOpen = !state.settingsOpen; showScreen(); });
-  $('settings-done').addEventListener('click', () => { closeAgentPopover({ restore: false }); state.settingsOpen = false; showScreen(); });
-  $('tab-check').addEventListener('click', () => setStep('check'));
-  $('tab-fill').addEventListener('click', () => setStep('fill'));
-  $('go-fill').addEventListener('click', () => setStep('fill'));
-  $('replace').addEventListener('click', () => $('file').click());
+  $('settings-btn').addEventListener('click', () => { state.settingsOpen = !state.settingsOpen; showScreen(); });
+  $('settings-done').addEventListener('click', () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); });
+  // The brain: Settings, at the assistant's card.
+  $('agent-btn').addEventListener('click', () => {
+    openSettings();
+    $('assistant').scrollIntoView({ block: 'start' });
+    $('ai-on').focus({ preventScroll: true });
+  });
+  $('check-toggle').addEventListener('click', () => { state.checkOpen = !state.checkOpen; renderWarnings(); });
+  $('file-menu-btn').addEventListener('click', () => setFileMenu($('file-menu').hidden));
+  $('replace').addEventListener('click', () => { setFileMenu(false); $('file').click(); });
+  $('open-pdf').addEventListener('click', () => openPdf());
+  $('pdf-back').addEventListener('click', closePdf);
+  $('pdf-tab').addEventListener('click', openPdfInTab);
+  $('pdf-prev').addEventListener('click', () => { pdfView.page--; renderPdf({ focus: true }); });
+  $('pdf-next').addEventListener('click', () => { pdfView.page++; renderPdf({ focus: true }); });
+  $('pdf-zoom-in').addEventListener('click', () => zoomPdf(PDF_ZOOMS.find((z) => z > pdfView.zoom)));
+  $('pdf-zoom-out').addEventListener('click', () => zoomPdf([...PDF_ZOOMS].reverse().find((z) => z < pdfView.zoom)));
+  $('pdf-zoom-fit').addEventListener('click', () => zoomPdf(1));
+  $('pdf-refocus').addEventListener('click', () => { pdfView.zoom = Math.max(pdfView.zoom, 2); renderPdf({ focus: true }); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && state.pdfOpen && !state.settingsOpen) closePdf(); });
+  let resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (state.pdfOpen) renderPdf({ keep: true }); }, 150);
+  });
   $('file').addEventListener('change', (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; });
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
   for (const t of [document.body]) {
@@ -2634,7 +2956,12 @@ function wire() {
     await store.remove('session');
     await persistAiPending();
     await clearAgentKeys();
+    await keepPdf(null);
+    state.pdfOpen = false;
+    state.reportAt = null;
+    setFileMenu(false);
     $('report').replaceChildren();
+    $('filled-report').replaceChildren();
     render();
   });
   $('fill').addEventListener('click', () => fillPage());
@@ -2642,7 +2969,6 @@ function wire() {
   $('capture').addEventListener('click', capturePage);
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
   if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') captureFromShortcut(); });
-  wireAgentPopover();
   wireUsage();
   wireAi();
   if (inExtension) {
@@ -2669,6 +2995,7 @@ async function init() {
   $('auto-followups').checked = saved.autoFollowUps ?? true;
   $('auto-pages').checked = saved.autoPages ?? false;
   $('auto-advance').checked = saved.autoAdvance ?? true;
+  state.checkOpen = !!state.intake?.warnings.some((w, i) => w.level === 'check' && !state.intake.done.includes(i));
   uploadNow();
   render();
   renderUsage();

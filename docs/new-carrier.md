@@ -17,6 +17,7 @@ For each discovered question, record its target by a locator the carrier's own c
 3. Implement supported controls and helpers with prerequisites. Use `MAIN` only when page-owned widgets require it; enable batching only with evidence that per-answer server waits are unnecessary. Follow [browser filling](browser-filling.md) for execution changes.
 4. Give repeated drivers/vehicles distinct targets and verify entity identity after redraws, imports, or lookups. Preserve questions that need an agent's answer.
 5. Add the carrier's supported standards to [tni-rules.js](../src/ai/tni-rules.js) when AI assistance is in scope. AI availability does not make the carrier fully supported.
+6. List the quote's `steps` in order, from captured quotes, for the side panel's progress bar: `pages` (page names, as Progressive's `pageName`) or, for one address with several steps, a `heading` that matches the step's visible heading (AmWINS). A page no step names shows no bar; without captures (GEICO today) leave `steps` out rather than guess.
 
 ## Validate and expand
 

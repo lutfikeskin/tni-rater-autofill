@@ -278,12 +278,18 @@ test('fill report omits absent sections without rendering null text', () => {
   assert.ok(box.children.every((child) => child != null && child !== false), 'DOM replaceChildren must receive only actual report nodes');
 });
 
+// The report is split between step 2 (#filled-report, what was filled) and step 3 (#report).
+function reportBoxes() {
+  const boxes = {};
+  return { boxes, $: (id) => (boxes[id] ??= { className: '', children: [], replaceChildren(...children) { this.children = children; } }) };
+}
+
 // FL live run, 2026-10-07: "See what was filled always shows 0". A follow-up pass finds the
 // answers an earlier pass filled already there; they're still ours, counted and shown as filled.
 test('fill report counts answers an earlier pass on the page filled', () => {
-  const box = { className: '', children: [], replaceChildren(...children) { this.children = children; } };
+  const { boxes, $ } = reportBoxes();
   const context = {
-    $: () => box,
+    $,
     state: { tab: { id: 1, url: 'https://example.test/?pageName=AddVehicle' }, filled: new Map([['ref:RiskInput.VIN', { path: 'vehicles[0].vin', shown: '1FTBR3X87MKA12345' }]]) },
     pageOf: () => 'AddVehicle',
     h: (tag, props, ...children) => ({ tag, props, children }),
@@ -291,10 +297,10 @@ test('fill report counts answers an earlier pass on the page filled', () => {
   vm.runInNewContext(extractFunction('renderReport'), context);
   context.renderReport([{ fields: 3, filled: [], failed: [], noData: [], leftRequired: [], actions: [],
     kept: [{ label: 'VIN', key: 'ref:RiskInput.VIN' }, { label: 'Annual Mileage', key: 'ref:RiskInput.AnnualMileage' }] }]);
-  const text = JSON.stringify(box.children);
-  assert.match(text, /Filled 1 of 3 questions/);
-  const more = box.children.find((c) => c?.tag === 'details');
-  assert.equal(more.children[0].children[2].children[0], '1', 'the count matches what we filled');
+  const text = JSON.stringify(boxes['filled-report'].children);
+  assert.equal(context.state.reportAt.filledCount, 1, 'step 2 says how many were filled');
+  const more = boxes['filled-report'].children.find((c) => c?.tag === 'details');
+  assert.equal(more.children[0].children[2].children[0], '1 of 3', 'the count matches what we filled');
   assert.match(text, /1FTBR3X87MKA12345/);
   assert.match(text, /left as the page had it/, 'a value the page had itself is still said so');
 });
@@ -302,9 +308,9 @@ test('fill report counts answers an earlier pass on the page filled', () => {
 // FL live run, 2026-10-07: the cargo commodity list has no caption, and the panel showed a
 // failure with no name. Such a field is named after its rule.
 test('fill report names a field without a caption after its rule', () => {
-  const box = { className: '', children: [], replaceChildren(...children) { this.children = children; } };
+  const { boxes, $ } = reportBoxes();
   const context = {
-    $: () => box,
+    $,
     state: { tab: { id: 1, url: 'https://example.test/?pageName=CoveragesRates' } },
     pageOf: () => 'CoveragesRates',
     h: (tag, props, ...children) => ({ tag, props, children }),
@@ -313,9 +319,8 @@ test('fill report names a field without a caption after its rule', () => {
   context.renderReport([{ fields: 2, kept: [], noData: [], leftRequired: [], actions: [],
     filled: [{ label: '', name: 'Cargo commodity category', key: 'a', shown: 'Consumer Goods' }],
     failed: [{ label: '', name: 'Cargo commodity', key: 'b', reason: 'no option matches' }] }]);
-  const text = JSON.stringify(box.children);
-  assert.match(text, /"children":\["Cargo commodity"\]/, 'the failure is named');
-  assert.match(text, /Cargo commodity category/, 'so is the filled list');
+  assert.match(JSON.stringify(boxes.report.children), /"children":\["Cargo commodity"\]/, 'the failure is named');
+  assert.match(JSON.stringify(boxes['filled-report'].children), /Cargo commodity category/, 'so is the filled list');
 });
 
 // Fable on PR #43: a page the carrier changed (a known field renamed, most questions unfamiliar)
@@ -391,7 +396,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
     pickListItem: async () => {}, retireAiOrigins: async () => {},
     afterFill: () => {},
-    runPendingPage: () => {},
+    runPendingPage: () => {}, renderSteps: () => {},
   };
   vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
   await context.autoFill('Rates');
@@ -1053,7 +1058,8 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
     aiPendingStore: { get: async () => stored, set: async value => { stored = value; } },
     usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
-    $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }),
+    $: () => ({ replaceChildren() {} }), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }),
+    readFieldPlaces: async () => ({}), keepPdf: async () => {}, setFileMenu() {},
     normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
     store: { set: async () => {} }, clearAgentKeys: async () => {}, uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {} };
@@ -1380,7 +1386,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
       recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
       runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, retireAiOrigins: async () => {},
-      afterFill: () => followUp, runPendingPage: () => {}, viewOf: () => 't1',
+      afterFill: () => followUp, runPendingPage: () => {}, renderSteps: () => {}, viewOf: () => 't1',
     };
     vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
     await context.autoFill('Rates');
@@ -1677,6 +1683,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     store: { saved: {}, set(k, v) { this.saved[k] = v; return Promise.resolve(); } },
     LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; },
+    renderSite: () => { context.rendered = (context.rendered ?? 0) + 1; },
   };
   vm.runInNewContext(['viewOf', 'saveViews', 'resetViews', 'stepScope', 'recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);
@@ -2373,6 +2380,9 @@ test('a one-address application names the step of each layout, and steps are com
   controls = [{ label: 'VIN', kind: 'text' }];
   await context.recordLayout('Vehicles', 'changed');
   assert.deepEqual(logged.map((e) => [e.step, e.fields[0].label]), [['Vehicles', 'VIN'], ['Coverages', 'Exclude Collision Coverage']]);
+  // The progress bar under the header follows the step on screen.
+  assert.deepEqual({ ...context.state.stepSeen }, { tabId: 1, page: 'Vehicles', key: 'Vehicles' });
+  assert.equal(context.rendered, 3, 'redrawn on each step change');
   // Other carriers' layouts carry no step (their pages have their own names).
   context.state.tab.carrier = { id: 'progressive', layoutUrl: /./ };
   controls = [{ q: '2A1', kind: 'radio', label: 'Hauls hazmat?', options: ['Yes', 'No'] }];
@@ -2473,4 +2483,43 @@ test('a manual capture is numbered in its scenario, keeps a redacted note and sc
   assert.equal(downloads.length, 3);
   assert.match(SIDEPANEL, /chrome\.commands\?\.onCommand\.addListener\(\(command\) => \{ if \(command === 'capture-page'\) captureFromShortcut\(\); \}\)/);
   assert.match(extractFunction('captureFromShortcut'), /mine\.id !== focused\.id\) return;/, 'only the focused window\'s panel captures');
+});
+
+// The progress bar under the header: where the page is in the carrier's quote. Progressive by its
+// page name; AmWINS (one address) by the step heading the page kit read on this tab and page.
+test('the progress bar places Progressive pages by name and AmWINS steps by their heading', async () => {
+  const { progressive } = await import('../src/carriers/progressive.js');
+  const { amwins } = await import('../src/carriers/amwins.js');
+  const state = { tab: { id: 3 }, stepSeen: null };
+  const context = { state };
+  vm.runInNewContext(extractFunction('quoteStep'), context);
+  const at = (carrier, page) => context.quoteStep(carrier, page)?.at ?? null;
+  assert.equal(at(progressive, 'BusinessOwnerInfo'), 0);
+  assert.equal(at(progressive, 'AddVehicle'), 1, 'every vehicle\'s page is the Vehicles step');
+  assert.equal(at(progressive, 'AddDriver'), 2);
+  assert.equal(at(progressive, 'CoveragesRates'), 4);
+  assert.equal(at(progressive, 'SomethingNew'), null, 'a page not listed gets no bar');
+  const pages = progressive.steps.flatMap((s) => s.pages);
+  assert.equal(new Set(pages).size, pages.length, 'each page is in one step');
+  assert.equal(at(amwins, '/application/businessauto'), null, 'no heading read yet');
+  state.stepSeen = { tabId: 3, page: '/application/businessauto', key: 'Business Auto / Vehicles' };
+  assert.equal(at(amwins, '/application/businessauto'), 2);
+  state.stepSeen = { tabId: 4, page: '/application/businessauto', key: 'Vehicles' };
+  assert.equal(at(amwins, '/application/businessauto'), null, 'another tab\'s step is not this one\'s');
+});
+
+// AmWINS keeps one address for every step: a fill report is about the step it filled. After Save &
+// Continue the next step starts again at Fill this page instead of showing the last step's report.
+test('a one-address application shows a fill report only on the step it filled', () => {
+  const state = { tab: { id: 3 }, stepSeen: null, reportAt: { tabId: 3, page: '/app', filled: true, step: 'Coverages' } };
+  const context = { state };
+  vm.runInNewContext(extractFunction('reportHere'), context);
+  assert.equal(context.reportHere('/app'), true, 'no step read yet: the report stands');
+  state.stepSeen = { tabId: 3, page: '/app', key: 'Coverages' };
+  assert.equal(context.reportHere('/app'), true);
+  state.stepSeen = { tabId: 3, page: '/app', key: 'Underwriting' };
+  assert.equal(context.reportHere('/app'), false, 'the next step is on screen');
+  state.reportAt = { tabId: 3, page: '/app', filled: true };
+  assert.equal(context.reportHere('/app'), true, 'pages named by address (Progressive) carry no step');
+  assert.equal(context.reportHere('/other'), false);
 });
