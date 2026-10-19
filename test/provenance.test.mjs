@@ -350,7 +350,7 @@ test('business structure: a suffix is a corporation, no company is a sole propri
   agentsNote(structure('Synthetic Expediter', amwins));
 });
 
-test('facts the intake lacks are left to the agent: Progressive attestations, AmWINS loss-run questions', () => {
+test('facts the intake lacks are left to the agent: Progressive attestations; AmWINS loss runs are TNI standards', () => {
   const p = buildPlan(expediter(), progressive, {});
   for (const q of ['20F', '2C97']) {
     assert.ok(AGENT_SOURCES.includes(byQ(p, q).source), `q${q} is the agent's`);
@@ -358,15 +358,10 @@ test('facts the intake lacks are left to the agent: Progressive attestations, Am
   }
   assert.match(byQ(p, '20F').note, /belong/i);
   const a = buildPlan(with_({ 'drivers.0.maritalStatus': null, 'applicant.yearEstablished': null }), amwins, {});
-  for (const re of [/^Valued loss runs/]) {
-    const step = named(a, re);
-    assert.equal(step.source, 'fact', step.name);
-    agentsNote(step);
-    assert.match(step.note, /isn't on the intake|yourself/);
-  }
-  // TNI 2026-10-19: these three are its standards, no longer the agent's.
+  // TNI 2026-10-19: these are its standards, no longer the agent's (valued loss runs after a later
+  // AmWINS run the same day).
   assert.equal(byQ(p, '21E').source, 'standard');
-  for (const re of [/^How long with the current carrier/, /^Claim-free loss runs/]) assert.equal(named(a, re).source, 'standard', re.source);
+  for (const re of [/^How long with the current carrier/, /^Claim-free loss runs/, /^Valued loss runs/]) assert.equal(named(a, re).source, 'standard', re.source);
   assert.equal(bySel(a, '#driversPanel [data-id="martialStatus"]').value, null, 'no marital status on the intake: left blank, no Married default');
   assert.equal(bySel(a, '#driversPanel [data-id="martialStatus"]').warn, null);
   assert.equal(bySel(a, '#yearBusinessEstablished').value, new Date().getFullYear(), 'no year established: this year (TNI standard)');

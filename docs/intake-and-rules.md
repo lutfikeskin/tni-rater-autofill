@@ -58,7 +58,7 @@ TNI on 2026-10-10 brought four of them back as standards (live run: a license ye
 TNI on 2026-10-19 (live run: the agent answered all three by hand) brought back three more as standards, which TNI may change later:
 
 - AmWINS how long with the current carrier: 1 TO 2 YEARS (`standard`), asked only of clients with a DOT number.
-- AmWINS can provide claim-free loss runs: No (`standard`). Valued loss runs stay the agent's.
+- AmWINS can provide claim-free loss runs: No (`standard`). Valued loss runs: No (`standard`; TNI after a later AmWINS run the same day, until then the agent's).
 - Progressive USDOT obtained within the last 60 days (`21E`): Yes (`standard`). Progressive asks it only after Verify USDOT finds no record for the number, with its notice on the page.
 
 Later on 2026-10-19 (a second SC live run: each of these went to the agent and to Luna, though Progressive often had No already selected), TNI made four Progressive answers standards for an intake that doesn't answer them. An intake answer still wins:
