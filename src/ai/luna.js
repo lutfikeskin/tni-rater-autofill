@@ -1,6 +1,6 @@
 // Luna resolves bounded choices; code gates automatic picks and the agent approves them.
 import { AssistError, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake } from './common.js';
-import { ntlMention, NTL_WORDS } from '../normalize.js';
+import { ntlMention, intakeNotes, NTL_WORDS } from '../normalize.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
 export const API_URL = 'https://api.openai.com/v1/responses';
@@ -284,7 +284,9 @@ export function noteLines(text) {
 // `redact`: client names, numbers and the street replaced before anything leaves the computer.
 // `today`: the year a stated start year is counted to.
 export function buildNotesReview(record, { redact = (s) => s, today = new Date() } = {}) {
-  const lines = [...new Set(noteLines(record?.claims?.text).map(redact))];
+  // The claims box and the Additional Notes box (2026-10 form) are read as one text.
+  const notes = intakeNotes(record);
+  const lines = [...new Set(noteLines(notes).map(redact))];
   if (!lines.length) return null;
   const ids = lines.map((_, i) => `l${i}`);
   // NTL and GL (asked for, or had: hasGl) are Luna's own questions (ntl, generalLiability), not
@@ -296,13 +298,13 @@ export function buildNotesReview(record, { redact = (s) => s, today = new Date()
     { claimsBox: Object.fromEntries(ids.map((id, i) => [id, lines[i]])), formCoverage }, NOTES_INSTRUCTIONS, 2048, 'claims_review');
   // The line the intake's own NTL item already quotes, and its sentences as the lines above read
   // them (a later line that happens to read like part of it is not it).
-  const mention = ntlMention(record.claims.text);
+  const mention = ntlMention(notes);
   // The years the carrier rules use: the intake's years in business, else its years under own
   // authority; null is TNI's blank-intake standard (0 years, a new venture).
   const a = record.applicant ?? {};
   const intakeYears = a.yearsInBusiness ?? a.yearsExperience ?? null;
   return { body, lines, ids, quoted: mention ? redact(mention).replace(/\s+/g, ' ').trim() : null,
-    quotedFragments: mention ? noteFragments(mention).map(redact) : [], truncated: claimsTruncated(record.claims.text),
+    quotedFragments: mention ? noteFragments(mention).map(redact) : [], truncated: claimsTruncated(notes),
     intakeYears, year: today.getFullYear(), glOnForm: record.coverage?.gl === true };
 }
 
@@ -339,24 +341,24 @@ export function notesWarnings(results, { quotedFragments = [], intakeYears = nul
   const gl = glOnForm ? null : results.find((x) => x.generalLiability === true && (!lines || lines.includes(x.line)));
   if (gl) {
     out.push({ line: gl.line, code: 'ai.gl', path: 'coverage.hasGl', level: 'check', choices: GL_CHOICES.map((c) => ({ ...c })),
-      msg: `Luna: the claims box mentions general liability: "${shortQuote(gl.line)}". General liability isn't ticked on the form, so Progressive's other business coverages are filled None of the above. If the client has GL, confirm it: those questions are then left to you.` });
+      msg: `Luna: the claims box or Additional Notes mention general liability: "${shortQuote(gl.line)}". General liability isn't ticked on the form, so Progressive's other business coverages are filled None of the above. If the client has GL, confirm it: those questions are then left to you.` });
   }
   const stated = results.find((x) => statedYears(x, year) != null);
   const years = stated ? statedYears(stated, year) : null;
   if (stated && years !== intakeYears) {
     const about = `"${stated.line}" (${years} year${years === 1 ? '' : 's'})`;
     out.push({ line: stated.line, code: 'ai.years-in-business', path: 'applicant.yearsInBusiness', level: 'check', msg: intakeYears == null
-      ? `Luna: the claims box may say how long the business has run: ${about}. Years in business is blank on the intake, so the quote gets 0 (New Venture). If the line is right, enter Years in business or Year established here.`
-      : `Luna: the claims box may say how long the business has run: ${about}, but the intake gives ${intakeYears}. Check Years in business here.` });
+      ? `Luna: the claims box or Additional Notes may say how long the business has run: ${about}. Years in business is blank on the intake, so the quote gets 0 (New Venture). If the line is right, enter Years in business or Year established here.`
+      : `Luna: the claims box or Additional Notes may say how long the business has run: ${about}, but the intake gives ${intakeYears}. Check Years in business here.` });
   }
   for (const x of results) {
     // The intake's own NTL item already covers NTL here; another request in it still counts.
     const quotedNtl = quotedFragments.includes(x.line) && NTL_WORDS.test(x.line);
     if (x.ntl && !quotedNtl) {
-      out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: the claims box may be about non-trucking liability (NTL): "${x.line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you.` });
+      out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: the claims box or Additional Notes may be about non-trucking liability (NTL): "${x.line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you.` });
     }
     if (x.coverageChange) {
-      out.push({ line: x.line, code: 'ai.coverage-change', path: 'claims.text', level: 'check', msg: `Luna: the claims box may ask for a coverage change: "${x.line}". The filler uses the coverages ticked on the form; change them under Requested coverage if the client wants this.` });
+      out.push({ line: x.line, code: 'ai.coverage-change', path: 'claims.text', level: 'check', msg: `Luna: the claims box or Additional Notes may ask for a coverage change: "${x.line}". The filler uses the coverages ticked on the form; change them under Requested coverage if the client wants this.` });
     }
   }
   return out;
@@ -372,7 +374,7 @@ export async function reviewNotes(record, config, { call = callModel, redact, to
   const flagged = new Set(warnings.map(w => w.line)).size;
   for (const w of warnings) delete w.line;
   // Past the first lines nothing was read: the agent reads the rest.
-  if (review.truncated) warnings.push({ code: 'ai.claims-truncated', path: 'claims.text', level: 'check', msg: `The claims box is long: Luna read its first ${MAX_NOTE_LINES} lines only. Read the rest yourself for coverage requests.` });
+  if (review.truncated) warnings.push({ code: 'ai.claims-truncated', path: 'claims.text', level: 'check', msg: `The claims box and Additional Notes are long: Luna read its first ${MAX_NOTE_LINES} lines only. Read the rest yourself for coverage requests.` });
   const count = value => Number.isFinite(value) && value >= 0 ? value : 0;
   // The same usage counters as page reviews (suggest), cache included.
   return { warnings, lines: review.lines.length, flagged, modelCalls: 1, tokensIn: count(json.usage?.input_tokens), tokensOut: count(json.usage?.output_tokens),

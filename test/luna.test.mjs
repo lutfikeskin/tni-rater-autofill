@@ -513,7 +513,7 @@ test('claims-box review: a general liability mention the form lacks is a check i
 
   const items = notesWarnings(parseNotesReview(lines(true), review), review);
   assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.gl', 'coverage.hasGl', 'check']]);
-  assert.match(items[0].msg, /mentions general liability: "Also has general liability with another agency, wants it quoted"/);
+  assert.match(items[0].msg, /mention general liability: "Also has general liability with another agency, wants it quoted"/);
   assert.match(items[0].msg, /None of the above.*left to you/);
   assert.doesNotMatch(items[0].msg, /GL limit|Requested coverage/, 'not a GL request');
   assert.deepEqual(items[0].choices, [{ label: 'Client has GL', path: 'coverage.hasGl', value: true }, { label: 'Not GL' }]);

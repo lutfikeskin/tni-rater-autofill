@@ -202,8 +202,14 @@ const plain = (s) => String(s).replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 // Words that name a non-trucking liability (NTL) customer in the claims box, and the line the
 // intake's review item quotes (the first that has them).
 export const NTL_WORDS = /\b(ntl|non[\s-]*tr[ua]ck(ing)?|bob[\s-]*tail(ing)?)\b/i;
+// The intake's free text: the claims box and, on the form since 2026-10, the Additional Notes box.
+// Clients answer other questions and ask for coverage in either, so notes are read from both.
+export const intakeNotes = (record) => [record?.claims?.text, record?.notes?.text].filter(Boolean).join('\n') || null;
+// The same without the claims box's own yes/no answer: its other lines and the Additional Notes box.
+export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.text].filter(Boolean).join('\n') || null;
+
 export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
-export const ntlCheckMessage = (line) => `The claims box mentions non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. AmWINS has no NTL option the filler knows: quote it by hand.`;
+export const ntlCheckMessage = (line) => `The claims box or Additional Notes mention non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. AmWINS has no NTL option the filler knows: quote it by hand.`;
 
 // Words in the claims notes that answer the ownership question. Only the form's three answers
 // are taken as the answer; the others count as mentions, so "on a lease, truck owned" is not
@@ -264,8 +270,11 @@ const KNOWN_FIELDS = new Set([
   'license_plate', 'veh_ownership', 'trl_ownership', 'trl_hitch_type', 'trl_interchange', 'interchange_limit',
   'trl_interchange_limit', 'equip_trailer', 'equip_vehicle', 'ins_type_1', 'ins_carrier_1', 'ins_limit_1',
   'ins_exp_1', 'auto_liability', 'auto_liab_limit', 'cargo_cov', 'cargo_limit_ded', 'gen_liability',
-  'gen_liab_limit', 'reefer_breakdown', 'claims_details', 'cross_personal_auto', 'cross_life',
-  'cross_homeowners', 'cross_renters', 'cross_other', 'cross_other_text', ...MARITAL_FIELDS,
+  'gen_liab_limit', 'reefer_breakdown', 'claims_details', ...MARITAL_FIELDS,
+  // Only on intakes before 2026-10: the other-insurance-products box (cross_*). Only on 2026-10 and
+  // later: the Additional Notes box and the Canada question. Either form is read.
+  'cross_personal_auto', 'cross_life', 'cross_homeowners', 'cross_renters', 'cross_other', 'cross_other_text',
+  'additional_notes', 'loads_to_canada',
   ...ROWS.flatMap((n) => [
     `drv_first_${n}`, `drv_last_${n}`, `drv_dob_${n}`, `drv_lic_${n}`, `drv_state_${n}`, `drv_cdl_${n}`, `drv_cdl_yr_${n}`,
     `veh_type_${n}`, `veh_year_${n}`, `veh_make_${n}`, `veh_model_${n}`, `veh_vin_${n}`, `veh_value_${n}`,
@@ -334,6 +343,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       hazmat: yesNo(raw.haul_hazmat),
       hazPlacard: yesNo(raw.hazardous_placard),
       movingState: yesNo(raw.moving_state),
+      // Not on intakes before 2026-10: unanswered (null), never No.
+      canadaLoads: yesNo(raw.loads_to_canada),
       personalUse: yesNo(raw.vehicle_personal_use),
       vehicleOwnership: txt('veh_ownership'),
       licensePlate: txt('license_plate')?.toUpperCase() ?? null,
@@ -366,6 +377,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       hasGl: null,
     },
     claims: { text: cleanMultiline(raw.claims_details), hasClaims: null, notes: null },
+    // The Additional Notes box (2026-10 form), as written; null on older intakes.
+    notes: { text: cleanMultiline(raw.additional_notes) },
     crossSell: [
       raw.cross_personal_auto && 'Personal auto', raw.cross_life && 'Life', raw.cross_homeowners && 'Homeowners',
       raw.cross_renters && 'Renters', raw.cross_other && (txt('cross_other_text') ?? 'Other'),
@@ -568,18 +581,22 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     else if (/^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
     const notes = (record.claims.hasClaims == null ? lines : lines.slice(1)).filter(Boolean);
     record.claims.notes = notes.length ? notes.join('\n') : null;
+  } else check('claims.blank', 'claims.text', 'Claims question left blank.');
+  // The claims box's other answers and the Additional Notes box are read alike.
+  const notes = otherNotes(record);
+  if (notes) {
     // A blank ownership answer that turns up in the notes ("Financed") is the ownership answer,
     // when the note is unambiguous (ownershipFromNotes); otherwise the agent reads it. The box
     // itself always wins over the notes.
-    const own = ops.vehicleOwnership ? null : ownershipFromNotes(record.claims.notes);
+    const own = ops.vehicleOwnership ? null : ownershipFromNotes(notes);
     if (own?.value) ops.vehicleOwnership = own.value;
-    else if (own) check('ownership.notes', 'operations.vehicleOwnership', `The claims box mentions ownership ("${own.lines}") but doesn't settle it for the vehicles. Set Vehicle ownership (owned / leased / financed) yourself.`);
-    // Non-trucking liability (NTL) is named only here: "NTL", "non-trucking" (also written "non
-    // tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the agent
-    // decides, and nothing is added until they set it to Yes.
-    const ntlLine = ntlMention(claims);
-    if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
-  } else check('claims.blank', 'claims.text', 'Claims question left blank.');
+    else if (own) check('ownership.notes', 'operations.vehicleOwnership', `The claims box or Additional Notes mention ownership ("${own.lines}") but don't settle it for the vehicles. Set Vehicle ownership (owned / leased / financed) yourself.`);
+  }
+  // Non-trucking liability (NTL) is named only in the notes: "NTL", "non-trucking" (also written
+  // "non tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the
+  // agent decides, and nothing is added until they set it to Yes.
+  const ntlLine = ntlMention(intakeNotes(record));
+  if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
     check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.');
   }

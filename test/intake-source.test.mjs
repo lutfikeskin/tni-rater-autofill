@@ -13,18 +13,23 @@ import { amwins } from '../src/carriers/amwins.js';
 const pdf = (name) => new Uint8Array(fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
 const raw = await readIntakeFields(pdfjs, pdf('sample-intake.pdf'));
 const places = await readIntakePlaces(pdfjs, pdf('sample-intake.pdf'));
+// The 2026-10 form: no other-insurance-products box; Additional Notes and the Canada question added.
+const rawNew = await readIntakeFields(pdfjs, pdf('sample-intake-2026-10.pdf'));
+const placesNew = await readIntakePlaces(pdfjs, pdf('sample-intake-2026-10.pdf'));
 
 test('the intake PDF says where each of its fields is drawn', () => {
   assert.deepEqual(places.pages, [{ width: 612, height: 792 }]);
   // The USDOT box, near the top left of the form (PDF units from the bottom left).
   assert.equal(places.fields.dot_number.page, 0);
   places.fields.dot_number.rect.forEach((n, i) => assert.ok(Math.abs(n - [74, 681, 162, 695][i]) <= 1, `USDOT box edge ${i}: ${n}`));
-  for (const name of Object.keys(raw)) {
-    const place = places.fields[name];
-    assert.ok(place, `${name} has a place`);
-    assert.equal(place.page, 0);
-    const [x1, y1, x2, y2] = place.rect;
-    assert.ok(x1 < x2 && y1 < y2 && x2 <= 612 && y2 <= 792, `${name} is on the page`);
+  for (const [form, fields] of [[raw, places], [rawNew, placesNew]]) {
+    for (const name of Object.keys(form)) {
+      const place = fields.fields[name];
+      assert.ok(place, `${name} has a place`);
+      assert.equal(place.page, 0);
+      const [x1, y1, x2, y2] = place.rect;
+      assert.ok(x1 < x2 && y1 < y2 && x2 <= 612 && y2 <= 792, `${name} is on the page`);
+    }
   }
 });
 
@@ -37,7 +42,9 @@ test('every answer of the client record points at the form fields it was read fr
       // The agent's (driver gender): no box on the form, never read.
       if (NOT_ON_INTAKE.has(tpl)) { assert.deepEqual(fields, [], `${path} isn't on the form`); continue; }
       assert.ok(fields.length, `${path} has a form field`);
-      for (const name of fields) assert.ok(name in raw, `${path}: ${name} is a field of the form`);
+      // A field of either form: the Additional Notes box and the Canada question are only on the
+      // 2026-10 form.
+      for (const name of fields) assert.ok(name in raw || name in rawNew, `${path}: ${name} is a field of the form`);
     }
   }
   // A TNI standard or an answer only the agent gives is on no field.

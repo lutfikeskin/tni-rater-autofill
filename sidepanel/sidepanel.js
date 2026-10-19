@@ -1,7 +1,7 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../src/intake.js';
 import { sourcePlace } from '../src/intake-source.js';
-import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { carrierForUrl, quoteProgress } from '../src/carriers.js';
@@ -1059,8 +1059,9 @@ async function agentEdit(path, after, kind) {
   await save();
   // Luna read the claims box against the form's coverages (NTL and GL are its own questions):
   // an edit to either is read again; a driver's first name, for the gender check, likewise.
-  if (path === 'claims.text') claimsTextEdited(state.intake);
-  if (path === 'claims.text' || (path.startsWith('coverage.') && !['coverage.ntl', 'coverage.gl', 'coverage.hasGl'].includes(path))) reviewClaimsBox({ retry: true });
+  const notesEdit = path === 'claims.text' || path === 'notes.text';
+  if (notesEdit) claimsTextEdited(state.intake);
+  if (notesEdit || (path.startsWith('coverage.') && !['coverage.ntl', 'coverage.gl', 'coverage.hasGl'].includes(path))) reviewClaimsBox({ retry: true });
   if (/^drivers\[\d+\]\.first$/.test(path)) reviewDriverGender({ retry: true });
 }
 
@@ -3051,14 +3052,14 @@ async function aiSettings() {
 // since its check was for the old text. Items are kept by position (checked marks are).
 function claimsTextEdited(intake) {
   const uncheck = (i) => { intake.done = intake.done.filter((d) => d !== i); };
-  const mention = ntlMention(intake.record.claims?.text);
+  const mention = ntlMention(intakeNotes(intake.record));
   const i = intake.warnings.findIndex((w) => w.code === 'coverage.ntl');
   if (mention && i < 0) intake.warnings.push({ code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: ntlCheckMessage(mention) });
   else if (mention && intake.warnings[i].msg !== ntlCheckMessage(mention)) {
     intake.warnings[i] = { code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: ntlCheckMessage(mention) };
     uncheck(i);
   } else if (!mention && i >= 0 && intake.warnings[i].level === 'check') {
-    intake.warnings[i] = { code: 'coverage.ntl', path: 'coverage.ntl', level: 'info', msg: 'The claims box no longer mentions non-trucking liability (NTL).' };
+    intake.warnings[i] = { code: 'coverage.ntl', path: 'coverage.ntl', level: 'info', msg: 'The claims box and Additional Notes no longer mention non-trucking liability (NTL).' };
   }
   intake.warnings.forEach((w, j) => { if (['ai.claims-truncated', 'ai.claims-review-failed'].includes(w.code)) uncheck(j); });
   save();
@@ -3067,7 +3068,7 @@ function claimsTextEdited(intake) {
 
 // The long-claims-box item is the code's own: it stays while the box is still too long to read whole.
 function supersedeClaimsItems(intake) {
-  const truncated = claimsTruncated(intake.record.claims?.text);
+  const truncated = claimsTruncated(intakeNotes(intake.record));
   intake.warnings.forEach((w, i) => {
     if (['ai.ntl', 'ai.coverage-change', 'ai.years-in-business', 'ai.gl'].includes(w.code) ||(w.code === 'ai.claims-truncated' && !truncated)) {
       if (w.code === 'ai.ntl' && intake.record.claims) intake.record.claims.aiNtl = false;
@@ -3083,7 +3084,8 @@ function claimsContext(record) {
   // In key order (stableJson): otherwise every reopen took the saved intake for an edit, Luna's
   // claims-box items were retired, the box was sent again, and the intake saved over any change
   // made meanwhile.
-  return stableJson([record.claims?.text ?? null, coverage]);
+  // The Additional Notes box only when the intake has it: an older saved intake keeps its context.
+  return stableJson([record.claims?.text ?? null, coverage, ...(record.notes?.text ? [record.notes.text] : [])]);
 }
 
 async function reviewClaimsBox({ retry = false } = {}) {
@@ -3097,7 +3099,7 @@ async function reviewClaimsBox({ retry = false } = {}) {
     await save();
     render();
   }
-  if (!intake?.record.claims?.text || intake.notesReview?.done || (intake.notesReview?.failed && !retry)) return;
+  if (!intakeNotes(intake?.record) || intake.notesReview?.done || (intake.notesReview?.failed && !retry)) return;
   // One at a time: a settings change during a review runs once it ends (a corrected key).
   if (state.notesAsking === intake) { if (retry) state.notesRetry = intake; return; }
   // Taken before the first await: two triggers close together ask once.

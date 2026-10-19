@@ -47,7 +47,7 @@
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { owner } from './progressive.js';
-import { isLongHaul } from '../normalize.js';
+import { isLongHaul, otherNotes } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired } from '../util.js';
 
 const street = (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null;
@@ -143,7 +143,7 @@ const disclosure = (r) => {
   if (p?.carrier && !noPriorInsurance(p)) {
     const kind = /commercial/i.test(p.type ?? '') ? 'Commercial' : /personal/i.test(p.type ?? '') ? 'Personal' : p.type;
     const carrier = p.carrier.toLowerCase().replace(/\b\w/g, (x) => x.toUpperCase());
-    const unavailable = /\b(?:pop|proof of prior)(?:\s+(?:insurance|document))?\s+(?:unavailable|missing|not available)\b/i.test(r.claims?.notes ?? '');
+    const unavailable = /\b(?:pop|proof of prior)(?:\s+(?:insurance|document))?\s+(?:unavailable|missing|not available)\b/i.test(otherNotes(r) ?? '');
     const prefix = unavailable ? 'Prior insurance; POP document unavailable' : 'POP';
     lines.push([prefix, kind].filter(Boolean).join(' ') + ` - ${carrier}${p.limit ? ` - ${p.limit}` : ''}${p.expiration ? ` - Exp Date ${p.expiration}` : ''}${priorPolicyExpired(r, p) ? ' - EXPIRED; confirm renewal or lapse' : ''}`);
   }

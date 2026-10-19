@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { assistContextKey, stableJson } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
+import { intakeNotes } from '../src/normalize.js';
 import { amwins } from '../src/carriers/amwins.js';
 
 
@@ -1896,7 +1897,7 @@ function claimsHarness() {
   const state = { intake: null, notesAsking: null, notesRetry: null };
   class AssistError extends Error {}
   const context = {
-    state, AssistError, Date, stableJson, redactor: () => (s) => s, redactionTerms: () => [], claimsTruncated: (text) => /LONG/.test(text ?? ''),
+    state, AssistError, Date, stableJson, redactor: () => (s) => s, redactionTerms: () => [], claimsTruncated: (text) => /LONG/.test(text ?? ''), intakeNotes,
     aiSettings: async () => ({ on: !state.offline, apiKey: 'k', model: 'gpt-6-luna' }),
     reviewNotes: async (record, cfg, opts) => {
       requests.push({ record, opts, reply: t.reply });
@@ -2120,7 +2121,7 @@ test('claims-box edits keep the NTL, long-box and failed-review items current', 
   const intake = { record: { claims: { text: 'No\nNeeds NTL' } }, done: [0, 1, 2],
     warnings: [{ code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: 'NTL: Needs NTL' },
       { code: 'ai.claims-truncated', level: 'check' }, { code: 'ai.claims-review-failed', level: 'check' }] };
-  const context = { ntlMention, ntlCheckMessage, save() {}, render() {} };
+  const context = { ntlMention, ntlCheckMessage, intakeNotes, save() {}, render() {} };
   vm.runInNewContext(extractFunction('claimsTextEdited'), context);
   intake.record.claims.text = 'No\nNeeds bobtail off dispatch';
   context.claimsTextEdited(intake);
