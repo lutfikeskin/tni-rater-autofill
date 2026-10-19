@@ -85,8 +85,10 @@ export function log(...events) {
     // Oldest events go first if nobody has exported in a long time; how many is logged in their
     // place (usage_lost), so a review knows the log is missing some.
     if (list.length > MAX_EVENTS) {
-      const lost = list.length - MAX_EVENTS + 1;
-      list = [...list.slice(lost), { ...stamp(), session: null, intakeId: null, type: 'usage_lost', count: lost }];
+      const dropped = list.slice(0, list.length - MAX_EVENTS + 1);
+      // A usage_lost entry among them stands for the events it counted, so those carry over.
+      const count = dropped.reduce((n, e) => n + (e.type === 'usage_lost' && Number.isInteger(e.count) ? e.count : 1), 0);
+      list = [...list.slice(dropped.length), { ...stamp(), session: null, intakeId: null, type: 'usage_lost', count }];
     }
     // Saved first: a failed write leaves a gap in the numbers, never a number used twice.
     await local.set(SEQ_KEY, seq);
