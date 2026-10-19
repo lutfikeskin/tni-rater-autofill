@@ -413,3 +413,18 @@ test('legacy AI decision evidence survives older-client uploads and historical r
   assert.deepEqual([rows[4].probability, rows[4].support, rows[4].evidenceProbability, rows[4].confidence], [undefined, 1, 1, 'medium']);
   assert.doesNotMatch(JSON.stringify(rows), /client name/);
 });
+
+test('keeps a panel crash with its bounded message and extension frames only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'client_error', filled: undefined, where: 'panel', error: 'Cannot read properties of null', stack: ['sidepanel/sidepanel.js:12:5'] }),
+      ev({ type: 'client_error', filled: undefined, where: 'carrier page', error: 'x'.repeat(301), stack: ['https://carrier.example/app.js:1:1'] }),
+    ] })).json();
+    assert.equal(r.accepted, 2);
+  });
+  const [ok, bad] = stored(dataDir);
+  assert.deepEqual([ok.where, ok.error, ok.stack], ['panel', 'Cannot read properties of null', ['sidepanel/sidepanel.js:12:5']]);
+  assert.deepEqual([bad.where, bad.error, bad.stack], [undefined, undefined, undefined]);
+  assert.deepEqual(bad.dropped.sort(), ['error', 'stack', 'where']);
+});
