@@ -724,9 +724,14 @@ async function loadFile(file) {
 // The agent's settings, logged whole: when an intake is loaded, when the panel opens on a saved
 // one, and when one changes (agentSettingsEvent). Practice pages are no exception: settings
 // belong to the agent, not to a page.
+// A change with no intake and session open belongs to no quote, so it is not logged. A failure
+// here must never reach the caller: the handlers do not await it.
 async function logSettings(reason, changed) {
-  const saved = await usage.settings();
-  usage.log(agentSettingsEvent(saved, { overwrite: !!$('overwrite')?.checked, reason, changed, centralServer: usage.DEFAULT_SERVER }));
+  try {
+    if (reason === 'changed' && !(state.intake && usage.currentSession())) return;
+    const saved = await usage.settings();
+    usage.log(agentSettingsEvent(saved, { overwrite: !!$('overwrite')?.checked, reason, changed, centralServer: usage.DEFAULT_SERVER }));
+  } catch { /* the settings log is best effort */ }
 }
 
 // The agent marks (or unmarks) the loaded intake as a test run: remembered for this PDF on this

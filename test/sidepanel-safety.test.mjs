@@ -3727,3 +3727,28 @@ test('the agent\'s settings are logged whole: on load, on opening, and on each c
   assert.match(extractFunction('wireAi'), /await usage\.saveSettings\(patch\);\s+logSettings\('changed'/);
   assert.match(SIDEPANEL, /if \(state\.intake && usage\.currentSession\(\)\) logSettings\('opened'\);/);
 });
+
+test('a settings change is logged only with an intake and session open, and a failure stays inside', async () => {
+  const logged = [];
+  let session = null;
+  let failing = false;
+  const sandbox = {
+    state: { intake: null }, $: () => null,
+    usage: { currentSession: () => session, settings: async () => { if (failing) throw new Error('storage'); return {}; }, log: (e) => logged.push(e), DEFAULT_SERVER: 'https://example.test' },
+    agentSettingsEvent: (saved, opts) => ({ type: 'agent_settings', reason: opts.reason, changed: opts.changed }),
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('logSettings'), sandbox);
+  await sandbox.logSettings('changed', 'autoPages');
+  assert.equal(logged.length, 0, 'no intake, no session');
+  sandbox.state.intake = {};
+  await sandbox.logSettings('changed', 'autoPages');
+  assert.equal(logged.length, 0, 'an intake without a session');
+  session = { intakeId: 'x' };
+  await sandbox.logSettings('changed', 'autoPages');
+  assert.deepEqual(logged.map((e) => e.reason), ['changed']);
+  failing = true;
+  await assert.doesNotReject(sandbox.logSettings('changed', 'autoPages'));
+  await assert.doesNotReject(sandbox.logSettings('intake'));
+  assert.equal(logged.length, 1, 'a failure logs nothing and throws nothing');
+});
