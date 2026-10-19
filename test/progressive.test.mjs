@@ -410,7 +410,7 @@ test('AmWINS: current carrier tenure (asked with a DOT only) 1 TO 2 YEARS and cl
   assert.deepEqual([sel('#howLongWithCurrentCarrier').value, sel('#howLongWithCurrentCarrier').source], ['1 TO 2 YEARS', 'standard']);
   assert.equal(sel('#howLongWithCurrentCarrier').ignore, false);
   assert.deepEqual([named(/^Claim-free loss runs/).value, named(/^Claim-free loss runs/).source], [false, 'standard']);
-  assert.equal(named(/^Valued loss runs/).source, 'fact', 'valued loss runs stay the agent\'s');
+  assert.deepEqual([named(/^Valued loss runs/).value, named(/^Valued loss runs/).source], [false, 'standard'], 'TNI 2026-10-19 (a later run): always No');
   const pip = named(/^Personal Injury Protection \(/);
   assert.equal(pip.ignore, false);
   assert.equal(pip.value, false, 'No: Medical Payments is offered');

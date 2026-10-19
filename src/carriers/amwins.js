@@ -15,8 +15,8 @@
 //
 // Rule sources (plan.js `source`): `derived` reads the intake, `standard` is TNI's coverage or
 // workflow choice (tagged in the panel; a check item in review mode), `fact` / `attestation` is
-// never filled (2026-10-09: valued loss runs and blank marital status are the agent's;
-// 2026-10-19: 1 TO 2 YEARS with the current carrier and no claim-free loss runs; 2026-10-10: gender is MALE unless set in client details, year licensed birth year + 17; attached equipment follows the intake; additional interest and
+// never filled (2026-10-09: blank marital status is the agent's;
+// 2026-10-19: 1 TO 2 YEARS with the current carrier, no claim-free and no valued loss runs; 2026-10-10: gender is MALE unless set in client details, year licensed birth year + 17; attached equipment follows the intake; additional interest and
 // the underwriting questions are No, and a blank years in business is a new venture).
 //
 // Third quote (2026-10-02): the contact is the client (name and phone), the garage address boxes
@@ -353,10 +353,10 @@ export const amwins = {
     // The client's insurance history the intake doesn't give. TNI's standards (2026-10-19, after a
     // live run; may change later): 1 TO 2 YEARS with the current carrier and no claim-free loss
     // runs. The current-carrier question is only asked of clients with a DOT number. Valued loss
-    // runs stay the agent's.
+    // runs: No too (TNI, 2026-10-19, a later AmWINS run: "valued loss runs are always NO").
     { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier (standard: 1 TO 2 YEARS)', kind: 'choice', source: 'standard', ignore: (r) => !r.applicant.dot, value: () => '1 TO 2 YEARS' },
     { name: 'Claim-free loss runs (standard: No)', label: '^can provide claim free loss run$', kind: 'bool', source: 'standard', value: () => false },
-    { label: '^valued loss runs$', kind: 'bool', ...fact('Valued loss runs', 'Whether valued loss runs can be provided isn\'t on the intake: answer it yourself.') },
+    { name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', source: 'standard', value: () => false },
     // Preserve the intake's explicit claims answer; unknown history stays with the agent.
     // Yes opens the required Loss History.
     { name: 'Any prior loss', label: '^any prior loss$', kind: 'bool', source: 'derived', clientFact: true,
