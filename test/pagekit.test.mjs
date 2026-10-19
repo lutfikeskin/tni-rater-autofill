@@ -3064,7 +3064,7 @@ test('verify revealed: an absent lookup with a shown result still waits for its 
   const report = await h.kit.fill(plan, { maxRounds: 8, advance: { text: '^Continue$' } });
   assert.equal(report.actions.length, 0);
   assert.ok(report.blockers.some((b) => /required-helper clicked/.test(b)), report.blockers.join(' | '));
-  // The same wait, structured for the panel (src/waiting.js names it in the agent's words).
+  // The same wait, by kind (what tells a lookup the page did itself at the end of the fill).
   assert.ok(report.blocked.some((b) => JSON.stringify(b.waits) === JSON.stringify([{ action: 'required-helper' }])), JSON.stringify(report.blocked));
   assert.equal(report.advanced, undefined);
 });

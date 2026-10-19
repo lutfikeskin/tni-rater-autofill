@@ -1666,8 +1666,8 @@
           && (!a.afterValue || pairs.some(({ step, control }) => step.path === a.afterValue[0] && new RegExp(a.afterValue[1], 'i').test(selectedText(control) ?? '')));
         if (!ready) {
           // Name what it waits for (field paths, buttons, pages: no client values), so the panel
-          // and the usage log say why a helper didn't run: `waits` for the panel, which names each
-          // in the agent's words, and `why` (the same, as text) for the log.
+          // and the usage log say why a helper didn't run: `why` for the log, and `waits` (the same,
+          // by kind) to tell, at the end of the fill, one the page did itself (doneByPage).
           const waits = [
             ...a.after.filter((p) => !has(p)).map((path) => ({ path })),
             ...(a.afterAny?.length && !a.afterAny.some(has) ? [{ any: a.afterAny }] : []),

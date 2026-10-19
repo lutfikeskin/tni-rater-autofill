@@ -81,8 +81,6 @@ function actionSteps(carrier, record, active) {
       unique: !!a.unique,
       // A helper the agent must otherwise do by hand: what the panel says when it can't be clicked.
       label: a.label ?? null,
-      // The button as the agent sees it on the page, for the panel (never its id).
-      button: a.button ?? null,
       missing: resolve(a.missing) ?? null,
       // `heldBy`: helpers (by id) whose open "needs you" item holds this one; `resolvedBy`: the
       // button whose return on the page settles that item (the Add NTL link, NTL removed).

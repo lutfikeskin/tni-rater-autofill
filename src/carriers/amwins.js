@@ -267,24 +267,24 @@ export const amwins = {
   supportedClasses: [{ re: FREIGHT, whatHaul: true }],
   // Import Data right after the VIN list is filled, before the vehicle boxes, which it fills.
   actions: [
-    ...[1, 2, 3].map((index) => ({ id: `addDriver${index}`, button: 'Add Driver', text: '^add driver$',
+    ...[1, 2, 3].map((index) => ({ id: `addDriver${index}`, text: '^add driver$',
       // The previous driver's row is in and filled (any of its intake answers on the page); not
       // just its license number, which a driver can be missing and would then block every later row.
       when: (r) => r.drivers.length > index, afterAny: ['first', 'last', 'dob', 'licenseNumber'].map((f) => `drivers[${index - 1}].${f}`),
       unlessSelector: `#driversPanel > .app-rp-section[data-id="${index}"]` })),
     // Start: the Auto tile opens the risk state box; Open New Application once the state is in.
-    { id: 'autoApplication', button: 'Auto', page: START_PAGES, text: '^auto$', unlessActions: ['openApplication'] },
-    { id: 'openApplication', button: 'Open New Application', page: START_PAGES, text: '^open new application$', after: ['amwins.riskState'] },
-    { id: 'importVins', button: 'Import Data', text: '^import data$', after: ['amwins.vinList'], immediate: true },
+    { id: 'autoApplication', page: START_PAGES, text: '^auto$', unlessActions: ['openApplication'] },
+    { id: 'openApplication', page: START_PAGES, text: '^open new application$', after: ['amwins.riskState'] },
+    { id: 'importVins', text: '^import data$', after: ['amwins.vinList'], immediate: true },
     // Import Data only shows a preview: this adds the vehicles (and redraws their rows).
     // Done only once the rows changed (the VIN and decoded values drawn into them, the list
     // emptied): a click the page didn't take is tried again, then left to the agent.
-    { id: 'importVinRecords', button: 'Import Valid Records', text: '^import valid records$', afterActions: ['importVins'], immediate: true, verify: 'revealed' },
+    { id: 'importVinRecords', text: '^import valid records$', afterActions: ['importVins'], immediate: true, verify: 'revealed' },
     // Underwriting: answers every General Information question No in one go (before the rules
     // below answer them one at a time; "other topics" is set back to Yes afterwards). Not while
     // an answer the agent gave is on the step: it reset a Yes of theirs (reproduced 2026-10-08),
     // and the rules answer the other questions anyway.
-    { id: 'defaultNo', button: 'Default all answers to No', text: '^default all answers to\\W*no\\W*$', immediate: true, skipIfProtected: true },
+    { id: 'defaultNo', text: '^default all answers to\\W*no\\W*$', immediate: true, skipIfProtected: true },
   ],
   // Each step ends with Save & Continue (saves the draft, opens the next step) once nothing is
   // left for the agent. The declaration step never gets there: the declaration is the agent's.
