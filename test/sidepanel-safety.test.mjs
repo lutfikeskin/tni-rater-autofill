@@ -4343,6 +4343,37 @@ test('marking a needs-you item done logs which question and why, keyed like fill
   assert.equal(logged.length, 1, 'practice pages log nothing');
 });
 
+test('a problem report names the fill it is about: view, run, step and what held Continue', () => {
+  let now = 1_000_000;
+  const state = { intake: { record: {} }, lastRuns: new Map([['7|Rates', { run: 'run-1234-abcd', at: now - 90_000, step: undefined, blockers: ['button: recalculate'] }]]) };
+  const sandbox = { state, viewOf: () => 't1', Date: { now: () => now }, Math };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('problemContext'), sandbox);
+  const tab = { id: 7, carrier: { id: 'progressive' } };
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), { view: 't1', run: 'run-1234-abcd', blockerList: ['button: recalculate'], since: 90 });
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'AddVehicle'))), { view: 't1' }, 'no fill on that page: only where');
+  now += 31 * 60 * 1000;
+  assert.equal(sandbox.problemContext(tab, 'Rates').run, undefined, 'a fill half an hour old is not what the report is about');
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), { view: 't1' });
+  state.intake = null;
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
+  assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
+});
+
+test('a new intake does not inherit the previous client\'s fill in problem reports', () => {
+  const now = 1_000_000;
+  const state = { intake: { record: { id: 'A' } }, lastLayouts: new Map(), lastRuns: new Map([['7|Rates', { run: 'run-1234-abcd', at: now - 60_000, blockers: ['button: recalculate'] }]]) };
+  const sandbox = { state, viewOf: () => 't1', Date: { now: () => now }, Math, Set, Map };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('problemContext'), sandbox);
+  vm.runInContext(extractFunction('holdLayouts'), sandbox);
+  const tab = { id: 7, carrier: { id: 'progressive' } };
+  assert.equal(sandbox.problemContext(tab, 'Rates').run, 'run-1234-abcd');
+  state.intake = { record: { id: 'B' } };
+  sandbox.holdLayouts();
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), { view: 't1' }, 'client B has no fill yet on that page');
+});
+
 test('a settings change is logged only with an intake and session open, and a failure stays inside', async () => {
   const logged = [];
   let session = null;
