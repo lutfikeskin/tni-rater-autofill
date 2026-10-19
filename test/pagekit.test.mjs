@@ -2082,6 +2082,9 @@ test('a lookup whose button the page took away once the VIN was typed is not lef
   assert.equal(vin.value, '1FTBR3X87MKA12345');
   assert.equal(report.blocked.length, 0, report.blockers.join(' | '));
   assert.ok(!report.blockers.some((b) => /lookupVin/.test(b)), 'Continue isn\'t held by it');
+  // Done by the page, not clicked: recorded like a result already shown, so a helper that follows
+  // it on a later page (Add Trailer after every vehicle's lookup) doesn't wait for it (review of PR #98).
+  assert.equal(JSON.stringify(report.actions.filter((x) => x.id === 'lookupVin:1').map((x) => x.alreadyShown)), '[true]');
 });
 
 test('each filled answer carries its timing and side effects (revealed / removed / changed)', async () => {

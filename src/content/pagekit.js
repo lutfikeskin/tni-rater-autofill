@@ -1792,18 +1792,25 @@
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.unfinished });
       }
     }
-    // A button that was waiting earlier in this fill and got clicked later isn't waiting any more,
-    // and neither is one that waited only for answers the page now shows, once the page took the
-    // button away: Progressive looked a second vehicle's VIN up by itself once it was typed (SC
-    // 2026-10-19), and the panel still said Look up VIN was waiting for the VIN. One still waiting
-    // for another helper, a page or a premium stays, as does a menu item (`opener`: shown only with
-    // its menu open) and a helper the agent must do by hand (`missing`, reported above).
-    const goneUnclicked = (b) => {
+    // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
+    // Nor is one that waited only for answers the page now shows, once the page took the button
+    // away: Progressive looked a second vehicle's VIN up by itself once it was typed (SC
+    // 2026-10-19), and the panel still said Look up VIN was waiting for the VIN. The page did it,
+    // so it's done, unclicked, as one already shown is: a helper that follows it (Add Trailer after
+    // every vehicle's lookup) doesn't wait for it either. One still waiting for another helper, a
+    // page or a premium stays, as does a menu item (`opener`: shown only with its menu open) and a
+    // helper the agent must do by hand (`missing`, reported above).
+    const doneByPage = (b) => {
       if (!stillHere || !b.waits?.length || !b.waits.every((w) => w.path && !w.set && answered(pairs, w.path))) return false;
       const a = actions.find((x) => x.action === b.id);
       return !!a && !a.opener && !a.missing && !findButton(a);
     };
-    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && !goneUnclicked(b) && all.findIndex((x) => x.id === b.id) === i);
+    for (const b of report.blocked) {
+      if (clicked.has(b.id) || !doneByPage(b)) continue;
+      clicked.add(b.id);
+      report.actions.push({ id: b.id, text: 'done by the page itself', alreadyShown: true });
+    }
+    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findIndex((x) => x.id === b.id) === i);
     // Where each item's field is on the page (`order`: its place among the page's questions, in
     // document order), so the side panel lists what's left in the page's order, whichever kind
     // of item it is. Read once, from the page as it is now (as the last round read it when a
