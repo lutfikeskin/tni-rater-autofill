@@ -522,7 +522,7 @@ try {
     && Object.values(namesSent.at(-1)).every((n) => loaded.record.drivers.some((d) => String(d.first ?? '').startsWith(n))), true);
   verify('the fixture has no GL ticked', loaded.record.coverage.gl === true, false);
   if (await panel.locator('#check-body').isHidden()) await panel.locator('#check-head').click();
-  const glCard = panel.locator('#warnings .warn-card', { hasText: 'mentions general liability' });
+  const glCard = panel.locator('#warnings .warn-card', { hasText: 'mention general liability' });
   const genderCard = panel.locator('#warnings .warn-card', { hasText: 'is more often a woman\'s name' });
   await glCard.waitFor({ timeout: 15000 });
   const quoted = (await glCard.innerText()).match(/general liability: "(.+?)"\./)?.[1] ?? '';
