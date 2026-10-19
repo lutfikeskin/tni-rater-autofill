@@ -490,3 +490,18 @@ test('keeps the install id, the platform and a lost-events count, in their shape
   assert.deepEqual([lost.type, lost.count], ['usage_lost', 12]);
   assert.deepEqual([odd.install, odd.platform], [undefined, undefined]);
 });
+
+test('keeps why an answer was given, and a dismissed check, in their shapes only', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'fill_field', filled: undefined, result: 'filled', q: '2CCC', source: 'standard', standard: true, review: true }),
+      ev({ type: 'fill_field', filled: undefined, result: 'filled', q: '2B20', source: 'a guess', standard: 'yes' }),
+      ev({ type: 'check_dismissed', filled: undefined, q: '1D97', key: '1D97', label: 'Liability', mark: 'check' }),
+    ] });
+  });
+  const [ok, odd, dismissed] = stored(dataDir);
+  assert.deepEqual([ok.source, ok.standard, ok.review], ['standard', true, true]);
+  assert.deepEqual([odd.source, odd.standard], [undefined, undefined]);
+  assert.deepEqual([dismissed.type, dismissed.label, dismissed.mark], ['check_dismissed', 'Liability', 'check']);
+});

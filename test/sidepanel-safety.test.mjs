@@ -538,7 +538,8 @@ test('each item left for the agent has a labelled Mark done bound to its field a
   assert.deepEqual(buttons.map((b) => b.props['aria-label']), ['Mark done: Vehicle field', 'Mark done: Rejected', 'Mark done: Missing']);
   assert.ok(buttons.every((b) => b.children[0] === 'Mark done'));
   buttons.forEach((button) => button.props.onclick());
-  assert.deepEqual(clicks, [['200F', 7, 'Rates'], ['failed', 7, 'Rates'], ['missing', 7, 'Rates']]);
+  assert.deepEqual(clicks.map((c) => c.slice(0, 3)), [['200F', 7, 'Rates'], ['failed', 7, 'Rates'], ['missing', 7, 'Rates']]);
+  assert.deepEqual(clicks.map((c) => c[3].key), ['200F', 'failed', 'missing'], 'and the row, for the log of what was dismissed');
 });
 
 // Design review, good-to-have #3: step 3 listed what's left by kind, so its order changed between
@@ -4324,6 +4325,22 @@ test('the agent\'s settings are logged whole: on load, on opening, and on each c
   }
   assert.match(extractFunction('wireAi'), /await usage\.saveSettings\(patch\);\s+logSettings\('changed'/);
   assert.match(SIDEPANEL, /if \(state\.intake && usage\.currentSession\(\)\) logSettings\('opened'\);/);
+});
+
+test('marking a needs-you item done logs which question and why, keyed like fill events', async () => {
+  const logged = [];
+  const state = { filling: false, tab: { id: 7, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, agentKeys: new Map() };
+  const sandbox = { state, usage: { log: (e) => logged.push(e), currentSession: () => ({ keySalt: 's' }) }, pageOf: (u) => u, editScope: (p) => p,
+    persistAgentKeys: async () => {}, settleNeed: () => {}, undoMarkDone: () => {}, redactor: () => (v) => v, redactionTerms: () => [], viewOf: () => 't1',
+    checkDismissedEvent: (x) => ({ type: 'check_dismissed', q: x.q, key: x.key, label: x.label, mark: x.mark }) };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('markDone'), sandbox);
+  await sandbox.markDone({}, '1D97', 7, 'Rates', { key: '1D97', q: '1D97', label: 'Liability', mark: 'check' });
+  assert.deepEqual(JSON.parse(JSON.stringify(logged)), [{ type: 'check_dismissed', q: '1D97', key: '1D97', label: 'Liability', mark: 'check', carrier: 'progressive', page: 'Rates', view: 't1' }]);
+  assert.ok(state.agentKeys.get('Rates').has('1D97'), 'and the question is still the agent\'s, as before');
+  state.tab.carrier.practice = true;
+  await sandbox.markDone({}, '2B9D', 7, 'Rates', { key: '2B9D', label: 'Distance', mark: 'needs' });
+  assert.equal(logged.length, 1, 'practice pages log nothing');
 });
 
 test('a settings change is logged only with an intake and session open, and a failure stays inside', async () => {

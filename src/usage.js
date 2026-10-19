@@ -112,6 +112,12 @@ export function platformOf(nav = globalThis.navigator) {
   return { os: os ? String(os).slice(0, 20) : null, chrome: Number.isFinite(chrome) ? chrome : null };
 }
 
+// The agent dismissed a "needs you" item (its ×: ignore this question and continue): which
+// question, why it needed them (`mark`: needs, failed, check, …), keyed like fill events.
+export function checkDismissedEvent(x, { redact = (v) => v, keySalt } = {}) {
+  return { type: 'check_dismissed', q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label || x.name || ''), mark: x.mark ?? null };
+}
+
 // The agent's settings, all of them each time (`values`), so the one in force at any moment is the
 // last event before it: the filling switches as the panel shows them (defaults: follow-ups and
 // Continue on, filling on arrival and replacing answers off), the AI assistant (on, applying
@@ -281,6 +287,9 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   const item = (result) => (x) => ({
     type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
     how: x.how ?? undefined,
+    // Why this answer: where it comes from (intake, derived, standard, fact, attestation), a TNI
+    // standard, the agent's only (never the AI's), and a review-mode answer the agent confirms.
+    ...(x.source ? { source: x.source } : {}), ...(x.standard ? { standard: true } : {}), ...(x.manualOnly ? { manualOnly: true } : {}), ...(x.review ? { review: true } : {}),
     shown: result === 'filled' && isChoice(x) ? redact(x.shown) : undefined,
     reason: x.reason ? redact(x.reason) : undefined,
     options: x.options?.map(redact),

@@ -6,7 +6,7 @@ import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { carrierForUrl, quoteProgress } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
-import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
+import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey, stableJson } from '../src/ai/common.js';
@@ -2522,8 +2522,14 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
 // Its field then joins the agent's on this page, as an edit there does: no fill changes it and
 // Continue no longer waits on it. Nothing is filled or clicked now (Continue stays its own click),
 // and it can be undone until the agent edits the field.
-async function markDone(item, key, tabId, page) {
+async function markDone(item, key, tabId, page, x = null) {
   if (!key || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
+  // Which question the agent marked done, and why it needed them: the review sees what was
+  // waved through, not only what was filled.
+  if (x && state.intake && !state.tab?.carrier?.practice) {
+    usage.log({ ...checkDismissedEvent(x, { redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }),
+      carrier: state.tab.carrier?.id ?? null, page, view: viewOf(tabId, page, state.tab.carrier) });
+  }
   const scope = editScope(page);
   const keys = state.agentKeys.get(scope) ?? new Set();
   const had = keys.has(key);
@@ -2759,7 +2765,7 @@ function renderReport(frames, ctx = {}) {
   const need = (x) => {
     const label = x.label || x.name;
     const done = x.key ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page',
-      'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page) }, 'Mark done') : null;
+      'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page, x) }, 'Mark done') : null;
     // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
     const show = x.key ? h('button', { class: 'link small show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
       'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;

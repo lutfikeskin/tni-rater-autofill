@@ -9,7 +9,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms } from '../src/plan.js';
-import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep, clientErrorEvent, agentSettingsEvent, platformOf } from '../src/usage.js';
+import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent } from '../src/usage.js';
 
 const bytes = new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url)));
 const raw = await readIntakeFields(pdfjs, bytes.slice());
@@ -325,4 +325,18 @@ test('the platform: system and Chrome major version, from userAgentData or the u
   assert.deepEqual(platformOf({ userAgentData: { platform: 'Windows', brands: [{ brand: 'Not A;Brand', version: '99' }, { brand: 'Google Chrome', version: '141' }] }, userAgent: '' }), { os: 'Windows', chrome: 141 });
   assert.deepEqual(platformOf({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36' }), { os: 'macOS', chrome: 140 });
   assert.deepEqual(platformOf({}), { os: null, chrome: null });
+});
+
+test('fill events say why an answer was given; a dismissed check is keyed like them', () => {
+  const frames = [{ filled: [
+    { key: '2CCC', q: '2CCC', label: 'Comp/coll', controlKind: 'radio', shown: 'Yes', source: 'standard', standard: true, review: true },
+    { key: '2B20', q: '2B20', label: 'VIN', controlKind: 'text', source: 'intake' },
+  ], leftRequired: [{ key: '246', q: '246', label: 'USDOT belongs', controlKind: 'radio', source: 'attestation', manualOnly: true }] }];
+  const events = fillEvents(frames, { carrier: 'progressive', page: 'AddVehicle', redact: (x) => x });
+  const field = (q) => events.find((e) => e.type === 'fill_field' && e.q === q);
+  assert.deepEqual([field('2CCC').source, field('2CCC').standard, field('2CCC').review], ['standard', true, true]);
+  assert.deepEqual([field('2B20').source, field('2B20').standard, field('2B20').review], ['intake', undefined, undefined]);
+  assert.deepEqual([field('246').source, field('246').manualOnly], ['attestation', true]);
+  assert.deepEqual(checkDismissedEvent({ key: 'owner_Ann', q: null, label: 'Owner Ann', mark: 'needs' }, { redact: redactor(['Ann']), keySalt: 's' }),
+    { type: 'check_dismissed', q: null, key: checkDismissedEvent({ key: 'owner_Ann' }, { redact: redactor(['Ann']), keySalt: 's' }).key, label: 'Owner [client]', mark: 'needs' });
 });
