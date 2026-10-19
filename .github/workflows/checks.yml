@@ -1,4 +1,5 @@
-# Unit and package checks on both platforms; browser checks live in windows-smoke.yml.
+# Unit and package checks on Ubuntu, the cheapest runner. Windows and the browser checks run
+# locally (`npm run ci`) or by hand (windows-smoke.yml).
 name: Checks
 
 on:
@@ -13,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 5
     steps:

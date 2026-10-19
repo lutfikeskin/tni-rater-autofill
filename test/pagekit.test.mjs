@@ -788,6 +788,52 @@ test('unfamiliar required controls warn in yellow without blocking known fields 
   assert.equal(helper._clicked, true);
 });
 
+// Design review 2026-10-10: a TNI standard (gender MALE, None of the above: an assumption, not an
+// intake fact) is marked apart from intake answers; a standard the agent must confirm stays amber.
+test('a TNI standard gets its own mark, an intake answer the filled green, and a standard to confirm the check color', async () => {
+  const h = harness();
+  const name = makeInput({ id: 'name', ariaLabel: 'Business Name' });
+  const gender = new SelectNode([{ text: '', value: '' }, { text: 'MALE', value: 'M' }, { text: 'FEMALE', value: 'F' }], { id: 'gender', ariaLabel: 'Gender' });
+  const marital = new SelectNode([{ text: '', value: '' }, { text: 'SINGLE', value: 'S' }, { text: 'MARRIED', value: 'M' }], { id: 'marital', ariaLabel: 'Marital Status' });
+  h.document.body.append(name, gender, marital);
+  const plan = [
+    { id: 'n', selector: '#name', path: 'x.name', name: 'Business name', kind: 'text', value: 'Synthetic Hauling' },
+    { id: 'g', selector: '#gender', path: 'x.gender', name: 'Gender', kind: 'choice', value: 'MALE', standard: true },
+    { id: 'm', selector: '#marital', path: 'x.marital', name: 'Marital status', kind: 'choice', value: 'SINGLE', standard: true, reviewRequired: true, warn: 'Review mode: confirm this standard answer.' },
+  ];
+  const report = await h.kit.fill(plan, { maxRounds: 4 });
+  assert.equal(report.filled.length, 3);
+  assert.equal(name.getAttribute('data-rater-autofill'), 'filled');
+  assert.equal(name.style.outline, '2px solid #16a34a');
+  assert.equal(name.getAttribute('title'), 'Rater Autofill: filled from intake: Business name');
+  assert.equal(gender.getAttribute('data-rater-autofill'), 'standard');
+  assert.equal(gender.style.outline, '2px solid #2f6fd6');
+  assert.equal(gender.getAttribute('title'), 'Rater Autofill: TNI standard answer, not from the intake: Gender');
+  assert.equal(marital.getAttribute('data-rater-autofill'), 'needs', 'a standard to confirm is a check item');
+  assert.equal(marital.style.outline, '2px dashed #d97706');
+  assert.equal(marital.getAttribute('title'), 'Rater Autofill: Review mode: confirm this standard answer.');
+  // A follow-up fill that keeps the marks leaves them as they were (the answers already in), and
+  // the standard to confirm is still a check.
+  const again = await h.kit.fill(plan, { maxRounds: 2, keepMarks: true });
+  assert.equal(again.filled.length, 0);
+  assert.equal(name.style.outline, '2px solid #16a34a');
+  assert.equal(gender.style.outline, '2px solid #2f6fd6');
+  assert.equal(marital.style.outline, '2px dashed #d97706');
+  assert.equal(h.kit.clear(), 3);
+  assert.equal(gender.style.outline, '');
+  assert.equal(gender.getAttribute('data-rater-autofill'), null);
+});
+
+test('the side panel key shows the page marks in the page kit colors', () => {
+  const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
+  const colors = [...PAGEKIT.match(/const COLORS = \{([^}]*)\}/)[1].matchAll(/(\w+): '(#[0-9a-f]{6})'/gi)];
+  assert.deepEqual(colors.map(([, status]) => status).sort(), ['ai', 'failed', 'filled', 'needs', 'standard']);
+  for (const [, status, hex] of colors) {
+    assert.equal(css.match(new RegExp(`--mark-${status}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1].toLowerCase(), hex.toLowerCase(), status);
+    assert.match(css, new RegExp(`\\.mark\\.${status} \\{[^}]*var\\(--mark-${status}\\)`), status);
+  }
+});
+
 test('repeated question ids without a vehicle hint stay yellow, and a hint picks the right row', async () => {
   const h = harness({ ext: true });
   const first = addExtText(h, 'U', '3C01', { caption: '2021 FORD TRANSIT 350', row: '8_1' });
@@ -1772,6 +1818,131 @@ test('AI banner lists pending selections at the bottom of the page and markKey r
   assert.equal(h.kit.markKey('nope', 'x', 'needs', 'n'), false);
 });
 
+// Design review, good-to-have #3: step 3 listed what's left by kind (unfamiliar, failed, missing,
+// …), so its order changed between fills and didn't follow the page. Each item carries its
+// field's place on the page, read at the end of the fill (a question revealed above the others
+// counts); an item without a field (a helper to click by hand) has none.
+test('report items carry the place of their field on the page, in document order', async () => {
+  const h = harness();
+  const first = makeInput({ id: 'first', ariaLabel: 'Unfamiliar one' });
+  const checked = makeInput({ id: 'checked', ariaLabel: 'Filled with a check' });
+  const missing = makeInput({ id: 'missing', ariaLabel: 'Missing answer' });
+  const bad = new SelectNode([{ text: '', value: '' }, { text: 'Yes', value: 'y' }, { text: 'No', value: 'n' }], { id: 'bad', ariaLabel: 'Bad choice' });
+  const required = makeInput({ id: 'required', ariaLabel: 'Required unfamiliar', required: true });
+  h.document.body.append(first, checked, missing, bad, required);
+  // Answering one draws a new question above them all.
+  checked.addEventListener('change', () => {
+    if (h.document.getElementById('revealed')) return;
+    const revealed = makeInput({ id: 'revealed', ariaLabel: 'Revealed above' });
+    revealed.parentElement = h.document.body;
+    revealed.ownerDocument = h.document;
+    h.document.body.children.unshift(revealed);
+  });
+  const report = await h.kit.fill([
+    { id: 'checked', selector: '#checked', path: 'a', kind: 'text', value: 'x', warn: 'Check it.' },
+    { id: 'missing', selector: '#missing', path: 'b', kind: 'text', value: null },
+    { id: 'bad', selector: '#bad', path: 'c', kind: 'choice', value: 'Maybe' },
+    { id: 'tile', kind: 'action', action: 'tile', label: 'Vehicle tile', text: 'Add vehicle', pages: [], after: [], afterActions: [], afterPages: [], unless: [], missing: 'Click the vehicle tile yourself.' },
+  ], { maxRounds: 6 });
+  const at = (list, label) => list.find((x) => x.label === label)?.order;
+  assert.deepEqual([at(report.unknown, 'Revealed above'), at(report.unknown, 'Unfamiliar one'), at(report.checks, 'Filled with a check'),
+    at(report.noData, 'Missing answer'), at(report.failed, 'Bad choice'), at(report.leftRequired, 'Required unfamiliar'), at(report.unknown, 'Required unfamiliar')],
+  [0, 1, 2, 3, 4, 5, 5]);
+  const tile = report.noData.find((x) => x.label === 'Vehicle tile');
+  assert.ok(tile, 'the helper is left for the agent');
+  assert.equal('order' in tile, false, 'a helper has no field on the page');
+});
+
+// "Show on page" in step 3 (good-to-have #3): the field comes into view and its mark is ringed for
+// a moment, then put back as it was. Nothing on the page changes: no value, no click, no focus,
+// no event.
+test('reveal scrolls a field into view and rings its mark briefly, changing nothing on the page', async () => {
+  const h = harness();
+  const field = new SelectNode([{ text: '', value: '' }, { text: 'Yes', value: 'y' }], { id: 'tow', ariaLabel: 'Tows for others' });
+  const closed = makeInput({ id: 'closed', ariaLabel: 'In a section closed since' });
+  h.document.body.append(field, closed);
+  const report = await h.kit.fill([], { maxRounds: 1 });
+  const keyOf = (label) => report.unknown.find((x) => x.label === label).key;
+  const outline = field.style.outline;
+  assert.ok(outline, 'marked by the fill');
+  field.style.boxShadow = 'inset 0 0 1px red';
+  const scrolled = [];
+  const touched = [];
+  field.scrollIntoView = (options) => scrolled.push(options);
+  field.focus = () => touched.push('focus');
+  field.click = () => touched.push('click');
+  field.dispatchEvent = (event) => { touched.push(event.type); return true; };
+  assert.equal(h.kit.reveal(keyOf('Tows for others'), 'Tows for others'), true);
+  assert.deepEqual(scrolled.map((o) => ({ ...o })), [{ block: 'center' }]);
+  assert.match(field.style.boxShadow, /^0 0 0 4px /);
+  assert.equal(field.style.outline, outline, 'its mark stays');
+  // Shown again while ringed: what was there before is still what comes back.
+  h.kit.reveal(keyOf('Tows for others'), 'Tows for others');
+  await new Promise((r) => setTimeout(r, 1600));
+  assert.equal(field.style.boxShadow, 'inset 0 0 1px red');
+  // A shadow the page sets meanwhile is the page's: left as it is.
+  h.kit.reveal(keyOf('Tows for others'), 'Tows for others');
+  field.style.boxShadow = 'page shadow';
+  await new Promise((r) => setTimeout(r, 1600));
+  assert.equal(field.style.boxShadow, 'page shadow');
+  assert.deepEqual([field.value, touched], ['', []], 'no value, click, focus or event');
+  // Not on screen now (a section closed since the fill) or not on the page: not found here.
+  closed._visible = false;
+  assert.equal(h.kit.reveal(keyOf('In a section closed since'), 'In a section closed since'), false);
+  assert.equal(h.kit.reveal('nope', 'x'), false);
+  assert.equal(closed.style.boxShadow, undefined);
+});
+
+// The side panel reads back what the page shows for answers it lists. Reading changes nothing:
+// no value, mark, click, focus or event.
+test('readBack reports what each field shows now, row by row, and changes nothing on the page', () => {
+  const h = harness({ ext: true });
+  const text = makeInput({ id: 'dot', ariaLabel: 'USDOT number', value: '1234567' });
+  const list = new SelectNode([{ text: 'Select one', value: '' }, { text: 'Yes', value: 'y' }, { text: 'No', value: 'n' }], { id: 'tow', ariaLabel: 'Tows for others', value: 'n' });
+  const ticked = makeInput({ id: 'federal', ariaLabel: 'Federal filing', type: 'checkbox', checked: true });
+  const unticked = makeInput({ id: 'state', ariaLabel: 'State filing', type: 'checkbox' });
+  const blank = makeInput({ id: 'blank', ariaLabel: 'Empty box' });
+  h.document.body.append(text, list, ticked, unticked, blank);
+  // Rows of one question: one key, told apart by their labels.
+  const first = addExtText(h, 'U', '3C01', { caption: '2021 FORD TRANSIT 350', value: '45000' });
+  const second = addExtText(h, 'P', '3C01', { caption: '2019 ISUZU NPR HD', value: '30000' });
+  const keys = new Map(h.kit.signature().split('\n').map((line) => line.split('|')).map(([key, label]) => [label, key]));
+  assert.equal(keys.get('2021 FORD TRANSIT 350'), keys.get('2019 ISUZU NPR HD'), 'the rows share a key');
+  const elements = [text, list, ticked, unticked, blank, first.input, second.input];
+  const touched = [];
+  for (const el of elements) {
+    el.focus = () => touched.push('focus');
+    el.click = () => touched.push('click');
+    el.dispatchEvent = (event) => { touched.push(event.type); return true; };
+  }
+  const values = () => elements.map((el) => [el.value, el.checked, el.getAttribute('data-rater-autofill'), el.style.outline]);
+  const before = values();
+  const ask = (label) => ({ key: keys.get(label), label });
+  const read = h.kit.readBack([
+    ask('USDOT number'), ask('Tows for others'), ask('Federal filing'), ask('State filing'), ask('Empty box'),
+    ask('2019 ISUZU NPR HD'), ask('2021 FORD TRANSIT 350'), { key: 'not-on-this-page', label: 'Elsewhere' },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(read)), [
+    { key: keys.get('USDOT number'), label: 'USDOT number', shown: '1234567', empty: false },
+    { key: keys.get('Tows for others'), label: 'Tows for others', shown: 'No', empty: false },
+    { key: keys.get('Federal filing'), label: 'Federal filing', shown: 'checked', empty: false },
+    { key: keys.get('State filing'), label: 'State filing', shown: 'unchecked', empty: true },
+    { key: keys.get('Empty box'), label: 'Empty box', shown: '', empty: true },
+    { key: keys.get('2019 ISUZU NPR HD'), label: '2019 ISUZU NPR HD', shown: '30000', empty: false },
+    { key: keys.get('2021 FORD TRANSIT 350'), label: '2021 FORD TRANSIT 350', shown: '45000', empty: false },
+  ].map((x) => ({ ...x, agrees: null })), 'the unknown key is left out; no steps, no judgement');
+  // With the steps that filled them, the kit judges as fill does (audit 2026-10-10): an address the
+  // page wrote in its own format agrees; a box holding something else doesn't.
+  const steps = [
+    { id: 'addr', kind: 'address-suggest', value: '5001 Sheridan Street Davenport, IA, USA' },
+    { id: 'dot', kind: 'text', value: '7654321' },
+  ];
+  const judged = h.kit.readBack([{ ...ask('USDOT number'), stepId: 'addr' }, { ...ask('USDOT number'), stepId: 'dot' }, { ...ask('Empty box'), stepId: 'addr' }, { ...ask('Tows for others'), stepId: 'gone' }], steps);
+  assert.deepEqual(JSON.parse(JSON.stringify(judged.map((x) => x.agrees))), [true, false, false, null]);
+  assert.deepEqual(values(), before, 'no value or mark changed');
+  assert.deepEqual(touched, [], 'no click, focus or event');
+});
+
 test('home address box: whole address typed, first suggestion picked, ZIP/city then checked', async () => {
   const h = harness({ search: '?pageName=BusinessOwnerInfo' });
   const address = makeInput({ id: `f_U${'A'.repeat(32)}2A9_1_1`, ariaLabel: 'Home Address' });
@@ -2044,6 +2215,31 @@ test('a default to confirm (warn) is filled, flagged yellow and holds Continue u
   assert.ok(!next._clicked);
   await h.kit.fill([step], { maxRounds: 3, skip: [again.checks[0].key], advance: { text: '^save & continue$' } });
   assert.ok(next._clicked, 'dismissed (or changed) by the agent: Continue');
+});
+
+// Live review 2026-10-09: a long fill had no way to stop it. The panel's Stop halts it the way an
+// agent edit does: what is in stays, nothing more is filled, and Continue isn't clicked.
+test('Stop halts a running fill after the answer going in; progress counts what is in', async () => {
+  const h = harness();
+  const a = makeInput({ id: 'a', ariaLabel: 'First' });
+  const b = makeInput({ id: 'b', ariaLabel: 'Second' });
+  const c = makeInput({ id: 'c', ariaLabel: 'Third' });
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  h.document.body.append(a, b, c);
+  let during = null;
+  b.addEventListener('change', () => { during = h.kit.progress(); assert.equal(h.kit.stop(), true); });
+  assert.equal(h.kit.progress(), null, 'no fill running');
+  assert.equal(h.kit.stop(), false, 'nothing to stop');
+  const steps = [['a', 'one'], ['b', 'two'], ['c', 'three']].map(([id, value]) => ({ id, selector: `#${id}`, path: `x.${id}`, kind: 'text', value }));
+  const report = await h.kit.fill(steps, { maxRounds: 3, advance: { text: '^continue$' } });
+  assert.equal(during?.filled, 1);
+  assert.equal(a.value, 'one');
+  assert.equal(c.value, '', 'nothing after Stop is filled');
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /You stopped the fill/);
+  assert.ok(!next._clicked, 'Continue is not clicked');
+  assert.equal(h.kit.progress(), null, 'the fill is over');
 });
 
 test('batch mode answers every visible question in one round and still checks each answer', async () => {
@@ -3157,6 +3353,153 @@ test('an agent edit during the wait before Continue stops the Continue and is a 
   assert.ok(report.blockers.includes(report.reason), `blockers: ${report.blockers.join(' | ')}`);
   assert.deepEqual([...report.protectedKeys], ['ref:Test.foo']);
   assert.equal(input.value, 'the agent\'s answer');
+});
+
+// A late server response during the wait before Continue rewrote an answer the fill had given: the
+// answer is the agent's to check (no retry), and Continue is not clicked.
+test('an answer the carrier rewrites during the wait before Continue fails, and Continue waits', async () => {
+  const run = async (rewriteAt) => {
+    const h = harness({ ext: true, search: '?pageName=Synthetic' });
+    addExtText(h, 'b', '1233', { ref: 'Test.earlier', caption: 'Earlier question', value: 'kept' });
+    const { input, cmp } = addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+    const button = addButton(h, 'Continue');
+    let clicks = 0;
+    button.onclick = () => { clicks++; };
+    // Every settle builds an observer; the last one is the wait before Continue.
+    let settles = 0;
+    h.context.MutationObserver = class {
+      constructor() { if (++settles === rewriteAt) setTimeout(() => cmp.setValue('carrier value'), 10); }
+      observe() {}
+      disconnect() {}
+    };
+    const plan = [
+      { id: 'earlier', q: '1233', field: 'Test.earlier', path: 'test.earlier', name: 'Earlier question', ask: ['Earlier question'], kind: 'text', value: 'kept' },
+      { id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' },
+    ];
+    const report = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' } });
+    return { report, clicks, settles, input };
+  };
+  // Nothing changes: the answer stays filled and Continue is clicked.
+  const control = await run(0);
+  assert.equal(control.clicks, 1);
+  assert.equal(control.report.advanced, 'Continue');
+  assert.deepEqual(Array.from(control.report.filled, (x) => x.key), ['ref:Test.foo']);
+  assert.equal(control.input.value, 'wanted');
+  // The carrier rewrites it during that last wait.
+  const { report, clicks, settles, input } = await run(control.settles);
+  assert.equal(settles, control.settles);
+  assert.equal(clicks, 0, 'no Continue over a changed answer');
+  assert.equal(report.advanced, undefined);
+  assert.equal(report.halted, false);
+  assert.equal(input.value, 'carrier value', 'not given again');
+  assert.equal(report.filled.length, 0);
+  const failed = report.failed.find((x) => x.key === 'ref:Test.foo');
+  assert.ok(failed, 'moved to failed');
+  assert.equal(failed.reason, 'The carrier changed this answer after it was filled; check it.');
+  assert.equal(failed.label, 'Synthetic question');
+  assert.equal(failed.order, 1, 'its place on the page, after the earlier question');
+  assert.ok(report.blockers.includes('failed: Synthetic question'), `blockers: ${report.blockers.join(' | ')}`);
+  assert.equal(input.getAttribute('data-rater-autofill'), 'failed');
+});
+
+// Check answers before Continue (the panel's `hold`): a done page is held for the agent; Looks
+// right sends the page's receipt as they saw it, and Continue is clicked only while the page still
+// matches it. A page changed since is held again, with no click.
+test('with hold, Continue waits for the receipt the agent approved, and a changed page is held again', async () => {
+  const h = harness({ ext: true, search: '?pageName=Synthetic' });
+  addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+  // A question the plan has no rule for, already answered on the page (not a blocker).
+  const other = addExtText(h, 'b', '1235', { ref: 'Test.other', caption: 'Other question', value: 'carrier' });
+  const button = addButton(h, 'Continue');
+  let clicks = 0;
+  button.onclick = () => { clicks++; };
+  const plan = [{ id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' }];
+  const options = { maxRounds: 3, advance: { text: 'Continue' }, hold: true };
+
+  const first = await h.kit.fill(plan, options);
+  assert.equal(first.held, 'check', 'done, and waiting for the agent');
+  assert.equal(clicks, 0);
+  assert.equal(first.advanced, undefined);
+  assert.deepEqual(Array.from(first.filled, (x) => x.key), ['ref:Test.foo']);
+  assert.ok(!first.blockers.length, 'held is not a blocker: nothing is left for the agent');
+
+  // The agent approved it; the carrier changed an answer before the click.
+  const seen = h.kit.receipt();
+  assert.match(seen, /^r1-[0-9a-z]+$/);
+  assert.equal(h.kit.receipt(), seen, 'the same page, the same receipt');
+  other.cmp.setValue('changed by the carrier');
+  assert.notEqual(h.kit.receipt(), seen);
+  const changed = await h.kit.fill(plan, { ...options, confirmed: seen });
+  assert.equal(changed.held, 'changed');
+  assert.equal(clicks, 0, 'no Continue for a page the agent did not see');
+
+  // Approved again as it is now: Continue.
+  const approved = await h.kit.fill(plan, { ...options, confirmed: h.kit.receipt() });
+  assert.equal(approved.held, undefined);
+  assert.equal(approved.advanced, 'Continue');
+  assert.equal(clicks, 1);
+});
+
+// Audit 2026-10-10: a fill also reads collapsed fields it has rules for (`hidden`: AmWINS' prior
+// carriers); Looks right's receipt, taken outside a fill, didn't. The receipt is the page as the
+// agent sees it either way, so Looks right can continue such a page.
+test('the receipt is the same inside a fill and out when a hidden rule\'s field is collapsed', async () => {
+  const h = harness({ ext: true, search: '?pageName=Synthetic' });
+  addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+  const prior = makeInput({ id: 'prior', ariaLabel: 'Prior carrier', value: 'NO PRIOR' });
+  prior._visible = false;
+  h.document.body.append(prior);
+  const button = addButton(h, 'Continue');
+  let clicks = 0;
+  button.onclick = () => { clicks++; };
+  const plan = [
+    { id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' },
+    { id: 'prior', selector: '#prior', hidden: true, kind: 'text', value: 'NO PRIOR', name: 'Prior carrier', standard: true, source: 'standard' },
+  ];
+  const options = { maxRounds: 3, advance: { text: 'Continue' }, hold: true };
+  assert.equal((await h.kit.fill(plan, options)).held, 'check');
+  const approved = await h.kit.fill(plan, { ...options, confirmed: h.kit.receipt() });
+  assert.equal(approved.held, undefined);
+  assert.equal(clicks, 1);
+});
+
+// Audit 2026-10-10: Stop pressed while the panel still prepared (before fill() began here) was
+// lost, and the fill ran to the end and could click Continue. Stop with the fill's run id is kept
+// until that fill starts, which then halts at once; another fill isn't affected.
+test('a Stop for a fill that hasn\'t begun here halts it as it starts', async () => {
+  const h = harness({ ext: true, search: '?pageName=Synthetic' });
+  const { input } = addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+  const button = addButton(h, 'Continue');
+  let clicks = 0;
+  button.onclick = () => { clicks++; };
+  const plan = [{ id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' }];
+  assert.equal(h.kit.stop('run-1'), false, 'no fill running here yet');
+  const stopped = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' }, run: 'run-1' });
+  assert.equal(stopped.halted, true);
+  assert.equal(stopped.reason, 'You stopped the fill. Nothing more was filled or clicked.');
+  assert.equal(clicks, 0);
+  assert.equal(input.value, '', 'nothing filled');
+  const next = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' }, run: 'run-2' });
+  assert.equal(next.halted, false);
+  assert.equal(next.advanced, 'Continue');
+  assert.equal(input.value, 'wanted');
+});
+
+test('without hold, a done page continues as before; receipt reads only', async () => {
+  const h = harness({ ext: true, search: '?pageName=Synthetic' });
+  const { input } = addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+  const button = addButton(h, 'Continue');
+  let clicks = 0;
+  button.onclick = () => { clicks++; };
+  const plan = [{ id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' }];
+  const before = input.value;
+  h.kit.receipt();
+  assert.equal(input.value, before, 'receipt changes nothing');
+  assert.equal(input.getAttribute('data-rater-autofill'), null);
+  const report = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' } });
+  assert.equal(report.held, undefined);
+  assert.equal(report.advanced, 'Continue');
+  assert.equal(clicks, 1);
 });
 
 test('an agent edit while AI answers go in protects that question and stops the remaining answers', async () => {
