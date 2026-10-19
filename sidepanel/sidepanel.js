@@ -827,6 +827,8 @@ function render() {
   showScreen();
   $('recording').hidden = !has;
   $('foot-version').hidden = has;
+  // Marking a test run (Settings → Advanced) needs an intake to mark.
+  $('test-run-row').hidden = !has;
   if (!has) return;
   const { record, stats, fileName } = state.intake;
   const n = (k, one) => `${record[k].length} ${one}${record[k].length === 1 ? '' : 's'}`;

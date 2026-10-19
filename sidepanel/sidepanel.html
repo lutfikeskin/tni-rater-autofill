@@ -76,7 +76,6 @@
       <div class="client-title">
         <h2 id="client-name"></h2>
         <p id="client-meta" class="client-meta"></p>
-        <label class="test-run" title="A practice or test quote, not a client's: the weekly review leaves it out of its numbers."><input type="checkbox" id="test-run"> Test run, not a client</label>
       </div>
       <button type="button" id="open-pdf" class="ghost intake-btn" title="Show the intake PDF"><span class="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
       <button type="button" id="file-menu-btn" class="ghost more-btn" aria-label="File options" aria-expanded="false" aria-controls="file-menu">⋯</button>
@@ -221,6 +220,8 @@
     <details id="advanced" class="advanced">
       <summary class="eyebrow">Advanced (for setup)</summary>
       <div class="advanced-body">
+        <!-- For the maintainer's practice quotes; agents don't see it unless they open Advanced. -->
+        <label id="test-run-row" class="test-run" title="A practice or test quote, not a client's: the weekly review leaves it out of its numbers." hidden><input type="checkbox" id="test-run"> This intake is a test run, not a client</label>
         <label class="field-stack">Server<input id="server-url" type="url" placeholder="https://usage-server-production.up.railway.app" autocomplete="off"></label>
         <label class="field-stack">Token<input id="server-token" type="password" placeholder="if the server needs one" autocomplete="off"></label>
         <label class="field-stack">Scenario<input id="capture-scenario" type="text" placeholder="e.g. FL van, hazmat yes/no" autocomplete="off" maxlength="60"></label>
