@@ -92,6 +92,19 @@ test('signals leaves test runs out: listed fingerprints and intakes marked as a 
   assert.equal(signals(events, { since: '2026-10-06', testIntakes: ['abcdef'] }).quotes, 0);
 });
 
+test('seq gaps count only when the later event is in the period; a bad since does not throw', () => {
+  const events = week();
+  const add = (seq, receivedAt) => events.push({ id: crypto.randomUUID(), t: receivedAt, receivedAt, v: '0.9.9', session: 'new', type: 'page_view', page: 'X', install: 'a', seq });
+  add(1, '2026-09-01T10:00:00Z');
+  add(5, '2026-09-02T10:00:00Z'); // gap of 3, long before the period
+  add(6, '2026-10-06T13:00:00Z');
+  add(9, '2026-10-06T13:01:00Z'); // gap of 2, in the period
+  assert.equal(signals(events, { since: '2026-10-06' }).lost.missingInSeq, 2);
+  assert.equal(signals(events).lost.missingInSeq, 5);
+  assert.doesNotThrow(() => signals(events, { since: 'not-a-date' }));
+  assert.equal(signals(events, { since: 'not-a-date' }).since, null);
+});
+
 test('the agent\'s latest test mark wins, and the new events are digested', () => {
   const events = week();
   const at = (s) => new Date(Date.parse('2026-10-06T12:40:00Z') + s * 1000).toISOString();

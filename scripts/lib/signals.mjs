@@ -57,7 +57,8 @@ export function testSessionsOf(all, testIntakes = []) {
  *   time the server received them from; testIntakes: intake fingerprints whose quotes are tests
  */
 export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {}) {
-  const from = since ? new Date(since).toISOString() : null;
+  // An unparsable `since` means no period, not an error.
+  const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOString() : null;
   const testSessions = testSessionsOf(all, testIntakes);
   const periodAll = from ? all.filter((e) => receivedAt(e) >= from) : all;
   // Test runs are left out of everything below, and counted.
@@ -293,12 +294,19 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
   // Events lost on the way: what a computer's log dropped (usage_lost), and gaps in each install's
   // numbers (`seq`) among the events received.
   const lostLocally = periodAll.filter((e) => e.type === 'usage_lost').reduce((x, e) => x + (Number(e.count) || 0), 0);
+  // Gaps are found over every event received, but counted only when the event after the gap
+  // falls in the period, so an old gap does not come back every week.
   const bySeq = new Map();
-  for (const e of all) if (e.install && Number.isSafeInteger(e.seq)) (bySeq.get(e.install) ?? bySeq.set(e.install, []).get(e.install)).push(e.seq);
+  for (const e of all) {
+    if (!e.install || !Number.isSafeInteger(e.seq)) continue;
+    const seqs = bySeq.get(e.install) ?? bySeq.set(e.install, new Map()).get(e.install);
+    const at = receivedAt(e);
+    if (!seqs.has(e.seq) || at < seqs.get(e.seq)) seqs.set(e.seq, at);
+  }
   let missing = 0;
-  for (const list of bySeq.values()) {
-    const sorted = [...new Set(list)].sort((a, b) => a - b);
-    for (let i = 1; i < sorted.length; i++) missing += sorted[i] - sorted[i - 1] - 1;
+  for (const seqs of bySeq.values()) {
+    const sorted = [...seqs].sort((a, b) => a[0] - b[0]);
+    for (let i = 1; i < sorted.length; i++) if (!from || sorted[i][1] >= from) missing += sorted[i][0] - sorted[i - 1][0] - 1;
   }
 
   const versions = [...new Set([...builds.values()].map((b) => b.version))].sort(byVersion);

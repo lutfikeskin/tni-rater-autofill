@@ -79,7 +79,7 @@ fs.rmSync(tmp, { recursive: true, force: true });
 // The weekly numbers come from the signals report (scripts/lib/signals.mjs), so the two agree:
 // per quote (a page filled twenty times counts once), test runs left out (intakes marked as a test,
 // and the fingerprints in reviews/test-intakes.txt when there is one).
-const week = signals(all, { since: from, testIntakes });
+const week = signals(all, { since: from && !Number.isNaN(Date.parse(from)) ? from : null, testIntakes });
 // Quotes: intakes loaded in this period that went to a carrier's page (whenever they did), not test runs.
 const quoting = quoteSessions(all);
 const quotes = new Set(recent.filter((e) => e.type === 'intake_loaded' && quoting.has(e.session) && !tests.has(e.session)).map((e) => e.session));
