@@ -2207,7 +2207,7 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
         return [{ result: context.busy }];
       }
       // The page as the page itself names it (pagekit's capture), normally the tab's.
-      return [{ result: { controls: controls(), buttons: ['Continue'], isTopFrame: true, page: context.domPage ?? context.state.tab.url, step: context.domStep ?? '' } }];
+      return [{ result: { controls: controls(), buttons: ['Continue'], isTopFrame: true, page: context.domPage ?? context.state.tab.url, step: context.domStep ?? '', messages: context.messages ?? [] } }];
     },
     sessionId: session,
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
@@ -4281,6 +4281,37 @@ test('a panel crash is logged once per message, at most 20, never on a practice 
   sandbox.usage.log = () => { throw new Error('storage full'); };
   state.tab.carrier.practice = false;
   assert.doesNotThrow(() => sandbox.logCrash(new Error('again')), 'logging a crash never throws');
+});
+
+test('a layout carries the page\'s messages, and a new message logs the page again', async () => {
+  const controls = [{ q: '2B9D', kind: 'select', label: 'Farthest distance', options: ['50 miles'] }];
+  const { context, logged } = layoutHarness(() => controls);
+  await context.recordLayout('Vehicles');
+  assert.equal(logged[0].messages, undefined, 'no messages, no field');
+  await context.recordLayout('Vehicles', 'messages');
+  assert.equal(logged.length, 1, 'nothing new on the page');
+  context.messages = ['This field is required'];
+  await context.recordLayout('Vehicles', 'messages');
+  assert.equal(logged.length, 2);
+  assert.deepEqual([...logged[1].messages], ['This field is required']);
+  assert.equal(logged[1].reason, 'messages');
+});
+
+test('an empty page is logged for a combined reason that includes messages, and skipped when the reason lacks it', async () => {
+  const { context, logged } = layoutHarness(() => []);
+  context.messages = ['This field is required'];
+  await context.recordLayout('Vehicles', 'changed');
+  assert.equal(logged.length, 0, 'messages on an empty page do not count without the messages reason');
+  await context.recordLayout('Vehicles', 'arrived+changed');
+  assert.equal(logged.length, 0, 'a combined reason without messages is skipped too');
+  await context.recordLayout('Vehicles', 'changed+messages');
+  assert.equal(logged.length, 1, 'messages merged with another reason is logged');
+  assert.equal(logged[0].reason, 'changed+messages');
+  assert.deepEqual([...logged[0].messages], ['This field is required']);
+  assert.equal(logged[0].fields.length, 0);
+  context.messages = [];
+  await context.recordLayout('Rates', 'changed+messages');
+  assert.equal(logged.length, 1, 'the messages reason with no message on an empty page is still skipped');
 });
 
 test('a panel crash is still logged when the intake has no record, and never unredacted if the redactor fails', () => {

@@ -43,7 +43,12 @@ class Document {
   }
 
   // Headings (the recorder's stepKey) are asked for apart from the controls.
-  querySelectorAll(selector) { return /^h1/.test(selector ?? '') ? [...(this.headings ?? [])] : [...this.body.controls]; }
+  querySelectorAll(selector) {
+    if (/^h1/.test(selector ?? '')) return [...(this.headings ?? [])];
+    // Error and validation messages (the recorder's MESSAGES selector).
+    if (/role=alert/.test(selector ?? '')) return [...(this.messages ?? [])];
+    return [...this.body.controls];
+  }
   getElementById(id) { return this.body.controls.find((c) => c.id === id) ?? null; }
   createTreeWalker() { return { currentNode: null, previousNode: () => false }; }
 }
@@ -306,7 +311,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 5);
+  assert.equal(h.context.__raterRecorder.version, 6);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -366,16 +371,15 @@ test('an ExtJS combo is reported as a combo, so its typed text is not logged as 
   assert.deepEqual([byKey['field:native'].kind, byKey['field:native'].combo], ['select', undefined], 'a native select is a choice as before');
 });
 
-test('an older recorder is replaced, so changes carry the combo flag and removed questions are reported', () => {
+test('an older recorder is replaced, so changes carry what the current one reports', () => {
   const h = harness();
   const disposed = [];
-  // A version-4 recorder still installed in the page: one had the combo flag without
-  // removed_fields, the other removed_fields without the combo flag.
+  // A version-5 recorder still installed in the page (it didn't report new messages).
   h.context.__raterRecorder.dispose();
-  h.context.__raterRecorder = { version: 4, rebaseline() {}, dispose() { disposed.push(4); } };
+  h.context.__raterRecorder = { version: 5, rebaseline() {}, dispose() { disposed.push(5); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
-  assert.deepEqual(disposed, [4]);
-  assert.equal(h.context.__raterRecorder.version, 5);
+  assert.deepEqual(disposed, [5]);
+  assert.equal(h.context.__raterRecorder.version, 6);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {
@@ -543,4 +547,23 @@ test('while paused, a trusted change counts only when the last gesture was on th
   await Promise.resolve();
   h.message({ ra: 'recorder', cmd: 'resume' });
   assert.deepEqual(changes(h).slice(1).map((c) => [c.key, c.before, c.after, c.agent]), [['field:hazmat', 'No', 'Yes', true]]);
+});
+
+test('a new error or validation message is reported once, without its text', () => {
+  const h = harness();
+  const message = (text) => ({ textContent: text, getClientRects: () => [{}] });
+  h.document.messages = [message('Enter your email')];
+  h.context.__raterRecorder.rebaseline();
+  h.tick();
+  assert.equal(h.sent.filter((m) => m.event === 'new_messages').length, 0, 'messages already on the page are no news');
+  // A Continue the carrier refused.
+  h.document.messages = [message('Enter your email'), message('This field is required')];
+  h.tick();
+  h.tick();
+  const sent = h.sent.filter((m) => m.event === 'new_messages');
+  assert.deepEqual(sent.map((m) => Object.keys(m).sort()), [['event', 'page', 'ra']], 'once, and never the message text');
+  // A message going away is no news either; a hidden one isn't shown.
+  h.document.messages = [{ textContent: 'Hidden', getClientRects: () => [] }];
+  h.tick();
+  assert.equal(h.sent.filter((m) => m.event === 'new_messages').length, 1);
 });

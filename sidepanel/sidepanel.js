@@ -1216,6 +1216,8 @@ function onRecorderMessage(msg, sender) {
     scheduleLayout(layoutPage, 'appeared');
   }
   if (msg.event === 'removed_fields') scheduleLayout(layoutPage, 'removed');
+  // An error or validation message appeared (a refused Continue): the layout carries the messages.
+  if (msg.event === 'new_messages') scheduleLayout(layoutPage, 'messages');
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1597,6 +1599,9 @@ async function captureLayout(job, reason) {
     // the tab may still show the previous client's quote. Any other heading: no step.
     const step = carrier.layoutSteps ? knownStep(carrier, top.step) : undefined;
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
+    // What the page said about the answers (validation, errors, help), as pagekit's capture reads
+    // and redacts it: the carrier's own wording of a refusal, which no other event carries.
+    const messages = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.messages ?? []))].slice(0, 40);
     const fields = results.map((r) => r.result).filter(Boolean).flatMap((f) => f.controls).map((c) => {
       // Agency staff lists (agent of record, agent/producer codes) aren't page structure.
       const staff = /agent|producer/i.test(c.label ?? '');
@@ -1619,13 +1624,14 @@ async function captureLayout(job, reason) {
     // question that shows a follow-up logs three layouts. A field renamed under the same number
     // (its data-model name) is a change too: that's the evidence of a carrier rename.
     const shape = fields.map((f) => [f.q ?? f.label, f.ref, f.label, !!f.required, f.options ?? [], !!f.optionsTruncated]);
-    const signature = await sha256Hex(JSON.stringify(shape));
+    // Messages too: the same questions with a new error on them is a page worth recording.
+    const signature = await sha256Hex(JSON.stringify(messages.length ? [shape, messages] : shape));
     if (!jobCurrent(job) || superseded(job)) return;
     // Per quote tab too: each tab keeps its own quote state (refreshTab).
     const scope = `${job.session}|${tabId}|${carrier.id}|${editScope(page)}|${step ?? ''}`;
-    // An empty page counts only when questions went away (an answer hid the last one): a fill or
-    // an arrival that finds nothing is a page still loading, or one without questions.
-    if (!fields.length && !why().split('+').includes('removed')) return;
+    // An empty page counts only when questions went away (an answer hid the last one) or a message
+    // appeared: a fill or an arrival that finds nothing is a page still loading, or one without questions.
+    if (!fields.length && !why().split('+').some((r) => r === 'removed' || (r === 'messages' && messages.length))) return;
     if (state.lastLayouts.get(scope) === signature) return;
     state.lastLayouts.set(scope, signature);
     const r = state.intake.record;
@@ -1638,7 +1644,7 @@ async function captureLayout(job, reason) {
       vehicles: r.vehicles.length,
       coverages: Object.entries(r.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     };
-    usage.log({ type: 'page_layout', carrier: carrier.id, page, view: viewOf(tabId, page, carrier), step, reason: why(), context, fields, buttons });
+    usage.log({ type: 'page_layout', carrier: carrier.id, page, view: viewOf(tabId, page, carrier), step, reason: why(), context, fields, buttons, ...(messages.length ? { messages } : {}) });
   } catch (e) {
     // A capture overtaken by a later change (a redraw can make its read fail) hands its reasons
     // on instead of reporting a failure for a page that is being captured anyway.
