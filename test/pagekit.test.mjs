@@ -3236,6 +3236,28 @@ test('the fill report says which answers are TNI standards; review mode makes th
   assert.ok(review.blockers.some((b) => /^check: /.test(b)), 'Continue waits');
 });
 
+// SC live run (2026-10-19): the claims box answered neither Yes nor No and Progressive had No
+// selected for every driver; each driver's question went to the agent and to Luna. TNI's standard
+// No now keeps the page's No (an automatic fill doesn't replace answers) with nothing left to the
+// agent; notes that mention a ticket still leave it to the agent.
+test('a blank claims answer is TNI\'s standard No: the page\'s No is kept, not a needs-you item', async () => {
+  const fillClaims = async (claims) => {
+    const h = harness({ search: '?pageName=AddDriver' });
+    const no = makeInput({ name: 'r_claims', type: 'radio', value: 'No', attrs: { fieldref: 'DriverInput.AnyAccidentsViolationsPastExpYears' } });
+    no.checked = true;
+    h.document.body.append(radioGroup('Has this driver had any accidents, claims or violations in the past 5 years? (since 11/2021)',
+      makeInput({ name: 'r_claims', type: 'radio', value: 'Yes', attrs: { fieldref: 'DriverInput.AnyAccidentsViolationsPastExpYears' } }), no));
+    const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims };
+    return h.kit.fill(buildPlan(record, progressive).filter((s) => s.q === '28F5'), { maxRounds: 4 });
+  };
+  const standard = await fillClaims({ hasClaims: null, notes: 'Financed' });
+  assert.deepEqual([standard.noData.length, standard.kept.length, standard.kept[0]?.standard], [0, 1, true]);
+  assert.ok(!standard.blockers.some((b) => /^needs you/.test(b)), 'nothing for the agent (or Luna)');
+  const mentioned = await fillClaims({ hasClaims: null, notes: 'One speeding ticket in 2024' });
+  assert.equal(mentioned.noData.length, 1, 'a ticket in the notes: the agent\'s');
+  assert.match(mentioned.noData[0].note, /speeding ticket/);
+});
+
 // Codex on c31942e: a fact the intake doesn't give reaches the report as the agent's (manualOnly),
 // so the AI assistant leaves it (ai/common.js collectItems).
 test('AmWINS review mode confirms differing retained standard choices before Continue', async () => {

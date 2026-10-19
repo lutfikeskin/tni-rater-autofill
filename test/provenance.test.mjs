@@ -106,7 +106,6 @@ const SOURCE = {
 // Not mapped on purpose, with the reason.
 const NOT_MAPPED = {
   progressive: {
-    'applicant.mc': 'Progressive asks for the USDOT number only; the MC number is never entered',
     'applicant.fein': 'Progressive asks the EIN on the finish flow, which is the agent\'s (AdditionalDetails is ignored)',
     'applicant.yearEstablished': 'Progressive does not ask when the business was established',
     'applicant.yearsInBusiness': 'Progressive does not ask the years in business',
@@ -115,9 +114,6 @@ const NOT_MAPPED = {
     'applicant.owner2': 'Progressive asks for one business owner',
     'applicant.yearsExperience': 'Progressive does not ask the years under own authority',
     'operations.eldBrand': 'Progressive asks only whether an ELD is required',
-    'operations.needSr22': 'Progressive\'s commercial quote has no SR-22 question in the mapped flow',
-    'operations.filingsWhich': 'on the Filings page Federal is ticked whenever filings are required; State is left as the page has it',
-    'operations.hazmat': 'Progressive asks whether a placard is required (operations.hazPlacard)',
     'operations.movingState': 'not asked by Progressive',
     'operations.teamDriving': 'on the intake since 2026-10-02; no Progressive question for it has been mapped',
     'operations.canadaLoads': 'on the intake since 2026-10; no Progressive question for it has been mapped',
@@ -166,8 +162,8 @@ const READ_INDIRECTLY = {
   progressive: {
     'applicant.applicationDate': 'util.priorPolicyExpired (currently insured, insured with Progressive)',
     'claims.text': 'normalize.intakeNotes (an NTL mention in the claims box holds Rates)',
-    'claims.notes': 'normalize.otherNotes (the defensive driver course)',
-    'notes.text': 'normalize.intakeNotes and otherNotes (NTL, the defensive driver course)',
+    'claims.notes': 'normalize.otherNotes (the defensive driver course, a claim the notes mention)',
+    'notes.text': 'normalize.intakeNotes and otherNotes (NTL, the defensive driver course, a claim the notes mention)',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag)',

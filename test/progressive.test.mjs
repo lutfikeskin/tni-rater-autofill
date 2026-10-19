@@ -738,6 +738,101 @@ test('defensive driver discount: No, unless the description box mentions a cours
   assert.deepEqual([fromNotes.value, /defensive driving course/.test(fromNotes.note ?? '')], [null, true]);
 });
 
+// TNI, 2026-10-19 (SC live run: each went to the agent and to Luna, though TNI's answer is No).
+test('TNI standards of 2026-10-19: blank placard, claims, filings (no USDOT / MC) and a vehicle under a year are No', () => {
+  const step = (record, q) => byQ(buildPlan(record, progressive, { drivers: 0, vehicles: 0 }), q);
+  const got = (s) => [s.value, s.source, s.standard, !!s.note];
+
+  // Hazmat placard: the intake's answer; blank is No unless they haul hazmat.
+  const placard = baseRecord();
+  assert.deepEqual(got(step(placard, '2F6')), [false, 'intake', false, false]);
+  placard.operations.hazPlacard = true;
+  assert.deepEqual(got(step(placard, '2F6')), [true, 'intake', false, false]);
+  placard.operations.hazPlacard = null;
+  assert.deepEqual(got(step(placard, '2F6')), [false, 'standard', true, false], 'blank: TNI standard No');
+  placard.operations.hazmat = true;
+  assert.deepEqual(got(step(placard, '2F6')), [null, 'derived', false, true], 'blank but hauls hazmat: the agent\'s');
+  assert.equal(step(placard, '2F6').path, 'operations.hazPlacard', 'still linked to the intake answer');
+  // What they haul may need a placard (review of PR #97): the agent's; "non-hazardous" isn't.
+  placard.operations.hazmat = null;
+  for (const what of ['Fuel and propane tanks', 'Industrial chemicals', 'Hazmat loads', 'Lithium batteries']) {
+    placard.operations.whatHaul = what;
+    assert.deepEqual(got(step(placard, '2F6')), [null, 'derived', false, true], `"${what}": the agent's`);
+    assert.match(step(placard, '2F6').note, /may need a placard/);
+  }
+  for (const what of ['General freight', 'Non-hazardous general freight', 'Dry goods, no hazmat', 'Furniture']) {
+    placard.operations.whatHaul = what;
+    assert.deepEqual(got(step(placard, '2F6')), [false, 'standard', true, false], `"${what}": TNI standard No`);
+  }
+  // A placard question found only by its label gets the same answer (review of PR #97).
+  const byLabel = (record) => buildPlan(record, progressive, {}).find((s) => s.q == null && s.path === 'operations.hazPlacard');
+  assert.deepEqual(got(byLabel(placard)), [false, 'standard', true, false], 'label fallback: TNI standard No');
+  placard.operations.whatHaul = 'Diesel fuel';
+  assert.deepEqual(got(byLabel(placard)), [null, 'derived', false, true], `label fallback: the agent's`);
+
+  // Accidents, claims or violations: the claims box's Yes or No; neither is No unless the notes
+  // mention one.
+  const claims = (hasClaims, notes = null, more = null) => ({ ...baseRecord(), claims: { hasClaims, notes }, notes: { text: more } });
+  assert.deepEqual(got(step(claims(true), '28F5')), [true, 'intake', false, false]);
+  assert.deepEqual(got(step(claims(false), '28F5')), [false, 'intake', false, false]);
+  for (const notes of [null, 'Financed', 'No claims or violations in the last 5 years.', 'None', 'N/A', 'Clean record', 'Can provide claim-free loss runs', 'Wants a quote by Friday; loss runs attached', 'Loss payee: First Bank', 'Pickup points in three states']) {
+    assert.deepEqual(got(step(claims(null, notes), '28F5')), [false, 'standard', true, false], `"${notes}": TNI standard No`);
+  }
+  for (const [notes, more] of [['One speeding ticket in 2024', null], ['No accidents but one speeding ticket', null], [null, 'Driver had an at-fault accident in 2023.'], ['DUI 2022', null], ['Prior loss: cargo theft 2024', null],
+    // Wordings the first version missed (review of PR #97).
+    ['4 points on his license', null], [null, 'License revoked in 2024.'], ['Rear-ended a car in March', null], ['Reckless driving 2023', null], ['OWI 2021', null], [null, 'Small fender bender last year'], ['Hit a deer in 2025', null], ['Needs SR-22', null]]) {
+    const s = step(claims(null, notes, more), '28F5');
+    assert.deepEqual(got(s), [null, 'derived', false, true], `"${notes ?? more}": the agent's`);
+    assert.match(s.note, /answer it yourself/);
+  }
+  // An SR-22 needed (review of PR #97): the agent's, with the reason.
+  const sr22 = claims(null);
+  sr22.operations.needSr22 = true;
+  assert.deepEqual(got(step(sr22, '28F5')), [null, 'derived', false, true], `SR-22 needed: the agent's`);
+  assert.match(step(sr22, '28F5').note, /SR-22/);
+  // An explicit No in the box wins over notes that mention something else.
+  assert.equal(step(claims(false, 'Ticket paid, dismissed'), '28F5').value, false);
+
+  // Filings: the intake's answer; blank is No only without a USDOT or MC number.
+  const filings = baseRecord();
+  filings.operations.filingsRequired = null;
+  filings.operations.filingsWhich = null;
+  assert.deepEqual(got(step(filings, 'CA')), [false, 'standard', true, false], 'blank, no USDOT or MC: TNI standard No');
+  assert.equal(step(filings, 'F11').value, null, 'the Filings page (shown only after a Yes) is unchanged');
+  // A USDOT coming within 60 days (TNI, 2026-10-19): still No; the USDOT question says "Not Yet".
+  filings.applicant.mcDotWithin60Days = true;
+  assert.deepEqual(got(step(filings, 'CA')), [false, 'standard', true, false], 'USDOT coming within 60 days: still No');
+  assert.match(step(filings, '1ED').value, /^Not Yet - but the customer has applied\/will apply/);
+  filings.applicant.dot = '1234567';
+  assert.deepEqual(got(step(filings, 'CA')), [null, 'derived', false, false], 'blank with a USDOT number: the agent\'s');
+  filings.applicant.dot = null;
+  filings.applicant.mc = '765432';
+  assert.deepEqual(got(step(filings, 'CA')), [null, 'derived', false, false], 'blank with an MC number: the agent\'s');
+  filings.applicant.mc = null;
+  // Filings named, or an SR-22 needed, with the answer blank (review of PR #97): the agent's.
+  filings.operations.filingsWhich = 'Form E';
+  assert.deepEqual(got(step(filings, 'CA')), [null, 'derived', false, true], `blank but filings named: the agent's`);
+  assert.match(step(filings, 'CA').note, /Form E/);
+  filings.operations.filingsWhich = null;
+  filings.operations.needSr22 = true;
+  assert.deepEqual(got(step(filings, 'CA')), [null, 'derived', false, true], `blank but SR-22 needed: the agent's`);
+  assert.match(step(filings, 'CA').note, /SR-22/);
+  filings.operations.filingsRequired = false;
+  assert.deepEqual(got(step(filings, 'CA')), [false, 'derived', false, false]);
+
+  // Had the vehicle less than a year: TNI's standard No; how long stays the agent's.
+  assert.deepEqual(got(step(baseRecord(), '2C06')), [false, 'standard', true, false]);
+  assert.equal(step(baseRecord(), '2C06').field, 'RiskInput.VehicleOwnershipLessThanAYear');
+  assert.equal(step(baseRecord(), '2C09').value, null);
+  // A vehicle of this model year or later (review of PR #97): likely bought within the year, the agent's.
+  const recent = baseRecord();
+  recent.vehicles[0].year = new Date().getFullYear();
+  assert.deepEqual(got(step(recent, '2C06')), [null, 'fact', false, true], `this model year: the agent's`);
+  assert.equal(step(recent, '2C06').manualOnly, true, `never Luna's`);
+  recent.vehicles[0].year = new Date().getFullYear() - 1;
+  assert.deepEqual(got(step(recent, '2C06')), [false, 'standard', true, false], 'last model year: TNI standard No');
+});
+
 // Runs of 2026-10-07 (FL, UT, SC): the CDL year, UMPD per vehicle, SC's glass deductible and
 // combined UM/UIM, Rates buttons waiting on required questions, and vehicle ownership length.
 test('FL / UT / SC questions of 2026-10-07', () => {
