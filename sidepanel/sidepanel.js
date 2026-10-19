@@ -37,6 +37,16 @@ const aiPendingStore = inExtension && globalThis.chrome?.storage?.local
       set: (v) => chrome.storage.local.set({ [AI_PENDING_KEY]: v }),
     }
   : { get: async () => memory[AI_PENDING_KEY] ?? [], set: async (v) => { memory[AI_PENDING_KEY] = v; } };
+// Intakes the agent marked as a test run (fingerprints, newest last, at most 200), kept on this
+// computer so the same test PDF loaded again is marked again. The weekly review leaves their
+// quotes out of its numbers (scripts/lib/signals.mjs).
+const TEST_INTAKES_KEY = 'testIntakes';
+const testIntakes = inExtension && globalThis.chrome?.storage?.local
+  ? {
+      get: async () => (await chrome.storage.local.get(TEST_INTAKES_KEY))[TEST_INTAKES_KEY] ?? [],
+      set: (v) => chrome.storage.local.set({ [TEST_INTAKES_KEY]: v }),
+    }
+  : { get: async () => memory[TEST_INTAKES_KEY] ?? [], set: async (v) => { memory[TEST_INTAKES_KEY] = v; } };
 // Tab ids can be reused after Chrome restarts. Local edit/helper records belong to the
 // extension's current browser session, whose nonce survives panel reloads in storage.session.
 const TAB_RECORDS_SESSION_KEY = 'tabRecordsSession';
@@ -690,6 +700,7 @@ async function loadFile(file) {
   const result = normalizeIntake(raw);
   if (result.error) return showLoadError(result.error, file.name);
   const summary = await intakeSummary(bytes, raw, result);
+  const test = (await testIntakes.get()).includes(summary.intakeId);
   // Where each answer is on the PDF, so check items and filled answers can be shown on it. A PDF
   // pdf.js reads the fields of but not their places just has no "See in PDF".
   const places = await readIntakePlaces(pdfjs, bytes.slice()).catch(() => null);
@@ -714,7 +725,8 @@ async function loadFile(file) {
   resetViews();
   // agentEdited: the fields the agent edited in the panel, saved with the intake so a derived one
   // among them (radius miles, years in business) stays theirs after the panel reopens.
-  state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places };
+  // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
+  state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test };
   if (same) keepWork(state.intake, same);
   // Step 1 starts open when something on the intake needs a look.
   state.checkOpen = state.intake.warnings.some((w, i) => w.level === 'check' && !state.intake.done.includes(i));
@@ -737,12 +749,26 @@ async function loadFile(file) {
   // This intake's edit keys and helper records (also a PDF dropped again) are restored per tab by
   // refreshTab; the panel's own sets and restoration markers were reset above.
   await pruneAgentRecords(summary.intakeId);
-  usage.log({ type: 'intake_loaded', ...summary });
+  usage.log({ type: 'intake_loaded', ...summary, ...(test ? { test: true } : {}) });
   uploadNow();
   await save();
   render();
   refreshTab();
   reviewIntake();
+}
+
+// The agent marks (or unmarks) the loaded intake as a test run: remembered for this PDF on this
+// computer and logged, so the quote's events, already sent or still to come, are known as a test.
+async function markTestRun(test) {
+  if (!state.intake || !!state.intake.test === test) return;
+  const intakeId = usage.currentSession()?.intakeId;
+  state.intake.test = test;
+  if (intakeId) {
+    const list = (await testIntakes.get()).filter((id) => id !== intakeId);
+    await testIntakes.set((test ? [...list, intakeId] : list).slice(-200));
+  }
+  usage.log({ type: 'intake_marked', test });
+  await save();
 }
 
 // The agent's work on an intake loaded again from the same PDF: the record with their corrections
@@ -786,6 +812,7 @@ function render() {
     counted('vehicles', 'vehicle', 'truck'),
     record.trailers.length ? h('span', { title: n('trailers', 'trailer') }, n('trailers', 'trailer')) : null,
   ].filter(Boolean));
+  $('test-run').checked = !!state.intake.test;
   $('details-count').textContent = `${stats.filled} answers`;
   $('open-pdf').hidden = !state.pdfBytes && !state.intake.pdfKept;
   $('file-menu').hidden = !state.fileMenuOpen;
@@ -4151,6 +4178,7 @@ function wire() {
     t.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); });
     t.addEventListener('dragover', () => { if (!state.intake) $('load-error').hidden = true; });
   }
+  $('test-run').addEventListener('change', () => markTestRun($('test-run').checked));
   // Change file: straight to the file picker, unless the agent has corrected or checked this
   // intake (a different file starts over). Clear: always asked first.
   $('replace').addEventListener('click', () => {

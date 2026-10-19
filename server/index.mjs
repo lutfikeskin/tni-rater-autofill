@@ -56,8 +56,11 @@ export function startupError({ host, token }) {
 // Event type -> fields kept. Anything else in an event is dropped.
 export const COMMON = ['id', 't', 'v', 'channel', 'commit', 'agent', 'session', 'intakeId', 'seq', 'type', 'carrier', 'page', 'view'];
 export const EVENT_FIELDS = {
-  intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings'],
+  // test: the agent marked this intake as a test run before (on this computer).
+  intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings', 'test'],
   intake_closed: ['reason'],
+  // The agent marked the loaded intake as a test run, or unmarked it.
+  intake_marked: ['test'],
   intake_edit: ['path', 'kind', 'change', 'warnings'],
   warning_checked: ['code', 'path', 'checked'],
   page_view: ['from', 'fields'],
@@ -157,6 +160,7 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
       if (out[k] !== undefined && !(out[k] === null || (typeof out[k] === 'number' && Number.isFinite(out[k]) && out[k] >= 0 && out[k] <= 1)
         || (k === 'confidence' && ['high', 'medium', 'low'].includes(out[k])))) drop(k);
     }
+    if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
     // A page's messages: at most 40 lines of at most 200 characters.
     if (out.messages !== undefined && !(Array.isArray(out.messages) && out.messages.length <= 40 && out.messages.every((m) => typeof m === 'string' && m.length <= 200))) drop('messages');
     // A crash: where, a bounded message, and frames inside the extension's files only.

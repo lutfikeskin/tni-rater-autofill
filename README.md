@@ -17,7 +17,7 @@ Agents install it from its private Chrome Web Store listing (see [docs/chrome-we
 2. Click **Load unpacked** and pick `dist/tni-rater-autofill`. That copy has a fixed extension ID (`cbpjccegchfackokbiogplhdekblkccj`), so its settings, including the OpenAI key, survive removing and loading it again.
 3. Pin the extension, then click its icon to open the side panel.
 4. After the next `npm run package`, click the extension's reload button. Open carrier pages need no refresh: the fill scripts left in them are replaced on the next fill (each build is stamped), and the usage recorder when the panel next follows the tab. Reopen the side panel to get its new version.
-5. Under **Usage log**, enter your initials. **Server** defaults to TNI's central collection server. For local development, set it to `http://localhost:8787` and start `npm run server`.
+5. Under **Usage log**, enter your initials. For a practice or test quote, tick **Test run, not a client** under the client's name: the weekly review leaves it out of its numbers (the PDF is remembered on this computer). **Server** defaults to TNI's central collection server. For local development, set it to `http://localhost:8787` and start `npm run server`.
 
 ## Using it
 

@@ -196,6 +196,8 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .file-confirm { display: grid; gap: 8px; }
 .file-confirm p { margin: 0; color: var(--ink); }
 .client-note { flex: 0 0 auto; margin: 0; padding: 8px 14px; background: var(--success-soft); border-bottom: 1px solid var(--border-soft); color: var(--success-ink); }
+.test-run { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-secondary); cursor: pointer; }
+.test-run input { margin: 0; }
 
 /* The three steps */
 .step-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }

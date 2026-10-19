@@ -1519,7 +1519,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
     $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
     normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
-    store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], uploadNow() {},
+    store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
     'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid'].map(extractFunction).join('\n'), context);
@@ -4014,7 +4014,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   assert.equal(stored.record.operations.radiusMiles, 77, 'and saved that way');
   sandbox.state.intake = { record, warnings: [] };
   // A new intake starts clean: its derived values follow their source again.
-  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places \};/, 'a loaded intake starts with no edits');
+  assert.match(SIDEPANEL, /state\.intake = \{ \.\.\.result, fileName: file\.name, done: \[\], agentEdited: \[\], places, test \};/, 'a loaded intake starts with no edits');
   radius.value = '250';
   await radius.listeners.change();
   assert.equal(record.operations.radiusMiles, 250, 'another intake: the miles follow the edit');
@@ -4063,7 +4063,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
         if (/\.answer\(/.test(String(func))) { answerStarted(); return pending; }
         return [frame];
       },
-      pruneAgentRecords: async () => [],
+      pruneAgentRecords: async () => [], testIntakes: { get: async () => [] },
       readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, normalizeIntake: () => ({ record: nextRecord, warnings: [] }),
       intakeSummary: async () => ({ intakeId: nextFingerprint }), pdfjs: {},
       cancelLayouts() {}, holdLayouts() {}, resetViews() {}, discardAiSuggestions() {}, uploadNow() {},
@@ -4153,7 +4153,7 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
       doneActionsQueue: Promise.resolve(), doneRestored: new Set(),
       doneActionsStore: { get: async (id, tab) => memory.get(`${id}|${tab}`) ?? [],
         set: async (id, tab, ids) => { memory.set(`${id}|${tab}`, [...ids]); } },
-      $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, pruneAgentRecords: async () => [],
+      $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] },
       normalizeIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
       store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
       discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
@@ -4295,6 +4295,25 @@ test('a layout carries the page\'s messages, and a new message logs the page aga
   assert.equal(logged.length, 2);
   assert.deepEqual([...logged[1].messages], ['This field is required']);
   assert.equal(logged[1].reason, 'messages');
+});
+
+test('marking a test run remembers the PDF on this computer and logs it once per change', async () => {
+  const logged = [];
+  let list = ['other-pdf'];
+  const sandbox = { state: { intake: { record: {}, test: false } }, usage: { currentSession: () => ({ intakeId: 'this-pdf' }), log: (e) => logged.push(e) },
+    testIntakes: { get: async () => list, set: async (v) => { list = v; } }, save: async () => {} };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('markTestRun'), sandbox);
+  await sandbox.markTestRun(true);
+  await sandbox.markTestRun(true);
+  assert.deepEqual([...list], ['other-pdf', 'this-pdf']);
+  assert.equal(sandbox.state.intake.test, true);
+  await sandbox.markTestRun(false);
+  assert.deepEqual([...list], ['other-pdf']);
+  assert.deepEqual(JSON.parse(JSON.stringify(logged)), [{ type: 'intake_marked', test: true }, { type: 'intake_marked', test: false }]);
+  // A test PDF loaded again carries the mark on intake_loaded.
+  assert.match(SIDEPANEL, /const test = \(await testIntakes\.get\(\)\)\.includes\(summary\.intakeId\);/);
+  assert.match(SIDEPANEL, /usage\.log\(\{ type: 'intake_loaded', \.\.\.summary, \.\.\.\(test \? \{ test: true \} : \{\}\) \}\);/);
 });
 
 test('an empty page is logged for a combined reason that includes messages, and skipped when the reason lacks it', async () => {
