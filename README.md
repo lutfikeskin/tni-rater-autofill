@@ -110,6 +110,15 @@ node scripts/find-intake.mjs <folder of intake PDFs> server-data   # which intak
 
 `signals` isn't part of `npm run review`; the weekly review reads both (see the `weekly-review` and `apply-review-fixes` skills in `.claude/skills/`). `learn` prints rule lines ready to paste into `src/carriers/<carrier>.js`. **Review each one**: a consistent answer isn't always a correct one. Generated layouts are git-ignored; review them before committing any.
 
+To measure a rule change on recorded quotes before release, replay them through the rules, given a folder with their intake PDFs (matched by fingerprint, never copied). It isn't part of `npm run review`:
+
+```bash
+npm run benchmark -- --intakes <folder of intake PDFs> --save reviews/benchmark-main.json   # on main
+npm run benchmark -- --intakes <folder of intake PDFs> --against reviews/benchmark-main.json  # on the branch
+```
+
+`reviews/benchmark-<date>.md` shows where today's rules agree with what agents left, differ from it, or leave it to the agent, and what changed since the saved run. Agreement with past agents isn't proof of a correct answer; see [learning](docs/learning.md).
+
 ### Replay test pages
 
 ```bash

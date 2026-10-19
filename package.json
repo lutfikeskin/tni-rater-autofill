@@ -29,6 +29,7 @@
     "pull": "node scripts/logs-pull.mjs",
     "push-logs": "node scripts/logs-push.mjs",
     "coverage": "node scripts/coverage.mjs server-data",
+    "benchmark": "node scripts/benchmark.mjs server-data",
     "fixtures:progressive": "node scripts/refresh-fixtures.mjs"
   },
   "devDependencies": {
