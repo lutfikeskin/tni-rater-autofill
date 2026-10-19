@@ -17,6 +17,7 @@ For each discovered question, record its target by a locator the carrier's own c
 3. Implement supported controls and helpers with prerequisites. Use `MAIN` only when page-owned widgets require it; enable batching only with evidence that per-answer server waits are unnecessary. Follow [browser filling](browser-filling.md) for execution changes.
 4. Give repeated drivers/vehicles distinct targets and verify entity identity after redraws, imports, or lookups: a row the page may draw in its own order is found by a witness it shows (`witness: { selector, path }`, AmWINS' vehicle rows by their VIN), not by its position, and a helper whose result the page shows (a lookup, an import) carries `verify` (`revealed`, or `{ appears }`) so a click that showed nothing is not counted as done. Preserve questions that need an agent's answer.
 5. Add the carrier's supported standards to [tni-rules.js](../src/ai/tni-rules.js) when AI assistance is in scope. AI availability does not make the carrier fully supported.
+6. When the quote's step order has been observed, list it as `quoteSteps` (each step's `pages`, or its one-address `step` heading) for the panel's page strip; leave out pages whose place in the flow wasn't seen. Without it the strip shows only the carrier.
 
 ## Validate and expand
 

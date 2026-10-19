@@ -71,13 +71,14 @@ test('prefilled insurance type without limit or expiry means currently insured N
   record.priorInsurance = [{ type: 'Commercial Auto', carrier: null, limit: null, expiration: null }];
   const plan = buildPlan(record, progressive);
   assert.equal(byQ(plan, '81').value, false);
-  // Continuous coverage isn't on the intake: the agent's, insured or not (2026-10-09).
+  // Continuous coverage: the agent's when not currently insured; Yes when insured (TNI 2026-10-10).
   assert.equal(byQ(plan, '83').value, null);
   assert.match(byQ(plan, '83').note, /continuous coverage/i);
   for (const q of ['95', '9D']) assert.equal(byQ(plan, q).ignore, true);
   record.priorInsurance[0].limit = '$500k CSL';
   record.priorInsurance[0].expiration = '10/31/2026';
   assert.equal(byQ(buildPlan(record, progressive), '81').value, true);
+  assert.equal(byQ(buildPlan(record, progressive), '83').value, true);
 });
 
 test('sole owner-driver with duplicated first name uses owner surname and driver DOB', () => {
@@ -213,8 +214,11 @@ test('search-style business type (IN), other-coverage checkboxes, vehicle list',
   assert.deepEqual(q36.choiceAliases, ['General Freight Trucking']);
   assert.equal(byQ(plan, '24D').ignore, true, 'the search box itself is not typed into');
   assert.equal(byQ(plan, '1D').ignore, true);
-  // 2026-10-09: the intake never asks about other coverages, so none of these is filled.
-  for (const q of ['AA', 'B2', 'A8', 'A2']) { assert.equal(byQ(plan, q).value, null, q); assert.match(byQ(plan, q).note, /other business coverages|General Liability/); }
+  // TNI 2026-10-10: None of the above unless the intake says general liability (then the agent's).
+  assert.deepEqual(['AA', 'B2', 'A8', 'A2'].map((q) => byQ(plan, q).value), [true, true, false, 'None']);
+  const gl = baseRecord();
+  gl.coverage.gl = true;
+  for (const q of ['AA', 'B2', 'A8', 'A2']) { const s = byQ(buildPlan(gl, progressive, {}), q); assert.equal(s.value, null, q); assert.match(s.note, /general liability/); }
   const search = plan.find((s) => s.action === 'businessTypeSearch');
   assert.equal(search.near, 'business type');
   assert.equal(progressive.vehicleList, 'VehicleSummary');
@@ -299,8 +303,8 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
   assert.equal(sel('#ownerName').value, 'IBRAHIM ALHARAZ');
   assert.equal(sel('#ownerDob').value, '01/01/1968');
   assert.equal(sel('#yrsInBusiness').value, '5+', 'years under own authority 7');
-  assert.equal(sel('#yearBusinessEstablished').value, null, 'blank on the intake: the agent\'s, not this year (2026-10-09)');
-  assert.equal(sel('#yearBusinessEstablished').path, 'applicant.yearEstablished');
+  assert.equal(sel('#yearBusinessEstablished').value, new Date().getFullYear(), 'blank on the intake: this year (TNI standard)');
+  assert.equal(sel('#yearBusinessEstablished').source, 'standard');
   assert.equal(sel('#classCodeAndDescription').kind, 'search-select');
   assert.equal(sel('#classCodeAndDescription').search, '484122');
   const prior = plan.filter((x) => /^Prior carrier/.test(x.name));
@@ -310,8 +314,9 @@ test('AmWINS second-quote rules: owner from a first-name-only box, years under a
     assert.equal(step.value, 'NO PRIOR');
     assert.equal(step.hidden, true, 'collapsed year panels are filled too');
   }
-  assert.equal(named(/^Year licensed/).value, null, 'not on the intake: the agent\'s (2026-10-09; birth year + 17 before)');
-  assert.equal(named(/^Year licensed/).source, 'fact');
+  assert.equal(named(/^Year licensed/).value, '1985', 'TNI: birth year + 17 (2026-10-10; the agent\'s on 2026-10-09)');
+  assert.equal(named(/^Year licensed/).source, 'standard');
+  assert.equal(named(/^Gender/).value, 'MALE', 'TNI standard, no gender set in client details');
   assert.equal(named(/^Disclosure/).value, 'Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods\nMore than 500 miles radius of operation\nPOP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026');
   assert.equal(sel('#autoSymbol6').value, true);
   assert.equal(sel('#autoSymbol1').value, false);
@@ -381,8 +386,10 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
     for (const label of LABELS) assert.equal(mine.filter((s) => new RegExp(s.re, 'i').test(label)).length, 1, `vehicle ${row + 1}: ${label}`);
   }
   assert.ok(plan.some((s) => s.re && new RegExp(s.re, 'i').test('code voilation')), 'the page spells it "voilation"');
-  assert.equal(named(/^Vehicles leased to others/)[0].value, null, 'not on the intake: the agent\'s (2026-10-09; always No before)');
-  assert.equal(named(/^Vehicles leased to others/)[0].source, 'fact');
+  for (const re of [/^Vehicles leased to others/, /^Vehicles not owned/, /^Convictions/, /^Additional interest/]) {
+    assert.equal(named(re)[0].value, false, `${re}: TNI's standard No (2026-10-09)`);
+    assert.equal(named(re)[0].source, 'standard');
+  }
   assert.equal(named(/^Body type/)[0].replace, true);
   assert.equal(named(/^Other topics/)[0].replace, true, 'Yes again after Default all answers to No');
   const actions = plan.filter((s) => s.kind === 'action');

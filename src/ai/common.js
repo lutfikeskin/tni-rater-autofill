@@ -1,7 +1,7 @@
 // Shared intake scoping and field restrictions for Luna assistance.
 // Exact answers, calculations and page execution remain in code.
 import { TNI_RULES } from './tni-rules.js';
-import { priorPolicyExpired } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired } from '../util.js';
 import { redactionTerms } from '../plan.js';
 import { redactor } from '../usage.js';
 
@@ -9,8 +9,17 @@ export const LEAVE = '__leave__';
 const CHOICE_KINDS = new Set(['radio', 'select', 'checkbox']);
 const MAX_OPTIONS = 254; // Keep per-field choices and evidence context bounded.
 
+// JSON with every object's keys in sorted order. chrome.storage gives an object back with its keys
+// sorted, not in the order they were set: a key that compares an intake before and after the panel
+// reopens must not see that as an edit.
+export function stableJson(value) {
+  const sorted = (v) => (Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object'
+    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v);
+  return JSON.stringify(sorted(value));
+}
+
 export function assistContextKey(record, active) {
-  return JSON.stringify([record, active]);
+  return stableJson([record, active]);
 }
 
 const NEVER = [
@@ -108,7 +117,7 @@ export function scopedIntake(record, active) {
     const index = active[key] ?? 0;
     if (Number.isInteger(index) && index >= 0 && record[key]?.[index]) out[`${key}[${index}]`] = clean(record[key][index]);
   }
-  if (record.priorInsurance?.length) out.computed = { priorPolicyExpired: priorPolicyExpired(record) };
+  if (record.priorInsurance?.length) out.computed = { priorPolicyExpired: priorPolicyExpired(record), noPriorInsurance: noPriorInsurance(record.priorInsurance[0]) };
   return out;
 }
 

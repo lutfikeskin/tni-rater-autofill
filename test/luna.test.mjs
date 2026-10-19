@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectItems, AssistError, LEAVE } from '../src/ai/common.js';
 import { buildRequest, parseResponse, buildVerification, verifyResponse, suggest, callModel, responseData,
-  DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes } from '../src/ai/luna.js';
+  DEFAULT_MODEL, API_URL, noteLines, buildNotesReview, parseNotesReview, notesWarnings, reviewNotes,
+  firstNameOf, buildNameReview, parseNameReview, nameWarnings, reviewDriverNames, NAME_GUESSES } from '../src/ai/luna.js';
 import { settingsFrom } from '../src/ai/providers.js';
 
 const context = { carrier: 'geico', page: 'operations', active: { drivers: 0, vehicles: 0 },
@@ -377,7 +378,7 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.deepEqual(body.text.format.schema.properties.lines.required, ['l0', 'l1', 'l2', 'l3']);
   assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'nothing to read');
 
-  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
+  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange, businessYears: null, businessSince: null, generalLiability: false }])) });
   // coverageChange means a change other than NTL (NTL has its own flag).
   const json = flags([[false, true], [true, false], [false, false], [false, false]]);
   const results = parseNotesReview(json, review);
@@ -404,7 +405,7 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.match(JSON.parse(JSON.stringify(mixed.body)).instructions, /other than non-trucking liability \(that is the ntl question\)/);
 
   assert.throws(() => parseNotesReview(flags([[false, true]]), review), AssistError, 'a missing line fails the whole review');
-  assert.throws(() => parseNotesReview(envelope({ lines: { l0: { ntl: 'yes', coverageChange: false }, l1: { ntl: false, coverageChange: false }, l2: { ntl: false, coverageChange: false }, l3: { ntl: false, coverageChange: false } } }), review), AssistError);
+  assert.throws(() => parseNotesReview(envelope({ lines: { l0: { ntl: 'yes', coverageChange: false, businessYears: null, businessSince: null, generalLiability: false }, l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false }, l2: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false }, l3: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false } } }), review), AssistError);
   assert.throws(() => parseNotesReview({ ...json, model: 'other-model' }, review), AssistError, 'an unexpected model fails');
 
   let sent;
@@ -435,14 +436,14 @@ test('non-trucking liability questions stay with the agent', () => {
 // Codex on PR #22: counts are lines, not cards; a long claims box says what wasn't read.
 test('claims-box review counts flagged lines and says when the box was too long to read whole', async () => {
   const mixed = { coverage: {}, claims: { text: 'No\nNeeds bobtail and physical damage\nFinanced' } };
-  const two = (body) => envelope({ lines: { l0: { ntl: true, coverageChange: true }, l1: { ntl: false, coverageChange: false } } });
+  const two = (body) => envelope({ lines: { l0: { ntl: true, coverageChange: true, businessYears: null, businessSince: null, generalLiability: false }, l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false } } });
   const done = await reviewNotes(mixed, { apiKey: 'k' }, { call: async ({ body }) => two(body) });
   assert.deepEqual(done.warnings.map((w) => w.code), ['ai.coverage-change'], 'the intake quotes the bobtail line');
   assert.equal(done.flagged, 1);
   assert.equal(done.lines, 2);
   assert.ok(done.warnings.every((w) => !('line' in w)), 'no extra fields on the intake items');
   const long = { coverage: {}, claims: { text: Array.from({ length: 25 }, (_, i) => `Line number ${i + 1} about the truck`).join('\n') } };
-  const all = await reviewNotes(long, { apiKey: 'k' }, { call: async ({ body }) => envelope({ lines: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).claimsBox).map((id) => [id, { ntl: false, coverageChange: false }])) }) });
+  const all = await reviewNotes(long, { apiKey: 'k' }, { call: async ({ body }) => envelope({ lines: Object.fromEntries(Object.keys(JSON.parse(body.input[0].content).claimsBox).map((id) => [id, { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false }])) }) });
   assert.equal(all.lines, 20);
   assert.deepEqual(all.warnings.map((w) => [w.code, w.level]), [['ai.claims-truncated', 'check']]);
   assert.match(all.warnings[0].msg, /first 20 lines only/);
@@ -450,7 +451,7 @@ test('claims-box review counts flagged lines and says when the box was too long 
 
 // Codex on PR #22: a later "NTL" line isn't the quoted "Does not want NTL"; "GL" alone is read.
 test('claims-box review: only the quoted line\'s own sentences are the intake\'s, and short coverage words are read', () => {
-  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange }])) });
+  const flags = (values) => envelope({ lines: Object.fromEntries(values.map(([ntl, coverageChange], i) => [`l${i}`, { ntl, coverageChange, businessYears: null, businessSince: null, generalLiability: false }])) });
   const review = buildNotesReview({ coverage: {}, claims: { text: 'No\nDoes not want NTL\nNTL' } });
   assert.deepEqual(review.lines, ['Does not want NTL', 'NTL']);
   assert.deepEqual(review.quotedFragments, ['Does not want NTL']);
@@ -458,4 +459,126 @@ test('claims-box review: only the quoted line\'s own sentences are the intake\'s
     [['ai.ntl', 'NTL']], 'the later positive line keeps its item');
   assert.deepEqual(buildNotesReview({ coverage: { gl: false }, claims: { text: 'No\nGL' } }).lines, ['GL']);
   assert.equal(buildNotesReview({ coverage: {}, claims: { text: 'No' } }), null, 'a bare No is still nothing to read');
+});
+
+// WA run 2026-10-09: year established blank, "in Biz for 3+ years" in the claims box. Luna copies
+// the stated years (or start year); code compares them with the intake's and tells the agent.
+test('claims-box review: a stated time in business the intake lacks or contradicts is a check item', async () => {
+  const today = new Date('2026-10-09');
+  const record = (applicant) => ({ applicant, coverage: {}, claims: { text: '1 AF in 2024\nin Biz for 3+ years' } });
+  const answer = (l1) => envelope({ lines: {
+    l0: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false },
+    l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false, ...l1 } } });
+  const blank = buildNotesReview(record({ yearsInBusiness: null, yearsExperience: null }), { today });
+  const schema = blank.body.text.format.schema.properties.lines.properties.l0;
+  assert.deepEqual(schema.required, ['ntl', 'coverageChange', 'businessYears', 'businessSince', 'generalLiability']);
+  assert.deepEqual(schema.properties.businessYears.type, ['integer', 'null']);
+  assert.match(blank.body.instructions, /Do not calculate/);
+
+  const items = notesWarnings(parseNotesReview(answer({ businessYears: 3 }), blank), blank);
+  assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.years-in-business', 'applicant.yearsInBusiness', 'check']]);
+  assert.match(items[0].msg, /"in Biz for 3\+ years" \(3 years\).*blank on the intake.*New Venture/);
+  // A start year: code counts the years.
+  assert.match(notesWarnings(parseNotesReview(answer({ businessSince: 2021 }), blank), blank)[0].msg, /\(5 years\)/);
+  // The intake agrees: nothing to say; it disagrees: say both.
+  const three = buildNotesReview(record({ yearsInBusiness: 3 }), { today });
+  assert.deepEqual(notesWarnings(parseNotesReview(answer({ businessYears: 3 }), three), three), []);
+  const one = buildNotesReview(record({ yearsInBusiness: null, yearsExperience: 1 }), { today });
+  assert.match(notesWarnings(parseNotesReview(answer({ businessYears: 3 }), one), one)[0].msg, /but the intake gives 1/);
+  // Nothing stated: no item.
+  assert.deepEqual(notesWarnings(parseNotesReview(answer({}), blank), blank), []);
+  // Out-of-range answers fail the review.
+  for (const bad of [{ businessYears: -1 }, { businessYears: 2.5 }, { businessYears: 101 }, { businessSince: 2027 }, { businessSince: 1900 }, { businessYears: '3' }]) {
+    assert.throws(() => parseNotesReview(answer(bad), blank), AssistError, JSON.stringify(bad));
+  }
+  const done = await reviewNotes(record({ yearsInBusiness: null }), { apiKey: 'k' }, { today, call: async () => answer({ businessYears: 3 }) });
+  assert.deepEqual(done.warnings.map((w) => w.code), ['ai.years-in-business']);
+  assert.equal(done.flagged, 1);
+});
+
+// Maintainer 2026-10-10: Progressive's other business coverages are None of the above unless the
+// client has GL. Luna flags a claims-box line about GL; code quotes that line (one it sent) and
+// offers a button that sets coverage.hasGl as the agent's edit: the client has GL, which is not a
+// request to quote GL (coverage.gl; audit 2026-10-10).
+test('claims-box review: a general liability mention the form lacks is a check item with its own buttons', async () => {
+  const text = 'Financed\nAlso has general liability with another agency, wants it quoted';
+  const lines = (gl) => envelope({ lines: { l0: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: false },
+    l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: gl } } });
+  const review = buildNotesReview({ coverage: { gl: null, cargo: true }, claims: { text } });
+  const state = JSON.parse(review.body.input[0].content);
+  assert.deepEqual(state.formCoverage, { cargo: true }, 'GL is its own question, not form coverage');
+  assert.equal(review.body.text.format.schema.properties.lines.properties.l0.properties.generalLiability.type, 'boolean');
+  assert.match(review.body.instructions, /generalLiability: does the line say the customer has, wants or asks about general liability/);
+  assert.match(review.body.instructions, /other than non-trucking liability \(that is the ntl question\) and general liability/);
+
+  const items = notesWarnings(parseNotesReview(lines(true), review), review);
+  assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.gl', 'coverage.hasGl', 'check']]);
+  assert.match(items[0].msg, /mentions general liability: "Also has general liability with another agency, wants it quoted"/);
+  assert.match(items[0].msg, /None of the above.*left to you/);
+  assert.doesNotMatch(items[0].msg, /GL limit|Requested coverage/, 'not a GL request');
+  assert.deepEqual(items[0].choices, [{ label: 'Client has GL', path: 'coverage.hasGl', value: true }, { label: 'Not GL' }]);
+  assert.deepEqual(notesWarnings(parseNotesReview(lines(false), review), review), [], 'no mention: nothing');
+  // GL already ticked on the form: nothing to ask.
+  const ticked = buildNotesReview({ coverage: { gl: true }, claims: { text } });
+  assert.deepEqual(notesWarnings(parseNotesReview(lines(true), ticked), ticked), []);
+  // The quote must be one of the lines sent: a line Luna made up is not evidence.
+  assert.deepEqual(notesWarnings([{ line: 'Client has GL', generalLiability: true }], review), [], 'not a line of the box');
+  // Missing or non-boolean flag: the whole review fails.
+  const bad = envelope({ lines: { l0: { ntl: false, coverageChange: false, businessYears: null, businessSince: null },
+    l1: { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: 'yes' } } });
+  assert.throws(() => parseNotesReview(bad, review), AssistError);
+  const done = await reviewNotes({ coverage: {}, claims: { text } }, { apiKey: 'k' }, { call: async () => lines(true) });
+  assert.deepEqual(done.warnings.map((w) => w.code), ['ai.gl']);
+  assert.equal(done.flagged, 1);
+  assert.ok(!('line' in done.warnings[0]));
+});
+
+// Maintainer 2026-10-10: gender is filled MALE (TNI standard) unless drivers[i].gender is set.
+// Luna guesses from first names only, as a bounded enum; likely_female asks the agent.
+test('driver names: only first names are sent, the answer is a bounded guess, likely_female asks the agent', async () => {
+  assert.equal(firstNameOf('  Maria J. '), 'Maria');
+  assert.equal(firstNameOf('J.'), null, 'an initial is not a name');
+  assert.equal(firstNameOf('[client]'), null);
+  assert.equal(firstNameOf(''), null);
+  const record = { applicant: { name: 'Sample Freight LLC' }, drivers: [
+    { first: 'Maria Elena', last: 'Sample', dob: '01/02/1980', licenseNumber: 'D1234567', licenseState: 'TX' },
+    { first: 'John', last: 'Sample', dob: '03/04/1975' },
+    { first: 'Taylor', last: 'Other', gender: 'MALE' },
+    { first: 'K', last: 'Initial' },
+  ] };
+  const review = buildNameReview(record);
+  assert.deepEqual(review.names, { d0: 'Maria', d1: 'John' }, 'drivers with gender set and initials are not asked');
+  const sent = review.body.input[0].content;
+  assert.deepEqual(JSON.parse(sent), { firstNames: { d0: 'Maria', d1: 'John' } }, 'first names only');
+  for (const term of ['Sample', 'Elena', '1980', 'D1234567', 'TX', 'Freight', 'Taylor']) assert.ok(!sent.includes(term), term);
+  assert.equal(review.body.store, false);
+  assert.equal(review.body.text.format.name, 'driver_first_names');
+  assert.deepEqual(review.body.text.format.schema.properties.drivers.properties.d0, { type: 'string', enum: [...NAME_GUESSES] });
+  assert.deepEqual(NAME_GUESSES, ['likely_female', 'likely_male', 'unclear']);
+  assert.match(review.body.instructions, /untrusted data/);
+  assert.equal(buildNameReview({ drivers: [{ first: 'Ann', gender: 'FEMALE' }] }), null, 'nothing to ask');
+  // A first-name box that may hold the surname sends nothing for that driver (audit 2026-10-10).
+  for (const d of [{ first: 'Smith, Jane', last: null }, { first: 'SMITH JANE', last: '' }, { first: 'Lopez', last: 'Lopez' }]) {
+    assert.equal(buildNameReview({ drivers: [d] }), null, d.first);
+  }
+  assert.deepEqual(buildNameReview({ drivers: [{ first: 'Smith, Jane' }, { first: 'Mary Ann', last: 'Lee' }] }).names, { d1: 'Mary' });
+
+  const reply = (d0, d1 = 'likely_male') => envelope({ drivers: { d0, d1 } });
+  const items = nameWarnings(parseNameReview(reply('likely_female'), review), review, record);
+  assert.deepEqual(items.map((w) => [w.code, w.path, w.level]), [['ai.driver-gender', 'drivers[0].gender', 'check']]);
+  assert.match(items[0].msg, /^Luna: driver 1's gender is filled Male \(TNI standard\)\. "Maria" is more often a woman's name\. This is a guess from the first name only/);
+  assert.deepEqual(items[0].choices, [{ label: 'Use Female', path: 'drivers[0].gender', value: 'FEMALE' }, { label: 'Keep Male', path: 'drivers[0].gender', value: 'MALE' }]);
+  assert.deepEqual(nameWarnings(parseNameReview(reply('unclear'), review), review, record), [], 'unclear: the standard stands');
+  // Set meanwhile, or a renamed driver: no item.
+  assert.deepEqual(nameWarnings([{ id: 'd0', index: 0, guess: 'likely_female' }], review, { drivers: [{ first: 'Maria', gender: 'MALE' }] }), []);
+  assert.deepEqual(nameWarnings([{ id: 'd0', index: 0, guess: 'likely_female' }], review, { drivers: [{ first: 'Mario' }] }), []);
+  // Free text, a missing driver or an extra key fails the whole review.
+  for (const bad of [reply('female'), reply('Likely_Female'), envelope({ drivers: { d0: 'likely_female' } }),
+    envelope({ drivers: { d0: 'unclear', d1: 'unclear', d2: 'unclear' } }), envelope({ drivers: { d0: 'unclear', d1: 'unclear' }, note: 'x' })]) {
+    assert.throws(() => parseNameReview(bad, review), AssistError);
+  }
+  const done = await reviewDriverNames(record, { apiKey: 'k' }, { call: async ({ apiKey, body }) => { assert.equal(apiKey, 'k'); assert.equal(body, body); return reply('likely_female'); } });
+  assert.deepEqual([done.names, done.flagged, done.modelCalls, done.tokensIn], [2, 1, 1, 100]);
+  const none = await reviewDriverNames({ drivers: [] }, { apiKey: 'k' }, { call: async () => { throw new Error('no call expected'); } });
+  assert.equal(none.modelCalls, 0);
 });

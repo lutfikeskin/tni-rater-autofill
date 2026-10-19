@@ -169,6 +169,8 @@ function fieldSteps(rules, record, carrier, active) {
         value = null;
       }
     }
+    // A derived answer's evidence: the intake facts its rule read (the panel shows them on the PDF).
+    const from = source === 'derived' && rule.value && value != null && value !== '' ? readsOf(rule.value, record, active, value) : null;
     const ignore = typeof rule.ignore === 'function' ? !!rule.ignore(record, active) : !!rule.ignore;
     // The agent's, never the AI's: a fact or attestation, or a client fact the intake didn't answer.
     const manualOnly = agents || (!!rule.clientFact && (value === null || value === undefined || value === ''));
@@ -230,6 +232,9 @@ function fieldSteps(rules, record, carrier, active) {
       trustPage: !!rule.trustPage,
       // May fill its field while it isn't on screen (an earlier step's question added later).
       hidden: !!rule.hidden,
+      // One question asked as several boxes (AmWINS' auto symbols 1 to 9): the panel lists it once,
+      // with the boxes ticked.
+      group: rule.group ?? null,
       // An ignored field the page fills itself (a lookup): flagged only if it stays empty.
       emptyNote: typeof rule.emptyNote === 'function' ? rule.emptyNote(record, active) : rule.emptyNote ?? null,
       // A default the agent should confirm: filled, but marked yellow with this note.
@@ -247,11 +252,49 @@ function fieldSteps(rules, record, carrier, active) {
       search: typeof rule.search === 'function' ? rule.search(record, active) : rule.search ?? null,
       withOption: typeof rule.withOption === 'function' ? rule.withOption(record, active) : rule.withOption ?? null,
       value: value === undefined || value === '' ? null : value,
+      from: from?.length ? from : null,
       // Which row of a repeated question is this unit's: the one holding a control matching
       // `selector` that reads as the unit's `value` (AmWINS' vehicle rows by their VIN). The path
       // is resolved for the unit so the page kit can name it ("vehicle 2"); never its position.
       witness: rule.witness ? { selector: rule.witness.selector, path: withIndex(rule.witness.path, active), value: get(record, withIndex(rule.witness.path, active)) ?? null } : null,
     };
+  });
+}
+
+// The record paths a rule's value function reads (`drivers[0].dob`, `applicant.dot`): it runs once
+// more on a view of the record that notes every value looked up. Only for the evidence; the answer
+// is the one computed from the record itself, so a rule that throws here changes nothing. Blank
+// answers it looked at (a unit number, the notes) are left out, unless they're all it read: an
+// answer worked out from what the intake left blank points at those blanks. A list the rule
+// searched (every driver, for the owner's row) keeps only the items whose answers are in `value`.
+function readsOf(fn, record, active, value) {
+  const read = new Map();
+  const view = (obj, at) => new Proxy(obj, {
+    get(target, key, receiver) {
+      const v = Reflect.get(target, key, receiver);
+      if (typeof key !== 'string' || typeof v === 'function') return v;
+      // A list's own properties (length) aren't facts; its items are.
+      const path = Array.isArray(target) ? (/^\d+$/.test(key) ? `${at}[${key}]` : null) : at ? `${at}.${key}` : key;
+      if (path === null) return v;
+      if (v && typeof v === 'object') return view(v, path);
+      read.set(path, v);
+      return v;
+    },
+  });
+  try { fn(view(record, ''), active); } catch { /* evidence only */ }
+  const filled = [...read].filter(([, v]) => v != null && v !== '');
+  if (!filled.length) return [...read.keys()];
+  // Words and digits only: "(555) 010-0100" is in "5550100100".
+  const bare = (x) => String(x).toLowerCase().replace(/[^a-z0-9]/g, '');
+  const answer = typeof value === 'string' || typeof value === 'number' ? bare(value) : '';
+  const echoed = ([, v]) => (typeof v === 'string' || typeof v === 'number') && bare(v).length >= 2 && answer.includes(bare(v));
+  const itemOf = (path) => path.match(/^(.*?)\[\d+\]/)?.[0] ?? null;
+  const listOf = (item) => item.replace(/\[\d+\]$/, '');
+  const inAnswer = new Set(filled.filter(echoed).map(([p]) => itemOf(p)).filter(Boolean));
+  const searched = new Set([...inAnswer].map(listOf));
+  return filled.map(([p]) => p).filter((p) => {
+    const item = itemOf(p);
+    return !item || !searched.has(listOf(item)) || inAnswer.has(item);
   });
 }
 

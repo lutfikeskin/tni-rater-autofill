@@ -51,6 +51,10 @@ function item(key, label = 'Synthetic question', options = ['Yes', 'No'], extra 
 test('context keys include the intake and active rows', () => {
   const key = assistContextKey(record, context.active);
   assert.equal(key, assistContextKey(structuredClone(record), { ...context.active }));
+  // The same intake read back from chrome.storage (keys sorted) is the same context.
+  const reversed = (v) => (Array.isArray(v) ? v.map(reversed) : v && typeof v === 'object'
+    ? Object.fromEntries(Object.keys(v).reverse().map((k) => [k, reversed(v[k])])) : v);
+  assert.equal(key, assistContextKey(reversed(record), reversed(context.active)));
   assert.notEqual(key, assistContextKey(record, { ...context.active, vehicles: 0 }));
   assert.notEqual(key, assistContextKey({ ...record, coverage: { reeferBreakdown: true } }, context.active));
 });

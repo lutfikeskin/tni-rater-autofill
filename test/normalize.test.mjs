@@ -6,6 +6,7 @@ import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
+import { noPriorInsurance } from '../src/util.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 
@@ -479,9 +480,10 @@ test('progressive: standard answers for follow-up questions', () => {
   assert.equal(byQ('215A').value, false, 'special cargo: no');
   assert.equal(byQ('216A').value, 'Consumer Goods', '"General freight hauler"');
   assert.equal(byQ('216B').value, 'Other Consumer Goods');
-  // Continuous coverage and other business coverages aren't on the intake: the agent's (2026-10-09).
-  assert.equal(byQ('83').value, null);
-  assert.equal(byQ('A2').value, null);
+  // TNI 2026-10-10: continuous coverage Yes with current insurance; other business coverages None
+  // unless the intake has general liability (then the agent's).
+  assert.equal(byQ('83').value, true, 'current Progressive policy to 10/31/2026');
+  assert.equal(byQ('A2').value, 'None', 'no general liability on the intake');
   assert.equal(byQ('28C1').value, false);
   // Filings: "all vehicles on quote" and Federal only when the intake says filings are needed;
   // MCS-90 is ticked by the page with Federal, so it's left alone.
@@ -579,10 +581,52 @@ test('a blank DOT/MC section is a valid absence, not a missing-data warning', ()
   assert.equal(noDot.warnings.some((warning) => warning.code === 'dot.missing'), false);
 });
 
-test('"NO POP" as the current carrier means not currently insured, without a warning', () => {
+test('"NO POP" as the current carrier means not currently insured, without a warning, and stays on the panel', () => {
   const r = normalizeIntake({ ...raw, ins_type_1: 'Select*', ins_carrier_1: 'NO POP ', ins_limit_1: 'Select*', ins_exp_1: 'n/a' }, { today: new Date('2026-09-30') });
-  assert.equal(r.record.priorInsurance.length, 0);
+  assert.equal(r.record.priorInsurance.length, 1);
+  assert.equal(r.record.priorInsurance[0].carrier, 'NO POP');
+  assert.ok(noPriorInsurance(r.record.priorInsurance[0]));
   assert.ok(!r.warnings.some((w) => w.code === 'prior.incomplete'));
+});
+
+// WA run 2026-10-09: "Personal Auto", "no POP", "State Minimum", no expiration. TNI: no prior.
+test('"no POP" or "No" as the carrier without an expiration date is no prior, whatever the type and limit', async () => {
+  const { amwins } = await import('../src/carriers/amwins.js');
+  for (const carrier of ['no POP', 'No', 'NONE']) {
+    const r = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: ` ${carrier} `, ins_limit_1: 'State Minimum', ins_exp_1: '' }, { today: new Date('2026-10-09') });
+    assert.deepEqual(r.record.priorInsurance, [{ type: 'Personal Auto', carrier, limit: 'State Minimum', expiration: null }], `${carrier}: shown as written`);
+    assert.ok(noPriorInsurance(r.record.priorInsurance[0]), carrier);
+    assert.ok(r.warnings.some((w) => w.code === 'prior.none'), carrier);
+    assert.ok(!r.warnings.some((w) => /^prior\.(incomplete|personal-auto)$/.test(w.code)), carrier);
+    const disclosure = buildPlan(r.record, amwins, {}).find((s) => /^Disclosure details/.test(s.name ?? ''));
+    assert.doesNotMatch(disclosure.value ?? '', /POP|prior/i, `${carrier}: nothing about prior insurance in the disclosure`);
+    const steps = buildPlan(r.record, progressive, {});
+    assert.equal(steps.find((s) => s.name === 'Currently insured')?.value, false, `${carrier}: not currently insured`);
+    for (const path of ['priorInsurance[0].limit', 'priorInsurance[0].expiration']) {
+      assert.ok(steps.filter((s) => s.path === path).every((s) => s.ignore), `${carrier}: ${path} not filled`);
+    }
+    const generic = buildPlan(r.record, { name: 'generic', fields: [] }, {}).filter((s) => s.path?.startsWith('priorInsurance'));
+    assert.ok(generic.length && generic.every((s) => !s.ignore && s.value == null && /no prior insurance/.test(s.note ?? '')), `${carrier}: generic prior questions left to the agent, not filled or skipped`);
+  }
+  // An expiration date means a policy: kept, as is a named carrier without one.
+  const dated = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: 'no POP', ins_limit_1: 'State Minimum', ins_exp_1: '12/01/2026' }, { today: new Date('2026-10-09') });
+  assert.equal(dated.record.priorInsurance.length, 1);
+  assert.ok(!noPriorInsurance(dated.record.priorInsurance[0]));
+  const named = normalizeIntake({ ...raw, ins_type_1: 'Personal Auto', ins_carrier_1: 'Nationwide', ins_limit_1: 'State Minimum', ins_exp_1: '' }, { today: new Date('2026-10-09') });
+  assert.equal(named.record.priorInsurance[0].carrier, 'Nationwide');
+});
+
+test('blank years in business and year established: a warning, and the record stays blank', () => {
+  const r = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'N/A' }, { today: new Date('2026-10-09') });
+  assert.equal(r.record.applicant.yearsInBusiness, null);
+  assert.equal(r.record.applicant.yearEstablished, null);
+  const w = r.warnings.find((x) => x.code === 'years-in-business.default');
+  assert.equal(w?.level, 'check');
+  assert.match(w.msg, /0 years \(New Venture\), established 2026/);
+  for (const answered of [{ year_established: '2021' }, { years_experience: '4' }]) {
+    assert.ok(!normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'N/A', ...answered }, { today: new Date('2026-10-09') })
+      .warnings.some((x) => x.code === 'years-in-business.default'), JSON.stringify(answered));
+  }
 });
 
 test('AmWINS pages are recognised as a carrier, not as practice', () => {

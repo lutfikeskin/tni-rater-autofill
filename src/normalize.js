@@ -4,12 +4,12 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, ownerIsDriver, set } from './util.js';
+import { STATES, noPriorInsurance, ownerIsDriver, set } from './util.js';
 
-const ROWS = [1, 2, 3, 4];
+export const ROWS = [1, 2, 3, 4];
 // The marital-status dropdowns have odd hierarchical names; positions on the page put them on
 // driver rows 1-4 in this order.
-const MARITAL_FIELDS = ['marital_stat_1.0', 'marital_stat_1.1', 'marital_stat_1.2.0', 'marital_stat_1.2.1'];
+export const MARITAL_FIELDS = ['marital_stat_1.0', 'marital_stat_1.1', 'marital_stat_1.2.0', 'marital_stat_1.2.1'];
 
 const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
 // Radius answers that mean the widest band (the carrier rules map them to "more than 500 miles"):
@@ -300,6 +300,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     return digits;
   };
 
+  // The form row (1-4) each driver, vehicle and trailer was read from: blank rows are skipped, so
+  // drivers[1] can be the form's row 3 (the panel shows an answer where it is on the PDF).
+  const rows = { drivers: [], vehicles: [], trailers: [] };
   const record = {
     applicant: {
       name: txt('company_name'),
@@ -358,6 +361,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       reeferBreakdown: yesNo(raw.reefer_breakdown),
       // Not on the form: only the agent sets it, after reading the claims box.
       ntl: null,
+      // The client already has general liability elsewhere (not a GL request: that's `gl`). Not on
+      // the form either: the agent sets it, after Luna flags the claims box.
+      hasGl: null,
     },
     claims: { text: cleanMultiline(raw.claims_details), hasClaims: null, notes: null },
     crossSell: [
@@ -388,6 +394,11 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
   }
   if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
+  // TNI's standard for a blank (2026-10-09): 0 years, established this year (the carrier rules
+  // fill it; the record stays blank, so a later answer here replaces it).
+  if (a.yearsInBusiness == null && a.yearsExperience == null) {
+    check('years-in-business.default', 'applicant.yearsInBusiness', `Years in business and year established are blank: the quote gets 0 years (New Venture), established ${year}. If the client has been in business longer, enter Years in business or Year established.`);
+  }
 
   // --- Garaging address -----------------------------------------------------------------------
   const addr = parseAddress(raw.garaging_address);
@@ -408,6 +419,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       first: txt(`drv_first_${n}`), middle: null, last: txt(`drv_last_${n}`), dob: null, licenseNumber: null,
       licenseState: txt(`drv_state_${n}`), cdl: yesNo(raw[`drv_cdl_${n}`]), cdlYear: toInt(raw[`drv_cdl_yr_${n}`]),
       maritalStatus: txt(MARITAL_FIELDS[i]),
+      // Not on the intake (schema NOT_ON_INTAKE): the agent's to set.
+      gender: null,
     };
     const rawDob = txt(`drv_dob_${n}`);
     const rawLic = txt(`drv_lic_${n}`);
@@ -445,6 +458,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     if (d.cdl && !d.cdlYear) check('cdl-year.missing', p('cdlYear'), `${who}: has a CDL but no year it was issued.`);
     if (d.cdl === false && d.cdlYear) check('cdl-year.without-cdl', p('cdlYear'), `${who}: marked no CDL but a CDL year is filled in.`);
     record.drivers.push(d);
+    rows.drivers.push(n);
   });
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
   if (a.ownerDrives && a.owner1) {
@@ -480,6 +494,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       } else check('vin.missing', p('vin'), `${what}: no VIN.`);
       if (!u.type) check('vehicle-type.missing', p('type'), `${what}: ${label.toLowerCase()} type not selected.`);
       record[list].push(u);
+      rows[list].push(n);
     });
   };
   units('veh', 'vehicles', 'Vehicle');
@@ -510,10 +525,17 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     type: txt('ins_type_1'), carrier: txt('ins_carrier_1'), limit: txt('ins_limit_1'), expiration: toDate(raw.ins_exp_1),
   };
   if (txt('ins_exp_1') && !prior.expiration) { prior.expiration = txt('ins_exp_1'); check('prior-expiration.invalid', 'priorInsurance[0].expiration', `Current policy expiration "${prior.expiration}" isn't a valid date.`); }
-  // "NO POP" (no proof of prior), "None", "No prior": the client has no current insurance.
-  const noPrior = /^(no\s*(pop|prior|insurance|ins|coverage)|none|n\/?a)\b/i.test(prior.carrier ?? '') && !prior.limit && !prior.expiration;
-  if (noPrior) info('prior.none', 'priorInsurance', `Current insurance says "${prior.carrier}": treated as not currently insured.`);
-  if (!noPrior && (prior.type || prior.carrier || prior.limit || prior.expiration)) {
+  // "No", "NO POP", "None" as the carrier without an expiration date is no prior insurance (TNI,
+  // 2026-10-09: "Personal Auto", "no POP", "State Minimum" is no prior). It stays on the record,
+  // as written, so the panel's Current insurance shows it; carriers fill and disclose nothing
+  // from it (noPriorInsurance).
+  // As written: "None" and "N/A" read as blank otherwise, and a blank carrier is no answer.
+  const carrierAsWritten = String(raw.ins_carrier_1 ?? '').replace(/\s+/g, ' ').trim();
+  const noPrior = noPriorInsurance({ carrier: carrierAsWritten, expiration: prior.expiration });
+  if (noPrior) {
+    record.priorInsurance.push({ ...prior, carrier: carrierAsWritten });
+    info('prior.none', 'priorInsurance', `Current insurance says "${carrierAsWritten}": treated as not currently insured.`);
+  } else if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
     const missing = [
@@ -566,7 +588,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (unknown.length) info('form.unknown-fields', '', `The PDF has filled fields this tool doesn't read yet: ${unknown.join(', ')}.`);
 
   const filled = Object.values(raw).filter((v) => v === true || (typeof v === 'string' && clean(v) != null)).length;
-  return { record, warnings, stats: { fields: Object.keys(raw).length, filled } };
+  return { record, warnings, stats: { fields: Object.keys(raw).length, filled }, rows };
 }
 
 // Parses a value typed into the review panel, according to the field's kind.

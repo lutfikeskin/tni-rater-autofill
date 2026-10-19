@@ -44,6 +44,14 @@ export function listOf(path) {
   return m ? m[1] : null;
 }
 
+// "No", "NO POP" (no proof of prior), "None", "No prior", "N/A" as the carrier, without an
+// expiration date: the client has no current insurance, whatever type or limit the form shows
+// (TNI, 2026-10-09). The policy stays on the record so the panel shows what the intake said,
+// but nothing is filled or disclosed from it.
+export function noPriorInsurance(policy) {
+  return !!policy && /^(no|none|n\/?a)\b/i.test(String(policy.carrier ?? '').trim()) && !policy.expiration;
+}
+
 // Compare calendar dates using the application date, so an archived intake stays reproducible.
 // An absent/invalid date does not establish that a policy expired.
 export function priorPolicyExpired(record, policy = record.priorInsurance?.[0]) {
