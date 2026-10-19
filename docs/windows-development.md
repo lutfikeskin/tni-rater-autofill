@@ -13,9 +13,8 @@ git clone https://github.com/lutfikeskin/tni-rater-autofill.git
 cd tni-rater-autofill
 ```
 
-Work from `main`; the Windows preparation (#68) is merged. The repository's `.gitattributes` keeps
-source line endings consistent even when Git for Windows uses `autocrlf`.
-Then install and check:
+Work from `main`. The repository's `.gitattributes` keeps source line endings
+consistent even when Git for Windows uses `autocrlf`. Then install and check:
 
 ```powershell
 node --version
