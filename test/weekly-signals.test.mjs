@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { markdown, mask, signals } from '../scripts/lib/signals.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { RESTRICTED, isRestricted, markdown, mask, signals } from '../scripts/lib/signals.mjs';
 
 // Two quotes on two builds: what each left, held and reported.
 function week() {
@@ -82,12 +86,54 @@ test('signals gives the weekly numbers per quote and how each quote ended', () =
 
 test('signals leaves test runs out: listed fingerprints and intakes marked as a test', () => {
   const events = week();
-  events.find((e) => e.session === 'old' && e.type === 'intake_loaded').intakeId = 'abcdef0123';
-  const listed = signals(events, { since: '2026-10-06', testIntakes: ['abcdef'] });
+  events.find((e) => e.session === 'old' && e.type === 'intake_loaded').intakeId = 'ABCDEF0123';
+  // Uppercase ids match too, and a listed prefix may be in either case.
+  const listed = signals(events, { since: '2026-10-06', testIntakes: ['ABCDEF01'] });
   assert.equal(listed.quotes, 1);
   assert.equal(listed.kpis.testRunsLeftOut, 1);
   // A problem report in a test run is still listed, marked as one.
   assert.ok(listed.problems.every((p) => p.session !== 'old' || p.test));
   events.find((e) => e.session === 'new' && e.type === 'intake_loaded').test = true;
-  assert.equal(signals(events, { since: '2026-10-06', testIntakes: ['abcdef'] }).quotes, 0);
+  assert.equal(signals(events, { since: '2026-10-06', testIntakes: ['abcdef01'] }).quotes, 0);
+});
+
+test('a test fingerprint shorter than 8 hex characters, or not hex, is refused rather than hiding quotes', () => {
+  for (const bad of ['a', 'abcdef', 'not-a-hex-id-at-all']) {
+    assert.throws(() => signals(week(), { since: '2026-10-06', testIntakes: [bad] }), /at least 8 hex/);
+  }
+});
+
+test('RESTRICTED covers every word of pagekit NEVER_ADVANCE, and Save & Continue is not one', () => {
+  const src = fs.readFileSync(new URL('../src/content/pagekit.js', import.meta.url), 'utf8');
+  const words = src.match(/const NEVER_ADVANCE = \/\\b\(([^)]+)\)\\b\/i/)[1].split('|');
+  assert.ok(words.length >= 10);
+  for (const w of words) assert.ok(RESTRICTED.test(w), `RESTRICTED misses "${w}"`);
+  assert.ok(isRestricted('advance "Save"'));
+  assert.ok(isRestricted('advance "Sign Out"'));
+  assert.ok(!isRestricted('advance "Save & Continue"'));
+  assert.ok(!isRestricted('advance "Continue"'));
+});
+
+const run = (...args) => spawnSync(process.execPath, ['scripts/weekly-signals.mjs', ...args], { encoding: 'utf8', cwd: new URL('..', import.meta.url) });
+
+test('weekly-signals fails loudly on --since without a valid date and on a missing --tests file', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'signals-'));
+  const log = path.join(dir, 'events.jsonl');
+  fs.writeFileSync(log, '');
+  try {
+    for (const bad of [['--since'], ['--since', 'not-a-date'], ['--since', '--json'], ['--tests', path.join(dir, 'missing.txt')], ['--tests']]) {
+      const r = run(log, ...bad);
+      assert.equal(r.status, 1, `${bad.join(' ')}: ${r.stdout}${r.stderr}`);
+      assert.match(r.stderr, /needs a value|not a date|no such file/);
+    }
+    // A too-short fingerprint in the list fails too.
+    const list = path.join(dir, 'tests.txt');
+    fs.writeFileSync(list, 'a\n');
+    fs.writeFileSync(log, JSON.stringify({ id: '1', t: '2026-10-06T12:00:00Z', receivedAt: '2026-10-06T12:00:00Z', session: 's', type: 'intake_loaded' }) + '\n');
+    const r = run(log, '--all', '--json', '--tests', list);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /at least 8 hex/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

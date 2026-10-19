@@ -11,8 +11,10 @@ import { receivedAt } from './daily.mjs';
 
 // Numbers and quoted values masked, so one problem across vehicles, amounts and options counts once.
 export const mask = (s) => String(s ?? '').replace(/"[^"]*"/g, '"…"').replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
-// Actions the extension must never take itself (pagekit NEVER_ADVANCE, and signing or ordering reports).
-export const RESTRICTED = /\b(finish|buy|bind|purchase|submit|sign|order|delete|remove|cancel)\b/i;
+// Actions the extension must never take itself: every word of pagekit's NEVER_ADVANCE (a test keeps
+// them in step), plus `sign` for signing. "Save & Continue" is not one, as in pagekit, which reads it as Continue.
+export const RESTRICTED = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|logout|log out|sign out|order|sign)\b/i;
+export const isRestricted = (action) => RESTRICTED.test(action.replace(/^(helper|advance) /, '').replace(/^"?save\s*(?:&|and)\s*continue"?$/i, 'continue'));
 const tally = (map, key, n = 1) => map.set(key, (map.get(key) ?? 0) + n);
 const top = (map, n) => [...map].sort((a, b) => b[1] - a[1]).slice(0, n);
 const build = (e) => `${e.v ?? '?'} ${e.channel ?? '?'}`;
@@ -37,7 +39,8 @@ const LOGIN = /\/(auth\/)?login\b|\/login\//i;
 
 // A test run: an intake the agent marked as a test (`test` on intake_loaded), or one of the
 // fingerprints the reviewer listed (`testIntakes`, full or leading hex).
-const isTest = (e, testIntakes) => e.test === true || (!!e.intakeId && [...testIntakes].some((id) => e.intakeId.startsWith(id)));
+export const MIN_TEST_PREFIX = 8;
+const isTest = (e, testIntakes) => e.test === true || (!!e.intakeId && [...testIntakes].some((id) => String(e.intakeId).toLowerCase().startsWith(id)));
 
 /**
  * @param {object[]} all  every event (loadEvents), for which sessions are quotes
@@ -46,7 +49,11 @@ const isTest = (e, testIntakes) => e.test === true || (!!e.intakeId && [...testI
  */
 export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {}) {
   const from = since ? new Date(since).toISOString() : null;
-  const tests = new Set([...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean));
+  const listed = [...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean);
+  // A short or non-hex line would match unrelated quotes: refuse it rather than hide them.
+  const tooShort = listed.filter((x) => x.length < MIN_TEST_PREFIX || !/^[0-9a-f]+$/.test(x));
+  if (tooShort.length) throw new Error(`Test fingerprints need at least ${MIN_TEST_PREFIX} hex characters: ${tooShort.join(', ')}`);
+  const tests = new Set(listed);
   const testSessions = new Set(all.filter((e) => e.type === 'intake_loaded' && e.session && isTest(e, tests)).map((e) => e.session));
   const periodAll = from ? all.filter((e) => receivedAt(e) >= from) : all;
   // Test runs are left out of everything below, and counted.
@@ -151,7 +158,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     for (const c of r.clicked ?? []) tally(actions, `helper ${String(typeof c === 'string' ? c : JSON.stringify(c)).replace(/:\d+$/, '')}`);
     if (r.advanced) tally(actions, `advance "${typeof r.advanced === 'string' ? r.advanced : JSON.stringify(r.advanced)}"`);
   }
-  const restricted = [...actions].filter(([a]) => RESTRICTED.test(a.replace(/^helper /, '').replace(/^advance /, '')));
+  const restricted = [...actions].filter(([a]) => isRestricted(a));
 
   const fillErrors = new Map();
   for (const e of periodAll.filter((x) => x.type === 'fill_error')) tally(fillErrors, `${build(e)} · ${where(e)}: ${mask(e.error)}`);
@@ -243,7 +250,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     problemReportsInTestRuns: periodAll.filter((e) => e.type === 'problem_report' && testSessions.has(e.session)).length,
     aiRequests: asks.length,
     aiErrorPercent: asks.length ? Math.round((asks.filter((a) => a.error).length / asks.length) * 100) : null,
-    restrictedActions: [...actions].filter(([a]) => RESTRICTED.test(a.replace(/^helper /, '').replace(/^advance /, ''))).reduce((x, [, c]) => x + c, 0),
+    restrictedActions: [...actions].filter(([a]) => isRestricted(a)).reduce((x, [, c]) => x + c, 0),
   };
 
   const versions = [...new Set([...builds.values()].map((b) => b.version))].sort(byVersion);
