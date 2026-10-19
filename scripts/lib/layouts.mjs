@@ -230,7 +230,7 @@ export function fieldIdentities(events) {
     const merged = mergeUnnamed(fields, placeOf, keys);
     const identity = (k) => {
       const field = fields.get(k);
-      return field && { id: baseId(k), ref: field.ref ?? null, caption: field.caption ?? null, kind: field.kind };
+      return field && { id: baseId(k), ref: field.ref ?? null, caption: field.caption ?? null, kind: field.kind, opts: field.opts };
     };
     // One id drawn once per vehicle (Rates rows recorded before names: their order among the
     // rows, `…#2`) is that question's: its first row's identity, so a quote with three vehicles and

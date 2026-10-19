@@ -73,8 +73,9 @@ export function textVerdict(step, answer, record) {
   if (['pick-not', 'first-option', 'selected-option', 'address-suggest'].includes(step.kind)) return 'unsure';
   const want = normalizeForMatch(step.kind === 'bool' ? (step.value ? 'Yes' : 'No') : step.value);
   if (answer.path) {
-    if (answer.path === step.path) return 'agree';
     const before = get(record, answer.path);
+    // A generated path (`progressive.q230`) holds no value to read: the rule's output may have changed.
+    if (answer.path === step.path) return before == null ? 'unsure' : 'agree';
     return before == null ? 'unsure' : normalizeForMatch(before) === want ? 'agree' : 'differ';
   }
   for (const m of answer.matches) {
@@ -110,11 +111,13 @@ const kindOf = (rule) => rule.kind ?? (rule.path ? fieldInfo(rule.path).kind : '
 
 // A rule by the path its step had when it filled (a field recorded before names, which no rule
 // claims by text today): `drivers[0].dob` is `drivers[].dob`, `progressive.q2B9` its q.
-function ruleByPath(carrier, path) {
+function ruleByPath(carrier, path, unique = false) {
   if (!path) return null;
   const want = path.replace(/\[\d+\]/g, '[]');
   const rules = [...(carrier.rules ?? []), ...(carrier.useGenericRules === false ? [] : GENERIC_RULES)];
-  return rules.find((r) => (r.path ?? (r.q ? `${carrier.id}.q${r.q}` : null)) === want) ?? null;
+  const found = rules.filter((r) => (r.path ?? (r.q ? `${carrier.id}.q${r.q}` : null)) === want);
+  // Rules that repeat a path (the owner's and the business's city) can't be told apart by it.
+  return unique && found.length > 1 ? null : found[0] ?? null;
 }
 
 // A question without an id (AmWINS) is found by its element id or data-id, which its events don't
@@ -146,7 +149,7 @@ function elementIds(events) {
 // can't be told), `agent` (a rule leaves it to the agent), `ignored`, `blank` (no answer from this
 // intake), or `value`.
 function today(a, unit, record, carrier, element) {
-  const f = { ref: a.ref ?? a.layout?.ref ?? undefined, caption: a.layout?.caption ?? a.label, kind: a.layout?.kind ?? a.kind, ...(element ?? {}) };
+  const f = { ref: a.ref ?? a.layout?.ref ?? undefined, caption: a.layout?.caption ?? a.label, kind: a.layout?.kind ?? a.kind, opts: a.layout?.opts, ...(element ?? {}) };
   let claim = claimingRule(f, carrier, a.page);
   // A checkbox takes only a yes/no rule (pagekit `fits`): the fill engine goes on to the next rule.
   const skipped = new Set();
@@ -162,14 +165,20 @@ function today(a, unit, record, carrier, element) {
   // selector rule would have found it first (a recording without element ids, before 0.8.1) or
   // whether it sits in a row section, where label rules never answer (rowSections). Then only the
   // rule that filled it in that quote pairs it.
-  const unclear = !a.q && (claim.passedUnsure || (claim.status === 'unsure' && !claim.unnamed) || (claim.generic && carrier.rowSections?.length));
+  // A rule whose text repeats on the page (askAfter) claims only the first field after its anchor,
+  // which needs the page's fields in order: not known here, so only the rule that filled it pairs.
+  const repeated = !!claim.def?.askAfter;
+  const unclear = repeated || !a.q && (claim.passedUnsure || (claim.status === 'unsure' && !claim.unnamed) || (claim.generic && carrier.rowSections?.length));
   if (unclear) {
-    rule = ruleByPath(carrier, a.mappedPath);
-    if (!rule) return { status: 'unsure', reason: element ? 'row section' : 'no element ids' };
+    rule = ruleByPath(carrier, a.mappedPath, repeated);
+    if (!rule) return { status: 'unsure', reason: repeated ? 'repeated text' : element ? 'row section' : 'no element ids' };
     pairedBy = 'path';
   } else if (claim.status === 'unsure' && !claim.unnamed) {
     return { status: 'unsure', rule: claim.rule, reason: 'selector' };
   } else if (claim.status === 'none') {
+    // A named field no rule claims any more stays the agent's; only a field recorded before names
+    // is found again by the rule path that filled it.
+    if (f.ref) return { status: 'none' };
     rule = ruleByPath(carrier, a.mappedPath);
     pairedBy = 'path';
     if (!rule) return { status: 'none' };
@@ -184,7 +193,8 @@ function today(a, unit, record, carrier, element) {
   const steps = buildPlan(record, { ...carrier, rules: [rule], useGenericRules: false, actions: [] }, active).filter((s) => s.kind !== 'action');
   if (!steps.length) return { status: 'blank', rule: name, pairedBy };
   // Several units' steps (Rates rows, a driver list): the page's own unit, else one answer for all.
-  const own = steps.filter((s) => s.activeVehicle === true);
+  // An answer that names no vehicle, driver or trailer (recorded before views) can't pick a row.
+  const own = Object.keys(active).length ? steps.filter((s) => s.activeVehicle === true) : [];
   const pick = own.length === 1 ? own : steps;
   const same = new Set(pick.map((s) => JSON.stringify([s.value, s.note, s.ignore]))).size === 1;
   if (!same) return { status: 'unsure', rule: name, pairedBy, reason: 'which unit' };

@@ -76,6 +76,43 @@ test('textVerdict needs an intake field to tell typed text apart', () => {
   assert.equal(textVerdict({ kind: 'text', path: 'progressive.q1', value: 'Zq-derived-77' }, { matches: [] }, record), 'unsure');
 });
 
+test('textVerdict does not vouch for a kept answer whose path is generated', () => {
+  const derived = { kind: 'text', path: 'progressive.q230', value: 'Zq-derived-77' };
+  assert.equal(textVerdict(derived, { path: 'progressive.q230' }, record), 'unsure');
+});
+
+// One answer of a lone session, with the layout the quote recorded of its page.
+function lone(page, view, ev, fields) {
+  const base = { session: 's', intakeId: 'sample', carrier: 'progressive' };
+  const events = [
+    { id: '1', t: '2026-10-05T12:00:00Z', ...base, type: 'intake_loaded', carrier: undefined, state: 'MD', businessClass: 'Expediter' },
+    ...(fields ? [{ id: '2', t: '2026-10-05T12:00:01Z', ...base, type: 'page_layout', page, view, fields }] : []),
+    { id: '3', t: '2026-10-05T12:00:02Z', ...base, page, view, q: ev.q, ...ev },
+  ];
+  return benchmark(events, { carriers: CARRIERS, raws: new Map([['sample', raw]]) }).rows;
+}
+
+test('benchmark does not guess which rule claims a repeated question, a vehicle or a removed name', () => {
+  // A "City" that repeats on the page needs the page's order: only the rule that filled it pairs it.
+  const city = lone('BusinessOwnerInfo', 't1', { type: 'field_change', q: '2B0', key: '2B0', label: 'City', kind: 'text', by: 'agent', change: 'entered', matchesIntake: ['garaging.city'] });
+  assert.equal(city[0].result, 'unsure');
+  assert.equal(city[0].reason, 'repeated text');
+  // An answer of no recorded vehicle can't take vehicle 0's row.
+  const miles = lone('AddVehicle', undefined, { type: 'field_change', q: '9A01', key: 'ref:RiskInput.AnnualMiles', label: 'Annual miles', kind: 'text', by: 'agent', change: 'entered', matchesIntake: [] });
+  assert.notEqual(miles[0].result, 'agree');
+  // A named field no rule claims is the agent's, even if a rule now has the path that once filled it.
+  const gone = lone('AddVehicle', 't1:v0', { type: 'field_change', q: '9A02', key: 'ref:Gone.Field', label: 'Gone', kind: 'text', by: 'agent', autofilled: 'drivers[0].dob', vsAutofill: 'same', change: 'entered', matchesIntake: ['drivers[0].dob'] });
+  assert.equal(gone[0].status, 'none');
+  assert.equal(gone[0].result, 'left');
+});
+
+test('benchmark gives a withOption rule the options the quote recorded', () => {
+  const doc = { q: '32B0', label: 'Documents', kind: 'select', options: ['Insurance Quote (with all bill plans)', 'Other'] };
+  const rows = lone('PrintEmailFax', 't1', { type: 'field_change', q: '32B0', key: '32B0', label: 'Documents', kind: 'select', by: 'agent', from: null, to: 'Insurance Quote (with all bill plans)' }, [doc]);
+  assert.equal(rows[0].status, 'value');
+  assert.equal(rows[0].result, 'agree');
+});
+
 test('compareRuns lists answers whose result changed between two runs of the same quotes', () => {
   const before = [{ id: 'a', result: 'differ', today: 'No' }, { id: 'b', result: 'agree', today: 'Yes' }];
   const after = [{ id: 'a', result: 'agree', today: 'Yes' }, { id: 'b', result: 'agree', today: 'Yes' }, { id: 'c', result: 'differ' }];
