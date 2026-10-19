@@ -3158,8 +3158,8 @@ test('the real USDOT plan recognizes an already shown no-record result', async (
   assert.equal(clicks, 0, 'matching DOT with an already visible result needs no retry');
   assert.deepEqual(Array.from(report.actions, (a) => [a.id, a.alreadyShown]), [['verifyDot', true]]);
   assert.ok(!report.blockers.some((b) => b.startsWith('button: verifyDot')), 'the completed lookup creates no helper blocker');
-  assert.equal(report.noData.length, 1, 'the intake still does not prove the 60-day attestation');
-  assert.equal(report.noData[0].manualOnly, true, 'that attestation remains with the agent, despite the visible lookup result');
+  // TNI 2026-10-19: the 60-day answer is its standard Yes, already chosen here.
+  assert.equal(report.noData.length, 0, 'the 60-day question has TNI\'s standard answer');
 });
 
 test('extra-row acknowledgement survives an unrelated step with no visible witnesses', async () => {

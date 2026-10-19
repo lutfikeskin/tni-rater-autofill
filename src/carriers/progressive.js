@@ -483,10 +483,9 @@ export const progressive = {
       { q: '1CC', field: 'Warehouse.QuoteVendorCode', ask: 'Quote Vendor Code', optional: true, name: 'Quote vendor code (optional)', ignore: true },
       { q: '1ED', source: 'derived', clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: hasUsdotNote },
       { q: '1F3', field: 'USDOTInput.NumberCollection', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !r.applicant.dot },
-      // Shown when Verify USDOT finds no record for the number (a brand-new USDOT). When the client
-      // got it isn't on the intake: the agent's (2026-10-09; TNI's 2026-10-01 Yes was an assertion).
-      { q: '21E', source: 'attestation', field: 'USDOTInput.SixtyDayQuestion', ask: 'Did the customer obtain their USDOT Number within the last 60 days?', name: 'USDOT obtained within the last 60 days', kind: 'bool', ignore: (r) => !r.applicant.dot,
-        note: 'Whether the USDOT number was obtained within the last 60 days isn\'t on the intake: answer it yourself.' },
+      // Shown when Verify USDOT finds no record for the number (a brand-new USDOT). TNI's standard
+      // Yes (2026-10-19, after a live run): a number the lookup doesn't know yet is a new one.
+      { q: '21E', source: 'standard', field: 'USDOTInput.SixtyDayQuestion', ask: 'Did the customer obtain their USDOT Number within the last 60 days?', name: 'USDOT obtained within the last 60 days (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, value: () => true },
       // Whether the number is the client's is the agent's to confirm against the lookup's registered
       // name (2026-10-09; TNI's 2026-10-01 Yes was an assertion). A registered name that differs
       // from the intake is said so (pagekit businessNames).
