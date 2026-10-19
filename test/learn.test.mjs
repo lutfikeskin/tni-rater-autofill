@@ -587,7 +587,7 @@ test('the review names two questions reading the same apart', async () => {
   const md = fs.readFileSync(out, 'utf8');
   assert.match(md, /progressive BusinessOwnerInfo "City" `PrimaryBusinessAddressInput\.City`/);
   assert.match(md, /progressive BusinessOwnerInfo "City" `BusinessOwnerHomeAddressInput\.City`/);
-  assert.match(md, /\| Autofilled answers the agent corrected \(a different, reformatted or cleared value\) \| 3 \|/, 'different, format and cleared by the agent on an autofilled field');
+  assert.match(md, /\| Autofilled answers the agent corrected \(another value or cleared\) · reformatted \| 2 · 1 \|/, 'different, format and cleared by the agent on an autofilled field');
   assert.match(md, /\| Autofilled answers the agent put back after they changed \(a carrier overwrite, or the agent's own edit\) \| 2 \|/, 'an edited text box and a select from another answer');
   assert.match(md, /\| Autofilled answers the agent re-entered unchanged \(from an empty field; not corrections\) \| 2 \|/, 'a text box entered and a select from nothing');
 });
