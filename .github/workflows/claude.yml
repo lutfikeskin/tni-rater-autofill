@@ -39,6 +39,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          # A comment in a PR's conversation arrives as issue_comment on the default branch, so
+          # check out the PR's head instead: npm ci below must install that PR's lockfile.
+          ref: ${{ github.event.pull_request.head.sha || (github.event.issue.pull_request && format('refs/pull/{0}/head', github.event.issue.number)) || '' }}
       # So Claude can run `npm test` before it pushes, as CLAUDE.md requires.
       - uses: actions/setup-node@v4
         with:
@@ -50,4 +53,4 @@ jobs:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: |
             --allowedTools "Bash(npm test),Bash(node --test:*),Bash(npm run package),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*)"
-            --append-system-prompt "Follow CLAUDE.md. When fixing review comments, read every unresolved review comment on the PR (gh api repos/OWNER/REPO/pulls/N/comments), fix each one you agree with, and say which ones you did not change and why. Run npm test before pushing and report the result. Keep changes to what was asked: no version bump, release or unrelated refactor. Never write the text @claude in a comment."
+            --append-system-prompt "Follow CLAUDE.md. When fixing review comments, read every review comment on the PR (gh api --paginate repos/OWNER/REPO/pulls/N/comments; without --paginate only the first 30 come back), skip the threads that are resolved (gh api graphql: pullRequest.reviewThreads with isResolved, paginated the same way), fix each one you agree with, and say which ones you did not change and why. Run npm test before pushing and report the result. Keep changes to what was asked: no version bump, release or unrelated refactor. Never write the text @claude in a comment."
