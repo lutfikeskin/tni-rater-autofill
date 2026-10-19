@@ -311,7 +311,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 7);
+  assert.equal(h.context.__raterRecorder.version, 8);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -374,12 +374,12 @@ test('an ExtJS combo is reported as a combo, so its typed text is not logged as 
 test('an older recorder is replaced, so changes carry what the current one reports', () => {
   const h = harness();
   const disposed = [];
-  // A version-6 recorder still installed in the page (it didn't report the agent's clicks).
+  // A version-7 recorder still installed in the page (it didn't send a step shown by itself).
   h.context.__raterRecorder.dispose();
-  h.context.__raterRecorder = { version: 6, rebaseline() {}, dispose() { disposed.push(6); } };
+  h.context.__raterRecorder = { version: 7, rebaseline() {}, dispose() { disposed.push(7); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
-  assert.deepEqual(disposed, [6]);
-  assert.equal(h.context.__raterRecorder.version, 7);
+  assert.deepEqual(disposed, [7]);
+  assert.equal(h.context.__raterRecorder.version, 8);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {
@@ -421,6 +421,27 @@ test('field changes name the visible step headings, when the page has any', () =
   message = h.sent.filter((m) => m.event === 'field_changes').at(-1);
   assert.equal(message.step, 'Vehicles / Unit 1');
   assert.equal(message.changes[0].after, '5+');
+});
+
+// Live run 2026-10-19: going back and forth between AmWINS' Drivers and Vehicles tabs sometimes left
+// the panel on the other step's report, when the step shown changed no answer and showed no new
+// question. A change of the step headings is sent by itself, once.
+test('a move to another step is sent when only the headings change', () => {
+  const h = harness();
+  const heading = (text) => [{ tagName: 'H3', textContent: text, getClientRects: () => [{}] }];
+  h.document.headings = heading('Drivers');
+  h.tick();
+  assert.deepEqual(h.sent.filter((m) => m.event === 'step_shown').map((m) => m.step), ['Drivers']);
+  h.tick();
+  assert.equal(h.sent.filter((m) => m.event === 'step_shown').length, 1, 'the same step is not sent again');
+  h.document.headings = heading('Vehicles');
+  h.tick();
+  h.document.headings = heading('Drivers');
+  h.tick();
+  assert.deepEqual(h.sent.filter((m) => m.event === 'step_shown').map((m) => m.step), ['Drivers', 'Vehicles', 'Drivers']);
+  h.document.headings = [];
+  h.tick();
+  assert.equal(h.sent.filter((m) => m.event === 'step_shown').length, 3, 'no headings: nothing to send');
 });
 
 // Codex reproduction (2026-10-08): a trusted change made while paused produced no event and

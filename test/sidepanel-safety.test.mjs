@@ -671,6 +671,26 @@ test('an automatic follow-up on a step without a report fills it as a new page, 
   assert.equal(fills.length, 1);
 });
 
+// Live run 2026-10-19: a step shown again without any change (AmWINS' Drivers and Vehicles tabs)
+// left the panel on the other step's report. The recorder's step_shown moves it.
+test('the panel follows a step the recorder saw shown, and only a known step of this tab', () => {
+  let rendered = 0;
+  const state = { tab: { id: 1, carrier: { id: 'amwins', layoutSteps: ['Drivers', 'Vehicles'] } }, intake: { record: {} }, tabSteps: new Map([[1, 'Vehicles']]) };
+  const context = { state, renderSite: () => rendered++, knownStep: (carrier, step) => carrier.layoutSteps.find((s) => s === step) };
+  vm.runInNewContext(extractFunction('noteStep'), context);
+  context.noteStep({ ra: 'usage', event: 'step_shown', page: '/application/businessauto', step: 'Drivers' }, { tab: { id: 1 } });
+  assert.deepEqual([state.tabSteps.get(1), rendered], ['Drivers', 1]);
+  context.noteStep({ ra: 'usage', event: 'step_shown', step: 'Drivers' }, { tab: { id: 1 } });
+  assert.equal(rendered, 1, 'the same step: nothing to redraw');
+  context.noteStep({ ra: 'usage', event: 'step_shown', step: 'Insured by Jane' }, { tab: { id: 1 } });
+  context.noteStep({ ra: 'usage', event: 'step_shown', step: 'Vehicles' }, { tab: { id: 2 } });
+  assert.deepEqual([state.tabSteps.get(1), rendered], ['Drivers', 1], 'an unknown heading or another tab: kept');
+});
+
+test('a fill report does not list the buttons waiting on others', () => {
+  assert.doesNotMatch(extractFunction('renderReport'), /'Buttons waiting'/);
+});
+
 test('an automatic fill says so in step 2 and brings step 3 into view, unless the agent is working in step 1', () => {
   const { context, filled } = reportHarness({ tab: { id: 1, url: 'Quote' } });
   context.renderReport([{ fields: 2, kept: [], failed: [], noData: [], leftRequired: [], actions: [], filled: [{ label: 'A', key: 'a', shown: 'x' }] }], { auto: 'page' });
