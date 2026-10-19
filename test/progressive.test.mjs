@@ -399,19 +399,18 @@ test('AmWINS third-quote rules: contact, garage boxes, one rule per exclusion, u
   assert.ok(!new RegExp(amwins.advance.text, 'i').test('Save & Exit'));
 });
 
-test('AmWINS facts the intake lacks: current carrier tenure (asked with a DOT only), loss runs and marital status are the agent\'s; PIP No', async () => {
+test('AmWINS: current carrier tenure (asked with a DOT only) 1 TO 2 YEARS and claim-free loss runs No are TNI standards; marital status the agent\'s; PIP No', async () => {
   const { amwins } = await import('../src/carriers/amwins.js');
   const record = baseRecord();
   record.applicant.dot = '1234567';
   let plan = buildPlan(record, amwins, {});
   const sel = (s) => plan.find((x) => x.selector === s);
   const named = (re) => plan.find((x) => re.test(x.name ?? ''));
-  // 2026-10-09: 1 TO 2 YEARS and No were facts about the client, not standards.
-  assert.equal(sel('#howLongWithCurrentCarrier').value, null);
-  assert.match(sel('#howLongWithCurrentCarrier').note, /current carrier/);
+  // TNI 2026-10-19: 1 TO 2 YEARS and No are its standards (2026-10-09 to 10-19 the agent's).
+  assert.deepEqual([sel('#howLongWithCurrentCarrier').value, sel('#howLongWithCurrentCarrier').source], ['1 TO 2 YEARS', 'standard']);
   assert.equal(sel('#howLongWithCurrentCarrier').ignore, false);
-  assert.equal(named(/^Claim-free loss runs/).value, null);
-  assert.match(named(/^Claim-free loss runs/).note, /loss runs/);
+  assert.deepEqual([named(/^Claim-free loss runs/).value, named(/^Claim-free loss runs/).source], [false, 'standard']);
+  assert.equal(named(/^Valued loss runs/).source, 'fact', 'valued loss runs stay the agent\'s');
   const pip = named(/^Personal Injury Protection \(/);
   assert.equal(pip.ignore, false);
   assert.equal(pip.value, false, 'No: Medical Payments is offered');
@@ -436,9 +435,8 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   record.applicant.owner1 = 'Amina Kone';
   record.garaging.state = 'FL';
   const plan = buildPlan(record, progressive, {});
-  // 2026-10-09: when the number was obtained is the agent's (TNI's 2026-10-01 Yes reversed).
-  assert.equal(byQ(plan, '21E').value, null);
-  assert.match(byQ(plan, '21E').note, /60 days/);
+  // TNI 2026-10-19: a USDOT the lookup doesn't find was obtained within 60 days, its standard Yes.
+  assert.deepEqual([byQ(plan, '21E').value, byQ(plan, '21E').source], [true, 'standard']);
   assert.equal(byQ(plan, '21E').ignore, false);
   assert.equal(byQ(plan, '230').ignore, false, 'business name typed in even with a USDOT number');
   assert.equal(byQ(plan, '230').value, 'Amina Kone', 'no company: the owner');

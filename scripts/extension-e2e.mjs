@@ -58,8 +58,8 @@ await panel.click('#fill');
 // inject protected keys to make navigation succeed.
 const AGENT_ANSWERS = [
   ['Insured Info', /^valued loss runs$/i, 'input[name="valuedLossRuns"][value="0"]', '0'],
-  ['Insured Info', /^how long with current carrier$/i, '#howLongWithCurrentCarrier', '1 TO 2 YEARS'],
-  ['Insured Info', /^can provide claim free loss run$/i, 'input[name="canProvideClaimFreeLossRun"][value="0"]', '0'],
+  // How long with the current carrier and claim-free loss runs are TNI standards since 2026-10-19
+  // (1 TO 2 YEARS, No): the extension fills them (EXACT below).
   // Driver gender and license year are TNI standards since 2026-10-10 (MALE, birth year + 17):
   // the extension fills them (EXACT below); a Drivers question left unresolved fails the run.
 ];

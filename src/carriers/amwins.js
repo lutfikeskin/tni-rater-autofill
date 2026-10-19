@@ -15,8 +15,8 @@
 //
 // Rule sources (plan.js `source`): `derived` reads the intake, `standard` is TNI's coverage or
 // workflow choice (tagged in the panel; a check item in review mode), `fact` / `attestation` is
-// never filled (2026-10-09: current-carrier tenure, loss runs and blank marital status are the
-// agent's; 2026-10-10: gender is MALE unless set in client details, year licensed birth year + 17; attached equipment follows the intake; additional interest and
+// never filled (2026-10-09: valued loss runs and blank marital status are the agent's;
+// 2026-10-19: 1 TO 2 YEARS with the current carrier and no claim-free loss runs; 2026-10-10: gender is MALE unless set in client details, year licensed birth year + 17; attached equipment follows the intake; additional interest and
 // the underwriting questions are No, and a blank years in business is a new venture).
 //
 // Third quote (2026-10-02): the contact is the client (name and phone), the garage address boxes
@@ -41,7 +41,7 @@
 // - Filing required Yes shows BMC-91, MCS-90, BMC-32, how long the authority has been active, how
 //   long with the current carrier, and "can provide claim-free loss runs"; the DOT / MC boxes
 //   show their number fields. How long with the current carrier (only asked with a DOT number)
-//   and claim-free loss runs aren't on the intake: the agent's.
+//   and claim-free loss runs aren't on the intake: TNI's standards (1 TO 2 YEARS, No).
 // - Personal Injury Protection shows for FL HI KS KY MA MI MN NJ NY ND PA UT AR DE MD OR TX NH SD
 //   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred.
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
@@ -350,11 +350,12 @@ export const amwins = {
     { name: 'Federal BMC-91', label: '^federal bmc91$', kind: 'bool', source: 'derived', value: federalLiability },
     { name: 'Federal liability MCS-90', label: '^federal liability mcs90$', kind: 'bool', source: 'derived', value: federalLiability },
     { name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', source: 'derived', value: federalCargo },
-    // Facts about the client's insurance history the intake doesn't give: the agent's (2026-10-09;
-    // until then 1 TO 2 YEARS and No were filled in). The current-carrier question is only asked
-    // of clients with a DOT number.
-    { selector: '#howLongWithCurrentCarrier', kind: 'choice', ignore: (r) => !r.applicant.dot, ...fact('How long with the current carrier', 'How long the insured has been with the current carrier isn\'t on the intake: answer it yourself.') },
-    { label: '^can provide claim free loss run$', kind: 'bool', ...fact('Claim-free loss runs', 'Whether claim-free loss runs can be provided isn\'t on the intake: answer it yourself.') },
+    // The client's insurance history the intake doesn't give. TNI's standards (2026-10-19, after a
+    // live run; may change later): 1 TO 2 YEARS with the current carrier and no claim-free loss
+    // runs. The current-carrier question is only asked of clients with a DOT number. Valued loss
+    // runs stay the agent's.
+    { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier (standard: 1 TO 2 YEARS)', kind: 'choice', source: 'standard', ignore: (r) => !r.applicant.dot, value: () => '1 TO 2 YEARS' },
+    { name: 'Claim-free loss runs (standard: No)', label: '^can provide claim free loss run$', kind: 'bool', source: 'standard', value: () => false },
     { label: '^valued loss runs$', kind: 'bool', ...fact('Valued loss runs', 'Whether valued loss runs can be provided isn\'t on the intake: answer it yourself.') },
     // Preserve the intake's explicit claims answer; unknown history stays with the agent.
     // Yes opens the required Loss History.

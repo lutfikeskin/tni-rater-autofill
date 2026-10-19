@@ -220,22 +220,22 @@
  },
  "test/fixtures/progressive/progressive_FL_expediter_van.json": {
   "questions": 110,
-  "filled": 67,
+  "filled": 68,
   "failed": 1,
   "unmapped": 5,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
     "questions": 26,
-    "filled": 15,
+    "filled": 16,
     "failed": [
      "Street Address: the page offered no address suggestion; check the address, city and ZIP"
     ],
-    "noData": 1,
+    "noData": 0,
     "unmapped": 0,
-    "blockers": 2,
+    "blockers": 1,
     "clicked": [],
-    "outcomes": "0a73f273008a"
+    "outcomes": "7051ea5fcfc6"
    },
    "MostCommonVehicles": {
     "questions": 9,
