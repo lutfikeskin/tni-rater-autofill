@@ -28,7 +28,7 @@ Leave a question as it is when the rules and the intake don't say anything about
 - **Business type list**: "For Hire Trucking" for expediters. **Type of Trucker**: "Other For-Hire Trucking" for expediters. For other businesses, use what the intake says.
 - **Business owner's first and last name** and **date of birth**: from the intake. The owner is the driver with the same last name; use that driver row's first name exactly as written.
 - **Phone**: split into area code, prefix and line number.
-- **Hazardous material placard?**: from the intake. Left blank: No (TNI standard), unless the intake says they haul hazardous material; then leave it to the agent.
+- **Hazardous material placard?**: from the intake. Left blank: No (TNI standard), unless the intake says they haul hazardous material, or what they haul may need a placard (fuel, propane, chemicals and the like); then leave it to the agent.
 - Leave empty: middle initial, suffix, DBA name (always), quote vendor code. Don't touch agent code or policy start date.
 
 ### MostCommonVehicles (vehicle picker)
@@ -44,13 +44,13 @@ Leave a question as it is when the rules and the intake don't say anything about
 - **Comprehensive or collision?**: Yes.
 - **Total value of permanently attached equipment**: always "$0 to $2,000". Also tick **Vehicle has no equipment**.
 - **If this vehicle was sold today, how much would it be?**: the intake's vehicle value, as a plain number (e.g. 45000).
-- **Has the insured or their hired driver had the vehicle less than one (1) year?**: No (TNI standard).
+- **Has the insured or their hired driver had the vehicle less than one (1) year?**: No (TNI standard), except a vehicle of this model year or later: leave it to the agent.
 
 ### AddDriver
 - **License state**: full state name.
 - **License number**: letters and digits only, no dashes or spaces. If the intake writes the state in front ("IL - S123…"), keep those letters in the number ("ILS123…").
 - **Exclude this driver?**: No.
-- **Accidents, claims or violations in the past 3 (or 5) years?**: from the intake's claims answer. The claims box sometimes has extra lines that answer other questions; the first line is the claims answer. When it is neither Yes nor No: No (TNI standard), unless the intake's notes mention an accident, claim, violation or ticket; then leave it to the agent.
+- **Accidents, claims or violations in the past 3 (or 5) years?**: from the intake's claims answer. The claims box sometimes has extra lines that answer other questions; the first line is the claims answer. When it is neither Yes nor No: No (TNI standard), unless the intake's notes mention an accident, claim, violation, ticket or points, or the intake says an SR-22 is needed; then leave it to the agent.
 
 ### MoreAboutBusiness
 - **Customer email**: from the intake.
@@ -59,7 +59,7 @@ Leave a question as it is when the rules and the intake don't say anything about
 - **Current bodily injury limit** and **current policy expiration**: from the intake, as written ("State Minimum" is "State Minimum or less").
 - **Other coverages for the business?**: None.
 - Leave the additional insured and waiver questions as they are.
-- **State or federal filings required?**: Yes when the intake says filings are required, No when it says they aren't. The page pre-selects No. Left blank: No (TNI standard) when the intake has no USDOT or MC number, also when one is coming within 60 days; with either number, leave it to the agent.
+- **State or federal filings required?**: Yes when the intake says filings are required, No when it says they aren't. The page pre-selects No. Left blank: No (TNI standard) when the intake has no USDOT or MC number, also when one is coming within 60 days; with either number, filings named on the intake, or an SR-22 needed, leave it to the agent.
 - **ELD required?**: from the intake.
 
 ### Filings (only when filings are required)

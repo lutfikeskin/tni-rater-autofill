@@ -90,6 +90,17 @@ const vehicleValueNote = (r, a) => {
   return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
 };
 
+// "Had the vehicle less than one year": TNI's standard No (2026-10-19), except for a vehicle of this
+// model year or later, likely bought within the year: that one is the agent's to ask the client.
+const recentModel = (r, a) => {
+  const v = r.vehicles?.[a.vehicles ?? 0];
+  return Number(v?.year) >= new Date().getFullYear() ? v : null;
+};
+const ownedUnderYearSource = (r, a) => (recentModel(r, a) ? 'fact' : 'standard');
+const ownedUnderYearNote = (r, a) => (recentModel(r, a)
+  ? `This vehicle is a ${recentModel(r, a).year} model, so it may have been bought less than a year ago: ask the client and answer it yourself.`
+  : null);
+
 // Loan / lease from the intake's ownership answer (also read from the claims-box notes). No answer
 // is not No: a missing ownership, or one that is none of owned / financed / leased (Rented), is
 // the agent's (2026-10-09; until then a blank was filled as No).
@@ -133,25 +144,36 @@ const defensiveMention = (r) => String(otherNotes(r) ?? '').match(/[^\n.]*defens
 // live run): when it gives neither, No (standard) unless the intake's notes (the claims box's
 // other lines, the Additional Notes box) mention one; then it's the agent's. A sentence that only
 // denies them ("No claims or violations in the last 5 years", "Clean record", "N/A") is no mention,
-// and neither are claim-free or loss runs.
+// and neither are claim-free, loss runs or a loss payee. An SR-22 (filed after a DUI, driving
+// uninsured or too many points) counts as a mention too.
 const CLAIM_WORDS = '(?:prior\\s+)?(?:accidents?|claims?|violations?|tickets?|citations?|losses|incidents?)';
-const CLAIM_WORD = /\b(?:accidents?|claims?(?![- ]?free)|violations?|tickets?|citations?|speeding|dui|dwi|crash(?:es)?|wrecks?|convictions?|convicted|suspen\w*|at[- ]fault|totall?ed|incidents?|loss(?:es)?(?!\s*runs?))\b/i;
+const CLAIM_WORD = /\b(?:accidents?|claims?(?![- ]?free)|violations?|tickets?|citations?|infractions?|speeding|reckless|careless|dui|dwi|owi|crash(?:es)?|wrecks?|collisions?|rear[- ]?ended|fender[- ]?benders?|hit[- ]and[- ]run|hit\s+(?:a|an|another|by|someone)|convictions?|convicted|suspen\w*|revoked|revocation|sr[- ]?22|\d+\s*(?:pts?|points?)|points?\s+on|at[- ]fault|totall?ed|incidents?|loss(?:es)?(?!\s*(?:runs?|payees?|payable)))\b/i;
 const CLAIM_DENIAL = new RegExp(`^(?:(?:no|none|zero|0|never had(?: any)?)(?:\\s+${CLAIM_WORDS}(?:\\s*(?:,|/|&|or|and|nor)\\s*${CLAIM_WORDS})*)?(?:\\s+(?:in|for|within|during)\\s+(?:the\\s+)?(?:last|past)\\s+\\d+\\s+(?:years?|yrs?))?|n/?a|clean(?:\\s+(?:record|mvr|driving record))?)$`, 'i');
 const claimMention = (r) => String(otherNotes(r) ?? '').split(/[\n.;]+/).map((s) => s.trim())
   .find((s) => CLAIM_WORD.test(s) && !CLAIM_DENIAL.test(s))?.slice(0, 80) ?? null;
-const hasClaims = (r) => (typeof r.claims?.hasClaims === 'boolean' ? r.claims.hasClaims : claimMention(r) ? null : false);
-const hasClaimsSource = (r) => (typeof r.claims?.hasClaims === 'boolean' ? 'intake' : claimMention(r) ? 'derived' : 'standard');
-const hasClaimsNote = (r) => (typeof r.claims?.hasClaims !== 'boolean' && claimMention(r)
-  ? `The claims box doesn't start with Yes or No, and the intake's notes mention one ("${claimMention(r)}"): answer it yourself.`
+const claimSignal = (r) => {
+  const m = claimMention(r);
+  return m ? `the intake's notes mention one ("${m}")` : r.operations?.needSr22 === true ? 'the intake says an SR-22 is needed' : null;
+};
+const hasClaims = (r) => (typeof r.claims?.hasClaims === 'boolean' ? r.claims.hasClaims : claimSignal(r) ? null : false);
+const hasClaimsSource = (r) => (typeof r.claims?.hasClaims === 'boolean' ? 'intake' : claimSignal(r) ? 'derived' : 'standard');
+const hasClaimsNote = (r) => (typeof r.claims?.hasClaims !== 'boolean' && claimSignal(r)
+  ? `The claims box doesn't start with Yes or No, and ${claimSignal(r)}: answer it yourself.`
   : null);
 
 // Hazardous material placard: the intake's answer. TNI (2026-10-19, after a live run): left blank,
-// No (standard) unless the intake says they haul hazardous material; then it's the agent's.
-const hazPlacard = (r) => (typeof r.operations.hazPlacard === 'boolean' ? r.operations.hazPlacard : r.operations.hazmat === true ? null : false);
-const hazPlacardSource = (r) => (typeof r.operations.hazPlacard === 'boolean' ? 'intake' : r.operations.hazmat === true ? 'derived' : 'standard');
-const hazPlacardNote = (r) => (typeof r.operations.hazPlacard !== 'boolean' && r.operations.hazmat === true
-  ? 'The intake says they haul hazardous material but doesn\'t answer the placard question: answer it yourself.'
-  : null);
+// No (standard) unless the intake says they haul hazardous material, or what they haul names
+// something that may be (fuel, propane, chemicals…; "non-hazardous" and "no hazmat" don't count);
+// then it's the agent's, with a note saying why.
+const HAZ_HAUL = /(?<!\bnon[- ]?|\bno\s)\bhaz(?:ard(?:ous)?|mat)\b|\b(?:fuel|gasoline|diesel|propane|butane|explosives?|ammunition|fireworks|flammable|corrosive|radioactive|chemicals?|acids?|lithium|placard\w*)\b/i;
+const hazPlacardNote = (r) => {
+  if (typeof r.operations.hazPlacard === 'boolean') return null;
+  if (r.operations.hazmat === true) return 'The intake says they haul hazardous material but doesn\'t answer the placard question: answer it yourself.';
+  const what = String(r.operations.whatHaul ?? '');
+  return HAZ_HAUL.test(what) ? `What they haul ("${what.slice(0, 60)}") may need a placard, but the intake doesn't answer the placard question: answer it yourself.` : null;
+};
+const hazPlacard = (r) => (typeof r.operations.hazPlacard === 'boolean' ? r.operations.hazPlacard : hazPlacardNote(r) ? null : false);
+const hazPlacardSource = (r) => (typeof r.operations.hazPlacard === 'boolean' ? 'intake' : hazPlacardNote(r) ? 'derived' : 'standard');
 
 // Farthest one-way distance: "Unlimited" / long haul becomes 501 miles, which picks "More than
 // 500 miles". A trailer goes as far as the vehicle (TNI).
@@ -187,15 +209,19 @@ const commodity = (r) => COMMODITIES.find((c) => c.match.test(r.operations.whatH
 // vehicles on this quote" = Yes and the Federal filing; ticking Federal makes Progressive tick
 // MCS-90 itself, so MCS-90 is left as the page sets it.
 const filings = (r) => (r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
+// A blank "filings required" with filings named, or an SR-22 needed (a state filing), is the agent's.
+const filingsHint = (r) => (r.operations.filingsRequired != null ? null
+  : r.operations.filingsWhich ? `names filings ("${String(r.operations.filingsWhich).slice(0, 40)}")`
+    : r.operations.needSr22 === true ? 'says an SR-22 is needed' : null);
 const filingsNote = (r) => (r.operations.filingsRequired === true && !r.applicant.dot
   ? 'Filings are requested but the intake has no USDOT number; Progressive may not allow filings without one.'
-  : null);
+  : filingsHint(r) ? `The intake leaves "filings required" blank but ${filingsHint(r)}: answer it yourself.` : null);
 // "Are state or federal filings required?" TNI (2026-10-19, after a live run): left blank on an
 // intake with no USDOT or MC number, No (standard), also when the intake says one is coming
-// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number a
-// blank answer stays the agent's. (The Filings page's answers keep `filings`: that page shows only
-// after a Yes.)
-const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && !r.applicant.dot && !r.applicant.mc;
+// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number,
+// filings named or an SR-22 needed, a blank answer stays the agent's. (The Filings page's answers
+// keep `filings`: that page shows only after a Yes.)
+const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && !r.applicant.dot && !r.applicant.mc && !filingsHint(r);
 const filingsAsked = (r) => (filingsBlankNoNumber(r) ? false : filings(r));
 const filingsSource = (r) => (filingsBlankNoNumber(r) ? 'standard' : 'derived');
 const usesEld = (r) => explicitBoolean(r, 'operations.usesEld');
@@ -295,7 +321,7 @@ const SAFE_LABEL_RULES = [
   { path: 'garaging.city', label: '\\bcity\\b' },
   { path: 'garaging.zip', label: '\\bzip|postal' },
   { path: 'operations.radius', label: 'radius|miles from (garag|home)' },
-  { path: 'operations.hazPlacard', label: 'placard' },
+  { path: 'operations.hazPlacard', label: 'placard', kind: 'bool', source: hazPlacardSource, value: hazPlacard, note: hazPlacardNote },
   { path: 'operations.personalUse', label: 'personal use' },
   { path: 'coverage.autoLiabLimit', label: '(auto |bodily injury |combined single |csl )?liability limit|^bi limit|combined single limit', not: 'general|cargo' },
   { path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', ignore: (r) => !currentlyInsured(r) },
@@ -662,7 +688,7 @@ export const progressive = {
       { q: '2CE0', source: 'derived', ask: 'What is the value of the permanently attached equipment?', name: 'Attached equipment amount (from the intake, over $2,000)', kind: 'money', value: vehicleEquipment, ignore: (r) => !equipmentOver(r), scope: 'vehicle' },
       // SC (2026-10-19): whether the insured has had the vehicle less than a year. Not on the intake;
       // TNI's standard No (after a live run, where the agent answered it).
-      { q: '2C06', source: 'standard', field: 'RiskInput.VehicleOwnershipLessThanAYear', ask: 'Has the insured or their hired driver had the vehicle less than one (1) year?', name: 'Had the vehicle less than one year (standard: No)', kind: 'bool', value: () => false },
+      { q: '2C06', source: ownedUnderYearSource, field: 'RiskInput.VehicleOwnershipLessThanAYear', ask: 'Has the insured or their hired driver had the vehicle less than one (1) year?', name: 'Had the vehicle less than one year (standard: No)', kind: 'bool', value: () => false, note: ownedUnderYearNote },
       // SC (2026-10-07): how long the insured has had the vehicle. Not on the intake: the agent's (TNI).
       { q: '2C09', source: 'fact', field: 'RiskInput.LengthOfVehicleOwnershipQuestion', ask: 'How long has the insured or their hired driver had the vehicle?', name: 'How long the insured has had the vehicle (the agent\'s)', note: () => 'How long the insured has had this vehicle isn\'t on the intake: answer it yourself.' },
       // Asked here for the vehicle being added, and on Rates (FL, NC, OH) once per vehicle, where each
