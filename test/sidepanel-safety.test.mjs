@@ -3698,3 +3698,20 @@ test('a layout carries the page\'s messages, and a new message logs the page aga
   assert.deepEqual([...logged[1].messages], ['This field is required']);
   assert.equal(logged[1].reason, 'messages');
 });
+
+test('an empty page is logged for a combined reason that includes messages, and skipped when the reason lacks it', async () => {
+  const { context, logged } = layoutHarness(() => []);
+  context.messages = ['This field is required'];
+  await context.recordLayout('Vehicles', 'changed');
+  assert.equal(logged.length, 0, 'messages on an empty page do not count without the messages reason');
+  await context.recordLayout('Vehicles', 'arrived+changed');
+  assert.equal(logged.length, 0, 'a combined reason without messages is skipped too');
+  await context.recordLayout('Vehicles', 'changed+messages');
+  assert.equal(logged.length, 1, 'messages merged with another reason is logged');
+  assert.equal(logged[0].reason, 'changed+messages');
+  assert.deepEqual([...logged[0].messages], ['This field is required']);
+  assert.equal(logged[0].fields.length, 0);
+  context.messages = [];
+  await context.recordLayout('Rates', 'changed+messages');
+  assert.equal(logged.length, 1, 'the messages reason with no message on an empty page is still skipped');
+});
