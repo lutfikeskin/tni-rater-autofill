@@ -376,15 +376,17 @@ test('AmWINS driver gender and year licensed: TNI standards, the agent\'s gender
   const std = buildPlan(expediter(), amwins, {});
   assert.deepEqual([gender(std).value, gender(std).source, gender(std).standard, gender(std).manualOnly], ['MALE', 'standard', true, false]);
   assert.deepEqual([year(std).value, year(std).source, year(std).standard], ['1997', 'standard', true], '01/02/1980: 1980 + 17');
-  for (const [set, want] of [['FEMALE', 'FEMALE'], ['female', 'FEMALE'], ['MALE', 'MALE']]) {
+  for (const [set, want] of [['FEMALE', 'FEMALE'], ['female', 'FEMALE'], ['MALE', 'MALE'], ['f', 'FEMALE'], ['F', 'FEMALE'], ['m', 'MALE'], ['M', 'MALE'], [' f ', 'FEMALE']]) {
     const g = gender(buildPlan(with_({ 'drivers.0.gender': set }), amwins, {}));
     assert.deepEqual([g.value, g.source, g.standard], [want, 'derived', false], set);
   }
-  const odd = gender(buildPlan(with_({ 'drivers.0.gender': 'X' }), amwins, {}));
-  assert.equal(odd.value, null, 'neither MALE nor FEMALE: the agent picks');
-  // ... never the AI (audit 2026-10-10): a fact, kept from Luna.
-  assert.deepEqual([odd.source, odd.manualOnly], ['fact', true]);
-  agentsNote(odd);
+  for (const set of ['X', 'Other', 'nonbinary']) {
+    const odd = gender(buildPlan(with_({ 'drivers.0.gender': set }), amwins, {}));
+    assert.equal(odd.value, null, `${set}: neither MALE nor FEMALE, the agent picks`);
+    // ... never the AI (audit 2026-10-10): a fact, kept from Luna.
+    assert.deepEqual([odd.source, odd.manualOnly], ['fact', true], set);
+    agentsNote(odd);
+  }
   for (const dob of [null, '1980', 'unknown']) {
     const y = year(buildPlan(with_({ 'drivers.0.dob': dob }), amwins, {}));
     assert.equal(y.source, 'fact', String(dob));
