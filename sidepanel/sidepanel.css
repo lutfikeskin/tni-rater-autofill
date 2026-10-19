@@ -243,7 +243,7 @@ button.step-head:hover { background: #fbfcfd; }
 .field-row { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--ink); }
 .field-row input { flex: 1; min-width: 0; }
 .field-stack input, .field-stack select, .field-stack textarea, .field-row input, .warn-card :is(input, select, textarea),
-.field input, .field select, .field textarea {
+.field input, .field select, .field textarea, .details-search {
   min-height: 32px; color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm); padding: 4px 8px; width: 100%;
 }
@@ -256,7 +256,9 @@ button.step-head:hover { background: #fbfcfd; }
 .details > summary::-webkit-details-marker { display: none; }
 .arrow { color: var(--ink-muted); font-weight: 400; display: inline-block; transition: transform 0.12s; }
 details[open] > summary .arrow { transform: rotate(90deg); }
+.details-search { margin-top: 8px; }
 #sections { padding: 6px 0 0; display: grid; gap: 2px; }
+#details-none { padding: 6px 0 2px; }
 details.section > summary { display: flex; gap: 8px; padding: 6px 2px; font-size: 12.5px; color: var(--ink); cursor: pointer; list-style: none; border-bottom: 1px solid var(--border-faint); }
 details.section > summary::-webkit-details-marker { display: none; }
 details.section > summary .title { flex: 1; }
@@ -281,6 +283,8 @@ details.section[open] > summary { font-weight: 600; color: var(--ink-strong); }
 #fill-hint { margin-top: -4px; }
 .fill-actions { display: grid; gap: 10px; }
 .fill-actions.filled { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+/* The fill shortcut Chrome assigned (showFillShortcut) */
+.key { display: inline-block; margin-left: 10px; padding: 1px 5px; border: 1px solid currentColor; border-radius: 4px; font: 600 10.5px/1.4 var(--font-mono); opacity: 0.8; vertical-align: middle; }
 /* Review mode: the business class isn't one the rules were written for (plan.js supportedClass) */
 .review-mode { display: grid; gap: 3px; padding: 10px; border: 1px solid var(--warning-line); border-radius: var(--radius-md); background: var(--warning-faint); }
 .review-mode b { font-size: 12.5px; font-weight: 600; color: var(--ink-strong); }
@@ -474,6 +478,9 @@ p.agent-page { font-weight: 600; }
 .problem { padding: 10px 14px 0; display: grid; gap: 6px; }
 .problem textarea { color: var(--ink-strong); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 6px 8px; resize: vertical; font-size: 12.5px; }
 .problem-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.problem-kinds .pill { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; font-size: 12px; cursor: pointer; }
+.problem-kinds .pill:has(input:checked) { color: var(--brand-dark); background: var(--surface-selected); border-color: var(--brand); }
+.problem-kinds input { margin: 0; }
 #ai-note:empty { display: none; }
 
 @keyframes appear { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }

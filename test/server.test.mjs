@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROBLEM_CATEGORIES } from '../server/index.mjs';
 import { checkServer } from '../scripts/lib/central.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
@@ -517,6 +517,26 @@ test('a problem report keeps the fill it is about, in its shapes', async () => {
   const [ok, odd] = stored(dataDir);
   assert.deepEqual([ok.view, ok.run, ok.blockerList, ok.since], ['t1', 'run-1234-abcd', ['button: recalculate'], 90]);
   assert.deepEqual([odd.blockerList, odd.since], [undefined, undefined]);
+});
+
+test('a problem report keeps the kind the agent picked, one of the form\'s', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    const r = await (await post({ events: [
+      ev({ type: 'problem_report', filled: undefined, page: 'AddVehicle', view: 't1:v0', category: 'wrong-answer', text: 'Body type picked Step van', run: 'run-1234-abcd', since: 12, extra: 'dropped' }),
+      ...['did-not-fill', 'stuck', 'other'].map((category) => ev({ type: 'problem_report', filled: undefined, category, text: 'x' })),
+      ev({ type: 'problem_report', filled: undefined, category: 'Wrong answer: the client said so', text: 'free text is not a kind' }),
+      ev({ type: 'problem_report', filled: undefined, text: 'from an older panel' }),
+    ] })).json();
+    assert.equal(r.accepted, 6);
+  });
+  const [first, ...rest] = stored(dataDir);
+  assert.deepEqual([first.page, first.view, first.category, first.text, first.run, first.since, first.extra], ['AddVehicle', 't1:v0', 'wrong-answer', 'Body type picked Step van', 'run-1234-abcd', 12, undefined]);
+  assert.deepEqual(rest.map((e) => e.category), ['did-not-fill', 'stuck', 'other', undefined, undefined]);
+  assert.deepEqual(rest[3].dropped, ['category'], 'an unknown kind is dropped, the report kept');
+  // The kinds the server keeps are the ones the panel's form offers.
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.deepEqual([...html.matchAll(/name="problem-category" value="([a-z-]+)"/g)].map((m) => m[1]), PROBLEM_CATEGORIES);
 });
 
 test('keeps a button the agent clicked: its text, bounded', async () => {

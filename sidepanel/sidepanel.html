@@ -115,7 +115,9 @@
           <div id="warnings" class="warn-cards"></div>
           <details id="details" class="details">
             <summary><span class="arrow">›</span><span class="grow">All client details</span><span id="details-count" class="small muted"></span></summary>
+            <input id="details-search" class="details-search" type="search" placeholder="Find a field, e.g. VIN, DOT, radius" autocomplete="off" aria-label="Find a field">
             <div id="sections"></div>
+            <p id="details-none" class="small muted center" hidden>No field matches.</p>
           </details>
         </div>
       </section>
@@ -150,7 +152,7 @@
           <p id="fill-error" class="card bad small" role="alert" hidden></p>
           <div id="filled-report" class="filled-report" hidden></div>
           <div id="fill-actions" class="fill-actions">
-            <button type="button" id="fill" class="primary big">Fill this page</button>
+            <button type="button" id="fill" class="primary big"><span id="fill-text">Fill this page</span><kbd id="fill-key" class="key" aria-hidden="true" hidden></kbd></button>
             <p id="fill-hint" class="small muted center"></p>
             <button type="button" id="unmark" class="link small subtle" hidden>Clear the marks on the page</button>
           </div>
@@ -254,6 +256,13 @@
 
   <footer class="foot">
     <div id="problem-form" class="problem" hidden>
+      <div class="pills problem-kinds" role="radiogroup" aria-label="What kind of problem?">
+        <label class="pill"><input type="radio" name="problem-category" value="wrong-answer">Wrong answer</label>
+        <label class="pill"><input type="radio" name="problem-category" value="did-not-fill">Didn’t fill</label>
+        <label class="pill"><input type="radio" name="problem-category" value="stuck">Got stuck</label>
+        <label class="pill"><input type="radio" name="problem-category" value="other">Other</label>
+      </div>
+      <p id="problem-need" class="small error" role="alert" hidden>Pick what kind of problem it is.</p>
       <textarea id="problem-text" rows="3" placeholder="What went wrong? Sent as typed: no client names, numbers or addresses."></textarea>
       <div class="problem-actions">
         <button type="button" id="cancel-problem" class="ghost small-btn">Cancel</button>

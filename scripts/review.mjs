@@ -206,7 +206,7 @@ else {
 
 p('## Problem reports', '');
 if (!problems.length) p('None.', '');
-else p(...problems.map((e) => `- ${e.t?.slice(0, 16).replace('T', ' ')} · ${e.agent ?? '?'} · ${buildOf(e)}${tests.has(e.session) ? ' · test run' : ''} · ${e.page ?? '?'}: ${String(e.text ?? '').trim().replace(/\n+/g, '\n  ')}`), '');
+else p(...problems.map((e) => `- ${e.t?.slice(0, 16).replace('T', ' ')} · ${e.agent ?? '?'} · ${buildOf(e)}${tests.has(e.session) ? ' · test run' : ''} · ${e.page ?? '?'}${e.category ? ` (${e.category})` : ''}: ${String(e.text ?? '').trim().replace(/\n+/g, '\n  ')}`), '');
 
 // Questions met on live pages that no rule claims (or, for AmWINS, that the mock lacks).
 const { markdown: coverageMd } = coverageReport(loadLayouts(inputs));
@@ -226,7 +226,7 @@ fs.writeFileSync(out, lines.join('\n'));
 if (opt('summary')) {
   fs.writeFileSync(opt('summary'), JSON.stringify({
     since,
-    problems: problems.map((e) => ({ t: e.t, receivedAt: e.receivedAt ?? null, agent: e.agent ?? null, page: e.page ?? null, build: buildOf(e), test: tests.has(e.session), text: e.text ?? '' })),
+    problems: problems.map((e) => ({ t: e.t, receivedAt: e.receivedAt ?? null, agent: e.agent ?? null, page: e.page ?? null, build: buildOf(e), test: tests.has(e.session), category: e.category ?? null, text: e.text ?? '' })),
     newQuestions: uncovered.new,
     uncoveredTotal: uncovered.total,
   }, null, 1));

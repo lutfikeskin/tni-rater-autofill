@@ -3219,7 +3219,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   };
   const ui = {
     overwrite: { checked: false }, 'auto-advance': { checked: true }, 'auto-followups': { checked: true }, 'auto-pages': { checked: false },
-    fill: { disabled: false, textContent: '' }, report: { children: [], replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); } },
+    fill: { disabled: false }, 'fill-text': { textContent: '' }, report: { children: [], replaceChildren(...c) { this.children = c; }, append(...c) { this.children.push(...c); } },
     'filled-report': { children: [], replaceChildren(...c) { this.children = c; } }, 'fill-stop': {},
   };
   const seen = { plan: null, logged: [], rendered: 0, reportTabs: [], problems: [], layouts: 0, persistedKeys: [], persistedActions: [], afterFill: [], options: null };
@@ -4586,4 +4586,172 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   await sandbox.applyCheckChoice(4, intake.warnings[4].choices[2]);
   assert.equal(JSON.stringify(record), before);
   assert.deepEqual([...intake.done], []);
+});
+
+// Ported from the 2026-10-09 panel redesign onto Drawer v4: the fill shortcut, the problem
+// report's kind, and the search in All client details.
+test('the fill shortcut fills only from the focused window, and only when Fill could be pressed', async () => {
+  const fills = [];
+  let hiddenAncestor = null;
+  const fill = { disabled: false, closest: (selector) => (selector === '[hidden]' ? hiddenAncestor : null) };
+  const state = { filling: false };
+  let windows = [{ id: 1 }, { id: 1 }];
+  const context = {
+    state, $: (id) => (id === 'fill' ? fill : null), fillPage: (...args) => fills.push(args),
+    chrome: { windows: { getCurrent: async () => windows[0], getLastFocused: async () => windows[1] } },
+  };
+  vm.runInNewContext(extractFunction('fillFromShortcut'), context);
+  await context.fillFromShortcut();
+  assert.deepEqual(fills, [[]], 'the same fill as the button: no options');
+  windows = [{ id: 1 }, { id: 2 }];
+  await context.fillFromShortcut();
+  windows = [{ id: 1 }, { id: 1 }];
+  // A stop page, a non-rater tab or the extension preview: renderSite disables the button.
+  fill.disabled = true;
+  await context.fillFromShortcut();
+  fill.disabled = false;
+  // Settings, the PDF, or a step body hidden (not a rater page, a stop page, a fill under way).
+  hiddenAncestor = { id: 'fill-ready' };
+  await context.fillFromShortcut();
+  hiddenAncestor = null;
+  state.filling = true;
+  await context.fillFromShortcut();
+  state.filling = false;
+  // The windows couldn't be read: as for the capture shortcut, the panel still fills.
+  context.chrome.windows.getCurrent = async () => { throw new Error('gone'); };
+  await context.fillFromShortcut();
+  assert.equal(fills.length, 2);
+  assert.match(SIDEPANEL, /chrome\.commands\?\.onCommand\.addListener\(\(command\) => \{ if \(command === 'fill-page'\) fillFromShortcut\(\); \}\)/);
+  assert.match(extractFunction('renderSite'), /const canFill = inExtension && !!carrier && !!state\.intake && !stopped;\s+\$\('fill'\)\.disabled = !canFill \|\| state\.filling;/, 'the button the shortcut follows is off on a stop page, a non-rater tab and during a fill');
+  const manifest = JSON.parse(fs.readFileSync(new URL('../manifest.json', import.meta.url), 'utf8'));
+  assert.equal(manifest.commands['fill-page'].suggested_key.default, 'Alt+F');
+});
+
+test('the Fill button shows the shortcut Chrome assigned, or none', async () => {
+  const ui = { fill: { title: '' }, 'fill-key': { textContent: '', hidden: true } };
+  let commands = [{ name: 'capture-page', shortcut: 'Alt+Shift+C' }, { name: 'fill-page', shortcut: 'Alt+F' }];
+  const context = { inExtension: true, $: (id) => ui[id], chrome: { commands: { getAll: async () => commands } } };
+  vm.runInNewContext(extractFunction('showFillShortcut'), context);
+  await context.showFillShortcut();
+  assert.deepEqual([ui['fill-key'].textContent, ui['fill-key'].hidden, ui.fill.title], ['Alt+F', false, 'Shortcut: Alt+F']);
+  // Taken by another extension, or cleared at chrome://extensions/shortcuts: Chrome reports ''.
+  commands = [{ name: 'fill-page', shortcut: '' }];
+  await context.showFillShortcut();
+  assert.deepEqual([ui['fill-key'].textContent, ui['fill-key'].hidden, ui.fill.title], ['', true, '']);
+  commands = [{ name: 'fill-page', shortcut: 'Alt+G' }];
+  await context.showFillShortcut();
+  assert.equal(ui['fill-key'].textContent, 'Alt+G', 'read again, so a changed key shows');
+  context.chrome.commands.getAll = async () => { throw new Error('no commands'); };
+  await context.showFillShortcut();
+  assert.equal(ui['fill-key'].hidden, true);
+  context.inExtension = false;
+  context.chrome = undefined;
+  await context.showFillShortcut();
+  assert.equal(ui['fill-key'].hidden, true, 'the preview page has no shortcuts');
+  assert.match(extractFunction('fillPage'), /\$\('fill-text'\)\.textContent = 'Filling…';/, 'the button\'s text changes, its shortcut stays');
+  assert.match(extractFunction('renderSite'), /\$\('fill-text'\)\.textContent = filledBefore \|\| filledHere \? 'Fill this page again' : 'Fill this page';/);
+  assert.match(extractFunction('wire'), /showFillShortcut\(\);\s+window\.addEventListener\('focus', showFillShortcut\);/);
+});
+
+function problemFormHarness() {
+  const seen = { logged: [], uploads: 0, focused: null };
+  const element = () => ({
+    value: '', hidden: true, checked: false, handlers: {},
+    addEventListener(type, fn) { (this.handlers[type] ??= []).push(fn); },
+    focus() { seen.focused = this; },
+    fire(type) { for (const fn of this.handlers[type] ?? []) fn({ target: this, currentTarget: this }); },
+  });
+  const ui = {};
+  const kinds = ['wrong-answer', 'did-not-fill', 'stuck', 'other'].map((value) => Object.assign(element(), { value }));
+  const context = {
+    state: { intake: { record: {} }, tab: { id: 7, url: 'Rates', carrier: { id: 'progressive' } } },
+    $: (id) => (ui[id] ??= element()),
+    document: { querySelectorAll: (selector) => (selector === '#problem-form input[name="problem-category"]' ? kinds : []) },
+    usage: { log: (e) => seen.logged.push(e) }, uploadNow: () => { seen.uploads++; }, setInterval() {}, confirm: () => false,
+    redactor: () => (text) => text.replace('Acme Hauling', '[client]'), redactionTerms: () => ['Acme Hauling'], pageOf: (url) => url,
+    problemContext: () => ({ view: 't1', run: 'run-1234-abcd', blockerList: ['button: recalculate'], since: 90 }),
+    renderSite() {}, renderUsage() {}, logSettings() {},
+  };
+  vm.runInNewContext(extractFunction('wireUsage'), context);
+  context.wireUsage();
+  const pick = (value) => {
+    const kind = kinds.find((k) => k.value === value);
+    for (const k of kinds) k.checked = k === kind;
+    kind.fire('change');
+  };
+  return { ui, kinds, seen, pick };
+}
+
+test('a problem report carries the kind the agent picked, next to the fill it is about', () => {
+  const { ui, kinds, seen, pick } = problemFormHarness();
+  ui['report-problem'].fire('click');
+  assert.equal(ui['problem-form'].hidden, false);
+  assert.equal(seen.focused, ui['problem-text']);
+  ui['problem-text'].value = '  Body type for Acme Hauling picked Step van  ';
+  ui['send-problem'].fire('click');
+  assert.equal(seen.logged.length, 0, 'none is picked for the agent');
+  assert.equal(ui['problem-need'].hidden, false);
+  assert.equal(seen.focused, kinds[0]);
+  pick('did-not-fill');
+  assert.equal(ui['problem-need'].hidden, true, 'picking one clears the prompt');
+  ui['send-problem'].fire('click');
+  assert.deepEqual(JSON.parse(JSON.stringify(seen.logged)), [{
+    type: 'problem_report', carrier: 'progressive', page: 'Rates', category: 'did-not-fill', text: 'Body type for [client] picked Step van',
+    view: 't1', run: 'run-1234-abcd', blockerList: ['button: recalculate'], since: 90,
+  }]);
+  assert.equal(seen.uploads, 1, 'sent right away');
+  assert.deepEqual([ui['problem-form'].hidden, ui['problem-text'].value, kinds.some((k) => k.checked)], [true, '', false], 'the next report starts empty');
+  // Cancel forgets the kind and the words; an empty note is never sent.
+  ui['report-problem'].fire('click');
+  pick('stuck');
+  ui['problem-text'].value = 'Continue did nothing';
+  ui['cancel-problem'].fire('click');
+  assert.deepEqual([ui['problem-form'].hidden, ui['problem-text'].value, kinds.some((k) => k.checked)], [true, '', false]);
+  ui['report-problem'].fire('click');
+  pick('other');
+  ui['problem-text'].value = '   ';
+  ui['send-problem'].fire('click');
+  assert.equal(seen.logged.length, 1);
+});
+
+test('the problem report form offers each kind once, as one radio group, none picked', () => {
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  const form = html.slice(html.indexOf('id="problem-form"'), html.indexOf('id="send-problem"'));
+  assert.deepEqual([...form.matchAll(/<input type="radio" name="problem-category" value="([a-z-]+)">/g)].map((m) => m[1]), ['wrong-answer', 'did-not-fill', 'stuck', 'other']);
+  assert.ok(!/checked/.test(form), 'none is picked for the agent');
+  assert.match(form, /role="radiogroup" aria-label="What kind of problem\?"/);
+});
+
+test('the client details search keeps the fields with a word starting with what was typed, or a capitals word holding it', async () => {
+  const { SECTIONS } = await import('../src/schema.js');
+  // Two of each listed item (drivers, vehicles…), as renderSections draws them.
+  const sections = SECTIONS.map((section) => ({
+    id: section.id, hidden: false, open: false,
+    rows: (section.list ? [0, 1] : [0]).flatMap(() => section.fields.map(([, label]) => ({ hidden: false, label, querySelector: () => ({ textContent: label }) }))),
+    querySelectorAll(selector) { return selector === '.field' ? this.rows : []; },
+  }));
+  const ui = { 'details-search': { value: '' }, 'details-none': { hidden: true } };
+  const context = { $: (id) => ui[id], document: { querySelectorAll: (selector) => (selector === '#sections details.section' ? sections : []) } };
+  vm.runInNewContext(extractFunction('filterSections'), context);
+  const search = (q) => {
+    ui['details-search'].value = q;
+    context.filterSections();
+    return sections.filter((s) => !s.hidden).map((s) => [s.id, s.open, s.rows.filter((r) => !r.hidden).map((r) => r.label)]);
+  };
+  assert.deepEqual(search('vin'), [['vehicles', true, ['VIN', 'VIN']], ['trailers', true, ['VIN', 'VIN']]], 'not "Moving states"; each item\'s row shows, its section opened');
+  assert.deepEqual(search('  Date of '), [['drivers', true, ['Date of birth', 'Date of birth']]]);
+  assert.deepEqual(search('DOT'), [['applicant', true, ['USDOT #', 'No DOT/MC: will have in 60 days']]], 'inside a capitals word too');
+  assert.deepEqual(search('ein'), [['applicant', true, ['FEIN']]]);
+  assert.deepEqual(search('sr-22'), [['operations', true, ['Needs SR-22']]], 'typed punctuation is taken as written');
+  assert.deepEqual(search('($').map(([id]) => id), ['vehicles', 'trailers'], '"Value ($)": a regular-expression character never throws');
+  assert.equal(ui['details-none'].hidden, true);
+  assert.deepEqual(search('zzz'), []);
+  assert.equal(ui['details-none'].hidden, false, 'No field matches');
+  const all = search('');
+  assert.equal(ui['details-none'].hidden, true);
+  assert.equal(all.length, sections.length, 'cleared: every section and field is back');
+  assert.ok(all.every(([, , rows], i) => rows.length === sections[i].rows.length));
+  assert.match(extractFunction('renderSections'), /\n {2}filterSections\(\);\n\}$/, 'a re-render keeps the search applied');
+  assert.match(extractFunction('jumpTo'), /\$\('details-search'\)\.value = '';\s+filterSections\(\);/, 'Show in client details clears a search that would hide the field');
+  assert.match(extractFunction('wire'), /\$\('details-search'\)\.addEventListener\('input', filterSections\);/);
 });

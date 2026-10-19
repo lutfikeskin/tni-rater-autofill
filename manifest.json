@@ -40,6 +40,12 @@
     }
   },
   "commands": {
+    "fill-page": {
+      "suggested_key": {
+        "default": "Alt+F"
+      },
+      "description": "Fill the quote page (with the side panel open)"
+    },
     "capture-page": {
       "suggested_key": {
         "default": "Alt+Shift+C"

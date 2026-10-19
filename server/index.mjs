@@ -90,9 +90,10 @@ export const EVENT_FIELDS = {
   check_dismissed: ['q', 'key', 'label', 'mark'],
   fill_error: ['run', 'rules', 'settings', 'auto', 'error'],
   field_change: ['step', 'q', 'key', 'label', 'kind', 'by', 'autofilled', 'change', 'vsAutofill', 'matchesIntake', 'from', 'to'],
-  // With what it is about: the last fill on that tab and page (run, step, what held Continue, how
-  // many seconds before the report).
-  problem_report: ['text', 'run', 'step', 'blockerList', 'since'],
+  // category: the kind the agent picked (wrong-answer, did-not-fill, stuck, other). With what it
+  // is about: the last fill on that tab and page (run, step, what held Continue, how many seconds
+  // before the report).
+  problem_report: ['category', 'text', 'run', 'step', 'blockerList', 'since'],
   // An error nothing in the panel caught: where (panel), its message (redacted, 300 characters)
   // and up to four frames inside the extension's own files.
   client_error: ['where', 'error', 'stack'],
@@ -102,6 +103,9 @@ export const EVENT_FIELDS = {
   // Earlier clients emitted these scores (and categorical confidence); ingestion retains them only.
   ai_decision: ['model', 'policy', 'probability', 'support', 'evidenceProbability', 'confidence', 'q', 'label', 'controlKind', 'decision', 'choice', 'basis', 'intakePath', 'reason'],
 };
+
+// A problem report's kinds, as the panel's Report a problem form offers them.
+export const PROBLEM_CATEGORIES = ['wrong-answer', 'did-not-fill', 'stuck', 'other'];
 
 // The run-identity fields (audit 2026-10-08, finding 7; Contract 1): their exact shapes, since a
 // review joins events by them. An event with one of these present but malformed is refused, not
@@ -177,6 +181,7 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     if (out.test !== undefined && typeof out.test !== 'boolean') drop('test');
     if (out.type === 'agent_click' && out.text !== undefined && !(typeof out.text === 'string' && out.text.length <= 60)) drop('text');
     if (out.type === 'problem_report') {
+      if (out.category !== undefined && !PROBLEM_CATEGORIES.includes(out.category)) drop('category');
       if (out.blockerList !== undefined && !(Array.isArray(out.blockerList) && out.blockerList.length <= 12 && out.blockerList.every((b) => typeof b === 'string' && b.length <= 120))) drop('blockerList');
       if (out.since !== undefined && !(Number.isSafeInteger(out.since) && out.since >= 0)) drop('since');
     }

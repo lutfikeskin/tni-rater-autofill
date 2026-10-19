@@ -1003,6 +1003,31 @@ function renderSections() {
       h('summary', {}, h('span', { class: 'title' }, section.title), flags.length ? h('span', { class: 'flag' }, `${flags.length} to check`) : null),
       body));
   }
+  filterSections();
+}
+
+// The client details' search: only the fields with a word in their label starting with what was
+// typed ("vin" finds VIN, not Moving) or a capitals word holding it ("dot" finds USDOT, "ein"
+// FEIN), their sections opened; sections with none are hidden.
+function filterSections() {
+  const q = $('details-search').value.trim();
+  const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const words = q ? new RegExp(`(^|[^a-z0-9])${escaped}`, 'i') : null;
+  const inCaps = (label) => (label.match(/\b[A-Z][A-Z0-9]+\b/g) ?? []).some((w) => w.toLowerCase().includes(q.toLowerCase()));
+  let any = false;
+  for (const details of document.querySelectorAll('#sections details.section')) {
+    let hits = 0;
+    for (const row of details.querySelectorAll('.field')) {
+      const label = row.querySelector('label').textContent;
+      const hit = !words || words.test(label) || inCaps(label);
+      row.hidden = !hit;
+      if (hit) hits++;
+    }
+    details.hidden = !!words && !hits;
+    if (words && hits) details.open = true;
+    any ||= hits > 0;
+  }
+  $('details-none').hidden = !words || any;
 }
 
 function fieldRow(path, label, kind, flagged, layout = 'row') {
@@ -1066,6 +1091,9 @@ async function agentEdit(path, after, kind) {
 
 function jumpTo(path) {
   $('details').open = true;
+  // The field may be one the search hides.
+  $('details-search').value = '';
+  filterSections();
   const info = fieldInfo(path);
   const sectionId = info.section?.id ?? SECTIONS.find((s) => s.id === path || s.list === path)?.id;
   const details = document.querySelector(`details.section[data-id="${sectionId}"]`);
@@ -1945,7 +1973,7 @@ function renderSite() {
   // On a one-address application (AmWINS) every step shares the address: "again" only once this
   // step has a report.
   const filledBefore = carrier?.layoutSteps ? !!state.reports.get(currentReportKey())?.fields : state.autoPages.has(page);
-  if (!state.filling) $('fill').textContent = filledBefore || filledHere ? 'Fill this page again' : 'Fill this page';
+  if (!state.filling) $('fill-text').textContent = filledBefore || filledHere ? 'Fill this page again' : 'Fill this page';
   $('capture').disabled = !(inExtension && carrier);
   $('fill-hint').textContent = !inExtension
     ? 'Filling works only in the Chrome extension.'
@@ -2288,7 +2316,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   ctx.active = { ...state.active };
   const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
   $('fill').disabled = true;
-  $('fill').textContent = 'Filling…';
+  $('fill-text').textContent = 'Filling…';
   // Step 2 shows how far it is and its Stop; step 3 waits for the new report (the last one stays
   // until it comes, in case this fill stops before it gets anywhere).
   state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, stopping: false };
@@ -2959,6 +2987,26 @@ async function captureFromShortcut() {
   const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
   if (mine && focused && mine.id !== focused.id) return;
   capturePage();
+}
+
+// The fill shortcut (manifest "fill-page", Alt+F unless the agent changed it) does what Fill this
+// page does, in the focused window's panel, and only when that button could be pressed: shown (not
+// under Settings, the PDF, a stop page or a non-rater tab) and enabled (no fill running).
+async function fillFromShortcut() {
+  const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
+  if (mine && focused && mine.id !== focused.id) return;
+  const fill = $('fill');
+  if (state.filling || fill.disabled || fill.closest('[hidden]')) return;
+  fillPage();
+}
+
+// The Fill button shows the shortcut Chrome actually assigned: none when the key was taken by
+// another extension or cleared at chrome://extensions/shortcuts.
+async function showFillShortcut() {
+  const command = inExtension ? (await chrome.commands?.getAll?.().catch(() => []))?.find((c) => c.name === 'fill-page') : null;
+  $('fill-key').textContent = command?.shortcut ?? '';
+  $('fill-key').hidden = !command?.shortcut;
+  $('fill').title = command?.shortcut ? `Shortcut: ${command.shortcut}` : '';
 }
 
 // What a capture did, under its button in Settings (never over a fill report).
@@ -3890,19 +3938,30 @@ function wireUsage() {
     $('usage-note').textContent = 'Usage log cleared.';
     renderUsage();
   });
+  // Report a problem: what kind it is (wrong answer, didn't fill, stuck, other), which the agent
+  // picks (none is picked for them, so the review's counts are theirs), and their words.
+  const kinds = () => [...document.querySelectorAll('#problem-form input[name="problem-category"]')];
+  const closeProblem = () => {
+    $('problem-text').value = '';
+    for (const kind of kinds()) kind.checked = false;
+    $('problem-need').hidden = true;
+    $('problem-form').hidden = true;
+  };
   $('report-problem').addEventListener('click', () => {
     $('problem-form').hidden = !$('problem-form').hidden;
     if (!$('problem-form').hidden) $('problem-text').focus();
   });
-  $('cancel-problem').addEventListener('click', () => { $('problem-text').value = ''; $('problem-form').hidden = true; });
+  for (const kind of kinds()) kind.addEventListener('change', () => { $('problem-need').hidden = true; });
+  $('cancel-problem').addEventListener('click', closeProblem);
   $('send-problem').addEventListener('click', () => {
     const text = $('problem-text').value.trim();
     if (!text) return;
+    const category = kinds().find((kind) => kind.checked)?.value;
+    if (!category) { $('problem-need').hidden = false; kinds()[0].focus(); return; }
     const redact = state.intake ? redactor(redactionTerms(state.intake.record)) : (x) => x;
     const page = state.tab?.url ? pageOf(state.tab.url) : null;
-    usage.log({ type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, text: redact(text).slice(0, 1000), ...problemContext(state.tab, page) });
-    $('problem-text').value = '';
-    $('problem-form').hidden = true;
+    usage.log({ type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, category, text: redact(text).slice(0, 1000), ...problemContext(state.tab, page) });
+    closeProblem();
     $('usage-note').textContent = 'Thanks — saved with the usage log.';
     // Sent now rather than on the minute: the panel is often closed right after (audit 2026-10-08).
     uploadNow();
@@ -4204,6 +4263,7 @@ function wire() {
   $('settings-btn').addEventListener('click', () => { closeAgentPopover({ restore: false }); state.settingsOpen = !state.settingsOpen; showScreen(); });
   $('settings-done').addEventListener('click', () => { closeAgentPopover({ restore: false }); state.settingsOpen = false; showScreen(); });
   $('check-head').addEventListener('click', () => { state.checkOpen = !state.checkOpen; renderSteps(); });
+  $('details-search').addEventListener('input', filterSections);
   $('file-menu-btn').addEventListener('click', () => { state.fileMenuOpen = !state.fileMenuOpen; state.fileConfirm = null; render(); });
   $('open-pdf').addEventListener('click', () => openPdf());
   $('pdf-back').addEventListener('click', closePdf);
@@ -4256,6 +4316,10 @@ function wire() {
   $('capture').addEventListener('click', capturePage);
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
   if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') captureFromShortcut(); });
+  if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'fill-page') fillFromShortcut(); });
+  // Read again when the agent comes back to the panel: they may have changed it meanwhile.
+  showFillShortcut();
+  window.addEventListener('focus', showFillShortcut);
   wireAgentPopover();
   wireUsage();
   wireAi();

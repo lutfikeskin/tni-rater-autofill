@@ -592,6 +592,22 @@ test('the review names two questions reading the same apart', async () => {
   assert.match(md, /\| Autofilled answers the agent re-entered unchanged \(from an empty field; not corrections\) \| 2 \|/, 'a text box entered and a select from nothing');
 });
 
+test('the review prints a problem report\'s kind and puts it in the summary', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
+  fs.mkdirSync(path.join(dir, 'events'));
+  const report = (id, extra) => ({ id, t: at(1), session: 's', agent: 'JK', carrier: 'progressive', type: 'problem_report', page: 'AddVehicle', text: 'Body type picked Step van', ...extra });
+  fs.writeFileSync(path.join(dir, 'events', '2026-10-05.jsonl'), [report('p1', { category: 'wrong-answer' }), report('p2', {})].map((e) => JSON.stringify(e)).join('\n'));
+  const out = path.join(dir, 'review.md');
+  const summary = path.join(dir, 'summary.json');
+  execFileSync(process.execPath, [fileURLToPath(new URL('../scripts/review.mjs', import.meta.url)), dir, '--all', '--out', out, '--summary', summary], { stdio: 'ignore' });
+  const lines = fs.readFileSync(out, 'utf8').split('\n').filter((l) => l.endsWith(': Body type picked Step van'));
+  assert.equal(lines.length, 2);
+  assert.match(lines[0], / · AddVehicle \(wrong-answer\): Body type picked Step van$/);
+  assert.match(lines[1], / · AddVehicle: Body type picked Step van$/, 'a report from an older panel has no kind');
+  assert.deepEqual(JSON.parse(fs.readFileSync(summary, 'utf8')).problems.map((p) => p.category), ['wrong-answer', null]);
+});
+
 // Codex on PR #56: two controls reading the same at once (Rates' cargo section and cargo row) stay two
 // questions, even when only one has a data-model name; and a text two questions share names neither.
 test('identity: controls drawn together stay apart; a shared text falls back to the id', () => {
