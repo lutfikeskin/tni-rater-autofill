@@ -11,6 +11,9 @@
 // `layoutSteps`: one address for several steps (AmWINS), as the list of its step headings; each
 // layout also names its step, and fill and field-change events name it only when it is one of them.
 //
+// `quoteSteps`: the quote's steps in order, for the side panel's page strip, each with the pages
+// (`pages`) or the one-address step heading (`step`, one of `layoutSteps`) that are part of it.
+//
 // `world: 'MAIN'` runs the page script in the page's own JavaScript world, needed when the
 // carrier's widgets (e.g. ExtJS) are only reachable through the page's own objects.
 //
@@ -53,4 +56,13 @@ export function carrierForUrl(url) {
     if (real) return { ...real, name: `${real.name} (practice)`, practice: true, autoFillUrl: null, layoutUrl: null };
   }
   return CARRIERS.find((c) => c.hosts.some((re) => re.test(u.hostname))) ?? null;
+}
+
+// Where the tab is in the carrier's quote (`quoteSteps`), for the side panel's page strip: the
+// step's name, its place (0-based) and how many steps there are; null on a page in none of them.
+// `step`: the one-address application's step (usage.js knownStep), when known.
+export function quoteProgress(carrier, page, step) {
+  const steps = carrier?.quoteSteps ?? [];
+  const index = steps.findIndex((s) => (step && s.step === step) || (page && s.pages?.includes(page)));
+  return index < 0 ? null : { name: steps[index].name, index, count: steps.length };
 }

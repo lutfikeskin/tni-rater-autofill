@@ -107,3 +107,12 @@ test('daily: a field seen before steps had names is not new under its step', () 
   const workflow = fs.readFileSync(new URL('../.github/workflows/daily-review.yml', import.meta.url), 'utf8');
   assert.match(workflow, /concurrency:\s*\n\s*group: daily-review\s*\n\s*cancel-in-progress: false/);
 });
+
+test('a problem report in the daily comment names the build that logged it, and a test run as one', () => {
+  const body = commentBody({ since: '2026-10-07T06:20:00Z', problems: [
+    { t: '2026-10-07T15:04:00Z', agent: 'AY', page: 'CoveragesRates', build: '0.9.8', text: 'Print not clicked' },
+    { t: '2026-10-08T15:04:00Z', agent: 'AY', page: 'Quote', build: '0.9.9 unpacked cfae2bf933', test: true, text: 'trying something' },
+  ] }, '2026-10-08');
+  assert.match(body, /- 2026-10-07 15:04 · AY · 0\.9\.8 · CoveragesRates: Print not clicked/);
+  assert.match(body, /- 2026-10-08 15:04 · AY · 0\.9\.9 unpacked cfae2bf933 · test run · Quote: trying something/);
+});

@@ -87,6 +87,13 @@ function claims(rule, f, page, named, fields) {
 // on purpose (note), or unclaimed. `unsure` when only a DOM-only selector might match. `fields`:
 // the page's fields in order, for questions told apart by the question before them (askAfter).
 export function fieldStatus(f, carrier, page = null, fields = null) {
+  const { def, passedUnsure, ...status } = claimingRule(f, carrier, page, fields);
+  return status;
+}
+
+// fieldStatus with the claiming rule itself (`def`), for evaluating it on an intake (npm run benchmark),
+// and whether a rule before it might have claimed the field through a selector (`passedUnsure`).
+export function claimingRule(f, carrier, page = null, fields = null) {
   const all = [...(carrier.rules ?? []), ...(carrier.useGenericRules === false ? [] : GENERIC_RULES)];
   // Known questions (a name, a text on its page, an option or a selector) before label rules, as
   // the fill engine pairs them.
@@ -97,13 +104,13 @@ export function fieldStatus(f, carrier, page = null, fields = null) {
   let unsure = null;
   for (const rule of rules) {
     const hit = claims(rule, f, page, named, fields);
-    if (hit === 'unnamed') return { status: 'unsure', rule: rule.name ?? rule.path, unnamed: true };
+    if (hit === 'unnamed') return { status: 'unsure', rule: rule.name ?? rule.path, unnamed: true, def: rule };
     if (hit === 'unknown') { unsure ??= rule; continue; }
     if (!hit) continue;
     const how = typeof rule.ignore === 'function' || rule.ignore ? 'ignored' : rule.note && !rule.value ? 'agent' : 'filled';
-    return { status: how, rule: rule.name ?? rule.path ?? rule.q ?? rule.label ?? rule.selector, generic: !(carrier.rules ?? []).includes(rule) };
+    return { status: how, rule: rule.name ?? rule.path ?? rule.q ?? rule.label ?? rule.selector, generic: !(carrier.rules ?? []).includes(rule), def: rule, passedUnsure: !!unsure };
   }
-  return unsure ? { status: 'unsure', rule: unsure.name ?? unsure.selector } : { status: 'none' };
+  return unsure ? { status: 'unsure', rule: unsure.name ?? unsure.selector, def: unsure } : { status: 'none' };
 }
 
 export function coverage(layout, carrier, { mockIds = null } = {}) {

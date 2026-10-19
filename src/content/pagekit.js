@@ -1,5 +1,5 @@
 // Injected into rater pages (every frame) by the side panel. Classic script, no imports.
-// Exposes globalThis.__raterKit = { fill, answer, markKey, aiBanner, capture, clear }.
+// Exposes globalThis.__raterKit = { fill, progress, stop, answer, markKey, reveal, readBack, receipt, aiBanner, capture, clear, … }.
 //
 // It never clicks Next/Submit, never touches password fields, and by default leaves fields the
 // page already filled alone.
@@ -14,15 +14,19 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 62 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 68 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
   const extraRowKeys = new Map();
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
-  // ai: an answer the AI assistant chose (accepted by the agent or auto-selected); check it.
-  const COLORS = { filled: '#16a34a', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed' };
+  // filled: an intake answer (or one worked out from it); standard: a TNI standard answer (plan
+  // step `standard`: an assumption such as gender MALE, not a fact from the intake); ai: an answer
+  // the AI assistant chose (accepted by the agent or auto-selected); check it. The side panel's key
+  // uses the same colors (sidepanel.css --mark-*).
+  const COLORS = { filled: '#16a34a', standard: '#2f6fd6', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed' };
+  const SOLID_MARKS = new Set(['filled', 'standard', 'ai']);
   const STATE_NAMES = {
     AL: 'alabama', AK: 'alaska', AZ: 'arizona', AR: 'arkansas', CA: 'california', CO: 'colorado', CT: 'connecticut',
     DE: 'delaware', DC: 'district of columbia', FL: 'florida', GA: 'georgia', HI: 'hawaii', ID: 'idaho', IL: 'illinois',
@@ -217,6 +221,8 @@
   // Selectors of rules allowed to fill a field that isn't on screen (set while a fill runs): a
   // question the page adds to an earlier step of a one-address application after it was left.
   let hiddenOk = [];
+  // In a step section that isn't the one on screen (AmWINS' .form-tab, hidden).
+  const otherStep = (el) => { const tab = el?.closest?.('.form-tab'); return !!tab && !isVisible(tab); };
 
   function collectControls() {
     const out = [];
@@ -946,7 +952,7 @@
         el.dataset.raPrevTitle = el.getAttribute('title') ?? '';
       }
       el.setAttribute(MARK, status);
-      el.style.outline = `2px ${status === 'filled' || status === 'ai' ? 'solid' : 'dashed'} ${COLORS[status]}`;
+      el.style.outline = `2px ${SOLID_MARKS.has(status) ? 'solid' : 'dashed'} ${COLORS[status]}`;
       el.style.outlineOffset = '1px';
       if (note) el.setAttribute('title', `Rater Autofill: ${note}`);
     }
@@ -1074,6 +1080,22 @@
   const EDIT_HALT = 'An agent edit interrupted filling. Review before resuming.';
   // Why the AI answers after such an edit are not put in.
   const EDIT_HALT_ANSWERS = 'an agent edit interrupted applying the answers; review the page, then request fresh suggestions';
+  // Why a fill stops when the agent clicks Stop in the side panel.
+  const STOP_HALT = 'You stopped the fill. Nothing more was filled or clicked.';
+
+  // The fill running in this frame (its report and how to halt it): the side panel reads how many
+  // answers are in so far, and its Stop halts it the way an agent edit does (no Continue after).
+  let running = null;
+  // Fills the agent stopped before they began here (`run`: the panel's id for the fill; Stop can
+  // come while the panel still prepares, before fill() starts): such a fill halts as it starts.
+  const stoppedRuns = new Set();
+  function progress() { return running ? { filled: running.report.filled.length } : null; }
+  function stop(run = null) {
+    if (run != null && (!running || running.run !== run)) stoppedRuns.add(run);
+    if (!running) return false;
+    running.halt(STOP_HALT);
+    return true;
+  }
 
   // The recorder is paused while the kit puts answers in (a fill, an AI apply), so a real edit by
   // the agent has to be caught here: a trusted input/change within 2 s of a trusted gesture (a
@@ -1186,7 +1208,10 @@
   // `doneSteps`: steps of a one-address application (stepKey) already continued from: a step the
   // agent goes back to is theirs, never continued again.
   // `stopPages`: pages where the carrier has stopped the quote: nothing is filled or clicked there.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [] } = {}) {
+  // `hold` (the panel's "Check answers before Continue"): Continue is clicked only when `confirmed`
+  // is the page's `receipt()` as the agent approved it (Looks right) and still is; otherwise the
+  // report says `held`: 'check' (not approved yet) or 'changed' (the page changed since).
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], hold = false, confirmed = null, run = null } = {}) {
     // An agent edit protects its field. A plain name saved by an older build (field-key v2)
     // protects every row key made from it (name#<row>): it could have been any row's edit.
     const skipKeys = new Set(skip);
@@ -1234,12 +1259,31 @@
     const serverBacked = !!ext();
     let pendingAction = null;
     let progressed = false; // did the last round fill or click anything?
-    if (!await settle({ quietMs: 400, maxMs: 15000 })) {
-      report.halted = true;
-      report.reason = 'The page is still waiting on its server. Review and retry.';
+    // The questions the last round read (in document order): where the items are on the page
+    // when a helper has opened the next page by the end of the fill.
+    let roundControls = [];
+    const halt = (reason) => { report.halted = true; report.reason = reason; };
+    // Answers this fill gave that their field no longer shows (a later server response rewrote or
+    // cleared them), each with its question as `pairs` read it. A field the agent edited, and a
+    // lookup box its helper has used, don't count.
+    const changedSinceFilled = (pairs) => {
+      const consumed = consumedPaths();
+      return report.filled.flatMap((previous) => {
+        const pair = pairs.find(({ step }) => step.id === previous.stepId);
+        return !pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path) ? [] : [{ previous, pair }];
+      });
+    };
+    const thisFill = { report, halt, run };
+    running = thisFill;
+    // Stopped by the agent before it began (the panel was still preparing): nothing is done.
+    if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
+    const settled = await settle({ quietMs: 400, maxMs: 15000 });
+    // Stopped while the page settled: nothing was done.
+    if (!settled || report.halted) {
+      if (!settled) halt('The page is still waiting on its server. Review and retry.');
+      if (running === thisFill) running = null;
       return report;
     }
-    const halt = (reason) => { report.halted = true; report.reason = reason; };
     // A real user edit during a fill must survive even while the recorder is paused: its field is
     // protected (also from this fill's later rounds) and the fill stops. The guard stays on until
     // the fill returns, so an edit during the wait before Continue stops that too.
@@ -1253,6 +1297,7 @@
     for (let round = 0; round < maxRounds; round++) {
       report.rounds = round + 1;
       const controls = collectControls();
+      roundControls = controls;
       report.fields = Math.max(report.fields, controls.length);
       if (report.halted) break;
       const allPairs = assign(controls, plan);
@@ -1298,10 +1343,7 @@
           handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
         }
       }
-      const consumed = consumedPaths();
-      for (const previous of [...report.filled]) {
-        const pair = allPairs.find(({ step }) => step.id === previous.stepId);
-        if (!pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path)) continue;
+      for (const { previous, pair } of changedSinceFilled(allPairs)) {
         if (retryOnce(pair.step.id)) {
           report.filled = report.filled.filter((x) => x !== previous);
           handled.delete(pair.step.id);
@@ -1330,10 +1372,13 @@
       for (const { step: planned, control: c, how, reworded } of pairs) {
         // A known field whose question reads differently now: answered, and the agent checks it.
         const step = reworded ? { ...planned, warn: [planned.warn, `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check the answer.`].filter(Boolean).join(' ') } : planned;
-        // Where its answer comes from (plan.js `source`) and whether review mode asks the agent to
-        // confirm it, for the usage log (a TNI standard or an intake fact; a check item or not).
         const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how, standard: !!step.standard, manualOnly: !!step.manualOnly,
-          source: step.source ?? null, review: !!step.reviewRequired };
+          // Where its answer comes from (plan.js `source`) and whether review mode asks the agent to
+          // confirm it, for the usage log (a TNI standard or an intake fact; a check item or not).
+          source: step.source ?? null, review: !!step.reviewRequired,
+          // A field another step of a one-address application holds (AmWINS keeps every step's
+          // section in the page, hidden): filled again here, but not this step's question.
+          ...(step.hidden && otherStep(c.el) ? { otherStep: true } : {}) };
         // A question left as the page has it whose wording changed: what the page has may not fit
         // any more, so the agent checks it (Continue waits).
         const leftAlone = step.verifyOnly || step.ignore;
@@ -1369,7 +1414,10 @@
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
         const differs = isChoice && replaceChoices && !agreesWith(step, c);
         const legacyHold = mayHoldLegacyEdit(c) && !refill.has(step.id);
-        if (legacyHold || (!overwrite && hasValue(c) && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+        // An unticked box that should stay unticked already has its answer (live run 2026-10-09:
+        // every unticked box was "filled" again on each pass).
+        const answered = hasValue(c) || (c.kind === 'checkbox' && step.value === false && !c.el.checked);
+        if (legacyHold || (!overwrite && answered && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
@@ -1429,7 +1477,10 @@
             }
           }
           report.filled.push({ ...item, shown: result.shown });
-          handled.set(step.id, { status: 'filled', note: `filled from intake: ${step.name}` });
+          // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
+          handled.set(step.id, step.standard
+            ? { status: 'standard', note: `TNI standard answer, not from the intake: ${step.name}` }
+            : { status: 'filled', note: `filled from intake: ${step.name}` });
           if (step.warn) {
             report.checks.push({ ...item, note: step.warn, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.warn });
@@ -1736,6 +1787,22 @@
     }
     // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
     report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findIndex((x) => x.id === b.id) === i);
+    // Where each item's field is on the page (`order`: its place among the page's questions, in
+    // document order), so the side panel lists what's left in the page's order, whichever kind
+    // of item it is. Read once, from the page as it is now (as the last round read it when a
+    // helper opened the next page). An item with no field there (a helper, a unit without its row,
+    // a field gone since) gets none: the panel lists it last.
+    const placeOf = new Map();
+    (stillHere ? controls : roundControls).forEach((c, i) => {
+      const key = fieldKey(c);
+      if (!placeOf.has(`${key}|${c.label}`)) placeOf.set(`${key}|${c.label}`, i);
+      if (!placeOf.has(key)) placeOf.set(key, i);
+    });
+    for (const x of [report.unknown, report.failed, report.noData, report.leftRequired, report.kept, report.checks].flat()) {
+      // Rows of one question share a key; their labels tell them apart.
+      const at = x.key == null ? undefined : placeOf.get(`${x.key}|${x.label}`) ?? placeOf.get(x.key);
+      if (at !== undefined) x.order = at;
+    }
     // Anything the agent should look at before moving on.
     // The carrier probably changed this page: a known field renamed, or most of its questions
     // unfamiliar at once. Continue waits for the agent, and the panel says so.
@@ -1751,7 +1818,9 @@
       ...report.failed.map((x) => `failed: ${called(x)}`),
       ...report.leftRequired.map((x) => `required: ${called(x)}`),
       ...report.kept.filter((x) => x.differs).map((x) => `differs: ${called(x)}`),
-      ...report.checks.map((x) => `check: ${called(x)}`),
+      // Another step's hidden fields (otherStep: AmWINS' prior carriers, filled again on every
+      // step) are confirmed on their own step, not again on each later one (audit 2026-10-10).
+      ...report.checks.filter((x) => !x.otherStep).map((x) => `check: ${called(x)}`),
       ...report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
       ...(report.halted ? [report.reason] : []),
     ];
@@ -1770,8 +1839,25 @@
       if (report.halted) {
         if (!report.blockers.includes(report.reason)) report.blockers.push(report.reason);
       } else {
-        const button = !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
-        if (button) {
+        // The carrier may have rewritten an answer during that wait (a late server response). An
+        // answer whose field no longer shows it is the agent's to check (no retry here): it moves
+        // to `failed`, is marked, and Continue waits.
+        const now = collectControls();
+        const changed = changedSinceFilled(assign(now, plan));
+        for (const { previous, pair } of changed) {
+          const item = { ...previous, reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
+          const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(pair.control);
+          if (at >= 0) item.order = at;
+          report.filled = report.filled.filter((x) => x !== previous);
+          report.failed.push(item);
+          mark(pair.control, 'failed', 'the carrier changed this answer after it was filled');
+          report.blockers.push(`failed: ${called(item)}`);
+        }
+        const button = !changed.length && !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
+        // The agent checks the answers first: Continue only for the page as they approved it.
+        const approved = !hold || (confirmed != null && confirmed === receipt());
+        if (button && !approved) report.held = confirmed == null ? 'check' : 'changed';
+        if (button && approved) {
           const text = oneLine(button.value || button.textContent).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           report.signatureBefore = signature();
@@ -1786,6 +1872,7 @@
       hiddenOk = [];
       try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
       releaseEditGuard();
+      if (running === thisFill) running = null;
     }
   }
 
@@ -1887,6 +1974,87 @@
     const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
     if (c) mark(c, status, note);
     return !!c;
+  }
+
+  // "Show on page" in the side panel: brings the field `key` into view (`label` tells rows of one
+  // question apart, as in markKey) and rings its mark for 1.5 s, then puts back what was there.
+  // It reads and scrolls only: no value is changed, nothing is clicked or focused, and no event is
+  // sent to the page. Returns whether this frame has the field on screen (one in a closed section
+  // isn't).
+  const ringed = new Map(); // a ringed element -> { prev: its own box-shadow, ring, timer }
+  function reveal(key, label) {
+    const same = collectControls().filter((c) => fieldKey(c) === key);
+    const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
+    if (!c) return false;
+    const targets = highlightTargets(c);
+    targets[0]?.scrollIntoView?.({ block: 'center' });
+    for (const el of targets) {
+      const was = ringed.get(el);
+      if (was) clearTimeout(was.timer);
+      const prev = was ? was.prev : el.style.boxShadow ?? '';
+      // In the color of its mark (blue when it has none), wider than the mark's outline.
+      el.style.boxShadow = `0 0 0 4px ${el.style.outlineColor || '#2563eb'}`;
+      // As the browser reads it back, to tell it from a shadow the page sets meanwhile.
+      const ring = el.style.boxShadow;
+      const timer = setTimeout(() => {
+        ringed.delete(el);
+        if (el.style.boxShadow === ring) el.style.boxShadow = prev;
+      }, 1500);
+      ringed.set(el, { prev, ring, timer });
+    }
+    return true;
+  }
+
+  // What fields show now, so the side panel can check answers against the page: `items` is
+  // [{ key, label }] (keys as fill reports them; `label` tells rows of one question apart, as in
+  // reveal). Returns [{ key, label, shown, empty }] for each one this frame has; one not found here
+  // is left out. `shown` is in the form of fill's `shown`: the option text of a list or choice,
+  // 'checked'/'unchecked' for a checkbox, the text in a box ('' when nothing is picked or typed).
+  // `steps`: the plan steps that filled them (an item's `stepId`): `agrees` then says whether the
+  // field still holds that answer the way fill judges it (agreesWith: an address the page wrote
+  // in its own format, a ZIP+4, a reformatted amount still agree), null without its step.
+  // It reads only: no event, focus, click, value change or mark change.
+  function readBack(items, steps = []) {
+    const controls = collectControls();
+    const out = [];
+    for (const { key, label, stepId = null } of items ?? []) {
+      const same = controls.filter((c) => fieldKey(c) === key);
+      const c = same.length > 1 ? same.find((x) => x.label === label) : same[0];
+      const step = stepId == null ? null : (steps ?? []).find((s) => String(s.id) === String(stepId));
+      if (c) out.push({ key, label, shown: shownNow(c), empty: !hasValue(c), agrees: step ? !!agreesWith(step, c) : null });
+    }
+    return out;
+  }
+
+  // The page's answers as they stand, as one short fingerprint (top frame only, where Continue is;
+  // null elsewhere): every question's key, label and what it shows (shownNow), but not another
+  // step's hidden fields (otherStep: AmWINS' prior carriers, filled again on every step). The panel
+  // takes it when the agent clicks Looks right and the fill compares it before Continue (`hold`).
+  // It reads only, and no value leaves the page: only the fingerprint does.
+  function receipt() {
+    if (window !== window.top) return null;
+    // The page as the agent sees it, inside a fill or not: a fill also reads collapsed fields it
+    // has rules for (hiddenOk: AmWINS' prior carriers), which the agent's Looks right didn't.
+    const fillHidden = hiddenOk;
+    let controls;
+    try { hiddenOk = []; controls = collectControls(); } finally { hiddenOk = fillHidden; }
+    const text = controls.filter((c) => !otherStep(c.el)).map((c) => `${fieldKey(c)}\u0001${c.label ?? ''}\u0001${shownNow(c)}`).join('\u0002');
+    // cyrb53: a 53-bit string hash (an equality check, not a secret).
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 2654435761);
+      h2 = Math.imul(h2 ^ ch, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return `r1-${(4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36)}`;
+  }
+
+  function shownNow(c) {
+    if (c.kind === 'checkbox') return (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) ? 'checked' : 'unchecked';
+    if (c.kind === 'text') return c.el.value || (c.cmp ? String(cmpValue(c.cmp, c.el) ?? '') : '');
+    return selectedText(c) ?? '';
   }
 
   // A small note at the bottom of the rater page listing what the AI selected and still needs
@@ -2067,5 +2235,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 62, build: BUILD, fill, answer, answerEdits, listed, markKey, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 68, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
 })();
