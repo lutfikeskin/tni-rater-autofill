@@ -48,7 +48,6 @@ await panel.waitForTimeout(1000);
 await panel.setInputFiles('#file', 'test/fixtures/sample-intake.pdf');
 await panel.waitForTimeout(2500);
 console.log('site:', await panel.textContent('#site'));
-await panel.click('#tab-fill').catch(() => {});
 await panel.waitForTimeout(500);
 console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#fill-hint'));
 await panel.bringToFront();
@@ -61,16 +60,14 @@ const AGENT_ANSWERS = [
   ['Insured Info', /^valued loss runs$/i, 'input[name="valuedLossRuns"][value="0"]', '0'],
   ['Insured Info', /^how long with current carrier$/i, '#howLongWithCurrentCarrier', '1 TO 2 YEARS'],
   ['Insured Info', /^can provide claim free loss run$/i, 'input[name="canProvideClaimFreeLossRun"][value="0"]', '0'],
-  ...[0, 1].flatMap(row => [
-    ['Drivers', /^gender$/i, `#driversPanel .app-rp-section[data-id="${row}"] [data-id="gender"]`, row ? 'FEMALE' : 'MALE'],
-    ['Drivers', /^license year/i, `#driversPanel .app-rp-section[data-id="${row}"] [data-id="licenseYear"]`, row ? '2013' : '2006'],
-  ]),
+  // Driver gender and license year are TNI standards since 2026-10-10 (MALE, birth year + 17):
+  // the extension fills them (EXACT below); a Drivers question left unresolved fails the run.
 ];
 const manualFailures = [], agentAnswered = new Set();
 const answeredSteps = new Map();
 let reachedDeclaration = false;
 const atStep = () => mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), saves: window.__amwinsMock.saves }));
-const idlePanel = () => panel.waitForFunction(() => !document.querySelector('#fill').disabled && document.querySelector('#report .summary'), null, { timeout: 20000, polling: 100 });
+const idlePanel = () => panel.waitForFunction(() => !document.querySelector('#fill').disabled && document.querySelector('#report .continue-note'), null, { timeout: 20000, polling: 100 });
 const recorderContext = await sw.evaluate(async url => {
   const tab = (await chrome.tabs.query({})).find(tab => tab.url === url);
   const { session } = await chrome.storage.session.get('session');
@@ -100,7 +97,7 @@ const resumeFromPanel = async () => {
   // in front on Windows, just as the agent would focus the real side panel to resume.
   await panel.bringToFront();
   await idlePanel();
-  const oldSummary = await panel.locator('#report .summary').elementHandle();
+  const oldSummary = await panel.locator('#report .continue-note').elementHandle();
   const deadline = Date.now() + 15000;
   let lastTimeout;
   try {
@@ -126,7 +123,7 @@ for (let round = 0; round < 20; round++) {
   await mock.waitForTimeout(1500); // the carrier's background save/reload and next-page fill
   if (await panel.locator('#fill').isDisabled()) continue;
   const before = await atStep();
-  const needs = await panel.locator('#report .need .row-text b').allTextContents();
+  const needs = await panel.locator('#report > .need:not(.resolved) .row-text b').allTextContents();
   const unresolved = needs.filter(label => !/i declare/i.test(label));
   console.log('Step:', before.step, 'saves:', before.saves, 'needs:', unresolved.join(', '));
   if (before.step === 'Underwriting' && needs.some(label => /i declare/i.test(label))
@@ -204,7 +201,7 @@ for (let round = 0; round < 20; round++) {
   // ordinary resume action and must preserve every correction the recorder just observed.
   await resumeFromPanel();
   const afterResume = await atStep();
-  const freshNeeds = await panel.locator('#report .need .row-text b').allTextContents();
+  const freshNeeds = await panel.locator('#report > .need:not(.resolved) .row-text b').allTextContents();
   if (afterResume.step === before.step && freshNeeds.some(label => answers.some(([, re]) => re.test(label)))) {
     manualFailures.push(`The fresh report still needs acknowledged agent answers on ${before.step}: ${freshNeeds.join(', ')}`);
     break;
@@ -234,8 +231,9 @@ const kept = await mock.evaluate(() => {
     prior0: v('#priorCarrierCoveragePanel0 [data-id="carrierName"]'), prior1: v('#priorCarrierCoveragePanel1 [data-id="carrierName"]'), prior2: v('#priorCarrierCoveragePanel2 [data-id="carrierName"]'),
   };
 });
-// The sample intake: Illinois, vehicle 1 a Van (Cargo Van on AmWINS).
-const EXACT = { additionalInterest: '0', valuedLossRuns: '0', claimFreeLossRuns: '0', currentCarrier: '1 TO 2 YEARS', licenseYear: '2006', secondLicenseYear: '2013', gender: 'MALE', secondGender: 'FEMALE', vehicleLeased: '0', prior0: 'NO PRIOR', prior1: 'NO PRIOR', prior2: 'NO PRIOR', mailingState: 'Illinois', bodyType: 'Cargo Van', medicalPayment: '$5,000', towing: '$75', usage: 'FOR HIRE', natureOfBusiness: 'TRANSPORTATION' };
+// The sample intake: Illinois, vehicle 1 a Van (Cargo Van on AmWINS); drivers born 1988 and 1995,
+// so license years 2005 and 2012 and gender MALE (TNI standards, no gender set).
+const EXACT = { additionalInterest: '0', valuedLossRuns: '0', claimFreeLossRuns: '0', currentCarrier: '1 TO 2 YEARS', licenseYear: '2005', secondLicenseYear: '2012', gender: 'MALE', secondGender: 'MALE', vehicleLeased: '0', prior0: 'NO PRIOR', prior1: 'NO PRIOR', prior2: 'NO PRIOR', mailingState: 'Illinois', bodyType: 'Cargo Van', medicalPayment: '$5,000', towing: '$75', usage: 'FOR HIRE', natureOfBusiness: 'TRANSPORTATION' };
 const lost = Object.entries(kept).filter(([k, x]) => k !== 'declaration' && (x == null || x === '' || x === false || x === '(missing)' || x === 'State' || (k in EXACT && x !== EXACT[k]))).map(([k]) => k);
 console.log('Kept after the reloads:', JSON.stringify(kept));
 if (lost.length) console.log('LOST:', lost.join(', '));

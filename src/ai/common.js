@@ -9,8 +9,17 @@ export const LEAVE = '__leave__';
 const CHOICE_KINDS = new Set(['radio', 'select', 'checkbox']);
 const MAX_OPTIONS = 254; // Keep per-field choices and evidence context bounded.
 
+// JSON with every object's keys in sorted order. chrome.storage gives an object back with its keys
+// sorted, not in the order they were set: a key that compares an intake before and after the panel
+// reopens must not see that as an edit.
+export function stableJson(value) {
+  const sorted = (v) => (Array.isArray(v) ? v.map(sorted) : v && typeof v === 'object'
+    ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sorted(v[k])])) : v);
+  return JSON.stringify(sorted(value));
+}
+
 export function assistContextKey(record, active) {
-  return JSON.stringify([record, active]);
+  return stableJson([record, active]);
 }
 
 const NEVER = [
