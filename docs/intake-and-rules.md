@@ -68,7 +68,7 @@ Progressive asks for a Vehicle Type on Add Vehicle only when the VIN lookup does
 
 Coverage and ownership are largely shared at policy/operations level. A correctly targeted vehicle row can still receive an inappropriate shared answer. Explicit entity-specific coverage, provenance, applicability/conflict resolution, and final requested-versus-entered reconciliation are design work, not existing guarantees.
 
-For a new missing concept, extend extraction, schema, review UI, rules, and verification together within the authorized scope. If information is absent from the intake, keep a visible agent question rather than inventing an answer. Repeated missing questions may justify a conditional intake supplement; logs alone do not authorize a new default.
+For a new missing concept, extend extraction, schema, review UI, rules, and verification together within the authorized scope. If information is absent from the intake, keep a visible agent question rather than inventing an answer, unless TNI has set a standard for it (a `standard` rule, recorded here as TNI's). Repeated missing questions may justify a conditional intake supplement; logs alone do not authorize a new default.
 
 ## Verification
 
