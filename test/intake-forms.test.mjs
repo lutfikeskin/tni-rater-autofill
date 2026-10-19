@@ -11,8 +11,8 @@ import { amwins } from '../src/carriers/amwins.js';
 
 // The intake form changed on 2026-10-19: the other-insurance-products box was removed, the claims
 // box narrowed with an Additional Notes box beside it, "Do you take loads to Canada?" (Yes/No)
-// added to the FEIN / SR22 / ELD row, and the trailer questions laid out one per row (one
-// interchange limit). It keeps the 2026-10-02 team driving / slip seating question, which replaced
+// added to the FEIN / SR22 / ELD row, and the trailer questions reworded (one interchange limit,
+// the two equipment values side by side). It keeps the 2026-10-02 team driving / slip seating question, which replaced
 // the license plate. Intakes on every version are read.
 const pdf = (name) => new Uint8Array(fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
 const oldRaw = await readIntakeFields(pdfjs, pdf('sample-intake.pdf'));
