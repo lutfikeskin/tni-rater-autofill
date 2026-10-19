@@ -35,8 +35,10 @@ jobs:
             PR NUMBER: ${{ github.event.pull_request.number }}
 
             Review this pull request as the maintainer's second reviewer. Read the diff with
-            `gh pr diff` and the description with `gh pr view`. Follow CLAUDE.md, and read only the
-            docs/ files its table points to for the systems this diff touches.
+            `gh pr diff` and the description with `gh pr view <PR NUMBER> --json title,body`
+            (plain `gh pr view` also asks for project fields this job's token can't read, and
+            fails). Follow CLAUDE.md, and read only the docs/ files its table points to for the
+            systems this diff touches.
 
             Look for, in order of importance:
             1. Wrong insurance answers: invented client facts or defaults presented as client facts;
