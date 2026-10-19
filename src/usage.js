@@ -85,33 +85,36 @@ export function matchIntake(record, typed) {
 // street) is replaced wherever it appears exactly as written. src/content/pagekit.js `capture`
 // builds the same patterns.
 const ONE_WORD = /^[\p{L}\p{M}]+(?:['’-][\p{L}\p{M}]+)*$/u;
-function redactionPattern(term, identifier = false) {
+function redactionPattern(term) {
   const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return !identifier && ONE_WORD.test(term) ? new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`, 'giu') : new RegExp(escaped, 'gi');
+  return ONE_WORD.test(term) ? new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])${escaped}(?![\\p{L}\\p{M}\\p{N}])`, 'giu') : new RegExp(escaped, 'gi');
 }
 
 export function redactor(terms) {
   const valid = terms.filter((t) => t && t.length >= 3);
-  const replace = (patterns) => (s) => (s == null ? s : patterns.reduce((acc, re) => acc.replace(re, '[client]'), String(s)));
-  const redact = replace(valid.map((term) => redactionPattern(term)));
-  // IDs concatenate names with letters/digits (driverAnn1); word boundaries only fit prose.
-  redact.identifier = replace(valid.map((term) => redactionPattern(term, true)));
-  return redact;
+  const patterns = valid.map((term) => redactionPattern(term));
+  return (s) => (s == null ? s : patterns.reduce((acc, re) => acc.replace(re, '[client]'), String(s)));
 }
 
 // ---------------------------------------------------------------------------------------------
 // Events
 
 // The control, not only its question: a question repeated per vehicle row (`<q>@<row>`) or a
-// field without a question id keeps its own key, the same one in fill and change events. Keys are
-// element ids and names, redacted even within words in case a page builds one from client data. A
+// field without a question id keeps its own key, the same one in fill and change events. A
+// data-model name (`ref:<name>`, Duck Creek's) is the carrier's, never the client's, and is kept as
+// it is: redacting a name word inside it turned HasContinuousCoverage into "HasContinuousCo[client]ge"
+// and split the question (maintainer, 2026-10-13: log quality over redaction). Other keys are
+// element ids and names, redacted like prose: a client term only as a whole word (owner_Ann), a
+// number or multi-word term wherever it appears; a name word run into an id (driverAnn1) stays. A
 // redacted key gets a digest under the quote's secret salt, so `owner_<one name>` and
 // `owner_<another>` stay two controls and a guessed name can't be checked; without a salt it's
 // left out rather than merged with others.
+const DATA_MODEL_KEY = /^ref:[\w.]+(?:@\d+)?$/;
 function fieldKeyOf(key, redact, salt) {
   if (!key) return null;
   const raw = String(key);
-  const shown = (redact.identifier ?? redact)(raw);
+  if (DATA_MODEL_KEY.test(raw)) return raw;
+  const shown = redact(raw);
   if (shown === raw) return raw;
   return salt ? `${shown}#${digest(`${salt}|${raw}`)}` : null;
 }
