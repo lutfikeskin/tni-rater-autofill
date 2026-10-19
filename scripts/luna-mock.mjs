@@ -23,6 +23,11 @@ const checks = [], errors = [];
 let context, mock, panel, phase = 'startup', requests = 0, mode = 'normal', started, release;
 // The claims-box review (once per intake), counted apart from page questions.
 let claimsRequests = 0;
+// The driver first-name check (once per intake), and what each one sent.
+let namesRequests = 0;
+const namesSent = [];
+// The intake-checks phase: Luna flags GL in the claims box and a likely-female first name.
+let flagIntake = false;
 // Fields the rules leave to the agent (manualOnly) that still reached Luna: must stay 0.
 let agentFactsSent = 0;
 const AGENT_FACT = /how long with current carrier|has additional interest|claim free loss run|valued loss runs|any prior loss|gender|marital|licen[cs]e year/i;
@@ -46,10 +51,25 @@ try {
         assert.equal(body.reasoning.effort, 'low');
         assert.equal(body.max_output_tokens, 2048);
         assert.equal(body.temperature, undefined);
-        // Nothing flagged: the synthetic claims box holds no coverage request.
-        const lines = Object.fromEntries(Object.keys(state.claimsBox).map(id => [id, { ntl: false, coverageChange: false, businessYears: null, businessSince: null }]));
+        assert.equal(state.formCoverage.gl, undefined, 'GL is its own question, not form coverage');
+        // Nothing flagged: the synthetic claims box holds no coverage request. In the intake-checks
+        // phase the first line is flagged as mentioning general liability.
+        const lines = Object.fromEntries(Object.keys(state.claimsBox).map((id, i) => [id, { ntl: false, coverageChange: false, businessYears: null, businessSince: null, generalLiability: flagIntake && i === 0 }]));
         return route.fulfill({ json: { status: 'completed', model: 'gpt-6-luna',
           output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify({ lines }) }] }],
+          usage: { input_tokens: 50, output_tokens: 5 } } });
+      }
+      if (body.text?.format?.name === 'driver_first_names') {
+        namesRequests++;
+        assert.equal(body.store, false);
+        assert.equal(body.reasoning.effort, 'low');
+        assert.deepEqual(Object.keys(state), ['firstNames'], 'first names only');
+        for (const name of Object.values(state.firstNames)) assert.match(name, /^\p{L}[\p{L}'’-]+$/u, 'one word, letters only');
+        namesSent.push(state.firstNames);
+        // Everyone unclear (the TNI standard stands), except the first driver in the intake-checks phase.
+        const drivers = Object.fromEntries(Object.keys(state.firstNames).map((id, i) => [id, flagIntake && i === 0 ? 'likely_female' : 'unclear']));
+        return route.fulfill({ json: { status: 'completed', model: 'gpt-6-luna',
+          output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify({ drivers }) }] }],
           usage: { input_tokens: 50, output_tokens: 5 } } });
       }
       requests++;
@@ -115,18 +135,27 @@ try {
   };
   const loadPdf = async ({ missingClaims = false } = {}) => {
     phase = 'load-pdf';
-    if (await panel.locator('#clear-client').isVisible()) {
+    if (await panel.locator('#quote').isVisible()) {
+      await panel.locator('#file-menu-btn').click();
       await panel.locator('#clear-client').click();
+      // Clear asks first; the panel stays as it was until the agent confirms.
+      await panel.locator('#file-confirm').waitFor({ state: 'visible' });
+      verify('Clear asks before the client goes', await panel.locator('#quote').isVisible(), true);
+      await panel.locator('#file-confirm-yes').click();
       await panel.locator('#home').waitFor({ state: 'visible' });
     }
-    const claimsBefore = claimsRequests;
+    const claimsBefore = claimsRequests, namesBefore = namesRequests;
     await panel.setInputFiles('#file', path.join(root, 'test/fixtures/sample-intake.pdf'));
     await panel.locator('#quote').waitFor({ state: 'visible' });
     // With Luna on and its key set, the panel reads the new intake's claims box: let that save
     // first, or it would write over the fixture edit below.
-    if (await panel.evaluate(async () => { const { settings } = await chrome.storage.local.get('settings'); return !!(settings?.aiOn && settings?.lunaKey); })) {
+    const reviewed = await panel.evaluate(async () => { const { settings } = await chrome.storage.local.get('settings'); return !!(settings?.aiOn && settings?.lunaKey); });
+    if (reviewed) {
       await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake?.notesReview, null, { timeout: 15000 });
       verify('a new intake gets one claims-box review', claimsRequests - claimsBefore, 1);
+      // And its drivers' first names, also saved before the fixture edit below.
+      await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake?.namesReview, null, { timeout: 15000 });
+      verify('a new intake gets one driver-name check', namesRequests - namesBefore, 1);
     }
     // This controlled fixture fact is synthetic; no customer data or external provider is used.
     await panel.evaluate(async (missingClaims) => {
@@ -136,13 +165,17 @@ try {
       await chrome.storage.session.set({ intake });
     }, missingClaims);
     await panel.reload();
-    await panel.locator('#tab-fill').click();
     // The panel reload completes before its async tab refresh on some Chromium/Linux runs.
     // Wait for the active fixture and an enabled Fill control, which are the production
     // conditions needed by the following AI request.
     await panel.waitForFunction((prefix) => chrome.tabs.query({ active: true, currentWindow: true })
       .then(([tab]) => tab?.url?.startsWith(prefix)), `${base}/test/fixtures/amwins/`);
     await panel.locator('#fill:not(:disabled)').waitFor({ state: 'visible' });
+    // The reopened panel reads the intake back from storage with its keys in another order. That
+    // is no edit: the claims box isn't sent again, and no review result is saved over a fixture
+    // edit made after this (Windows smoke 2026-10-10: the missing-years edit was saved over, and
+    // Years in Business was filled 5+).
+    if (reviewed) verify('reopening the panel does not read the claims box again', claimsRequests - claimsBefore, 1);
     phase = 'fixture-ready';
   };
   const loadPdfMissingYears = async () => {
@@ -156,7 +189,6 @@ try {
       await chrome.storage.session.set({ intake });
     });
     await panel.reload();
-    await panel.locator('#tab-fill').click();
   };
   const keyboardSelect = async (locator, value, delayMs = 0) => {
     let indexes;
@@ -214,7 +246,8 @@ try {
   const savedSettings = () => panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings);
   const fillAndWait = async () => {
     await panel.locator('#fill').click();
-    await panel.locator('#fill:disabled').waitFor({ state: 'visible' });
+    // While it fills, step 2 shows its progress and Stop in place of the button.
+    await panel.locator('#fill-progress').waitFor({ state: 'visible' });
     await panel.locator('#fill:not(:disabled)').waitFor({ state: 'visible' });
   };
   const waitSetting = (key, value) => panel.waitForFunction(([k, v]) => chrome.storage.local.get('settings').then(({ settings }) => settings?.[k] === v), [key, value]);
@@ -259,12 +292,11 @@ try {
       approved: false, rejected: false, manual: false, confirmed: false, snapshotHash: null, confidence: null }],
   }), { scope: legacyScope, tabId: legacyTabId });
   await panel.reload();
-  await panel.locator('#tab-fill').click();
   await panel.locator('#fill').click();
   await panel.locator('.ai-approve').waitFor({ timeout: 30000 });
   verify('retired automatic decision requires explicit review', await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true }).count(), 1);
   verify('legacy automatic decision remains a review hold after reload', await mock.evaluate(() => window.__amwinsMock.saves), 0);
-  verify('legacy profile makes no Luna or Jev request', requests + claimsRequests, 0);
+  verify('legacy profile makes no Luna or Jev request', requests + claimsRequests + namesRequests, 0);
   verify('legacy profile does not contact the Jev host', unexpectedProviderHosts.size, 0);
   const migratedSettings = await panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings ?? {});
   verify('legacy OpenAI/TypeSafe fields do not become a Luna key', migratedSettings.lunaKey ?? '', '');
@@ -272,7 +304,6 @@ try {
   await keyboardSelect(mock.locator('#mockLunaChoice'), 'Yes');
   await panel.waitForFunction(async () => (await chrome.storage.local.get('aiPendingDecisions')).aiPendingDecisions?.some(x => x.key === 'mockLunaChoice' && x.manual) === true);
   await panel.reload();
-  await panel.locator('#tab-fill').click();
   await panel.locator('#fill').click();
   await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
   verify('manual upgrade correction releases the retired hold', await panel.locator('.ai-approve').count(), 0);
@@ -289,8 +320,8 @@ try {
   phase = 'missing-key';
   await panel.locator('#fill').click();
   await panel.getByText(/GPT-6 Luna needs an OpenAI API key/).waitFor();
-  verify('Luna never reuses legacy or TypeSafe keys', requests + claimsRequests, 0);
-  await panel.locator('#fill-notices').getByRole('button', { name: 'Add key', exact: true }).click();
+  verify('Luna never reuses legacy or TypeSafe keys', requests + claimsRequests + namesRequests, 0);
+  await panel.locator('#quote-notices').getByRole('button', { name: 'Add key', exact: true }).click();
   await panel.locator('#ai-openai-key').waitFor({ state: 'visible' });
   verify('missing OpenAI key focuses its dedicated field', await panel.evaluate(() => document.activeElement.id), 'ai-openai-key');
   verify('automatic selection is visible for Luna', await panel.locator('#ai-auto-option').isVisible(), true);
@@ -303,6 +334,8 @@ try {
   // The key arrived with this intake open: its claims box is read now, once.
   await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake?.notesReview, null, { timeout: 15000 });
   verify('adding the key reviews the open intake\'s claims box', claimsRequests, 1);
+  await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake?.namesReview, null, { timeout: 15000 });
+  verify('adding the key checks the open intake\'s driver first names', namesRequests, 1);
   verify('OpenAI key save stays in the dedicated Luna field', await panel.evaluate(async () =>
     (await chrome.storage.local.get('settings')).settings.lunaKey === 'synthetic-openai'), true);
   await panel.locator('#agent-btn').click();
@@ -345,22 +378,23 @@ try {
   verify('Luna automatic review has no confidence percentage', !aiText.includes('%') && !aiText.includes('confidence'), true);
   // Facts the intake doesn't give are the agent's since 2026-10-09 (plan.js `source: 'fact'` and
   // unanswered `clientFact` rules) and hold Continue too. Answering them on the page would change
-  // the snapshot the automatic pick was checked against, so the agent dismisses them (×) here:
-  // only the Luna approval holds Continue below.
+  // the snapshot the automatic pick was checked against, so the agent marks them done here (Mark
+  // done: nothing is filled or clicked): only the Luna approval holds Continue below.
   verify('missing claims does not become a prior-loss answer', await mock.locator('input[name=anyPriorLoss]:checked').count(), 0);
   verify('missing claims has a visible agent review item', await panel.locator('.need', { hasText: 'any prior loss' }).count(), 1);
+  const leftBefore = await panel.locator('#finish-summary').innerText();
   for (const label of ['any prior loss', 'how long with current carrier', 'has additional interest', 'can provide claim free loss run', 'valued loss runs']) {
-    const need = panel.locator('.need', { hasText: label });
+    const need = panel.locator('#report > .need', { hasText: label });
     if (!await need.count()) continue;
-    await need.locator('.ignore-review').click();
-    await need.waitFor({ state: 'detached', timeout: 30000 });
-    await approve.waitFor({ timeout: 30000 });
+    await need.locator('.mark-done').click();
+    await panel.locator('#report > .need.resolved', { hasText: label }).waitFor({ timeout: 30000 });
   }
+  verify('Mark done lowers "left for you" without a refill', await panel.locator('#finish-summary').innerText() !== leftBefore, true);
+  verify('Mark done keeps the Luna approval card', await approve.isVisible(), true);
   verify('agent-dismissed facts leave Continue held for the Luna approval', await mock.evaluate(() => window.__amwinsMock.saves), 0);
   verify('facts left to the agent never reach Luna', agentFactsSent, 0);
   await panel.waitForFunction(async () => (await chrome.storage.local.get('aiPendingDecisions')).aiPendingDecisions?.length > 0);
   await panel.reload();
-  await panel.locator('#tab-fill').click();
   await installSnapshotVariation({ firstReversed: true });
   // Re-scan the unchanged page so the restored pending record gets its approval card rendered;
   // aiSettledOnPage prevents a second provider request for the restored choice.
@@ -400,7 +434,6 @@ try {
   }
   verify('manual correction clears the durable rejected hold', corrected, true);
   await panel.reload();
-  await panel.locator('#tab-fill').click();
   await panel.locator('#fill').click();
   await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
   verify('manual correction survives a panel reload', await mock.locator('#mockLunaChoice').inputValue(), 'Yes');
@@ -421,9 +454,10 @@ try {
     await chrome.storage.local.set({ settings: { ...settings, autoAdvance: false } });
   });
   await panel.reload();
-  await panel.locator('#tab-fill').click();
-  if (await panel.locator('#clear-client').isVisible()) {
+  if (await panel.locator('#quote').isVisible()) {
+    await panel.locator('#file-menu-btn').click();
     await panel.locator('#clear-client').click();
+    await panel.locator('#file-confirm-yes').click();
     await panel.locator('#home').waitFor({ state: 'visible' });
   }
   await openMock();
@@ -474,6 +508,42 @@ try {
   verify('other prior carrier rows stay NO PRIOR', JSON.stringify([delayedValues[0], delayedValues[2]]), JSON.stringify(['NO PRIOR', 'NO PRIOR']));
   verify('garage edit remains isolated from prior carrier rows', await garageState.inputValue(), 'IN');
 
+  // Maintainer 2026-10-10: Luna's intake checks. A general-liability mention in the claims box and
+  // a first name more often a woman's become step-1 items; their buttons set the record as the
+  // agent's edit (saved with the intake, marked agentEdited). Only first names are sent.
+  phase = 'intake-checks';
+  flagIntake = true;
+  await openMock(); await loadPdf();
+  flagIntake = false;
+  const savedIntake = () => panel.evaluate(async () => (await chrome.storage.session.get('intake')).intake);
+  const loaded = await savedIntake();
+  const sent = JSON.stringify(namesSent.at(-1));
+  verify('the name check sends first names only', loaded.record.drivers.every((d) => !d.last || !sent.includes(d.last))
+    && Object.values(namesSent.at(-1)).every((n) => loaded.record.drivers.some((d) => String(d.first ?? '').startsWith(n))), true);
+  verify('the fixture has no GL ticked', loaded.record.coverage.gl === true, false);
+  if (await panel.locator('#check-body').isHidden()) await panel.locator('#check-head').click();
+  const glCard = panel.locator('#warnings .warn-card', { hasText: 'mentions general liability' });
+  const genderCard = panel.locator('#warnings .warn-card', { hasText: 'is more often a woman\'s name' });
+  await glCard.waitFor({ timeout: 15000 });
+  const quoted = (await glCard.innerText()).match(/general liability: "(.+?)"\./)?.[1] ?? '';
+  verify('the GL item quotes a line of the claims box', quoted.length > 0 && loaded.record.claims.text.replace(/\s+/g, ' ').includes(quoted.replace(/…$/, '')), true);
+  const claimsBeforeChoice = claimsRequests;
+  verify('the gender item says it is a guess from the name', /guess from the first name only/.test(await genderCard.innerText()), true);
+  verify('the gender item says the TNI standard', /filled Male \(TNI standard\)/.test(await genderCard.innerText()), true);
+  await panel.locator('#warnings').screenshot({ path: path.join(out, 'luna-intake-checks.png'), animations: 'disabled' });
+  await glCard.getByRole('button', { name: 'Client has GL', exact: true }).click();
+  await genderCard.getByRole('button', { name: 'Use Female', exact: true }).click();
+  await panel.waitForFunction(async () => {
+    const { intake } = await chrome.storage.session.get('intake');
+    return intake.record.coverage.hasGl === true && intake.record.drivers[0].gender === 'FEMALE';
+  }, null, { timeout: 15000 });
+  const edited = await savedIntake();
+  verify('the buttons are the agent\'s edits', ['coverage.hasGl', 'drivers[0].gender'].every((p) => edited.agentEdited.includes(p)), true);
+  verify('Client has GL asks for no GL quote', edited.record.coverage.gl === true, false);
+  verify('both items are checked', await panel.locator('#warnings .warn-card', { hasText: /general liability|woman's name/ }).count(), 0);
+  await panel.waitForTimeout(500);
+  verify('confirming GL does not read the claims box again', claimsRequests, claimsBeforeChoice);
+
   mode = 'conflict';
   await openMock(); await loadPdf();
   await panel.locator('#fill').click();
@@ -493,6 +563,18 @@ try {
   await panel.waitForTimeout(1000);
   verify('turning assistance off discards an in-flight Luna response', await approve.count(), 0);
   verify('stale provider response never fills the page', await mock.locator('#mockLunaChoice').inputValue(), '');
+  // With assistance off a new intake gets neither check: nothing sent, GL and gender untouched.
+  phase = 'intake-checks-off';
+  const offBefore = claimsRequests + namesRequests;
+  flagIntake = true;
+  await panel.locator('#close-agent').click();
+  await openMock(); await loadPdf();
+  await panel.waitForTimeout(1000);
+  flagIntake = false;
+  const offIntake = await savedIntake();
+  verify('assistance off: no claims or name check is sent', claimsRequests + namesRequests, offBefore);
+  verify('assistance off: no GL or gender item', await panel.locator('#warnings .warn-card', { hasText: /general liability|woman's name/ }).count(), 0);
+  verify('assistance off: GL and gender stay as the intake has them', offIntake.record.coverage.gl !== true && offIntake.record.coverage.hasGl !== true && offIntake.record.drivers.every((d) => d.gender == null), true);
   verify('no unrecognized provider host was contacted', unexpectedProviderHosts.size, 0);
   verify('nothing was submitted', await mock.evaluate(() => window.__amwinsMock.submitted), false);
   verify('browser errors', errors.length, 0);
@@ -520,7 +602,7 @@ try {
       const value = globalThis.__raterKit?.decisionSnapshot?.();
       return { available: typeof globalThis.__raterKit?.decisionSnapshot === 'function', length: value?.length ?? null };
     })),
-    requestCounts: { luna: requests, claimsReview: claimsRequests, unexpectedProviderHosts: [...unexpectedProviderHosts] },
+    requestCounts: { luna: requests, claimsReview: claimsRequests, driverNames: namesRequests, unexpectedProviderHosts: [...unexpectedProviderHosts] },
     panelReport: (await safe(() => panel?.locator('#report').innerText(), '')).slice(0, 4000),
     pageErrors: errors.slice(-20),
   };

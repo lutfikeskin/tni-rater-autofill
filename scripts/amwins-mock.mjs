@@ -83,9 +83,9 @@ const AGENT_ANSWERS = [
   [/how long with current carrier/i, '#howLongWithCurrentCarrier', '1 TO 2 YEARS'],
   [/claim free loss run/i, 'radio:canProvideClaimFreeLossRun', '0'],
   [/valued loss runs/i, 'radio:valuedLossRuns', '0'],
-  [/gender/i, '#driversPanel [data-id="gender"]', 'MALE'],
+  // Gender (MALE) and license year (birth year + 17: 1985) are TNI standards since 2026-10-10:
+  // filled by the extension, not answered here (EXPECT checks them).
   [/mar[it]+al status/i, '#driversPanel [data-id="martialStatus"]', 'MARRIED'],
-  [/licen[cs]e year/i, '#driversPanel [data-id="licenseYear"]', '1985'],
   [/^vehicle leased$|leased to others/i, 'radio:vehicleLeased', '0'],
 ];
 const DECLARATION = /i declare/i;
