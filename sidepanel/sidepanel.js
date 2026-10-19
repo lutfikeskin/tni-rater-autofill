@@ -3072,7 +3072,7 @@ function supersedeClaimsItems(intake) {
   intake.warnings.forEach((w, i) => {
     if (['ai.ntl', 'ai.coverage-change', 'ai.years-in-business', 'ai.gl'].includes(w.code) ||(w.code === 'ai.claims-truncated' && !truncated)) {
       if (w.code === 'ai.ntl' && intake.record.claims) intake.record.claims.aiNtl = false;
-      intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box since edited: ${w.msg}` };
+      intake.warnings[i] = { code: 'ai.claims-superseded', path: w.path, level: 'info', msg: `Earlier Luna item, for a claims box or Additional Notes since edited: ${w.msg}` };
     }
   });
 }
@@ -3123,7 +3123,7 @@ async function reviewClaimsBox({ retry = false } = {}) {
       if (changed) { again = true; return; }
       // Warnings are marked checked by position: an earlier failure, or Luna's items from a claims
       // box the agent has since edited, are replaced in place, never removed.
-      if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Luna reviewed the claims box after an earlier failure.' };
+      if (failed >= 0) intake.warnings[failed] = { code: 'ai.claims-reviewed', path: 'claims.text', level: 'info', msg: 'Luna reviewed the claims box and Additional Notes after an earlier failure.' };
       supersedeClaimsItems(intake);
       // One long-claims-box item, kept from an earlier review.
       const kept = intake.warnings.some((w) => w.code === 'ai.claims-truncated');
@@ -3135,7 +3135,7 @@ async function reviewClaimsBox({ retry = false } = {}) {
       if (state.intake !== intake) return;
       const msg = e instanceof AssistError ? e.message : 'The claims-box review failed.';
       usage.log({ ...logged, ms: Date.now() - started, error: msg.slice(0, 200) });
-      if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Luna couldn't review the claims box. Read it for coverage requests, e.g. NTL or a different limit." });
+      if (failed < 0) intake.warnings.push({ code: 'ai.claims-review-failed', path: 'claims.text', level: 'check', msg: "Luna couldn't review the claims box and Additional Notes. Read them for coverage requests, e.g. NTL or a different limit." });
       intake.notesReview = { failed: true, model: cfg.model };
     }
     await save();

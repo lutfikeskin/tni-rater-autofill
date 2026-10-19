@@ -5,7 +5,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake, intakeNotes } from '../src/normalize.js';
 import { sourceFields } from '../src/intake-source.js';
-import { buildNotesReview } from '../src/ai/luna.js';
+import { buildNotesReview, notesWarnings } from '../src/ai/luna.js';
 import { buildPlan } from '../src/plan.js';
 import { amwins } from '../src/carriers/amwins.js';
 
@@ -93,6 +93,11 @@ test('Luna reads the claims box and the Additional Notes box; AmWINS reads POP n
   const review = buildNotesReview(record);
   assert.ok(review.lines.includes('Needs NTL too'));
   assert.equal(review.quoted, 'Needs NTL too');
+  // A coverage request Luna flags in the notes points at the notes box, one in the claims box at that box.
+  const asked = (text) => notesWarnings([{ line: text, ntl: false, coverageChange: true, businessYears: null, businessSince: null, generalLiability: false }], review)[0].path;
+  assert.equal(asked('Dec page will be provided'), 'notes.text');
+  const claimsReview = buildNotesReview({ ...record, claims: { ...record.claims, text: 'No\nWants hired auto' } });
+  assert.equal(notesWarnings([{ line: 'Wants hired auto', ntl: false, coverageChange: true, businessYears: null, businessSince: null, generalLiability: false }], claimsReview)[0].path, 'claims.text');
   const pop = normalizeIntake({ ...newRaw, ins_type_1: 'Commercial Auto', additional_notes: 'POP document unavailable' }, today).record;
   assert.match(buildPlan(pop, amwins).find((s) => s.re === '^disclosure details$').value, /POP document unavailable/);
 });

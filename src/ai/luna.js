@@ -303,7 +303,10 @@ export function buildNotesReview(record, { redact = (s) => s, today = new Date()
   // authority; null is TNI's blank-intake standard (0 years, a new venture).
   const a = record.applicant ?? {};
   const intakeYears = a.yearsInBusiness ?? a.yearsExperience ?? null;
-  return { body, lines, ids, quoted: mention ? redact(mention).replace(/\s+/g, ' ').trim() : null,
+  // Lines only the Additional Notes box has: their items point at that box, not the claims box.
+  const inClaims = new Set(noteFragments(record.claims?.text).map(redact));
+  const fromNotes = noteFragments(record.notes?.text).map(redact).filter((l) => !inClaims.has(l));
+  return { body, lines, ids, fromNotes, quoted: mention ? redact(mention).replace(/\s+/g, ' ').trim() : null,
     quotedFragments: mention ? noteFragments(mention).map(redact) : [], truncated: claimsTruncated(notes),
     intakeYears, year: today.getFullYear(), glOnForm: record.coverage?.gl === true };
 }
@@ -336,7 +339,7 @@ const statedYears = (x, year) => x.businessYears ?? (x.businessSince != null ? y
 // (`glOnForm`). Its quote must be one of the lines sent (`lines`): evidence Luna can't make up.
 export const GL_CHOICES = Object.freeze([{ label: 'Client has GL', path: 'coverage.hasGl', value: true }, { label: 'Not GL' }]);
 const shortQuote = (line, max = 120) => (line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line);
-export function notesWarnings(results, { quotedFragments = [], intakeYears = null, year = new Date().getFullYear(), glOnForm = false, lines = null } = {}) {
+export function notesWarnings(results, { quotedFragments = [], intakeYears = null, year = new Date().getFullYear(), glOnForm = false, lines = null, fromNotes = [] } = {}) {
   const out = [];
   const gl = glOnForm ? null : results.find((x) => x.generalLiability === true && (!lines || lines.includes(x.line)));
   if (gl) {
@@ -358,7 +361,7 @@ export function notesWarnings(results, { quotedFragments = [], intakeYears = nul
       out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: the claims box or Additional Notes may be about non-trucking liability (NTL): "${x.line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you.` });
     }
     if (x.coverageChange) {
-      out.push({ line: x.line, code: 'ai.coverage-change', path: 'claims.text', level: 'check', msg: `Luna: the claims box or Additional Notes may ask for a coverage change: "${x.line}". The filler uses the coverages ticked on the form; change them under Requested coverage if the client wants this.` });
+      out.push({ line: x.line, code: 'ai.coverage-change', path: fromNotes.includes(x.line) ? 'notes.text' : 'claims.text', level: 'check', msg: `Luna: the claims box or Additional Notes may ask for a coverage change: "${x.line}". The filler uses the coverages ticked on the form; change them under Requested coverage if the client wants this.` });
     }
   }
   return out;

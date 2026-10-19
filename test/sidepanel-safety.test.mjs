@@ -1940,7 +1940,7 @@ test('Luna reads the claims box once per intake, visibly fails, and retries on a
   t.review();
   await t.answer();
   assert.deepEqual(failing.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-review-failed', 'check']]);
-  assert.match(failing.warnings[1].msg, /Read it for coverage requests/);
+  assert.match(failing.warnings[1].msg, /Read them for coverage requests/);
   assert.equal(t.logs.at(-1).error, 'Luna took too long. Nothing was applied.');
   await t.review();
   assert.equal(t.requests.length, 2, 'not retried on every panel reload');
@@ -2073,6 +2073,47 @@ test('the claims box is reviewed again after the agent edits what Luna read', as
   assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-superseded', 'info'], ['ai.ntl', 'check']],
     'the old item is replaced in place (checked marks are by position), the new one added');
   assert.deepEqual(intake.done, [1]);
+});
+
+// PR #95: the Additional Notes box is part of what Luna read. Editing it retires Luna's items and
+// reads again; an intake without the box (saved before it existed) keeps its review context.
+test('editing the Additional Notes box retires Luna\'s items and reads again', async () => {
+  const t = claimsHarness();
+  const intake = claimsIntake('No');
+  intake.record.notes = { text: 'Needs physical damage' };
+  t.state.intake = intake;
+  t.review();
+  await t.answer();
+  assert.deepEqual(intake.warnings.map((w) => w.code), ['other', 'ai.ntl']);
+  intake.record.notes.text = 'Needs physical damage\nNeeds hired auto';
+  t.review({ retry: true });
+  await t.answer();
+  assert.equal(t.requests.length, 2, 'the edited notes are read again');
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['other', 'check'], ['ai.claims-superseded', 'info'], ['ai.ntl', 'check']]);
+  // Only notes text changes the context: none, or a blank box, reads as before the box existed.
+  const context = vm.runInNewContext(`${extractFunction('claimsContext')}; claimsContext`, { stableJson });
+  const before = context({ claims: { text: 'No' }, coverage: { cargo: true } });
+  assert.equal(context({ claims: { text: 'No' }, notes: { text: null }, coverage: { cargo: true } }), before);
+  assert.notEqual(context({ claims: { text: 'No' }, notes: { text: 'Financed' }, coverage: { cargo: true } }), before);
+});
+
+test('a panel edit of the claims box or the Additional Notes box asks Luna again; other edits do not', async () => {
+  const { get, set } = await import('../src/util.js');
+  const { rederive } = await import('../src/normalize.js');
+  const calls = [];
+  const sandbox = {
+    state: { intake: { record: { claims: { text: 'No' }, notes: { text: null }, applicant: {} }, warnings: [] } },
+    get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, usage: { log: () => {} }, save: async () => {},
+    claimsTextEdited: () => calls.push('claimsTextEdited'), reviewClaimsBox: () => calls.push('reviewClaimsBox'), reviewDriverGender: () => {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('agentEdit'), sandbox);
+  await sandbox.agentEdit('notes.text', 'Needs hired auto', 'textarea');
+  assert.deepEqual(calls.splice(0), ['claimsTextEdited', 'reviewClaimsBox']);
+  await sandbox.agentEdit('claims.text', 'Yes', 'textarea');
+  assert.deepEqual(calls.splice(0), ['claimsTextEdited', 'reviewClaimsBox']);
+  await sandbox.agentEdit('applicant.name', 'X', 'text');
+  assert.deepEqual(calls, []);
 });
 
 // Codex on PR #22: an edit retires Luna's old items even when no new review can run.
