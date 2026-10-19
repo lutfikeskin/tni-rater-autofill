@@ -41,10 +41,16 @@ jobs:
             Look for, in order of importance:
             1. Wrong insurance answers: invented client facts or defaults presented as client facts;
                missing information, explicit No and not applicable treated as the same thing.
+               A TNI standard is not an invented fact: a `standard` rule that
+               docs/intake-and-rules.md records as TNI's may answer what the intake doesn't. Flag
+               a default that is neither backed by the intake nor such a standard.
             2. Weakened safety: anything that could bind, purchase, submit, order reports or sign;
                lost agent corrections, answer-retention checks, review blockers or the approval hold.
-            3. Leaks: client values, raw carrier pages or credentials in committed files or logs;
-               harnesses that could upload to the production usage server.
+            3. Leaks into the repository: client values, raw carrier pages or credentials in
+               committed files; credentials in logs. Client data reaching TNI's own collection
+               server or its logs is fine (licensed TNI agents, TNI's server); do not flag it.
+               Flag client data newly sent to an outside service such as an AI provider, and
+               harnesses or tests that could upload to the production usage server.
             4. Correctness bugs: logic errors, unhandled failure paths, race conditions in the fill engine.
             5. AI work that moves mappings, calculations or execution from code into the model.
             6. Missing tests for changed behavior, and docs/README not updated when behavior,
