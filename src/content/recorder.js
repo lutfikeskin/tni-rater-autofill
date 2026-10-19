@@ -253,8 +253,9 @@
   const pageKey = () => (new URLSearchParams(location.search).get('pageName') || (location.pathname + ((location.hash ?? '').startsWith('#/') ? location.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
   const isTop = window === window.top;
   // The step of a one-address application (AmWINS), as pagekit's stepKey reads it: the visible
-  // h1-h3 headings. Sent with each batch of changes, so the panel can name the step a change was on
-  // (its steps share the page's address); the panel keeps it only for such carriers, redacted.
+  // h1-h3 headings. Sent with each batch of changes, new questions and page arrival, so the panel
+  // can name the step a change was on and see the agent move to the next step (its steps share the
+  // page's address); the panel keeps it only as one of such a carrier's step names.
   const stepKey = () => {
     const headings = [...(document.querySelectorAll?.('h1, h2, h3') ?? [])].filter((el) => /^H[1-3]$/.test(el.tagName ?? '')
       && el.getClientRects?.().length && globalThis.getComputedStyle?.(el)?.visibility !== 'hidden');
@@ -319,7 +320,7 @@
       .map(([key]) => key);
     for (const [key, c] of cur) if (!c.controls.some((el) => deferred.has(el))) prev.set(key, c);
     if (changes.length) send({ event: 'field_changes', page, step: stepKey(), changes });
-    if (appeared.length) send({ event: 'new_fields', page, keys: appeared });
+    if (appeared.length) send({ event: 'new_fields', page, step: stepKey(), keys: appeared });
     for (const el of pending) {
       trustedPending.delete(el);
       trustedImmediate.delete(el);
@@ -350,7 +351,7 @@
     trustedImmediate.clear();
     // New questions (follow-ups revealed by an answer, or a panel that opened): the side panel
     // may fill them automatically.
-    if (appeared.length) send({ event: 'new_fields', page, keys: appeared });
+    if (appeared.length) send({ event: 'new_fields', page, step: stepKey(), keys: appeared });
     // Questions that went away (hidden, disabled or removed by an answer): the panel records the
     // page's layout again, so both sides of a follow-up question are seen.
     if (removed.length) send({ event: 'removed_fields', page, keys: removed });
@@ -361,7 +362,7 @@
   function pageChanged(nowPage, cur) {
     trustedPending.clear();
     trustedImmediate.clear();
-    if (isTop) send({ event: 'page_view', page: nowPage, from: page, fields: cur.size, title: document.title });
+    if (isTop) send({ event: 'page_view', page: nowPage, from: page, step: stepKey(), fields: cur.size, title: document.title });
     page = nowPage;
     prevMessages = messages();
   }
@@ -442,5 +443,5 @@
   };
   globalThis.__raterRecorder = api;
 
-  if (isTop) send({ event: 'page_view', page, from: null, fields: prev.size, title: document.title });
+  if (isTop) send({ event: 'page_view', page, from: null, step: stepKey(), fields: prev.size, title: document.title });
 })();

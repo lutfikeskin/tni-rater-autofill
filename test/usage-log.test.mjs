@@ -299,6 +299,14 @@ test('every event names its install; a full log says how many oldest events it d
     assert.deepEqual(data.usageLog.slice(-3, -1).map((e) => e.page), ['C', 'D']);
     assert.equal(data.usageLog[0].id, 'old-3');
     assert.equal(data.usageSeq, lost.seq, 'the loss has its own number');
+    // A second overflow drops the first usage_lost too: its count carries into the new one.
+    data.usageLog = [lost, ...Array.from({ length: MAX_EVENTS - 1 }, (_, i) => ({ id: `n-${i}`, type: 'page_view', seq: 1000 + i }))];
+    await log.log({ type: 'page_view', page: 'E' }, { type: 'page_view', page: 'F' });
+    assert.equal(data.usageLog.length, MAX_EVENTS);
+    const again = data.usageLog.at(-1);
+    assert.equal(again.type, 'usage_lost');
+    assert.equal(again.count, 3 + 2, 'the earlier 3 plus the 2 real events dropped now');
+    assert.equal(data.usageLog.filter((e) => e.type === 'usage_lost').length, 1);
   } finally {
     delete globalThis.chrome;
   }

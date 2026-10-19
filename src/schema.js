@@ -53,6 +53,9 @@ export const SECTIONS = [
     ['drivers[].cdl', 'CDL', 'bool'],
     ['drivers[].cdlYear', 'CDL year', 'int'],
     ['drivers[].maritalStatus', 'Marital status', 'choice'],
+    // Not on the intake PDF (NOT_ON_INTAKE): the agent sets it (MALE / FEMALE) in client details or
+    // by accepting an AI suggestion; normalizeIntake leaves it null.
+    ['drivers[].gender', 'Gender', 'choice'],
   ] },
   { id: 'vehicles', title: 'Vehicles', list: 'vehicles', item: 'Vehicle', fields: [
     ['vehicles[].type', 'Type', 'choice'],
@@ -90,6 +93,7 @@ export const SECTIONS = [
     ['coverage.cargoLimit', 'Cargo limit', 'money'],
     ['coverage.cargoDeductible', 'Cargo deductible', 'money'],
     ['coverage.gl', 'General liability', 'bool'],
+    ['coverage.hasGl', 'Already has general liability (claims box)', 'bool'],
     ['coverage.glLimit', 'GL limit', 'choice'],
     ['coverage.reeferBreakdown', 'Reefer breakdown', 'bool'],
     ['coverage.ntl', 'Non-trucking liability (NTL)', 'bool'],
@@ -100,6 +104,10 @@ export const SECTIONS = [
     ['claims.notes', 'Notes (other answers in the claims box)', 'textarea'],
   ] },
 ];
+
+// Fields the intake PDF has no box for: never read by normalizeIntake (null until the agent sets
+// one), so no place on the form (intake-source.js sourceFields gives []).
+export const NOT_ON_INTAKE = new Set(['drivers[].gender']);
 
 const FIELDS = new Map(
   SECTIONS.flatMap((s) => s.fields.map(([path, label, kind = 'text']) => [path, { path, label, kind, section: s }])),

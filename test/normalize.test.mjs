@@ -480,9 +480,10 @@ test('progressive: standard answers for follow-up questions', () => {
   assert.equal(byQ('215A').value, false, 'special cargo: no');
   assert.equal(byQ('216A').value, 'Consumer Goods', '"General freight hauler"');
   assert.equal(byQ('216B').value, 'Other Consumer Goods');
-  // Continuous coverage and other business coverages aren't on the intake: the agent's (2026-10-09).
-  assert.equal(byQ('83').value, null);
-  assert.equal(byQ('A2').value, null);
+  // TNI 2026-10-10: continuous coverage Yes with current insurance; other business coverages None
+  // unless the intake has general liability (then the agent's).
+  assert.equal(byQ('83').value, true, 'current Progressive policy to 10/31/2026');
+  assert.equal(byQ('A2').value, 'None', 'no general liability on the intake');
   assert.equal(byQ('28C1').value, false);
   // Filings: "all vehicles on quote" and Federal only when the intake says filings are needed;
   // MCS-90 is ticked by the page with Federal, so it's left alone.
