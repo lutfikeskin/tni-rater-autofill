@@ -10,7 +10,7 @@
 // control remains a compatibility fallback for widgets which do not emit those events.
 
 (() => {
-  const VERSION = 7;
+  const VERSION = 8;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
@@ -273,6 +273,9 @@
   let page = pageKey();
   let prev = snapshot();
   let prevMessages = messages();
+  // The step headings last seen, so a move to another step is sent even when no answer changes and
+  // no question appears with it (a step whose questions are still loading or in a closed section).
+  let shownStep = isTop ? stepKey() : undefined;
 
   function send(msg) {
     if (!isCurrent()) return;
@@ -356,6 +359,15 @@
     // page's layout again, so both sides of a follow-up question are seen.
     if (removed.length) send({ event: 'removed_fields', page, keys: removed });
     if (newMessages) send({ event: 'new_messages', page });
+    // The agent moved to another step of a one-address application (AmWINS' Drivers and Vehicles
+    // tabs): the panel shows that step's report (live run 2026-10-19).
+    if (isTop) {
+      const step = stepKey();
+      if (step !== shownStep) {
+        shownStep = step;
+        if (step) send({ event: 'step_shown', page, step });
+      }
+    }
   }
 
   // Only the top frame reports page switches; embedded frames (ads, trackers) would be noise.

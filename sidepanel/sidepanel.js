@@ -2910,7 +2910,9 @@ function renderReport(frames, ctx = {}) {
     // Said once for all the items (hidden by recount once none is open).
     needs.length ? h('p', { class: 'needs-say muted small' }, 'Answer these on the page.') : null,
     ...needs.map(need),
-    waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Buttons waiting'), h('span', { class: 'muted' }, waiting.map((x) => `${x.id.replace(/:\d+$/, '')}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`).join('; '))) : null,
+    // Buttons waiting on others (Progressive's bill plan before Recalculate) aren't shown: the fill
+    // clicks them in turn, and a question one waits on is already an item above. The fill log
+    // keeps them (blockerList).
     // The marks on the page (pagekit.js COLORS, the same colors: sidepanel.css --mark-*).
     h('div', { class: 'legend' },
       h('span', {}, h('span', { class: 'mark filled' }), 'Filled'),
@@ -4144,11 +4146,11 @@ async function openPdfInTab() {
 }
 
 // The step a one-address application's tab is on (AmWINS), as the recorder reads it on arrival,
-// with new questions and with each batch of changes: for the page strip and the report shown
-// (renderSite), so the agent's own Continue to the next step is followed. A fill's own step is
-// noted by renderReport.
+// with new questions, with each batch of changes and whenever the headings change (step_shown): for
+// the page strip and the report shown (renderSite), so the agent's own Continue to the next step,
+// or a click on another step's tab, is followed. A fill's own step is noted by renderReport.
 function noteStep(msg, sender) {
-  if (msg?.ra !== 'usage' || !['field_changes', 'new_fields', 'page_view'].includes(msg.event) || !state.intake || sender.tab?.id !== state.tab?.id) return;
+  if (msg?.ra !== 'usage' || !['field_changes', 'new_fields', 'page_view', 'step_shown'].includes(msg.event) || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const step = knownStep(state.tab.carrier, msg.step);
   if (!step || state.tabSteps.get(sender.tab.id) === step) return;
   state.tabSteps.set(sender.tab.id, step);
