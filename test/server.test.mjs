@@ -474,3 +474,19 @@ test('keeps the agent\'s settings, booleans and where usage goes only', async ()
   assert.equal(key.values, undefined, 'a value that is not a yes/no never stays (a key)');
   assert.deepEqual(odd.dropped.sort(), ['reason', 'values']);
 });
+
+test('keeps the install id, the platform and a lost-events count, in their shapes only', async () => {
+  const dataDir = tmp();
+  const install = crypto.randomUUID();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'intake_loaded', filled: undefined, install, platform: { os: 'Windows', chrome: 141 } }),
+      ev({ type: 'usage_lost', filled: undefined, install, count: 12 }),
+      ev({ type: 'intake_loaded', filled: undefined, install: 'JOHN-PC', platform: { os: 'Windows', chrome: 141, user: 'john' } }),
+    ] });
+  });
+  const [loaded, lost, odd] = stored(dataDir);
+  assert.deepEqual([loaded.install, loaded.platform], [install, { os: 'Windows', chrome: 141 }]);
+  assert.deepEqual([lost.type, lost.count], ['usage_lost', 12]);
+  assert.deepEqual([odd.install, odd.platform], [undefined, undefined]);
+});

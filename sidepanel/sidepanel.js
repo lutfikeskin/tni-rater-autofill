@@ -6,7 +6,7 @@ import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { carrierForUrl, quoteProgress } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
-import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
+import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey, stableJson } from '../src/ai/common.js';
@@ -749,7 +749,7 @@ async function loadFile(file) {
   // This intake's edit keys and helper records (also a PDF dropped again) are restored per tab by
   // refreshTab; the panel's own sets and restoration markers were reset above.
   await pruneAgentRecords(summary.intakeId);
-  usage.log({ type: 'intake_loaded', ...summary, ...(test ? { test: true } : {}) });
+  usage.log({ type: 'intake_loaded', ...summary, ...(test ? { test: true } : {}), platform: platformOf() });
   await logSettings('intake');
   uploadNow();
   await save();

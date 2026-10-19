@@ -9,7 +9,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms } from '../src/plan.js';
-import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep, clientErrorEvent, agentSettingsEvent } from '../src/usage.js';
+import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep, clientErrorEvent, agentSettingsEvent, platformOf } from '../src/usage.js';
 
 const bytes = new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url)));
 const raw = await readIntakeFields(pdfjs, bytes.slice());
@@ -319,4 +319,10 @@ test('the agent\'s settings event has every setting, defaults included, and neve
   assert.ok(!JSON.stringify(e).includes('sk-secret'), 'never the key');
   assert.equal(agentSettingsEvent({ serverUrl: '' }, { reason: 'opened', centralServer: central }).values.uploads, 'off');
   assert.equal(agentSettingsEvent({ serverUrl: central }, { reason: 'opened', centralServer: central }).values.uploads, 'central');
+});
+
+test('the platform: system and Chrome major version, from userAgentData or the user agent', () => {
+  assert.deepEqual(platformOf({ userAgentData: { platform: 'Windows', brands: [{ brand: 'Not A;Brand', version: '99' }, { brand: 'Google Chrome', version: '141' }] }, userAgent: '' }), { os: 'Windows', chrome: 141 });
+  assert.deepEqual(platformOf({ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36' }), { os: 'macOS', chrome: 140 });
+  assert.deepEqual(platformOf({}), { os: null, chrome: null });
 });

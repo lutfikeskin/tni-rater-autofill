@@ -49,6 +49,18 @@ export async function saveSettings(patch) {
 }
 
 const SEQ_KEY = 'usageSeq';
+// A random id for this copy of the extension on this computer, made once and stamped on every
+// event (`install`): with `seq`, which numbers this computer's events, a review tells two computers
+// sharing initials apart and sees events lost on the way (a gap in one install's numbers).
+const INSTALL_KEY = 'usageInstall';
+async function installId() {
+  let id = await local.get(INSTALL_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    await local.set(INSTALL_KEY, id);
+  }
+  return id;
+}
 
 // Panels open in two windows keep a queue each but share the stored log and its numbering. A Web
 // Lock (shared by all of the extension's pages) lets one of them read and write it at a time.
@@ -65,15 +77,22 @@ export function log(...events) {
   const { id: sessionId = null, intakeId = null } = session ?? {};
   queue = queue.then(() => exclusive(async () => {
     const { agent = null } = await settings();
-    const list = (await local.get(LOG_KEY)) ?? [];
+    const install = await installId();
+    let list = (await local.get(LOG_KEY)) ?? [];
     let seq = (await local.get(SEQ_KEY)) ?? 0;
-    for (const e of events) {
-      list.push({ id: crypto.randomUUID(), t, v: version, channel: PROVENANCE.channel, ...(PROVENANCE.commit ? { commit: PROVENANCE.commit } : {}), agent, session: sessionId, intakeId, seq: ++seq, ...e });
+    const stamp = () => ({ id: crypto.randomUUID(), t, v: version, channel: PROVENANCE.channel, ...(PROVENANCE.commit ? { commit: PROVENANCE.commit } : {}), agent, install, session: sessionId, intakeId, seq: ++seq });
+    for (const e of events) list.push({ ...stamp(), ...e });
+    // Oldest events go first if nobody has exported in a long time; how many is logged in their
+    // place (usage_lost), so a review knows the log is missing some.
+    if (list.length > MAX_EVENTS) {
+      const dropped = list.slice(0, list.length - MAX_EVENTS + 1);
+      // A usage_lost entry among them stands for the events it counted, so those carry over.
+      const count = dropped.reduce((n, e) => n + (e.type === 'usage_lost' && Number.isInteger(e.count) ? e.count : 1), 0);
+      list = [...list.slice(dropped.length), { ...stamp(), session: null, intakeId: null, type: 'usage_lost', count }];
     }
     // Saved first: a failed write leaves a gap in the numbers, never a number used twice.
     await local.set(SEQ_KEY, seq);
-    // Oldest events go first if nobody has exported in a long time.
-    await local.set(LOG_KEY, list.length > MAX_EVENTS ? list.slice(-MAX_EVENTS) : list);
+    await local.set(LOG_KEY, list);
     saveStatus = { state: 'ok' };
   })).catch((e) => {
     saveStatus = { state: 'error', at: new Date().toISOString(), message: String(e?.message ?? e).slice(0, 160) };

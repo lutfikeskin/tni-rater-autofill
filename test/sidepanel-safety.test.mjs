@@ -1519,7 +1519,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     usage: { currentSession: () => ({ intakeId: scope }), startSession: () => ({ intakeId: scope }), log() {} },
     $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
     normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
-    store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, uploadNow() {},
+    store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
     'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid'].map(extractFunction).join('\n'), context);
@@ -4063,7 +4063,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
         if (/\.answer\(/.test(String(func))) { answerStarted(); return pending; }
         return [frame];
       },
-      pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {},
+      pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }),
       readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, normalizeIntake: () => ({ record: nextRecord, warnings: [] }),
       intakeSummary: async () => ({ intakeId: nextFingerprint }), pdfjs: {},
       cancelLayouts() {}, holdLayouts() {}, resetViews() {}, discardAiSuggestions() {}, uploadNow() {},
@@ -4153,7 +4153,7 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
       doneActionsQueue: Promise.resolve(), doneRestored: new Set(),
       doneActionsStore: { get: async (id, tab) => memory.get(`${id}|${tab}`) ?? [],
         set: async (id, tab, ids) => { memory.set(`${id}|${tab}`, [...ids]); } },
-      $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {},
+      $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }),
       normalizeIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
       store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
       discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
@@ -4313,7 +4313,7 @@ test('marking a test run remembers the PDF on this computer and logs it once per
   assert.deepEqual(JSON.parse(JSON.stringify(logged)), [{ type: 'intake_marked', test: true }, { type: 'intake_marked', test: false }]);
   // A test PDF loaded again carries the mark on intake_loaded.
   assert.match(SIDEPANEL, /const test = \(await testIntakes\.get\(\)\)\.includes\(summary\.intakeId\);/);
-  assert.match(SIDEPANEL, /usage\.log\(\{ type: 'intake_loaded', \.\.\.summary, \.\.\.\(test \? \{ test: true \} : \{\}\) \}\);/);
+  assert.match(SIDEPANEL, /usage\.log\(\{ type: 'intake_loaded', \.\.\.summary, \.\.\.\(test \? \{ test: true \} : \{\}\), platform: platformOf\(\) \}\);/);
 });
 
 test('the agent\'s settings are logged whole: on load, on opening, and on each change', () => {
