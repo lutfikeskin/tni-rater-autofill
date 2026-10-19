@@ -119,6 +119,8 @@ const NOT_MAPPED = {
     'operations.filingsWhich': 'on the Filings page Federal is ticked whenever filings are required; State is left as the page has it',
     'operations.hazmat': 'Progressive asks whether a placard is required (operations.hazPlacard)',
     'operations.movingState': 'not asked by Progressive',
+    'operations.teamDriving': 'on the intake since 2026-10-02; no Progressive question for it has been mapped',
+    'operations.canadaLoads': 'on the intake since 2026-10; no Progressive question for it has been mapped',
     'operations.licensePlate': 'not asked by Progressive',
     'drivers[].maritalStatus': 'Progressive\'s commercial driver page does not ask it',
     'drivers[].gender': 'Progressive\'s commercial driver page does not ask it',
@@ -140,6 +142,8 @@ const NOT_MAPPED = {
     'operations.needSr22': 'not asked on the Business Auto application',
     'operations.hazPlacard': 'AmWINS asks about transporting hazardous material (operations.hazmat)',
     'operations.movingState': 'not asked on the Business Auto application',
+    'operations.teamDriving': 'on the intake since 2026-10-02; no AmWINS question for it has been mapped',
+    'operations.canadaLoads': 'on the intake since 2026-10; no AmWINS question for it has been mapped',
     'operations.licensePlate': 'not asked on the Business Auto application',
     'drivers[].cdl': 'AmWINS has no CDL question; the license year is TNI\'s birth year + 17',
     'drivers[].cdlYear': 'AmWINS has no CDL question; the license year is TNI\'s birth year + 17',
@@ -161,10 +165,15 @@ const NOT_MAPPED = {
 const READ_INDIRECTLY = {
   progressive: {
     'applicant.applicationDate': 'util.priorPolicyExpired (currently insured, insured with Progressive)',
+    'claims.text': 'normalize.intakeNotes (an NTL mention in the claims box holds Rates)',
+    'claims.notes': 'normalize.otherNotes (the defensive driver course)',
+    'notes.text': 'normalize.intakeNotes and otherNotes (NTL, the defensive driver course)',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag)',
     'applicant.ownerDrives': 'owner() in progressive.js (the owner\'s driver row)',
+    'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
+    'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
   },
 };
 

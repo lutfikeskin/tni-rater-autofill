@@ -36,6 +36,8 @@ const FIELDS = {
   'operations.hazmat': ['haul_hazmat'],
   'operations.hazPlacard': ['hazardous_placard'],
   'operations.movingState': ['moving_state'],
+  'operations.teamDriving': ['team_driving_or_slip_seating'],
+  'operations.canadaLoads': ['loads_to_canada'],
   'operations.licensePlate': ['license_plate'],
   'operations.equipVehicle': ['equip_vehicle'],
   'trailerInfo.ownership': ['trl_ownership'],
@@ -56,10 +58,11 @@ const FIELDS = {
   'coverage.gl': ['gen_liability'],
   'coverage.glLimit': ['gen_liab_limit'],
   'coverage.reeferBreakdown': ['reefer_breakdown'],
-  // Not a form field: only the claims box names it.
-  'coverage.ntl': ['claims_details'],
-  'coverage.hasGl': ['claims_details'],
+  // Not a form field: only the claims box or the Additional Notes box names it.
+  'coverage.ntl': ['claims_details', 'additional_notes'],
+  'coverage.hasGl': ['claims_details', 'additional_notes'],
   claims: ['claims_details'],
+  notes: ['additional_notes'],
 };
 FIELDS['priorInsurance[0]'] = FIELDS.priorInsurance;
 
@@ -99,7 +102,7 @@ export function sourceFields(path, rows = {}) {
   if (FIELDS[p]) return FIELDS[p];
   // The garaging address is one box; the claims box holds the claims answer and the notes.
   const section = p.split('.')[0];
-  return section === 'garaging' || section === 'claims' ? FIELDS[section] : [];
+  return ['garaging', 'claims', 'notes'].includes(section) ? FIELDS[section] : [];
 }
 
 // The box around some rectangles (PDF units).

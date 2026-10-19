@@ -71,7 +71,7 @@ export function matchIntake(record, typed) {
   if (want.length < 3) return [];
   const hits = [];
   for (const [path, value] of leaves(record)) {
-    if (path.startsWith('claims.text')) continue;
+    if (path.startsWith('claims.text') || path.startsWith('notes.text')) continue;
     const norm = normalizeForMatch(value);
     if (norm.length >= 3 && norm === want) hits.push(path);
     // Phone and ID numbers are often typed in parts.

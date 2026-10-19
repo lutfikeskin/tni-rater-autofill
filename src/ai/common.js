@@ -110,7 +110,7 @@ export function scopedIntake(record, active) {
       ['dot', 'mc'].includes(k) ? [`has${k.toUpperCase()}`, !!v] : [k, clean(v)]));
   };
   const out = {};
-  for (const key of ['applicant', 'operations', 'garaging', 'coverage', 'claims', 'trailerInfo', 'priorInsurance']) {
+  for (const key of ['applicant', 'operations', 'garaging', 'coverage', 'claims', 'notes', 'trailerInfo', 'priorInsurance']) {
     if (record[key]) out[key] = clean(record[key]);
   }
   for (const key of ['drivers', 'vehicles', 'trailers']) {

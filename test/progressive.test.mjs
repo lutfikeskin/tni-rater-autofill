@@ -732,6 +732,10 @@ test('defensive driver discount: No, unless the description box mentions a cours
   const step = byQ(buildPlan(record, progressive, {}), '299D');
   assert.equal(step.value, null);
   assert.match(step.note, /defensive driving course/);
+  // The 2026-10 form's Additional Notes box counts the same.
+  const notes = { ...baseRecord(), notes: { text: 'Driver took a defensive driving course last year.' } };
+  const fromNotes = byQ(buildPlan(notes, progressive, {}), '299D');
+  assert.deepEqual([fromNotes.value, /defensive driving course/.test(fromNotes.note ?? '')], [null, true]);
 });
 
 // Runs of 2026-10-07 (FL, UT, SC): the CDL year, UMPD per vehicle, SC's glass deductible and

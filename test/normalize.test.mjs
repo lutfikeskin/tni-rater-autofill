@@ -266,7 +266,7 @@ test('split trailer ownership notes never become vehicle ownership on either car
     const check = warnings.find((w) => w.code === 'ownership.notes');
     assert.equal(check?.path, 'operations.vehicleOwnership');
     assert.equal(check?.level, 'check');
-    assert.match(check?.msg ?? '', /doesn't settle it for the vehicles/);
+    assert.match(check?.msg ?? '', /don't settle it for the vehicles/);
     assert.deepEqual(targets(r), missingTargets, `${notes}: neither carrier receives an inferred vehicle fact`);
   }
   for (const notes of ['Financed', 'Truck financed.', 'Truck.\nFinanced.', 'No claims in 3 years\nVehicle financed.']) {

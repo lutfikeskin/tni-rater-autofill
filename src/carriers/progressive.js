@@ -30,7 +30,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver } from '../util.js';
-import { ntlMention, isLongHaul } from '../normalize.js';
+import { ntlMention, intakeNotes, otherNotes, isLongHaul } from '../normalize.js';
 
 // Values that Progressive asks the agent to attest to must come from an explicit intake field.
 // Keep these helpers conservative: an absent value is a review item, not a reason to guess.
@@ -126,8 +126,8 @@ const trailerEquipment = (r) => (r.trailerInfo?.equipTrailer > 0 ? r.trailerInfo
 const trailerEquipmentSource = (r) => (r.trailerInfo?.equipTrailer == null ? 'standard' : 'derived');
 
 // TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
-// the driver took a course; then it's the agent's.
-const defensiveMention = (r) => String(r.claims?.notes ?? '').match(/[^\n.]*defensive[^\n.]*/i)?.[0].trim().slice(0, 80) ?? null;
+// the driver took a course (or the Additional Notes box does); then it's the agent's.
+const defensiveMention = (r) => String(otherNotes(r) ?? '').match(/[^\n.]*defensive[^\n.]*/i)?.[0].trim().slice(0, 80) ?? null;
 
 // Farthest one-way distance: "Unlimited" / long haul becomes 501 miles, which picks "More than
 // 500 miles". A trailer goes as far as the vehicle (TNI).
@@ -225,7 +225,7 @@ const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT numb
 // An NTL mention in the claims box the agent hasn't answered yet (Yes or No) is not a No: Rates
 // waits for it like for NTL itself.
 // Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl).
-const ntlUndecided = (r) => r.coverage.ntl == null && (!!ntlMention(r.claims?.text) || r.claims?.aiNtl === true);
+const ntlUndecided = (r) => r.coverage.ntl == null && (!!ntlMention(intakeNotes(r)) || r.claims?.aiNtl === true);
 const notNtl = (r) => r.coverage.ntl !== true && !ntlUndecided(r);
 const ourBillPlan = (r) => r.coverage.gl !== true && notNtl(r);
 

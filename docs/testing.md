@@ -8,7 +8,7 @@ The extension uses plain ES modules with no source build step. `npm ci` installs
 
 | Affected behavior | Relevant checks |
 | --- | --- |
-| Intake extraction or cleanup | `test/normalize.test.mjs`, `test/intake-regressions.test.mjs`, `test/intake-source.test.mjs` (where answers are on the PDF, the page strip's step order); affected synthetic intake cases |
+| Intake extraction or cleanup | `test/normalize.test.mjs`, `test/intake-regressions.test.mjs`, `test/intake-forms.test.mjs` (the pre- and post-2026-10 intake forms), `test/intake-source.test.mjs` (where answers are on the PDF, the page strip's step order); affected synthetic intake cases |
 | Progressive rules or page execution | `test/progressive.test.mjs`, `test/pagekit.test.mjs`, `npm run e2e -- --fixtures` |
 | AmWINS rules or application flow | `npm run mock:amwins` before completing an AmWINS rule change |
 | Panel orchestration or packaged behavior | `test/sidepanel-safety.test.mjs`, `npm run e2e:extension` |

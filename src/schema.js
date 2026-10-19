@@ -40,6 +40,8 @@ export const SECTIONS = [
     ['operations.hazmat', 'Hazmat / tobacco / Rx', 'bool'],
     ['operations.hazPlacard', 'Hazmat placard', 'bool'],
     ['operations.movingState', 'Moving states within 6 months', 'bool'],
+    ['operations.teamDriving', 'Team driving / slip seating', 'bool'],
+    ['operations.canadaLoads', 'Takes loads to Canada', 'bool'],
     ['operations.licensePlate', 'License plate'],
     ['operations.equipVehicle', 'Attached equipment value (vehicle)', 'money'],
   ] },
@@ -102,6 +104,10 @@ export const SECTIONS = [
     ['claims.hasClaims', 'Any claims / violations', 'bool'],
     ['claims.text', 'Claims box, as written', 'textarea'],
     ['claims.notes', 'Notes (other answers in the claims box)', 'textarea'],
+  ] },
+  // The Additional Notes box, on the intake form since 2026-10 (empty on older intakes).
+  { id: 'notes', title: 'Additional notes', fields: [
+    ['notes.text', 'Additional notes, as written', 'textarea'],
   ] },
 ];
 
