@@ -458,3 +458,19 @@ test('keeps an intake marked as a test run, and only a yes/no mark', async () =>
   assert.equal(odd.test, undefined);
   assert.deepEqual(odd.dropped, ['test']);
 });
+
+test('keeps the agent\'s settings, booleans and where usage goes only', async () => {
+  const dataDir = tmp();
+  const values = { autoFollowUps: true, autoAdvance: false, autoPages: false, overwrite: false, aiOn: true, aiAuto: false, aiKey: true, uploads: 'central' };
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ type: 'agent_settings', filled: undefined, reason: 'changed', changed: 'autoAdvance', values }),
+      ev({ type: 'agent_settings', filled: undefined, reason: 'changed', values: { ...values, lunaKey: 'sk-secret' } }),
+      ev({ type: 'agent_settings', filled: undefined, reason: 'whenever', values: { ...values, uploads: 'https://x' } }),
+    ] });
+  });
+  const [ok, key, odd] = stored(dataDir);
+  assert.deepEqual([ok.reason, ok.changed, ok.values], ['changed', 'autoAdvance', values]);
+  assert.equal(key.values, undefined, 'a value that is not a yes/no never stays (a key)');
+  assert.deepEqual(odd.dropped.sort(), ['reason', 'values']);
+});

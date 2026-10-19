@@ -6,7 +6,7 @@ import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { carrierForUrl, quoteProgress } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
-import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
+import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey, stableJson } from '../src/ai/common.js';
@@ -750,11 +750,25 @@ async function loadFile(file) {
   // refreshTab; the panel's own sets and restoration markers were reset above.
   await pruneAgentRecords(summary.intakeId);
   usage.log({ type: 'intake_loaded', ...summary, ...(test ? { test: true } : {}) });
+  await logSettings('intake');
   uploadNow();
   await save();
   render();
   refreshTab();
   reviewIntake();
+}
+
+// The agent's settings, logged whole: when an intake is loaded, when the panel opens on a saved
+// one, and when one changes (agentSettingsEvent). Practice pages are no exception: settings
+// belong to the agent, not to a page.
+// A change with no intake and session open belongs to no quote, so it is not logged. A failure
+// here must never reach the caller: the handlers do not await it.
+async function logSettings(reason, changed) {
+  try {
+    if (reason === 'changed' && !(state.intake && usage.currentSession())) return;
+    const saved = await usage.settings();
+    usage.log(agentSettingsEvent(saved, { overwrite: !!$('overwrite')?.checked, reason, changed, centralServer: usage.DEFAULT_SERVER }));
+  } catch { /* the settings log is best effort */ }
 }
 
 // The agent marks (or unmarks) the loaded intake as a test run: remembered for this PDF on this
@@ -3700,6 +3714,7 @@ function wireAi() {
     }
     // Keep pending approvals; their cache keys remain bound to the original model and context.
     await usage.saveSettings(patch);
+    logSettings('changed', Object.keys(patch).map((k) => ({ aiOn: 'aiOn', lunaAuto: 'aiAuto', lunaKey: 'aiKey' })[k] ?? k).join(','));
     await renderAiSettings();
     // Luna just turned on or got a key: read the open intake's claims box and driver names if not done yet.
     reviewIntake({ retry: true });
@@ -3804,9 +3819,10 @@ async function uploadNow() {
 }
 
 function wireUsage() {
-  $('auto-followups').addEventListener('change', (e) => usage.saveSettings({ autoFollowUps: e.target.checked }));
-  $('auto-pages').addEventListener('change', (e) => usage.saveSettings({ autoPages: e.target.checked }));
-  $('auto-advance').addEventListener('change', (e) => { usage.saveSettings({ autoAdvance: e.target.checked }); renderSite(); });
+  $('auto-followups').addEventListener('change', async (e) => { await usage.saveSettings({ autoFollowUps: e.target.checked }); logSettings('changed', 'autoFollowUps'); });
+  $('auto-pages').addEventListener('change', async (e) => { await usage.saveSettings({ autoPages: e.target.checked }); logSettings('changed', 'autoPages'); });
+  $('auto-advance').addEventListener('change', async (e) => { const saving = usage.saveSettings({ autoAdvance: e.target.checked }); renderSite(); await saving; logSettings('changed', 'autoAdvance'); });
+  $('overwrite').addEventListener('change', () => logSettings('changed', 'overwrite'));
   // Saved with the other switches but never logged (fillContext's settings are the four the
   // usage server knows).
   $('check-continue').addEventListener('change', (e) => usage.saveSettings({ checkBeforeContinue: e.target.checked }));
@@ -4234,6 +4250,8 @@ async function init() {
   $('auto-followups').checked = saved.autoFollowUps ?? true;
   $('auto-pages').checked = saved.autoPages ?? false;
   $('auto-advance').checked = saved.autoAdvance ?? true;
+  // The panel opened on a saved intake: the settings in force for the rest of its quote.
+  if (state.intake && usage.currentSession()) logSettings('opened');
   $('check-continue').checked = saved.checkBeforeContinue ?? false;
   uploadNow();
   render();
