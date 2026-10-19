@@ -299,7 +299,10 @@ const loggedCrashes = new Set();
 function logCrash(err) {
   try {
     if (state.tab?.carrier?.practice) return;
-    const redact = state.intake ? redactor(redactionTerms(state.intake.record)) : (x) => x;
+    // An intake without a record (the very crash this log exists for) has no terms to redact. If
+    // the redactor itself can't be built, the message is dropped rather than logged unredacted.
+    let redact;
+    try { redact = state.intake?.record ? redactor(redactionTerms(state.intake.record)) : (x) => x; } catch { redact = () => ''; }
     const event = clientErrorEvent(err, { where: 'panel', redact });
     if (loggedCrashes.has(event.error) || loggedCrashes.size >= 20) return;
     loggedCrashes.add(event.error);
