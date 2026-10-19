@@ -1597,6 +1597,8 @@ function holdLayouts() {
   state.layoutNewTabs = new Set();
   // What was kept for the previous quote's layouts is no use any more.
   state.lastLayouts = new Map();
+  // Nor is the previous client's last fill: a problem report must not name it.
+  state.lastRuns = new Map();
   state.layoutErrorsLogged = new Set();
 }
 

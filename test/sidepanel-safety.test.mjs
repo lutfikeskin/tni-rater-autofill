@@ -3761,3 +3761,17 @@ test('a problem report names the fill it is about: view, run, step and what held
   assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), {});
   assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
 });
+
+test('a new intake does not inherit the previous client\'s fill in problem reports', () => {
+  const now = 1_000_000;
+  const state = { intake: { record: { id: 'A' } }, lastLayouts: new Map(), lastRuns: new Map([['7|Rates', { run: 'run-1234-abcd', at: now - 60_000, blockers: ['button: recalculate'] }]]) };
+  const sandbox = { state, viewOf: () => 't1', Date: { now: () => now }, Math, Set, Map };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('problemContext'), sandbox);
+  vm.runInContext(extractFunction('holdLayouts'), sandbox);
+  const tab = { id: 7, carrier: { id: 'progressive' } };
+  assert.equal(sandbox.problemContext(tab, 'Rates').run, 'run-1234-abcd');
+  state.intake = { record: { id: 'B' } };
+  sandbox.holdLayouts();
+  assert.deepEqual(JSON.parse(JSON.stringify(sandbox.problemContext(tab, 'Rates'))), { view: 't1' }, 'client B has no fill yet on that page');
+});
