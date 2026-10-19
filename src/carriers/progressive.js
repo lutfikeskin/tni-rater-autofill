@@ -129,6 +129,30 @@ const trailerEquipmentSource = (r) => (r.trailerInfo?.equipTrailer == null ? 'st
 // the driver took a course (or the Additional Notes box does); then it's the agent's.
 const defensiveMention = (r) => String(otherNotes(r) ?? '').match(/[^\n.]*defensive[^\n.]*/i)?.[0].trim().slice(0, 80) ?? null;
 
+// A driver's accidents, claims or violations: the claims box's Yes or No. TNI (2026-10-19, after a
+// live run): when it gives neither, No (standard) unless the intake's notes (the claims box's
+// other lines, the Additional Notes box) mention one; then it's the agent's. A sentence that only
+// denies them ("No claims or violations in the last 5 years", "Clean record", "N/A") is no mention,
+// and neither are claim-free or loss runs.
+const CLAIM_WORDS = '(?:prior\\s+)?(?:accidents?|claims?|violations?|tickets?|citations?|losses|incidents?)';
+const CLAIM_WORD = /\b(?:accidents?|claims?(?![- ]?free)|violations?|tickets?|citations?|speeding|dui|dwi|crash(?:es)?|wrecks?|convictions?|convicted|suspen\w*|at[- ]fault|totall?ed|incidents?|loss(?:es)?(?!\s*runs?))\b/i;
+const CLAIM_DENIAL = new RegExp(`^(?:(?:no|none|zero|0|never had(?: any)?)(?:\\s+${CLAIM_WORDS}(?:\\s*(?:,|/|&|or|and|nor)\\s*${CLAIM_WORDS})*)?(?:\\s+(?:in|for|within|during)\\s+(?:the\\s+)?(?:last|past)\\s+\\d+\\s+(?:years?|yrs?))?|n/?a|clean(?:\\s+(?:record|mvr|driving record))?)$`, 'i');
+const claimMention = (r) => String(otherNotes(r) ?? '').split(/[\n.;]+/).map((s) => s.trim())
+  .find((s) => CLAIM_WORD.test(s) && !CLAIM_DENIAL.test(s))?.slice(0, 80) ?? null;
+const hasClaims = (r) => (typeof r.claims?.hasClaims === 'boolean' ? r.claims.hasClaims : claimMention(r) ? null : false);
+const hasClaimsSource = (r) => (typeof r.claims?.hasClaims === 'boolean' ? 'intake' : claimMention(r) ? 'derived' : 'standard');
+const hasClaimsNote = (r) => (typeof r.claims?.hasClaims !== 'boolean' && claimMention(r)
+  ? `The claims box doesn't start with Yes or No, and the intake's notes mention one ("${claimMention(r)}"): answer it yourself.`
+  : null);
+
+// Hazardous material placard: the intake's answer. TNI (2026-10-19, after a live run): left blank,
+// No (standard) unless the intake says they haul hazardous material; then it's the agent's.
+const hazPlacard = (r) => (typeof r.operations.hazPlacard === 'boolean' ? r.operations.hazPlacard : r.operations.hazmat === true ? null : false);
+const hazPlacardSource = (r) => (typeof r.operations.hazPlacard === 'boolean' ? 'intake' : r.operations.hazmat === true ? 'derived' : 'standard');
+const hazPlacardNote = (r) => (typeof r.operations.hazPlacard !== 'boolean' && r.operations.hazmat === true
+  ? 'The intake says they haul hazardous material but doesn\'t answer the placard question: answer it yourself.'
+  : null);
+
 // Farthest one-way distance: "Unlimited" / long haul becomes 501 miles, which picks "More than
 // 500 miles". A trailer goes as far as the vehicle (TNI).
 const radiusMiles = (r) => r.operations.radiusMiles ?? (isLongHaul(r.operations.radius) ? 501 : null);
@@ -166,6 +190,12 @@ const filings = (r) => (r.operations.filingsRequired === true ? true : r.operati
 const filingsNote = (r) => (r.operations.filingsRequired === true && !r.applicant.dot
   ? 'Filings are requested but the intake has no USDOT number; Progressive may not allow filings without one.'
   : null);
+// "Are state or federal filings required?" TNI (2026-10-19, after a live run): left blank on an
+// intake with no USDOT or MC number, No (standard). With either number a blank answer stays the
+// agent's. (The Filings page's answers keep `filings`: that page shows only after a Yes.)
+const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && !r.applicant.dot && !r.applicant.mc;
+const filingsAsked = (r) => (filingsBlankNoNumber(r) ? false : filings(r));
+const filingsSource = (r) => (filingsBlankNoNumber(r) ? 'standard' : 'derived');
 const usesEld = (r) => explicitBoolean(r, 'operations.usesEld');
 const eldNote = (r) => (usesEld(r) == null ? 'The intake does not answer the ELD question.' : null);
 const cargoNote = (r) => r.coverage.cargo === true && !r.coverage.cargoLimit
@@ -533,7 +563,8 @@ export const progressive = {
       { q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
       { q: '2DD', field: 'AccountInput.PhoneThreeDigitsString', ask: 'Three digit prefix of phone', name: 'Phone prefix (optional)', ignore: true },
       { q: '2DF', field: 'AccountInput.PhoneFourDigitsString', ask: 'Four digit suffix of phone', name: 'Phone line number (optional)', ignore: true },
-      { q: '2F6', field: 'BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard', ask: 'Do any listed vehicles or the load require a hazardous material placard?', path: 'operations.hazPlacard', name: 'Hazmat placard required' },
+      // The intake's answer; blank: TNI's standard No unless they haul hazmat (hazPlacard, 2026-10-19).
+      { q: '2F6', source: hazPlacardSource, field: 'BCBTUBusQuestions.B53AnyVehicleRequiresHazardousPlacard', ask: 'Do any listed vehicles or the load require a hazardous material placard?', path: 'operations.hazPlacard', name: 'Hazmat placard required (standard: No when the intake leaves it blank)', kind: 'bool', value: hazPlacard, note: hazPlacardNote },
     ]),
 
     // --- Owner not found by Progressive's lookup (NoHit) ----------------------------------------
@@ -581,7 +612,7 @@ export const progressive = {
       { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
       { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },
       { q: 'C1', field: 'AccountInput.BlanketWOSQuestion', ask: 'Is a Blanket Waiver of Subrogation endorsement needed by contract?', name: 'Blanket waiver of subrogation (preserve prefilled value)', ignore: true },
-      { q: 'CA', source: 'derived', field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required', kind: 'bool', value: filings, note: filingsNote },
+      { q: 'CA', source: filingsSource, field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank with no USDOT or MC number)', kind: 'bool', value: filingsAsked, note: filingsNote },
       { q: 'D1', source: 'derived', field: 'PolicyInput.ELDHoursOfServiceRecords', ask: 'Is an Electronic Logging Device (ELD) required to record hours of service?', name: 'Electronic logging', kind: 'bool', value: usesEld, note: eldNote },
     ]),
 
@@ -627,6 +658,9 @@ export const progressive = {
       // Found by its text: its data-model name is the trailer's too (kept to the trailer pages).
       // Shown once the band says more than $2,000: the intake's equipment value.
       { q: '2CE0', source: 'derived', ask: 'What is the value of the permanently attached equipment?', name: 'Attached equipment amount (from the intake, over $2,000)', kind: 'money', value: vehicleEquipment, ignore: (r) => !equipmentOver(r), scope: 'vehicle' },
+      // SC (2026-10-19): whether the insured has had the vehicle less than a year. Not on the intake;
+      // TNI's standard No (after a live run, where the agent answered it).
+      { q: '2C06', source: 'standard', field: 'RiskInput.VehicleOwnershipLessThanAYear', ask: 'Has the insured or their hired driver had the vehicle less than one (1) year?', name: 'Had the vehicle less than one year (standard: No)', kind: 'bool', value: () => false },
       // SC (2026-10-07): how long the insured has had the vehicle. Not on the intake: the agent's (TNI).
       { q: '2C09', source: 'fact', field: 'RiskInput.LengthOfVehicleOwnershipQuestion', ask: 'How long has the insured or their hired driver had the vehicle?', name: 'How long the insured has had the vehicle (the agent\'s)', note: () => 'How long the insured has had this vehicle isn\'t on the intake: answer it yourself.' },
       // Asked here for the vehicle being added, and on Rates (FL, NC, OH) once per vehicle, where each
@@ -673,7 +707,8 @@ export const progressive = {
       // No: the driver is listed on the intake to be covered. An exclusion request has no intake
       // field; the agent excludes a driver themselves.
       { q: '28C1', source: 'derived', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (No: listed on the intake)', kind: 'bool', value: () => false },
-      { q: '28F5', field: 'DriverInput.AnyAccidentsViolationsPastExpYears', label: '^has this driver had any accidents claims or violations in the past', path: 'claims.hasClaims', name: 'Accidents / claims / violations (3 yrs)', kind: 'bool' },
+      // The claims box's Yes or No; neither: TNI's standard No unless the notes mention one (hasClaims, 2026-10-19).
+      { q: '28F5', source: hasClaimsSource, field: 'DriverInput.AnyAccidentsViolationsPastExpYears', label: '^has this driver had any accidents claims or violations in the past', path: 'claims.hasClaims', name: 'Accidents / claims / violations (standard: No unless the intake says otherwise)', kind: 'bool', value: hasClaims, note: hasClaimsNote },
     ]),
 
     // --- Coverages and rates (CoveragesRates) ----------------------------------------------------

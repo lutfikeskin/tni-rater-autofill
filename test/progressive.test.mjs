@@ -738,6 +738,57 @@ test('defensive driver discount: No, unless the description box mentions a cours
   assert.deepEqual([fromNotes.value, /defensive driving course/.test(fromNotes.note ?? '')], [null, true]);
 });
 
+// TNI, 2026-10-19 (SC live run: each went to the agent and to Luna, though TNI's answer is No).
+test('TNI standards of 2026-10-19: blank placard, claims, filings (no USDOT / MC) and a vehicle under a year are No', () => {
+  const step = (record, q) => byQ(buildPlan(record, progressive, { drivers: 0, vehicles: 0 }), q);
+  const got = (s) => [s.value, s.source, s.standard, !!s.note];
+
+  // Hazmat placard: the intake's answer; blank is No unless they haul hazmat.
+  const placard = baseRecord();
+  assert.deepEqual(got(step(placard, '2F6')), [false, 'intake', false, false]);
+  placard.operations.hazPlacard = true;
+  assert.deepEqual(got(step(placard, '2F6')), [true, 'intake', false, false]);
+  placard.operations.hazPlacard = null;
+  assert.deepEqual(got(step(placard, '2F6')), [false, 'standard', true, false], 'blank: TNI standard No');
+  placard.operations.hazmat = true;
+  assert.deepEqual(got(step(placard, '2F6')), [null, 'derived', false, true], 'blank but hauls hazmat: the agent\'s');
+  assert.equal(step(placard, '2F6').path, 'operations.hazPlacard', 'still linked to the intake answer');
+
+  // Accidents, claims or violations: the claims box's Yes or No; neither is No unless the notes
+  // mention one.
+  const claims = (hasClaims, notes = null, more = null) => ({ ...baseRecord(), claims: { hasClaims, notes }, notes: { text: more } });
+  assert.deepEqual(got(step(claims(true), '28F5')), [true, 'intake', false, false]);
+  assert.deepEqual(got(step(claims(false), '28F5')), [false, 'intake', false, false]);
+  for (const notes of [null, 'Financed', 'No claims or violations in the last 5 years.', 'None', 'N/A', 'Clean record', 'Can provide claim-free loss runs', 'Wants a quote by Friday; loss runs attached']) {
+    assert.deepEqual(got(step(claims(null, notes), '28F5')), [false, 'standard', true, false], `"${notes}": TNI standard No`);
+  }
+  for (const [notes, more] of [['One speeding ticket in 2024', null], ['No accidents but one speeding ticket', null], [null, 'Driver had an at-fault accident in 2023.'], ['DUI 2022', null], ['Prior loss: cargo theft 2024', null]]) {
+    const s = step(claims(null, notes, more), '28F5');
+    assert.deepEqual(got(s), [null, 'derived', false, true], `"${notes ?? more}": the agent's`);
+    assert.match(s.note, /answer it yourself/);
+  }
+  // An explicit No in the box wins over notes that mention something else.
+  assert.equal(step(claims(false, 'Ticket paid, dismissed'), '28F5').value, false);
+
+  // Filings: the intake's answer; blank is No only without a USDOT or MC number.
+  const filings = baseRecord();
+  filings.operations.filingsRequired = null;
+  assert.deepEqual(got(step(filings, 'CA')), [false, 'standard', true, false], 'blank, no USDOT or MC: TNI standard No');
+  assert.equal(step(filings, 'F11').value, null, 'the Filings page (shown only after a Yes) is unchanged');
+  filings.applicant.dot = '1234567';
+  assert.deepEqual(got(step(filings, 'CA')), [null, 'derived', false, false], 'blank with a USDOT number: the agent\'s');
+  filings.applicant.dot = null;
+  filings.applicant.mc = '765432';
+  assert.deepEqual(got(step(filings, 'CA')), [null, 'derived', false, false], 'blank with an MC number: the agent\'s');
+  filings.operations.filingsRequired = false;
+  assert.deepEqual(got(step(filings, 'CA')), [false, 'derived', false, false]);
+
+  // Had the vehicle less than a year: TNI's standard No; how long stays the agent's.
+  assert.deepEqual(got(step(baseRecord(), '2C06')), [false, 'standard', true, false]);
+  assert.equal(step(baseRecord(), '2C06').field, 'RiskInput.VehicleOwnershipLessThanAYear');
+  assert.equal(step(baseRecord(), '2C09').value, null);
+});
+
 // Runs of 2026-10-07 (FL, UT, SC): the CDL year, UMPD per vehicle, SC's glass deductible and
 // combined UM/UIM, Rates buttons waiting on required questions, and vehicle ownership length.
 test('FL / UT / SC questions of 2026-10-07', () => {

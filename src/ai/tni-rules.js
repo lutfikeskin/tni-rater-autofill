@@ -10,7 +10,7 @@ export const TNI_RULES = `
 ## General
 - The intake (the client's TNI Commercial Insurance Quote Application) is the source of truth for facts about the client. Never invent a fact the intake doesn't give.
 - Coverage and workflow questions the intake doesn't cover use TNI's standard answers below. The page's own pre-selected answer is not always right: prefer the TNI rule.
-- A fact about the client that the intake doesn't give (a driver's marital status, when the business was established, whether valued loss runs can be provided, who a vehicle is registered to) is the agent's: leave it. There is no standard answer for a client fact, except these TNI standards: a driver's gender is MALE unless the client details set it; the year first licensed is the birth year + 17; continuous coverage is Yes when the intake shows the customer currently insured; other business coverages are "None" / "None of the above" unless the customer has general liability (the agent marked it) or the intake asks for general liability; on AmWINS, how long with the current carrier is 1 TO 2 YEARS and claim-free loss runs No; on Progressive, a USDOT number obtained within the last 60 days (asked when the lookup finds no record) is Yes.
+- A fact about the client that the intake doesn't give (a driver's marital status, when the business was established, whether valued loss runs can be provided, who a vehicle is registered to) is the agent's: leave it. There is no standard answer for a client fact, except these TNI standards: a driver's gender is MALE unless the client details set it; the year first licensed is the birth year + 17; continuous coverage is Yes when the intake shows the customer currently insured; other business coverages are "None" / "None of the above" unless the customer has general liability (the agent marked it) or the intake asks for general liability; on AmWINS, how long with the current carrier is 1 TO 2 YEARS and claim-free loss runs No; on Progressive, a USDOT number obtained within the last 60 days (asked when the lookup finds no record) is Yes, and the hazardous material placard, a driver's accidents, claims or violations, state or federal filings and whether the insured has had the vehicle less than one year are No as described below.
 - The agent decides: MVR and CLUE report orders, excluding a driver, anything the client must sign, attest or authorise, payment or bank details, and moving to another page.
 
 ## Named insured and business (BusinessOwnerInfo)
@@ -23,7 +23,7 @@ export const TNI_RULES = `
 - Business type search list: preserve the intake's distinction between expediter and general freight hauler, using the mappings below. If the needed option is absent from the visible search results, leave it for review rather than choosing a different business type.
 - Business type: "For Hire Trucking" for expediters, then Type of Trucker "Other For-Hire Trucking". General freight haulers are "General Freight Hauler" (portal wording may be "General Freight Trucking"). Otherwise use the closest match to what the intake says the business does.
 - Owner name and date of birth from the intake; the owner is usually the driver with the same last name.
-- Hazardous material placard: from the intake.
+- Hazardous material placard: from the intake. Left blank: No (TNI standard), unless the intake says they haul hazardous material; then the agent's.
 - Verify USDOT finds no record (a brand-new USDOT): "obtained within the last 60 days" is Yes, and the business name box gets the company name (no company: the owner's full name).
 - Leave empty: middle initial, suffix, DBA name (always), quote vendor code. Don't change agent code or policy start date.
 
@@ -38,7 +38,7 @@ export const TNI_RULES = `
 - Permanently attached equipment: the intake's attached equipment value (vehicle). None, or up to $2,000: "$0 to $2,000" and tick "Vehicle has no equipment" (standard). More: no-equipment is No, the amount is entered, and the band is the agent's. The vehicle value question that follows ("If this vehicle was sold today…") is the intake's vehicle value.
 - On the vehicle list page, vehicles found by the USDOT lookup are listed; add the intake's vehicle with Add → Add Vehicle.
 - Vehicle registrant (NJ): not on the intake; the agent answers it. NJ safety equipment boxes (anti-lock brakes, traction control, 5 MPH bumpers, anti-theft devices): keep what the VIN lookup set.
-- How long the insured or their hired driver has had the vehicle: not on the intake; the agent answers it.
+- How long the insured or their hired driver has had the vehicle: not on the intake; the agent answers it. Whether they have had it less than one (1) year: No (TNI standard).
 - Vehicle value: the intake's vehicle value. GVW, annual mileage, anti-lock brakes, driver-side airbag and anti-theft device come from the VIN lookup: keep Progressive's answers.
 - Trailers (after the vehicles: Add → Add Trailer, then the trailer tile): "Flatbed" is "Flatbed Trailer", "Dry Van" is "Dry Freight Trailer", "Reefer" is "Refrigerated Dry Freight"; Enclosed, Tanker, Lowboy, Step Deck and Other: the agent picks. On Add Trailer: the intake trailer's VIN, year, make and value; farthest distance as the vehicle's; loan or lease from the intake's trailer ownership (financed: "Yes - Loan", leased: "Yes - Lease", owned: No; not given, or another answer such as Rented: the agent's); comprehensive / collision Yes; tick "Trailer has no equipment", unless the intake gives a trailer equipment value (then enter it as the equipment value).
 
@@ -47,13 +47,13 @@ export const TNI_RULES = `
 - Exclude this driver: No for a driver listed on the intake; excluding a driver is the agent's decision.
 - Year CDL issued: the intake's CDL year; "Year is unknown" is the agent's.
 - Defensive driver discount: No, unless the intake's description box mentions a defensive driving course (then the agent answers it).
-- Accidents, claims or violations in the past 3 years: from the intake's claims answer (its first line; later lines in the claims box sometimes answer other questions).
+- Accidents, claims or violations in the past 3 (or 5) years: from the intake's claims answer (its first line; later lines in the claims box sometimes answer other questions). When it is neither Yes nor No: No (TNI standard), unless the intake's notes (the claims box, Additional Notes) mention an accident, claim, violation or ticket; then the agent's.
 
 ## More about the business (MoreAboutBusiness)
 - Currently insured: Yes when the intake lists current insurance with a limit and an expiration that is not before the application date. An expired policy alone is not current coverage.
 - Continuous coverage: Yes when the customer is currently insured (as above; TNI: more than a year is always Yes); otherwise the agent answers it. Current bodily injury limit and expiration: as written in the intake ("State Minimum" is "State Minimum or less").
 - Other coverages for the business: TNI standard "None" (the checkbox version: "None of the above" ticked in each group, the coverages unticked), unless the customer has general liability (the agent marked it) or the intake asks for general liability; then the agent answers all of them. Additional insured, waiver and blanket endorsement questions: leave as the page has them (0 / No).
-- State or federal filings required: Yes when the intake says filings are required.
+- State or federal filings required: Yes when the intake says filings are required, No when it says they aren't. Left blank: No (TNI standard) when the intake has no USDOT or MC number; with either number, the agent's.
 - ELD required: from the intake.
 
 ## Filings
