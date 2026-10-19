@@ -41,13 +41,16 @@ the store refuses a version it already has.
      types into a problem report)."
    - Host permissions: "foragentsonly.com / progressive.com / amwinsadmittedplacement.com /
      geico.com: the carrier quote pages it fills. api.openai.com: Luna suggestions for unresolved
-     choice questions, with the agent's own OpenAI key.
+     choice questions, a review of the application's claims box, and a check of drivers' first
+     names (for the gender TNI assumes), with the agent's own OpenAI key.
      usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, no client
      details beyond what an agent types into a problem report).
      localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
-     page, sent to OpenAI when the AI assistant is on). TNI's compliance owner should confirm
-     these answers.
+     page, sent to OpenAI when the AI assistant is on, with client names and numbers redacted).
+     With the assistant on, drivers' first names are sent to OpenAI unredacted, alone in their own
+     request: declare "Personally identifiable information" (name). TNI's compliance owner should
+     confirm these answers.
 4. **Distribution** → Visibility: *Private* (domain or trusted testers) or *Unlisted*.
 5. **Submit for review**. Reviews usually take from a few hours to a few days; the dashboard
    shows the status.
@@ -91,13 +94,13 @@ Load the client's TNI Commercial Insurance Quote Application (PDF) in the side p
 
 What it does
 • Reads the quote application on your computer and lets you check and correct it before filling.
-• Fills one page at a time, checks that each answer was kept by the carrier's page, and marks every field: filled, needs you, or couldn't fill.
+• Fills one page at a time, checks that each answer was kept by the carrier's page, and marks every field: filled, TNI standard, needs you, couldn't fill, or AI answer.
 • Moves to the next step only when nothing is left for you, and never binds, buys, submits or signs anything.
 • Leaves MVR/CLUE orders, declarations and bank/card details to you. Some coverage and exclusion answers use programmed defaults; review them for this client's circumstances.
 • Optional AI tips (with your own OpenAI key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
 
 Privacy
-The application stays on your computer for the session. To improve the extension, a usage log (which fields were filled, what you changed afterwards, problems you report) is sent to TNI's server; client names, numbers and what you type into the quote are not included. A problem report is sent as you type it, with values from the loaded application, if one is loaded, replaced only where they appear exactly as written there, so don't type client details into it.
+The application stays on your computer for the session. With the AI assistant on, parts of it go to OpenAI with your key: client names and numbers are replaced, except drivers' first names, which are sent alone for the gender check. To improve the extension, a usage log (which fields were filled, what you changed afterwards, problems you report) is sent to TNI's server; client names, numbers and what you type into the quote are not included. A problem report is sent as you type it, with values from the loaded application, if one is loaded, replaced only where they appear exactly as written there, so don't type client details into it.
 
 For TNI agents only.
 ```

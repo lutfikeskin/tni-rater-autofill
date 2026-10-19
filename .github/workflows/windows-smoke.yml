@@ -1,7 +1,8 @@
+# By hand only (Actions > Windows browser smoke > Run workflow): the repository is private and
+# Windows minutes are billed double. `npm run ci` runs the same steps on a local Windows computer.
 name: Windows browser smoke
 
 on:
-  pull_request:
   workflow_dispatch:
 
 concurrency:
