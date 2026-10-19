@@ -271,10 +271,12 @@ const KNOWN_FIELDS = new Set([
   'trl_interchange_limit', 'equip_trailer', 'equip_vehicle', 'ins_type_1', 'ins_carrier_1', 'ins_limit_1',
   'ins_exp_1', 'auto_liability', 'auto_liab_limit', 'cargo_cov', 'cargo_limit_ded', 'gen_liability',
   'gen_liab_limit', 'reefer_breakdown', 'claims_details', ...MARITAL_FIELDS,
-  // Only on intakes before 2026-10: the other-insurance-products box (cross_*). Only on 2026-10 and
-  // later: the Additional Notes box and the Canada question. Either form is read.
+  // Each form version has fields the others lack; every version is read. Before 2026-10-02: the
+  // license plate. Before 2026-10-19: the other-insurance-products box (cross_*) and a second
+  // interchange limit beside the hitch. From 2026-10-02: team driving / slip seating. From
+  // 2026-10-19: the Additional Notes box and the Canada question.
   'cross_personal_auto', 'cross_life', 'cross_homeowners', 'cross_renters', 'cross_other', 'cross_other_text',
-  'additional_notes', 'loads_to_canada',
+  'team_driving_or_slip_seating', 'additional_notes', 'loads_to_canada',
   ...ROWS.flatMap((n) => [
     `drv_first_${n}`, `drv_last_${n}`, `drv_dob_${n}`, `drv_lic_${n}`, `drv_state_${n}`, `drv_cdl_${n}`, `drv_cdl_yr_${n}`,
     `veh_type_${n}`, `veh_year_${n}`, `veh_make_${n}`, `veh_model_${n}`, `veh_vin_${n}`, `veh_value_${n}`,
@@ -343,7 +345,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       hazmat: yesNo(raw.haul_hazmat),
       hazPlacard: yesNo(raw.hazardous_placard),
       movingState: yesNo(raw.moving_state),
-      // Not on intakes before 2026-10: unanswered (null), never No.
+      // Not on older intakes (team driving before 2026-10-02, Canada before 2026-10-19):
+      // unanswered (null), never No.
+      teamDriving: yesNo(raw.team_driving_or_slip_seating),
       canadaLoads: yesNo(raw.loads_to_canada),
       personalUse: yesNo(raw.vehicle_personal_use),
       vehicleOwnership: txt('veh_ownership'),

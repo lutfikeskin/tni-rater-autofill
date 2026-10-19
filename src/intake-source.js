@@ -36,6 +36,7 @@ const FIELDS = {
   'operations.hazmat': ['haul_hazmat'],
   'operations.hazPlacard': ['hazardous_placard'],
   'operations.movingState': ['moving_state'],
+  'operations.teamDriving': ['team_driving_or_slip_seating'],
   'operations.canadaLoads': ['loads_to_canada'],
   'operations.licensePlate': ['license_plate'],
   'operations.equipVehicle': ['equip_vehicle'],

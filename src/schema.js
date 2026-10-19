@@ -40,6 +40,7 @@ export const SECTIONS = [
     ['operations.hazmat', 'Hazmat / tobacco / Rx', 'bool'],
     ['operations.hazPlacard', 'Hazmat placard', 'bool'],
     ['operations.movingState', 'Moving states within 6 months', 'bool'],
+    ['operations.teamDriving', 'Team driving / slip seating', 'bool'],
     ['operations.canadaLoads', 'Takes loads to Canada', 'bool'],
     ['operations.licensePlate', 'License plate'],
     ['operations.equipVehicle', 'Attached equipment value (vehicle)', 'money'],

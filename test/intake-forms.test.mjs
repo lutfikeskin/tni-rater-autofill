@@ -10,10 +10,13 @@ import { buildPlan } from '../src/plan.js';
 import { amwins } from '../src/carriers/amwins.js';
 
 // The intake form changed on 2026-10-19: the other-insurance-products box was removed, the claims
-// box narrowed with an Additional Notes box beside it, and "Do you take loads to Canada?" (Yes/No)
-// added to the FEIN / SR22 / ELD row. Intakes on either form are read.
+// box narrowed with an Additional Notes box beside it, "Do you take loads to Canada?" (Yes/No)
+// added to the FEIN / SR22 / ELD row, and the trailer questions laid out one per row (one
+// interchange limit). It keeps the 2026-10-02 team driving / slip seating question, which replaced
+// the license plate. Intakes on every version are read.
 const pdf = (name) => new Uint8Array(fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
 const oldRaw = await readIntakeFields(pdfjs, pdf('sample-intake.pdf'));
+const octRaw = await readIntakeFields(pdfjs, pdf('multi-vehicle-intake.pdf'));
 const newRaw = await readIntakeFields(pdfjs, pdf('sample-intake-2026-10.pdf'));
 const today = { today: new Date('2026-10-19') };
 
@@ -25,6 +28,19 @@ test('the 2026-10 form has the Additional Notes box and the Canada question, and
     assert.ok(!(name in newRaw), `${name} is gone from the new form`);
   }
   assert.ok(!('loads_to_canada' in oldRaw) && !('additional_notes' in oldRaw));
+  assert.equal(newRaw.team_driving_or_slip_seating, 'No', 'slip seating kept from the 2026-10-02 form');
+  assert.ok(!('license_plate' in newRaw) && !('interchange_limit' in newRaw));
+  assert.equal(newRaw.trl_interchange, 'No');
+});
+
+test('the slip seating question is read; unanswered on intakes before it', () => {
+  assert.equal(normalizeIntake(oldRaw, today).record.operations.teamDriving, null);
+  const oct = normalizeIntake(octRaw, today);
+  assert.equal(oct.record.operations.teamDriving, false);
+  assert.ok(!oct.warnings.some((w) => w.code === 'form.unknown-fields'), 'the 2026-10-02 form has no unread field');
+  assert.equal(normalizeIntake(newRaw, today).record.operations.teamDriving, false);
+  assert.equal(normalizeIntake({ ...newRaw, team_driving_or_slip_seating: 'Yes' }, today).record.operations.teamDriving, true);
+  assert.deepEqual(sourceFields('operations.teamDriving'), ['team_driving_or_slip_seating']);
 });
 
 test('an intake on the old form reads as before: Canada unanswered, no additional notes', () => {
@@ -43,6 +59,7 @@ test('an intake on the new form: Canada answered, the notes read like the claims
   assert.equal(error, undefined);
   assert.equal(record.operations.canadaLoads, true);
   assert.equal(record.claims.text, 'No');
+  assert.equal(record.trailerInfo.interchange, false);
   assert.equal(record.claims.hasClaims, false);
   assert.equal(record.claims.notes, null);
   assert.match(record.notes.text, /^3 Years\nFinanced\n/);
