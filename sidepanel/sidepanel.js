@@ -1273,6 +1273,13 @@ function onRecorderMessage(msg, sender) {
     scheduleLayout(layoutPage, 'appeared');
   }
   if (msg.event === 'removed_fields') scheduleLayout(layoutPage, 'removed');
+  // A button the agent clicked themselves (its text, redacted): a helper or a Continue by hand.
+  // On a one-address application, the step it was on (a known step name only, as elsewhere).
+  if (msg.event === 'agent_click') {
+    const page = samePage(msg.page);
+    const step = state.tab.carrier?.layoutSteps ? knownStep(state.tab.carrier, msg.step) : undefined;
+    log({ type: 'agent_click', carrier, page, view: viewOf(sender.tab.id, page), ...(step ? { step } : {}), text: redactor(redactionTerms(state.intake.record))(String(msg.text ?? '')).slice(0, 60) });
+  }
   // An error or validation message appeared (a refused Continue): the layout carries the messages.
   if (msg.event === 'new_messages') scheduleLayout(layoutPage, 'messages');
 }

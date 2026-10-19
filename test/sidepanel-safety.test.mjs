@@ -4360,6 +4360,12 @@ test('a problem report names the fill it is about: view, run, step and what held
   assert.match(extractFunction('wireUsage'), /type: 'problem_report'[^\n]*\.\.\.problemContext\(state\.tab, page\)/);
 });
 
+test('the agent\'s own button clicks are logged redacted, with a known step only', () => {
+  const body = extractFunction('onRecorderMessage');
+  assert.match(body, /if \(msg\.event === 'agent_click'\) \{[\s\S]{0,400}log\(\{ type: 'agent_click', carrier, page, view: viewOf\(sender\.tab\.id, page\), \.\.\.\(step \? \{ step \} : \{\}\), text: redactor\(redactionTerms\(state\.intake\.record\)\)/);
+  assert.match(body, /knownStep\(state\.tab\.carrier, msg\.step\)/);
+});
+
 test('a new intake does not inherit the previous client\'s fill in problem reports', () => {
   const now = 1_000_000;
   const state = { intake: { record: { id: 'A' } }, lastLayouts: new Map(), lastRuns: new Map([['7|Rates', { run: 'run-1234-abcd', at: now - 60_000, blockers: ['button: recalculate'] }]]) };
