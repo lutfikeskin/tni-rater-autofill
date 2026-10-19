@@ -24,7 +24,7 @@ flowchart TD
 
 The side panel injects the fill engine into the open carrier tab. It uses the live DOM and supported widget APIs, not downloaded HTML as a runtime template. Progressive finds questions by their data-model names (`fieldref`) or their text on the page, never by question ids, which Progressive renumbers, with reviewed fallbacks; AmWINS uses selectors and labels; GEICO currently has generic label rules only.
 
-The client record lives in Chrome session storage. AI-enabled requests send unresolved choice questions, options, active intake context and relevant TNI rules to OpenAI GPT-6 Luna with the agent's per-device key. Luna's automatic selection is separately opt-in; picks remain held for agent approval. Pending automatic decisions survive a panel reload, including saved choices from a retired assistant that still require manual review. Usage events are separately queued locally and uploaded to the configured collection server. These are different data paths.
+The client record, and the intake PDF for the panel's PDF view, live in Chrome session storage. AI-enabled requests send unresolved choice questions, options, active intake context and relevant TNI rules to OpenAI GPT-6 Luna with the agent's per-device key. Luna's automatic selection is separately opt-in; picks remain held for agent approval. Pending automatic decisions survive a panel reload, including saved choices from a retired assistant that still require manual review. Usage events are separately queued locally and uploaded to the configured collection server. These are different data paths.
 
 ## Boundaries and known gaps
 
