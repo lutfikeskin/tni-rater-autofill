@@ -59,7 +59,7 @@ Leave a question as it is when the rules and the intake don't say anything about
 - **Current bodily injury limit** and **current policy expiration**: from the intake, as written ("State Minimum" is "State Minimum or less").
 - **Other coverages for the business?**: None.
 - Leave the additional insured and waiver questions as they are.
-- **State or federal filings required?**: Yes when the intake says filings are required, No when it says they aren't. The page pre-selects No. Left blank: No (TNI standard) when the intake has no USDOT or MC number; with either number, leave it to the agent.
+- **State or federal filings required?**: Yes when the intake says filings are required, No when it says they aren't. The page pre-selects No. Left blank: No (TNI standard) when the intake has no USDOT or MC number, also when one is coming within 60 days; with either number, leave it to the agent.
 - **ELD required?**: from the intake.
 
 ### Filings (only when filings are required)

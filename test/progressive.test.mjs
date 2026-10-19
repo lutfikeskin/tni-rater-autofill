@@ -775,6 +775,10 @@ test('TNI standards of 2026-10-19: blank placard, claims, filings (no USDOT / MC
   filings.operations.filingsRequired = null;
   assert.deepEqual(got(step(filings, 'CA')), [false, 'standard', true, false], 'blank, no USDOT or MC: TNI standard No');
   assert.equal(step(filings, 'F11').value, null, 'the Filings page (shown only after a Yes) is unchanged');
+  // A USDOT coming within 60 days (TNI, 2026-10-19): still No; the USDOT question says "Not Yet".
+  filings.applicant.mcDotWithin60Days = true;
+  assert.deepEqual(got(step(filings, 'CA')), [false, 'standard', true, false], 'USDOT coming within 60 days: still No');
+  assert.match(step(filings, '1ED').value, /^Not Yet - but the customer has applied\/will apply/);
   filings.applicant.dot = '1234567';
   assert.deepEqual(got(step(filings, 'CA')), [null, 'derived', false, false], 'blank with a USDOT number: the agent\'s');
   filings.applicant.dot = null;

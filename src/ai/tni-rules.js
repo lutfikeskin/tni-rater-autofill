@@ -53,7 +53,7 @@ export const TNI_RULES = `
 - Currently insured: Yes when the intake lists current insurance with a limit and an expiration that is not before the application date. An expired policy alone is not current coverage.
 - Continuous coverage: Yes when the customer is currently insured (as above; TNI: more than a year is always Yes); otherwise the agent answers it. Current bodily injury limit and expiration: as written in the intake ("State Minimum" is "State Minimum or less").
 - Other coverages for the business: TNI standard "None" (the checkbox version: "None of the above" ticked in each group, the coverages unticked), unless the customer has general liability (the agent marked it) or the intake asks for general liability; then the agent answers all of them. Additional insured, waiver and blanket endorsement questions: leave as the page has them (0 / No).
-- State or federal filings required: Yes when the intake says filings are required, No when it says they aren't. Left blank: No (TNI standard) when the intake has no USDOT or MC number; with either number, the agent's.
+- State or federal filings required: Yes when the intake says filings are required, No when it says they aren't. Left blank: No (TNI standard) when the intake has no USDOT or MC number, also when one is coming within 60 days; with either number, the agent's.
 - ELD required: from the intake.
 
 ## Filings

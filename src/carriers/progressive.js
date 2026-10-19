@@ -191,8 +191,10 @@ const filingsNote = (r) => (r.operations.filingsRequired === true && !r.applican
   ? 'Filings are requested but the intake has no USDOT number; Progressive may not allow filings without one.'
   : null);
 // "Are state or federal filings required?" TNI (2026-10-19, after a live run): left blank on an
-// intake with no USDOT or MC number, No (standard). With either number a blank answer stays the
-// agent's. (The Filings page's answers keep `filings`: that page shows only after a Yes.)
+// intake with no USDOT or MC number, No (standard), also when the intake says one is coming
+// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number a
+// blank answer stays the agent's. (The Filings page's answers keep `filings`: that page shows only
+// after a Yes.)
 const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && !r.applicant.dot && !r.applicant.mc;
 const filingsAsked = (r) => (filingsBlankNoNumber(r) ? false : filings(r));
 const filingsSource = (r) => (filingsBlankNoNumber(r) ? 'standard' : 'derived');
