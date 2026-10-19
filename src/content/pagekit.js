@@ -1600,12 +1600,16 @@
         && (!a.pages.length || a.pages.includes(currentPage())) && !(a.resolvedBy && findButton({ text: a.resolvedBy }));
     }
 
+    // A prerequisite holds when its field shows the intake's answer, or an answer the agent chose
+    // themselves (their correction counts as resolved). Missing, rejected or different: not yet.
+    function answered(pairs, path) {
+      return pairs.some(({ step, control }) => step.path === path && !step.ignore && !invalidControl(control)
+        && ((step.value != null && agreesWith(step, control)) || (skippedField(control) && hasValue(control))));
+    }
+
     function clickNextAction(controls, immediateOnly = false) {
       const pairs = assign(controls, plan);
-      // A prerequisite holds when its field shows the intake's answer, or an answer the agent chose
-      // themselves (their correction counts as resolved). Missing, rejected or different: not yet.
-      const has = (path) => pairs.some(({ step, control }) => step.path === path && !step.ignore && !invalidControl(control)
-        && ((step.value != null && agreesWith(step, control)) || (skippedField(control) && hasValue(control))));
+      const has = (path) => answered(pairs, path);
       const blocked = [];
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         // A link verified by its going away that is back on its page (NTL removed by hand, then
@@ -1662,19 +1666,22 @@
           && (!a.afterValue || pairs.some(({ step, control }) => step.path === a.afterValue[0] && new RegExp(a.afterValue[1], 'i').test(selectedText(control) ?? '')));
         if (!ready) {
           // Name what it waits for (field paths, buttons, pages: no client values), so the panel
-          // and the usage log say why a helper didn't run.
-          const waitingFor = [
-            ...a.after.filter((p) => !has(p)),
-            ...(a.afterAny?.length && !a.afterAny.some(has) ? [`one of ${a.afterAny.join(' / ')}`] : []),
-            ...a.afterActions.filter((id) => !clicked.has(id)).map((id) => `${id} clicked`),
-            ...(a.afterPages.length && !a.afterPages.some((p) => visited.has(p)) ? [`${a.afterPages.join(' / ')} visited`] : []),
-            ...(a.needsPremium && !premiumReady() ? ['a current premium'] : []),
-            ...(a.afterValue ? [`${a.afterValue[0]} set`] : []),
-            ...holds.map((h) => `${h.label ?? h.baseAction} resolved`),
-            ...openRequired.slice(0, 3).map((c) => `${c.label || 'a required question'} answered`),
+          // and the usage log say why a helper didn't run: `waits` for the panel, which names each
+          // in the agent's words, and `why` (the same, as text) for the log.
+          const waits = [
+            ...a.after.filter((p) => !has(p)).map((path) => ({ path })),
+            ...(a.afterAny?.length && !a.afterAny.some(has) ? [{ any: a.afterAny }] : []),
+            ...a.afterActions.filter((id) => !clicked.has(id)).map((action) => ({ action })),
+            ...(a.afterPages.length && !a.afterPages.some((p) => visited.has(p)) ? [{ pages: a.afterPages }] : []),
+            ...(a.needsPremium && !premiumReady() ? [{ say: 'a current premium' }] : []),
+            ...(a.afterValue ? [{ path: a.afterValue[0], set: true }] : []),
+            ...holds.map((h) => ({ action: h.action, say: `${h.label ?? h.baseAction} resolved` })),
+            ...openRequired.slice(0, 3).map((c) => ({ say: `${c.label || 'a required question'} answered` })),
           ];
+          const waitingFor = waits.map((w) => w.say ?? (w.any ? `one of ${w.any.join(' / ')}` : w.action ? `${w.action} clicked`
+            : w.pages ? `${w.pages.join(' / ')} visited` : `${w.path}${w.set ? ' set' : ''}`));
           blocked.push(a.action);
-          report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites' });
+          report.blocked.push({ id: a.action, why: waitingFor.length ? `waiting for ${waitingFor.join(', ')}` : 'waiting for its prerequisites', waits });
           continue;
         }
         // Its result already shows (the agent ran the lookup before Fill): done, not clicked again.
@@ -1785,8 +1792,18 @@
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.unfinished });
       }
     }
-    // A button that was waiting earlier in this fill and got clicked later isn't waiting any more.
-    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findIndex((x) => x.id === b.id) === i);
+    // A button that was waiting earlier in this fill and got clicked later isn't waiting any more,
+    // and neither is one that waited only for answers the page now shows, once the page took the
+    // button away: Progressive looked a second vehicle's VIN up by itself once it was typed (SC
+    // 2026-10-19), and the panel still said Look up VIN was waiting for the VIN. One still waiting
+    // for another helper, a page or a premium stays, as does a menu item (`opener`: shown only with
+    // its menu open) and a helper the agent must do by hand (`missing`, reported above).
+    const goneUnclicked = (b) => {
+      if (!stillHere || !b.waits?.length || !b.waits.every((w) => w.path && !w.set && answered(pairs, w.path))) return false;
+      const a = actions.find((x) => x.action === b.id);
+      return !!a && !a.opener && !a.missing && !findButton(a);
+    };
+    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && !goneUnclicked(b) && all.findIndex((x) => x.id === b.id) === i);
     // Where each item's field is on the page (`order`: its place among the page's questions, in
     // document order), so the side panel lists what's left in the page's order, whichever kind
     // of item it is. Read once, from the page as it is now (as the last round read it when a

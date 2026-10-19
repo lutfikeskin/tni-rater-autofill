@@ -354,38 +354,38 @@ export const progressive = {
     // Done once the page shows the lookup's result (the registered names to pick, or the 60-day
     // question when the number is new): a click without one is tried again, then the agent's.
     // Already showing them for the number on the page (the agent verified it before Fill): done.
-    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] } },
+    { id: 'verifyDot', button: 'Verify USDOT', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] } },
     // Vehicle summary: "Add a Vehicle" for a vehicle not entered yet (its VIN lookup not done).
     // The vehicles found by the USDOT lookup are listed there too; ours is added with Add Vehicle,
     // which sits in the "Add" menu.
     // The side panel moves the active vehicle to the next one not added yet (vehicleList below);
     // once all are added nothing is left on the page and its Continue is clicked.
-    { id: 'addVehicle', page: 'VehicleSummary', text: '^add (a |another )?vehicle$|^add another$', opener: '^add$', unlessActions: ['lookupVin:vehicle'], scope: 'vehicle' },
+    { id: 'addVehicle', button: 'Add Vehicle', page: 'VehicleSummary', text: '^add (a |another )?vehicle$|^add another$', opener: '^add$', unlessActions: ['lookupVin:vehicle'], scope: 'vehicle' },
     // Driver list: Add for each intake driver not entered yet (the side panel moves the active
     // driver, see driverList), then Continue.
     // A driver counts once the list comes back from its page; Add Driver opened and left holds
     // Continue with a note, like a trailer.
-    { id: 'addDriver', page: 'DriverSummary', text: '^add (a |another )?driver$|^add another$', opener: '^add$', unlessActions: ['driverEntered'], scope: 'driver', label: 'Driver', doneWhen: (r, a) => [`driverEntered:${a.drivers ?? 0}`], unfinished: 'Add Driver was opened, but this intake driver was never entered: add them (Add → Add Driver) before Continue.' },
+    { id: 'addDriver', button: 'Add Driver', page: 'DriverSummary', text: '^add (a |another )?driver$|^add another$', opener: '^add$', unlessActions: ['driverEntered'], scope: 'driver', label: 'Driver', doneWhen: (r, a) => [`driverEntered:${a.drivers ?? 0}`], unfinished: 'Add Driver was opened, but this intake driver was never entered: add them (Add → Add Driver) before Continue.' },
     // Some states (IN, OH) show the business type as a box with a Search next to it, which opens
     // the business type list (BECAPopup).
-    { id: 'businessTypeSearch', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
+    { id: 'businessTypeSearch', button: 'Search (business type)', page: 'BusinessOwnerInfo', text: '^search$', near: 'business type', unless: ['progressive.q36'] },
     // Two tiles matching (two reefer tiles) means it's the agent's pick.
-    { id: 'vehicleTile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
+    { id: 'vehicleTile', button: 'the vehicle tile', page: 'MostCommonVehicles', text: vehicleTile, unique: true, label: 'Vehicle type', missing: vehicleTileNote, scope: 'vehicle' },
     // Done once the decoded vehicle shows (year, make, model, the safety boxes): same again.
     // Already decoded for the VIN on the page (the agent looked it up before Fill): done.
-    { id: 'lookupVin', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle', verify: 'revealed', shownBy: { all: ['vehicles[].year', 'vehicles[].make', 'vehicles[].model'], answered: true } },
+    { id: 'lookupVin', button: 'Look up VIN', page: 'AddVehicle', text: '^look ?up( vin)?$', after: ['vehicles[].vin'], immediate: true, scope: 'vehicle', verify: 'revealed', shownBy: { all: ['vehicles[].year', 'vehicles[].make', 'vehicles[].model'], answered: true } },
     // Trailers, once every vehicle is in: Add Trailer (in the "Add" menu) for the next intake
     // trailer not entered yet (the side panel moves the active trailer, see trailerList), its tile,
     // then its Add Trailer page. When the button can't be found the agent is told, so Continue
     // never leaves an intake trailer out (TN 2026-10-07).
-    { id: 'addTrailer', page: 'VehicleSummary', text: '^add (a |another )?trailer$', opener: '^add$', unlessActions: ['trailerEntered:trailer'], afterActions: (r) => (r.vehicles ?? []).map((_, i) => `lookupVin:${i}`), scope: 'trailer', label: 'Trailer', missing: 'Add the intake\'s trailer yourself (Add → Add Trailer).', doneWhen: (r, a) => [`trailerEntered:${a.trailers ?? 0}`], unfinished: 'Add Trailer was opened, but this intake trailer was never entered: add it (Add → Add Trailer) before Continue.', when: (r) => (r.trailers?.length ?? 0) > 0 },
-    { id: 'trailerTile', page: 'MostCommonTrailers', text: trailerTile, unique: true, label: 'Trailer type', missing: trailerTileNote, scope: 'trailer', when: (r) => (r.trailers?.length ?? 0) > 0 },
+    { id: 'addTrailer', button: 'Add Trailer', page: 'VehicleSummary', text: '^add (a |another )?trailer$', opener: '^add$', unlessActions: ['trailerEntered:trailer'], afterActions: (r) => (r.vehicles ?? []).map((_, i) => `lookupVin:${i}`), scope: 'trailer', label: 'Trailer', missing: 'Add the intake\'s trailer yourself (Add → Add Trailer).', doneWhen: (r, a) => [`trailerEntered:${a.trailers ?? 0}`], unfinished: 'Add Trailer was opened, but this intake trailer was never entered: add it (Add → Add Trailer) before Continue.', when: (r) => (r.trailers?.length ?? 0) > 0 },
+    { id: 'trailerTile', button: 'the trailer tile', page: 'MostCommonTrailers', text: trailerTile, unique: true, label: 'Trailer type', missing: trailerTileNote, scope: 'trailer', when: (r) => (r.trailers?.length ?? 0) > 0 },
     // Non-trucking liability, once the agent set it to Yes (a claims-box mention alone never
     // clicks it): the link under the liability coverage that opens the NTL section. First in this
     // list, so it comes before cargo. Done only when the link is gone afterwards (a click lost in a
     // redraw stays a blocker). What the section asks hasn't been seen on a live quote: its
     // questions, the bill plan and the rest of Rates are the agent's (agentPages below).
-    { id: 'addNtl', page: 'CoveragesRates', text: ADD_NTL, verify: 'gone', when: (r) => r.coverage.ntl === true },
+    { id: 'addNtl', button: 'Add Non-Trucking Liability', page: 'CoveragesRates', text: ADD_NTL, verify: 'gone', when: (r) => r.coverage.ntl === true },
     // NTL added on this quote, then set back to No: the filler doesn't remove it. Never clicked; a
     // "needs you" item on Rates, holding the later Rates helpers, until the page offers Add NTL
     // again (the agent removed it).
@@ -399,27 +399,27 @@ export const progressive = {
       missing: () => 'NTL was added on this quote, but Non-trucking liability is no longer Yes on the intake: remove it on this page yourself, or set it back to Yes.' },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
     // With NTL the cargo helpers are the agent's too (the rest of Rates is, see agentPages).
-    { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true && notNtl(r) },
-    { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'openCargo', button: '+ (Motor Truck Cargo)', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'addCargoCommodity', button: 'Add commodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true && notNtl(r) },
     // OK (2026-10-07): the commodity was chosen but Done didn't show until the agent chose it again
     // (the category's reload still under way): with no Done, the commodity is chosen again, once.
-    { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', nudge: 'progressive.q216B', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'doneCargo', button: 'Done with this coverage', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', nudge: 'progressive.q216B', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true && notNtl(r) },
     // Rates, as TNI agents work it: once cargo is added (and no GL is requested), open the bill
     // plan options, pick automatic payments there, come back (Continue), then Recalculate, then
     // Print, Email, Fax. With GL or NTL requested the agent does the rates page by hand.
     // None of the rates helpers run while the liability limit is unresolved (missing, rejected or
     // different from the intake); a limit the agent set themselves counts as resolved.
-    { id: 'billPlan', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: ourBillPlan },
+    { id: 'billPlan', button: 'Bill plan options', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: ourBillPlan },
     // Back from the bill plan Progressive has usually recalculated already (Recalculate is gone,
     // Print, Email, Fax is there): Recalculate only when the rates say they're out of date.
     // Recalculate and Print follow the bill plan, which waited for a resolved liability limit.
     // They don't re-check that field: back from the bill plan, the reloaded Rates page failed the
     // same check on a limit that was fine (FL and NJ runs: Print, Email, Fax never ran).
     // With GL there is no bill plan step of ours: they keep the liability check instead.
-    { id: 'recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
+    { id: 'recalculate', button: 'Recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal.
-    { id: 'print', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], when: notNtl },
+    { id: 'print', button: 'Print, Email, Fax', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], when: notNtl },
     // Print/Send is the agent's (TNI 2026-10-07): Progressive opens the quote PDF in a new window
     // from that click, and Chrome only lets a page open one right after the person's own click, so
     // ours went through without a PDF. The Print page is filled; the panel asks for the click.

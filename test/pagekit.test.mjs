@@ -2066,6 +2066,24 @@ test('a helper that waited earlier in the fill and was clicked later does not ke
   assert.equal(next._clicked, true, 'nothing left: Continue');
 });
 
+// SC live run (2026-10-19), second vehicle: Progressive looked the VIN up by itself once it was
+// typed and the Look up button went away, yet the panel still said "Buttons waiting: lookupVin
+// (waiting for vehicles[1].vin)".
+test('a lookup whose button the page took away once the VIN was typed is not left waiting', async () => {
+  const h = harness({ search: '?pageName=AddVehicle' });
+  const vin = makeInput({ id: 'vin', ariaLabel: 'VIN' });
+  const lookup = addButton(h, 'Lookup VIN');
+  vin.addEventListener('change', () => { lookup.remove(); });
+  h.document.body.append(vin);
+  const report = await h.kit.fill([
+    { id: 'vin-step', selector: '#vin', path: 'vehicles[1].vin', kind: 'text', value: '1FTBR3X87MKA12345' },
+    { id: 'lookup', kind: 'action', action: 'lookupVin:1', text: '^lookup vin$', pages: [], after: ['vehicles[1].vin'], afterActions: [], afterPages: [], unless: [], immediate: true },
+  ], { maxRounds: 6 });
+  assert.equal(vin.value, '1FTBR3X87MKA12345');
+  assert.equal(report.blocked.length, 0, report.blockers.join(' | '));
+  assert.ok(!report.blockers.some((b) => /lookupVin/.test(b)), 'Continue isn\'t held by it');
+});
+
 test('each filled answer carries its timing and side effects (revealed / removed / changed)', async () => {
   const h = harness();
   const first = makeInput({ id: 'first', ariaLabel: 'First question' });
@@ -3043,6 +3061,8 @@ test('verify revealed: an absent lookup with a shown result still waits for its 
   const report = await h.kit.fill(plan, { maxRounds: 8, advance: { text: '^Continue$' } });
   assert.equal(report.actions.length, 0);
   assert.ok(report.blockers.some((b) => /required-helper clicked/.test(b)), report.blockers.join(' | '));
+  // The same wait, structured for the panel (src/waiting.js names it in the agent's words).
+  assert.ok(report.blocked.some((b) => JSON.stringify(b.waits) === JSON.stringify([{ action: 'required-helper' }])), JSON.stringify(report.blocked));
   assert.equal(report.advanced, undefined);
 });
 

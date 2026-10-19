@@ -8,6 +8,7 @@ import { carrierForUrl, quoteProgress } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
+import { waitingText } from '../src/waiting.js';
 import * as usage from './usage-log.js';
 import { collectItems, AssistError, assistContextKey, stableJson } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated, firstNameOf } from '../src/ai/luna.js';
@@ -2908,7 +2909,8 @@ function renderReport(frames, ctx = {}) {
     // Said once for all the items (hidden by recount once none is open).
     needs.length ? h('p', { class: 'needs-say muted small' }, 'Answer these on the page.') : null,
     ...needs.map(need),
-    waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Buttons waiting'), h('span', { class: 'muted' }, waiting.map((x) => `${x.id.replace(/:\d+$/, '')}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`).join('; '))) : null,
+    // Helper buttons not clicked yet, by their names on the page and what they wait for (waitingText).
+    waiting.length ? h('div', { class: 'card quiet small' }, h('b', {}, 'Waiting to click'), h('span', { class: 'muted' }, waiting.map((x) => waitingText(x, ctx.plan)).join('; '))) : null,
     // The marks on the page (pagekit.js COLORS, the same colors: sidepanel.css --mark-*).
     h('div', { class: 'legend' },
       h('span', {}, h('span', { class: 'mark filled' }), 'Filled'),
