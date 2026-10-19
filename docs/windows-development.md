@@ -13,13 +13,7 @@ git clone https://github.com/lutfikeskin/tni-rater-autofill.git
 cd tni-rater-autofill
 ```
 
-While the Windows preparation PR is open, select its branch before continuing:
-
-```powershell
-git switch codex/windows-development
-```
-
-After that PR is merged, use `main`. The repository's `.gitattributes` keeps
+Work from `main`; the Windows preparation (#68) is merged. The repository's `.gitattributes` keeps
 source line endings consistent even when Git for Windows uses `autocrlf`.
 Then install and check:
 
