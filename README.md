@@ -104,10 +104,11 @@ npm run layouts   # carrier page layouts per state/product -> captures/<carrier>
 npm run transitions  # when follow-up questions show, answers not seen yet, what changed after an answer -> reviews/
 npm run captures  # manual captures in layouts/, per scenario in order, with what changed between them -> reviews/
 npm run summary   # intake problems, corrections, failures, time per page
+npm run signals   # builds that logged the period, how far quotes got, what was left and why, what held Continue, problem reports with their build -> reviews/
 node scripts/find-intake.mjs <folder of intake PDFs> server-data   # which intake a session used
 ```
 
-`learn` prints rule lines ready to paste into `src/carriers/<carrier>.js`. **Review each one**: a consistent answer isn't always a correct one. Generated layouts are git-ignored; review them before committing any.
+`signals` isn't part of `npm run review`; the weekly review reads both (see the `weekly-review` and `apply-review-fixes` skills in `.claude/skills/`). `learn` prints rule lines ready to paste into `src/carriers/<carrier>.js`. **Review each one**: a consistent answer isn't always a correct one. Generated layouts are git-ignored; review them before committing any.
 
 ### Replay test pages
 
