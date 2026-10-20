@@ -1295,6 +1295,39 @@ test('a data-model name fenced off this page does not keep a text rule from its 
   assert.equal(report.unknown.length, 0);
 });
 
+// TNI 2026-10-20 (W43-02): with no ZIP on the intake, the vehicle ZIP Progressive filled from the
+// business address is kept, not asked on every vehicle. An empty field is still the agent's, and an
+// intake ZIP still fills (or is flagged when the page says another).
+test('vehicle ZIP: Progressive\'s own ZIP is kept when the intake has none; empty stays the agent\'s', async () => {
+  const zipRun = async (intakeZip, pageZip) => {
+    const record = { applicant: { name: 'Sample Test LLC' }, garaging: { zip: intakeZip }, operations: {}, drivers: [], vehicles: [{ vin: '1FTBW3XM5HKA00001', type: 'Van' }], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+    const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+    const zip = addExtText(h, 'c', '2C02', { caption: 'Zip code where the vehicle is located', ref: 'RiskInput.PrimaryZIP', required: true, value: pageZip });
+    zip.input.value = pageZip;
+    const steps = buildPlan(record, progressive).filter((s) => s.field === 'RiskInput.PrimaryZIP' && s.pages?.includes('AddVehicle'));
+    assert.equal(steps.length, 1);
+    return { zip, report: await h.kit.fill(steps, { maxRounds: 4 }) };
+  };
+  // No intake ZIP, Progressive filled it: kept, named, nothing for the agent.
+  let { zip, report } = await zipRun(null, '18042');
+  assert.equal(zip.cmp.getValue(), '18042');
+  assert.equal(report.noData.length, 0);
+  assert.equal(report.blockers.length, 0, report.blockers.join(' | '));
+  assert.match(report.kept[0]?.keptNote ?? '', /business address \(not on the intake\)/);
+  // No intake ZIP and an empty field: the agent's.
+  ({ report } = await zipRun(null, ''));
+  assert.equal(report.noData.length, 1);
+  assert.ok(report.blockers.length >= 1);
+  // An intake ZIP fills an empty field...
+  ({ zip, report } = await zipRun('17101', ''));
+  assert.equal(zip.cmp.getValue(), '17101');
+  assert.equal(report.kept.length, 0);
+  // ...and a different one on the page is flagged, not kept quietly.
+  ({ report } = await zipRun('17101', '18042'));
+  assert.ok(report.kept.some((x) => x.differs), 'page ZIP differs from the intake: flagged');
+  assert.ok(!report.kept.some((x) => x.keptNote));
+});
+
 // SC 2026-10-07: the equipment amount showed until "no equipment" was ticked, then went away; it
 // stayed listed as unfamiliar. A question gone by the end of the fill isn't the agent's.
 test('an unfamiliar question that went away during the fill is not reported', async () => {

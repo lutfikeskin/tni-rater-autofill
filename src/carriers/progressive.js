@@ -82,6 +82,8 @@ const insuredWithProgressive = (r) => {
 // in the reviewed address rules).
 const registered = (prefer) => ({ kind: 'pick-not', source: 'standard', value: () => ({ not: '^enter a different', prefer }), ignore: (r) => !r.applicant.dot });
 const businessNames = (r) => [r.applicant.name || r.applicant.owner1].filter(Boolean);
+// Shown in the panel for a vehicle or trailer ZIP Progressive filled when the intake has none.
+const VEHICLE_ZIP_KEPT = 'Progressive\'s ZIP from the business address (not on the intake)';
 
 // The intake's vehicle value, only when it's a dollar amount. Anything else ("N/A", "about
 // 40k") goes to the agent with the intake's text, rather than being typed and cleared.
@@ -669,7 +671,11 @@ export const progressive = {
       // the mismatch named.
       { field: 'RiskInput.VehicleTypeToDisplay', ask: 'Vehicle Type', name: 'Vehicle type (asked when the VIN lookup disagrees with the tile)', ignore: true, scope: 'vehicle', emptyNote: vehicleTypeNote },
       { q: '2B20', field: 'RiskInput.VIN', ask: 'Vehicle Identification Number (VIN)', path: 'vehicles[].vin' },
-      { q: '2B92', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip' },
+      // No ZIP on the intake: Progressive fills this from the quote's business address (the USDOT
+      // address when the lookup found one), and the intake's one address is both. Kept, not asked
+      // (TNI, 2026-10-20: "We verified the address through the DOT, so we dont need to see this
+      // question every time"); an empty field is still the agent's, and an intake ZIP still fills.
+      { q: '2B92', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', keepPage: VEHICLE_ZIP_KEPT },
       // "Unlimited" / long haul becomes 501 miles, which picks "More than 500 miles".
       { q: '2B9D', source: 'derived', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this vehicle typically travels (90% or more of the time)', name: 'Farthest one-way distance', kind: 'int', value: radiusMiles },
       { q: '2C05', source: 'derived', field: 'BCBTUVehQuestions.V01Use', ask: 'Is this vehicle used for business, personal or both?', name: 'Business / personal use', kind: 'choice', value: (r) => (r.operations.personalUse === false ? 'Business Only' : r.operations.personalUse ? 'Business & Personal' : null) },
@@ -706,7 +712,7 @@ export const progressive = {
       { q: '2A29', field: 'RiskInput.VIN', ask: 'VIN', path: 'trailers[].vin' },
       { q: '2A2A', field: 'RiskInput.Year', ask: 'Year', path: 'trailers[].year', kind: 'choice' },
       { q: '2A2B', field: 'RiskInput.MakeCode', ask: 'Make', path: 'trailers[].make', kind: 'choice' },
-      { q: '2A61', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', name: 'Trailer ZIP' },
+      { q: '2A61', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', name: 'Trailer ZIP', keepPage: VEHICLE_ZIP_KEPT },
       { q: '2A65', source: 'derived', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this trailer travels for work', name: 'Trailer farthest one-way distance (as the vehicle)', kind: 'int', value: radiusMiles },
       { q: '2AD0', source: 'derived', clientFact: true, field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from the trailer ownership)', kind: 'choice', value: trailerLoanLease, note: trailerOwnershipNote },
       { q: '2AEE', source: 'standard', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this trailer in an accident or loss?', name: 'Trailer comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },

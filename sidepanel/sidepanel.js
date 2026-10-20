@@ -2842,7 +2842,7 @@ function renderReport(frames, ctx = {}) {
     ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null })),
     ...earlier.map((x) => ({ label: x.label || x.name, value: maps.filled.get(x.key).shown || 'filled', standard: !!(x.standard || maps.filled.get(x.key).standard), path: maps.filled.get(x.key).path, from: fromOf.get(x.stepId), edited: editedBy(maps.filled.get(x.key).path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: maps.filled.get(x.key).shown ? x.key : null, field: x.label ?? null })),
     ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
-    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: !!x.standard, group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page' })),
+    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: x.keptNote ?? 'left as the page had it', standard: !!x.standard, group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page' })),
     ...all('skipped').map((x) => ({ label: x.label, value: 'yours (not filled)', kind: 'yours' })),
   ].reduce((rows, row) => {
     // One question asked as several boxes (plan.js `group`: AmWINS' auto symbols): one row, the
