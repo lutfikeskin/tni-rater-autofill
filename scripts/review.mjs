@@ -13,8 +13,8 @@
 // repository's reviews/test-intakes.txt; a git worktree has none, so pass the main checkout's).
 // Rule suggestions and layouts always use all the data (they need many quotes).
 // Reports go to reviews/review-<date>.md (git-ignored, like generated layouts: review first). With
-// --out, the transitions and captures reports and the generated layouts go next to that file
-// instead of into this repository's reviews/ and captures/.
+// --out outside reviews/, the transitions and captures reports and the generated layouts go next
+// to that file instead of into this repository's reviews/ and captures/.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -54,9 +54,12 @@ const previous = fs.existsSync(reviewsDir)
   : null;
 const since = args.includes('--all') ? null : opt('since') ?? previous ?? null;
 const out = opt('out') ?? path.join(reviewsDir, `review-${today}.md`);
-// With --out, the other scripts' reports and layouts go next to it: a review written elsewhere (a
-// test's, in a temporary folder) must not replace the day's real ones in reviews/ and captures/.
-const sideDir = opt('out') ? path.dirname(path.resolve(out)) : null;
+// A review written outside reviews/ (a test's, in a temporary folder) gets the other scripts'
+// reports and layouts next to it: it must not replace the day's real ones in reviews/ and
+// captures/. One written into reviews/ is a real review: its layouts stay where npm run e2e and
+// fixtures:progressive read them.
+const outDir = path.dirname(path.resolve(out));
+const sideDir = path.relative(reviewsDir, outDir) ? outDir : null;
 const sideOut = (name) => (sideDir ? ['--out', path.join(sideDir, `${name}-${today}.md`)] : []);
 
 const all = loadEvents(inputs);
