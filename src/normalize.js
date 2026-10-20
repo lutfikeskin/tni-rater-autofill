@@ -4,7 +4,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, noPriorInsurance, ownerIsDriver, set } from './util.js';
+import { STATES, noPriorInsurance, ownerIsDriver, set, companyName } from './util.js';
 
 export const ROWS = [1, 2, 3, 4];
 // The marital-status dropdowns have odd hierarchical names; positions on the page put them on
@@ -12,9 +12,6 @@ export const ROWS = [1, 2, 3, 4];
 export const MARITAL_FIELDS = ['marital_stat_1.0', 'marital_stat_1.1', 'marital_stat_1.2.0', 'marital_stat_1.2.1'];
 
 const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
-// A company-name box saying there is no company ("NO", "N.A.", "None.", "No company"): the owner
-// is a sole proprietor (TNI, 2026-10-20). Only for that box: "NO" elsewhere is an answer.
-const NO_COMPANY = /^(?:no(?:ne)?|n\s*[\/.]?\s*a\.?|nil|not applicable|no (?:company|business|name)(?: name)?)\.?$/i;
 // Radius answers that mean the widest band (the carrier rules map them to "more than 500 miles"):
 // unlimited, long haul, nationwide, OTR, "48 states" / "lower 48", anywhere. Whole words only: a
 // bare "48" is 48 miles, and "any" must not be found inside "company".
@@ -344,6 +341,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const info = (code, path, msg) => warnings.push({ code, path, level: 'info', msg });
   const txt = (k) => clean(raw[k]);
   const year = today.getFullYear();
+  // "NO", "N.A.", "None." in the company-name box: no company (util.js companyName).
+  const companyAsWritten = txt('company_name');
 
   // Numbers that should be digits only: note when stray characters were dropped.
   const idNumber = (k, path, label, pattern) => {
@@ -359,7 +358,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const rows = { drivers: [], vehicles: [], trailers: [] };
   const record = {
     applicant: {
-      name: NO_COMPANY.test(txt('company_name') ?? '') ? null : txt('company_name'),
+      name: companyName(companyAsWritten),
       dot: idNumber('dot_number', 'applicant.dot', 'USDOT #', /^\d{1,8}$/),
       mc: idNumber('mc_number', 'applicant.mc', 'MC #', /^\d{1,8}$/),
       mcDotWithin60Days: yesNo(raw.mc_dot_60days),
@@ -539,7 +538,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     record.drivers.push(d);
     rows.drivers.push(n);
   });
-  if (NO_COMPANY.test(txt('company_name') ?? '')) info('company.none', 'applicant.name', `Company name "${txt('company_name')}": no company, so a sole proprietor.`);
+  if (companyAsWritten && !companyName(companyAsWritten)) info('company.none', 'applicant.name', `Company name "${companyAsWritten}": no company, so a sole proprietor.`);
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
   if (a.ownerDrives && a.owner1) {
     if (!record.drivers.some((d) => ownerIsDriver(a.owner1, d))) {

@@ -29,7 +29,7 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver } from '../util.js';
+import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul } from '../normalize.js';
 
 // Values that Progressive asks the agent to attest to must come from an explicit intake field.
@@ -44,9 +44,9 @@ const explicitBoolean = (record, path) => {
 // The business owner, matched to their driver row (for date of birth and a clean name split).
 // An intake saying the owner doesn't drive links no row, whatever the names: the name parts come
 // from the owner box alone and the date of birth stays the agent's (a driver with the owner's
-// surname is another person). The owner is always on the driver list, usually first (TNI,
-// 2026-10-20): with no single name match, the date of birth (`dob`) is the first name-matching
-// driver's, else the first driver's.
+// surname is another person). The date of birth (`dob`) is the matched driver's, or the first
+// of several drivers matching the owner's name; with none it is the agent's, with a warning
+// (ownerDobNote; TNI, 2026-10-20: never another driver's).
 export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
@@ -67,8 +67,17 @@ export function owner(r) {
   const driver = fullMatches.length === 1 ? fullMatches[0] : fullMatches.length ? null : lastMatches.length === 1 ? lastMatches[0]
     : repeatedFirst ? sole : firstOnly.length === 1 ? firstOnly[0] : null;
   const first = driver?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
-  const dob = (driver ?? fullMatches[0] ?? lastMatches[0] ?? candidates[0])?.dob ?? null;
-  return { driver, dob, first: first || null, middle: driver?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : driver?.last ?? full.split(/\s+/).at(-1) ?? null };
+  const dobDriver = driver ?? fullMatches[0] ?? lastMatches[0] ?? null;
+  return { driver, dob: dobDriver?.dob ?? null, dobDriver, first: first || null, middle: driver?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : driver?.last ?? full.split(/\s+/).at(-1) ?? null };
+}
+
+// The owner's date of birth left to the agent, and why (Progressive and AmWINS).
+export function ownerDobNote(r) {
+  const o = owner(r);
+  if (o.dob) return null;
+  if (r.applicant.ownerDrives === false) return 'The intake says the owner doesn\'t drive, so no driver row gives their date of birth: enter it yourself.';
+  if (o.dobDriver) return 'The owner\'s driver row has no date of birth: enter it yourself.';
+  return `No driver matches the owner "${r.applicant.owner1 ?? ''}": check the names and enter the owner's date of birth yourself.`;
 }
 
 // "Is the customer currently insured with Progressive Commercial Auto?" Yes only when the
@@ -84,7 +93,7 @@ const insuredWithProgressive = (r) => {
 // no such choice: the manual boxes are the only option and get the intake's values (below and
 // in the reviewed address rules).
 const registered = (prefer) => ({ kind: 'pick-not', source: 'standard', value: () => ({ not: '^enter a different', prefer }), ignore: (r) => !r.applicant.dot });
-const businessNames = (r) => [r.applicant.name || r.applicant.owner1].filter(Boolean);
+const businessNames = (r) => [companyName(r.applicant.name) || r.applicant.owner1].filter(Boolean);
 // A vehicle or trailer ZIP with none on the intake: Progressive's own value is left as it is,
 // and only a field still empty when the fill ends is the agent's.
 const noIntakeZip = (r) => !r.garaging?.zip;
@@ -294,15 +303,13 @@ const OTHER_GROUP = { AA: 'Other business coverages', A7: 'Other business covera
   B2: 'Other business coverages (Progressive bundle)', AF: 'Other business coverages (Progressive bundle)', B0: 'Other business coverages (Progressive bundle)' };
 // Once For Hire Trucking reveals this question, the agency workflow uses this subtype.
 const truckerType = (r) => (isExpediter(r) ? 'Other For-Hire Trucking' : null);
-// LLC / Inc / Corp in the company name means a corporation; no company name means a sole proprietor
-// (the owner-operators quoted so far). A company name without a suffix is the agent's (it may be a
-// partnership or an unsuffixed LLC). Partnerships are never guessed. LLC / Inc / Corp count
-// anywhere as a word ("SAMPLE LLC DBA EXAMPLE FREIGHT"); Company / Co only at the end.
-const CORPORATE_SUFFIX = /\b(?:l\.?l\.?c|inc|incorporated|corp|corporation)\b|\b(?:company|co)\.?$/i;
-const businessStructure = (r) => (CORPORATE_SUFFIX.test(r.applicant.name ?? '') ? 'Corporation or LLC / Non-Profit'
-  : !String(r.applicant.name ?? '').trim() ? 'Individual / Sole Proprietor' : null);
-const businessStructureNote = (r) => (businessStructure(r) == null
-  ? `The company name "${r.applicant.name}" has no LLC / Inc / Corp suffix, so its structure isn't known: answer it yourself.` : null);
+// The business structure from the company name's last word (util.js companyStructure): LLC / Inc /
+// Corp is a corporation, no company a sole proprietor (Progressive then shows no business name
+// box). LLC inside the name is filled with a warning; a name with none of them is the agent's.
+const STRUCTURES = { llc: 'Corporation or LLC / Non-Profit', corp: 'Corporation or LLC / Non-Profit', sole: 'Individual / Sole Proprietor' };
+const businessStructure = (r) => STRUCTURES[companyStructure(r.applicant.name).structure] ?? null;
+const businessStructureNote = (r) => companyStructureNote(r.applicant.name);
+const businessStructureWarn = (r) => companyStructureWarn(r.applicant.name);
 // Hauls goods for hire: the expediters and freight haulers the rules were written for do. Any other
 // business class is the agent's (review mode covers its standard answers).
 const forHire = (r) => (isExpediter(r) || isFreightHauler(r) ? true : null);
@@ -605,7 +612,7 @@ export const progressive = {
       { q: '2A5', source: 'standard', field: 'BusinessOwnerHomeAddressInputNonShredded.AddressOptionsForPrimaryBsnsAdrs', ask: 'Home Address', name: 'Owner home address (first option)', kind: 'first-option', value: () => 'first option' },
       // Typed in whenever Progressive shows the box: without a USDOT number, and also with a brand-new
       // one the lookup can't find yet (then there's no registered name to pick).
-      { q: '230', source: 'derived', field: 'AccountInput.BusinessName', ask: 'Business Name', path: 'applicant.name', name: 'Business / sole proprietor name', value: (r) => r.applicant.name || [owner(r).first, owner(r).last].filter(Boolean).join(' ') || r.applicant.owner1 },
+      { q: '230', source: 'derived', field: 'AccountInput.BusinessName', ask: 'Business Name', path: 'applicant.name', name: 'Business / sole proprietor name', value: (r) => companyName(r.applicant.name) || [owner(r).first, owner(r).last].filter(Boolean).join(' ') || r.applicant.owner1 },
       { q: '233', field: 'AccountInput.DBA', ask: 'DBA Name', optional: true, name: 'DBA name (always left empty)', ignore: true },
       // Owner home address box, shown when there's no registered address to pick ("2AA" after
       // "Enter a different address", "2A9" when there's no choice at all): the whole address,
@@ -628,14 +635,14 @@ export const progressive = {
       { q: '1D', ask: 'Business Type', control: 'text', each: true, name: 'Business type search box', ignore: true },
       { q: '36', source: 'standard', ask: 'Business Type Label', name: 'Business type (search list: For Hire Trucking, else General Freight Trucking)', kind: 'choice', value: () => 'For Hire Trucking', choiceAliases: () => ['General Freight Trucking'] },
       { q: '239', source: 'derived', ask: ['Business type list', 'Business Type'], control: 'select', name: 'Business type', kind: 'choice', value: businessType, choiceAliases: businessAliases, summaryAfter: (r) => isExpediter(r) ? 'Type of Trucker' : 'How is the customer\'s business structured?' },
-      { q: '22D', source: 'derived', clientFact: true, field: 'AccountInput.BusinessStructure', ask: 'How is the customer\'s business structured?', name: 'Business structure (from the company name)', kind: 'choice', value: businessStructure, note: businessStructureNote },
+      { q: '22D', source: 'derived', clientFact: true, field: 'AccountInput.BusinessStructure', ask: 'How is the customer\'s business structured?', name: 'Business structure (from the company name)', kind: 'choice', value: businessStructure, note: businessStructureNote, warn: businessStructureWarn },
       { q: '267', source: 'derived', field: 'AccountInput.SpecificTruckHaulContractType', ask: 'Type of Trucker', name: 'Type of trucker', kind: 'choice', value: truckerType, ignore: (r) => !isExpediter(r) },
       { q: '295', source: 'derived', field: 'AccountInput.BusinessOwnerName', ask: 'Business Owner\'s Name', name: 'Owner first name', value: (r) => owner(r).first },
       { q: '296', source: 'derived', field: 'AccountInput.BusinessOwnerMiddleInitial', ask: 'MIMiddle initial', optional: true, name: 'Owner middle initial', value: (r) => owner(r).middle?.[0] ?? null, ignore: true },
       { q: '297', source: 'derived', field: 'AccountInput.BusinessOwnerLastName', ask: 'Last Name', name: 'Owner last name', value: (r) => owner(r).last },
       { q: '298', field: 'AccountInput.BusinessOwnerSuffix', ask: 'Suffix', optional: true, name: 'Owner suffix (optional)', ignore: true },
       { q: '29F', field: 'AccountInput.DriverInPolicyIndicator', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives' },
-      { q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', value: (r) => owner(r).dob },
+      { q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
       // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
       { q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
       { q: '2DD', field: 'AccountInput.PhoneThreeDigitsString', ask: 'Three digit prefix of phone', name: 'Phone prefix (optional)', ignore: true },
@@ -656,7 +663,7 @@ export const progressive = {
       { q: '1B84', source: 'derived', field: 'CurrentAddress.Address1', ask: 'Home Address', name: 'Owner home address (NoHit)', value: (r) => r.garaging?.street ?? null },
       { q: '1B85', field: 'CurrentAddress.City', ask: 'City', path: 'garaging.city', name: 'Owner home city (NoHit)' },
       { q: '1B89', field: 'CurrentAddress.ZipCode', ask: 'Zip Code', path: 'garaging.zip', name: 'Owner home ZIP (NoHit)' },
-      { q: '1B8B', source: 'derived', field: 'NoHitCredit.DOB', ask: 'Date of Birth', name: 'Owner date of birth (NoHit)', kind: 'date', value: (r) => owner(r).dob },
+      { q: '1B8B', source: 'derived', field: 'NoHitCredit.DOB', ask: 'Date of Birth', name: 'Owner date of birth (NoHit)', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
       { q: '1B8D', field: 'NoHitCredit.SSN', ask: 'Social Security Number', name: 'Social Security Number (never filled; the agent enters one only if the client gave it)', ignore: true },
     ]),
 

@@ -338,10 +338,25 @@ test('business structure: a suffix is a corporation, no company is a sole propri
   assert.equal(structure('Synthetic Expediter LLC', progressive).value, 'Corporation or LLC / Non-Profit');
   assert.equal(structure('Synthetic Expediter Inc.', progressive).value, 'Corporation or LLC / Non-Profit');
   assert.equal(structure(null, progressive).value, 'Individual / Sole Proprietor');
-  for (const name of ['Sample L.L.C.', 'Sample LLC DBA Example Freight', 'Sample Corp. Trucking', 'Sample, Incorporated']) {
+  // TNI (2026-10-20): the last word decides, on both carriers; LLC inside the name is filled with a
+  // warning; Inc / Corp inside it, or no structure word at all, is the agent's.
+  for (const name of ['Sample L.L.C.', 'Sample, Incorporated', 'Sample Freight Co.']) {
     assert.equal(structure(name, progressive).value, 'Corporation or LLC / Non-Profit', name);
+    assert.equal(structure(name, progressive).warn, null, name);
   }
-  for (const name of ['Incline Freight', 'Corporate Haulers', 'Cole Co Trucking']) assert.equal(structure(name, progressive).value, null, name);
+  assert.equal(structure('Sample L.L.C.', amwins).value, 'LLC');
+  for (const carrier of [progressive, amwins]) {
+    const mid = structure('Sample LLC DBA Example Freight', carrier);
+    assert.equal(mid.value, carrier === progressive ? 'Corporation or LLC / Non-Profit' : 'LLC');
+    assert.match(mid.warn, /LLC inside it/);
+    for (const name of ['Sample Corp. Trucking', 'Trucking Expedite', 'Express Freight', 'Incline Freight', 'Cole Co Trucking']) {
+      agentsNote(structure(name, carrier));
+      assert.match(structure(name, carrier).note, /doesn't end in LLC, Inc or Corp/, name);
+    }
+    // No company, also when the agent's edit says so: a sole proprietor.
+    for (const name of ['NO', 'N/A', 'None.']) assert.equal(structure(name, carrier).value, carrier === progressive ? 'Individual / Sole Proprietor' : 'SOLE PROPRIETOR', name);
+  }
+  assert.notEqual(byQ(buildPlan(with_({ 'applicant.name': 'NO' }), progressive, {}), '230').value, 'NO', 'no company: the business name is the owner\'s');
   agentsNote(structure('Synthetic Expediter', progressive));
   // Codex on 2dcd1e8: a bare name's structure is the agent's, never the AI's (clientFact).
   assert.equal(structure('Synthetic Expediter', progressive).manualOnly, true);
