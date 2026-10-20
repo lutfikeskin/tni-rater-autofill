@@ -60,6 +60,10 @@ export const SECTIONS = [
     // Not on the intake PDF (NOT_ON_INTAKE): the agent sets it (MALE / FEMALE) in client details or
     // by accepting an AI suggestion; normalizeIntake leaves it null.
     ['drivers[].gender', 'Gender', 'choice'],
+    // "Excluded" written in the license-number box: the client wants this driver excluded.
+    // Progressive's exclude question is Yes; AmWINS has none and gets "(Excluded)" after the license
+    // number (TNI 2026-10-20).
+    ['drivers[].excluded', 'Excluded driver', 'bool'],
   ] },
   { id: 'vehicles', title: 'Vehicles', list: 'vehicles', item: 'Vehicle', fields: [
     ['vehicles[].type', 'Type', 'choice'],
