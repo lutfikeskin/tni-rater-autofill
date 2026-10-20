@@ -32,12 +32,21 @@ const byVersion = (a, b) => {
 };
 
 // The page (or one-address application step) where a quote is done, per carrier: Progressive's
-// quote summary and print confirmation, AmWINS' last application step (Underwriting) or its
-// submission notice. A heuristic for the weekly numbers, not a carrier's definition.
+// quote summary, print confirmation or the printed quote PDF, AmWINS' last application step
+// (Underwriting) or its submission notice. A heuristic for the weekly numbers, not a carrier's
+// definition. A printed quote is done (TNI, 2026-10-20): Print/Send opens the PDF in a tab the
+// panel then follows, so the confirmation page in the quote tab may not be logged after it. The
+// panel's own page strip (a carrier's `quoteSteps`) is a separate list.
 export const FINAL = {
-  progressive: /^(Quote|PrintEmailFaxConfirm)$/,
+  progressive: /^(Quote|PrintEmailFaxConfirm|\/Express\/PDFHandler\.ashx)$/i,
   amwins: /› (Underwriting|Thank you for the submission)/,
 };
+// The agent's own click that ends a quote, on the page it is made: Progressive's Print/Send (the
+// agent's since 2026-10-07; logged in the quote tab, whether or not the PDF's page is).
+export const FINAL_CLICK = {
+  progressive: { page: /^PrintEmailFax$/, text: /^print\s*\/\s*send$/i },
+};
+const finalClick = (e) => e.type === 'agent_click' && !!FINAL_CLICK[e.carrier]?.page.test(e.page) && FINAL_CLICK[e.carrier].text.test(String(e.text ?? '').trim());
 // A carrier's login page reached in the middle of a quote: the carrier's session ran out.
 const LOGIN = /\/(auth\/)?login\b|\/login\//i;
 
@@ -247,9 +256,10 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     };
   });
 
-  // How each quote ended on each carrier it went to: done (its final page), declined (the carrier
-  // stopped it), or stopped at its last page; with its minutes from first to last carrier event,
-  // and whether the carrier's login came up in the middle (its session ran out).
+  // How each quote ended on each carrier it went to: done (its final page or final click, after
+  // this quote's own fill there), declined (the carrier stopped it), or stopped at its last page;
+  // with its minutes from first to last carrier event, and whether the carrier's login came up in
+  // the middle (its session ran out).
   const perQuote = new Map();
   for (const e of events) {
     if (!inPeriod.has(e.session) || !e.carrier || !e.page) continue;
@@ -260,9 +270,12 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     q.last = Math.max(q.last, t);
     const page = `${e.page}${e.step ? ` › ${mask(e.step)}` : ''}`;
     if (['page_view', 'fill_run', 'page_layout', 'fill_field', 'field_change'].includes(e.type)) q.lastPage = page;
-    if (FINAL[e.carrier]?.test(page) || FINAL[e.carrier]?.test(e.page)) q.done = true;
+    if (e.type === 'fill_run') q.seenWork = true;
+    // Only after this quote's own fill: the page the panel opens on may be the previous client's
+    // confirmation, or an old quote the agent reopened.
+    if (q.seenWork && (FINAL[e.carrier]?.test(page) || FINAL[e.carrier]?.test(e.page) || finalClick(e))) q.done = true;
     if (e.type === 'fill_run' && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
-    if (e.type === 'page_view' && LOGIN.test(e.page)) { if (q.seenWork) q.logins++; } else if (e.type === 'fill_run') q.seenWork = true;
+    if (e.type === 'page_view' && LOGIN.test(e.page) && q.seenWork) q.logins++;
     perQuote.set(k, q);
   }
   const outcomes = {};
@@ -397,7 +410,7 @@ export function markdown(s, { noTestList = false } = {}) {
   const k = s.kpis;
   L.push('## Weekly numbers', '', 'Per quote (a quote re-filled many times counts once). Track these week over week.', '', '| Number | Value |', '| --- | --- |',
     `| Quotes (on any carrier · per carrier) | ${k.quotes} · ${k.carrierQuotes} |`,
-    `| Quotes done (reached the carrier's final page) | ${k.donePercent ?? '—'}% |`,
+    `| Quotes done (reached the carrier's final page or printed) | ${k.donePercent ?? '—'}% |`,
     `| Median minutes for a done quote | ${k.medianMinutesDone ?? '—'} |`,
     `| Answers filled by the rules, per quote | ${k.filledPerQuote ?? '—'} |`,
     `| Autofilled answers the agent corrected, per 100 filled (another value or cleared; reformatted apart: ${k.reformatted}) | ${k.correctedPer100Filled ?? '—'} (${k.corrected}) |`,
@@ -412,7 +425,7 @@ export function markdown(s, { noTestList = false } = {}) {
   for (const [carrier, f] of Object.entries(s.funnel)) {
     L.push(`**${carrier}** (${f.quotes} quotes)`, '', '| Page | Quotes |', '| --- | --- |', ...f.pages.map((p) => `| ${p.page} | ${p.quotes} |`), '');
   }
-  L.push('## How quotes ended', '', 'Per carrier a quote went to: done (its final page), declined by the carrier, or stopped at its last page (finished elsewhere, abandoned, or still open). A login in the middle means the carrier\'s session ran out.', '');
+  L.push('## How quotes ended', '', 'Per carrier a quote went to: done (its final page or Progressive\'s Print/Send, after the quote\'s own fill), declined by the carrier, or stopped at its last page (finished elsewhere, abandoned, or still open). A login in the middle means the carrier\'s session ran out.', '');
   for (const [carrier, o] of Object.entries(s.outcomes)) {
     L.push(`**${carrier}**: ${o.quotes} quotes · ${o.done} done (median ${o.medianMinutesDone ?? '—'} min) · ${o.declined} declined · ${o.loginInterrupted} interrupted by a login`, '', ...(o.stopped.length ? o.stopped.map(([p, c]) => `- stopped at ${p}: ${c}`) : []), '');
   }

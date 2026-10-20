@@ -162,7 +162,7 @@ p('| | |', '| --- | --- |');
 const k = week.kpis;
 p(`| Quotes started | ${quotes.size}${Object.keys(states).length ? ` (${Object.entries(states).map(([s, n]) => `${s} ${n}`).join(', ')})` : ''}${k.testRunsLeftOut ? ` · ${k.testRunsLeftOut} test run(s) left out` : ''} |`);
 p(`| Builds | ${week.builds.map((b) => `${b.version} ${b.channel}: ${b.quotes} quote${b.quotes === 1 ? '' : 's'}`).join(' · ') || '—'} |`);
-p(`| Quotes done (reached the carrier's final page) | ${k.donePercent ?? '—'}% |`);
+p(`| Quotes done (reached the carrier's final page or printed) | ${k.donePercent ?? '—'}% |`);
 p(`| Answers filled by the rules, per quote | ${k.filledPerQuote ?? '—'} |`);
 p(`| Left to the agent per quote (each question once per quote): ${Object.keys(k.leftPerQuote).join(' / ') || '—'} | ${Object.values(k.leftPerQuote).join(' / ') || '—'} |`);
 p(`| Autofilled answers the agent corrected (another value or cleared) · reformatted | ${k.corrected} · ${k.reformatted} |`);

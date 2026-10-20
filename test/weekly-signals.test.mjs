@@ -57,6 +57,48 @@ test('signals counts the period by build, quote and reason, never by raw repeats
   assert.deepEqual(s.problems[0].lastRun.blockers, ['unfamiliar: Agent Code']);
 });
 
+// W43-05 (TNI, 2026-10-20: a printed quote is done). The agent's Print/Send opened the quote PDF in
+// a tab the panel followed, and the quote was counted as "stopped at /Express/PDFHandler.ashx".
+const at = (n) => new Date(Date.parse('2026-10-06T12:30:00Z') + n * 1000).toISOString();
+const later = (n, x) => ({ id: `later${n}`, t: at(n), receivedAt: at(n), session: 'new', v: '0.9.9', carrier: 'progressive', ...x });
+const printFlow = [later(1, { type: 'page_view', page: 'PrintEmailFax', from: 'CoveragesRates' }), later(2, { type: 'agent_click', page: 'PrintEmailFax', text: 'Print/Send' })];
+
+test('a printed Progressive quote is done: its PDF page or the agent\'s Print/Send', () => {
+  const run = (extra) => signals([...week(), ...extra], { since: '2026-10-06' });
+  // The PDF's page, in either case of its path.
+  for (const page of ['/Express/PDFHandler.ashx', '/express/pdfhandler.ashx']) {
+    const s = run([...printFlow, later(3, { type: 'page_view', page, from: null })]);
+    assert.equal(s.outcomes.progressive.done, 1, page);
+    assert.ok(!s.outcomes.progressive.stopped.some(([p]) => /pdfhandler/i.test(p)), page);
+    assert.equal(s.kpis.donePercent, 50, page);
+    assert.equal(s.kpis.medianMinutesDone, 30, page);
+  }
+  // The Print/Send click with no PDF page logged (another window, a download).
+  assert.equal(run(printFlow).outcomes.progressive.done, 1);
+  // The Print page without the click: stopped there.
+  const s = run(printFlow.slice(0, 1));
+  assert.equal(s.outcomes.progressive.done, 0);
+  assert.ok(s.outcomes.progressive.stopped.some(([p, n]) => p === 'PrintEmailFax' && n === 1));
+});
+
+test("a final page or click before the quote's own fill is not its end", () => {
+  const events = week();
+  const next = (n, x) => ({ id: `next${n}`, t: at(n), receivedAt: at(n), session: 'next', v: '0.9.9', carrier: 'progressive', ...x });
+  // The panel opened on the previous client's PDF and confirmation; this quote then stopped on its
+  // first page.
+  events.push(next(1, { type: 'intake_loaded', carrier: undefined }), next(2, { type: 'page_view', page: '/Express/PDFHandler.ashx', from: null }),
+    next(3, { type: 'page_view', page: 'PrintEmailFaxConfirm', from: null }), next(4, { type: 'agent_click', page: 'PrintEmailFax', text: 'Print/Send' }),
+    next(5, { type: 'page_view', page: 'BusinessOwnerInfo', from: null }), next(6, { type: 'fill_run', page: 'BusinessOwnerInfo', blockers: 1, blockerList: [] }),
+    // Another carrier's Print/Send is not Progressive's end.
+    next(7, { carrier: 'amwins', type: 'fill_run', page: '/application', step: 'Vehicles', blockers: 0, blockerList: [] }),
+    next(8, { carrier: 'amwins', type: 'agent_click', page: 'PrintEmailFax', text: 'Print/Send' }));
+  const s = signals(events, { since: '2026-10-06' });
+  assert.equal(s.outcomes.progressive.quotes, 3);
+  assert.equal(s.outcomes.progressive.done, 0);
+  assert.ok(s.outcomes.progressive.stopped.some(([p, n]) => p === 'BusinessOwnerInfo' && n === 1));
+  assert.equal(s.outcomes.amwins.done, 0);
+});
+
 test('signals flags a restricted action the extension clicked', () => {
   const events = week();
   events.push({ id: 'x', t: '2026-10-06T13:00:00Z', receivedAt: '2026-10-06T13:00:00Z', session: 'new', v: '0.9.9', carrier: 'amwins', type: 'fill_run', page: '/application', advanced: 'Submit Application', clicked: [] });
