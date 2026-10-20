@@ -431,9 +431,15 @@ export const MIN_TREND_QUOTES = 10;
 const LEFT = ['unfamiliar', 'leftRequired', 'noData', 'failed'];
 // The numbers the brief tracks week over week, in the brief template's order; `better`: +1 higher
 // is better, -1 lower is, 0 neither; `pick`: which number of the ledger's cell (parentheses aside).
+// `redefined`: when the number's definition changed (`at`), how a ledger's label says it was counted
+// under the new one (`current`), and what changed; a ledger number counted under the old one gets no
+// trend (weeklyRows).
 export const NUMBERS = [
   { label: 'Quotes (any carrier · per carrier)', match: /^Quotes \(/i, show: (k) => `${k.quotes} · ${k.carrierQuotes}`, n: (k) => k.quotes, better: 0 },
-  { label: "Quotes done (reached the carrier's final page)", match: /^Quotes done/i, show: (k) => (k.donePercent == null ? '—' : `${k.donePercent}%`), n: (k) => k.donePercent, better: 1 },
+  // A printed Progressive quote is done since PR #108 (signals.mjs FINAL, FINAL_CLICK; merged
+  // 2026-10-20 08:08 UTC); until then the row read "reached the carrier's final page".
+  { label: "Quotes done (reached the carrier's final page or printed)", match: /^Quotes done/i, show: (k) => (k.donePercent == null ? '—' : `${k.donePercent}%`), n: (k) => k.donePercent, better: 1,
+    redefined: { name: 'Quotes done', at: '2026-10-20T08:08:38Z', current: /\bprinted\b/i, change: 'a printed Progressive quote (Print/Send or its PDF) counts as done since 2026-10-20' } },
   { label: 'Median minutes for a done quote', match: /^Median minutes/i, show: (k) => `${k.medianMinutesDone ?? '—'}`, n: (k) => k.medianMinutesDone, better: -1 },
   { label: 'Answers filled by the rules, per quote', match: /^Answers filled/i, show: (k) => `${k.filledPerQuote ?? '—'}`, n: (k) => k.filledPerQuote, better: 1 },
   { label: 'Autofilled answers corrected, per 100 filled', match: /^Autofilled answers/i, show: (k) => `${k.correctedPer100Filled ?? '—'} (${k.corrected})`, n: (k) => k.correctedPer100Filled, better: -1 },
@@ -453,26 +459,37 @@ export function cellNumber(cell, pick = 0) {
 
 /**
  * This period's weekly numbers (signals' `kpis`) beside the ledger's, with a trend only when both
- * periods have at least MIN_TREND_QUOTES quotes: below that a change is noise.
+ * periods have at least MIN_TREND_QUOTES quotes: below that a change is noise. A ledger number
+ * counted before its definition changed (`redefined`: its label lacks the new wording, and the
+ * ledger issue, when `createdAt` is known, was opened before the change) gets no trend either: the
+ * two periods count it differently.
+ * @param {{createdAt?: string|null}} opts  createdAt: when the ledger issue was opened (gh), if known
  */
-export function weeklyRows(kpis, previous) {
+export function weeklyRows(kpis, previous, { createdAt = null } = {}) {
   const prev = previous?.values ?? {};
   const prevLabel = (row) => Object.keys(prev).find((l) => row.match.test(l));
   const prevQuotes = cellNumber(prev[prevLabel(NUMBERS[0])]);
   const enough = kpis.quotes >= MIN_TREND_QUOTES && prevQuotes != null && prevQuotes >= MIN_TREND_QUOTES;
+  const counted = createdAt && !Number.isNaN(Date.parse(createdAt)) ? new Date(createdAt).toISOString() : null;
+  const redefined = [];
   const rows = NUMBERS.map((row) => {
     const label = prevLabel(row);
     const before = label == null ? null : cellNumber(prev[label], row.pick ?? 0);
     const now = row.n(kpis);
+    // The ledger's label names the definition it was counted under, unless the issue was opened after
+    // the change (its label copied from a report older than the change).
+    const old = !!row.redefined && label != null && !row.redefined.current.test(label) && !(counted && counted >= row.redefined.at);
+    if (old && before != null) redefined.push({ name: row.redefined.name, change: row.redefined.change });
     let trend = '—';
     if (row.zero && now > 0) trend = 'must be 0';
     else if (now == null || before == null) trend = '—';
     else if (!enough) trend = 'too few quotes';
+    else if (old) trend = 'definition changed';
     else if (now === before) trend = 'same';
     else trend = `${now > before ? 'up' : 'down'}${row.better ? ((now > before) === (row.better > 0) ? ' (better)' : ' (worse)') : ''}`;
     return { label: row.label, now: row.show(kpis), before: label == null ? '—' : prev[label], trend };
   });
-  return { column: previous?.column ?? 'Last period', quotes: kpis.quotes, prevQuotes, enough, rows };
+  return { column: previous?.column ?? 'Last period', quotes: kpis.quotes, prevQuotes, enough, rows, redefined };
 }
 
 // ---------- the report ----------
@@ -502,11 +519,15 @@ function evidence(r) {
   return parts.join(' · ');
 }
 
-/** The report as Markdown: the brief's "Last period's decisions" and "Weekly numbers". */
+/**
+ * The report as Markdown: the brief's "Last period's decisions" and "Weekly numbers".
+ * `r.noTestList`: the warning readTestList gave when there was no test-run list (signals.mjs).
+ */
 export function markdown(r) {
   const L = [];
   L.push(`# Ledger check: ${r.ledger.title || 'weekly-review ledger'}${r.ledger.number ? ` (#${r.ledger.number})` : ''}`, '');
   L.push(`Events received since ${r.since ? r.since.slice(0, 16).replace('T', ' ') : 'the start'} UTC: ${n(r.quotes, 'quote')}${r.testRunsLeftOut ? `, plus ${n(r.testRunsLeftOut, 'test run')} the weekly numbers leave out (the items' counts keep them, marked "test")` : ''}. Read only: the ledger isn't changed. IDs, builds and counts only, no client data.`, '');
+  if (r.noTestList) L.push(`**${r.noTestList}**`, '');
   L.push("## Last period's decisions", '');
   L.push('| ID | Title | Status (proposed) | Evidence |', '| --- | --- | --- | --- |');
   for (const x of r.items) {
@@ -520,6 +541,7 @@ export function markdown(r) {
   L.push(`| Number | This period (${n(w.quotes, 'quote')}) | ${cell(w.column)}${w.prevQuotes != null ? ` (${n(w.prevQuotes, 'quote')})` : ''} | Trend |`, '| --- | --- | --- | --- |');
   for (const row of w.rows) L.push(`| ${row.label} | ${cell(row.now)} | ${cell(row.before)} | ${row.trend} |`);
   L.push('', w.enough ? 'Trend: this period against the ledger\'s.' : `No trend called: a period has fewer than ${MIN_TREND_QUOTES} quotes.`);
+  for (const x of w.redefined ?? []) L.push('', `**${x.name}: two definitions.** ${cell(w.column)}'s number was counted before the change (${x.change}); this period's follows it, so no trend is called.`);
   L.push('', '## Builds this period', '', '| Build | Quotes | Merged fixes it contains |', '| --- | --- | --- |');
   for (const b of r.builds) L.push(`| ${b.name} | ${b.quotes} | ${cell(b.fixes)} |`);
   if (r.notes?.length) L.push('', '## Notes', '', ...r.notes.map((x) => `- ${x}`));

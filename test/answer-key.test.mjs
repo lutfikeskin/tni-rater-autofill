@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { CARRIERS } from '../src/carriers.js';
 import { benchmark } from '../scripts/lib/benchmark.mjs';
-import { markdown, signals } from '../scripts/lib/signals.mjs';
+import { markdown, NO_TEST_LIST, signals } from '../scripts/lib/signals.mjs';
 import {
   agentVerdict, answerKind, byIdOnly, compareKey, keyCells, keyVerdict, quotePage, readKey, scoreKey, sheetHtml, sheetModel, unitPath, wanted,
 } from '../scripts/lib/answer-key.mjs';
@@ -234,4 +239,113 @@ test('the weekly numbers show the key score only when a key is configured', () =
   assert.match(markdown(s), /\| Today's rules against TNI's answer key \(1 keyed intake,.*\| 50% · 0 · 1 · 0 \/ 0% · 0 · 1 · 0; 1 of 2 \|/);
   assert.equal(signals(events).kpis.answerKey, null);
   assert.doesNotMatch(markdown(signals(events)), /answer key/);
+});
+
+// Post-merge review of #109: the sheet and the benchmark's key score read reviews/test-intakes.txt
+// from the working folder (a worktree has none) and never counted fixture intakes as tests; they now
+// read the list as the review and the signals do (readTestList).
+const root = fileURLToPath(new URL('..', import.meta.url));
+const repoList = fs.existsSync(path.join(root, 'reviews', 'test-intakes.txt'));
+const sha = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+// A working folder with four intakes' quotes: three clients' PDFs (the sample with a line of its own
+// after its end, so a fingerprint of its own: `agent`, `listed`, `decoy`) and the committed fixture
+// itself. The folder's own reviews/test-intakes.txt, which isn't the repository's, names `listed`
+// and `decoy`; `list` (for --tests) names `listed` only.
+function clients(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'answer-key-cli-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const sample = fs.readFileSync(path.join(root, 'test', 'fixtures', 'sample-intake.pdf'));
+  const intakes = path.join(dir, 'intakes');
+  fs.mkdirSync(intakes);
+  const ids = {};
+  for (const name of ['agent', 'listed', 'decoy']) {
+    const bytes = Buffer.concat([sample, Buffer.from(`\n% ${name}\n`)]);
+    fs.writeFileSync(path.join(intakes, `${name}.pdf`), bytes);
+    ids[name] = sha(bytes);
+  }
+  fs.writeFileSync(path.join(intakes, 'fixture.pdf'), sample);
+  ids.fixture = sha(sample);
+  const events = [];
+  let at = Date.parse('2026-10-05T12:00:00Z');
+  for (const [session, intakeId] of Object.entries(ids)) {
+    const e = (x) => events.push({ id: `${session}${events.length}`, t: new Date(at += 1000).toISOString(), session, intakeId, carrier: 'progressive', ...x });
+    e({ type: 'intake_loaded', carrier: undefined, state: 'MD', businessClass: 'Expediter' });
+    e({ type: 'fill_field', page: 'AddVehicle', view: 't1:v0', q: '2CCC', key: 'ref:RiskInput.CompCollIndicator', label: COMP, controlKind: 'radio', result: 'filled', path: 'progressive.q2CCC', shown: 'Yes' });
+  }
+  const data = path.join(dir, 'events.jsonl');
+  fs.writeFileSync(data, events.map((e) => JSON.stringify(e)).join('\n'));
+  fs.mkdirSync(path.join(dir, 'reviews'));
+  fs.writeFileSync(path.join(dir, 'reviews', 'test-intakes.txt'), `${ids.listed.slice(0, 8)}\n${ids.decoy.slice(0, 8)}\n`);
+  const list = path.join(dir, 'tests.txt');
+  fs.writeFileSync(list, `# the maintainer's test intake\n${ids.listed.slice(0, 12)}\n`);
+  const short = path.join(dir, 'short.txt');
+  fs.writeFileSync(short, 'abc\n');
+  const run = (script, ...args) => spawnSync(process.execPath, [path.join(root, 'scripts', script), data, '--intakes', intakes, ...args], { cwd: dir, encoding: 'utf8' });
+  return { dir, ids, list, short, run };
+}
+
+// The refusals the review makes: no value, a missing file, a short or non-hex fingerprint.
+function refusesBadLists(c, script, out, ...args) {
+  for (const bad of [['--tests'], ['--tests', '--out'], ['--tests', path.join(c.dir, 'missing.txt')], ['--tests', c.short]]) {
+    const r = c.run(script, ...args, '--out', out, ...bad);
+    assert.equal(r.status, 1, `${bad.join(' ')}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /needs a value|no such file|at least 8 hex/);
+  }
+  assert.ok(!fs.existsSync(out), 'nothing written from a bad list');
+}
+
+test('the sheet reads the test-run list as the review does, and says on the sheet when it has none', (t) => {
+  const c = clients(t);
+  const sheet = (file) => {
+    const html = fs.readFileSync(file, 'utf8');
+    return JSON.parse(/<script type="application\/json" id="model">([\s\S]*?)<\/script>/.exec(html)[1]);
+  };
+  const keyed = (model) => model.intakes.map((i) => Object.keys(c.ids).find((k) => c.ids[k] === i.id)).sort();
+  // The repository's list, wherever it runs (never the working folder's), and the fixture's quote.
+  const plain = c.run('answer-key-sheet.mjs', '--out', path.join(c.dir, 'plain.html'));
+  assert.equal(plain.status, 0, plain.stderr);
+  const model = sheet(path.join(c.dir, 'plain.html'));
+  assert.deepEqual(keyed(model), ['agent', 'decoy', 'listed'], 'the fixture\'s quote left out; the working folder\'s list not read');
+  assert.equal(model.noTestList, repoList ? null : NO_TEST_LIST);
+  if (repoList) assert.doesNotMatch(plain.stderr, /No test-run list/, 'the repository\'s list was found');
+  else assert.ok(plain.stderr.includes(`Warning: ${NO_TEST_LIST}`));
+  // The page shows the warning it was given.
+  assert.match(fs.readFileSync(path.join(c.dir, 'plain.html'), 'utf8'), /getElementById\('noTestList'\)\.textContent = M\.noTestList/);
+  // --tests: the listed quote is a test too, and nothing to warn about.
+  const listed = c.run('answer-key-sheet.mjs', '--tests', c.list, '--out', path.join(c.dir, 'listed.html'));
+  assert.equal(listed.status, 0, listed.stderr);
+  const withList = sheet(path.join(c.dir, 'listed.html'));
+  assert.deepEqual([keyed(withList), withList.noTestList], [['agent', 'decoy'], null]);
+  assert.doesNotMatch(listed.stderr, /No test-run list/);
+  assert.match(listed.stdout, /\(2 test-run sessions left out;/);
+  refusesBadLists(c, 'answer-key-sheet.mjs', path.join(c.dir, 'bad.html'));
+});
+
+test('the benchmark scores the key with the test-run list the review reads, and says when it has none', (t) => {
+  const c = clients(t);
+  const keyFile = path.join(c.dir, 'key.json');
+  fs.writeFileSync(keyFile, JSON.stringify({ kind: 'tni-answer-key', version: 1, questions: { [COMP_ID]: { answer: { value: 'Yes' }, ...by } }, quotes: Object.fromEntries(Object.values(c.ids).map((id) => [id, {}])) }));
+  const line = (md) => /4 intakes keyed, (\d+) with recorded quotes here; test runs left out \((\d+) test-run sessions\)/.exec(md)?.slice(1).map(Number);
+  // The repository's list, wherever it runs (never the working folder's), and the fixture's quote.
+  const plain = c.run('benchmark.mjs', '--key', keyFile, '--out', path.join(c.dir, 'plain.md'));
+  assert.equal(plain.status, 0, plain.stderr);
+  const md = fs.readFileSync(path.join(c.dir, 'plain.md'), 'utf8');
+  assert.deepEqual(line(md), [3, 1], 'the fixture\'s quote left out; the working folder\'s list not read');
+  if (repoList) assert.doesNotMatch(`${plain.stderr}${md}`, /No test-run list/, 'the repository\'s list was found');
+  else {
+    assert.ok(plain.stderr.includes(`Warning: ${NO_TEST_LIST}`));
+    assert.ok(md.includes(`**${NO_TEST_LIST}**`));
+  }
+  // --tests: the listed quote is a test too, and nothing to warn about.
+  const listed = c.run('benchmark.mjs', '--key', keyFile, '--tests', c.list, '--out', path.join(c.dir, 'listed.md'));
+  assert.equal(listed.status, 0, listed.stderr);
+  const withList = fs.readFileSync(path.join(c.dir, 'listed.md'), 'utf8');
+  assert.deepEqual(line(withList), [2, 2]);
+  assert.doesNotMatch(`${listed.stderr}${withList}`, /No test-run list/);
+  refusesBadLists(c, 'benchmark.mjs', path.join(c.dir, 'bad.md'), '--key', keyFile);
+  // Without a key the list isn't read: no warning, nothing scored.
+  const unkeyed = c.run('benchmark.mjs', '--out', path.join(c.dir, 'unkeyed.md'));
+  assert.equal(unkeyed.status, 0, unkeyed.stderr);
+  assert.doesNotMatch(`${unkeyed.stderr}${fs.readFileSync(path.join(c.dir, 'unkeyed.md'), 'utf8')}`, /No test-run list|answer key/);
 });

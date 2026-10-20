@@ -1282,6 +1282,31 @@ test('a Rates button waits while a required question on the page is empty', asyn
   assert.equal(button._clicked, true);
 });
 
+// TNI 2026-10-20 (PR #110 review): GL asked for on the intake is the agent's to add on Rates (what
+// its "+" opens hasn't been recorded). That needs-you item holds Print until the agent has been to
+// the bill plan (`settledByPages`), which they open after adding GL; then it is settled.
+test('a needs-you helper item holds later helpers until the agent has been to the page that settles it', async () => {
+  const run = async (visitedPages) => {
+    const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+    const button = addButton(h, 'Print, Email, Fax');
+    button.onclick = () => { button._clicked = true; };
+    const glItem = { id: 'gl', kind: 'action', action: 'glRates', baseAction: 'glRates', label: 'General liability', pages: ['CoveragesRates'], text: null,
+      missing: 'Add general liability yourself, then open the bill plan options.', after: [], afterActions: [], afterPages: [], unless: [], heldBy: [], settledByPages: ['ChangePaymentPlan'] };
+    const print = { id: 'pr', kind: 'action', action: 'print', baseAction: 'print', text: '^print, email, fax$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: ['ChangePaymentPlan'], unless: [], heldBy: ['glRates'] };
+    const report = await h.kit.fill([glItem, print], { maxRounds: 2, visitedPages });
+    return { report, clicked: !!button._clicked, blockers: Array.from(report.blockers).join(' | ') };
+  };
+  let r = await run([]);
+  assert.equal(r.clicked, false);
+  assert.ok(r.report.noData.some((x) => x.label === 'General liability' && /Add general liability yourself/.test(x.note)), r.blockers);
+  assert.ok(r.report.blockers.includes('needs you: General liability'), r.blockers);
+  assert.match(r.blockers, /button: print \(waiting for [^)]*General liability resolved/);
+  // Back from the bill plan: the item is settled, and Print runs.
+  r = await run(['ChangePaymentPlan']);
+  assert.equal(r.clicked, true, r.blockers);
+  assert.doesNotMatch(r.blockers, /General liability/);
+});
+
 // SC 2026-10-07: a trailer rule's data-model name (RiskInput.PAValue, kept to Add Trailer) left the
 // vehicle's own question for that field on Add Vehicle unclaimed. A name fenced off a page claims
 // nothing there.

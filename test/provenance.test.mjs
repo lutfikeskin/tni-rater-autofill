@@ -124,7 +124,6 @@ const NOT_MAPPED = {
     'trailerInfo.interchange': 'trailer interchange is not mapped (no live quote has asked it)',
     'trailerInfo.interchangeLimit': 'trailer interchange is not mapped (no live quote has asked it)',
     'coverage.autoLiability': 'liability is always quoted; only its limit is entered',
-    'coverage.glLimit': 'General Liability is not validated on Progressive: the agent reviews it (glNote)',
   },
   amwins: {
     'applicant.mcDotWithin60Days': 'AmWINS asks for the numbers themselves (has DOT / has MC / no number)',
@@ -452,18 +451,17 @@ test('Progressive other business coverages: None of the above unless the intake 
   assert.equal(byQ(p, 'A8').group, 'Other business coverages');
   assert.equal(byQ(p, 'B2').group, byQ(p, 'B0').group);
   assert.notEqual(byQ(p, 'B2').group, byQ(p, 'AA').group, 'two groups, each with its own None of the above');
-  // GL asked for on the form (whether they have it now is unknown), or the agent marked that the
-  // client has it (Luna's claims-box card: coverage.hasGl, not a GL request): the agent's.
+  // The agent marked that the client has GL (Luna's claims-box card on the notes: coverage.hasGl,
+  // not a GL request): the agent's. GL asked for on the form alone keeps the standard (TNI
+  // 2026-10-19: "None of the above if it's not mentioned in the notes").
   const asked = buildPlan(with_({ 'coverage.gl': true }), progressive, {});
   const has = buildPlan(with_({ 'coverage.hasGl': true }), progressive, {});
   for (const q of ['A2', 'AA', 'B2', 'A7', 'A8', 'A9', 'AF', 'B0']) {
-    for (const gl of [asked, has]) {
-      assert.equal(byQ(gl, q).source, 'fact', q);
-      assert.equal(byQ(gl, q).manualOnly, true, q);
-      agentsNote(byQ(gl, q));
-    }
-    assert.match(byQ(asked, q).note, /^The intake asks for general liability: /);
+    assert.equal(byQ(has, q).source, 'fact', q);
+    assert.equal(byQ(has, q).manualOnly, true, q);
+    agentsNote(byQ(has, q));
     assert.match(byQ(has, q).note, /^You marked that the client has general liability: /);
+    assert.deepEqual([byQ(asked, q).value, byQ(asked, q).source, byQ(asked, q).note], [byQ(p, q).value, 'standard', null], `${q}: a GL request alone`);
   }
 });
 
