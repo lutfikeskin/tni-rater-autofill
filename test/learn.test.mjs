@@ -597,58 +597,82 @@ test('the review names two questions reading the same apart', async (t) => {
 // repository, so the review run above replaced the day's real transitions and captures reports
 // (and generated layouts) on every npm test in the main checkout.
 test('a review written elsewhere (--out) writes nothing into the repository\'s reviews/ or captures/', async (t) => {
-  const { execFileSync } = await import('node:child_process');
+  const { execFileSync, spawnSync } = await import('node:child_process');
   const root = fileURLToPath(new URL('..', import.meta.url));
   const script = (name) => path.join(root, 'scripts', name);
-  const today = new Date().toISOString().slice(0, 10);
+  // What no real report holds: this test's layout key and capture scenario. Checked by content, not
+  // by modification time, so another run writing the day's reports meanwhile doesn't fail it.
   const context = { state: 'ZZ', businessClass: 'Review Out Test', vehicleTypes: ['Van'], trailers: false };
   const key = layoutKey('progressive', context);
-  const inRepo = [`reviews/transitions-${today}.md`, `reviews/captures-${today}.md`, `captures/progressive/generated/${key}.json`].map((f) => path.join(root, f));
-  const stamps = () => inRepo.map((f) => (fs.existsSync(f) ? fs.statSync(f).mtimeMs : null));
-  const before = stamps();
+  const marker = /review[- ]out[- ]test/i;
+  // Reports found by name, not by today's date: a run across UTC midnight writes the next day's.
+  const reports = (folder, name) => (fs.existsSync(folder) ? fs.readdirSync(folder).filter((f) => new RegExp(`^${name}-\\d{4}-\\d{2}-\\d{2}\\.md$`).test(f)).map((f) => path.join(folder, f)) : []);
+  const inRepo = () => [
+    ...['transitions', 'captures'].flatMap((name) => reports(path.join(root, 'reviews'), name)).filter((f) => marker.test(fs.readFileSync(f, 'utf8'))),
+    ...[path.join(root, 'captures', 'progressive', 'generated', `${key}.json`)].filter((f) => fs.existsSync(f)),
+  ];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(dir, 'data'));
-  fs.writeFileSync(path.join(dir, 'data', '2026-10-05.jsonl'), `${JSON.stringify({ id: 'l1', t: at(1), session: 's', carrier: 'progressive', type: 'page_layout', page: 'AddVehicle', context, fields: [{ q: '2B9D', kind: 'select', label: 'Farthest distance', options: ['50 miles'] }] })}\n`);
+  // Two quotes of a page, a question in only one: the layout's key heads the transitions report.
+  const distance = { q: '2B9D', kind: 'select', label: 'Farthest distance', options: ['50 miles'] };
+  const forHire = { q: '2C1A', kind: 'radio', label: 'For hire?', options: ['Yes', 'No'] };
+  const layout = (n, fields) => ({ id: `l${n}`, t: at(n), session: `s${n}`, carrier: 'progressive', type: 'page_layout', page: 'MoreAboutBusiness', context, fields });
+  const data = path.join(dir, 'data');
+  fs.mkdirSync(data);
+  fs.writeFileSync(path.join(data, '2026-10-05.jsonl'), [layout(1, [distance, forHire]), layout(2, [distance])].map((e) => JSON.stringify(e)).join('\n'));
   const out = path.join(dir, 'out');
-  execFileSync(process.execPath, [script('review.mjs'), path.join(dir, 'data'), '--all', '--out', path.join(out, 'review.md')], { stdio: 'ignore' });
-  assert.deepEqual(stamps(), before, 'no report or layout written or replaced in the repository');
+  execFileSync(process.execPath, [script('review.mjs'), data, '--all', '--out', path.join(out, 'review.md')], { stdio: 'ignore' });
+  assert.deepEqual(inRepo(), [], 'nothing of this run in the repository (delete a stray file an older build left)');
   // They went next to the review instead.
-  assert.ok(fs.existsSync(path.join(out, `transitions-${today}.md`)), 'the transitions report next to the review');
+  const [transitions] = reports(out, 'transitions');
+  assert.ok(transitions, 'the transitions report next to the review');
+  assert.match(fs.readFileSync(transitions, 'utf8'), marker);
   assert.ok(fs.existsSync(path.join(out, 'captures', 'progressive', 'generated', `${key}.json`)), 'the generated layout next to the review');
-  if (fs.existsSync(path.join(root, 'layouts'))) assert.ok(fs.existsSync(path.join(out, `captures-${today}.md`)), 'the captures report next to the review');
+  if (fs.existsSync(path.join(root, 'layouts'))) assert.equal(reports(out, 'captures').length, 1, 'the captures report next to the review');
   // The scripts on their own (the review runs them from the repository).
-  fs.mkdirSync(path.join(dir, 'layouts'));
-  execFileSync(process.execPath, [script('transitions.mjs'), path.join(dir, 'data'), '--out', path.join(dir, 'transitions.md')], { cwd: root, stdio: 'ignore' });
-  execFileSync(process.execPath, [script('captures.mjs'), path.join(dir, 'layouts'), '--out', path.join(dir, 'captures.md')], { cwd: root, stdio: 'ignore' });
-  assert.match(fs.readFileSync(path.join(dir, 'transitions.md'), 'utf8'), /^# When questions show/);
-  assert.match(fs.readFileSync(path.join(dir, 'captures.md'), 'utf8'), /^# Manual captures/);
-  assert.deepEqual(stamps(), before, 'transitions.mjs and captures.mjs with --out write only there');
+  const layouts = path.join(dir, 'layouts');
+  fs.mkdirSync(layouts);
+  fs.writeFileSync(path.join(layouts, 'capture-progressive-review-out-test-q1-001-MoreAboutBusiness.json'), JSON.stringify({ kind: 'page-capture', version: 2, carrier: 'progressive', scenario: 'Review Out Test', quote: 'q1', n: 1, page: 'MoreAboutBusiness', capturedAt: at(1), frames: [{ isTopFrame: true, controls: [distance] }] }));
+  execFileSync(process.execPath, [script('transitions.mjs'), data, '--out', path.join(dir, 'transitions.md')], { cwd: root, stdio: 'ignore' });
+  execFileSync(process.execPath, [script('captures.mjs'), layouts, '--out', path.join(dir, 'captures.md')], { cwd: root, stdio: 'ignore' });
+  assert.match(fs.readFileSync(path.join(dir, 'transitions.md'), 'utf8'), marker);
+  assert.match(fs.readFileSync(path.join(dir, 'captures.md'), 'utf8'), marker);
+  assert.deepEqual(inRepo(), [], 'transitions.mjs and captures.mjs with --out write only there');
+  // An --out without a file name is refused, not written to a file named after the next flag.
+  for (const name of ['transitions.mjs', 'captures.mjs']) {
+    const r = spawnSync(process.execPath, [script(name), data, '--out', '--all'], { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 1, `${name}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /--out needs a value/);
+    assert.ok(!fs.existsSync(path.join(dir, '--all')), `${name} wrote a file named --all`);
+  }
 });
 
 // Audit 2026-10-19: the review read only <repository>/reviews/test-intakes.txt, which a git
 // worktree doesn't have, and then counted the maintainer's test quotes as agents' work silently.
 test('the review leaves out the quotes --tests lists, and says when it has no test-run list', async (t) => {
   const { spawnSync } = await import('node:child_process');
+  const { createHash } = await import('node:crypto');
   const root = fileURLToPath(new URL('..', import.meta.url));
   const review = (...args) => spawnSync(process.execPath, [path.join(root, 'scripts', 'review.mjs'), ...args], { encoding: 'utf8' });
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  // Three quotes: one listed as a test, one marked as a test in the panel, one an agent's.
+  // Four quotes: one listed as a test, one marked as a test in the panel, one of a committed
+  // fixture PDF (a test wherever the review runs), one an agent's.
   const quote = (session, intakeId, x = {}) => [
     { id: `${session}1`, t: at(1), session, type: 'intake_loaded', state: 'VA', intakeId, ...x },
     { id: `${session}2`, t: at(2), session, carrier: 'progressive', type: 'page_view', page: 'AddVehicle' },
   ];
+  const fixture = createHash('sha256').update(fs.readFileSync(path.join(root, 'test', 'fixtures', 'sample-intake.pdf'))).digest('hex');
   const data = path.join(dir, 'data');
   fs.mkdirSync(data);
-  fs.writeFileSync(path.join(data, '2026-10-05.jsonl'), [...quote('a', 'aaaaaaaa0001'), ...quote('b', 'bbbbbbbb0002', { test: true }), ...quote('c', 'cccccccc0003')].map((e) => JSON.stringify(e)).join('\n'));
+  fs.writeFileSync(path.join(data, '2026-10-05.jsonl'), [...quote('a', 'aaaaaaaa0001'), ...quote('b', 'bbbbbbbb0002', { test: true }), ...quote('f', fixture), ...quote('c', 'cccccccc0003')].map((e) => JSON.stringify(e)).join('\n'));
   const list = path.join(dir, 'tests.txt');
   fs.writeFileSync(list, '# the maintainer\'s test intake\naaaaaaaa\n');
 
   const listed = review(data, '--all', '--tests', list, '--out', path.join(dir, 'listed.md'));
   assert.equal(listed.status, 0, listed.stderr);
   const md = fs.readFileSync(path.join(dir, 'listed.md'), 'utf8');
-  assert.match(md, /\| Quotes started \| 1 \(VA 1\) · 2 test run\(s\) left out \|/, 'the listed and the marked quote left out');
+  assert.match(md, /\| Quotes started \| 1 \(VA 1\) · 3 test run\(s\) left out \|/, 'the listed, the marked and the fixture quote left out');
   assert.doesNotMatch(`${listed.stderr}${md}`, /No test-run list/);
 
   const unlisted = review(data, '--all', '--out', path.join(dir, 'unlisted.md'));
@@ -657,9 +681,10 @@ test('the review leaves out the quotes --tests lists, and says when it has no te
   if (fs.existsSync(path.join(root, 'reviews', 'test-intakes.txt'))) {
     assert.doesNotMatch(`${unlisted.stderr}${plain}`, /No test-run list/, 'the repository\'s list was found');
   } else {
-    assert.match(unlisted.stderr, /Warning: No test-run list: test quotes are counted as agents' work/);
-    assert.match(plain, /\*\*No test-run list: test quotes are counted as agents' work/);
-    assert.match(plain, /\| Quotes started \| 2 \(VA 2\) · 1 test run\(s\) left out \|/, 'the quote marked as a test still left out');
+    const warning = /No test-run list: the maintainer's test quotes are counted as agents' work \(fixture intakes and intakes marked as a test are still left out\)/;
+    assert.match(unlisted.stderr, new RegExp(`Warning: ${warning.source}`));
+    assert.match(plain, new RegExp(`\\*\\*${warning.source}`));
+    assert.match(plain, /\| Quotes started \| 2 \(VA 2\) · 2 test run\(s\) left out \|/, 'the marked and the fixture quote still left out');
   }
 
   // Checked as weekly-signals checks it.

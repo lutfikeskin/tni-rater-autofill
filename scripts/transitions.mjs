@@ -20,8 +20,13 @@ import { layoutTransitions, summarizeTransitions } from './lib/transitions.mjs';
 
 const args = process.argv.slice(2);
 const outIdx = args.indexOf('--out');
+const outFile = outIdx >= 0 ? args[outIdx + 1] : null;
+if (outIdx >= 0 && (!outFile || outFile.startsWith('--'))) {
+  console.error('--out needs a value.');
+  process.exit(1);
+}
 const inputs = outIdx >= 0 ? args.filter((_, i) => i !== outIdx && i !== outIdx + 1) : args;
-if (!inputs.length || (outIdx >= 0 && !args[outIdx + 1])) {
+if (!inputs.length) {
   console.error('usage: node scripts/transitions.mjs <server-data folder | usage logs>... [--out file.md]');
   process.exit(1);
 }
@@ -73,7 +78,7 @@ if (transitions.length) {
   p('');
 }
 
-const out = outIdx >= 0 ? args[outIdx + 1] : path.join('reviews', `transitions-${new Date().toISOString().slice(0, 10)}.md`);
+const out = outFile ?? path.join('reviews', `transitions-${new Date().toISOString().slice(0, 10)}.md`);
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, `${md.join('\n')}\n`);
 console.log(`${out}: ${conditions} condition(s), ${unknown} unknown, ${unseen} answer(s) not seen yet, ${transitions.length} transition(s)`);

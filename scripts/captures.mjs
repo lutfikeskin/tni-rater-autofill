@@ -120,8 +120,9 @@ export function captureStory(captures) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
   const outIdx = args.indexOf('--out');
-  if (outIdx >= 0 && !args[outIdx + 1]) {
-    console.error('usage: node scripts/captures.mjs [layouts folders or files...] [--out file.md]');
+  const outFile = outIdx >= 0 ? args[outIdx + 1] : null;
+  if (outIdx >= 0 && (!outFile || outFile.startsWith('--'))) {
+    console.error('--out needs a value.');
     process.exit(1);
   }
   const given = outIdx >= 0 ? args.filter((_, i) => i !== outIdx && i !== outIdx + 1) : args;
@@ -131,7 +132,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     'Each scenario in the order captured. Changes are between consecutive captures of the same page; they were seen, not proven.', '',
     ...(unreadable.length ? ['**Not read** (a step may be missing from the stories below):', ...unreadable.map((u) => `- ${u.file}: ${u.error}`), ''] : []),
     ...(captures.length ? captureStory(captures) : ['No captures (version 2) found. Take some with Capture page layout or Alt+Shift+C, then move them to layouts/.', ''])];
-  const out = outIdx >= 0 ? args[outIdx + 1] : path.join('reviews', `captures-${new Date().toISOString().slice(0, 10)}.md`);
+  const out = outFile ?? path.join('reviews', `captures-${new Date().toISOString().slice(0, 10)}.md`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${md.join('\n')}\n`);
   console.log(`${out}: ${captures.length} capture(s) in ${new Set(captures.map((c) => `${c.carrier}|${c.scenario}|${c.quote}`)).size} scenario(s)${unreadable.length ? `, ${unreadable.length} file(s) not read` : ''}`);

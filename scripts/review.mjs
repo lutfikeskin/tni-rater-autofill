@@ -9,8 +9,8 @@
 // is when the server received the events (when logged, for exported ones): one uploaded a day late
 // is in the next review, not lost between two. --summary writes what's new (problem reports,
 // questions without a rule) for the daily review's issue (scripts/daily-issue.mjs).
-// --tests: the test-run list, read as scripts/weekly-signals.mjs reads it (default: this
-// repository's reviews/test-intakes.txt; a git worktree has none, so pass the main checkout's).
+// --tests: the test-run list (readTestList in scripts/lib/signals.mjs, as weekly-signals.mjs; default:
+// this repository's reviews/test-intakes.txt; a git worktree has none, so pass the main checkout's).
 // Rule suggestions and layouts always use all the data (they need many quotes).
 // Reports go to reviews/review-<date>.md (git-ignored, like generated layouts: review first). With
 // --out outside reviews/, the transitions and captures reports and the generated layouts go next
@@ -25,7 +25,7 @@ import { loadEvents, quoteSessions } from './lib/events.mjs';
 import { loadLayouts, report as coverageReport } from './coverage.mjs';
 import { receivedAt, uncoveredQuestions } from './lib/daily.mjs';
 import { questionOf } from './lib/learn.mjs';
-import { NO_TEST_LIST, signals, testSessionsOf } from './lib/signals.mjs';
+import { readTestList, signals, testSessionsOf } from './lib/signals.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -37,15 +37,14 @@ if (!inputs.length) inputs.push('server-data');
 for (const p of inputs) {
   if (!fs.existsSync(p)) { console.error(`No usage data at ${p}. Start the server (npm run server) or pass exported logs.`); process.exit(1); }
 }
-// The test-run list, checked as scripts/weekly-signals.mjs checks it. Without one, the
-// maintainer's test quotes count as agents' work: say so on stderr and in the report.
+// The test-run list. Without a local one, the maintainer's test quotes count as agents' work:
+// say so on stderr and in the report.
 const testsOpt = opt('tests');
 if (args.includes('--tests') && (testsOpt === undefined || testsOpt.startsWith('--'))) fail('--tests needs a value.');
-if (testsOpt && !fs.existsSync(testsOpt)) fail(`--tests ${testsOpt}: no such file.`);
-const defaultTests = path.join(root, 'reviews', 'test-intakes.txt');
-const testFile = testsOpt ?? (fs.existsSync(defaultTests) ? defaultTests : null);
-const testIntakes = testFile ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
-if (!testFile) console.error(`Warning: ${NO_TEST_LIST} Pass --tests <file> (from a git worktree, the main checkout's reviews/test-intakes.txt).`);
+let testList;
+try { testList = readTestList({ tests: testsOpt }); } catch (err) { fail(err.message); }
+const { intakes: testIntakes, warning: noTestList } = testList;
+if (noTestList) console.error(`Warning: ${noTestList}`);
 
 const today = new Date().toISOString().slice(0, 10);
 const reviewsDir = path.join(root, 'reviews');
@@ -56,20 +55,20 @@ const since = args.includes('--all') ? null : opt('since') ?? previous ?? null;
 const out = opt('out') ?? path.join(reviewsDir, `review-${today}.md`);
 // A review written outside reviews/ (a test's, in a temporary folder) gets the other scripts'
 // reports and layouts next to it: it must not replace the day's real ones in reviews/ and
-// captures/. One written into reviews/ is a real review: its layouts stay where npm run e2e and
-// fixtures:progressive read them.
+// captures/. One written anywhere in reviews/ (reviews/daily/ too) is a real review: its reports
+// and layouts stay where they always go, where npm run e2e and fixtures:progressive read them.
 const outDir = path.dirname(path.resolve(out));
-const sideDir = path.relative(reviewsDir, outDir) ? outDir : null;
+const inReviews = path.relative(reviewsDir, outDir);
+const sideDir = inReviews.startsWith('..') || path.isAbsolute(inReviews) ? outDir : null;
 const sideOut = (name) => (sideDir ? ['--out', path.join(sideDir, `${name}-${today}.md`)] : []);
 
 const all = loadEvents(inputs);
 // Compared as full ISO times: gh's run times have no milliseconds, the server's receipts do.
 const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOString() : since;
 const recent = from ? all.filter((e) => receivedAt(e) >= from) : all;
-// Test runs: intakes marked as a test, and the fingerprints in the test-run list when there is
-// one (scripts/lib/signals.mjs). Their events leave the numbers and the usage summary.
-let tests;
-try { tests = testSessionsOf(all, testIntakes); } catch (err) { fail(`${testFile}: ${err.message}`); }
+// Test runs: intakes marked as a test, fixture intakes and the fingerprints in the test-run list
+// (scripts/lib/signals.mjs). Their events leave the numbers and the usage summary.
+const tests = testSessionsOf(all, testIntakes);
 // The agents' work in the period: everything but test runs (problem reports keep them, marked).
 const live = recent.filter((e) => !tests.has(e.session));
 
@@ -98,7 +97,7 @@ fs.rmSync(tmp, { recursive: true, force: true });
 // --- Numbers for the top of the report ------------------------------------------------------
 // The weekly numbers come from the signals report (scripts/lib/signals.mjs), so the two agree:
 // per quote (a page filled twenty times counts once), test runs left out (intakes marked as a test,
-// and the fingerprints in the test-run list when there is one).
+// fixture intakes and the fingerprints in the test-run list).
 const week = signals(all, { since: from && !Number.isNaN(Date.parse(from)) ? from : null, testIntakes });
 // Quotes: intakes loaded in this period that went to a carrier's page (whenever they did), not test runs.
 const quoting = quoteSessions(all);
@@ -157,7 +156,7 @@ const lines = [];
 const p = (...x) => lines.push(...x);
 p(`# Rater Autofill review ${today}`, '');
 p(`Period: ${since ? `since ${since}` : 'all data'} · ${recent.length} events (${all.length} in total) · ${quotes.size} quotes · agents: ${agents.join(', ') || '—'}`, '');
-if (!testFile) p(`**${NO_TEST_LIST}**`, '');
+if (noTestList) p(`**${noTestList}**`, '');
 p('## At a glance', '');
 p('| | |', '| --- | --- |');
 const k = week.kpis;

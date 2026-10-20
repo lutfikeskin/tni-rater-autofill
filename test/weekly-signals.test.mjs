@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { RESTRICTED, isRestricted, markdown, mask, signals, testSessionsOf } from '../scripts/lib/signals.mjs';
+import { NO_TEST_LIST, RESTRICTED, isRestricted, markdown, mask, readTestList, signals, testSessionsOf } from '../scripts/lib/signals.mjs';
 
 // Two quotes on two builds: what each left, held and reported.
 function week() {
@@ -141,22 +142,85 @@ test('weekly-signals fails loudly on --since without a valid date and on a missi
 
 // Audit 2026-10-19: run where there is no reviews/test-intakes.txt (a git worktree), the signals
 // counted the maintainer's test quotes as agents' work without saying so.
-test('weekly-signals says when it has no test-run list', () => {
+const sha = (data) => createHash('sha256').update(data).digest('hex');
+const repo = fileURLToPath(new URL('..', import.meta.url));
+
+// Review of PR #103: one reader of the test-run list for every review script, so they can't
+// disagree on where it is; committed fixture PDFs are tests on any computer.
+test('readTestList: the repository\'s list or --tests, plus fixture PDFs, checked', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tests-list-'));
+  try {
+    assert.deepEqual(readTestList({ root }), { file: null, intakes: [], warning: NO_TEST_LIST });
+    // Fixture and synthetic intake PDFs, at any depth, are tests without a list.
+    fs.mkdirSync(path.join(root, 'test', 'fixtures', 'more'), { recursive: true });
+    fs.mkdirSync(path.join(root, 'dist', 'synthetic-intakes', 'pdfs'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'test', 'fixtures', 'more', 'a.pdf'), 'fixture a');
+    fs.writeFileSync(path.join(root, 'dist', 'synthetic-intakes', 'pdfs', 'b.PDF'), 'synthetic b');
+    fs.writeFileSync(path.join(root, 'test', 'fixtures', 'notes.txt'), 'not an intake');
+    const fixtures = readTestList({ root });
+    assert.deepEqual(fixtures.intakes.sort(), [sha('fixture a'), sha('synthetic b')].sort());
+    assert.equal(fixtures.warning, NO_TEST_LIST, 'fixtures alone are no list: the maintainer\'s own test intakes are missing');
+    // The repository's list: comments, blank lines, CRLF and case don't matter.
+    fs.mkdirSync(path.join(root, 'reviews'));
+    fs.writeFileSync(path.join(root, 'reviews', 'test-intakes.txt'), '# the maintainer\'s\r\nDEADBEEF01  # a test\r\n\r\n');
+    const local = readTestList({ root });
+    assert.equal(local.file, path.join(root, 'reviews', 'test-intakes.txt'));
+    assert.equal(local.warning, null);
+    assert.deepEqual(local.intakes.filter((x) => x.length < 64), ['deadbeef01']);
+    assert.equal(local.intakes.length, 3);
+    // --tests replaces the repository's list; the fixtures stay.
+    const other = path.join(root, 'other.txt');
+    fs.writeFileSync(other, 'cafebabe\n');
+    assert.deepEqual(readTestList({ tests: other, root }).intakes.filter((x) => x.length < 64), ['cafebabe']);
+    // Refused: a missing file, a short or non-hex line.
+    assert.throws(() => readTestList({ tests: path.join(root, 'missing.txt'), root }), /no such file/);
+    fs.writeFileSync(other, 'abc\n');
+    assert.throws(() => readTestList({ tests: other, root }), /at least 8 hex/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('readTestList reads this repository\'s list and fixtures by default', () => {
+  const list = readTestList();
+  const local = path.join(repo, 'reviews', 'test-intakes.txt');
+  assert.equal(list.file, fs.existsSync(local) ? local : null);
+  assert.equal(list.warning, fs.existsSync(local) ? null : NO_TEST_LIST);
+  assert.ok(list.intakes.includes(sha(fs.readFileSync(path.join(repo, 'test', 'fixtures', 'sample-intake.pdf')))));
+});
+
+// Audit 2026-10-19: run where there was no reviews/test-intakes.txt (a git worktree), the signals
+// counted the maintainer's test quotes as agents' work without saying so.
+test('weekly-signals reads the repository\'s list wherever it runs, and says when there is none', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'signals-'));
   try {
+    const at = '2026-10-06T12:00:00Z';
+    const quote = (session, intakeId) => [
+      { id: `${session}1`, t: at, receivedAt: at, session, type: 'intake_loaded', intakeId },
+      { id: `${session}2`, t: at, receivedAt: at, session, carrier: 'progressive', type: 'page_view', page: 'AddVehicle' },
+    ];
     const log = path.join(dir, 'events.jsonl');
-    fs.writeFileSync(log, JSON.stringify({ id: '1', t: '2026-10-06T12:00:00Z', receivedAt: '2026-10-06T12:00:00Z', session: 's', type: 'intake_loaded' }) + '\n');
-    // From a folder without reviews/, as a worktree is.
-    const signalsIn = (...args) => spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/weekly-signals.mjs', import.meta.url)), log, '--all', ...args], { encoding: 'utf8', cwd: dir });
+    fs.writeFileSync(log, [...quote('listed', 'eeeeeeee01'), ...quote('fixture', sha(fs.readFileSync(path.join(repo, 'test', 'fixtures', 'sample-intake.pdf'))))].map((e) => JSON.stringify(e)).join('\n'));
+    // A list in the working folder is not the repository's: not read.
+    fs.mkdirSync(path.join(dir, 'reviews'));
+    fs.writeFileSync(path.join(dir, 'reviews', 'test-intakes.txt'), 'eeeeeeee\n');
+    const signalsIn = (...args) => spawnSync(process.execPath, [path.join(repo, 'scripts', 'weekly-signals.mjs'), log, '--all', ...args], { encoding: 'utf8', cwd: dir });
+    const json = signalsIn('--json');
+    assert.equal(json.status, 0, json.stderr);
+    assert.equal(JSON.parse(json.stdout).kpis.testRunsLeftOut, 1, 'the fixture quote, on any computer; not the one listed in the working folder');
     const none = signalsIn('--out', path.join(dir, 'none.md'));
     assert.equal(none.status, 0, none.stderr);
-    assert.match(none.stderr, /Warning: No test-run list: test quotes are counted as agents' work/);
-    assert.match(fs.readFileSync(path.join(dir, 'none.md'), 'utf8'), /\*\*No test-run list: test quotes are counted as agents' work/);
-    const list = path.join(dir, 'tests.txt');
-    fs.writeFileSync(list, 'deadbeef\n');
-    const listed = signalsIn('--tests', list, '--out', path.join(dir, 'listed.md'));
+    const md = fs.readFileSync(path.join(dir, 'none.md'), 'utf8');
+    if (fs.existsSync(path.join(repo, 'reviews', 'test-intakes.txt'))) {
+      assert.doesNotMatch(`${none.stderr}${md}`, /No test-run list/, 'the repository\'s list was found');
+    } else {
+      assert.ok(none.stderr.includes(`Warning: ${NO_TEST_LIST}`));
+      assert.ok(md.includes(`**${NO_TEST_LIST}**`));
+    }
+    const listed = signalsIn('--tests', path.join(dir, 'reviews', 'test-intakes.txt'), '--out', path.join(dir, 'listed.md'));
     assert.equal(listed.status, 0, listed.stderr);
     assert.doesNotMatch(`${listed.stderr}${fs.readFileSync(path.join(dir, 'listed.md'), 'utf8')}`, /No test-run list/);
+    assert.match(fs.readFileSync(path.join(dir, 'listed.md'), 'utf8'), /2 test run\(s\) left out/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

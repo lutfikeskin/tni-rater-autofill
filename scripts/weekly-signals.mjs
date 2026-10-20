@@ -8,16 +8,17 @@
 //   node scripts/weekly-signals.mjs server-data [more logs...] [--since 2026-10-06[T06:00]] [--all] [--tests reviews/test-intakes.txt] [--json] [--out file.md]
 //
 // --tests: a file of intake fingerprints (full or leading hex, at least 8 characters, one per line, # for comments) whose
-// quotes are test runs; they, and intakes the agent marked as a test, are left out and counted.
-// Without a list (none given, no reviews/test-intakes.txt here, as in a git worktree) it warns, and
-// the report says test quotes are counted as agents' work.
+// quotes are test runs; they, fixture intakes and intakes the agent marked as a test, are left out
+// and counted (readTestList in scripts/lib/signals.mjs, shared with review.mjs). Without a list
+// (none given, no reviews/test-intakes.txt in this repository, as in a git worktree) it warns, and
+// the report says the maintainer's test quotes are counted as agents' work.
 //
 // Writes reviews/signals-<date>.md (git-ignored: problem reports are agents' own words).
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadEvents } from './lib/events.mjs';
-import { markdown, NO_TEST_LIST, signals } from './lib/signals.mjs';
+import { markdown, readTestList, signals } from './lib/signals.mjs';
 
 const args = process.argv.slice(2);
 const fail = (msg) => { console.error(msg); process.exit(1); };
@@ -36,13 +37,12 @@ for (const p of inputs) {
 const since = args.includes('--all') ? null : opt('since') ?? new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
 if (since && Number.isNaN(Date.parse(since))) fail(`--since ${since} is not a date.`);
 
-const testsOpt = opt('tests');
-if (testsOpt && !fs.existsSync(testsOpt)) fail(`--tests ${testsOpt}: no such file.`);
-const testFile = testsOpt ?? (fs.existsSync('reviews/test-intakes.txt') ? 'reviews/test-intakes.txt' : null);
-const testIntakes = testFile ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
-if (!testFile) console.error(`Warning: ${NO_TEST_LIST} Pass --tests <file> (from a git worktree, the main checkout's reviews/test-intakes.txt).`);
+let testList;
+try { testList = readTestList({ tests: opt('tests') }); } catch (err) { fail(err.message); }
+const { file: testFile, intakes: testIntakes, warning } = testList;
+if (warning) console.error(`Warning: ${warning}`);
 let result;
-try { result = signals(loadEvents(inputs), { since, testIntakes }); } catch (err) { fail(`${testFile ?? 'signals'}: ${err.message}`); }
+try { result = signals(loadEvents(inputs), { since, testIntakes }); } catch (err) { fail(`signals: ${err.message}`); }
 // A fingerprint list that hides many quotes may be hiding real ones.
 if (result.kpis.testRunsLeftOut > 3) console.error(`Warning: ${result.kpis.testRunsLeftOut} quotes left out as test runs${testFile ? ` (${testFile})` : ''}. Check the list.`);
 if (args.includes('--json')) {
@@ -51,5 +51,5 @@ if (args.includes('--json')) {
 }
 const out = opt('out') ?? path.join('reviews', `signals-${new Date().toISOString().slice(0, 10)}.md`);
 fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, markdown(result, { noTestList: !testFile }));
+fs.writeFileSync(out, markdown(result, { noTestList: !!warning }));
 console.log(`${out}  (${result.quotes} quotes, ${result.problems.length} problem reports, newest version ${result.newestVersion ?? '?'})`);

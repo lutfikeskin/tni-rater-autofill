@@ -27,7 +27,7 @@ What each source usually means, what to check before concluding, and which layer
 
 ## Pitfalls
 
-- **Testing versus agents' work.** `channel` `unpacked` or `source` is a development copy; `store` is what agents install. Before launch the maintainer also runs live quotes on development copies. Test runs are recognized by intake, not by channel: intakes marked as a test (`test: true` on `intake_loaded`), and the fingerprints in `reviews/test-intakes.txt`, are left out of the signals report. An intake quoted many times in a short time is probably a test: ask.
+- **Testing versus agents' work.** `channel` `unpacked` or `source` is a development copy; `store` is what agents install. Before launch the maintainer also runs live quotes on development copies. Test runs are recognized by intake, not by channel: intakes marked as a test (`test: true` on `intake_loaded`), fixture intakes (`test/fixtures/`, `dist/synthetic-intakes/pdfs/`) and the fingerprints in `reviews/test-intakes.txt` are left out of the signals report and the review. An intake quoted many times in a short time is probably a test: ask.
 - **Old events lack fields.** `view`, `key` (0.9.9), `channel`/`commit`, `run`/`rules`/`settings`, `step` (0.9.6), element ids in AmWINS layouts (0.8.1). `docs/learning.md` says which version added what. A missing field is "unknown", not "absent".
 - **Question ids are not identities.** Progressive renumbered every question on 2026-10-07. Identify a question by its data-model name (`ref:`) or its text on its page, as the reports do.
 - **`[client]` and masked numbers** are redaction placeholders, not page text. "Co[client]ges" is "Coverages" with a client word redacted.
