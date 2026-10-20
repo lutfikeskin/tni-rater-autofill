@@ -61,7 +61,8 @@ test('readKey takes the four kinds of answer and refuses ids, bad answers and qu
   assert.equal(answerKind({ value: '' }), null);
   assert.equal(answerKind({ value: 'Yes', agent: true }), null);
   assert.equal(answerKind({ fromIntake: 'drivers[].dob; rm' }), null);
-  assert.ok(key({ [COMP_ID]: { answer: { value: 'Yes' }, states: ['MD'], ...by } }));
+  assert.ok(key({ [COMP_ID]: { answer: { value: 'Yes' }, states: ['MD'], proposed: true, ...by } }));
+  assert.throws(() => key({ [COMP_ID]: { answer: { value: 'Yes' }, proposed: 'yes' } }), /no valid answer/);
   assert.throws(() => readKey({ kind: 'benchmark-run', version: 1 }), /not an answer key/);
   assert.throws(() => key({ 'progressive|AddVehicle|q:2CCC': { answer: { value: 'Yes' } } }), /no valid answer/);
   assert.throws(() => key({ [COMP_ID]: { answer: { value: 'Yes' }, states: ['Maryland'] } }), /no valid answer/);
@@ -110,6 +111,28 @@ test('scoreKey: a quote\'s own answer wins, states limit a question\'s, and only
   assert.equal(perQuote.total.cells, perQuote.scored.length);
 });
 
+test('scoreKey scores the reviewer\'s decided answers apart from those confirmed as proposed', () => {
+  const run = scoreKey(rowsOf(), key({
+    [COMP_ID]: { answer: { value: 'Yes' }, proposed: true, ...by },
+    [COLOR_ID]: { answer: { value: 'Blue' }, ...by },
+  }));
+  // Both count in every answer; only the typed one is decided.
+  assert.deepEqual([run.total.right, run.total.missed], [1, 1]);
+  assert.deepEqual([run.decided.cells, run.decided.right, run.decided.missed], [1, 0, 1]);
+  assert.equal(run.decidedByCarrier.progressive.missed, 1);
+  assert.deepEqual([run.entries, run.proposed], [2, 1]);
+});
+
+test('scoreKey leaves test runs out: a keyed intake run again as a test is not its agent\'s answer', () => {
+  const rows = rowsOf();
+  const k = key({ [COMP_ID]: { answer: { value: 'Yes' }, ...by } });
+  // `fixed`, the intake's latest quote, corrected Yes to No; as a test run, `kept` stands for it.
+  assert.equal(scoreKey(rows, k).scored.find((s) => s.question === COMP_ID).agent, 'wrong');
+  const run = scoreKey(rows, k, { tests: new Set(['fixed']) });
+  assert.equal(run.scored.find((s) => s.question === COMP_ID).agent, 'right');
+  assert.equal(scoreKey(rows, k, { tests: new Set(['fixed', 'kept']) }).quotes, 0);
+});
+
 test('the agents\' final answers are scored apart, typed text only through the intake fields it matched', () => {
   const rows = rowsOf();
   const run = scoreKey(rows, key({ [COMP_ID]: { answer: { value: 'Yes' }, ...by }, [DOB_ID]: { answer: { fromIntake: 'drivers[].dob' }, ...by } }));
@@ -149,7 +172,13 @@ test('sheetModel groups standards, intake fields and the agent\'s questions, and
   const m = sheetModel(rowsOf().filter((r) => r.session !== 'other'));
   const q = (id) => m.questions.find((x) => x.id === id);
   assert.equal(q(COMP_ID).group, 'standard');
-  assert.deepEqual(q(COMP_ID).proposal, { answer: { value: 'Yes' } });
+  // The agent answered the standard otherwise: nothing preselected, both offered.
+  assert.deepEqual(q(COMP_ID).proposal, { answer: null });
+  assert.deepEqual(q(COMP_ID).choose, { rules: 'Yes', agents: [{ text: 'No', n: 1 }] });
+  // Where the agent kept it, today's standard is the proposal.
+  const kept = sheetModel(rowsOf().filter((r) => r.session === 'kept')).questions.find((x) => x.id === COMP_ID);
+  assert.deepEqual(kept.proposal, { answer: { value: 'Yes' } });
+  assert.equal(kept.choose, undefined);
   assert.equal(q(DOB_ID).group, 'mapping');
   assert.deepEqual(q(DOB_ID).proposal, { answer: { fromIntake: 'drivers[].dob' } });
   assert.equal(q(COLOR_ID).group, 'agent');
@@ -165,6 +194,17 @@ test('sheetModel groups standards, intake fields and the agent\'s questions, and
   assert.equal(m.questions.some((x) => /q:9Z02|9Z02$|Login/.test(x.id)), false);
   assert.deepEqual(m.left, { byId: 1, offQuote: 1 });
   assert.equal(m.intakes.length, 1);
+});
+
+test('sheetModel proposes the option a quote ended on for a standard pick that depends on the page\'s options', () => {
+  const row = (session, step) => ({
+    id: `${session}|progressive|BusinessOwnerInfo|ref:Home.Address`, session, intakeId: 'i1', carrier: 'progressive', page: 'BusinessOwnerInfo', question: 'progressive|BusinessOwnerInfo|ref:Home.Address',
+    label: 'Home Address', kind: 'radio', status: 'value', source: 'standard', group: 'kept', result: 'unsure',
+    detail: { step, truth: { group: 'kept', value: 'Main St (USDOT Address)' }, record: {}, unit: '', state: 'MD', options: ['Main St (USDOT Address)', 'Enter a different address'] },
+  });
+  const m = sheetModel([row('s1', { kind: 'first-option', value: 'first option' })]);
+  assert.deepEqual(m.questions[0].proposal, { answer: { value: 'Main St (USDOT Address)' } });
+  assert.deepEqual(m.cells[0].attention, []);
 });
 
 test('the sheet resumes a key and keeps a label from closing its script', () => {
@@ -186,10 +226,12 @@ test('compareKey lists keyed answers whose result changed', () => {
 
 test('the weekly numbers show the key score only when a key is configured', () => {
   const events = quotes();
-  const answerKey = scoreKey(rowsOf(events), key({ [COMP_ID]: { answer: { value: 'Yes' }, ...by }, [COLOR_ID]: { answer: { value: 'Blue' }, ...by } }));
+  const answerKey = scoreKey(rowsOf(events), key({ [COMP_ID]: { answer: { value: 'Yes' }, proposed: true, ...by }, [COLOR_ID]: { answer: { value: 'Blue' }, ...by } }));
   const s = signals(events, { answerKey });
-  assert.deepEqual([s.kpis.answerKey.quotes, s.kpis.answerKey.right, s.kpis.answerKey.missed, s.kpis.answerKey.invented], [1, 1, 1, 0]);
-  assert.match(markdown(s), /\| Today's rules against TNI's answer key \(1 keyed intakes?.*\| 50% · 0 · 1 · 0 \|/);
+  const k = s.kpis.answerKey;
+  assert.deepEqual([k.quotes, k.all.right, k.all.missed, k.all.invented, k.decided.right, k.decided.missed, k.proposed, k.entries], [1, 1, 1, 0, 0, 1, 1, 2]);
+  // Every answer, then the reviewer's decided ones, then the entries accepted as proposed.
+  assert.match(markdown(s), /\| Today's rules against TNI's answer key \(1 keyed intake,.*\| 50% · 0 · 1 · 0 \/ 0% · 0 · 1 · 0; 1 of 2 \|/);
   assert.equal(signals(events).kpis.answerKey, null);
   assert.doesNotMatch(markdown(signals(events)), /answer key/);
 });

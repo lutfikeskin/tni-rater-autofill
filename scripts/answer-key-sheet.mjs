@@ -39,7 +39,8 @@ if (testFile && !fs.existsSync(testFile)) fail(`--tests ${testFile}: no such fil
 const testIntakes = testFile ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
 
 const events = loadEvents(inputs);
-const tests = testSessionsOf(events, testIntakes);
+let tests;
+try { tests = testSessionsOf(events, testIntakes); } catch (err) { fail(`${testFile}: ${err.message}`); }
 const raws = await readIntakes(folders, new Set(events.filter((e) => e.type === 'intake_loaded' && e.intakeId && !tests.has(e.session)).map((e) => e.intakeId)));
 if (!raws.size) fail(`None of the recorded quotes' intake PDFs (test runs left out) is in ${folders.join(', ')}.`);
 const run = benchmark(events, { carriers: CARRIERS, raws, detail: true });

@@ -53,6 +53,9 @@
   .chip.warn { background: var(--warnbg); color: var(--warn); }
   .chip.ok { background: var(--okbg); color: var(--ok); }
   .why { color: var(--warn); font-size: 13px; }
+  .why button { margin: 2px 4px 2px 0; font-size: 12.5px; }
+  .resume { background: var(--warnbg); color: var(--warn); border-radius: 6px; padding: 6px 10px; }
+  .resume:empty { display: none; }
   details { margin-top: 4px; font-size: 13px; }
   summary { cursor: pointer; color: var(--accent); }
   .quotes td { font-size: 12.5px; border-top: 1px solid var(--line); }
@@ -77,7 +80,8 @@
 </header>
 <main>
   <div class="intro">
-    <p><b>What this is.</b> Each row is a question these quotes met. Decide TNI's right answer once; the benchmark then scores today's rules against it every week (<code>npm run benchmark -- --key</code>). Every row starts with a <b>proposal</b> from today's rules or the agent's answer. A proposal is not a decision: nothing goes into the key until you confirm it. Changing an answer confirms it.</p>
+    <p id="resume" class="resume"></p>
+    <p><b>What this is.</b> Each row is a question these quotes met. Decide TNI's right answer once; the benchmark then scores today's rules against it every week (<code>npm run benchmark -- --key</code>). Most rows start with a <b>proposal</b> from today's rules or the agent's answer. A proposal is not a decision: nothing goes into the key until you confirm it, and the key marks what you confirmed unchanged as <i>proposed</i>. Proposals agree with today's rules by construction, so the benchmark scores the rules twice: on every answer, and on the answers you decided (changed or typed) alone. Changing an answer confirms it as yours. Where an agent answered a standard otherwise, nothing is preselected: choose.</p>
     <ul>
       <li><b>This answer</b>: a TNI standard or another fixed answer (a standard can be limited to states).</li>
       <li><b>The intake's answer at</b> a record path (<code>drivers[].dob</code> is each driver's). A blank intake answer then counts as missing: the agent's.</li>
@@ -85,18 +89,19 @@
       <li><b>Not applicable</b>: nobody should answer it here.</li>
       <li><b>Depends on the client</b>: decide it quote by quote in section C.</li>
     </ul>
-    <p>Work top to bottom: A (standards), then B (which intake field answers each question, and the values a rule works out), then C (this client's answers). "Confirm unconfirmed in this section" confirms what you leave as proposed, except rows where the agent and the rules disagree, which need their own decision. Your work is kept in this browser as you go; <b>Save key.json</b> to keep it (save it to <code>layouts/answer-key/key.json</code>). To continue later, open a new sheet (or this one) and load the saved key.</p>
+    <p>Work top to bottom: A (standards), then B (which intake field answers each question, and the values a rule works out), then C (this client's answers). A and B are confirmed row by row: each is one decision for every quote. In C, "Confirm rows without a flag" confirms the questions left to the agent and the per-quote rows you leave as proposed; a flagged row (the agent and the rules disagree, an intake answering a standard, a coverage choice) needs its own decision.</p>
+    <p><b>Saving.</b> <b>Save key.json</b> to <code>layouts/answer-key/key.json</code>. Until you save, this browser keeps a copy of your answers so a closed tab or a new sheet doesn't lose them; Chrome gives every local file the same storage, so saving clears that copy (the page keeps your work until you close it). To continue from a saved key, load it here, or make the sheet with <code>npm run key:sheet -- --intakes layouts/intakes --key layouts/answer-key/key.json</code>.</p>
     <p id="leftOut" class="k"></p>
   </div>
   <div class="intakes">
     <b>Quotes on this sheet</b> (by intake PDF fingerprint)
     <table id="intakes"><thead><tr><th>Intake</th><th>State</th><th>Business class</th><th>Carriers</th><th>Recorded quotes</th></tr></thead><tbody></tbody></table>
   </div>
-  <section id="A"><h2>A. Standards <span class="progress"></span><button data-confirm="A">Confirm unconfirmed in this section</button></h2>
+  <section id="A"><h2>A. Standards <span class="progress"></span></h2>
     <p>Questions today's rules answer with a TNI standard in at least one quote. One answer per question; limit it to states when TNI's standard holds only there. A quote where the intake answers it instead is listed in C.</p><div class="rows"></div></section>
-  <section id="B"><h2>B. Intake fields <span class="progress"></span><button data-confirm="B">Confirm unconfirmed in this section</button></h2>
+  <section id="B"><h2>B. Intake fields <span class="progress"></span></h2>
     <p>Which intake field answers each question. The quotes' values are listed under each row: check them, then confirm. A question a rule works out from the intake (a band, a name split, a yes/no from an amount) is confirmed as its listed answers, quote by quote; if one is wrong, choose "Depends on the client" and correct it in C.</p><div class="rows"></div></section>
-  <section id="C"><h2>C. This client's answers <span class="progress"></span><button data-confirm="C">Confirm unconfirmed in this section</button></h2>
+  <section id="C"><h2>C. This client's answers <span class="progress"></span><button data-confirm="C">Confirm rows without a flag</button></h2>
     <p>First the questions today's rules leave to the agent (one row each: is it always the client's, or is there an answer?), then one row per quote where the answer depends on that client: coverage choices, answers the agent changed, today's rules and the agent disagreeing, and quotes today's rules answer differently from their question's row.</p>
     <h3>Left to the agent today</h3><div class="rows" id="C1"></div>
     <h3>Quote by quote</h3><div class="rows" id="C2"></div></section>
@@ -108,7 +113,9 @@
 const M = JSON.parse(document.getElementById('model').textContent);
 const Q = new Map(M.questions.map((q) => [q.id, q]));
 const C = new Map(M.cells.map((c) => [c.id, c]));
-const STORE = `tni-answer-key:${M.generated}`;
+// One copy of unsaved answers for every sheet, kept as a key: a sheet made again (after adding PDFs)
+// takes back what was decided, question by question and quote by quote. Saving clears it.
+const STORE = 'tni-answer-key:unsaved';
 const KINDS = { value: 'This answer', fromIntake: 'The intake\'s answer at', agent: 'The agent\'s (client fact or attestation)', na: 'Not applicable', perQuote: 'Depends on the client (decide per quote in C)', listed: 'Its rule\'s answer for each quote, as listed' };
 const today = () => new Date().toISOString().slice(0, 10);
 const kindOf = (a) => (a ? Object.keys(a).find((k) => k in KINDS) : null);
@@ -122,40 +129,48 @@ const el = (tag, attrs = {}, ...kids) => {
   for (const kid of kids.flat()) if (kid != null && kid !== false) e.append(kid.nodeType ? kid : String(kid));
   return e;
 };
-// A cell row waits for its own decision when the agent and the rules disagree about it.
-const needsOwn = (c) => c.attention.some((a) => /corrected|differ/.test(a));
 const sectionOf = (q) => ({ standard: 'A', mapping: 'B', derived: 'B' }[q.group] ?? 'C');
 
-// Decisions: the proposals, then a loaded key, then what this browser kept of this sheet.
+// Decisions: the proposals, then a loaded key, then this browser's unsaved copy. `edited`: the
+// reviewer changed or typed the answer; one confirmed without that is `proposed` in the key.
 let D;
 let extra;
 function fresh() {
   D = { q: {}, c: {} };
   extra = { questions: {}, quotes: {} };
-  for (const q of M.questions) D.q[q.id] = { ...clone(q.proposal), confirmed: false };
-  for (const c of M.cells) D.c[c.id] = { ...clone(c.proposal), confirmed: false };
+  for (const q of M.questions) D.q[q.id] = { ...clone(q.proposal), confirmed: false, edited: false };
+  for (const c of M.cells) D.c[c.id] = { ...clone(c.proposal), confirmed: false, edited: false };
 }
+// A key's entries onto this sheet's rows, by question and by quote; the rest kept as they are.
 function applyKey(key) {
   if (!key || key.kind !== 'tni-answer-key' || key.version !== 1) throw new Error('Not an answer key (kind tni-answer-key, version 1).');
+  let n = 0;
   for (const [id, e] of Object.entries(key.questions ?? {})) {
+    n++;
     if (!D.q[id]) { extra.questions[id] = e; continue; }
-    D.q[id] = { answer: clone(e.answer), states: e.states ?? undefined, listed: !!e.listed, confirmed: true, by: e.by, date: e.date };
+    D.q[id] = { answer: clone(e.answer), states: e.states ?? undefined, listed: !!e.listed, confirmed: true, edited: !e.proposed, proposed: !!e.proposed, by: e.by, date: e.date };
   }
   for (const [intake, cells] of Object.entries(key.quotes ?? {})) {
     for (const [cell, e] of Object.entries(cells ?? {})) {
+      n++;
       const id = `${intake}|${cell}`;
       if (!D.c[id]) { (extra.quotes[intake] ??= {})[cell] = e; continue; }
-      D.c[id] = { answer: clone(e.answer), confirmed: true, frozen: !!e.listed, by: e.by, date: e.date };
+      D.c[id] = { answer: clone(e.answer), confirmed: true, edited: !e.proposed, proposed: !!e.proposed, frozen: !!e.listed, by: e.by, date: e.date };
     }
     if (!M.intakes.some((i) => i.id === intake)) extra.quotes[intake] ??= {};
   }
+  return n;
 }
-function keep() { try { localStorage.setItem(STORE, JSON.stringify({ D, extra, by: by.value })); } catch { /* not kept: Save key.json */ } }
+function keep() { try { localStorage.setItem(STORE, JSON.stringify({ key: buildKey(), by: by.value, at: new Date().toISOString() })); } catch { /* not kept: Save key.json */ } }
+function forget() { try { localStorage.removeItem(STORE); } catch { /* nothing kept */ } }
+// This browser's unsaved answers, merged over the sheet's: { entries, at } or null.
 function restore() {
   try {
     const s = JSON.parse(localStorage.getItem(STORE) ?? 'null');
-    if (s?.D) { D = s.D; extra = s.extra ?? extra; if (s.by && !by.value) by.value = s.by; }
-  } catch { /* nothing kept */ }
+    if (!s?.key) return null;
+    if (s.by && !by.value) by.value = s.by;
+    return { entries: applyKey(s.key), at: s.at };
+  } catch { return null; }
 }
 
 // A row is confirmed only with an answer (a pick with no proposal waits for one) and the reviewer's initials.
@@ -163,7 +178,7 @@ const answered = (a) => { const k = kindOf(a); return k === 'value' ? String(a.v
 function stamp(d, quiet = false) {
   if (!answered(d.answer)) { if (!quiet) alert('Choose an answer first.'); return false; }
   if (!by.value.trim()) { alert('Enter your initials as reviewer first.'); by.focus(); return false; }
-  d.confirmed = true; d.by = by.value.trim(); d.date = today();
+  d.confirmed = true; d.proposed = !d.edited; d.by = by.value.trim(); d.date = today();
   return true;
 }
 
@@ -176,21 +191,21 @@ function buildKey() {
     const kind = kindOf(d.answer);
     key.questions[q.id] = {
       answer: d.answer, ...(kind === 'value' && d.states?.length ? { states: d.states } : {}), ...(d.listed ? { listed: true } : {}),
-      by: d.by, date: d.date, carrier: q.carrier, page: q.page + (q.step ? ` › ${q.step}` : ''), label: q.label,
+      ...(d.proposed ? { proposed: true } : {}), by: d.by, date: d.date, carrier: q.carrier, page: q.page + (q.step ? ` › ${q.step}` : ''), label: q.label,
     };
     // A rule's answers confirmed as listed: each quote's becomes its entry (unless decided apart).
     if (d.listed) {
       for (const id of q.cells) {
         const c = C.get(id);
         if (D.c[id].confirmed || !c.frozen) continue;
-        key.quotes[c.intake][c.cell] = { answer: c.frozen, listed: true, by: d.by, date: d.date };
+        key.quotes[c.intake][c.cell] = { answer: c.frozen, listed: true, ...(d.proposed ? { proposed: true } : {}), by: d.by, date: d.date };
       }
     }
   }
   for (const c of M.cells) {
     const d = D.c[c.id];
     if (!d.confirmed) continue;
-    key.quotes[c.intake][c.cell] = { answer: d.answer, ...(d.frozen ? { listed: true } : {}), by: d.by, date: d.date };
+    key.quotes[c.intake][c.cell] = { answer: d.answer, ...(d.frozen ? { listed: true } : {}), ...(d.proposed ? { proposed: true } : {}), by: d.by, date: d.date };
   }
   return key;
 }
@@ -231,7 +246,8 @@ function editor(d, { question = null, cell = null }) {
     d.listed = k === 'listed';
     d.states = question && k === 'value' ? states.value.split(/[\s,]+/).map((s) => s.trim().toUpperCase()).filter((s) => /^[A-Z]{2}$/.test(s)) : undefined;
     // Leaving "as listed" drops the quote entries it froze.
-    if (question && wasListed && !d.listed) for (const id of question.cells) if (D.c[id].frozen) D.c[id] = { ...clone(C.get(id).proposal), confirmed: false };
+    if (question && wasListed && !d.listed) for (const id of question.cells) if (D.c[id].frozen) D.c[id] = { ...clone(C.get(id).proposal), confirmed: false, edited: false };
+    d.edited = true;
     if (!stamp(d)) return;
     keep(); render();
   };
@@ -243,7 +259,7 @@ function editor(d, { question = null, cell = null }) {
   });
   box.append(sel, val, path, states);
   if (options.length) box.append(el('datalist', { id: listId }, options.map((o) => el('option', { value: o }))));
-  box.append(el('div', { class: 'line' }, el('label', {}, confirm, ' Confirmed'), d.confirmed ? el('span', { class: 'stamp' }, `${d.by ?? ''} ${d.date ?? ''}`) : el('span', { class: 'stamp' }, 'proposal')));
+  box.append(el('div', { class: 'line' }, el('label', {}, confirm, ' Confirmed'), d.confirmed ? el('span', { class: 'stamp' }, `${d.proposed ? 'as proposed' : 'decided'} · ${d.by ?? ''} ${d.date ?? ''}`) : el('span', { class: 'stamp' }, d.answer ? 'proposal' : 'choose an answer')));
   show();
   return box;
 }
@@ -275,8 +291,18 @@ function questionRow(q) {
       el('div', { class: 'facts' },
         el('div', {}, el('span', { class: 'k' }, 'Today\'s rules: '), chips(q.today)),
         el('div', {}, el('span', { class: 'k' }, 'Agents\' final answers: '), chips(q.agents))),
+      q.choose ? chooser(q, d) : null,
       quoteTable(q, q.group === 'mapping' || q.group === 'derived')),
     editor(d, { question: q }));
+}
+
+// A standard the agents answered otherwise: no answer is preselected; one click takes either.
+function chooser(q, d) {
+  const take = (value) => () => { d.answer = { value }; d.listed = false; d.edited = true; if (stamp(d)) { keep(); render(); } };
+  const picks = [[q.choose.rules, 'today\'s rules'], ...q.choose.agents.filter((a) => a.text !== 'other typed text').map((a) => [a.text, `agents, ${a.n} quote${a.n === 1 ? '' : 's'}`])];
+  return el('div', { class: 'why' }, 'Agents answered otherwise: choose. ',
+    picks.map(([value, who]) => el('button', { type: 'button', onclick: take(value) }, `"${value}" (${who})`)), ' ',
+    q.choose.agents.some((a) => a.text === 'other typed text') ? 'An agent typed something else.' : '');
 }
 
 function cellRow(c) {
@@ -322,27 +348,47 @@ function render() {
   document.getElementById('progress').textContent = `${all[0]} of ${all[1]} rows confirmed`;
 }
 
+// C only: the questions left to the agent, and the per-quote rows of a question that depends on the
+// client, as proposed. A flagged row (attention) waits for its own decision; A and B are confirmed
+// row by row, since each is one decision for every quote.
 function confirmSection(s) {
+  if (s !== 'C') return;
   if (!by.value.trim()) { alert('Enter your initials as reviewer first.'); by.focus(); return; }
   let n = 0;
-  for (const q of M.questions) if (sectionOf(q) === s && !D.q[q.id].confirmed && stamp(D.q[q.id], true)) n++;
-  if (s === 'C') {
-    for (const c of M.cells) {
-      const qd = D.q[c.question];
-      if ((c.attention.length || (kindOf(qd.answer) === 'perQuote' && !qd.listed)) && !needsOwn(c) && !D.c[c.id].confirmed && stamp(D.c[c.id], true)) n++;
-    }
+  for (const q of M.questions) if (sectionOf(q) === 'C' && !D.q[q.id].confirmed && stamp(D.q[q.id], true)) n++;
+  for (const c of M.cells) {
+    const qd = D.q[c.question];
+    if (!c.attention.length && kindOf(qd.answer) === 'perQuote' && !qd.listed && !D.c[c.id].confirmed && stamp(D.c[c.id], true)) n++;
   }
   keep(); render();
-  const waiting = s === 'C' ? M.cells.filter((c) => needsOwn(c) && !D.c[c.id].confirmed).length : 0;
-  if (waiting) alert(`${n} confirmed. ${waiting} row${waiting === 1 ? '' : 's'} where the agent and the rules disagree still need${waiting === 1 ? 's' : ''} your own decision.`);
+  const waiting = M.cells.filter((c) => c.attention.length && !D.c[c.id].confirmed).length;
+  if (waiting) alert(`${n} confirmed. ${waiting} flagged row${waiting === 1 ? '' : 's'} still need${waiting === 1 ? 's' : ''} your own decision.`);
 }
 
 const by = document.getElementById('by');
 by.addEventListener('change', keep);
-document.getElementById('save').addEventListener('click', () => {
-  const blob = new Blob([JSON.stringify(buildKey(), null, 1)], { type: 'application/json' });
-  const a = el('a', { href: URL.createObjectURL(blob), download: 'key.json' });
+const resume = document.getElementById('resume');
+function download(text) {
+  const a = el('a', { href: URL.createObjectURL(new Blob([text], { type: 'application/json' })), download: 'key.json' });
   document.body.append(a); a.click(); a.remove();
+}
+// Saved: this browser's copy goes (Chrome gives every local file one storage). With a save dialog
+// the browser can say whether it was saved; a plain download is taken as saved.
+document.getElementById('save').addEventListener('click', async () => {
+  const text = JSON.stringify(buildKey(), null, 1);
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({ suggestedName: 'key.json', types: [{ description: 'Answer key', accept: { 'application/json': ['.json'] } }] });
+      const out = await handle.createWritable();
+      await out.write(text);
+      await out.close();
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      download(text);
+    }
+  } else download(text);
+  forget();
+  resume.textContent = `Saved ${new Date().toLocaleTimeString()}. This browser's copy of your answers is cleared; the page keeps them until you close it.`;
 });
 document.getElementById('loadBtn').addEventListener('click', () => document.getElementById('load').click());
 document.getElementById('load').addEventListener('change', async (ev) => {
@@ -350,7 +396,12 @@ document.getElementById('load').addEventListener('change', async (ev) => {
   if (!file) return;
   try {
     const key = JSON.parse(await file.text());
-    fresh(); applyKey(key); keep(); render();
+    fresh();
+    const n = applyKey(key);
+    // Unsaved answers in this browser are newer than any saved key: they stay on top.
+    const kept = restore();
+    render();
+    resume.textContent = `Loaded ${file.name}: ${n} answers.${kept ? ` ${kept.entries} unsaved answers from this browser are applied on top; save to keep them.` : ''}`;
   } catch (err) { alert(`Couldn't load ${file.name}: ${err.message}`); }
   ev.target.value = '';
 });
@@ -361,9 +412,15 @@ document.getElementById('paths').append(...M.paths.map(([p, label]) => el('optio
 document.querySelector('#intakes tbody').append(...M.intakes.map((i) => el('tr', {}, el('td', {}, el('code', {}, i.short)), el('td', {}, i.state ?? '?'), el('td', {}, i.businessClass ?? '?'), el('td', {}, i.carriers.join(', ')), el('td', {}, i.sessions))));
 document.getElementById('leftOut').textContent = `Generated ${M.generated.slice(0, 16).replace('T', ' ')} UTC. Not on this sheet: ${M.left.byId} recorded answers to questions known only by an id (no data-model name or text: the key can't name them), ${M.left.offQuote} on login or portal pages.`;
 fresh();
-if (M.key) { try { applyKey(M.key); } catch (err) { alert(err.message); } }
-restore();
+let given = 0;
+if (M.key) { try { given = applyKey(M.key); } catch (err) { alert(err.message); } }
+const kept = restore();
 render();
+resume.textContent = [
+  given ? `Resumed from the key given with --key: ${given} answers.` : '',
+  kept ? `${kept.entries} unsaved answers from this browser (${String(kept.at ?? '').slice(0, 16).replace('T', ' ')} UTC) are back; save key.json to keep them.` : '',
+  !given && !kept ? 'Starting a new review. Continuing one? Load your saved key.json above, or make the sheet with --key layouts/answer-key/key.json, so your answers carry over to this sheet.' : '',
+].filter(Boolean).join(' ');
 </script>
 </body>
 </html>

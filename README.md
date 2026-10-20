@@ -123,7 +123,7 @@ TNI's answer key is what a reviewer at TNI decided is right for a set of recorde
 
 ```bash
 npm run key:sheet -- --intakes layouts/intakes [--key layouts/answer-key/key.json]   # review page -> layouts/answer-key/sheet-<date>.html; save key.json there
-npm run benchmark -- --intakes layouts/intakes --key layouts/answer-key/key.json    # adds "Against TNI's answer key": right, wrong, missed, invented
+npm run benchmark -- --intakes layouts/intakes --key layouts/answer-key/key.json    # adds "Against TNI's answer key": right, wrong, missed, invented (all, and the reviewer's decided answers)
 ```
 
 When `layouts/answer-key/key.json` exists, `npm run signals` adds the key's score to the weekly numbers.

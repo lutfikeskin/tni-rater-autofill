@@ -62,8 +62,8 @@ export function testSessionsOf(all, testIntakes = []) {
  * @param {object[]} all  every event (loadEvents), for which sessions are quotes
  * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>, answerKey?: object|null}} opts  since: ISO
  *   time the server received them from; testIntakes: intake fingerprints whose quotes are tests;
- *   answerKey: today's rules scored against TNI's answer key (answer-key.mjs scoreKey: its `total`
- *   and `quotes`), when one is configured
+ *   answerKey: today's rules scored against TNI's answer key (answer-key.mjs scoreKey: `total`,
+ *   `decided`, `quotes`, `entries`, `proposed`), when one is configured
  */
 export function signals(all, { since = null, top: n = 12, testIntakes = [], answerKey = null } = {}) {
   // An unparsable `since` means no period, not an error.
@@ -267,7 +267,8 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     aiErrorPercent: asks.length ? Math.round((asks.filter((a) => a.error).length / asks.length) * 100) : null,
     restrictedActions: [...actions].filter(([a]) => isRestricted(a)).reduce((x, [, c]) => x + c, 0),
     // Not the period's: today's rules on the keyed quotes, whenever they were recorded.
-    answerKey: answerKey ? { quotes: answerKey.quotes, ...Object.fromEntries(['cells', 'right', 'wrong', 'missed', 'invented', 'unsure', 'unkeyed'].map((x) => [x, answerKey.total[x]])) } : null,
+    // All keyed answers, and those the reviewer decided (not confirmed as proposed) apart.
+    answerKey: answerKey ? { quotes: answerKey.quotes, entries: answerKey.entries, proposed: answerKey.proposed, all: keyCounts(answerKey.total), decided: keyCounts(answerKey.decided) } : null,
   };
 
   // Crashes in the panel (client_error), by build and message; test runs too.
@@ -354,10 +355,17 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
   };
 }
 
-// The answer key's weekly number: of the keyed answers judged, the share today's rules get right.
+const keyCounts = (t) => Object.fromEntries(['cells', 'right', 'wrong', 'missed', 'invented', 'unsure', 'unkeyed'].map((x) => [x, t[x]]));
+
+// The answer key's weekly number: of the keyed answers judged, the share today's rules get right,
+// for every keyed answer and for the reviewer's decided ones (a proposal agrees with the rules by
+// construction), with how many entries were accepted as proposed.
 const keyLine = (a) => {
-  const judged = a.right + a.wrong + a.missed + a.invented;
-  return `| Today's rules against TNI's answer key (${a.quotes} keyed intake${a.quotes === 1 ? '' : 's'}, their quotes of any date): right · wrong · missed · invented (must be 0) | ${judged ? Math.round((a.right / judged) * 100) : '—'}% · ${a.wrong} · ${a.missed} · ${a.invented} |`;
+  const part = (c) => {
+    const judged = c.right + c.wrong + c.missed + c.invented;
+    return `${judged ? Math.round((c.right / judged) * 100) : '—'}% · ${c.wrong} · ${c.missed} · ${c.invented}`;
+  };
+  return `| Today's rules against TNI's answer key (${a.quotes} keyed intake${a.quotes === 1 ? '' : 's'}, their quotes of any date): right · wrong · missed · invented (must be 0), all answers / decided by the reviewer; entries accepted as proposed | ${part(a.all)} / ${part(a.decided)}; ${a.proposed} of ${a.entries} |`;
 };
 
 // The same as Markdown, for the weekly brief.

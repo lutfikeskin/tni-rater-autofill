@@ -15,6 +15,9 @@
 //   { na: true }         not applicable: nobody should answer it
 //   { perQuote: true }   (question entries only) it depends on the client: see each quote's entry
 // with `by` (the reviewer) and `date`. A question entry may name the `states` it holds for.
+// `proposed: true` marks an entry the reviewer confirmed as the sheet proposed it, without changing
+// or typing it. A proposal is today's rule answer (or the agent's), so such entries agree with the
+// rules by construction: scores are given for all entries and for the decided ones (the rest) apart.
 //
 // Question entries are keyed by question identity as the learner and benchmark group answers
 // (`<carrier>|<page>|ref:<name>`, else the question's text on its page; AmWINS by page, step and
@@ -74,11 +77,12 @@ export function readKey(json) {
   for (const [id, e] of Object.entries(json.questions ?? {})) {
     if (byIdOnly(id) || !answerKind(e?.answer)) bad.push(id);
     else if (e.states && (!Array.isArray(e.states) || e.states.some((s) => !/^[A-Z]{2}$/.test(s)))) bad.push(`${id} (states)`);
+    else if (e.proposed !== undefined && typeof e.proposed !== 'boolean') bad.push(`${id} (proposed)`);
   }
   for (const [intake, cells] of Object.entries(json.quotes ?? {})) {
     for (const [id, e] of Object.entries(cells ?? {})) {
       const kind = answerKind(e?.answer);
-      if (!kind || kind === 'perQuote') bad.push(`${intake.slice(0, 8)} ${id}`);
+      if (!kind || kind === 'perQuote' || (e.proposed !== undefined && typeof e.proposed !== 'boolean')) bad.push(`${intake.slice(0, 8)} ${id}`);
     }
   }
   if (bad.length) throw new Error(`answer key: ${bad.length} entr${bad.length === 1 ? 'y has' : 'ies have'} no valid answer (${bad.slice(0, 3).join('; ')})`);
@@ -156,10 +160,12 @@ export function wanted(answer, record, unit) {
   return kind === 'agent' || kind === 'na' ? { none: kind } : { unsure: true };
 }
 
-const NOT_JUDGED = ['pick-not', 'first-option', 'selected-option', 'address-suggest'];
+// Picks by the page's options (any but one, the first, the one already selected): no value of
+// their own. An address typed for the page's suggestion is the text typed.
+const PAGE_PICKS = ['pick-not', 'first-option', 'selected-option'];
 const yesNo = (v) => (v ? 'Yes' : 'No');
 function sameText(step, value) {
-  if (NOT_JUDGED.includes(step.kind) || (step.value && typeof step.value === 'object')) return 'unsure';
+  if (PAGE_PICKS.includes(step.kind) || (step.value && typeof step.value === 'object')) return 'unsure';
   const got = normalizeForMatch(step.kind === 'bool' ? yesNo(step.value) : step.value);
   return got === normalizeForMatch(typeof value === 'boolean' ? yesNo(value) : value) ? 'agree' : 'differ';
 }
@@ -219,26 +225,40 @@ export function scoreCell(c, entry) {
 export const RESULTS = ['right', 'wrong', 'missed', 'invented', 'unsure'];
 const counts = () => ({ cells: 0, right: 0, wrong: 0, missed: 0, invented: 0, unsure: 0, unkeyed: 0, agents: { right: 0, wrong: 0, unsure: 0 } });
 
+// The key's entries, and how many the reviewer confirmed as proposed.
+export function keyEntries(key) {
+  const all = [...Object.values(key.questions), ...Object.values(key.quotes).flatMap((q) => Object.values(q))];
+  return { entries: all.length, proposed: all.filter((e) => e.proposed).length };
+}
+
 /**
- * Scores today's rules on the key's quotes.
+ * Scores today's rules on the key's quotes, test runs left out (as the sheet leaves them out: a
+ * keyed intake run again as a test must not become its agent's answer).
  * @param {object[]} rows  benchmark rows run with `detail`
- * @returns {{scored: object[], total: object, byCarrier: object, quotes: number}}
+ * @param {{tests?: Set<string>|null}} opts  tests: the sessions that are test runs (testSessionsOf)
+ * @returns {{scored: object[], total: object, decided: object, byCarrier: object, decidedByCarrier: object, quotes: number, entries: number, proposed: number}}
+ *   total: every keyed answer; decided: only answers whose entry the reviewer changed or typed
+ *   (not `proposed`), so a key confirmed as proposed can't score the rules right by itself
  */
-export function scoreKey(rows, key) {
-  const scored = keyCells(rows).filter((c) => key.quotes[c.intake]).map((c) => {
+export function scoreKey(rows, key, { tests = null } = {}) {
+  const scored = keyCells(rows.filter((r) => !tests?.has(r.session))).filter((c) => key.quotes[c.intake]).map((c) => {
     const entry = keyEntry(key, c);
-    return { ...c, entry, ...scoreCell(c, entry) };
+    return { ...c, entry, decided: !!entry && !entry.proposed, ...scoreCell(c, entry) };
   });
   const total = counts();
+  const decided = counts();
   const byCarrier = {};
+  const decidedByCarrier = {};
   for (const s of scored) {
-    for (const t of [total, (byCarrier[s.row.carrier] ??= counts())]) {
+    const into = [total, (byCarrier[s.row.carrier] ??= counts())];
+    if (s.decided) into.push(decided, (decidedByCarrier[s.row.carrier] ??= counts()));
+    for (const t of into) {
       t.cells++;
       t[s.result]++;
       if (s.agent) t.agents[s.agent]++;
     }
   }
-  return { scored, total, byCarrier, quotes: new Set(scored.map((s) => s.intake)).size };
+  return { scored, total, decided, byCarrier, decidedByCarrier, quotes: new Set(scored.map((s) => s.intake)).size, ...keyEntries(key) };
 }
 
 // The share of keyed answers today's rules get right.
@@ -252,8 +272,9 @@ export const rightPercent = (t) => {
 export function keyByQuestion(scored, result) {
   const out = new Map();
   for (const s of scored.filter((x) => x.result === result)) {
-    const q = out.get(s.question) ?? { question: s.question, carrier: s.row.carrier, page: s.row.page, step: s.row.step, label: s.row.label, rule: s.row.rule, source: s.row.source, cells: 0, intakes: new Set(), pairs: new Map() };
+    const q = out.get(s.question) ?? { question: s.question, carrier: s.row.carrier, page: s.row.page, step: s.row.step, label: s.row.label, rule: s.row.rule, source: s.row.source, cells: 0, decided: 0, intakes: new Set(), pairs: new Map() };
     q.cells++;
+    if (s.decided) q.decided++;
     q.intakes.add(s.intake);
     const today = s.row.today ?? { none: 'no rule', agent: 'agent\'s', ignored: 'left alone', blank: 'blank', unsure: '?' }[s.row.status] ?? (s.row.kind && CHOICE.has(s.row.kind) ? '?' : 'text');
     const pair = `key ${s.want ?? 'text'} · today ${today}`;
@@ -281,6 +302,8 @@ function show(step, kind) {
   if (step.value && typeof step.value === 'object') return step.value.not ? `any but "${step.value.not}"` : JSON.stringify(step.value);
   return CHOICE.has(kind) ? shown(step, kind) : step.kind === 'bool' ? yesNo(step.value) : String(step.value);
 }
+// Whether the key can hold today's answer as a value: not a pick that depends on the page's options.
+const holdable = (step) => step?.value != null && typeof step.value !== 'object' && !PAGE_PICKS.includes(step.kind);
 // A value as the key holds it: a yes/no as the page shows it (Yes, checked), else the rule's own
 // (a number stays one).
 const raw = (step, kind) => (step.kind === 'bool' ? shown(step, kind) : step.value);
@@ -315,9 +338,8 @@ function intakeValues(c) {
 function frozen(c) {
   const { step } = c.row.detail;
   if (['agent', 'blank'].includes(c.row.status)) return { agent: true };
-  if (c.row.status !== 'value' || c.row.source !== 'derived') return null;
-  const v = raw(step, c.row.kind);
-  return v == null || typeof v === 'object' ? null : { value: v };
+  if (c.row.status !== 'value' || c.row.source !== 'derived' || !holdable(step)) return null;
+  return { value: raw(step, c.row.kind) };
 }
 
 const tally = (map, k) => map.set(k, (map.get(k) ?? 0) + 1);
@@ -364,21 +386,32 @@ export function sheetModel(rows, { key = null } = {}) {
     }
     // The proposal for the question, and which quotes it covers as today's rules answer them.
     let proposal;
+    // A standard the agents answered otherwise: what the reviewer chooses between.
+    let choose = null;
     let covers;
     if (group === 'standard') {
       const answers = new Map();
-      for (const c of of('standard')) tally(answers, JSON.stringify(raw(c.row.detail.step, kind)));
-      const value = JSON.parse(ranked(answers)[0].text);
-      // A pick the key can't hold as a value (any option but one, the page's suggestion): the option
-      // the agents' quotes ended on, else none (the reviewer types it).
+      for (const c of of('standard')) if (holdable(c.row.detail.step)) tally(answers, JSON.stringify(raw(c.row.detail.step, kind)));
+      const value = answers.size ? JSON.parse(ranked(answers)[0].text) : null;
+      // A pick the key can't hold as a value (any option but one, the first option, the page's
+      // suggestion): the option the agents' quotes ended on, else none (the reviewer types it).
       const picked = new Map();
       for (const c of list) { const v = (c.truthRow ?? c.row).detail.truth?.value; if (CHOICE.has(kind) && v != null && v !== '') tally(picked, v); }
-      const proposed = value != null && typeof value !== 'object' ? value : picked.size ? ranked(picked)[0].text : null;
+      const proposed = value ?? (picked.size ? ranked(picked)[0].text : null);
       const states = new Set(of('standard').map((c) => c.row.detail.state));
       // Restricted to those states only when a quote elsewhere gets another answer today.
       const elsewhere = list.some((c) => c.row.status !== 'unsure' && !states.has(c.row.detail.state));
-      proposal = { answer: proposed == null ? null : { value: proposed }, ...(elsewhere ? { states: [...states].filter(Boolean).sort() } : {}) };
-      covers = (c) => c.row.status === 'value' && c.row.source === 'standard' && JSON.stringify(raw(c.row.detail.step, kind)) === JSON.stringify(value);
+      // An agent who corrected it, or answered it themselves, otherwise: no answer is preselected;
+      // the reviewer chooses between today's rule and the agents' answers.
+      const others = new Map();
+      for (const c of list) {
+        const tr = c.truthRow ?? c.row;
+        if (proposed == null || !['corrected', 'agent'].includes(tr.group)) continue;
+        if (agentVerdict(tr.detail.truth, { value: proposed }, CHOICE.has(kind), tr.detail.record) === 'wrong') tally(others, CHOICE.has(kind) ? String(tr.detail.truth.value) : 'other typed text');
+      }
+      if (others.size) choose = { rules: proposed, agents: ranked(others) };
+      proposal = { answer: proposed == null || others.size ? null : { value: proposed }, ...(elsewhere ? { states: [...states].filter(Boolean).sort() } : {}) };
+      covers = (c) => c.row.status === 'value' && c.row.source === 'standard' && (value == null ? !holdable(c.row.detail.step) : JSON.stringify(raw(c.row.detail.step, kind)) === JSON.stringify(value));
     } else if (group === 'mapping') {
       const paths = new Map();
       for (const c of of('intake')) tally(paths, listPath(c.row.detail.step.path));
@@ -399,7 +432,7 @@ export function sheetModel(rows, { key = null } = {}) {
     const q = {
       id, carrier: first.carrier, page: first.page, step: first.step ?? null, label: first.label, kind, options: first.detail.options ?? null,
       rule: [...new Set(list.map((c) => c.row.rule).filter(Boolean))].slice(0, 3).join(' / ') || null,
-      group, proposal, today: ranked(today), agents: ranked(agents), cells: [], quotes: new Set(list.map((c) => c.intake)).size,
+      group, proposal, ...(choose ? { choose } : {}), today: ranked(today), agents: ranked(agents), cells: [], quotes: new Set(list.map((c) => c.intake)).size,
     };
     for (const c of list) {
       const d = c.row.detail;
@@ -415,7 +448,9 @@ export function sheetModel(rows, { key = null } = {}) {
       const agentChoice = CHOICE.has(kind) && t?.value != null && ['corrected', 'agent'].includes(truthGroup) ? t.value : null;
       if (agentChoice != null && attention.length && !(group === 'coverage' && truthGroup === 'agent' && c.row.status === 'value')) answer = { value: agentChoice };
       else if (c.row.status === 'value' && c.row.source === 'intake' && d.step.path) answer = { fromIntake: listPath(d.step.path) };
-      else if (c.row.status === 'value' && !(d.step.value && typeof d.step.value === 'object')) answer = { value: raw(d.step, kind) };
+      else if (c.row.status === 'value' && holdable(d.step)) answer = { value: raw(d.step, kind) };
+      // A pick by the page's options: the option the quote ended on.
+      else if (c.row.status === 'value' && CHOICE.has(kind) && t?.value != null && t.value !== '') answer = { value: t.value };
       else if (!CHOICE.has(kind) && t?.matches?.length) answer = { fromIntake: listPath(t.matches[0].replace(/:part$/, '')) };
       else answer = { agent: true };
       const cellRow = {

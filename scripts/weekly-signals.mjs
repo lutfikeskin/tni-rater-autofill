@@ -20,7 +20,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CARRIERS } from '../src/carriers.js';
 import { loadEvents } from './lib/events.mjs';
-import { markdown, signals } from './lib/signals.mjs';
+import { markdown, signals, testSessionsOf } from './lib/signals.mjs';
 import { benchmark } from './lib/benchmark.mjs';
 import { readIntakes } from './lib/intake-pdfs.mjs';
 import { readKey, scoreKey } from './lib/answer-key.mjs';
@@ -59,7 +59,14 @@ if (keyFile) {
   const raws = await readIntakes([folder], new Set(Object.keys(key.quotes)));
   const absent = Object.keys(key.quotes).length - raws.size;
   if (absent) console.error(`Warning: ${absent} of the answer key's intake PDFs are not in ${folder}; their quotes are not scored.`);
-  answerKey = scoreKey(benchmark(events, { carriers: CARRIERS, raws, detail: true }).rows, key);
+  // Test runs are left out, as the sheet leaves them out.
+  let tests;
+  try { tests = testSessionsOf(events, testIntakes); } catch (err) { fail(`${testFile}: ${err.message}`); }
+  // Only the keyed intakes' quotes are replayed. Every quote's page layouts stay: a question recorded
+  // without its name takes it from the layouts, as the sheet named it.
+  const keyed = new Set(events.filter((e) => e.type === 'intake_loaded' && key.quotes[e.intakeId] && !tests.has(e.session)).map((e) => e.session));
+  const theirs = events.filter((e) => keyed.has(e.session) || e.type === 'page_layout');
+  answerKey = scoreKey(benchmark(theirs, { carriers: CARRIERS, raws, detail: true }).rows, key, { tests });
 }
 
 let result;
