@@ -1405,13 +1405,6 @@
         }
         if (step.note || step.value == null) {
           if (step.optional) { handled.set(step.id, { status: null }); continue; }
-          // Nothing on the intake, but the carrier already filled it (plan.js `keepPage`): kept, with
-          // where it came from. An empty field is still the agent's.
-          if (step.keepPage && !step.note && hasValue(c)) {
-            report.kept.push({ ...item, keptNote: step.keepPage });
-            handled.set(step.id, { status: null });
-            continue;
-          }
           report.noData.push({ ...item, note: step.note, ...describe(c) });
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
           continue;

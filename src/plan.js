@@ -230,9 +230,6 @@ function fieldSteps(rules, record, carrier, active) {
       replace: !!rule.replace,
       // What a lookup put there wins over the intake's wording (no "page differs" flag).
       trustPage: !!rule.trustPage,
-      // With no intake value, a value the carrier already put there is kept, not asked: this note
-      // says where it came from (Progressive's vehicle ZIP from the business address).
-      keepPage: rule.keepPage ?? null,
       // May fill its field while it isn't on screen (an earlier step's question added later).
       hidden: !!rule.hidden,
       // One question asked as several boxes (AmWINS' auto symbols 1 to 9): the panel lists it once,
