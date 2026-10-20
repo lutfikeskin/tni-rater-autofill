@@ -88,7 +88,10 @@ It downloads the log and builds the review of the events the server received sin
 successful run on the default branch began downloading (`scripts/daily-issue.mjs since`, from that
 run's steps; a day when there is none; a run that can't tell fails rather than guess), so an
 upload that arrives late is in the next review and none is in two. Runs go one at a time. It keeps the review as an
-artifact for 90 days and shows it as the run summary. When something is new, it comments on the
+artifact for 90 days and shows it as the run summary. The runner has no local test-run list
+(`reviews/test-intakes.txt` is ignored by git), so its review carries the "No test-run list"
+warning: the maintainer's own test quotes count as agents' work there, while fixture intakes and
+intakes marked as a test are still left out ([learning](learning.md)). When something is new, it comments on the
 open issue labelled `daily-review`, or opens one titled "Daily review" when none is open: problem
 reports (each with the build that logged it, and marked when it came from a test run), questions without a rule (or AmWINS fields the mock lacks) first seen in a layout of the
 period (one per question, whatever its row, number, product or step: `scripts/lib/daily.mjs`), a

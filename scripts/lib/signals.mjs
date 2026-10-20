@@ -6,6 +6,10 @@
 // A reporter only: counts and lists, no suggestions (learn.mjs owns those). For the weekly review
 // (.claude/skills/weekly-review), where "which build" tells a problem already fixed from a live one.
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { quoteSessions } from './events.mjs';
 import { receivedAt } from './daily.mjs';
 
@@ -41,15 +45,48 @@ const LOGIN = /\/(auth\/)?login\b|\/login\//i;
 // fingerprints the reviewer listed (`testIntakes`, full or leading hex).
 export const MIN_TEST_PREFIX = 8;
 const isTest = (e, testIntakes) => e.test === true || (!!e.intakeId && [...testIntakes].some((id) => String(e.intakeId).toLowerCase().startsWith(id)));
+// A short or non-hex line would match unrelated quotes: refused rather than hiding them.
+const badFingerprints = (list) => list.filter((x) => x.length < MIN_TEST_PREFIX || !/^[0-9a-f]+$/.test(x));
+const tooShort = (bad) => `Test fingerprints need at least ${MIN_TEST_PREFIX} hex characters: ${bad.join(', ')}`;
+
+// What the reports say without a local list (a git worktree, CI or another computer has no
+// reviews/test-intakes.txt).
+export const NO_TEST_LIST = 'No test-run list: the maintainer\'s test quotes are counted as agents\' work (fixture intakes and intakes marked as a test are still left out). Pass --tests <file>; from a git worktree, the main checkout\'s reviews/test-intakes.txt.';
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+// Intake PDFs that are tests wherever the review runs: the committed fixtures and the generated
+// synthetic intakes. Not client data, so their fingerprints need no local list.
+const FIXTURE_PDFS = ['test/fixtures', 'dist/synthetic-intakes/pdfs'];
+const pdfsIn = (dir) => (fs.existsSync(dir)
+  ? fs.readdirSync(dir, { withFileTypes: true, recursive: true }).filter((e) => e.isFile() && /\.pdf$/i.test(e.name)).map((e) => path.join(e.parentPath, e.name))
+  : []);
+
+/**
+ * The test-run list every review script uses: the fingerprints in `tests` (a file), else in
+ * <root>/reviews/test-intakes.txt when there is one, plus the SHA-256 of every PDF under
+ * test/fixtures/ and dist/synthetic-intakes/pdfs/. Throws when `tests` is missing or a line
+ * isn't at least MIN_TEST_PREFIX hex characters.
+ * @param {{tests?: string|null, root?: string}} opts  root: the repository (default this one)
+ * @returns {{file: string|null, intakes: string[], warning: string|null}}  file: the list read;
+ *   warning: NO_TEST_LIST when there was none, for stderr and the report
+ */
+export function readTestList({ tests = null, root = REPO } = {}) {
+  if (tests && !fs.existsSync(tests)) throw new Error(`--tests ${tests}: no such file.`);
+  const fallback = path.join(root, 'reviews', 'test-intakes.txt');
+  const file = tests || (fs.existsSync(fallback) ? fallback : null);
+  const listed = file ? fs.readFileSync(file, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean) : [];
+  const bad = badFingerprints(listed);
+  if (bad.length) throw new Error(`${file}: ${tooShort(bad)}`);
+  const fixtures = FIXTURE_PDFS.flatMap((dir) => pdfsIn(path.join(root, dir))).map((f) => createHash('sha256').update(fs.readFileSync(f)).digest('hex'));
+  return { file, intakes: [...new Set([...listed, ...fixtures])], warning: file ? null : NO_TEST_LIST };
+}
 
 // The sessions that are test runs: an intake loaded as one (marked before, `test` on
 // intake_loaded) or listed (`testIntakes`), and the agent's latest mark in the panel
 // (intake_marked: marked, or unmarked after). Shared with the review (scripts/review.mjs).
 export function testSessionsOf(all, testIntakes = []) {
   const listed = [...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean);
-  // A short or non-hex line would match unrelated quotes: refuse it rather than hide them.
-  const tooShort = listed.filter((x) => x.length < MIN_TEST_PREFIX || !/^[0-9a-f]+$/.test(x));
-  if (tooShort.length) throw new Error(`Test fingerprints need at least ${MIN_TEST_PREFIX} hex characters: ${tooShort.join(', ')}`);
+  const bad = badFingerprints(listed);
+  if (bad.length) throw new Error(tooShort(bad));
   const tests = new Set(listed);
   const out = new Set(all.filter((e) => e.type === 'intake_loaded' && e.session && isTest(e, tests)).map((e) => e.session));
   const marks = new Map();
@@ -350,12 +387,13 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
   };
 }
 
-// The same as Markdown, for the weekly brief.
-export function markdown(s) {
+// The same as Markdown, for the weekly brief. noTestList: no test-run list was found.
+export function markdown(s, { noTestList = false } = {}) {
   const L = [];
   const list = (rows, unit = '') => (rows.length ? rows.map(([k, v]) => `- ${v}${unit} · ${k}`) : ['None.']);
   L.push(`# Weekly signals ${s.since ? `since ${s.since.slice(0, 16).replace('T', ' ')} UTC` : '(all data)'}`, '');
   L.push(`${s.events} events · ${s.quotes} quotes · ${s.runs} fill runs (${s.blockedRuns} ended with something holding Continue). Newest version seen: ${s.newestVersion ?? '?'}.${s.kpis.testRunsLeftOut ? ` ${s.kpis.testRunsLeftOut} test run(s) left out.` : ''}`, '');
+  if (noTestList) L.push(`**${NO_TEST_LIST}**`, '');
   const k = s.kpis;
   L.push('## Weekly numbers', '', 'Per quote (a quote re-filled many times counts once). Track these week over week.', '', '| Number | Value |', '| --- | --- |',
     `| Quotes (on any carrier · per carrier) | ${k.quotes} · ${k.carrierQuotes} |`,
