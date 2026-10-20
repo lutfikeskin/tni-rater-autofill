@@ -1304,16 +1304,21 @@
     };
     // A registered name shown only after this fill answered (Progressive shows it right after
     // "belongs to the business" Yes): that answer is the agent's to verify too, as if the name had
-    // been there first. It stays on the page, and Continue waits.
+    // been there first. It stays on the page, and Continue waits. A field the agent edited since is
+    // theirs already. Returns the items it moved, each with its field.
     const identityAfterAnswer = (pairs, controls) => {
+      const moved = [];
       for (const { step, control } of pairs) {
         const previous = report.filled.find((x) => x.stepId === step.id);
-        if (!previous || step.registeredName || !identityDiffers(step, controls)) continue;
+        if (!previous || step.registeredName || skippedField(control) || !identityDiffers(step, controls)) continue;
         report.filled = report.filled.filter((x) => x !== previous);
         report.checks = report.checks.filter((x) => x.stepId !== step.id);
-        report.noData.push({ ...previous, note: IDENTITY_NOTE, reviewOnly: true, ...describe(control) });
+        const item = { ...previous, note: IDENTITY_NOTE, reviewOnly: true, ...describe(control) };
+        report.noData.push(item);
         handled.set(step.id, { status: 'needs', note: IDENTITY_NOTE });
+        moved.push({ item, control });
       }
+      return moved;
     };
     try {
 
@@ -1343,9 +1348,13 @@
       for (const c of controls) {
         if (!mapped.has(c) || skippedField(c) || !hasValue(c) || !invalidControl(c)) continue;
         // An answer the page invalidated after another one changed (Progressive's liability limit
-        // after a PIP change) is picked again, at most twice; then it's the agent's.
+        // after a PIP change) is picked again, at most twice; then it's the agent's. Never one the
+        // identity check left to the agent, nor a `keepChoice` answer this fill didn't give (a
+        // person's): those stay as they are, flagged.
         const own = allPairs.find((p) => p.control === c)?.step;
-        if (own && own.value != null && !own.ignore && !own.note && !own.verifyOnly && retryOnce(own.id)) {
+        const ours = !!own && handled.get(own.id)?.note !== IDENTITY_NOTE
+          && (!own.keepChoice || refill.has(own.id) || report.filled.some((x) => x.stepId === own.id));
+        if (ours && own.value != null && !own.ignore && !own.note && !own.verifyOnly && retryOnce(own.id)) {
           report.failed = report.failed.filter((x) => x.key !== fieldKey(c));
           handled.delete(own.id);
           refill.add(own.id);
@@ -1892,7 +1901,8 @@
         // answer whose field no longer shows it is the agent's to check (no retry here): it moves
         // to `failed`, is marked, and Continue waits.
         const now = collectControls();
-        const changed = changedSinceFilled(assign(now, plan));
+        const nowPairs = assign(now, plan);
+        const changed = changedSinceFilled(nowPairs);
         for (const { previous, pair } of changed) {
           const item = { ...previous, reason: 'The carrier changed this answer after it was filled; check it.', ...describe(pair.control) };
           const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(pair.control);
@@ -1902,7 +1912,16 @@
           mark(pair.control, 'failed', 'the carrier changed this answer after it was filled');
           report.blockers.push(`failed: ${called(item)}`);
         }
-        const button = !changed.length && !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
+        // A registered name drawn during that wait, after the fill's last check, makes an answer
+        // given before it the agent's to verify, as during the fill: marked, and Continue waits.
+        const moved = identityAfterAnswer(nowPairs, now);
+        for (const { item, control } of moved) {
+          const at = placeOf.get(`${item.key}|${item.label}`) ?? placeOf.get(item.key) ?? now.indexOf(control);
+          if (at >= 0) item.order = at;
+          mark(control, 'needs', IDENTITY_NOTE);
+          report.blockers.push(`needs you: ${called(item)}`);
+        }
+        const button = !changed.length && !moved.length && !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
         // The agent checks the answers first: Continue only for the page as they approved it.
         const approved = !hold || (confirmed != null && confirmed === receipt());
         if (button && !approved) report.held = confirmed == null ? 'check' : 'changed';

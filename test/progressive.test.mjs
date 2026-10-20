@@ -107,11 +107,14 @@ test('Progressive standard answers: USDOT belongs to the business is TNI\'s stan
   assert.equal(byQ(plan, '20F').manualOnly, false);
   assert.deepEqual(byQ(plan, '20F').businessNames, ['Synthetic Expediter LLC']);
   assert.equal(byQ(plan, '20F').keepChoice, true, 'never pre-selected by Progressive: an answer there is a person\'s');
-  // No business or owner name on the intake: nothing to check the USDOT record against.
+  // No business or owner name on the intake: nothing to check the USDOT record against, so the
+  // agent attests it (not a standard left unfilled).
   const nameless = baseRecord();
   Object.assign(nameless.applicant, { dot: '1234567', name: null, owner1: null });
   const unchecked = byQ(buildPlan(nameless, progressive, {}), '20F');
   assert.equal(unchecked.value, null);
+  assert.equal(unchecked.source, 'attestation');
+  assert.equal(unchecked.standard, false);
   assert.equal(unchecked.manualOnly, true);
   assert.match(unchecked.note, /no business or owner name/);
   assert.equal(byQ(plan, 'F11').value, true);

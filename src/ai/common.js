@@ -30,6 +30,9 @@ const NEVER = [
   /\b(payments?|billing|bill\s*plan|ach|eft|autopay|checking\s*account|direct\s*debit|pay\s*in\s*full)\b/i,
   // Progressive's NTL section has not been seen on a live quote: its questions are the agent's.
   /\bnon[\s-]*trucking\b|\bntl\b|\bbob[\s-]*tail/i,
+  // Whether the USDOT number belongs to the business: the extension fills it after its own
+  // registered-name check (Progressive, TNI 2026-10-20); one it couldn't answer is the agent's.
+  /\b(?:us)?dot\b.*\bbelong/i,
 ];
 const TYPED_ID = /\b(vin|license|licence|usdot|dot (number|no|#)|mc (number|no|#)|fein|ein|tax id|policy (number|no|#))\b/i;
 // These require exact calculations or independent lookup identity checks, not semantic guesses.
