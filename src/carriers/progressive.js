@@ -234,9 +234,20 @@ const eldNote = (r) => (usesEld(r) == null ? 'The intake does not answer the ELD
 const cargoNote = (r) => r.coverage.cargo === true && !r.coverage.cargoLimit
   ? 'Cargo was requested without a limit; an agent must choose it.'
   : null;
-const glNote = (r) => r.coverage.gl === true
-  ? 'Progressive General Liability mappings are not validated; an agent must review this coverage manually.'
-  : null;
+// General liability the intake asks for (Requested coverage). Every recorded Rates page has a
+// General Liability row with its own "+", but what it opens hasn't been recorded, so adding it is
+// the agent's: a "needs you" item on Rates (glRates) names the limit to pick. That is the intake's
+// limit, else TNI's default $1M per occurrence / $2M aggregate (TNI, 2026-10-20), said as a
+// default (Check intake warns too: gl-limit.missing).
+const GL_DEFAULT_LIMIT = '$1M/$2M';
+const glRequested = (r) => r.coverage?.gl === true;
+const glLimitText = (r) => (r.coverage.glLimit ? `the intake's limit, ${r.coverage.glLimit}`
+  : `TNI's default limit, ${GL_DEFAULT_LIMIT} ($1M per occurrence, $2M aggregate), as the intake gives none: confirm it with the client`);
+const glAddNote = (r) => `The intake asks for general liability: add it with "+" in the General Liability row, with ${glLimitText(r)}. Then open the bill plan options yourself; Recalculate and Print follow.`;
+// General liability's own questions on Rates (once its section is open): not mapped, the agent's.
+const glNote = (r) => `General liability's questions aren't mapped: answer them yourself${glRequested(r) ? `, with ${glLimitText(r)}` : ''}.`;
+// The later Rates helpers wait while that item is open (only on a quote that has it).
+const GL_HOLD = ['glRates'];
 
 // Progressive's business type (and, for trucking, the type of trucker) for what the intake
 // calls the business. Expediters are "For Hire Trucking" / "Other For-Hire Trucking".
@@ -251,13 +262,13 @@ const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHaul
 const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
 const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration && !priorPolicyExpired(r, p));
 // Other business coverages (MoreAboutBusiness): TNI's standard is none (2026-10-10), unless the
-// customer has general liability: the agent marked that they have it (coverage.hasGl, from the
-// claims box), or the intake asks for GL (coverage.gl, Requested coverage: whether they have it now
-// is then unknown). Then every one of them is the agent's.
-const hasGl = (r) => r.coverage?.hasGl === true || r.coverage?.gl === true;
-const glWhy = (r) => (r.coverage?.hasGl === true ? 'You marked that the client has general liability' : 'The intake asks for general liability');
+// notes say the customer has general liability: the agent marked that they have it
+// (coverage.hasGl, from Luna's claims-box card). Then every one of them is the agent's. GL asked
+// for under Requested coverage (coverage.gl) alone keeps the standard (TNI, 2026-10-19, after an
+// AR run: "None of the above if it's not mentioned in the notes").
+const hasGl = (r) => r.coverage?.hasGl === true;
 const otherCoverage = (rule, standard, note) => ({ ...rule, source: (r) => (hasGl(r) ? 'fact' : 'standard'),
-  value: () => standard, note: (r) => (hasGl(r) ? `${glWhy(r)}: ${note}` : null) });
+  value: () => standard, note: (r) => (hasGl(r) ? `You marked that the client has general liability: ${note}` : null) });
 const OTHER_GROUP = { AA: 'Other business coverages', A7: 'Other business coverages', A8: 'Other business coverages', A9: 'Other business coverages',
   B2: 'Other business coverages (Progressive bundle)', AF: 'Other business coverages (Progressive bundle)', B0: 'Other business coverages (Progressive bundle)' };
 // Once For Hire Trucking reveals this question, the agency workflow uses this subtype.
@@ -282,7 +293,8 @@ const hasUsdot = (r) => (r.applicant.dot ? 'Yes - the customer has a USDOT numbe
 const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT number and doesn\'t say whether one is expected within 60 days: answer it yourself.' : null);
 
 // Rates as TNI agents work it (bill plan, back, Recalculate, Print) unless GL is requested: then
-// the bill plan is the agent's. With NTL the whole page is, Recalculate and Print too, until the
+// the agent adds GL and opens the bill plan themselves, and Recalculate and Print follow their bill
+// plan visit (GL_HOLD). With NTL the whole page is the agent's, Recalculate and Print too, until the
 // NTL section has been seen on a live quote (an earlier bill plan visit must not let them run
 // while its new questions are open).
 // An NTL mention in the claims box the agent hasn't answered yet (Yes or No) is not a No: Rates
@@ -290,7 +302,7 @@ const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT numb
 // Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl).
 const ntlUndecided = (r) => r.coverage.ntl == null && (!!ntlMention(intakeNotes(r)) || r.claims?.aiNtl === true);
 const notNtl = (r) => r.coverage.ntl !== true && !ntlUndecided(r);
-const ourBillPlan = (r) => r.coverage.gl !== true && notNtl(r);
+const ourBillPlan = (r) => !glRequested(r) && notNtl(r);
 
 // The whole address on one line, for address boxes that offer the carrier's own suggestions.
 const oneLineAddress = (r) => {
@@ -305,6 +317,8 @@ const ADD_NTL = '^add non-?trucking liability( instead)?\\??$';
 // Later Rates helpers wait while an NTL added on this quote is still there after the agent set it
 // back to No (until the page offers Add NTL again).
 const NTL_HOLD = ['ntlStillAdded'];
+// Recalculate and Print wait for the GL item too, when the intake asks for GL.
+const ratesHold = (r) => (glRequested(r) ? [...NTL_HOLD, ...GL_HOLD] : NTL_HOLD);
 
 // A small, reviewed label fallback for practice layouts and carrier redraws that omit a Duck
 // Creek question id. Keep optional contact fields and unvalidated GL out of this list.
@@ -460,6 +474,11 @@ export const progressive = {
       missing: () => 'The claims box mentions NTL and Non-trucking liability isn\'t answered: set it to Yes or No on Check intake, then fill this page again.' },
     { id: 'ntlStillAdded', page: 'CoveragesRates', afterActions: ['addNtl'], resolvedBy: ADD_NTL, label: 'Non-trucking liability', when: (r) => r.coverage.ntl !== true,
       missing: () => 'NTL was added on this quote, but Non-trucking liability is no longer Yes on the intake: remove it on this page yourself, or set it back to Yes.' },
+    // General liability on the intake: never clicked (what its "+" opens hasn't been recorded). A
+    // "needs you" item on Rates with the limit to pick, settled once the agent has been to the bill
+    // plan (ChangePaymentPlan), which they open after adding it. Until then Recalculate and Print
+    // wait (GL_HOLD); the bill plan is the agent's (ourBillPlan).
+    { id: 'glRates', page: 'CoveragesRates', label: 'General liability', settledByPages: ['ChangePaymentPlan'], when: (r) => glRequested(r) && notNtl(r), missing: glAddNote },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
     // With NTL the cargo helpers are the agent's too (the rest of Rates is, see agentPages).
     { id: 'openCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\\+$', near: 'motor truck cargo', unless: ['progressive.q2150', 'progressive.q216F'], when: (r) => r.coverage.cargo === true && notNtl(r) },
@@ -469,7 +488,8 @@ export const progressive = {
     { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', nudge: 'progressive.q216B', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true && notNtl(r) },
     // Rates, as TNI agents work it: once cargo is added (and no GL is requested), open the bill
     // plan options, pick automatic payments there, come back (Continue), then Recalculate, then
-    // Print, Email, Fax. With GL or NTL requested the agent does the rates page by hand.
+    // Print, Email, Fax. With GL requested the agent adds it and opens the bill plan (glRates); with
+    // NTL they do the rates page by hand.
     // None of the rates helpers run while the liability limit is unresolved (missing, rejected or
     // different from the intake); a limit the agent set themselves counts as resolved.
     { id: 'billPlan', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => r.coverage.cargo ? ['doneCargo'] : [], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: ourBillPlan },
@@ -478,11 +498,12 @@ export const progressive = {
     // Recalculate and Print follow the bill plan, which waited for a resolved liability limit.
     // They don't re-check that field: back from the bill plan, the reloaded Rates page failed the
     // same check on a limit that was fine (FL and NJ runs: Print, Email, Fax never ran).
-    // With GL there is no bill plan step of ours: they keep the liability check instead.
-    { id: 'recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
+    // With GL there is no bill plan step of ours: they follow the agent's bill plan visit, and keep
+    // the liability check instead.
+    { id: 'recalculate', page: 'CoveragesRates', heldBy: ratesHold, waitRequired: true, text: '^recalculate$', after: (r) => (glRequested(r) ? ['coverage.autoLiabLimit'] : []), afterActions: (r) => (glRequested(r) ? [] : ['billPlan']), afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal.
-    { id: 'print', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: PRINT_EMAIL_FAX, after: (r) => r.coverage.gl === true ? ['coverage.autoLiabLimit'] : [], afterActions: (r) => r.coverage.gl !== true ? ['billPlan'] : [], afterPages: ['ChangePaymentPlan'], when: notNtl },
+    { id: 'print', page: 'CoveragesRates', heldBy: ratesHold, waitRequired: true, text: PRINT_EMAIL_FAX, after: (r) => (glRequested(r) ? ['coverage.autoLiabLimit'] : []), afterActions: (r) => (glRequested(r) ? [] : ['billPlan']), afterPages: ['ChangePaymentPlan'], when: notNtl },
     // Print/Send is the agent's (TNI 2026-10-07): Progressive opens the quote PDF in a new window
     // from that click, and Chrome only lets a page open one right after the person's own click, so
     // ours went through without a PDF. The Print page is filled; the panel asks for the click.
@@ -634,10 +655,11 @@ export const progressive = {
       { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', ignore: (r) => !currentlyInsured(r) },
       { q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', ignore: (r) => !currentlyInsured(r) },
       // Other business coverages: TNI's standard None (2026-10-10; the agent's from 2026-10-09),
-      // unless the customer has general liability (hasGl): then all of them are the agent's. The radio version (A2: General Liability / Business Owner's Policy /
+      // unless the notes say the customer has general liability (hasGl): then all of them are the
+      // agent's. A GL request alone keeps None (2026-10-19). The radio version (A2: General Liability / Business Owner's Policy /
       // None) and the checkbox version (IN, PA: two groups, each with its own "None of the above",
       // ticked, and the coverages themselves unticked).
-      otherCoverage({ q: 'A2', field: 'MoreBusinessInput.OtherBusinessCoverages', ask: 'Does the customer have other coverages for the business?', name: 'Other business coverages (standard: None unless the intake has general liability)', kind: 'choice' },
+      otherCoverage({ q: 'A2', field: 'MoreBusinessInput.OtherBusinessCoverages', ask: 'Does the customer have other coverages for the business?', name: 'Other business coverages (standard: None unless the notes say the client has general liability)', kind: 'choice' },
         'None', 'answer the other business coverages yourself.'),
       otherCoverage({ q: 'AA', field: 'MoreBusinessInputNonShredded.OtherBusinessCoveragesNoneInd', ask: 'None of the above', each: true, name: 'Other coverages: None of the above', group: OTHER_GROUP.AA, kind: 'bool' },
         true, 'tick the other business coverages that apply yourself.'),
@@ -774,8 +796,10 @@ export const progressive = {
       // the deductible Progressive lists for it (the agent's picks on that quote).
       { q: '1E68', source: 'standard', field: 'LineInput.UMBIPDLimit', ask: 'Uninsured Motorist Bodily Injury & Property Damage', name: 'Uninsured motorist BI & PD (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL w/ $200 Deductible' },
       { q: '1E6C', source: 'standard', field: 'LineInput.UIMBIPDLimit', ask: 'Underinsured Motorist Bodily Injury & Property Damage', name: 'Underinsured motorist BI & PD (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL w/ $0 Deductible' },
-      // States that ask UM and UIM separately (PA 1DCA/1DDE, IN 1DD8): the same $100k CSL.
-      ...[['1DCA', { ask: 'Uninsured Motorist Bodily Injury' }], ['1DDE', { ask: 'Underinsured Motorist Bodily Injury' }], ['1DD8', { field: 'LineInput.UIMBILimit' }], ['1DBF', { field: 'LineInput.UMBILimit' }]]
+      // States that ask UM and UIM separately (PA 1DCA/1DDE, IN and AR 1DBF/1DD8): the same $100k
+      // CSL. Uninsured first: AR offers underinsured only up to the uninsured limit (live run
+      // 2026-10-19: tried while uninsured was still $1 million, it offered only that, and failed).
+      ...[['1DCA', { ask: 'Uninsured Motorist Bodily Injury' }], ['1DDE', { ask: 'Underinsured Motorist Bodily Injury' }], ['1DBF', { field: 'LineInput.UMBILimit' }], ['1DD8', { field: 'LineInput.UIMBILimit' }]]
         .map(([q, which]) => ({ q, source: 'standard', ...which, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
       // Pennsylvania first-party benefits: not on the intake means not bought, except medical
       // expense, which PA requires (its lowest, $5,000).
@@ -809,9 +833,10 @@ export const progressive = {
       // with the row's taken, "Motor Trucking Cargo" is left with one field, the section's.
       { q: '2150', source: 'derived', cargo: 'limit', field: 'LineInput.MotorTruckingCargoLimit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo summary', kind: 'choice', value: cargo, note: cargoNote },
       { q: '216F', source: 'derived', cargo: 'limit', ask: 'Motor Trucking Cargo', name: 'Motor truck cargo', kind: 'choice', value: cargo, note: cargoNote },
-      // No live Progressive GL question IDs have been validated. Keep any requested GL visible to
-      // the agent for review instead of allowing generic label matching to make an assertion.
-      { name: 'General Liability (manual review)', label: '^general liability', ignore: (r) => r.coverage.gl !== true, note: glNote },
+      // No live Progressive GL question IDs have been validated. A General Liability question on
+      // Rates stays the agent's (never the AI's), whatever the intake asks for, instead of letting
+      // generic label matching make an assertion.
+      { source: 'fact', name: 'General Liability (manual review)', label: '^general liability', note: glNote },
     ]),
     // Trailer rows on Rates ("2019 Wilson", TNI 2026-10-07): comprehensive and collision $1,000,
     // rental and fire / theft not selected, no equipment and the trailer's value as on Add Trailer.

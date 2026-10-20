@@ -1629,7 +1629,13 @@
     // and the page hasn't settled it (NTL added, then set back to No, and still on the quote).
     function holdOpen(a) {
       return !!a.missing && a.afterActions.every((id) => clicked.has(id)) && !clicked.has(a.action)
-        && (!a.pages.length || a.pages.includes(currentPage())) && !(a.resolvedBy && findButton({ text: a.resolvedBy }));
+        && (!a.pages.length || a.pages.includes(currentPage())) && !settledItem(a);
+    }
+
+    // Its button back on the page (`resolvedBy`: the Add NTL link, NTL removed), or a page the agent
+    // has been to since (`settledByPages`: the bill plan, after adding General Liability).
+    function settledItem(a) {
+      return !!(a.resolvedBy && findButton({ text: a.resolvedBy })) || !!a.settledByPages?.some((p) => visited.has(p));
     }
 
     // A prerequisite holds when its field shows the intake's answer, or an answer the agent chose
@@ -1815,7 +1821,7 @@
       for (const a of actions) {
         if (!a.missing || clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage())) || findButton(a)
           || !a.afterActions.every((id) => clicked.has(id)) || a.unlessActions?.some((id) => clicked.has(id))
-          || (a.resolvedBy && findButton({ text: a.resolvedBy }))) continue;
+          || settledItem(a)) continue;
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing });
       }
       // Clicked earlier, but what it adds never got in (Add Trailer opened, the trailer page left

@@ -518,9 +518,11 @@ test('claims-box review: a general liability mention the form lacks is a check i
   assert.doesNotMatch(items[0].msg, /GL limit|Requested coverage/, 'not a GL request');
   assert.deepEqual(items[0].choices, [{ label: 'Client has GL', path: 'coverage.hasGl', value: true }, { label: 'Not GL' }]);
   assert.deepEqual(notesWarnings(parseNotesReview(lines(false), review), review), [], 'no mention: nothing');
-  // GL already ticked on the form: nothing to ask.
+  // GL ticked on the form too: still asked (TNI 2026-10-19: the request alone keeps None of the
+  // above, so only the notes say whether they have it).
   const ticked = buildNotesReview({ coverage: { gl: true }, claims: { text } });
-  assert.deepEqual(notesWarnings(parseNotesReview(lines(true), ticked), ticked), []);
+  assert.deepEqual(notesWarnings(parseNotesReview(lines(true), ticked), ticked).map((w) => [w.code, w.path]), [['ai.gl', 'coverage.hasGl']]);
+  assert.doesNotMatch(notesWarnings(parseNotesReview(lines(true), ticked), ticked)[0].msg, /isn't ticked on the form/);
   // The quote must be one of the lines sent: a line Luna made up is not evidence.
   assert.deepEqual(notesWarnings([{ line: 'Client has GL', generalLiability: true }], review), [], 'not a line of the box');
   // Missing or non-boolean flag: the whole review fails.
