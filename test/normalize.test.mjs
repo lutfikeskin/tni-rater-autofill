@@ -730,12 +730,21 @@ test('"Excluded" in a license-number box marks the driver excluded and is left o
   }
   assert.ok(record.drivers.every((d) => d.excluded === null), 'the sample intake marks no one');
   // Progressive: the license number box gets the number before the word, or is the agent's; the
-  // exclude question is never No for this driver.
+  // exclude question is Yes for this driver (TNI 2026-10-20).
   const step = (box, q) => buildPlan(one(box).record, progressive, { drivers: 0 }).find((s) => s.q === q);
   assert.equal(step('12345678 EXCLUDED', '28B9').value, '12345678');
   assert.equal(step('Excluded', '28B9').value, null);
-  for (const box of ['Excluded', '12345678 EXCLUDED']) assert.deepEqual([step(box, '28C1').value, step(box, '28C1').manualOnly], [null, true], box);
+  for (const box of ['Excluded', '12345678 EXCLUDED']) assert.deepEqual([step(box, '28C1').value, step(box, '28C1').manualOnly], [true, false], box);
   assert.equal(step('12345678', '28C1').value, false);
+  // AmWINS has no exclude question: "(Excluded)" after the number; no number is the agent's.
+  const amwinsLicense = (box) => buildPlan(one(box).record, amwins, {}).find((s) => s.path === 'drivers[0].licenseNumber');
+  assert.equal(amwinsLicense('12345678 EXCLUDED').value, '12345678 (Excluded)');
+  assert.deepEqual([amwinsLicense('Excluded').value, !!amwinsLicense('Excluded').note], [null, true]);
+  assert.equal(amwinsLicense('12345678').value, '12345678');
+  // The check item says what each carrier gets.
+  const said = (box) => one(box).warnings.find((w) => w.code === 'license.excluded').msg;
+  assert.match(said('12345678 EXCLUDED'), /Progressive's exclude question gets Yes; on AmWINS, which has no such question, their license number gets "\(Excluded\)" after it\./);
+  assert.match(said('Excluded'), /on AmWINS, which has no such question, type "\(Excluded\)" after the license number you enter\./);
 });
 
 // PR #17 review: a mention ("no bobtail") must never become NTL coverage. The agent sets it.

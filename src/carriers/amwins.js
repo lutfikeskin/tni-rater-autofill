@@ -178,6 +178,16 @@ const birthYear = (r, a) => {
 const licenseYear = (r, a) => (birthYear(r, a) == null ? null : String(birthYear(r, a) + 17));
 const licenseYearNote = (r, a) => (birthYear(r, a) == null
   ? 'The driver\'s date of birth is missing or unreadable, so the year first licensed (birth year + 17) can\'t be worked out: answer it yourself.' : null);
+// A driver the intake marks excluded ("Excluded" in their license-number box, normalize.js; or set
+// in client details). AmWINS asks nothing about excluding a driver, so TNI (2026-10-20) writes
+// "(Excluded)" after their license number. With no number to write it after, the box is the agent's.
+const excludedDriver = (r, a) => driverOf(r, a)?.excluded === true;
+const licenseNumber = (r, a) => {
+  const number = driverOf(r, a)?.licenseNumber ?? null;
+  return number && excludedDriver(r, a) ? `${number} (Excluded)` : number;
+};
+const licenseNumberNote = (r, a) => (excludedDriver(r, a) && !driverOf(r, a)?.licenseNumber
+  ? 'The intake marks this driver as excluded and gives no license number: type their license number yourself, then "(Excluded)" after it.' : null);
 // Underwriting questions TNI answers No (both sections), by the field names AmWINS uses.
 // The second section's vehicle, MVR and conviction questions have their own rules below.
 const UNDERWRITING_NO = [
@@ -370,7 +380,9 @@ export const amwins = {
     { selector: dataId('middleName', DRIVER), name: 'Middle name (only when the intake has one)', path: 'drivers[].middle', ignore: (r, a) => !r.drivers?.[a.drivers ?? 0]?.middle },
     { selector: dataId('lastName', DRIVER), path: 'drivers[].last' },
     { selector: dataId('dateOfBirth', DRIVER), path: 'drivers[].dob' },
-    { selector: dataId('licenseNumber', DRIVER), path: 'drivers[].licenseNumber' },
+    // An excluded driver's number ends in "(Excluded)" (TNI 2026-10-20, excludedDriver above).
+    { selector: dataId('licenseNumber', DRIVER), path: 'drivers[].licenseNumber',
+      source: (r, a) => (excludedDriver(r, a) ? 'derived' : 'intake'), value: licenseNumber, note: licenseNumberNote },
     { selector: dataId('licenseState', DRIVER), path: 'drivers[].licenseState' },
     // Gender and the year first licensed aren't on the intake: TNI's standards (2026-10-10; the
     // agent's from 2026-10-09): MALE unless the agent set the driver's gender, and birth year + 17

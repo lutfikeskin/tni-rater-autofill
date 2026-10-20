@@ -144,7 +144,6 @@ const NOT_MAPPED = {
     'operations.licensePlate': 'not asked on the Business Auto application',
     'drivers[].cdl': 'AmWINS has no CDL question; the license year is TNI\'s birth year + 17',
     'drivers[].cdlYear': 'AmWINS has no CDL question; the license year is TNI\'s birth year + 17',
-    'drivers[].excluded': 'the AmWINS driver section has no exclusion question (its "Exclude …" boxes are coverage exclusions): Check intake tells the agent',
     'trailerInfo.ownership': 'AmWINS has no trailer section (the trailer is a disclosure line)',
     'trailerInfo.hitch': 'AmWINS has no trailer section',
     'trailerInfo.interchange': 'AmWINS has no trailer section',
@@ -404,6 +403,31 @@ test('AmWINS driver gender and year licensed: TNI standards, the agent\'s gender
   const second = buildPlan(two, amwins, { drivers: 1 });
   assert.equal(second.find((s) => /^Gender/.test(s.name) && /data-id="1"/.test(s.selector)).value, 'FEMALE');
   assert.equal(second.find((s) => /^Year licensed/.test(s.name) && /data-id="1"/.test(s.selector)).value, '2012');
+});
+
+// TNI 2026-10-20: AmWINS asks nothing about excluding a driver, so a driver the intake marks
+// excluded ("Excluded" in the license-number box) gets "(Excluded)" after their license number.
+test('AmWINS: an excluded driver\'s license number ends in "(Excluded)"; with no number it\'s the agent\'s', () => {
+  const lic = (record, row = 0) => buildPlan(record, amwins, {}).find((s) => s.path === `drivers[${row}].licenseNumber`);
+  const got = (s) => [s.value, s.source, s.note];
+  assert.deepEqual(got(lic(expediter())), ['NJ1234567', 'intake', null], 'a listed driver: the number, as before');
+  assert.deepEqual(got(lic(with_({ 'drivers.0.excluded': false }))), ['NJ1234567', 'intake', null], 'the agent\'s No');
+  const excluded = lic(with_({ 'drivers.0.excluded': true }));
+  assert.deepEqual(got(excluded), ['NJ1234567 (Excluded)', 'derived', null]);
+  assert.deepEqual(excluded.from, ['drivers[0].licenseNumber', 'drivers[0].excluded'], 'its evidence: the license box');
+  // No number to write it after: the agent types the number and "(Excluded)", never "(Excluded)" alone.
+  const none = lic(with_({ 'drivers.0.excluded': true, 'drivers.0.licenseNumber': null }));
+  agentsNote(none);
+  assert.match(none.note, /excluded and gives no license number: type their license number yourself, then "\(Excluded\)" after it/);
+  // Two drivers: only the excluded one's row. Its step keeps the license path, which the next Add
+  // Driver waits on (any of the previous row's intake answers).
+  const two = with_({ 'drivers.0.excluded': true });
+  two.drivers.push({ first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'NJ7654321', licenseState: 'NJ', cdl: false, cdlYear: null, maritalStatus: 'Single' });
+  const plan = buildPlan(two, amwins, {});
+  const row = (n) => plan.find((s) => s.path === `drivers[${n}].licenseNumber`);
+  assert.deepEqual([row(0).value, row(1).value], ['NJ1234567 (Excluded)', 'NJ7654321']);
+  assert.match(row(0).selector, /data-id="0"/);
+  assert.ok(plan.find((x) => x.action === 'addDriver1').afterAny.includes(row(0).path));
 });
 
 test('Progressive continuous coverage: Yes when currently insured, otherwise the agent\'s', () => {

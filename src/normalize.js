@@ -516,7 +516,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       info('license.cleaned', p('licenseNumber'), `${who}: license number written as "${rawLic}", entered as ${d.licenseNumber} (letters and digits only).`);
     }
     if (excluded) {
-      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}": the driver is to be excluded, and ${d.licenseNumber ? `the license number is ${d.licenseNumber}` : 'it has no license number'}. Excluding them is yours, and it usually needs the insured's signed form: Progressive's exclude question is left to you; AmWINS has none and lists them like any driver.`);
+      // What the carriers do with it (TNI 2026-10-20): Progressive's exclude question is Yes; AmWINS
+      // has none, and the license number gets "(Excluded)" after it.
+      const amwins = d.licenseNumber ? 'their license number gets "(Excluded)" after it' : 'type "(Excluded)" after the license number you enter';
+      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}": the driver is to be excluded, and ${d.licenseNumber ? `the license number is ${d.licenseNumber}` : 'it has no license number'}. Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. An exclusion usually needs the insured's signed form.`);
     }
 
     if (name.suffix) {

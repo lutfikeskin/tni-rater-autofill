@@ -51,7 +51,7 @@ flowchart LR
 - Luna returns data and has no navigation or submission tool. Page content and intake text are data, not instructions.
 - Successful Luna reviews report `tokensIn`, `tokensOut`, `modelCalls`, `reasoningTokens`, `cachedTokens`, and `cacheWriteTokens`. Reasoning tokens are included in the output count. `modelCalls` counts logical provider calls and excludes HTTP retries. These counters do not account for all possible spend from failed or timed-out requests.
 
-The AI never-list does not override deterministic carrier rules: Progressive answers its driver-exclusion question No for a driver listed on the intake, except a driver the intake marks excluded, which is the agent's. See [intake and rules](intake-and-rules.md) when changing that behavior.
+The AI never-list does not override deterministic carrier rules: Progressive answers its driver-exclusion question No for a driver listed on the intake and Yes for one the intake marks excluded. See [intake and rules](intake-and-rules.md) when changing that behavior.
 
 ## Making changes
 
