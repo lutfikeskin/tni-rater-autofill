@@ -1,6 +1,6 @@
 ---
 name: weekly-review
-description: Review a period of TNI Rater Autofill agents' live runs (usage logs, problem reports, agent edits and corrections, fill failures, AI suggestions, new questions, options and layouts), check whether last period's fixes held, and produce a prioritized decision brief with questions for the maintainer. Use when asked to review the week, summarize what agents ran into, or decide what to fix next. It changes no code; approved items go to the apply-review-fixes skill.
+description: Review a period of TNI Rater Autofill agents' live runs (usage logs, problem reports, agent edits and corrections, fill failures, AI suggestions, new questions, options and layouts), check whether last period's fixes held, and produce a prioritized decision brief with questions for the maintainer. Use when asked to review the week or the last few runs, summarize what agents ran into, or decide what to fix next. It changes no code; approved items go to the apply-review-fixes skill.
 ---
 
 # Weekly review of agent runs
@@ -16,11 +16,13 @@ Read `CLAUDE.md` (identical to `AGENTS.md`) first. Its working rules apply throu
 - **Build before blame.** Every finding names the builds it was seen on. A problem seen only on builds older than a fix is "Watch", not "Fix".
 - **Count quotes, not events.** Fill runs repeat on a page; one quote re-run twenty times is one quote. Use the per-quote counts the reports give.
 - **Leave test runs out.** Quotes of fixture, synthetic or the maintainer's test intakes are not agents' work. `npm run signals` leaves out intakes marked as a test (`test: true` on `intake_loaded`, when the panel sends it) and the fingerprints listed in `reviews/test-intakes.txt` (local, ignored; one per line). When a new intake looks like a test (quoted many times in a day, a fixture's name in the review), ask the maintainer and add it to the list.
+- **Few quotes, no trend.** Every weekly number is per quote; show each period's quote count beside it, and call no trend when either period has fewer than about 10 quotes.
+- **Local data is in the main checkout.** `server-data/`, `reviews/` (with `reviews/test-intakes.txt`) and `layouts/` are ignored, so a worktree (`.claude/worktrees/<name>`) has none of them; they are in the main checkout folder, the first line of `git worktree list`. From a worktree, pass their paths: `npm run pull -- --out <main>/server-data`, `node scripts/weekly-signals.mjs <main>/server-data --tests <main>/reviews/test-intakes.txt --out <main>/reviews/signals-<date>.md`, and the same data path, `--tests` and `--out` for `scripts/ledger.mjs` and `scripts/benchmark.mjs`. `npm run review` reads `reviews/` of the checkout it runs in (its default `--since` and the test-intake list), so run it in the main checkout.
 
 ## 1. Set up the period
 
 ```bash
-git switch main && git pull --ff-only
+git switch main && git pull --ff-only    # in a worktree: git fetch origin main, and work from origin/main
 npm ci                    # only when package-lock.json changed
 npm run pull              # needs the admin token (~/.config/tni-rater/admin-token or RATER_ADMIN_TOKEN); if it's missing, ask
 ```
@@ -31,11 +33,17 @@ The period starts where the last weekly review ended: the date in the title of t
 
 ## 2. Close the loop on earlier decisions
 
-Read the open `weekly-review` issue (the ledger, step 7). For each item that is merged or released:
+```bash
+npm run ledger -- --since <since>        # reviews/ledger-<date>.md; --ledger <n> for another issue than the open one
+```
 
-1. Find the builds that contain the fix. Events carry `v` (version), `channel` (`store`, `unpacked`, `source`) and, since 0.9.9, `commit` (`+dirty`: uncommitted changes on top). A build contains fix commit `F` when `git merge-base --is-ancestor F <commit>` succeeds. A build with a version only contains it when its version is at least the first `manifest.json` version after `F` (`git log --format='%h %s' F..main -- manifest.json`). Agents on the Web Store get a fix only after a store release (`docs/chrome-web-store.md`); merged to `main` is not released.
-2. Look for the item's signature (the event, field, page and result recorded in the ledger) in this period's events from those builds.
-3. Mark it **verified** (the scenario ran on a fixed build without the symptom), **recurred** (the symptom on a fixed build: reopen as a new item at its old severity or higher), or **not exercised** (no fixed build reached the scenario: keep watching).
+It reads the open `weekly-review` issue (the ledger, step 7) through `gh` and changes nothing. For each item it finds the PRs (those its line names, and those naming its ID) and their merge commits, then which builds that logged the period contain the fix: a build with a `commit` (since 0.9.9; `+dirty`: uncommitted changes on top) when the fix's merge commit is its ancestor, else one whose version is at least the first `manifest.json` version after the fix. It counts the item's signature on those builds' events, per quote, and proposes:
+
+- **verified**: on a build with the fix, the expected event was there, or the scenario ran without the symptom;
+- **recurred**: the symptom on a build with the fix, or the expected event missing where it should be: reopen it as a new item at its old severity or higher;
+- **not exercised**: no build with the fix reached it: keep watching. Merged to `main` is not released; agents on the Web Store get a fix only after a store release (`docs/chrome-web-store.md`).
+
+These are proposals from counts: read each item's evidence, and check by hand the ones it marks so (no signature, or free text naming no event) and the ones marked `?` (a free-text signature, read as the presence of the events it names in backticks). Its "Last period's decisions" table and its weekly numbers beside the ledger's go into the brief.
 
 Also read the comments on the open `daily-review` issue since the period start (`gh issue list --label daily-review --state open`, then `gh issue view <n> --comments`).
 
@@ -46,7 +54,7 @@ npm run signals -- --since <since>                                    # reviews/
 npm run review -- --since <since> --out reviews/review-<date>.md      # the full review: AI, problem reports, coverage, learner suggestions, layouts
 ```
 
-If `scripts/benchmark.mjs` exists and the maintainer has given a folder with the intake PDFs, also replay the recorded quotes through today's rules:
+If the maintainer has given a folder with the intake PDFs, also replay the recorded quotes through today's rules:
 
 ```bash
 npm run benchmark -- --intakes <folder> --save reviews/benchmark-<date>.json [--against reviews/benchmark-<last>.json]
@@ -91,7 +99,7 @@ For each, record:
 
 ## 6. Write the brief and ask for decisions
 
-Write `reviews/weekly-<date>.md` from `references/brief-template.md`. It opens with **For you**, in plain language for the maintainer, who is not reading code: what agents ran into this week, what is broken, what got better, and what you need from them. Then the weekly numbers against last week (from the previous ledger issue), then the details. Order findings by severity, then quotes affected. Keep evidence to counts, builds, pages, questions and short masked quotes of agents' reports.
+Write `reviews/weekly-<date>.md` from `references/brief-template.md`. It opens with **For you**, in plain language for the maintainer, who is not reading code: what agents ran into this week, what is broken, what got better, and what you need from them. Then the weekly numbers against last week (the ledger report's table, with each period's quote count), then the details. Order findings by severity, then quotes affected. Keep evidence to counts, builds, pages, questions and short masked quotes of agents' reports.
 
 Every Decide question carries your **recommendation** and **what happens if it isn't answered** (it stays the agent's question; nothing is defaulted). Every Fix item says in one line what the agent will notice when it ships.
 
@@ -101,10 +109,26 @@ Deliver it where the maintainer reads: send the brief as a file (in the Claude a
 
 After the maintainer has answered, keep the ledger as a GitHub issue so it survives machines and assistants. It holds IDs, titles, severity, type, decision and signatures, never client data.
 
+- **The issue body is the ledger.** An item's state lives on its line in the body: tick and update lines in place (`gh issue view <n> --json body --jq .body > <file>`, edit the file, `gh issue edit <n> --body-file <file>`) and add new items there. Comments are history (a copy of the brief, a spot review); a line only in a comment is not in the ledger, and `npm run ledger` flags it.
 - Create the label once if missing: `gh label create weekly-review --description "Weekly review ledger" --color 0E8A16`.
-- Open `Weekly review W<week> (<since> – <date>)` with the label. Its body: the period, the **weekly numbers** table from the signals report (it is how next week compares, on any machine), and one checklist line per item: `- [ ] W42-03 · S2 · Fix · <title> · decision: approved · signature: fill_field failed "no option matches" on progressive CoveragesRates "Bodily Injury…"`. Add each Decide item's question and the maintainer's answer with its date.
+- Open `Weekly review W<week> (<since> – <date>)` with the label. Its body: the period, the **weekly numbers** table (this period's column from the ledger report, quotes first; it is how next week compares, on any machine), and one checklist line per item:
+
+  ``- [ ] W42-03 · S2 · Fix · <title> · approved · PR #77 · signature: `symptom fill_field page=CoveragesRates result=failed reason~"no option matches"` ``
+
+  Fields are separated by ` · `: ID, severity, type, title, the decision (`approved`, `question: …`, `answer: … (TNI, <date>)`, `awaiting approval`, `dropped`, `deferred`), then `PR #n`, the status the fix skill keeps (`PR open`, `merged <commit>`, `released in <version>`), and the signature last. Add each Decide item's question and the maintainer's answer with its date.
+- **Write signatures so `npm run ledger` can count them**: `expect` (the fix makes this event appear) or `symptom` (this event is the problem), an event type or `*`, then conditions `field=value`, `field!=value`, `field~text` (case-insensitive, or `~/regex/`), `field>n`, `field<n`, `field=*` (present), `field!=*` (absent). Fields may be dotted (`platform.os`); a value with spaces goes in double quotes. `when <event> <conditions>` names the scenario that must have run for the item to be exercised; a symptom without one uses its own event on the same carrier, page, step and question. Several patterns: each in its own backticks. For example `symptom fill_field key=ref:RiskInput.PrimaryZIP result=noData pageHasValue=true`, `expect agent_settings when intake_loaded`, `symptom page_view page=/application/commercialproperty when page_view carrier=amwins`. Free text is still read, as the presence of the event types it names in backticks; a signature only a person can check (a line of a report, a sequence of events) stays free text and is checked by hand.
+- Closing the loop (step 2): tick a verified item (`- [x]`, adding `verified <date> on <build>`), leave a not-exercised one open, and reopen a recurred one as a new item that names the old ID.
 - Carry items still open from the previous ledger into the new one (same ID), then close the previous issue with a link to the new one.
 
 Ask before the first post: the ledger is a GitHub issue in the maintainer's private repository.
 
 Hand over: approved items go to the `apply-review-fixes` skill with their IDs.
+
+## Spot review: the last few runs
+
+For "review my last N runs" (or "the quote I just ran"), a short check instead of the week:
+
+1. `npm run ledger -- --last <n>`: it prints the window those quotes were received in and judges the ledger's items on them.
+2. `npm run signals -- --since <that time>`: the builds, how each quote ended, what was left to the agent, what held Continue, the extension's clicks, crashes, AI errors, lost events and problem reports.
+3. Write `reviews/last-runs-<date>.md`: the runs (carrier, build, how far, minutes); safety (restricted actions, crashes, AI errors, lost events); the ledger items these runs verified, left not exercised or showed recurring; and new findings, triaged as in step 5 and numbered in the coming weekly review's series (`W43-01` after a W42 ledger), after any IDs it already has. No weekly numbers or trends: a few quotes call none.
+4. Ask the maintainer item by item as in step 6. After they answer, update the ledger body (step 7): add the new items, tick the verified ones. Then post the summary as a comment on the ledger (`Spot review: the last <n> runs (<window> UTC)`): IDs, builds and counts, no client data. The comment is history; the body holds the state.

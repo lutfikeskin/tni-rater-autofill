@@ -13,7 +13,7 @@ The extension uses plain ES modules with no source build step. `npm ci` installs
 | AmWINS rules or application flow | `npm run mock:amwins` before completing an AmWINS rule change |
 | Panel orchestration or packaged behavior | `test/sidepanel-safety.test.mjs`, `npm run e2e:extension` |
 | AI validation, approvals, caching | `test/luna.test.mjs`, `test/ai-eval.test.mjs`, `npm run mock:luna` |
-| Events, learning, layout coverage, transport | Corresponding `usage`, `usage-log`, `learn`, `coverage`, `conditions`, `weekly-signals`, `server`, and `consistency` test files |
+| Events, learning, layout coverage, transport | Corresponding `usage`, `usage-log`, `learn`, `coverage`, `conditions`, `weekly-signals`, `ledger`, `server`, and `consistency` test files |
 | Rule changes measured on recorded quotes | `test/benchmark.test.mjs`; locally, `npm run benchmark -- --intakes <folder> --save <file>` on `main` and again with `--against <file>` on the branch ([learning](learning.md)). It needs the quotes' intake PDFs on this computer and reports agreement with past agents, not live accuracy |
 | Manual page captures and their report | `test/pagekit.test.mjs` (capture), `test/sidepanel-safety.test.mjs` (panel), `test/captures.test.mjs` (`npm run captures`) |
 | Documentation only | Link/command checks, current-code audit, and `git diff --check`; no browser run or version bump |
