@@ -499,7 +499,7 @@ test('progressive: standard answers for follow-up questions', () => {
   noDot.applicant.mcDotWithin60Days = false;
   assert.equal(byQ('1ED', noDot).value, 'No - and the customer will not have a USDOT number');
   assert.equal(byQ('20F', noDot).ignore, true);
-  assert.equal(byQ('20F').value, null, 'an attestation: the agent confirms the number is the business\'s (2026-10-09)');
+  assert.equal(byQ('20F').value, true, 'TNI\'s standard Yes once the lookup found the number (2026-10-20)');
   // Other freight descriptions aren't guessed.
   const other = structuredClone(record);
   other.operations.whatHaul = 'Auto parts';

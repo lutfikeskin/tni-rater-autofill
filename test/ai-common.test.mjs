@@ -179,10 +179,26 @@ test('manual-only metadata and labels stay agent-owned', () => {
     { fieldType: 'date' }, { fieldType: 'limit' }, { fieldType: 'identity' }, { fieldType: 'identifier' },
     { valueType: 'date' }, { semanticType: 'identity' }, { label: 'Annual distance' },
     { label: 'Liability CSL' }, { label: 'Does VIN belong to this vehicle?' },
+    // Progressive's own wording: "USDOT" in one word.
+    { label: 'Does this USDOT Number belong to the customer\'s business?' },
   ]) {
     assert.match(manualOnlyReason({ label: 'Synthetic bounded field', ...metadata }) ?? '', /review|manual|require/i, JSON.stringify(metadata));
   }
   assert.equal(manualOnlyReason(item('ok', 'Synthetic bounded field')), null);
+});
+
+// TNI 2026-10-20: Progressive's "belongs to the business" is a standard the extension fills after
+// its registered-name check, so its step isn't manual-only. One the fill couldn't answer (failed,
+// changed by the page) carries no flag and still never reaches the assistant.
+test('a USDOT "belongs" question the fill could not answer stays off the assistant\'s list', () => {
+  const label = 'Does this USDOT Number belong to the customer\'s business?';
+  const { items, blocked } = collectItems([{
+    failed: [{ key: 'belongs', label, controlKind: 'radio', options: ['Yes', 'No'], reason: 'the page did not keep the answer; check it' }],
+  }]);
+  assert.deepEqual(items, []);
+  assert.deepEqual(blocked.map(x => x.key), ['belongs']);
+  assert.match(blocked[0].why, /agent/);
+  assert.ok(neverReason({ section: 'Business', label: 'Does this DOT number belong to the business?' }));
 });
 
 test('common errors remain typed for callers', () => {

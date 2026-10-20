@@ -1,25 +1,25 @@
 {
  "test/bakeoff/course-MD-expediter-van.json": {
   "questions": 79,
-  "filled": 58,
+  "filled": 59,
   "failed": 2,
   "unmapped": 2,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
     "questions": 29,
-    "filled": 18,
+    "filled": 19,
     "failed": [
      "Home Address: the page offered no address suggestion; check the address, city and ZIP",
      "Street Address: the page offered no address suggestion; check the address, city and ZIP"
     ],
-    "noData": 1,
+    "noData": 0,
     "unmapped": 2,
-    "blockers": 8,
+    "blockers": 7,
     "clicked": [
      "Verify DOT"
     ],
-    "outcomes": "cf0b04c84896"
+    "outcomes": "7bad6f823508"
    },
    "MostCommonVehicles": {
     "questions": 0,
@@ -622,25 +622,25 @@
  },
  "test/fixtures/progressive/progressive_MD_expediter_van.json": {
   "questions": 105,
-  "filled": 67,
+  "filled": 68,
   "failed": 4,
   "unmapped": 3,
   "issues": [],
   "pages": {
    "BusinessOwnerInfo": {
     "questions": 37,
-    "filled": 20,
+    "filled": 21,
     "failed": [
      "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
      "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])",
      "Street Address: the page offered no address suggestion; check the address, city and ZIP",
      "Business type list: no option matches \"For Hire Trucking\""
     ],
-    "noData": 1,
+    "noData": 0,
     "unmapped": 3,
-    "blockers": 11,
+    "blockers": 10,
     "clicked": [],
-    "outcomes": "398355a28752"
+    "outcomes": "841bd31b6654"
    },
    "AddVehicle": {
     "questions": 12,

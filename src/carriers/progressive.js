@@ -553,11 +553,16 @@ export const progressive = {
       // Shown when Verify USDOT finds no record for the number (a brand-new USDOT). TNI's standard
       // Yes (2026-10-19, after a live run): a number the lookup doesn't know yet is a new one.
       { q: '21E', source: 'standard', field: 'USDOTInput.SixtyDayQuestion', ask: 'Did the customer obtain their USDOT Number within the last 60 days?', name: 'USDOT obtained within the last 60 days (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, value: () => true },
-      // Whether the number is the client's is the agent's to confirm against the lookup's registered
-      // name (2026-10-09; TNI's 2026-10-01 Yes was an assertion). A registered name that differs
-      // from the intake is said so (pagekit businessNames).
-      { q: '20F', source: 'attestation', ask: 'Does this USDOT Number belong to the customer\'s business?', name: 'USDOT number belongs to the business', kind: 'bool', ignore: (r) => !r.applicant.dot, businessNames,
-        note: 'Whether this USDOT number belongs to the customer\'s business is yours to confirm against the registered name the lookup shows.' },
+      // Asked only after Verify USDOT finds the intake's number. TNI's standard Yes (2026-10-20, after
+      // a live run: "This should be always yes, because this question appears only after we insert
+      // the DOT number and verify it"; it was the agent's from 2026-10-09). The identity check stays
+      // (pagekit businessNames): a registered name that differs from the intake leaves this question
+      // and the Business Name choice to the agent, also when it shows only after the Yes. With no
+      // business or owner name on the intake there is nothing to check: the agent's to attest.
+      // Progressive never pre-selects it, so an answer already there is a person's (`keepChoice`).
+      { q: '20F', source: (r) => (businessNames(r).length ? 'standard' : 'attestation'), ask: 'Does this USDOT Number belong to the customer\'s business?', name: 'USDOT number belongs to the business (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, businessNames, keepChoice: true,
+        value: () => true,
+        note: (r) => (businessNames(r).length ? null : 'The intake has no business or owner name to check the USDOT record against: answer it yourself.') },
       { q: '22F', ask: 'Business Name', registeredName: true, name: 'Business name (USDOT record)', ...registered(), businessNames },
       { q: '277', ask: 'Business Address', name: 'Primary business address (USDOT record)', ...registered(), businessNames },
       // Always the first choice offered. When that's "Enter a different address", the address box
