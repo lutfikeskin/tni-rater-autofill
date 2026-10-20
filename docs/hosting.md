@@ -170,7 +170,10 @@ every day at 06:00 UTC, which GitHub often starts hours late (and on demand: Act
 review → Run workflow, optionally with a start date or time). Its window starts when the last
 successful run on the default branch began downloading (`scripts/daily-issue.mjs since`, from that
 run's steps; a day when there is none; a run that can't tell fails rather than guess). It keeps the
-review as an artifact for 90 days and shows it as the run summary, and when the script that
+review as an artifact for 90 days and shows it as the run summary. The runner has no local test-run list
+(`reviews/test-intakes.txt` is ignored by git), so its review carries the "No test-run list"
+warning: the maintainer's own test quotes count as agents' work there, while fixture intakes and
+intakes marked as a test are still left out ([learning](learning.md)). When the script that
 comments is what broke, the workflow says so with `gh` alone. Its cron is still set, so GitHub
 still tries it each day and the run fails at start. Before using it again, stop the local
 schedule and start its first run by hand, with the `since` in the local `reviews/daily/state.json`
