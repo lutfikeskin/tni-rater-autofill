@@ -69,6 +69,7 @@ export const TNI_RULES = `
 - General liability: not set up yet; the agent answers it.
 - Non-trucking liability (NTL): only when the agent has set coverage.ntl to Yes; a claims-box mention alone is not a request. The filler opens it with "Add Non-Trucking Liability instead?". Its limit and its other questions are the agent's: leave them.
 - Florida: Property Damage Liability Only "Not Selected"; Personal Injury Protection "$10k w/ $0 Deductible" (Florida requires it). Personal Injury Protection in other states (Texas, Maryland): keep what the page has.
+- Arkansas: Personal Injury Protection (the "Limit" list of 5k Medical and Hospital, Income Loss and 5k Accidental Death) "5k Medical and Hospital" alone.
 - Pennsylvania first-party benefits: Medical Expense Benefits $5,000 (required, lowest); Extraordinary Medical, Income Loss, Funeral Expense and Accidental Death: Not Selected unless the intake asks for them.
 - Cargo without a deductible on the intake: $1,000 deductible.
 

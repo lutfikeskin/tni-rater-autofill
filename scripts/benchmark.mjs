@@ -1,59 +1,59 @@
 #!/usr/bin/env node
 // Replay benchmark: would today's rules give the answers agents left in recorded quotes?
 //
-//   npm run benchmark -- --intakes <folder with intake PDFs> [--intakes <another>] [--save run.json] [--against earlier.json]
+//   npm run benchmark -- --intakes <folder with intake PDFs> [--intakes <another>] [--key key.json] [--save run.json] [--against earlier.json]
 //   node scripts/benchmark.mjs server-data --intakes ~/Downloads --save reviews/benchmark-main.json
+//   npm run benchmark -- --intakes layouts/intakes --key layouts/answer-key/key.json
 //
 // Each recorded quote whose intake PDF is in one of the folders (matched by the PDF's SHA-256, as
 // the extension fingerprints it) is replayed through today's rules without a browser; see
 // scripts/lib/benchmark.mjs for how answers are paired and compared. Writes
 // reviews/benchmark-<date>.md (ignored: it holds the quotes' question answers). --save keeps the
 // per-answer results; --against compares this run with a saved one, listing the answers a rule
-// change fixed or broke on the same quotes. Nothing here reads or prints the intakes' values.
+// change fixed or broke on the same quotes. --key scores today's rules (and, apart, the agents'
+// final answers) against TNI's answer key for the quotes it covers (scripts/lib/answer-key.mjs;
+// `npm run key:sheet` makes one): right, wrong, missed, invented. Nothing here prints the intakes'
+// values: the report shows choices, never typed text.
 
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { readIntakeFields } from '../src/intake.js';
 import { CARRIERS } from '../src/carriers.js';
 import { loadEvents } from './lib/events.mjs';
 import { benchmark, byQuestion, CHANGES, compareRuns, summarize } from './lib/benchmark.mjs';
+import { readIntakes } from './lib/intake-pdfs.mjs';
+import { testSessionsOf } from './lib/signals.mjs';
+import { compareKey, keyByQuestion, readKey, rightPercent, scoreKey } from './lib/answer-key.mjs';
 
 const args = process.argv.slice(2);
-const valued = new Set(['--intakes', '--save', '--against', '--out']);
+const valued = new Set(['--intakes', '--save', '--against', '--out', '--key', '--tests']);
 const values = (name) => args.flatMap((a, i) => (a === `--${name}` && args[i + 1] ? [args[i + 1]] : []));
 const inputs = args.filter((a, i) => !valued.has(a) && !valued.has(args[i - 1]));
 if (!inputs.length) inputs.push('server-data');
 const folders = values('intakes');
 if (!folders.length) {
-  console.error('usage: node scripts/benchmark.mjs [server-data | usage logs]... --intakes <folder of intake PDFs> [--save run.json] [--against earlier.json] [--out report.md]');
+  console.error('usage: node scripts/benchmark.mjs [server-data | usage logs]... --intakes <folder of intake PDFs> [--key key.json [--tests reviews/test-intakes.txt]] [--save run.json] [--against earlier.json] [--out report.md]');
   process.exit(1);
 }
-
-function* pdfs(dir, depth = 0) {
-  let entries;
-  try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
-  for (const e of entries) {
-    const full = path.join(dir, e.name);
-    if (e.isDirectory() && depth < 4 && !e.name.startsWith('.') && e.name !== 'node_modules') yield* pdfs(full, depth + 1);
-    else if (e.isFile() && /\.pdf$/i.test(e.name)) yield full;
-  }
+const fail = (msg) => { console.error(msg); process.exit(1); };
+const keyFile = values('key')[0] ?? null;
+let key = null;
+if (keyFile) {
+  try { key = readKey(JSON.parse(fs.readFileSync(keyFile, 'utf8'))); } catch (err) { fail(`${keyFile}: ${err.message}`); }
 }
 
 const events = loadEvents(inputs);
-const wanted = new Set(events.filter((e) => e.type === 'intake_loaded' && e.intakeId).map((e) => e.intakeId));
-const raws = new Map();
-for (const folder of folders) {
-  for (const file of pdfs(folder)) {
-    const bytes = fs.readFileSync(file);
-    const id = crypto.createHash('sha256').update(bytes).digest('hex');
-    if (!wanted.has(id) || raws.has(id)) continue;
-    try { raws.set(id, await readIntakeFields(pdfjs, new Uint8Array(bytes))); } catch { /* not a readable intake */ }
-  }
+// Test runs are left out of the key's score, as the sheet leaves them out (marked as a test, or
+// listed in reviews/test-intakes.txt or --tests).
+let tests = null;
+if (key) {
+  const testFile = values('tests')[0] ?? (fs.existsSync('reviews/test-intakes.txt') ? 'reviews/test-intakes.txt' : null);
+  if (testFile && !fs.existsSync(testFile)) fail(`--tests ${testFile}: no such file.`);
+  const testIntakes = testFile ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
+  try { tests = testSessionsOf(events, testIntakes); } catch (err) { fail(`${testFile}: ${err.message}`); }
 }
+const raws = await readIntakes(folders, new Set(events.filter((e) => e.type === 'intake_loaded' && e.intakeId).map((e) => e.intakeId)));
 
-const run = benchmark(events, { carriers: CARRIERS, raws });
+const run = benchmark(events, { carriers: CARRIERS, raws, detail: !!keyFile });
 const { rows } = run;
 const sum = summarize(rows);
 const pct = (n, d) => (d ? `${Math.round((n / d) * 100)}%` : '–');
@@ -104,8 +104,40 @@ section('Still corrected', 'Answers agents corrected that today\'s rules still g
 section('Newly automated', 'Questions the agent answered that today\'s rules fill the same way.', of('agent', 'agree'));
 section('Lost answers', 'Autofilled answers agents kept that today\'s rules leave blank or to the agent.', byQuestion(rows.filter((r) => r.group === 'kept' && (r.result === 'blank' || r.result === 'left'))));
 
+// TNI's answer key: what a reviewer at TNI decided for these quotes, in place of the agents' answers.
+const keyed = key ? scoreKey(rows, key, { tests }) : null;
+if (keyed) {
+  const notFound = Object.keys(key.quotes).filter((i) => !raws.has(i)).length;
+  const keyLine = (name, c) => `| ${name} | ${c.cells} | ${c.right} (${pct(c.right, c.right + c.wrong + c.missed + c.invented)}) | ${c.wrong} | ${c.missed} | **${c.invented}** | ${c.unsure} | ${c.unkeyed} | ${c.agents.right} · ${c.agents.wrong} · ${c.agents.unsure} |`;
+  const keyTable = (byCarrier, total) => ['| Carrier | Answers | Right | Wrong | Missed | Invented | Unsure | Not keyed | Agents right · wrong · unsure |',
+    '| --- | --- | --- | --- | --- | --- | --- | --- | --- |',
+    ...Object.entries(byCarrier).sort().map(([c, x]) => keyLine(c, x)),
+    keyLine('**All**', total), ''];
+  lines.push('## Against TNI\'s answer key', '',
+    `${path.basename(keyFile)}: ${Object.keys(key.quotes).length} intakes keyed, ${keyed.quotes} with recorded quotes here${notFound ? ` (${notFound} keyed intake PDF${notFound === 1 ? '' : 's'} not in the given folders)` : ''}; test runs left out (${tests.size} test-run sessions). One answer per quote, question and unit (vehicle, driver, trailer, Rates row): an intake's latest quote on each carrier.`, '',
+    `**${keyed.proposed} of the key's ${keyed.entries} entries were accepted as proposed** (confirmed without a change). A proposal is today's rule answer or the agent's, so those agree with the rules by construction: read the second table, the answers the reviewer decided (changed or typed), for what the key adds.`, '',
+    '**How to read it.** right: today\'s rules give the key\'s answer, or leave to the agent what the key says is the agent\'s, not applicable, or blank on the intake · wrong: another answer · missed: left to the agent though the key has an answer · **invented: filled where the key says the agent\'s or not applicable (must be 0)** · unsure: the pairing or the page\'s options can\'t tell · not keyed: no answer in the key yet. Right % is of the answers judged (right, wrong, missed, invented). Agents: their final answers where the key has one (right · wrong · unsure); typed text is judged only through the intake fields it matched.', '',
+    '### Every keyed answer', '', ...keyTable(keyed.byCarrier, keyed.total),
+    '### Decided by the reviewer', '', `Only answers whose entry the reviewer changed or typed: ${keyed.decided.cells} of ${keyed.total.cells}.`, '', ...keyTable(keyed.decidedByCarrier, keyed.decided));
+  const keySection = (title, note, list) => {
+    lines.push(`### ${title}`, '', note, '');
+    if (!list.length) { lines.push('None.', ''); return; }
+    lines.push('| Question | Where | Answers (decided) | Intakes | Today\'s rule (source) | Key · today |', '| --- | --- | --- | --- | --- | --- |');
+    for (const q of list.slice(0, 40)) lines.push(`| ${label(q)} | ${where(q)} | ${q.cells} (${q.decided}) | ${q.intakes} | ${String(q.rule ?? '').slice(0, 60)}${q.source ? ` (${q.source})` : ''} | ${pairs(q)} |`);
+    if (list.length > 40) lines.push(`| … ${list.length - 40} more | | | | | |`);
+    lines.push('');
+  };
+  keySection('Invented', 'Today\'s rules fill an answer the key says is the agent\'s (a client fact, an attestation, or blank on the intake) or not applicable. Each one is a finding.', keyByQuestion(keyed.scored, 'invented'));
+  keySection('Wrong', 'Today\'s rules give another answer than the key\'s.', keyByQuestion(keyed.scored, 'wrong'));
+  keySection('Missed', 'Left to the agent, though the key has an answer (from the intake or a TNI standard).', keyByQuestion(keyed.scored, 'missed'));
+}
+
+// A keyed answer as --save keeps it: its quote, question and unit, where, and the results; no values.
+const keyRow = (s) => ({ id: s.id, question: s.question, carrier: s.row.carrier, page: s.row.page, ...(s.row.step ? { step: s.row.step } : {}), label: s.row.label, key: s.result, decided: s.decided, agentKey: s.agent });
+
 if (values('against').length) {
-  const before = JSON.parse(fs.readFileSync(values('against')[0], 'utf8')).rows ?? [];
+  const saved = JSON.parse(fs.readFileSync(values('against')[0], 'utf8'));
+  const before = saved.rows ?? [];
   const changed = compareRuns(before, rows);
   const count = (kind) => changed.filter((r) => r.change === kind).length;
   lines.push(`## Compared with ${path.basename(values('against')[0])}`, '',
@@ -128,6 +160,24 @@ if (values('against').length) {
     }
     lines.push('');
   }
+  // The key's results on the same quotes, when both runs were scored against a key.
+  if (keyed && saved.key) {
+    const moved = compareKey(saved.key, keyed.scored.map(keyRow));
+    const kinds = new Map();
+    for (const r of moved) kinds.set(`${r.wasKey} → ${r.key}`, (kinds.get(`${r.wasKey} → ${r.key}`) ?? 0) + 1);
+    lines.push(`## Answer key compared with ${path.basename(values('against')[0])}`, '',
+      `${moved.length} keyed answers changed result on the same quotes${moved.length ? `: ${[...kinds].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${k}`).join(', ')}` : ''}. A change to wrong, missed or invented is a regression unless the PR says why.`, '');
+    if (moved.length) {
+      const groups = new Map();
+      for (const r of moved) {
+        const k = `${r.wasKey} → ${r.key}|${r.question}`;
+        groups.set(k, { ...r, change: `${r.wasKey} → ${r.key}`, n: (groups.get(k)?.n ?? 0) + 1 });
+      }
+      lines.push('| Before → now | Question | Where | Answers |', '| --- | --- | --- | --- |');
+      for (const g of [...groups.values()].sort((a, b) => b.n - a.n)) lines.push(`| ${g.change} | ${label(g)} | ${where(g)} | ${g.n} |`);
+      lines.push('');
+    }
+  } else if (keyed) lines.push(`(${path.basename(values('against')[0])} was saved without --key: no answer-key comparison.)`, '');
 }
 
 const out = values('out')[0] ?? path.join('reviews', `benchmark-${new Date().toISOString().slice(0, 10)}.md`);
@@ -135,7 +185,12 @@ fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, lines.join('\n'));
 if (values('save').length) {
   fs.mkdirSync(path.dirname(values('save')[0]), { recursive: true });
-  fs.writeFileSync(values('save')[0], JSON.stringify({ kind: 'benchmark-run', generated: new Date().toISOString(), rows }, null, 1));
+  fs.writeFileSync(values('save')[0], JSON.stringify({ kind: 'benchmark-run', generated: new Date().toISOString(), rows, ...(keyed ? { key: keyed.scored.map(keyRow) } : {}) }, null, 1));
 }
 console.log(lines.slice(0, 16).join('\n'));
+if (keyed) {
+  const line = (t) => `${t.right} right (${rightPercent(t) ?? '–'}%), ${t.wrong} wrong, ${t.missed} missed, ${t.invented} invented (must be 0), ${t.unsure} unsure, ${t.unkeyed} not keyed`;
+  console.log(`\nAgainst TNI's answer key (${keyed.quotes} keyed intakes, ${keyed.total.cells} answers): ${line(keyed.total)}.`);
+  console.log(`Decided by the reviewer (${keyed.decided.cells} answers; ${keyed.proposed} of ${keyed.entries} key entries accepted as proposed): ${line(keyed.decided)}.`);
+}
 console.log(`\nReport: ${out}${values('save').length ? `\nSaved run: ${values('save')[0]}` : ''}`);

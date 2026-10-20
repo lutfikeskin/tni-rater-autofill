@@ -5,9 +5,10 @@
 // and required flags that changed, and the picks that changed. For writing carrier rules and mock
 // pages from a series like "answer Yes, capture; answer No, capture". What it lists was seen in
 // those captures; it isn't the carrier's rule. Reads capture files (version 2) from the folders
-// given (default layouts/, kept out of git) and writes reviews/captures-<date>.md.
+// given (default layouts/, kept out of git) and writes reviews/captures-<date>.md, or the file
+// --out names (scripts/review.mjs puts it next to its own report).
 //
-//   node scripts/captures.mjs layouts [more folders or files...]
+//   node scripts/captures.mjs layouts [more folders or files...] [--out file.md]
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -117,13 +118,21 @@ export function captureStory(captures) {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const inputs = process.argv.slice(2).length ? process.argv.slice(2) : ['layouts'];
+  const args = process.argv.slice(2);
+  const outIdx = args.indexOf('--out');
+  const outFile = outIdx >= 0 ? args[outIdx + 1] : null;
+  if (outIdx >= 0 && (!outFile || outFile.startsWith('--'))) {
+    console.error('--out needs a value.');
+    process.exit(1);
+  }
+  const given = outIdx >= 0 ? args.filter((_, i) => i !== outIdx && i !== outIdx + 1) : args;
+  const inputs = given.length ? given : ['layouts'];
   const { captures, unreadable } = readCaptures(inputs.filter((p) => fs.existsSync(p)));
   const md = [`# Manual captures (${new Date().toISOString().slice(0, 10)})`, '',
     'Each scenario in the order captured. Changes are between consecutive captures of the same page; they were seen, not proven.', '',
     ...(unreadable.length ? ['**Not read** (a step may be missing from the stories below):', ...unreadable.map((u) => `- ${u.file}: ${u.error}`), ''] : []),
     ...(captures.length ? captureStory(captures) : ['No captures (version 2) found. Take some with Capture page layout or Alt+Shift+C, then move them to layouts/.', ''])];
-  const out = path.join('reviews', `captures-${new Date().toISOString().slice(0, 10)}.md`);
+  const out = outFile ?? path.join('reviews', `captures-${new Date().toISOString().slice(0, 10)}.md`);
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${md.join('\n')}\n`);
   console.log(`${out}: ${captures.length} capture(s) in ${new Set(captures.map((c) => `${c.carrier}|${c.scenario}|${c.quote}`)).size} scenario(s)${unreadable.length ? `, ${unreadable.length} file(s) not read` : ''}`);

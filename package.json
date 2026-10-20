@@ -15,6 +15,7 @@
     "captures": "node scripts/captures.mjs layouts",
     "summary": "node scripts/summarize-usage.mjs server-data",
     "signals": "node scripts/weekly-signals.mjs server-data",
+    "ledger": "node scripts/ledger.mjs",
     "replay": "node scripts/replay.mjs",
     "bakeoff:score": "node scripts/bakeoff-score.mjs test/bakeoff/answer-key.json",
     "package": "node scripts/package.mjs",
@@ -27,9 +28,11 @@
     "e2e:extension": "node scripts/extension-e2e.mjs",
     "ci": "node scripts/ci-local.mjs",
     "pull": "node scripts/logs-pull.mjs",
+    "daily": "node scripts/daily.mjs",
     "push-logs": "node scripts/logs-push.mjs",
     "coverage": "node scripts/coverage.mjs server-data",
     "benchmark": "node scripts/benchmark.mjs server-data",
+    "key:sheet": "node scripts/answer-key-sheet.mjs server-data",
     "fixtures:progressive": "node scripts/refresh-fixtures.mjs"
   },
   "devDependencies": {

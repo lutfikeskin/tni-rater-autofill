@@ -133,6 +133,7 @@ const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
 const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').trim());
+const isArkansas = (r) => /^(ar|arkansas)$/i.test(String(r.garaging?.state ?? '').trim());
 
 // A trailer's attached equipment: the intake's amount when it gives one (not "N/A" or 0), else
 // none (TNI standard: "Trailer has no equipment").
@@ -757,7 +758,12 @@ export const progressive = {
       { q: '1DB8', source: 'standard', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
       // PIP shares its data-model name across states: other states' lists (TX $2,500–$25,000, MD
       // "Full PIP") are left as Progressive set them (TNI 2026-10-07: no standard there).
-      { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r), emptyNote: (r) => (isFlorida(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida only: choose it yourself.') },
+      { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r), emptyNote: (r) => (isFlorida(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida and Arkansas only: choose it yourself.') },
+      // AR (TNI, 2026-10-19, after a live run): personal injury protection is its own control there
+      // (PIPInput.Limit, captioned only "Limit", so it was unfamiliar), offering 5k medical, income
+      // loss and 5k accidental death alone or together. Progressive picked all three; TNI's standard
+      // is 5k Medical and Hospital alone. Other states with this control keep Progressive's choice.
+      { q: '1FB2', source: 'standard', field: 'PIPInput.Limit', name: 'Personal injury protection, AR (standard: 5k Medical and Hospital; other states: as Progressive set it)', kind: 'choice', value: (r) => (isArkansas(r) ? '5k Medical and Hospital' : null), ignore: (r) => !isArkansas(r), emptyNote: (r) => (isArkansas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida and Arkansas only: choose it yourself.') },
       { q: '1DEE', source: 'standard', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
       // SC (2026-10-07): uninsured and underinsured motorist as BI & PD together, each $100k CSL with
       // the deductible Progressive lists for it (the agent's picks on that quote).
