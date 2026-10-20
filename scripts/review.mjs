@@ -229,6 +229,8 @@ if (opt('summary')) {
     problems: problems.map((e) => ({ t: e.t, receivedAt: e.receivedAt ?? null, agent: e.agent ?? null, page: e.page ?? null, build: buildOf(e), test: tests.has(e.session), text: e.text ?? '' })),
     newQuestions: uncovered.new,
     uncoveredTotal: uncovered.total,
+    // The newest receipt in the whole log, test runs included: the daily heartbeat (scripts/lib/daily.mjs).
+    lastReceived: all.reduce((last, e) => (receivedAt(e) > last ? receivedAt(e) : last), '') || null,
   }, null, 1));
 }
 console.log(`${path.relative(process.cwd(), out)}  (${since ? `since ${since}` : 'all data'}: ${quotes.size} quotes, ${decisions.length} AI decisions, ${problems.length} problem reports)`);

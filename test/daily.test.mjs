@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { windowStart, lastSuccess, DOWNLOAD_STEP, questionId, uncoveredQuestions, decide, commentBody, receivedAt } from '../scripts/lib/daily.mjs';
+import { windowStart, lastSuccess, DOWNLOAD_STEP, questionId, uncoveredQuestions, decide, commentBody, receivedAt, quietStretch, QUIET_HOURS } from '../scripts/lib/daily.mjs';
 import { loadEvents } from '../scripts/lib/events.mjs';
 
 // Audit 2026-10-08: the daily review read events by when they were logged, from yesterday: 17 of 95
@@ -60,6 +60,38 @@ test('daily: the issue hears only about what is new, on the one open issue', () 
   assert.equal(decide({ server: 'different' }, open).kind, 'comment', 'a server to redeploy');
   assert.equal(decide({ server: 'unreachable' }, open).kind, 'comment');
   assert.equal(decide({ failed: true, server: 'not checked' }, open).kind, 'comment', 'a failed run');
+});
+
+// Audit 2026-10-19: no events arrived from 2026-10-11 to 10-18 and every run said nothing, so a week
+// without quotes and uploads that broke looked the same. Two days without one is said, once.
+test('daily: two days without events is said once, by the run whose window holds the two-day mark', () => {
+  const lastReceived = '2026-10-10T18:00:00.000Z';
+  const run = (since, until) => decide({ problems: [], newQuestions: [], server: 'same', lastReceived, since, until }, [{ number: 50, createdAt: '2026-10-08T06:00:00Z' }]).kind;
+  assert.equal(run('2026-10-11T06:00:00Z', '2026-10-12T06:00:00Z'), 'none', '36 hours: not yet');
+  assert.equal(run('2026-10-12T06:00:00Z', '2026-10-13T06:00:00Z'), 'comment', 'reached two days in this window');
+  assert.equal(run('2026-10-13T06:00:00Z', '2026-10-14T06:00:00Z'), 'none', 'said already: not every day of it');
+  assert.equal(run('2026-10-18T06:00:00Z', '2026-10-19T06:00:00Z'), 'none');
+  assert.equal(run('2026-10-08T06:00:00Z', '2026-10-19T06:00:00Z'), 'comment', 'a run after days off');
+  assert.equal(decide({ lastReceived: '2026-10-19T05:00:00Z', since: '2026-10-18T06:00:00Z', until: '2026-10-19T06:00:00Z' }, []).kind, 'none', 'events today');
+  assert.equal(decide({ lastReceived, since: '2026-10-12T06:00:00Z' }, [], new Date('2026-10-13T06:00:00Z')).kind, 'create', 'without `until`: now');
+  assert.equal(decide({ lastReceived: null, since: '2026-10-12T06:00:00Z', until: '2026-10-13T06:00:00Z' }, []).kind, 'create', 'an empty log');
+  assert.equal(decide({ since: '2026-10-12T06:00:00Z', until: '2026-10-13T06:00:00Z' }, []).kind, 'none', 'not known (an older summary): no heartbeat');
+  assert.equal(quietStretch({ lastReceived, since: '2026-10-12T06:00:00Z', until: '2026-10-13T06:00:00Z' }).days, 2);
+  assert.equal(QUIET_HOURS, 48);
+
+  const body = commentBody({ since: '2026-10-12T06:00:00Z', lastReceived, until: '2026-10-13T06:00:00Z', server: 'same', review: 'reviews/daily/review-2026-10-13.md' }, '2026-10-13');
+  assert.match(body, /^## 2026-10-13: 0 new problem report\(s\), 0 new question\(s\) without a rule, usage server same, no events since 2026-10-10/);
+  assert.match(body, /No events received for 2 day\(s\):\*\* the last arrived 2026-10-10 18:00 UTC/);
+  assert.match(body, /The whole review is `reviews\/daily\/review-2026-10-13\.md` on the computer that ran it/);
+  assert.doesNotMatch(commentBody({ since: '2026-10-13T06:00:00Z', lastReceived, until: '2026-10-14T06:00:00Z', problems: [{ text: 'x' }] }), /no events/i, 'said already');
+  assert.match(commentBody({ since: 's', lastReceived: null, until: '2026-10-13T06:00:00Z' }), /no events at all/);
+});
+
+test('daily: a run on this computer says where its review and log are', () => {
+  assert.match(commentBody({ failed: true, failedStep: 'download', log: 'reviews/daily/daily.log', serverNote: 'The usage server could not be checked (ECONNREFUSED).' }, '2026-10-19'),
+    /could not run\n\nIt stopped at the download: its log is `reviews\/daily\/daily\.log` on the computer that ran it\.\n\nThe usage server could not be checked/);
+  const many = Array.from({ length: 50 }, (_, i) => ({ carrier: 'progressive', page: 'P', caption: 'x'.repeat(2000) + i }));
+  assert.match(commentBody({ since: 's', newQuestions: many, review: 'reviews/daily/review-2026-10-19.md' }), /the whole list is in the review: reviews\/daily\/review-2026-10-19\.md\)$/);
 });
 
 test('daily: the comment lists the new items and links the run', () => {
