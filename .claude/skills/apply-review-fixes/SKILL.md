@@ -32,6 +32,8 @@ npm run e2e -- --fixtures                        # Progressive layout replays; m
 npm run benchmark -- --intakes <folder> --save reviews/benchmark-base.json   # only if the maintainer gave the PDF folder
 ```
 
+When TNI's answer key exists (`layouts/answer-key/key.json`, its PDFs in `layouts/intakes`), add `--key layouts/answer-key/key.json` to that benchmark run (and `--intakes layouts/intakes` if the folder given doesn't hold them), so step 3 can compare the key's score.
+
 The usage data, `reviews/` and `layouts/` are ignored, so a worktree (`.claude/worktrees/<name>`) has none of them: they are in the main checkout folder, the first line of `git worktree list`. From a worktree, pass their paths (`node scripts/benchmark.mjs <main>/server-data --intakes <folder> --save <main>/reviews/benchmark-base.json`), and read raw captures from `<main>/layouts/`.
 
 A check that already fails on `main` is reported as such, not fixed silently inside an unrelated item.
@@ -67,6 +69,7 @@ Then compare answers on the same inputs:
 
 - **E2E baseline**: when a replay page's outcome changes, read the report (`reviews/e2e-<date>.md`) and explain every changed page in the PR. Accept it with `npm run e2e -- --update` only when each change is the intended one; never to turn a failure green.
 - **Benchmark** (when it ran in step 1): `npm run benchmark -- --intakes <folder> --against reviews/benchmark-base.json`. Every "now differs" and "handed to the agent" change is either the intended effect, listed in the PR, or a regression to fix before the PR.
+- **TNI's answer key** (when `layouts/answer-key/key.json` exists): run the base in step 1 and the branch both with `--key layouts/answer-key/key.json` (PDFs in `layouts/intakes`). Compare "Against TNI's answer key" before and after, both tables (every keyed answer, and the reviewer's decided answers: entries confirmed as proposed agree with the old rules by construction, so the decided table is the evidence), and read "Answer key compared with …": invented must stay 0, and every keyed answer that became wrong or missed is a regression to fix before the PR unless the maintainer decided the key's answer changes, in which case update the key with `npm run key:sheet -- --key` and say so. Put the counts in the PR (right, wrong, missed, invented, all and decided, before → after), never the key's values: it holds client answers.
 
 Re-read the diff against the item before opening the PR: does it fix the cause the evidence shows, and only that? Run a code review pass when one is available.
 

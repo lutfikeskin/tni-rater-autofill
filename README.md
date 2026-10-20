@@ -120,6 +120,15 @@ npm run benchmark -- --intakes <folder of intake PDFs> --against reviews/benchma
 
 `reviews/benchmark-<date>.md` shows where today's rules agree with what agents left, differ from it, or leave it to the agent, and what changed since the saved run. Agreement with past agents isn't proof of a correct answer; see [learning](docs/learning.md).
 
+TNI's answer key is what a reviewer at TNI decided is right for a set of recorded quotes. The intake PDFs go in `layouts/intakes/` and the key in `layouts/answer-key/`, both ignored: they hold client answers.
+
+```bash
+npm run key:sheet -- --intakes layouts/intakes [--key layouts/answer-key/key.json]   # review page -> layouts/answer-key/sheet-<date>.html; save key.json there
+npm run benchmark -- --intakes layouts/intakes --key layouts/answer-key/key.json    # adds "Against TNI's answer key": right, wrong, missed, invented (all, and the reviewer's decided answers)
+```
+
+When `layouts/answer-key/key.json` exists, `npm run signals` adds the key's score to the weekly numbers.
+
 ### Replay test pages
 
 ```bash

@@ -101,7 +101,7 @@ function truthOf(a, choice) {
 }
 
 // The vehicle, driver or trailer a page is about, from the answer's unit (`<view unit>@<row>`).
-function activeOf(unit) {
+export function activeOf(unit) {
   const m = String(unit).split('@')[0].match(/^(v|d|tr)(\d+)$/);
   return m ? { [{ v: 'vehicles', d: 'drivers', tr: 'trailers' }[m[1]]]: Number(m[2]) } : {};
 }
@@ -199,26 +199,29 @@ function today(a, unit, record, carrier, element) {
   const same = new Set(pick.map((s) => JSON.stringify([s.value, s.note, s.ignore]))).size === 1;
   if (!same) return { status: 'unsure', rule: name, pairedBy, reason: 'which unit' };
   const step = pick[0];
-  if (step.ignore) return { status: 'ignored', rule: name, pairedBy };
-  if (step.note && step.value == null) return { status: 'agent', rule: name, pairedBy };
-  if (step.value == null) return { status: 'blank', rule: name, pairedBy };
-  return { status: 'value', step, rule: name, pairedBy };
+  // Where today's answer comes from (intake, derived, standard, fact, attestation; plan.js).
+  const source = step.source ?? null;
+  if (step.ignore) return { status: 'ignored', rule: name, pairedBy, source, step };
+  if (step.note && step.value == null) return { status: 'agent', rule: name, pairedBy, source, step };
+  if (step.value == null) return { status: 'blank', rule: name, pairedBy, source, step };
+  return { status: 'value', step, rule: name, pairedBy, source };
 }
 
 // What a step's value reads as in the report (choices only: typed text is never shown).
-const shown = (step, kind) => (step.kind === 'bool' ? (kind === 'checkbox' ? (step.value ? 'checked' : 'unchecked') : step.value ? 'Yes' : 'No')
+export const shown = (step, kind) => (step.kind === 'bool' ? (kind === 'checkbox' ? (step.value ? 'checked' : 'unchecked') : step.value ? 'Yes' : 'No')
   : typeof step.value === 'object' ? null : String(step.value));
 
 /**
  * @param {object[]} events  from loadEvents()
- * @param {{carriers: object[], raws: Map<string, object>}} opts  raws: intake fingerprint -> the
- *   PDF's fields (readIntakeFields)
+ * @param {{carriers: object[], raws: Map<string, object>, detail?: boolean}} opts  raws: intake
+ *   fingerprint -> the PDF's fields (readIntakeFields); detail: give each row a non-enumerable
+ *   `detail` (today's step, the quote's answer, the intake record) for the answer key
  * @returns {{rows: object[], quotes: number, replayed: number, missing: string[], edited: number}}
  *   one row per recorded answer: result `agree`, `differ`, `unsure`, `blank` (no answer today),
  *   `left` (the agent's today: no rule, or one that leaves it), or `unknown` (the quote's answer
  *   isn't known)
  */
-export function benchmark(events, { carriers, raws }) {
+export function benchmark(events, { carriers, raws, detail = false }) {
   const contexts = sessionContexts(events);
   const quotes = quoteSessions(events);
   const answers = finalAnswers(events);
@@ -251,7 +254,7 @@ export function benchmark(events, { carriers, raws }) {
         result = choice ? choiceVerdict(now.step, truth.value) : textVerdict(now.step, truth, record);
         if (result === 'unsure') reason = choice ? 'depends on the page\'s options' : 'derived or suggested text';
       } else result = { none: 'left', agent: 'left', ignored: 'left', blank: 'blank', unsure: 'unsure' }[now.status];
-      rows.push({
+      const row = {
         id: `${session}|${key}`,
         session,
         intakeId: ctx.intakeId,
@@ -268,11 +271,16 @@ export function benchmark(events, { carriers, raws }) {
         today: choice && now.step ? shown(now.step, kind) : null,
         status: now.status,
         rule: now.rule ?? null,
+        source: now.source ?? null,
         pairedBy: now.pairedBy ?? null,
         result,
         ...(result === 'unsure' ? { reason } : {}),
         intakeEdited: editedSessions.has(session),
-      });
+      };
+      // In memory only, for TNI's answer key (answer-key.mjs): today's step, the quote's answer and
+      // the intake read again. Not enumerable, so --save never writes the intake's values.
+      if (detail) Object.defineProperty(row, 'detail', { value: { step: now.step ?? null, truth, record, unit, state: ctx.state ?? null, businessClass: ctx.businessClass ?? null, options: a.layout?.opts ?? null, mappedPath: a.mappedPath ?? null } });
+      rows.push(row);
     }
   }
   return { rows, quotes: [...answers.keys()].filter((s) => quotes.has(s)).length, replayed, missing: [...missing], edited: [...editedSessions].filter((s) => rows.some((r) => r.session === s)).length };
