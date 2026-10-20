@@ -157,9 +157,22 @@ test('Progressive coverage and helper ordering are conservative', () => {
   assert.deepEqual(addDriver.unlessActions, ['driverEntered:0']);
   assert.equal(progressive.driverList, 'DriverSummary');
   assert.ok(progressive.agentPages.NoHit);
+  // TNI 2026-10-19 (AR run): GL asked for on the intake isn't on the Progressive quote, so Rates
+  // is ours as usual; only a General Liability row on Rates holds the bill plan, Recalculate, Print.
   const gl = structuredClone(record);
   gl.coverage.gl = true;
-  assert.ok(!buildPlan(gl, progressive, {}).some((step) => step.action === 'billPlan'), 'with GL the agent does the rates page');
+  const glActions = buildPlan(gl, progressive, {}).filter((step) => step.kind === 'action');
+  for (const id of ['billPlan', 'recalculate', 'print']) {
+    const step = glActions.find((s) => s.action === id);
+    assert.ok(step, `with GL requested, ${id} is still ours`);
+    assert.deepEqual(step.whileShown, ['progressive.qGL'], `${id} waits while a General Liability row shows`);
+  }
+  assert.deepEqual(glActions.find((s) => s.action === 'recalculate').afterActions, ['billPlan']);
+  for (const r of [record, gl]) {
+    const row = byQ(buildPlan(r, progressive, {}), 'GL');
+    assert.deepEqual([row.path, row.ignore, row.value, row.re], ['progressive.qGL', false, null, '^general liability'], 'a GL row on Rates is the agent\'s, whatever the intake asks');
+    assert.match(row.note, /on this Progressive quote.*bill plan, Recalculate and Print are yours/);
+  }
   assert.ok(bill.afterAny.includes('progressive.q216F'));
   const multi = structuredClone(record);
   multi.vehicles.push({ type: 'Van', year: 2021, make: 'FORD', model: 'Transit', vin: '1FTBR3X87MKA12345', value: 40000 });
@@ -214,11 +227,15 @@ test('search-style business type (IN), other-coverage checkboxes, vehicle list',
   assert.deepEqual(q36.choiceAliases, ['General Freight Trucking']);
   assert.equal(byQ(plan, '24D').ignore, true, 'the search box itself is not typed into');
   assert.equal(byQ(plan, '1D').ignore, true);
-  // TNI 2026-10-10: None of the above unless the intake says general liability (then the agent's).
+  // TNI 2026-10-10: None of the above unless the notes say the client has general liability
+  // (then the agent's). GL asked for on the intake alone keeps None (TNI 2026-10-19, AR run).
   assert.deepEqual(['AA', 'B2', 'A8', 'A2'].map((q) => byQ(plan, q).value), [true, true, false, 'None']);
   const gl = baseRecord();
   gl.coverage.gl = true;
-  for (const q of ['AA', 'B2', 'A8', 'A2']) { const s = byQ(buildPlan(gl, progressive, {}), q); assert.equal(s.value, null, q); assert.match(s.note, /general liability/); }
+  assert.deepEqual(['AA', 'B2', 'A8', 'A2'].map((q) => byQ(buildPlan(gl, progressive, {}), q).value), [true, true, false, 'None'], 'a GL request alone');
+  const has = baseRecord();
+  has.coverage.hasGl = true;
+  for (const q of ['AA', 'B2', 'A8', 'A2']) { const s = byQ(buildPlan(has, progressive, {}), q); assert.equal(s.value, null, q); assert.match(s.note, /general liability/); }
   const search = plan.find((s) => s.action === 'businessTypeSearch');
   assert.equal(search.near, 'business type');
   assert.equal(progressive.vehicleList, 'VehicleSummary');
@@ -233,7 +250,11 @@ test('Pennsylvania coverages, NoHit owner page, cargo without a deductible', () 
   const plan = buildPlan(record, progressive, {});
   assert.equal(byQ(plan, '216F').value, '$100000/$1000', 'standard $1,000 cargo deductible');
   assert.equal(byQ(plan, '216F').note, null);
-  for (const q of ['1DCA', '1DDE', '1DD8']) assert.equal(byQ(plan, q).value, '$100k CSL');
+  for (const q of ['1DCA', '1DDE', '1DD8', '1DBF']) assert.equal(byQ(plan, q).value, '$100k CSL');
+  // AR 2026-10-19: underinsured is offered only up to the uninsured limit, so uninsured is
+  // answered first (the fill goes in plan order).
+  const at = (q) => plan.findIndex((step) => step.q === q);
+  assert.ok(at('1DBF') < at('1DD8') && at('1DCA') < at('1DDE'), 'uninsured before underinsured');
   assert.equal(byQ(plan, '1E66').value, '$5,000');
   assert.equal(byQ(plan, '1FE4').value, '$5,000 per person');
   for (const q of ['1E69', '1E6E', '1E71', '1E74']) assert.equal(byQ(plan, q).value, 'Not Selected');
@@ -480,7 +501,8 @@ test('Progressive NJ run: vehicle registrant, VIN-lookup safety boxes kept, Rate
   }
   const gl = structuredClone(baseRecord());
   gl.coverage.gl = true;
-  assert.deepEqual(buildPlan(gl, progressive, {}).find((s) => s.action === 'print').after, ['coverage.autoLiabLimit'], 'with GL (no bill plan of ours) the limit check stays');
+  const glPrint = buildPlan(gl, progressive, {}).find((s) => s.action === 'print');
+  assert.deepEqual([glPrint.after, glPrint.afterActions], [[], ['billPlan']], 'with GL requested, Print follows our bill plan too');
   assert.deepEqual(plan.find((s) => s.action === 'recalculate').afterPages, ['ChangePaymentPlan']);
 });
 
@@ -620,10 +642,11 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   assert.match(progressive.agentPages.PrintEmailFax, /Click Print\/Send yourself/);
   assert.ok(progressive.advance.exceptPages.includes('PrintEmailFax'), 'never continued past the Print page');
   assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print/);
-  // GL without NTL is unchanged: no bill plan of ours, the liability check stays.
+  // GL without NTL is a plain quote's Rates (TNI 2026-10-19): our bill plan, Print after it.
   const gl = baseRecord();
   gl.coverage.gl = true;
-  assert.deepEqual(actions(gl).find((s) => s.action === 'print').after, ['coverage.autoLiabLimit']);
+  assert.ok(ids(gl).includes('billPlan'));
+  assert.deepEqual(actions(gl).find((s) => s.action === 'print').afterActions, ['billPlan']);
   assert.ok(ids(baseRecord()).includes('billPlan'), 'and a plain quote keeps our bill plan');
 });
 

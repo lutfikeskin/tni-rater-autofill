@@ -1654,10 +1654,13 @@
         const alreadyShown = a.verify === 'revealed' && resultShown(a, pairs);
         if (!button && !a.opener && !alreadyShown) continue;
         const holds = actions.filter((h) => (a.heldBy ?? []).includes(h.baseAction) && holdOpen(h));
+        // A question that, while it's on the page, leaves the rest of it to the agent (General
+        // Liability on Progressive's Rates): its step, matched to a field here.
+        const shownHolds = (a.whileShown ?? []).flatMap((p) => pairs.filter(({ step }) => step.path === p).slice(0, 1).map(({ step }) => step));
         // A page button that the carrier refuses while a required question is empty (Rates' bill
         // plan, SC 2026-10-07: clicked right after UM/UIM were cleared, and nothing opened).
         const openRequired = a.waitRequired ? controls.filter((c) => c.required && !hasValue(c) && !skippedField(c)) : [];
-        const ready = !holds.length && !openRequired.length && (!a.afterAny?.length || a.afterAny.some(has))
+        const ready = !holds.length && !shownHolds.length && !openRequired.length && (!a.afterAny?.length || a.afterAny.some(has))
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
           && a.after.every(has)
@@ -1676,6 +1679,8 @@
             ...(a.needsPremium && !premiumReady() ? [{ say: 'a current premium' }] : []),
             ...(a.afterValue ? [{ path: a.afterValue[0], set: true }] : []),
             ...holds.map((h) => ({ action: h.action, say: `${h.label ?? h.baseAction} resolved` })),
+            // Named only (no path): the page taking the button away doesn't settle it (doneByPage).
+            ...shownHolds.map((s) => ({ say: `${s.name} off the page` })),
             ...openRequired.slice(0, 3).map((c) => ({ say: `${c.label || 'a required question'} answered` })),
           ];
           const waitingFor = waits.map((w) => w.say ?? (w.any ? `one of ${w.any.join(' / ')}` : w.action ? `${w.action} clicked`

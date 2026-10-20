@@ -86,6 +86,9 @@ function actionSteps(carrier, record, active) {
       // button whose return on the page settles that item (the Add NTL link, NTL removed).
       heldBy: resolve(a.heldBy) ?? [],
       resolvedBy: a.resolvedBy ?? null,
+      // `whileShown`: field steps (by path) whose question on the page holds this one while it shows
+      // (a General Liability row on Progressive's Rates: the rest of the page is the agent's).
+      whileShown: resolve(a.whileShown) ?? [],
       opener: a.opener ?? null,
       nudge: a.nudge ?? null,
       immediate: !!a.immediate,
