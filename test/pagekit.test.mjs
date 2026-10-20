@@ -2330,6 +2330,30 @@ test('a DOT lookup listing the matching business name twice still counts as one 
   assert.equal(report.failed.length, 0);
 });
 
+// TNI 2026-10-20 (W43-01): "belongs to the customer's business" is Yes, unless the registered name
+// the lookup shows differs from the intake's: then neither it nor the Business Name is answered.
+test('USDOT belongs: Yes while the registered business name matches or is not shown yet; a different name is the agent\'s', async () => {
+  const record = { applicant: { name: 'Sample Test LLC', dot: '12345678' }, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const choices = (field, labels) => {
+    const records = labels.map((label) => ({ get: () => label }));
+    Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+  };
+  for (const registered of [null, 'Sample Test LLC', 'Another Carrier Inc']) {
+    const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+    const name = registered ? addExtText(h, 'c', '22F', { caption: 'Business Name', required: true }) : null;
+    if (name) choices(name, [registered, 'Enter a different Business Name']);
+    const belongs = addExtText(h, 'd', '20F', { caption: 'Does this USDOT Number belong to the customer\'s business?', required: true });
+    choices(belongs, ['Yes', 'No']);
+    const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => ['20F', '22F'].includes(s.q)), {});
+    const differs = registered === 'Another Carrier Inc';
+    assert.equal(belongs.cmp.getValue(), differs ? '' : 'Yes', `registered name ${registered ?? 'not shown'}`);
+    if (name) assert.equal(name.cmp.getValue(), differs ? '' : registered);
+    assert.equal(report.noData.some((x) => x.reviewOnly && /differs from the intake/.test(x.note)), differs);
+    if (differs) assert.ok(report.blockers.length >= 1, 'Continue waits for the agent');
+    else assert.ok(report.filled.some((x) => x.standard && /belongs/.test(x.name ?? '')), 'filled as TNI\'s standard');
+  }
+});
+
 test('AI answers refuse changed values, options, sections and page snapshots', async () => {
   const h = harness();
   const field = new SelectNode([
