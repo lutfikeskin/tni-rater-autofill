@@ -49,7 +49,7 @@ class Document {
     if (/role=alert/.test(selector ?? '')) return [...(this.messages ?? [])];
     return [...this.body.controls];
   }
-  getElementById(id) { return this.body.controls.find((c) => c.id === id) ?? null; }
+  getElementById(id) { return [...this.body.controls, ...(this.captions ?? [])].find((c) => c.id === id) ?? null; }
   createTreeWalker() { return { currentNode: null, previousNode: () => false }; }
 }
 
@@ -306,12 +306,13 @@ test('same-version reinjection rebaselines without adding a second active timer'
   const h = harness();
   const field = new Control('input', { id: 'answer', value: 'before' });
   h.append(field);
+  h.context.__raterRecorder.rebaseline();
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
   field.value = 'after';
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 8);
+  assert.equal(h.context.__raterRecorder.version, 9);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -379,7 +380,7 @@ test('an older recorder is replaced, so changes carry what the current one repor
   h.context.__raterRecorder = { version: 7, rebaseline() {}, dispose() { disposed.push(7); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
   assert.deepEqual(disposed, [7]);
-  assert.equal(h.context.__raterRecorder.version, 8);
+  assert.equal(h.context.__raterRecorder.version, 9);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {
@@ -598,4 +599,99 @@ test('a button the agent clicks is reported by its text; the extension\'s own cl
   const clicks = h.sent.filter((m) => m.event === 'agent_click');
   assert.deepEqual(clicks.map((m) => m.text), ['Recalculate'], 'one trusted click on a button; nothing for an untrusted click or one on no button');
   assert.ok(clicks[0].page);
+});
+
+// Duck Creek (Progressive) ids: f_<letter><32 hex group><question id>_<page>_<row>, a radio's
+// option numbered after its row; the question's caption is the label c_<same id>.
+const DCT = 'm459E6B06C4424B0BABF82E0824D0EA8A';
+const dctCaption = (id, text, note = '') => ({ id: `c_${id}`, childNodes: [
+  { textContent: text },
+  ...(note ? [{ textContent: note, classList: { contains: (c) => c === 'lowerLabelText' } }] : []),
+] });
+
+// Live run 2026-10-20 (AR Progressive): the agent's Yes on Rates question 222B was logged with the
+// text of the cargo commodity row above it. textBefore skips labels, and the caption is one.
+test('a Duck Creek question is named by its caption, as pagekit names it', () => {
+  const h = harness();
+  const radio = (option, value) => {
+    const el = new Control('input', { id: `f_${DCT}222B_8_1_${option}-inputEl`, name: 'boolean_222B', type: 'radio', value });
+    el.labels = [{ textContent: value === '1' ? 'Yes' : 'No' }];
+    el.checked = false;
+    return el;
+  };
+  const yes = radio(0, '1');
+  const no = radio(1, '0');
+  const limit = extField(`f_${DCT}225C_8_1-inputEl`, 'x-form-arrow-trigger');
+  h.document.captions = [
+    dctCaption(`${DCT}222B_8_1`, 'Does the customer earn 100% of his or her income from for hire trucking operations?', '(A note under the question.)'),
+    dctCaption(`${DCT}225C_8_1`, 'General Liability'),
+  ];
+  h.append(yes, no, limit);
+  h.context.__raterRecorder.rebaseline();
+
+  h.emit('pointerdown', yes, true);
+  yes.checked = true;
+  h.emit('change', yes, true);
+  limit.value = '$1,000,000/ $2,000,000 Aggregate';
+  h.tick();
+
+  const byKey = Object.fromEntries(changes(h).map((c) => [c.key, c]));
+  assert.deepEqual([byKey['q:222B'].label, byKey['q:222B'].after],
+    ['Does the customer earn 100% of his or her income from for hire trucking operations?', 'Yes'], 'the caption, without the note under it');
+  assert.equal(byKey['q:225C'].label, 'General Liability');
+});
+
+test('a field without a caption keeps its own label', () => {
+  const h = harness();
+  const field = new Control('input', { id: `f_${DCT}2190_8_1-inputEl` });
+  field.labels = [{ textContent: 'Own label' }];
+  h.append(field);
+  h.context.__raterRecorder.rebaseline();
+  field.value = 'typed';
+  h.tick();
+  assert.equal(changes(h)[0]?.label, 'Own label');
+});
+
+// Live run 2026-10-20 (AR Progressive): the agent picked the General Liability limit and clicked
+// "Done with this coverage" within one poll. The tab update reinjected the recorder and the panel
+// told it to resume; both took the page as the new baseline, and an ExtJS combo pick fires no
+// input/change event to flush first, so the pick was never logged.
+test('a combo pick just before the recorder is reinjected is reported, once, as the agent\'s', () => {
+  const h = harness();
+  const limit = extField('limit', 'x-form-arrow-trigger');
+  h.append(limit);
+  h.context.__raterRecorder.rebaseline();
+
+  h.emit('pointerdown', limit, true);
+  limit.value = '$1,000,000/ $2,000,000 Aggregate';
+  vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  h.tick();
+
+  assert.deepEqual(changes(h).map((c) => [c.key, c.before, c.after, c.agent]),
+    [['field:limit', '', '$1,000,000/ $2,000,000 Aggregate', true]]);
+});
+
+test('resume while not paused reports what changed since the last poll', () => {
+  const h = harness();
+  const limit = extField('limit', 'x-form-arrow-trigger');
+  h.append(limit);
+  h.context.__raterRecorder.rebaseline();
+  h.emit('pointerdown', limit, true);
+  limit.value = '$1,000,000/ $1,000,000 Aggregate';
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  assert.deepEqual(changes(h).map((c) => [c.after, c.agent]), [['$1,000,000/ $1,000,000 Aggregate', true]]);
+});
+
+test('reinjection while paused leaves the fill\'s answers unreported until resume', () => {
+  const h = harness();
+  const name = new Control('input', { id: 'name' });
+  h.append(name);
+  h.context.__raterRecorder.rebaseline();
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  name.value = 'Example LLC'; // the fill's own answer
+  vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  h.tick();
+  assert.equal(changes(h).length, 0);
 });
