@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildPlan } from '../src/plan.js';
 import { progressive, owner } from '../src/carriers/progressive.js';
+import { amwins } from '../src/carriers/amwins.js';
 
 const baseRecord = () => ({
   applicant: {
@@ -63,7 +64,7 @@ test('owner name punctuation and reversed order still match the unique driver DO
   assert.equal(byQ(plan, '295').value, 'Amina');
   assert.equal(byQ(plan, '297').value, 'Kone');
   record.drivers.push({ ...record.drivers[0], dob: '02/03/1985' });
-  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, null);
+  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, '01/02/1980', 'two drivers by that name: the first one listed (TNI, 2026-10-20)');
 });
 
 test('prefilled insurance type without limit or expiry means currently insured No', () => {
@@ -610,7 +611,17 @@ test('the owner is never another driver: first names must agree, and a non-drivi
   o = owner(record);
   assert.equal(o.driver, null, 'the owner drives, but the sole driver has another first name');
   assert.equal(o.first, 'Alice');
-  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, null);
+  // TNI (2026-10-20): no driver matching the owner's name is a warning, never another driver's
+  // date of birth, on both carriers; the agent's, not the AI's.
+  for (const q of ['2BB', '1B8B']) {
+    const step = byQ(buildPlan(record, progressive), q);
+    assert.equal(step.value, null, q);
+    assert.match(step.note, /No driver matches the owner "Alice Sample"/, q);
+    assert.equal(step.manualOnly, true, q);
+  }
+  const amwinsDob = buildPlan(record, amwins).find((s) => s.selector === '#ownerDob');
+  assert.equal(amwinsDob.value, null);
+  assert.match(amwinsDob.note, /No driver matches the owner/);
   record.drivers = [{ first: 'Alice', middle: null, last: 'Sample', dob: '03/04/1985' }];
   assert.equal(owner(record).driver?.dob, '03/04/1985', 'the exact full name links');
   record.applicant.ownerDrives = false;

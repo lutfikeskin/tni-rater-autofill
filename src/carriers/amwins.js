@@ -46,24 +46,20 @@
 //   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred.
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
-import { owner } from './progressive.js';
+import { owner, ownerDobNote } from './progressive.js';
 import { isLongHaul, otherNotes } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
 const street = (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null;
 const digits = (v) => (v ? String(v).replace(/\D/g, '') || null : null);
 
-// Entity type from the company name, as on Progressive (22D): LLC / Inc / Corp by the suffix, no
-// company name is a sole proprietor, and a company name without a suffix is the agent's.
-// Partnerships are never guessed.
-const entityType = (r) => {
-  const name = String(r.applicant.name ?? '').trim();
-  if (/\b(llc|l\.l\.c)\.?$/i.test(name)) return 'LLC';
-  if (/\b(inc|corp|corporation|incorporated|company|co)\.?$/i.test(name)) return 'CORPORATION';
-  return name ? null : 'SOLE PROPRIETOR';
-};
-const entityTypeNote = (r) => (entityType(r) == null
-  ? `The company name "${r.applicant.name}" has no LLC / Inc / Corp suffix, so its entity type isn't known: answer it yourself.` : null);
+// Entity type from the company name, as on Progressive (22D; util.js companyStructure): the last
+// word decides LLC or a corporation, no company is a sole proprietor, LLC inside the name is filled
+// with a warning, and a name with none of them is the agent's. Partnerships are never guessed.
+const ENTITY_TYPES = { llc: 'LLC', corp: 'CORPORATION', sole: 'SOLE PROPRIETOR' };
+const entityType = (r) => ENTITY_TYPES[companyStructure(r.applicant.name).structure] ?? null;
+const entityTypeNote = (r) => companyStructureNote(r.applicant.name);
+const entityTypeWarn = (r) => companyStructureWarn(r.applicant.name);
 
 // Facts the intake doesn't supply are the agent's (plan.js: `source: 'fact'` is never filled).
 // `clientFact` marks a client fact the intake may answer: when it doesn't, the agent's too (the AI
@@ -313,16 +309,16 @@ export const amwins = {
     // Contact Information: the client, name and phone only; single contact stays Yes.
     { selector: '#inspectionContactName', name: 'Contact name (the owner)', source: 'derived', value: ownerFull },
     { selector: '#inspectionContactOfficePhone', name: 'Contact phone', source: 'derived', value: (r) => digits(r.applicant.phone) },
-    { selector: '#name', name: 'Named insured (company, else the owner)', source: 'derived', value: (r) => r.applicant.name || ownerFull(r) },
+    { selector: '#name', name: 'Named insured (company, else the owner)', source: 'derived', value: (r) => companyName(r.applicant.name) || ownerFull(r) },
     { selector: '#ownerName', name: 'Owner full name', source: 'derived', value: ownerFull },
-    { selector: '#ownerDob', name: 'Owner date of birth', kind: 'date', source: 'derived', value: (r) => owner(r).driver?.dob ?? null },
+    { selector: '#ownerDob', name: 'Owner date of birth', kind: 'date', source: 'derived', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
     { selector: '#mailingAddress', name: 'Mailing street', source: 'derived', value: street },
     { selector: '#mailingCity', path: 'garaging.city' },
     // The list has no blank entry: it starts on Alabama, which isn't an answer.
     { selector: '#mailingState', path: 'garaging.state', replace: true },
     { selector: '#mailingZip', path: 'garaging.zip' },
     { selector: '#businessPhone', name: 'Business phone', source: 'derived', value: (r) => digits(r.applicant.phone) },
-    { selector: '#entityType', name: 'Entity type (from the company name)', kind: 'choice', source: 'derived', clientFact: true, value: entityType, note: entityTypeNote },
+    { selector: '#entityType', name: 'Entity type (from the company name)', kind: 'choice', source: 'derived', clientFact: true, value: entityType, note: entityTypeNote, warn: entityTypeWarn },
     { selector: '#yrsInBusiness', name: 'Years in business (standard when blank: New Venture)', kind: 'choice', source: yearsSource, value: yearsInBusiness },
     { selector: '#yearBusinessEstablished', name: 'Year established (standard when blank: this year)', kind: 'int', source: establishedSource, value: yearEstablished },
     { name: 'Non-profit (standard: No)', label: '^is non profit$', kind: 'bool', source: 'standard', value: () => false },

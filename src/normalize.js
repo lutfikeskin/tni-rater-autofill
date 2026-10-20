@@ -4,7 +4,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, noPriorInsurance, ownerIsDriver, set } from './util.js';
+import { STATES, noPriorInsurance, ownerIsDriver, set, companyName } from './util.js';
 
 export const ROWS = [1, 2, 3, 4];
 // The marital-status dropdowns have odd hierarchical names; positions on the page put them on
@@ -341,6 +341,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const info = (code, path, msg) => warnings.push({ code, path, level: 'info', msg });
   const txt = (k) => clean(raw[k]);
   const year = today.getFullYear();
+  // "NO", "N.A.", "None." in the company-name box: no company (util.js companyName).
+  const companyAsWritten = txt('company_name');
 
   // Numbers that should be digits only: note when stray characters were dropped.
   const idNumber = (k, path, label, pattern) => {
@@ -356,7 +358,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const rows = { drivers: [], vehicles: [], trailers: [] };
   const record = {
     applicant: {
-      name: txt('company_name'),
+      name: companyName(companyAsWritten),
       dot: idNumber('dot_number', 'applicant.dot', 'USDOT #', /^\d{1,8}$/),
       mc: idNumber('mc_number', 'applicant.mc', 'MC #', /^\d{1,8}$/),
       mcDotWithin60Days: yesNo(raw.mc_dot_60days),
@@ -536,6 +538,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     record.drivers.push(d);
     rows.drivers.push(n);
   });
+  if (companyAsWritten && !companyName(companyAsWritten)) info('company.none', 'applicant.name', `Company name "${companyAsWritten}": no company, so a sole proprietor.`);
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
   if (a.ownerDrives && a.owner1) {
     if (!record.drivers.some((d) => ownerIsDriver(a.owner1, d))) {

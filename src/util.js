@@ -84,3 +84,38 @@ export function ownerIsDriver(ownerName, d) {
   if (owner.length === driver.length && [...owner].sort().join(' ') === [...driver].sort().join(' ')) return true;
   return nameWords(d.last).includes(owner.at(-1)) && nameWords(`${d.first ?? ''} ${d.middle ?? ''}`).includes(owner[0]);
 }
+
+// A company-name box saying there is no company ("NO", "N/A", "N.A.", "None.", "No company"): the
+// owner is a sole proprietor (TNI, 2026-10-20). Only for that box: "NO" elsewhere is an answer.
+const NO_COMPANY = /^(?:no(?:ne)?|n\s*[\/.]?\s*a\.?|nil|null|unknown|not applicable|no (?:company|business|name)(?: name)?|-+|\.+)\.?$/i;
+
+// The company name, or null when the box is blank or says there is none. Read again at quote time,
+// so a name the agent edits is held to the same rule as the PDF's.
+export function companyName(name) {
+  const s = String(name ?? '').replace(/\s+/g, ' ').trim();
+  return !s || NO_COMPANY.test(s) ? null : s;
+}
+
+// The business structure from the company name (TNI, 2026-10-20), shared by the carriers:
+// - no company: 'sole' (a sole proprietor);
+// - the last word decides: LLC ('llc'), or Inc / Incorporated / Corp / Corporation / Company / Co
+//   ('corp');
+// - LLC only inside the name ("SAMPLE LLC DBA EXAMPLE"): 'llc', with `mid` set so the carrier
+//   warns;
+// - anything else ("Express Freight"): null, the agent's. Partnerships are never guessed.
+export function companyStructure(name) {
+  const company = companyName(name);
+  if (!company) return { structure: 'sole', mid: false };
+  const words = company.toLowerCase().replace(/\./g, '').match(/[a-z0-9]+/g) ?? [];
+  const last = words.at(-1);
+  if (last === 'llc') return { structure: 'llc', mid: false };
+  if (['inc', 'incorporated', 'corp', 'corporation', 'company', 'co'].includes(last)) return { structure: 'corp', mid: false };
+  if (words.includes('llc')) return { structure: 'llc', mid: true };
+  return { structure: null, mid: false };
+}
+
+// The warning and note the carriers give with companyStructure.
+export const companyStructureWarn = (name) => (companyStructure(name).mid
+  ? `The company name "${companyName(name)}" has LLC inside it, not at the end: confirm it is an LLC.` : null);
+export const companyStructureNote = (name) => (companyStructure(name).structure == null
+  ? `The company name "${companyName(name)}" doesn't end in LLC, Inc or Corp, so its structure isn't known: answer it yourself.` : null);
