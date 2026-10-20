@@ -12,15 +12,19 @@
 // the newest n quotes instead (a spot review). Read only: it asks gh and git, and never edits the
 // issue. Writes reviews/ledger-<date>.md (git-ignored).
 //
-// In a worktree, the usage data, reviews/ and the test-intake list live in the main checkout: pass
-// their paths (`node scripts/ledger.mjs ../../../server-data --tests ../../../reviews/test-intakes.txt`).
+// --tests: the test-run list (readTestList in scripts/lib/signals.mjs, as review.mjs and
+// weekly-signals.mjs read it): this repository's reviews/test-intakes.txt by default, wherever the
+// script runs from, plus the fixture and synthetic intake PDFs. Without a list it warns on stderr
+// and in the report. In a worktree, the usage data, reviews/ and the test-intake list live in the
+// main checkout: pass their paths (`node scripts/ledger.mjs ../../../server-data --tests
+// ../../../reviews/test-intakes.txt`).
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { loadEvents, quoteSessions } from './lib/events.mjs';
 import { receivedAt } from './lib/daily.mjs';
-import { signals, testSessionsOf } from './lib/signals.mjs';
+import { readTestList, signals, testSessionsOf } from './lib/signals.mjs';
 import { buildContains, buildKey, buildName, fixOf, gitReader, inPeriod, judgeItem, markdown, parseLedger, weeklyRows } from './lib/ledger.mjs';
 
 const args = process.argv.slice(2);
@@ -35,6 +39,12 @@ const valued = new Set(['--ledger', '--since', '--last', '--tests', '--main', '-
 const inputs = args.filter((a, i) => !a.startsWith('--') && !valued.has(args[i - 1]));
 if (!inputs.length) inputs.push('server-data');
 for (const p of inputs) if (!fs.existsSync(p)) fail(`No usage data at ${p}. Run npm run pull first, or pass the folder (in a worktree, the main checkout's server-data).`);
+// The test-run list, as the review and the signals read it, checked before anything asks gh.
+// Without one, the maintainer's test quotes count as agents' work: said on stderr and in the report.
+let testList;
+try { testList = readTestList({ tests: opt('tests') }); } catch (err) { fail(err.message); }
+const { intakes: testIntakes, warning: noTestList } = testList;
+if (noTestList) console.error(`Warning: ${noTestList}`);
 
 const repo = opt('repo');
 // One retry: a dropped connection shouldn't end a run of twenty lookups. No gh at all ends the run;
@@ -61,7 +71,7 @@ let issue;
 if (ledgerOpt && !/^#?\d+$/.test(ledgerOpt)) {
   if (!fs.existsSync(ledgerOpt)) fail(`--ledger ${ledgerOpt}: no such file (or give the issue number).`);
   const body = fs.readFileSync(ledgerOpt, 'utf8');
-  issue = { number: null, title: /^#\s+(.+)$/m.exec(body)?.[1].trim() ?? path.basename(ledgerOpt), body, comments: [] };
+  issue = { number: null, title: /^#\s+(.+)$/m.exec(body)?.[1].trim() ?? path.basename(ledgerOpt), body, comments: [], createdAt: null };
 } else {
   let number = ledgerOpt?.replace('#', '');
   if (!number) {
@@ -71,8 +81,9 @@ if (ledgerOpt && !/^#?\d+$/.test(ledgerOpt)) {
     if (open.length > 1) notes.push(`${open.length} open weekly-review issues (${open.map((x) => `#${x.number}`).join(', ')}); read #${open[0].number}. Close the older ones.`);
     number = String(open[0].number);
   }
-  const x = JSON.parse(ghOrFail('issue', 'view', number, '--json', 'number,title,body,comments'));
-  issue = { number: x.number, title: x.title, body: x.body, comments: (x.comments ?? []).map((c) => c.body) };
+  const x = JSON.parse(ghOrFail('issue', 'view', number, '--json', 'number,title,body,comments,createdAt'));
+  // When it was opened tells which definition its weekly numbers were counted under (weeklyRows).
+  issue = { number: x.number, title: x.title, body: x.body, comments: (x.comments ?? []).map((c) => c.body), createdAt: x.createdAt ?? null };
 }
 const ledger = parseLedger(issue.body, { title: issue.title, comments: issue.comments });
 if (!ledger.items.length) notes.push('No item lines found (`- [ ] W42-03 · S2 · Fix · <title> · … · signature: …`).');
@@ -96,11 +107,6 @@ if (!since) fail('No period: pass --since <date> (or --last <n>); the ledger tit
 if (Number.isNaN(Date.parse(since))) fail(`--since ${since} is not a date.`);
 since = new Date(since).toISOString();
 
-const testsOpt = opt('tests');
-if (testsOpt && !fs.existsSync(testsOpt)) fail(`--tests ${testsOpt}: no such file.`);
-const testFile = testsOpt ?? (fs.existsSync('reviews/test-intakes.txt') ? 'reviews/test-intakes.txt' : null);
-if (!testFile) notes.push('No test-intake list (reviews/test-intakes.txt, or --tests): test runs are counted as quotes.');
-const testIntakes = testFile ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
 const testSessions = testSessionsOf(all, testIntakes);
 const period = inPeriod(all, since);
 
@@ -187,12 +193,13 @@ if (free.length) notes.push(`Free-text signatures, checked by hand (${free.join(
 for (const x of ledger.items.filter((i) => i.signature?.error)) notes.push(`${x.id}: signature not read: ${x.signature.error}.`);
 const kpis = signals(all, { since, testIntakes }).kpis;
 const result = {
-  ledger: { number: issue.number, title: ledger.title, week: ledger.week, period: ledger.period },
+  ledger: { number: issue.number, title: ledger.title, week: ledger.week, period: ledger.period, createdAt: issue.createdAt },
   since,
   quotes: kpis.quotes,
   testRunsLeftOut: kpis.testRunsLeftOut,
+  noTestList,
   items,
-  weekly: weeklyRows(kpis, ledger.numbers),
+  weekly: weeklyRows(kpis, ledger.numbers, { createdAt: issue.createdAt }),
   builds: buildRows,
   notes,
 };

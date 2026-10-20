@@ -159,7 +159,7 @@ npm run mock:amwins -- --headed  # watch it
 npm run e2e:extension    # needs npm run package and npm run replay (port 8792)
 ```
 
-The packaged extension itself in Chromium, its side panel opened as a page, on the same mock: loads the sample intake, verifies that missing client facts hold Continue, enters explicit synthetic agent answers through trusted browser input, and resumes filling. It checks retention after saves/reloads, stops at the declaration and never submits.
+The packaged extension itself in Chromium, its side panel opened as a page, on the same mock: loads the sample intake and clears the second driver's marital status in the panel's client details (the sample answers every client fact AmWINS asks), verifies that the missing fact holds Continue, enters an explicit synthetic agent answer through trusted browser input, and resumes filling. It checks retention after saves/reloads, stops at the declaration and never submits.
 
 ### Synthetic intake variations and AI controls
 

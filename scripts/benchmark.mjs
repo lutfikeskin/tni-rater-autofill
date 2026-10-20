@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Replay benchmark: would today's rules give the answers agents left in recorded quotes?
 //
-//   npm run benchmark -- --intakes <folder with intake PDFs> [--intakes <another>] [--key key.json] [--save run.json] [--against earlier.json]
+//   npm run benchmark -- --intakes <folder with intake PDFs> [--intakes <another>] [--key key.json [--tests <file>]] [--save run.json] [--against earlier.json]
 //   node scripts/benchmark.mjs server-data --intakes ~/Downloads --save reviews/benchmark-main.json
 //   npm run benchmark -- --intakes layouts/intakes --key layouts/answer-key/key.json
 //
@@ -14,6 +14,12 @@
 // final answers) against TNI's answer key for the quotes it covers (scripts/lib/answer-key.mjs;
 // `npm run key:sheet` makes one): right, wrong, missed, invented. Nothing here prints the intakes'
 // values: the report shows choices, never typed text.
+//
+// The key's score leaves test runs out, as the sheet does (readTestList in scripts/lib/signals.mjs,
+// as the review reads them): intakes marked as a test, the fixture and synthetic intake PDFs, and
+// this repository's reviews/test-intakes.txt (wherever the script runs from) or --tests <file>.
+// Without a list it warns on stderr and in the report; a git worktree has none, so pass the main
+// checkout's.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -21,7 +27,7 @@ import { CARRIERS } from '../src/carriers.js';
 import { loadEvents } from './lib/events.mjs';
 import { benchmark, byQuestion, CHANGES, compareRuns, summarize } from './lib/benchmark.mjs';
 import { readIntakes } from './lib/intake-pdfs.mjs';
-import { testSessionsOf } from './lib/signals.mjs';
+import { readTestList, testSessionsOf } from './lib/signals.mjs';
 import { compareKey, keyByQuestion, readKey, rightPercent, scoreKey } from './lib/answer-key.mjs';
 
 const args = process.argv.slice(2);
@@ -35,21 +41,25 @@ if (!folders.length) {
   process.exit(1);
 }
 const fail = (msg) => { console.error(msg); process.exit(1); };
+const testsAt = args.indexOf('--tests');
+if (testsAt >= 0 && (!args[testsAt + 1] || args[testsAt + 1].startsWith('--'))) fail('--tests needs a value.');
 const keyFile = values('key')[0] ?? null;
 let key = null;
 if (keyFile) {
   try { key = readKey(JSON.parse(fs.readFileSync(keyFile, 'utf8'))); } catch (err) { fail(`${keyFile}: ${err.message}`); }
 }
 
+// Test runs are left out of the key's score, as the sheet leaves them out (the test-run list, as
+// the review reads it). Without a list, the maintainer's test quotes are scored as agents' work.
+let testList = null;
+if (key) {
+  try { testList = readTestList({ tests: values('tests')[0] ?? null }); } catch (err) { fail(err.message); }
+  if (testList.warning) console.error(`Warning: ${testList.warning}`);
+}
 const events = loadEvents(inputs);
-// Test runs are left out of the key's score, as the sheet leaves them out (marked as a test, or
-// listed in reviews/test-intakes.txt or --tests).
 let tests = null;
 if (key) {
-  const testFile = values('tests')[0] ?? (fs.existsSync('reviews/test-intakes.txt') ? 'reviews/test-intakes.txt' : null);
-  if (testFile && !fs.existsSync(testFile)) fail(`--tests ${testFile}: no such file.`);
-  const testIntakes = testFile ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
-  try { tests = testSessionsOf(events, testIntakes); } catch (err) { fail(`${testFile}: ${err.message}`); }
+  try { tests = testSessionsOf(events, testList.intakes); } catch (err) { fail(err.message); }
 }
 const raws = await readIntakes(folders, new Set(events.filter((e) => e.type === 'intake_loaded' && e.intakeId).map((e) => e.intakeId)));
 
@@ -115,6 +125,7 @@ if (keyed) {
     keyLine('**All**', total), ''];
   lines.push('## Against TNI\'s answer key', '',
     `${path.basename(keyFile)}: ${Object.keys(key.quotes).length} intakes keyed, ${keyed.quotes} with recorded quotes here${notFound ? ` (${notFound} keyed intake PDF${notFound === 1 ? '' : 's'} not in the given folders)` : ''}; test runs left out (${tests.size} test-run sessions). One answer per quote, question and unit (vehicle, driver, trailer, Rates row): an intake's latest quote on each carrier.`, '',
+    ...(testList.warning ? [`**${testList.warning}**`, ''] : []),
     `**${keyed.proposed} of the key's ${keyed.entries} entries were accepted as proposed** (confirmed without a change). A proposal is today's rule answer or the agent's, so those agree with the rules by construction: read the second table, the answers the reviewer decided (changed or typed), for what the key adds.`, '',
     '**How to read it.** right: today\'s rules give the key\'s answer, or leave to the agent what the key says is the agent\'s, not applicable, or blank on the intake · wrong: another answer · missed: left to the agent though the key has an answer · **invented: filled where the key says the agent\'s or not applicable (must be 0)** · unsure: the pairing or the page\'s options can\'t tell · not keyed: no answer in the key yet. Right % is of the answers judged (right, wrong, missed, invented). Agents: their final answers where the key has one (right · wrong · unsure); typed text is judged only through the intake fields it matched.', '',
     '### Every keyed answer', '', ...keyTable(keyed.byCarrier, keyed.total),
