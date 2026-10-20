@@ -1295,6 +1295,58 @@ test('a data-model name fenced off this page does not keep a text rule from its 
   assert.equal(report.unknown.length, 0);
 });
 
+// TNI 2026-10-20 (W43-02): with no ZIP on the intake, the vehicle or trailer ZIP Progressive put
+// there is left, not asked on every vehicle. A field still empty when the fill ends is the agent's,
+// and an intake ZIP still fills (or is flagged when the page says another).
+test('vehicle ZIP: Progressive\'s own ZIP is left when the intake has none; empty at the end stays the agent\'s', async () => {
+  const zipRun = async (intakeZip, pageZip, { page = 'AddVehicle', caption = 'Zip code where the vehicle is located', vinSets } = {}) => {
+    const record = { applicant: { name: 'Sample Test LLC' }, garaging: { zip: intakeZip }, operations: {}, drivers: [], vehicles: [{ vin: '1FTBW3XM5HKA00001', type: 'Van' }], trailers: [{ vin: '1GRAA0621FB000001', type: 'Dry Van' }], priorInsurance: [], coverage: {}, claims: {} };
+    const h = harness({ ext: true, search: `?pageName=${page}` });
+    const zip = addExtText(h, 'c', '2C02', { caption, ref: 'RiskInput.PrimaryZIP', required: true, value: pageZip });
+    zip.input.value = pageZip;
+    const fields = ['RiskInput.PrimaryZIP'];
+    // The page changing the ZIP while the fill answers another question (the VIN).
+    if (vinSets != null) {
+      addExtText(h, 'c', '2C01', { caption: 'Vehicle Identification Number (VIN)', ref: 'RiskInput.VIN', row: '8_3', onSet: () => zip.cmp.setValue(vinSets) });
+      fields.push('RiskInput.VIN');
+    }
+    const steps = buildPlan(record, progressive).filter((s) => fields.includes(s.field) && s.pages?.includes(page));
+    assert.equal(steps.length, fields.length, page);
+    return { zip, report: await h.kit.fill(steps, { maxRounds: 4 }) };
+  };
+  for (const page of ['AddVehicle', 'AddTrailer']) {
+    // No intake ZIP, Progressive filled it: left, nothing for the agent.
+    let { zip, report } = await zipRun(null, '18042', { page });
+    assert.equal(zip.cmp.getValue(), '18042', page);
+    assert.equal(report.noData.length, 0, page);
+    assert.equal(report.failed.length, 0, page);
+    assert.equal(report.blockers.length, 0, `${page}: ${report.blockers.join(' | ')}`);
+    // No intake ZIP and an empty field: the agent's, with the note.
+    ({ report } = await zipRun(null, '', { page }));
+    assert.equal(report.noData.length, 1, page);
+    assert.match(report.noData[0].note, /no garaging ZIP/);
+    assert.ok(report.blockers.length >= 1, page);
+  }
+  // Emptied by the page later in the fill: the agent's. Filled by the page later: not.
+  let { zip, report } = await zipRun(null, '18042', { vinSets: '' });
+  assert.equal(zip.cmp.getValue(), '');
+  assert.equal(report.noData.length, 1, 'emptied after it was left');
+  ({ zip, report } = await zipRun(null, '', { vinSets: '18042' }));
+  assert.equal(zip.cmp.getValue(), '18042');
+  assert.equal(report.noData.length, 0, 'filled by the page before the fill ended');
+  // The question reads differently now: what the page has is the agent's to check.
+  ({ report } = await zipRun(null, '18042', { caption: 'Garaging ZIP for this vehicle' }));
+  assert.equal(report.checks.length, 1);
+  assert.match(report.checks[0].note, /wording of this question changed/);
+  // An intake ZIP fills an empty field...
+  ({ zip, report } = await zipRun('17101', ''));
+  assert.equal(zip.cmp.getValue(), '17101');
+  assert.equal(report.kept.length, 0);
+  // ...and a different one on the page is flagged, not kept quietly.
+  ({ report } = await zipRun('17101', '18042'));
+  assert.ok(report.kept.some((x) => x.differs), 'page ZIP differs from the intake: flagged');
+});
+
 // SC 2026-10-07: the equipment amount showed until "no equipment" was ticked, then went away; it
 // stayed listed as unfamiliar. A question gone by the end of the fill isn't the agent's.
 test('an unfamiliar question that went away during the fill is not reported', async () => {
