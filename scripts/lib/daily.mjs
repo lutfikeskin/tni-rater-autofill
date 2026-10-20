@@ -84,10 +84,25 @@ export function uncoveredQuestions(events, since) {
 // review that says nothing (2026-10-11 to 10-18: no events, and no comment). Said once a quiet
 // stretch, by the run whose window holds the moment it reached two days: the run before ended
 // earlier, the next starts later; a run after days off says it too. `lastReceived`: the newest
-// event's receipt in the whole log (review.mjs --summary), null when it has none (said by every run:
+// receipt in the whole log, test runs left out (lastReceipts, review.mjs --summary), null when it has none (said by every run:
 // an empty or replaced server, not a quiet stretch), absent when not known (no heartbeat). `until`:
 // where the window ends, when its download began (else now).
 export const QUIET_HOURS = 48;
+
+// The newest receipt in the log (`lastReceived`, null when none) and each install's, with its
+// agent. Test runs (`tests`: their sessions, testSessionsOf) are left out: the maintainer's own
+// uploads would restart the two days while agents' uploads had stopped.
+export function lastReceipts(events, tests = new Set()) {
+  let last = '';
+  const byInstall = {};
+  for (const e of events) {
+    if (tests.has(e.session)) continue;
+    const r = receivedAt(e);
+    if (r > last) last = r;
+    if (e.install && r > (byInstall[e.install]?.last ?? '')) byInstall[e.install] = { agent: e.agent ?? null, last: r };
+  }
+  return { lastReceived: last || null, lastReceivedByInstall: byInstall };
+}
 export function quietStretch({ lastReceived, since = null, until = null }, now = new Date()) {
   if (lastReceived === undefined) return null;
   const end = Date.parse(until ?? '') || now.getTime();

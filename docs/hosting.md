@@ -92,7 +92,7 @@ opens one titled "Daily review" when none is open. New means:
   one per question whatever its row, number, product or step (`scripts/lib/daily.mjs`);
 - a deployed usage server that isn't the repository's (`scripts/server-check.mjs`, checked first
   and only on the default branch): redeploy it;
-- two days without any event received;
+- two days without any event received (test runs don't count);
 - a run that couldn't finish, because the server was down or a script broke.
 
 Nothing new, no comment. Two quiet days get one comment, with the day the last event arrived, from
@@ -109,47 +109,59 @@ fails before it starts. `npm run daily` (`scripts/daily.mjs`) does the same step
 any) computer: the server check, `npm run pull`, `scripts/review.mjs --since <start> --summary`,
 then `scripts/daily-issue.mjs post`. It needs Node 22, the admin token (`RATER_ADMIN_TOKEN` or
 `~/.config/tni-rater/admin-token`), and `gh auth login` as an account that can comment on the
-repository's issues. Run it in the main checkout, on the default branch and kept current (`git
-pull`): the server check compares the deployed server with that checkout (on another branch the
-comment says it didn't check, and why), and the review uses its rules.
+repository's issues.
 
 ```powershell
 npm run daily                                          # a dry run: prints the comment, posts nothing
-npm run daily -- --post --since 2026-10-20T01:12:33Z   # the first real run here: where to start
-npm run daily -- --post                                # after that: since the last run here
+npm run daily -- --post                                # posts it, since the last run here
+npm run daily -- --post --since <ISO time>             # the first real run here only (below)
 npm run daily -- --no-pull --data path\to\server-data  # a dry run on a log as it is
 ```
 
 It posts only with `--post`, and so does `scripts/daily-issue.mjs post` (the workflow passes it), so
-trying it out never comments by accident. The first real run starts where the last comment on the
-issue stopped. Comment 6280982877 on #50 covered events received up to 2026-10-20T01:12:33Z.
+trying it out never comments by accident. A dry run may run anywhere. `--post` refuses, and says
+what to do, unless it runs in the main checkout (not a linked worktree, whose state would be its
+own), on the default branch, level with `origin` after a fetch: the server check compares the
+deployed server with that checkout, and the review uses its rules. The main checkout was on
+`claude/release-0.9.10` on 2026-10-20; switch it to `main` and `git pull` before the first real run.
 
-Where the last run stopped is `reviews/daily/state.json` (git-ignored): when its download began,
-written only after its post step succeeded (a comment, or nothing new to say). A run that fails
-leaves it, so the next one reviews the period again; without it, the run asks for `--since` rather
-than guess a start. A dry run (no `--post`) never changes it. Runs go one at a time (`reviews/daily/run.lock`).
-The review, its summary, the comment and a log of every run (`daily.log`) are in `reviews/daily/`,
-not next to the weekly `reviews/review-<date>.md` files, so `npm run review` still starts from the
-last weekly review. A run that can't finish says so on the issue with the step that stopped and
-exits 1; one that can't reach GitHub at all only writes `daily.log`.
+The first real run needs `--since`, once: where the last comment on the issue stopped. That was
+2026-10-20T01:12:33Z (comment 6280982877 on #50, the last before this runner). After it,
+`reviews/daily/state.json` (git-ignored) says where each run starts: when the last real run's
+download began. It's written whole (a temporary file, then a rename) and only after the post step
+succeeded (a comment, or nothing new to say). A run that fails leaves it, so the next one reviews
+the period again. A dry run never changes it. Without it and without `--since` the run stops
+rather than guess a start; when it can't be read, the run says so on the issue (with `--post`).
+Don't pass `--since` again once it exists, except to review a period on purpose.
+
+The download starts the day before the window (the server exports whole days, and `npm run pull`
+replaces only the days it downloads); a local copy with no earlier day gets everything, as telling
+which questions are new needs the history. Runs go one at a time (`reviews/daily/run.lock`). The
+review, its summary, the comment and a log of every run (`daily.log`) are in `reviews/daily/`, named
+by UTC day and minute, not next to the weekly `reviews/review-<date>.md` files. A run that can't
+finish says so on the issue with the step that stopped and exits 1; one that can't reach GitHub at
+all only writes `daily.log`.
 
 **Scheduling it on Windows.** After the first real run has written the state, use Task Scheduler,
-from PowerShell in the checkout (09:00 Istanbul is 06:00 UTC, the workflow's time):
+from PowerShell in the main checkout. `-At` is this computer's local time. The workflow ran at 06:00
+UTC, after US agents' day; the first line turns that into local time (02:00 at UTC-4). Any hour
+works, as each run starts where the last stopped: pick one when the computer is usually on.
 
 ```powershell
+$at       = [DateTime]::UtcNow.Date.AddHours(6).ToLocalTime()   # 06:00 UTC, in local time
 $action   = New-ScheduledTaskAction -Execute (Get-Command node).Source -Argument 'scripts\daily.mjs --post' -WorkingDirectory (Get-Location).Path
-$trigger  = New-ScheduledTaskTrigger -Daily -At 9am
+$trigger  = New-ScheduledTaskTrigger -Daily -At $at
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 Register-ScheduledTask -TaskName 'TNI daily review' -Action $action -Trigger $trigger -Settings $settings
 ```
 
+The trigger keeps the local hour, so after a daylight-saving change it runs an hour off 06:00 UTC.
 It runs as you, while you are signed in (where `gh`'s login and the token are); `-StartWhenAvailable`
-runs a day missed while the computer was off once it is on, and the window still starts where the
-last run stopped. Its Last Run Result is 0 or 1; the output is in `reviews/daily/daily.log`.
-`Unregister-ScheduledTask -TaskName 'TNI daily review'` removes it. Alternatively, a scheduled task in
-the Claude desktop app, in the main checkout, every morning, with a prompt such as "Run `npm run
-daily -- --post` and report what it printed; change no files." It runs only while the app is open and the
-computer awake. Use one schedule, not both.
+runs a day missed while the computer was off once it is on. Its Last Run Result is 0 or 1; the
+output is in `reviews/daily/daily.log`. `Unregister-ScheduledTask -TaskName 'TNI daily review'`
+removes it. Alternatively, a scheduled task in the Claude desktop app, in the main checkout, every
+morning, with a prompt such as "Run `npm run daily -- --post` and report what it printed; change no
+files." It runs only while the app is open and the computer awake. Use one schedule, not both.
 
 ### On GitHub: the workflow
 

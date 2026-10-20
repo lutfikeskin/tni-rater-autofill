@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { windowStart, lastSuccess, DOWNLOAD_STEP, questionId, uncoveredQuestions, decide, commentBody, receivedAt, quietStretch, QUIET_HOURS } from '../scripts/lib/daily.mjs';
+import { windowStart, lastSuccess, DOWNLOAD_STEP, questionId, uncoveredQuestions, decide, commentBody, receivedAt, quietStretch, QUIET_HOURS, lastReceipts } from '../scripts/lib/daily.mjs';
 import { loadEvents } from '../scripts/lib/events.mjs';
 
 // Audit 2026-10-08: the daily review read events by when they were logged, from yesterday: 17 of 95
@@ -85,6 +85,22 @@ test('daily: two days without events is said once, by the run whose window holds
   assert.match(body, /The whole review is `reviews\/daily\/review-2026-10-13\.md` on the computer that ran it/);
   assert.doesNotMatch(commentBody({ since: '2026-10-13T06:00:00Z', lastReceived, until: '2026-10-14T06:00:00Z', problems: [{ text: 'x' }] }), /no events/i, 'said already');
   assert.match(commentBody({ since: 's', lastReceived: null, until: '2026-10-13T06:00:00Z' }), /no events at all/);
+});
+
+// Review of PR #105: the maintainer's own test uploads restarted the two days while agents' had stopped.
+test('daily: the heartbeat leaves test runs out, and keeps the last receipt of each install', () => {
+  const events = [
+    { session: 'a', install: 'i1', agent: 'AY', receivedAt: '2026-10-10T14:25:00Z' },
+    { session: 'a', install: 'i1', agent: 'AY', receivedAt: '2026-10-09T10:00:00Z' },
+    { session: 'b', install: 'i2', agent: 'AD', receivedAt: '2026-10-08T10:00:00Z' },
+    { session: 'test', install: 'i3', agent: 'LK', receivedAt: '2026-10-18T10:00:00Z' },
+  ];
+  assert.deepEqual(lastReceipts(events, new Set(['test'])), {
+    lastReceived: '2026-10-10T14:25:00Z',
+    lastReceivedByInstall: { i1: { agent: 'AY', last: '2026-10-10T14:25:00Z' }, i2: { agent: 'AD', last: '2026-10-08T10:00:00Z' } },
+  });
+  assert.equal(lastReceipts(events).lastReceived, '2026-10-18T10:00:00Z', 'no test runs known: all of them');
+  assert.equal(lastReceipts([]).lastReceived, null);
 });
 
 test('daily: a run on this computer says where its review and log are', () => {
