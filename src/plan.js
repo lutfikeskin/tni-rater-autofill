@@ -86,8 +86,8 @@ function actionSteps(carrier, record, active) {
       // button whose return on the page settles that item (the Add NTL link, NTL removed).
       heldBy: resolve(a.heldBy) ?? [],
       resolvedBy: a.resolvedBy ?? null,
-      // `settledByPages`: pages whose visit settles that item too (Progressive's General Liability
-      // item: the agent opens the bill plan after adding it).
+      // `settledByPages`: pages whose visit settles that item too (none uses it since Progressive's
+      // General Liability became automatic, 2026-10-20).
       settledByPages: resolve(a.settledByPages) ?? [],
       opener: a.opener ?? null,
       nudge: a.nudge ?? null,
@@ -221,6 +221,8 @@ function fieldSteps(rules, record, carrier, active) {
       registeredName: !!rule.registeredName,
       // Progressive's cargo questions: 'section' (the commodity section), 'limit', or true.
       cargo: rule.cargo ?? null,
+      // Its general liability questions the same way: 'section' or 'limit'.
+      gl: rule.gl ?? null,
       selector: rule.repeatSelector ? rule.repeatSelector(record, active) : rule.selector ?? null,
       re: rule.label ?? null,
       ex: rule.not ?? null,
