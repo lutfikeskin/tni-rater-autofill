@@ -197,6 +197,7 @@ test('Progressive coverage and helper ordering are conservative', () => {
     const step = glField(glPlan, ref);
     assert.deepEqual([step.value, step.standard, step.gl, step.manualOnly], [value, true, 'section', false], ref);
   }
+  assert.deepEqual(glActions.find((s) => s.action === 'doneCargo').unlessActions, ['openGl'], "GL's Done is never taken for cargo's");
   // No limit on the intake: TNI's default $1M/$2M, filled and marked to confirm.
   const limit = glField(glPlan, 'LineInput.GeneralLiabilityLimit');
   assert.deepEqual([limit.path, limit.value, limit.standard, limit.gl], ['progressive.q21D1', '$1,000,000/ $2,000,000 Aggregate', true, 'limit']);
@@ -207,19 +208,22 @@ test('Progressive coverage and helper ordering are conservative', () => {
   assert.deepEqual([asked.value, asked.source, asked.warn], ['$1,000,000/ $2,000,000 Aggregate', 'derived', null]);
   gl.coverage.glLimit = '$500K/$1M';
   const odd = glField(buildPlan(gl, progressive, {}), 'LineInput.GeneralLiabilityLimit');
-  assert.equal(odd.value, null);
+  assert.deepEqual([odd.value, odd.manualOnly], [null, true]);
   assert.match(odd.note, /\$500K\/\$1M general liability limit, which Progressive doesn't offer/);
   // Oil and gas work in what they haul: that question is the agent's.
   const oil = structuredClone(gl);
   oil.operations.whatHaul = 'Frac sand and oilfield equipment';
   const oilStep = glField(buildPlan(oil, progressive, {}), 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas');
-  assert.equal(oilStep.value, null);
+  assert.deepEqual([oilStep.value, oilStep.manualOnly], [null, true], "the agent's, never Luna's");
+  const bigRig = structuredClone(gl);
+  bigRig.operations.whatHaul = 'General freight in a big rig';
+  assert.equal(glField(buildPlan(bigRig, progressive, {}), 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas').value, false, '"big rig" is no oil and gas work');
   assert.match(oilStep.note, /mentions oil or gas work \("Frac sand and oilfield equipment"\)/);
   // No GL on the intake: no GL helpers, and a section the agent opened is theirs.
   assert.ok(!actions.some((s) => /Gl$/.test(s.action)), 'no GL requested: no GL helpers');
   for (const ref of ['GeneralLiabilityInput.GeneralLiabilityTruckIncome', 'LineInput.GeneralLiabilityLimit']) {
     const step = glField(plan, ref);
-    assert.equal(step.value, null, ref);
+    assert.deepEqual([step.value, step.manualOnly], [null, true], ref);
     assert.match(step.note, /doesn't ask for general liability/);
   }
   // Any other General Liability question on Rates is the agent's, never the AI's.

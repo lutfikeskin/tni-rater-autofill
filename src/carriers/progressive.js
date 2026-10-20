@@ -255,13 +255,14 @@ const glLimitNote = (r) => glUnrequested(r) ?? (r.coverage.glLimit && !GL_OPTION
 const glLimitWarn = (r) => (!glRequested(r) || r.coverage.glLimit ? null
   : `TNI's default limit, ${GL_DEFAULT_LIMIT} ($1M per occurrence, $2M aggregate), as the intake gives none: confirm it with the client.`);
 const glLimit = (r) => GL_OPTIONS[r.coverage.glLimit ?? GL_DEFAULT_LIMIT] ?? null;
-const glLimitSource = (r) => (r.coverage.glLimit ? 'derived' : 'standard');
+// Left to the agent (no GL request, or a limit Progressive doesn't offer): a fact, never Luna's.
+const glLimitSource = (r) => (glLimitNote(r) ? 'fact' : r.coverage.glLimit ? 'derived' : 'standard');
 const glAddNote = (r) => `The intake asks for general liability: add it with "+" in the General Liability row${glLimit(r) ? `, with ${glLimit(r)}` : ''}, then fill this page again.`;
 // A General Liability question no rule knows (its section's five are below): the agent's.
 const glNote = () => 'This general liability question isn\'t mapped: answer it yourself.';
 // GL's oil and gas question is No unless what they haul or the notes mention oil or gas fields,
 // fracking or the like; then it's the agent's.
-const OIL_GAS = /\b(?:oil ?field|oil and gas|oil & gas|oil\/gas|frac(?:k|king)?|fracing|crude|drilling|rig|pipe ?line|well ?site)s?\b/i;
+const OIL_GAS = /\b(?:oil ?field|oil and gas|oil & gas|oil\/gas|frac(?:k|king)?|fracing|crude|drilling|(?:oil|drilling) rig|pipe ?line|well ?site)s?\b/i;
 const oilGasMention = (r) => [r.operations?.whatHaul, otherNotes(r)].map((x) => String(x ?? ''))
   .flatMap((x) => x.split(/[\n.;]+/)).map((s) => s.trim()).find((s) => OIL_GAS.test(s))?.slice(0, 80) ?? null;
 const oilGasNote = (r) => glUnrequested(r) ?? (oilGasMention(r) ? `The intake mentions oil or gas work ("${oilGasMention(r)}"): answer it yourself.` : null);
@@ -493,12 +494,13 @@ export const progressive = {
     { id: 'addCargoCommodity', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^add( another)?( a)? commodity$', afterActions: ['openCargo'], when: (r) => r.coverage.cargo === true && notNtl(r) },
     // OK (2026-10-07): the commodity was chosen but Done didn't show until the agent chose it again
     // (the category's reload still under way): with no Done, the commodity is chosen again, once.
-    { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', nudge: 'progressive.q216B', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', when: (r) => r.coverage.cargo === true && notNtl(r) },
+    { id: 'doneCargo', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^done with this coverage$', nudge: 'progressive.q216B', afterActions: ['addCargoCommodity'], after: ['progressive.q216A', 'progressive.q216B'], afterAny: ['progressive.q216F', 'progressive.q2150'], verify: 'cargoClosed', unlessActions: ['openGl'], when: (r) => r.coverage.cargo === true && notNtl(r) },
     // General liability on the intake (TNI, 2026-10-20): once cargo is done (one "Done with this
     // coverage" on the page at a time), the "+" in its row opens its section, whose questions and
     // limit fill (glQuestion, glLimit), then its Done closes it. Done waits for the limit and for
     // every required question in the section: one no rule knows stays the agent's. Done only once
-    // the section's questions are gone and the row keeps the limit (glClosed).
+    // the section's questions are gone and the row keeps the limit (glClosed). Once GL is open,
+    // cargo's Done (the same text) is never clicked again (doneCargo's unlessActions).
     { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\+$', near: 'general liability', unless: ['progressive.q21D1'], afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
     { id: 'doneGl', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openGl'], after: ['progressive.q21D1'], verify: 'glClosed', when: (r) => glRequested(r) && notNtl(r) },
     // Rates, as TNI agents work it: once cargo and GL are added, open the bill plan options, pick
@@ -856,8 +858,8 @@ export const progressive = {
         ['21ED', 'GeneralLiabilityTruckOtherPremises', 'Warehouse or premises customers visit (standard: No)', false],
         ['21EF', 'GeneralLiabilityTruckSetup', 'Set-up or installation (standard: No)', false],
         ['21F3', 'GeneralLiabilityTruckOtherBusiness', 'Other businesses than for-hire trucking (standard: No)', false]]
-        .map(([q, ref, name, answer]) => ({ q, source: 'standard', gl: 'section', field: `GeneralLiabilityInput.${ref}`, name, kind: 'bool', value: () => answer, note: glUnrequested })),
-      { q: '21F1', source: (r) => (oilGasMention(r) ? 'derived' : 'standard'), gl: 'section', field: 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas', name: 'Oil and gas fields (standard: No unless the intake mentions them)', kind: 'bool', value: () => false, note: oilGasNote },
+        .map(([q, ref, name, answer]) => ({ q, source: (r) => (glRequested(r) ? 'standard' : 'fact'), gl: 'section', field: `GeneralLiabilityInput.${ref}`, name, kind: 'bool', value: () => answer, note: glUnrequested })),
+      { q: '21F1', source: (r) => (oilGasNote(r) ? 'fact' : 'standard'), gl: 'section', field: 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas', name: 'Oil and gas fields (standard: No unless the intake mentions them)', kind: 'bool', value: () => false, note: oilGasNote },
       { q: '21D1', source: glLimitSource, gl: 'limit', field: 'LineInput.GeneralLiabilityLimit', name: 'General liability limit (the intake\'s; none: TNI\'s default $1M/$2M)', kind: 'choice', value: glLimit, note: glLimitNote, warn: glLimitWarn },
       // Any other General Liability question on Rates stays the agent's (never the AI's), instead
       // of letting generic label matching make an assertion.
