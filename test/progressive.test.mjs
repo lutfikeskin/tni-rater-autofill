@@ -456,9 +456,21 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   for (const state of ['TX', 'MD']) {
     const other = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {}), '1E8D');
     assert.deepEqual([other.value, other.ignore], [null, true], state);
-    assert.match(other.emptyNote, /Florida only/, `${state}: an empty PIP goes to the agent`);
+    assert.match(other.emptyNote, /Florida and Arkansas only/, `${state}: an empty PIP goes to the agent`);
   }
   assert.equal(byQ(plan, '1E8D').emptyNote, null);
+  // AR 2026-10-19 (live run): PIP is its own control there (PIPInput.Limit, captioned "Limit",
+  // unfamiliar until now). TNI's standard: 5k Medical and Hospital alone, where Progressive picked
+  // income loss, medical and accidental death. Elsewhere this control keeps Progressive's choice.
+  const ar = buildPlan({ ...record, garaging: { ...record.garaging, state: 'AR' } }, progressive, {});
+  assert.deepEqual([byQ(ar, '1FB2').field, byQ(ar, '1FB2').value, byQ(ar, '1FB2').source, byQ(ar, '1FB2').ignore, byQ(ar, '1FB2').emptyNote],
+    ['PIPInput.Limit', '5k Medical and Hospital', 'standard', false, null]);
+  assert.equal(byQ(ar, '1E8D').ignore, true, 'Florida\'s PIP standard is Florida\'s only');
+  for (const state of ['FL', 'TX']) {
+    const other = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {}), '1FB2');
+    assert.deepEqual([other.value, other.ignore], [null, true], state);
+    assert.match(other.emptyNote, /Florida and Arkansas only/, state);
+  }
   record.applicant.dot = null;
   assert.equal(byQ(buildPlan(record, progressive, {}), '21E').ignore, true);
 });
