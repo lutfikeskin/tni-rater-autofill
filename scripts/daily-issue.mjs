@@ -6,12 +6,12 @@
 //       prints where the review starts: the last successful run on the default branch, else a day ago
 //   node scripts/daily-issue.mjs post --summary review-summary.json --server <same|different|…> \
 //       [--server-note text] (--run-url <url> | --review <file> [--log <file>]) [--until <time>] \
-//       [--failed [--failed-step <step>]] [--out daily-comment.md] [--dry-run]
+//       [--failed [--failed-step <step>]] [--out daily-comment.md] [--post]
 //       comments on the open daily-review issue (or opens one) when something is new: problem
 //       reports, questions without a rule first seen, a usage server that isn't the repository's,
 //       two days without events (once a quiet stretch), or a run that failed. Nothing new: says
-//       nothing. --until: when the window's download began (else now). --dry-run prints what it
-//       would say and where, and posts nothing.
+//       nothing. --until: when the window's download began (else now). Without --post it only
+//       prints what it would say and where: a real post is asked for, never a default.
 //
 // The decisions are scripts/lib/daily.mjs (tested); this file only asks gh and tells it.
 
@@ -40,7 +40,7 @@ if (args[0] === 'since') {
   console.log(windowStart(run, steps));
 } else if (args[0] === 'post') {
   const failed = args.includes('--failed');
-  const dryRun = args.includes('--dry-run');
+  const dryRun = !args.includes('--post');
   const file = opt('summary');
   const summary = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
   const facts = { ...summary, server: opt('server') || 'not checked', serverNote: opt('server-note') ?? '', failed, failedStep: opt('failed-step') ?? '',
@@ -51,7 +51,7 @@ if (args[0] === 'since') {
     open = JSON.parse(gh('issue', 'list', '--label', LABEL, '--state', 'open', '--json', 'number,createdAt'));
   } catch (e) {
     if (!dryRun) throw e;
-    console.log(`(dry run: couldn't list the open issues, ${String(e.message).split('\n')[0]}; as if none were open)`);
+    console.log(`(dry run, no --post: couldn't list the open issues, ${String(e.message).split('\n')[0]}; as if none were open)`);
     open = [];
   }
   const action = decide(facts, open);
@@ -60,7 +60,7 @@ if (args[0] === 'since') {
   } else {
     fs.writeFileSync(out, commentBody(facts));
     if (dryRun) {
-      console.log(`dry run: would ${action.kind === 'comment' ? `comment on #${action.number}` : `open "${action.title}"`} with (${out}):\n\n${fs.readFileSync(out, 'utf8')}`);
+      console.log(`dry run, no --post: would ${action.kind === 'comment' ? `comment on #${action.number}` : `open "${action.title}"`} with (${out}):\n\n${fs.readFileSync(out, 'utf8')}`);
     } else if (action.kind === 'comment') {
       gh('issue', 'comment', String(action.number), '--body-file', out);
       console.log(`commented on #${action.number}`);
@@ -71,6 +71,6 @@ if (args[0] === 'since') {
     }
   }
 } else {
-  console.error('usage: node scripts/daily-issue.mjs since | post --summary file --server status (--run-url url | --review file [--log file]) [--server-note text] [--until time] [--failed [--failed-step step]] [--out file] [--dry-run]');
+  console.error('usage: node scripts/daily-issue.mjs since | post --summary file --server status (--run-url url | --review file [--log file]) [--server-note text] [--until time] [--failed [--failed-step step]] [--out file] [--post]');
   process.exit(1);
 }

@@ -88,6 +88,14 @@ test('daily: two days without events is said once, by the run whose window holds
 });
 
 test('daily: a run on this computer says where its review and log are', () => {
+  // 2026-10-20 on #50: "usage server skipped" with no reason read like a failure.
+  assert.match(commentBody({ since: 's', problems: [{ text: 'x' }], server: 'skipped', serverNote: 'run on claude/x, not the default branch', review: 'r.md' }, '2026-10-20'),
+    /^## 2026-10-20: 1 new problem report\(s\), 0 new question\(s\) without a rule, usage server not checked \(run on claude\/x, not the default branch\)\n/);
+  // Posting is asked for: the workflow's two posts say --post, or GitHub would only print them.
+  const workflow = fs.readFileSync(new URL('../.github/workflows/daily-review.yml', import.meta.url), 'utf8');
+  const posts = workflow.split('\n').filter((l) => l.includes('daily-issue.mjs post'));
+  assert.equal(posts.length, 2);
+  for (const l of posts) assert.match(l, / --post( |$)/);
   assert.match(commentBody({ failed: true, failedStep: 'download', log: 'reviews/daily/daily.log', serverNote: 'The usage server could not be checked (ECONNREFUSED).' }, '2026-10-19'),
     /could not run\n\nIt stopped at the download: its log is `reviews\/daily\/daily\.log` on the computer that ran it\.\n\nThe usage server could not be checked/);
   const many = Array.from({ length: 50 }, (_, i) => ({ carrier: 'progressive', page: 'P', caption: 'x'.repeat(2000) + i }));

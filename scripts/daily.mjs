@@ -4,11 +4,13 @@
 // the events received since the last run here, and comments on the open daily-review issue when
 // something is new (scripts/daily-issue.mjs post, scripts/lib/daily.mjs).
 //
-//   npm run daily                                  # since the last run here
-//   npm run daily -- --since 2026-10-19T06:00      # the first run here, or a period again
-//   npm run daily -- --dry-run [--no-pull] [--data some/server-data]
-//       prints the comment instead of posting it and keeps where the next run starts; --no-pull
-//       reads the data as it is (dry runs only: a real run's window ends at its download)
+//   npm run daily                                  # a dry run: prints the comment, posts nothing
+//   npm run daily -- --post                        # posts it, since the last run here
+//   npm run daily -- --post --since 2026-10-20T01:12:33Z   # the first run here, or a period again
+//   npm run daily -- [--since …] [--no-pull] [--data some/server-data]
+//       --no-pull reads the data as it is (dry runs only: a real run's window ends at its download)
+//
+// Without --post nothing is posted and the state is kept: a real post is asked for, never a default.
 //
 // Where the last run stopped is reviews/daily/state.json (git-ignored, like the reviews): when its
 // download began, written only once its post step succeeded (a comment, or nothing new to say). A
@@ -24,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const opt = (name) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : null; };
-const dryRun = args.includes('--dry-run');
+const dryRun = !args.includes('--post');
 const pull = !args.includes('--no-pull');
 const data = path.resolve(opt('data') ?? path.join(root, 'server-data'));
 const dir = path.join(root, 'reviews', 'daily');
@@ -32,7 +34,7 @@ const rel = (f) => (path.relative(root, f).startsWith('..') ? f : path.relative(
 const stateFile = path.join(dir, 'state.json');
 const logFile = path.join(dir, 'daily.log');
 
-if (!pull && !dryRun) { console.error('--no-pull is for dry runs: a real run reviews up to its own download.'); process.exit(1); }
+if (!pull && !dryRun) { console.error('--no-pull is for dry runs (no --post): a real run reviews up to its own download.'); process.exit(1); }
 const state = fs.existsSync(stateFile) ? JSON.parse(fs.readFileSync(stateFile, 'utf8')) : null;
 const since = opt('since') ?? state?.since ?? null;
 if (!since) {
@@ -71,9 +73,9 @@ const review = path.join(dir, `review-${tag}.md`);
 const summary = path.join(dir, `summary-${tag}.json`);
 const serverMd = path.join(dir, `server-check-${tag}.md`);
 const comment = path.join(dir, `comment-${tag}.md`);
-const posting = dryRun ? ['--dry-run'] : [];
+const posting = dryRun ? [] : ['--post'];
 
-log(`npm run daily${dryRun ? ' (dry run)' : ''}: events received since ${since}, from ${rel(data)}`);
+log(`npm run daily${dryRun ? ' (dry run: no --post)' : ' --post'}: events received since ${since}, from ${rel(data)}`);
 
 // First, so a server that is down is still reported (the download would stop the run). Only the
 // default branch is what's deployed: a checkout on another branch doesn't compare.

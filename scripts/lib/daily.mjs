@@ -120,8 +120,10 @@ export function commentBody(facts, today = new Date().toISOString().slice(0, 10)
     return lines.join('\n');
   }
   const quiet = quietStretch(facts);
+  // A skipped check says why (a run off the default branch): "skipped" alone reads like a failure.
+  const serverSays = server === 'skipped' ? `not checked (${serverNote || 'skipped'})` : server;
   const lastDay = quiet?.last ? quiet.last.slice(0, 10) : null;
-  lines.push(`## ${today}: ${problems.length} new problem report(s), ${newQuestions.length} new question(s) without a rule, usage server ${server}${quiet ? `, ${lastDay ? `no events since ${lastDay}` : 'no events at all'}` : ''}`, '');
+  lines.push(`## ${today}: ${problems.length} new problem report(s), ${newQuestions.length} new question(s) without a rule, usage server ${serverSays}${quiet ? `, ${lastDay ? `no events since ${lastDay}` : 'no events at all'}` : ''}`, '');
   lines.push(`Events received since ${since}. ${runUrl ? `The whole review is in the run summary and its artifact: ${runUrl}` : `The whole review is \`${review}\` on the computer that ran it.`}`, '');
   if (quiet) {
     lines.push(lastDay
