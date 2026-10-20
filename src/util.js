@@ -73,7 +73,7 @@ export function nameWords(name) {
 }
 
 // The intake's owner name is this driver: the same words across the name boxes (the suffix
-// too: "CLEMENT NEWTON JR"), or the owner's last word is the driver's surname or one of its words
+// too: "SAMPLE EXAMPLO JR"), or the owner's last word is the driver's surname or one of its words
 // (two-word surnames: "CAMPELO KRAYCHETE") and the owner's first name is one of the driver's given
 // names. A surname alone is a family, not a person: owner "Alice Sample" is not driver "Bob
 // Sample" (nor "Bob Jones Sample").

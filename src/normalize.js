@@ -220,8 +220,8 @@ const NEGATION = /\b(not|no|never|without|none)\b|n't\b/i;
 const TRAILER_WORD = /\btrailers?\b/i;
 const ownershipLines = (text) => String(text ?? '').split('\n').filter((line) => new RegExp(OWNERSHIP_WORDS.source, 'i').test(line));
 
-// A generational suffix written into a driver's name box ("CLEMENT, JR", "NEWTON III"), and a
-// lone letter after the first name ("TIFFANY L"), its middle initial. Carriers' driver name boxes
+// A generational suffix written into a driver's name box ("SAMPLE, JR", "EXAMPLO III"), and a
+// lone letter after the first name ("JORDAN L"), its middle initial. Carriers' driver name boxes
 // take letters, digits, spaces, hyphens and apostrophes only (Progressive refused the comma, AR
 // 2026-10-19) and have no suffix box, so both are kept apart: the suffix in `suffix`, the initial
 // in `middle`. A first name of one letter ("A J") is left as it is.

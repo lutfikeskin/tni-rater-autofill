@@ -49,7 +49,7 @@ export const SECTIONS = [
     ['drivers[].first', 'First name'],
     ['drivers[].middle', 'Middle name'],
     ['drivers[].last', 'Last name'],
-    // Read off the end of a name box ("CLEMENT, JR"); no carrier's driver page has a box for it.
+    // Read off the end of a name box ("SAMPLE, JR"); no carrier's driver page has a box for it.
     ['drivers[].suffix', 'Suffix (Jr, Sr, II…)'],
     ['drivers[].dob', 'Date of birth', 'date'],
     ['drivers[].licenseNumber', 'License #'],
