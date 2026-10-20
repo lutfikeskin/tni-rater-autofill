@@ -7,7 +7,7 @@ import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProble
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance } from '../src/util.js';
-import { progressive } from '../src/carriers/progressive.js';
+import { progressive, owner } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 
 // test/fixtures/sample-intake.pdf is the real TNI form filled with made-up data, including the
@@ -652,6 +652,46 @@ test('an owner whose surname has two words is found in the driver list', () => {
   assert.ok(family.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'the same one-word surname with another first name is another person');
   const same = normalizeIntake({ ...people, owner_name_1: 'BOB EXAMPLO', drv_first_1: 'BOB', drv_last_1: 'EXAMPLO' }, { today: new Date('2026-09-30') });
   assert.ok(!same.warnings.some((w) => w.code === 'drivers.owner-not-listed'));
+});
+
+// AR 2026-10-19 (live run): a driver's first-name box read "<first>, JR". Progressive's name box
+// takes letters, digits, spaces, hyphens and apostrophes only, so it refused the comma and the
+// agent retyped it twice. Another driver's "<first> L" went in whole, the initial in the first name.
+test('a suffix or a middle initial written in a name box is kept apart from the name', () => {
+  const today = { today: new Date('2026-09-30') };
+  const one = (first, last = 'EXAMPLO', extra = {}) => normalizeIntake({ ...raw, drv_first_1: first, drv_last_1: last, ...extra }, today);
+  const parts = (r) => { const d = r.record.drivers[0]; return [d.first, d.middle, d.last, d.suffix]; };
+  const codes = (r) => r.warnings.filter((w) => w.path?.startsWith('drivers[0].')).map((w) => w.code);
+  const jr = one('SAMPLE, JR');
+  assert.deepEqual(parts(jr), ['SAMPLE', null, 'EXAMPLO', 'JR']);
+  assert.ok(codes(jr).includes('name.suffix') && !codes(jr).includes('name.multi-word-first'), codes(jr).join(' '));
+  assert.equal(jr.warnings.find((w) => w.code === 'name.suffix').level, 'info');
+  assert.match(jr.warnings.find((w) => w.code === 'name.suffix').msg, /"SAMPLE, JR" read as first name SAMPLE and suffix JR/);
+  const initial = one('JORDAN L');
+  assert.deepEqual(parts(initial), ['JORDAN', 'L', 'EXAMPLO', null]);
+  assert.ok(codes(initial).includes('name.middle-initial') && !codes(initial).includes('name.multi-word-first'));
+  assert.deepEqual(parts(one('Jordan L.')), ['Jordan', 'L', 'EXAMPLO', null]);
+  assert.deepEqual(parts(one('JORDAN A JR.')), ['JORDAN', 'A', 'EXAMPLO', 'JR']);
+  const last = one('JORDAN', 'EXAMPLO III');
+  assert.deepEqual(parts(last), ['JORDAN', null, 'EXAMPLO', 'III']);
+  assert.match(last.warnings.find((w) => w.code === 'name.suffix').msg, /last-name box "EXAMPLO III" read as last name EXAMPLO/);
+  // Not a suffix or an initial: left as written, and two words still ask the agent.
+  for (const first of ['A J', 'JUAN CARLOS', 'JR', 'JUNIOR']) {
+    const r = one(first);
+    assert.deepEqual(parts(r), [first, null, 'EXAMPLO', null], first);
+    assert.equal(codes(r).includes('name.multi-word-first'), /\s/.test(first), first);
+  }
+  // The owner box with the suffix is still this driver (the owner's date of birth is linked).
+  const owned = one('SAMPLE, JR', 'EXAMPLO', { owner_drives: true, owner_name_1: 'SAMPLE EXAMPLO JR' });
+  assert.ok(!owned.warnings.some((w) => w.code === 'drivers.owner-not-listed'));
+  assert.equal(owner(owned.record).driver, owned.record.drivers[0]);
+  assert.deepEqual([owner(owned.record).first, owner(owned.record).last], ['SAMPLE', 'EXAMPLO']);
+  const plain = one('SAMPLE, JR', 'EXAMPLO', { owner_drives: true, owner_name_1: 'SAMPLE EXAMPLO' });
+  assert.ok(!plain.warnings.some((w) => w.code === 'drivers.owner-not-listed'), 'the owner box without the suffix too');
+  // Progressive's driver name box gets the name alone; its middle initial box is left as it is.
+  const plan = buildPlan(initial.record, progressive, { drivers: 0 });
+  assert.equal(plan.find((s) => s.path === 'drivers[0].first' && s.q === '2898').value, 'JORDAN');
+  assert.equal(plan.find((s) => s.q === '2899').ignore, true);
 });
 
 // PR #17 review: a mention ("no bobtail") must never become NTL coverage. The agent sets it.

@@ -3,14 +3,18 @@
 // plus what the AI assistant did and the agents' problem reports, in one Markdown file.
 //
 //   npm run review                              # server-data, since the last review
-//   node scripts/review.mjs server-data [more logs...] [--since 2026-10-01[T06:00]] [--all] [--out file.md] [--summary file.json]
+//   node scripts/review.mjs server-data [more logs...] [--since 2026-10-01[T06:00]] [--all] [--tests reviews/test-intakes.txt] [--out file.md] [--summary file.json]
 //
 // "Since" defaults to the date of the newest file in reviews/, so each review shows what's new. It
 // is when the server received the events (when logged, for exported ones): one uploaded a day late
 // is in the next review, not lost between two. --summary writes what's new (problem reports,
 // questions without a rule) for the daily review's issue (scripts/daily-issue.mjs).
+// --tests: the test-run list (readTestList in scripts/lib/signals.mjs, as weekly-signals.mjs; default:
+// this repository's reviews/test-intakes.txt; a git worktree has none, so pass the main checkout's).
 // Rule suggestions and layouts always use all the data (they need many quotes).
-// Reports go to reviews/review-<date>.md (git-ignored, like generated layouts: review first).
+// Reports go to reviews/review-<date>.md (git-ignored, like generated layouts: review first). With
+// --out outside reviews/, the transitions and captures reports and the generated layouts go next
+// to that file instead of into this repository's reviews/ and captures/.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,19 +23,28 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadEvents, quoteSessions } from './lib/events.mjs';
 import { loadLayouts, report as coverageReport } from './coverage.mjs';
-import { receivedAt, uncoveredQuestions } from './lib/daily.mjs';
+import { receivedAt, uncoveredQuestions, lastReceipts } from './lib/daily.mjs';
 import { questionOf } from './lib/learn.mjs';
-import { signals, testSessionsOf } from './lib/signals.mjs';
+import { readTestList, signals, testSessionsOf } from './lib/signals.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
+const fail = (msg) => { console.error(msg); process.exit(1); };
 const opt = (name) => { const i = args.indexOf(`--${name}`); return i >= 0 ? args[i + 1] : null; };
-const valued = new Set(['--since', '--out', '--summary']);
+const valued = new Set(['--since', '--out', '--summary', '--tests']);
 const inputs = args.filter((a, i) => !a.startsWith('--') && !valued.has(args[i - 1]));
 if (!inputs.length) inputs.push('server-data');
 for (const p of inputs) {
   if (!fs.existsSync(p)) { console.error(`No usage data at ${p}. Start the server (npm run server) or pass exported logs.`); process.exit(1); }
 }
+// The test-run list. Without a local one, the maintainer's test quotes count as agents' work:
+// say so on stderr and in the report.
+const testsOpt = opt('tests');
+if (args.includes('--tests') && (testsOpt === undefined || testsOpt.startsWith('--'))) fail('--tests needs a value.');
+let testList;
+try { testList = readTestList({ tests: testsOpt }); } catch (err) { fail(err.message); }
+const { intakes: testIntakes, warning: noTestList } = testList;
+if (noTestList) console.error(`Warning: ${noTestList}`);
 
 const today = new Date().toISOString().slice(0, 10);
 const reviewsDir = path.join(root, 'reviews');
@@ -40,15 +53,21 @@ const previous = fs.existsSync(reviewsDir)
   : null;
 const since = args.includes('--all') ? null : opt('since') ?? previous ?? null;
 const out = opt('out') ?? path.join(reviewsDir, `review-${today}.md`);
+// A review written outside reviews/ (a test's, in a temporary folder) gets the other scripts'
+// reports and layouts next to it: it must not replace the day's real ones in reviews/ and
+// captures/. One written anywhere in reviews/ (reviews/daily/ too) is a real review: its reports
+// and layouts stay where they always go, where npm run e2e and fixtures:progressive read them.
+const outDir = path.dirname(path.resolve(out));
+const inReviews = path.relative(reviewsDir, outDir);
+const sideDir = inReviews.startsWith('..') || path.isAbsolute(inReviews) ? outDir : null;
+const sideOut = (name) => (sideDir ? ['--out', path.join(sideDir, `${name}-${today}.md`)] : []);
 
 const all = loadEvents(inputs);
 // Compared as full ISO times: gh's run times have no milliseconds, the server's receipts do.
 const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOString() : since;
 const recent = from ? all.filter((e) => receivedAt(e) >= from) : all;
-// Test runs: intakes marked as a test, and the fingerprints in reviews/test-intakes.txt when
-// there is one (scripts/lib/signals.mjs). Their events leave the numbers and the usage summary.
-const testFile = path.join(root, 'reviews', 'test-intakes.txt');
-const testIntakes = fs.existsSync(testFile) ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
+// Test runs: intakes marked as a test, fixture intakes and the fingerprints in the test-run list
+// (scripts/lib/signals.mjs). Their events leave the numbers and the usage summary.
 const tests = testSessionsOf(all, testIntakes);
 // The agents' work in the period: everything but test runs (problem reports keep them, marked).
 const live = recent.filter((e) => !tests.has(e.session));
@@ -69,16 +88,16 @@ const run = (script, scriptArgs) => {
 };
 const summary = live.length ? run('summarize-usage.mjs', [recentFile]) : '(no events in this period)';
 const learn = run('learn-rules.mjs', inputs).replace(/^# /m, '### ');
-const layouts = run('build-layouts.mjs', inputs);
-const transitions = run('transitions.mjs', inputs);
+const layouts = run('build-layouts.mjs', [...inputs, ...(sideDir ? ['--out', path.join(sideDir, 'captures')] : [])]);
+const transitions = run('transitions.mjs', [...inputs, ...sideOut('transitions')]);
 // Manual captures kept in layouts/ (developer captures; not in the usage log).
-const captures = fs.existsSync(path.join(root, 'layouts')) ? run('captures.mjs', [path.join(root, 'layouts')]) : '(no layouts/ folder)';
+const captures = fs.existsSync(path.join(root, 'layouts')) ? run('captures.mjs', [path.join(root, 'layouts'), ...sideOut('captures')]) : '(no layouts/ folder)';
 fs.rmSync(tmp, { recursive: true, force: true });
 
 // --- Numbers for the top of the report ------------------------------------------------------
 // The weekly numbers come from the signals report (scripts/lib/signals.mjs), so the two agree:
 // per quote (a page filled twenty times counts once), test runs left out (intakes marked as a test,
-// and the fingerprints in reviews/test-intakes.txt when there is one).
+// fixture intakes and the fingerprints in the test-run list).
 const week = signals(all, { since: from && !Number.isNaN(Date.parse(from)) ? from : null, testIntakes });
 // Quotes: intakes loaded in this period that went to a carrier's page (whenever they did), not test runs.
 const quoting = quoteSessions(all);
@@ -137,12 +156,13 @@ const lines = [];
 const p = (...x) => lines.push(...x);
 p(`# Rater Autofill review ${today}`, '');
 p(`Period: ${since ? `since ${since}` : 'all data'} · ${recent.length} events (${all.length} in total) · ${quotes.size} quotes · agents: ${agents.join(', ') || '—'}`, '');
+if (noTestList) p(`**${noTestList}**`, '');
 p('## At a glance', '');
 p('| | |', '| --- | --- |');
 const k = week.kpis;
 p(`| Quotes started | ${quotes.size}${Object.keys(states).length ? ` (${Object.entries(states).map(([s, n]) => `${s} ${n}`).join(', ')})` : ''}${k.testRunsLeftOut ? ` · ${k.testRunsLeftOut} test run(s) left out` : ''} |`);
 p(`| Builds | ${week.builds.map((b) => `${b.version} ${b.channel}: ${b.quotes} quote${b.quotes === 1 ? '' : 's'}`).join(' · ') || '—'} |`);
-p(`| Quotes done (reached the carrier's final page) | ${k.donePercent ?? '—'}% |`);
+p(`| Quotes done (reached the carrier's final page or printed) | ${k.donePercent ?? '—'}% |`);
 p(`| Answers filled by the rules, per quote | ${k.filledPerQuote ?? '—'} |`);
 p(`| Left to the agent per quote (each question once per quote): ${Object.keys(k.leftPerQuote).join(' / ') || '—'} | ${Object.values(k.leftPerQuote).join(' / ') || '—'} |`);
 p(`| Autofilled answers the agent corrected (another value or cleared) · reformatted | ${k.corrected} · ${k.reformatted} |`);
@@ -229,6 +249,8 @@ if (opt('summary')) {
     problems: problems.map((e) => ({ t: e.t, receivedAt: e.receivedAt ?? null, agent: e.agent ?? null, page: e.page ?? null, build: buildOf(e), test: tests.has(e.session), text: e.text ?? '' })),
     newQuestions: uncovered.new,
     uncoveredTotal: uncovered.total,
+    // The newest receipt in the whole log, test runs left out, and each install's: the daily heartbeat.
+    ...lastReceipts(all, tests),
   }, null, 1));
 }
 console.log(`${path.relative(process.cwd(), out)}  (${since ? `since ${since}` : 'all data'}: ${quotes.size} quotes, ${decisions.length} AI decisions, ${problems.length} problem reports)`);

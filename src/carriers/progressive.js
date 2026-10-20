@@ -49,7 +49,7 @@ export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
   const candidates = r.applicant.ownerDrives === false ? [] : r.drivers;
-  const fullMatches = candidates.filter((d) => nameKey(full) && nameKey(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''}`) === nameKey(full));
+  const fullMatches = candidates.filter((d) => nameKey(full) && nameKey(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''} ${d.suffix ?? ''}`) === nameKey(full));
   // The owner's surname (or a word of a two-word surname) with a matching first name (util.js).
   const lastMatches = candidates.filter((d) => ownerIsDriver(full, d));
   // Some intakes repeat the first name in the sole driver's last-name box. Only connect
@@ -82,6 +82,10 @@ const insuredWithProgressive = (r) => {
 // in the reviewed address rules).
 const registered = (prefer) => ({ kind: 'pick-not', source: 'standard', value: () => ({ not: '^enter a different', prefer }), ignore: (r) => !r.applicant.dot });
 const businessNames = (r) => [r.applicant.name || r.applicant.owner1].filter(Boolean);
+// A vehicle or trailer ZIP with none on the intake: Progressive's own value is left as it is,
+// and only a field still empty when the fill ends is the agent's.
+const noIntakeZip = (r) => !r.garaging?.zip;
+const vehicleZipNote = (r) => (noIntakeZip(r) ? 'The intake has no garaging ZIP and Progressive left this empty: enter where the vehicle is kept.' : null);
 
 // The intake's vehicle value, only when it's a dollar amount. Anything else ("N/A", "about
 // 40k") goes to the agent with the intake's text, rather than being typed and cleared.
@@ -129,6 +133,7 @@ const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
 const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').trim());
+const isArkansas = (r) => /^(ar|arkansas)$/i.test(String(r.garaging?.state ?? '').trim());
 
 // A trailer's attached equipment: the intake's amount when it gives one (not "N/A" or 0), else
 // none (TNI standard: "Trailer has no equipment").
@@ -674,7 +679,10 @@ export const progressive = {
       // the mismatch named.
       { field: 'RiskInput.VehicleTypeToDisplay', ask: 'Vehicle Type', name: 'Vehicle type (asked when the VIN lookup disagrees with the tile)', ignore: true, scope: 'vehicle', emptyNote: vehicleTypeNote },
       { q: '2B20', field: 'RiskInput.VIN', ask: 'Vehicle Identification Number (VIN)', path: 'vehicles[].vin' },
-      { q: '2B92', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip' },
+      // No ZIP on the intake: whatever ZIP Progressive put here is left, not asked (TNI, 2026-10-20:
+      // "We verified the address through the DOT, so we dont need to see this question every
+      // time"); a field still empty after the fill is the agent's, and an intake ZIP still fills.
+      { q: '2B92', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', ignore: noIntakeZip, emptyNote: vehicleZipNote },
       // "Unlimited" / long haul becomes 501 miles, which picks "More than 500 miles".
       { q: '2B9D', source: 'derived', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this vehicle typically travels (90% or more of the time)', name: 'Farthest one-way distance', kind: 'int', value: radiusMiles },
       { q: '2C05', source: 'derived', field: 'BCBTUVehQuestions.V01Use', ask: 'Is this vehicle used for business, personal or both?', name: 'Business / personal use', kind: 'choice', value: (r) => (r.operations.personalUse === false ? 'Business Only' : r.operations.personalUse ? 'Business & Personal' : null) },
@@ -711,7 +719,7 @@ export const progressive = {
       { q: '2A29', field: 'RiskInput.VIN', ask: 'VIN', path: 'trailers[].vin' },
       { q: '2A2A', field: 'RiskInput.Year', ask: 'Year', path: 'trailers[].year', kind: 'choice' },
       { q: '2A2B', field: 'RiskInput.MakeCode', ask: 'Make', path: 'trailers[].make', kind: 'choice' },
-      { q: '2A61', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', name: 'Trailer ZIP' },
+      { q: '2A61', field: 'RiskInput.PrimaryZIP', ask: 'Zip code where the vehicle is located', path: 'garaging.zip', name: 'Trailer ZIP', ignore: noIntakeZip, emptyNote: vehicleZipNote },
       { q: '2A65', source: 'derived', field: 'RiskInput.Radius', ask: 'Farthest one-way distance this trailer travels for work', name: 'Trailer farthest one-way distance (as the vehicle)', kind: 'int', value: radiusMiles },
       { q: '2AD0', source: 'derived', clientFact: true, field: 'RiskInput.OwnLeaseIndicator', ask: 'Is there a loan/lease on this trailer?', name: 'Trailer loan / lease (from the trailer ownership)', kind: 'choice', value: trailerLoanLease, note: trailerOwnershipNote },
       { q: '2AEE', source: 'standard', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this trailer in an accident or loss?', name: 'Trailer comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
@@ -755,7 +763,12 @@ export const progressive = {
       { q: '1DB8', source: 'standard', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
       // PIP shares its data-model name across states: other states' lists (TX $2,500–$25,000, MD
       // "Full PIP") are left as Progressive set them (TNI 2026-10-07: no standard there).
-      { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r), emptyNote: (r) => (isFlorida(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida only: choose it yourself.') },
+      { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; other states: as Progressive set it)', kind: 'choice', value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : null), ignore: (r) => !isFlorida(r), emptyNote: (r) => (isFlorida(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida and Arkansas only: choose it yourself.') },
+      // AR (TNI, 2026-10-19, after a live run): personal injury protection is its own control there
+      // (PIPInput.Limit, captioned only "Limit", so it was unfamiliar), offering 5k medical, income
+      // loss and 5k accidental death alone or together. Progressive picked all three; TNI's standard
+      // is 5k Medical and Hospital alone. Other states with this control keep Progressive's choice.
+      { q: '1FB2', source: 'standard', field: 'PIPInput.Limit', name: 'Personal injury protection, AR (standard: 5k Medical and Hospital; other states: as Progressive set it)', kind: 'choice', value: (r) => (isArkansas(r) ? '5k Medical and Hospital' : null), ignore: (r) => !isArkansas(r), emptyNote: (r) => (isArkansas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida and Arkansas only: choose it yourself.') },
       { q: '1DEE', source: 'standard', field: 'LineInput.UMUIMBILimit', ask: ['Uninsured/Underinsured Motorist Bodily Injury', 'Uninsured/Underinsured Motorist Bodily Injury Coverage Limit', 'Uninsured Motorist Bodily Injury coverage limit'], name: 'Uninsured / underinsured motorist liability', kind: 'choice', value: () => '$100k CSL', scope: 'policy' },
       // SC (2026-10-07): uninsured and underinsured motorist as BI & PD together, each $100k CSL with
       // the deductible Progressive lists for it (the agent's picks on that quote).

@@ -78,7 +78,7 @@ jobs:
         env:
           SERVER_STATUS: ${{ steps.server.outputs.status }}
           SERVER_NOTE: ${{ steps.server.outputs.note }}
-        run: node scripts/daily-issue.mjs post --summary review-summary.json --server "$SERVER_STATUS" --server-note "$SERVER_NOTE" --run-url "$RUN_URL"
+        run: node scripts/daily-issue.mjs post --summary review-summary.json --server "$SERVER_STATUS" --server-note "$SERVER_NOTE" --run-url "$RUN_URL" --post
       # The download or the review failed (the usage server down, a broken script): say so on the
       # same issue, with what the server check found. When the script that says so is what broke
       # (or the checkout), gh says it directly.
@@ -88,7 +88,7 @@ jobs:
           SERVER_STATUS: ${{ steps.server.outputs.status || 'not checked' }}
           SERVER_NOTE: ${{ steps.server.outputs.note }}
         run: |
-          node scripts/daily-issue.mjs post --failed --server "$SERVER_STATUS" --server-note "$SERVER_NOTE" --run-url "$RUN_URL" && exit 0
+          node scripts/daily-issue.mjs post --failed --server "$SERVER_STATUS" --server-note "$SERVER_NOTE" --run-url "$RUN_URL" --post && exit 0
           N=$(gh issue list --repo "$GITHUB_REPOSITORY" --label daily-review --state open --json number --jq 'map(.number) | max // empty')
           BODY="The daily review could not run: $RUN_URL"
           if [ -n "$N" ]; then gh issue comment "$N" --repo "$GITHUB_REPOSITORY" --body "$BODY"; else gh issue create --repo "$GITHUB_REPOSITORY" --title "Daily review" --label daily-review --body "$BODY"; fi
