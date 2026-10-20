@@ -55,6 +55,16 @@ test('signals counts the period by build, quote and reason, never by raw repeats
   assert.deepEqual(s.problems[0].lastRun.blockers, ['unfamiliar: Agent Code']);
 });
 
+// W43-05 (2026-10-20): Print/Send opened the quote PDF without the confirmation page; the quote was
+// counted as "stopped at /Express/PDFHandler.ashx".
+test('a Progressive quote printed to PDF is done', () => {
+  const events = week();
+  events.push({ id: 'pdf', t: '2026-10-06T12:30:00Z', receivedAt: '2026-10-06T12:30:00Z', session: 'new', v: '0.9.11', carrier: 'progressive', type: 'page_view', page: '/Express/PDFHandler.ashx', from: null });
+  const s = signals(events, { since: '2026-10-06' });
+  assert.equal(s.outcomes.progressive.done, 1);
+  assert.ok(!s.outcomes.progressive.stopped.some(([page]) => /PDFHandler/.test(page)));
+});
+
 test('signals flags a restricted action the extension clicked', () => {
   const events = week();
   events.push({ id: 'x', t: '2026-10-06T13:00:00Z', receivedAt: '2026-10-06T13:00:00Z', session: 'new', v: '0.9.9', carrier: 'amwins', type: 'fill_run', page: '/application', advanced: 'Submit Application', clicked: [] });

@@ -28,10 +28,11 @@ const byVersion = (a, b) => {
 };
 
 // The page (or one-address application step) where a quote is done, per carrier: Progressive's
-// quote summary and print confirmation, AmWINS' last application step (Underwriting) or its
+// quote summary, print confirmation or the printed quote PDF (Print/Send opens it without the
+// confirmation page: 2 quotes by 2026-10-20), AmWINS' last application step (Underwriting) or its
 // submission notice. A heuristic for the weekly numbers, not a carrier's definition.
 export const FINAL = {
-  progressive: /^(Quote|PrintEmailFaxConfirm)$/,
+  progressive: /^(Quote|PrintEmailFaxConfirm|\/Express\/PDFHandler\.ashx)$/,
   amwins: /› (Underwriting|Thank you for the submission)/,
 };
 // A carrier's login page reached in the middle of a quote: the carrier's session ran out.
