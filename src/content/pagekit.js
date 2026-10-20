@@ -1629,7 +1629,13 @@
     // and the page hasn't settled it (NTL added, then set back to No, and still on the quote).
     function holdOpen(a) {
       return !!a.missing && a.afterActions.every((id) => clicked.has(id)) && !clicked.has(a.action)
-        && (!a.pages.length || a.pages.includes(currentPage())) && !(a.resolvedBy && findButton({ text: a.resolvedBy }));
+        && (!a.pages.length || a.pages.includes(currentPage())) && !settledItem(a);
+    }
+
+    // Its button back on the page (`resolvedBy`: the Add NTL link, NTL removed), or a page the agent
+    // has been to since (`settledByPages`: the bill plan, after adding General Liability).
+    function settledItem(a) {
+      return !!(a.resolvedBy && findButton({ text: a.resolvedBy })) || !!a.settledByPages?.some((p) => visited.has(p));
     }
 
     // A prerequisite holds when its field shows the intake's answer, or an answer the agent chose
@@ -1686,13 +1692,10 @@
         const alreadyShown = a.verify === 'revealed' && resultShown(a, pairs);
         if (!button && !a.opener && !alreadyShown) continue;
         const holds = actions.filter((h) => (a.heldBy ?? []).includes(h.baseAction) && holdOpen(h));
-        // A question that, while it's on the page, leaves the rest of it to the agent (General
-        // Liability on Progressive's Rates): its step, matched to a field here.
-        const shownHolds = (a.whileShown ?? []).flatMap((p) => pairs.filter(({ step }) => step.path === p).slice(0, 1).map(({ step }) => step));
         // A page button that the carrier refuses while a required question is empty (Rates' bill
         // plan, SC 2026-10-07: clicked right after UM/UIM were cleared, and nothing opened).
         const openRequired = a.waitRequired ? controls.filter((c) => c.required && !hasValue(c) && !skippedField(c)) : [];
-        const ready = !holds.length && !shownHolds.length && !openRequired.length && (!a.afterAny?.length || a.afterAny.some(has))
+        const ready = !holds.length && !openRequired.length && (!a.afterAny?.length || a.afterAny.some(has))
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
           && a.after.every(has)
@@ -1711,8 +1714,6 @@
             ...(a.needsPremium && !premiumReady() ? [{ say: 'a current premium' }] : []),
             ...(a.afterValue ? [{ path: a.afterValue[0], set: true }] : []),
             ...holds.map((h) => ({ action: h.action, say: `${h.label ?? h.baseAction} resolved` })),
-            // Named only (no path): the page taking the button away doesn't settle it (doneByPage).
-            ...shownHolds.map((s) => ({ say: `${s.name} off the page` })),
             ...openRequired.slice(0, 3).map((c) => ({ say: `${c.label || 'a required question'} answered` })),
           ];
           const waitingFor = waits.map((w) => w.say ?? (w.any ? `one of ${w.any.join(' / ')}` : w.action ? `${w.action} clicked`
@@ -1820,7 +1821,7 @@
       for (const a of actions) {
         if (!a.missing || clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage())) || findButton(a)
           || !a.afterActions.every((id) => clicked.has(id)) || a.unlessActions?.some((id) => clicked.has(id))
-          || (a.resolvedBy && findButton({ text: a.resolvedBy }))) continue;
+          || settledItem(a)) continue;
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing });
       }
       // Clicked earlier, but what it adds never got in (Add Trailer opened, the trailer page left

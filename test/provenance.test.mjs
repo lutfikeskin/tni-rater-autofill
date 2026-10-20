@@ -124,8 +124,6 @@ const NOT_MAPPED = {
     'trailerInfo.interchange': 'trailer interchange is not mapped (no live quote has asked it)',
     'trailerInfo.interchangeLimit': 'trailer interchange is not mapped (no live quote has asked it)',
     'coverage.autoLiability': 'liability is always quoted; only its limit is entered',
-    'coverage.gl': 'a GL request changes no Progressive answer (TNI 2026-10-19): GL is not on the Progressive quote; a GL row on Rates is the agent\'s (glNote)',
-    'coverage.glLimit': 'General Liability is not validated on Progressive: the agent reviews it (glNote)',
   },
   amwins: {
     'applicant.mcDotWithin60Days': 'AmWINS asks for the numbers themselves (has DOT / has MC / no number)',

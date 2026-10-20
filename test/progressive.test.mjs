@@ -169,22 +169,33 @@ test('Progressive coverage and helper ordering are conservative', () => {
   assert.deepEqual(addDriver.unlessActions, ['driverEntered:0']);
   assert.equal(progressive.driverList, 'DriverSummary');
   assert.ok(progressive.agentPages.NoHit);
-  // TNI 2026-10-19 (AR run): GL asked for on the intake isn't on the Progressive quote, so Rates
-  // is ours as usual; only a General Liability row on Rates holds the bill plan, Recalculate, Print.
+  // GL asked for on the intake (TNI 2026-10-20, PR #110 review): Rates says to add it with "+" in
+  // its row (glRates, never clicked), naming the limit; the bill plan is the agent's, and
+  // Recalculate and Print wait until the agent has been to it.
   const gl = structuredClone(record);
   gl.coverage.gl = true;
   const glActions = buildPlan(gl, progressive, {}).filter((step) => step.kind === 'action');
-  for (const id of ['billPlan', 'recalculate', 'print']) {
+  assert.ok(!glActions.some((s) => s.action === 'billPlan'), 'with GL requested the bill plan is the agent\'s');
+  const glItem = glActions.find((s) => s.action === 'glRates');
+  assert.deepEqual([glItem.text, glItem.pages, glItem.label, glItem.settledByPages], [null, ['CoveragesRates'], 'General liability', ['ChangePaymentPlan']]);
+  for (const id of ['recalculate', 'print']) {
     const step = glActions.find((s) => s.action === id);
-    assert.ok(step, `with GL requested, ${id} is still ours`);
-    assert.deepEqual(step.whileShown, ['progressive.qGL'], `${id} waits while a General Liability row shows`);
+    assert.ok(step.heldBy.includes('glRates'), `${id} waits for the GL item`);
+    assert.deepEqual([step.after, step.afterActions, step.afterPages], [['coverage.autoLiabLimit'], [], ['ChangePaymentPlan']], `${id} follows the agent's bill plan visit`);
   }
-  assert.deepEqual(glActions.find((s) => s.action === 'recalculate').afterActions, ['billPlan']);
+  // No limit on the intake: TNI's default $1M/$2M, said as one to confirm; else the intake's.
+  assert.match(glItem.missing, /add it with "\+" in the General Liability row, with TNI's default limit, \$1M\/\$2M \(\$1M per occurrence, \$2M aggregate\), as the intake gives none: confirm it with the client\. Then open the bill plan options yourself/);
+  gl.coverage.glLimit = '$500K/$1M';
+  assert.match(buildPlan(gl, progressive, {}).find((s) => s.action === 'glRates').missing, /with the intake's limit, \$500K\/\$1M\./);
+  assert.ok(!actions.some((s) => s.action === 'glRates'), 'no GL requested: no item');
+  // A General Liability question on Rates (its section open) is the agent's whatever the intake
+  // asks, and never the AI's.
   for (const r of [record, gl]) {
-    const row = byQ(buildPlan(r, progressive, {}), 'GL');
-    assert.deepEqual([row.path, row.ignore, row.value, row.re], ['progressive.qGL', false, null, '^general liability'], 'a GL row on Rates is the agent\'s, whatever the intake asks');
-    assert.match(row.note, /on this Progressive quote.*bill plan, Recalculate and Print are yours/);
+    const row = buildPlan(r, progressive, {}).find((s) => s.re === '^general liability');
+    assert.deepEqual([row.source, row.manualOnly, row.value, row.ignore], ['fact', true, null, false]);
+    assert.match(row.note, /^General liability's questions aren't mapped: answer them yourself/);
   }
+  assert.match(buildPlan(gl, progressive, {}).find((s) => s.re === '^general liability').note, /with the intake's limit, \$500K\/\$1M\.$/);
   assert.ok(bill.afterAny.includes('progressive.q216F'));
   const multi = structuredClone(record);
   multi.vehicles.push({ type: 'Van', year: 2021, make: 'FORD', model: 'Transit', vin: '1FTBR3X87MKA12345', value: 40000 });
@@ -526,7 +537,7 @@ test('Progressive NJ run: vehicle registrant, VIN-lookup safety boxes kept, Rate
   const gl = structuredClone(baseRecord());
   gl.coverage.gl = true;
   const glPrint = buildPlan(gl, progressive, {}).find((s) => s.action === 'print');
-  assert.deepEqual([glPrint.after, glPrint.afterActions], [[], ['billPlan']], 'with GL requested, Print follows our bill plan too');
+  assert.deepEqual([glPrint.after, glPrint.afterActions], [['coverage.autoLiabLimit'], []], 'with GL (no bill plan of ours) the limit check stays');
   assert.deepEqual(plan.find((s) => s.action === 'recalculate').afterPages, ['ChangePaymentPlan']);
 });
 
@@ -666,11 +677,14 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   assert.match(progressive.agentPages.PrintEmailFax, /Click Print\/Send yourself/);
   assert.ok(progressive.advance.exceptPages.includes('PrintEmailFax'), 'never continued past the Print page');
   assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print/);
-  // GL without NTL is a plain quote's Rates (TNI 2026-10-19): our bill plan, Print after it.
+  // GL without NTL: the GL item, no bill plan of ours, Print after the agent's bill plan visit.
+  // With NTL too, the NTL item says the rest of Rates is theirs: no GL item on top.
   const gl = baseRecord();
   gl.coverage.gl = true;
-  assert.ok(ids(gl).includes('billPlan'));
-  assert.deepEqual(actions(gl).find((s) => s.action === 'print').afterActions, ['billPlan']);
+  assert.ok(!ids(gl).includes('billPlan') && ids(gl).includes('glRates'));
+  assert.deepEqual(actions(gl).find((s) => s.action === 'print').afterActions, []);
+  gl.coverage.ntl = true;
+  assert.ok(!ids(gl).includes('glRates') && ids(gl).includes('ntlRates'));
   assert.ok(ids(baseRecord()).includes('billPlan'), 'and a plain quote keeps our bill plan');
 });
 

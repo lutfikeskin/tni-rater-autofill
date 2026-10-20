@@ -600,7 +600,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   record.coverage.cargoDeductible = cargo.deductible;
   if (record.coverage.cargo && !cargo.limit) check('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.');
   if (record.coverage.autoLiability === 'Yes' && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
-  if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'Wants general liability but no limit chosen.');
+  if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'Wants general liability but no limit chosen: TNI\'s default is $1M/$2M ($1M per occurrence, $2M aggregate). Confirm it with the client.');
 
   // --- Claims box -----------------------------------------------------------------------------
   // Clients use this box for answers to other questions too. A leading yes/no answers the claims
