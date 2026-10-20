@@ -1,6 +1,6 @@
 # Weekly review W<week> (<since> – <date>)
 
-Sources: `reviews/signals-<date>.md`, `reviews/review-<date>.md`[, `reviews/benchmark-<date>.json`], ledger #<issue>. Client data: none in this brief. Test runs left out: <n>.
+Sources: `reviews/signals-<date>.md`, `reviews/review-<date>.md`, `reviews/ledger-<date>.md`[, `reviews/benchmark-<date>.json`], ledger #<issue>. Client data: none in this brief. Test runs left out: <n>.
 
 ## For you
 
@@ -13,12 +13,12 @@ Plain language, no code names, five to eight short lines:
 
 ## Weekly numbers
 
-From the signals report's "Weekly numbers"; last period's from the previous ledger issue.
+From the ledger report (`npm run ledger`): this period's numbers beside the previous ledger issue's. No trend when either period has fewer than about 10 quotes.
 
-| Number | This period | Last period | Trend |
+| Number | This period (<n> quotes) | Last period (<n> quotes) | Trend |
 | --- | --- | --- | --- |
 | Quotes (any carrier · per carrier) | | | |
-| Quotes done (reached the carrier's final page) | | | |
+| Quotes done (reached the carrier's final page or printed) | | | |
 | Median minutes for a done quote | | | |
 | Answers filled by the rules, per quote | | | |
 | Autofilled answers corrected, per 100 filled | | | |
@@ -30,6 +30,8 @@ From the signals report's "Weekly numbers"; last period's from the previous ledg
 Builds this period: <versions and channels; how many quotes on the newest>.
 
 ## Last period's decisions
+
+From the ledger report; each status confirmed by you, not copied.
 
 | ID | Title | Status | Evidence |
 | --- | --- | --- | --- |
@@ -47,7 +49,7 @@ Builds this period: <versions and channels; how many quotes on the newest>.
 - **Cause:** confirmed, or the hypothesis and how to confirm it.
 - **Proposed change:** layer, likely files, the test that reproduces it, a nearby case where it must not apply.
 - **What the agent will notice:** one line.
-- **Signature to watch:** event type, field, page and result that show it again.
+- **Signature to watch:** in the ledger's structured form (`symptom <event> page=… result=…`, or `expect <event> … when <event> …`), so next week's `npm run ledger` counts it.
 
 ## Questions for the maintainer
 

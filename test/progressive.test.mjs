@@ -91,7 +91,7 @@ test('sole owner-driver with duplicated first name uses owner surname and driver
   assert.equal(byQ(buildPlan(record, progressive), '2BB').value, null);
 });
 
-test('Progressive standard answers: USDOT belongs to the business is the agent\'s, filings, MCS-90 left to the page', () => {
+test('Progressive standard answers: USDOT belongs to the business is TNI\'s standard Yes, filings, MCS-90 left to the page', () => {
   const record = baseRecord();
   record.applicant.dot = '1234567';
   const plan = buildPlan(record, progressive, {});
@@ -100,11 +100,23 @@ test('Progressive standard answers: USDOT belongs to the business is the agent\'
   assert.equal(byQ(plan, '2A5').kind, 'first-option', 'home address: always the first choice');
   assert.equal(byQ(plan, '2CE3').value, true, 'no equipment (Add Vehicle and Rates: one field)');
   assert.equal(byQ(plan, '1FDD').value, 'Not selected', 'UMPD');
-  // 2026-10-09: an attestation, never filled (TNI's 2026-10-01 Yes is reversed); the lookup's
-  // registered names are still compared (businessNames).
-  assert.equal(byQ(plan, '20F').value, null);
-  assert.match(byQ(plan, '20F').note, /belong/);
+  // TNI 2026-10-20: Yes, a standard (the agent's from 2026-10-09); the lookup's registered names are
+  // still compared (businessNames), so a different registered name stays the agent's.
+  assert.equal(byQ(plan, '20F').value, true);
+  assert.equal(byQ(plan, '20F').standard, true);
+  assert.equal(byQ(plan, '20F').manualOnly, false);
   assert.deepEqual(byQ(plan, '20F').businessNames, ['Synthetic Expediter LLC']);
+  assert.equal(byQ(plan, '20F').keepChoice, true, 'never pre-selected by Progressive: an answer there is a person\'s');
+  // No business or owner name on the intake: nothing to check the USDOT record against, so the
+  // agent attests it (not a standard left unfilled).
+  const nameless = baseRecord();
+  Object.assign(nameless.applicant, { dot: '1234567', name: null, owner1: null });
+  const unchecked = byQ(buildPlan(nameless, progressive, {}), '20F');
+  assert.equal(unchecked.value, null);
+  assert.equal(unchecked.source, 'attestation');
+  assert.equal(unchecked.standard, false);
+  assert.equal(unchecked.manualOnly, true);
+  assert.match(unchecked.note, /no business or owner name/);
   assert.equal(byQ(plan, 'F11').value, true);
   assert.equal(byQ(plan, 'F11').standard, true, 'kept as TNI\'s 2026-10-01 decision, marked standard');
   assert.equal(plan.find((step) => step.re === '^federal( liability)?( filing)?$').value, true);
@@ -191,7 +203,7 @@ test('filings follow the intake; a missing USDOT number is only a warning', () =
   assert.match(byQ(plan, 'CA').note, /no USDOT/i);
   record.applicant.dot = '1234567';
   assert.equal(byQ(buildPlan(record, progressive, {}), 'CA').value, true);
-  assert.equal(byQ(buildPlan(record, progressive, {}), '20F').value, null, 'the agent confirms the number is the client\'s');
+  assert.equal(byQ(buildPlan(record, progressive, {}), '20F').value, true, 'TNI\'s standard Yes (2026-10-20)');
 });
 
 test('absent DOT: No only when the intake says no USDOT within 60 days; no answer is the agent\'s', () => {
@@ -477,9 +489,21 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   for (const state of ['TX', 'MD']) {
     const other = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {}), '1E8D');
     assert.deepEqual([other.value, other.ignore], [null, true], state);
-    assert.match(other.emptyNote, /Florida only/, `${state}: an empty PIP goes to the agent`);
+    assert.match(other.emptyNote, /Florida and Arkansas only/, `${state}: an empty PIP goes to the agent`);
   }
   assert.equal(byQ(plan, '1E8D').emptyNote, null);
+  // AR 2026-10-19 (live run): PIP is its own control there (PIPInput.Limit, captioned "Limit",
+  // unfamiliar until now). TNI's standard: 5k Medical and Hospital alone, where Progressive picked
+  // income loss, medical and accidental death. Elsewhere this control keeps Progressive's choice.
+  const ar = buildPlan({ ...record, garaging: { ...record.garaging, state: 'AR' } }, progressive, {});
+  assert.deepEqual([byQ(ar, '1FB2').field, byQ(ar, '1FB2').value, byQ(ar, '1FB2').source, byQ(ar, '1FB2').ignore, byQ(ar, '1FB2').emptyNote],
+    ['PIPInput.Limit', '5k Medical and Hospital', 'standard', false, null]);
+  assert.equal(byQ(ar, '1E8D').ignore, true, 'Florida\'s PIP standard is Florida\'s only');
+  for (const state of ['FL', 'TX']) {
+    const other = byQ(buildPlan({ ...record, garaging: { ...record.garaging, state } }, progressive, {}), '1FB2');
+    assert.deepEqual([other.value, other.ignore], [null, true], state);
+    assert.match(other.emptyNote, /Florida and Arkansas only/, state);
+  }
   record.applicant.dot = null;
   assert.equal(byQ(buildPlan(record, progressive, {}), '21E').ignore, true);
 });

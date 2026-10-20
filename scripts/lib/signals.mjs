@@ -6,6 +6,10 @@
 // A reporter only: counts and lists, no suggestions (learn.mjs owns those). For the weekly review
 // (.claude/skills/weekly-review), where "which build" tells a problem already fixed from a live one.
 
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { quoteSessions } from './events.mjs';
 import { receivedAt } from './daily.mjs';
 
@@ -28,12 +32,21 @@ const byVersion = (a, b) => {
 };
 
 // The page (or one-address application step) where a quote is done, per carrier: Progressive's
-// quote summary and print confirmation, AmWINS' last application step (Underwriting) or its
-// submission notice. A heuristic for the weekly numbers, not a carrier's definition.
+// quote summary, print confirmation or the printed quote PDF, AmWINS' last application step
+// (Underwriting) or its submission notice. A heuristic for the weekly numbers, not a carrier's
+// definition. A printed quote is done (TNI, 2026-10-20): Print/Send opens the PDF in a tab the
+// panel then follows, so the confirmation page in the quote tab may not be logged after it. The
+// panel's own page strip (a carrier's `quoteSteps`) is a separate list.
 export const FINAL = {
-  progressive: /^(Quote|PrintEmailFaxConfirm)$/,
+  progressive: /^(Quote|PrintEmailFaxConfirm|\/Express\/PDFHandler\.ashx)$/i,
   amwins: /› (Underwriting|Thank you for the submission)/,
 };
+// The agent's own click that ends a quote, on the page it is made: Progressive's Print/Send (the
+// agent's since 2026-10-07; logged in the quote tab, whether or not the PDF's page is).
+export const FINAL_CLICK = {
+  progressive: { page: /^PrintEmailFax$/, text: /^print\s*\/\s*send$/i },
+};
+const finalClick = (e) => e.type === 'agent_click' && !!FINAL_CLICK[e.carrier]?.page.test(e.page) && FINAL_CLICK[e.carrier].text.test(String(e.text ?? '').trim());
 // A carrier's login page reached in the middle of a quote: the carrier's session ran out.
 const LOGIN = /\/(auth\/)?login\b|\/login\//i;
 
@@ -41,15 +54,48 @@ const LOGIN = /\/(auth\/)?login\b|\/login\//i;
 // fingerprints the reviewer listed (`testIntakes`, full or leading hex).
 export const MIN_TEST_PREFIX = 8;
 const isTest = (e, testIntakes) => e.test === true || (!!e.intakeId && [...testIntakes].some((id) => String(e.intakeId).toLowerCase().startsWith(id)));
+// A short or non-hex line would match unrelated quotes: refused rather than hiding them.
+const badFingerprints = (list) => list.filter((x) => x.length < MIN_TEST_PREFIX || !/^[0-9a-f]+$/.test(x));
+const tooShort = (bad) => `Test fingerprints need at least ${MIN_TEST_PREFIX} hex characters: ${bad.join(', ')}`;
+
+// What the reports say without a local list (a git worktree, CI or another computer has no
+// reviews/test-intakes.txt).
+export const NO_TEST_LIST = 'No test-run list: the maintainer\'s test quotes are counted as agents\' work (fixture intakes and intakes marked as a test are still left out). Pass --tests <file>; from a git worktree, the main checkout\'s reviews/test-intakes.txt.';
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+// Intake PDFs that are tests wherever the review runs: the committed fixtures and the generated
+// synthetic intakes. Not client data, so their fingerprints need no local list.
+const FIXTURE_PDFS = ['test/fixtures', 'dist/synthetic-intakes/pdfs'];
+const pdfsIn = (dir) => (fs.existsSync(dir)
+  ? fs.readdirSync(dir, { withFileTypes: true, recursive: true }).filter((e) => e.isFile() && /\.pdf$/i.test(e.name)).map((e) => path.join(e.parentPath, e.name))
+  : []);
+
+/**
+ * The test-run list every review script uses: the fingerprints in `tests` (a file), else in
+ * <root>/reviews/test-intakes.txt when there is one, plus the SHA-256 of every PDF under
+ * test/fixtures/ and dist/synthetic-intakes/pdfs/. Throws when `tests` is missing or a line
+ * isn't at least MIN_TEST_PREFIX hex characters.
+ * @param {{tests?: string|null, root?: string}} opts  root: the repository (default this one)
+ * @returns {{file: string|null, intakes: string[], warning: string|null}}  file: the list read;
+ *   warning: NO_TEST_LIST when there was none, for stderr and the report
+ */
+export function readTestList({ tests = null, root = REPO } = {}) {
+  if (tests && !fs.existsSync(tests)) throw new Error(`--tests ${tests}: no such file.`);
+  const fallback = path.join(root, 'reviews', 'test-intakes.txt');
+  const file = tests || (fs.existsSync(fallback) ? fallback : null);
+  const listed = file ? fs.readFileSync(file, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim().toLowerCase()).filter(Boolean) : [];
+  const bad = badFingerprints(listed);
+  if (bad.length) throw new Error(`${file}: ${tooShort(bad)}`);
+  const fixtures = FIXTURE_PDFS.flatMap((dir) => pdfsIn(path.join(root, dir))).map((f) => createHash('sha256').update(fs.readFileSync(f)).digest('hex'));
+  return { file, intakes: [...new Set([...listed, ...fixtures])], warning: file ? null : NO_TEST_LIST };
+}
 
 // The sessions that are test runs: an intake loaded as one (marked before, `test` on
 // intake_loaded) or listed (`testIntakes`), and the agent's latest mark in the panel
 // (intake_marked: marked, or unmarked after). Shared with the review (scripts/review.mjs).
 export function testSessionsOf(all, testIntakes = []) {
   const listed = [...testIntakes].map((x) => String(x).trim().toLowerCase()).filter(Boolean);
-  // A short or non-hex line would match unrelated quotes: refuse it rather than hide them.
-  const tooShort = listed.filter((x) => x.length < MIN_TEST_PREFIX || !/^[0-9a-f]+$/.test(x));
-  if (tooShort.length) throw new Error(`Test fingerprints need at least ${MIN_TEST_PREFIX} hex characters: ${tooShort.join(', ')}`);
+  const bad = badFingerprints(listed);
+  if (bad.length) throw new Error(tooShort(bad));
   const tests = new Set(listed);
   const out = new Set(all.filter((e) => e.type === 'intake_loaded' && e.session && isTest(e, tests)).map((e) => e.session));
   const marks = new Map();
@@ -60,10 +106,12 @@ export function testSessionsOf(all, testIntakes = []) {
 
 /**
  * @param {object[]} all  every event (loadEvents), for which sessions are quotes
- * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>}} opts  since: ISO
- *   time the server received them from; testIntakes: intake fingerprints whose quotes are tests
+ * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>, answerKey?: object|null}} opts  since: ISO
+ *   time the server received them from; testIntakes: intake fingerprints whose quotes are tests;
+ *   answerKey: today's rules scored against TNI's answer key (answer-key.mjs scoreKey: `total`,
+ *   `decided`, `quotes`, `entries`, `proposed`), when one is configured
  */
-export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {}) {
+export function signals(all, { since = null, top: n = 12, testIntakes = [], answerKey = null } = {}) {
   // An unparsable `since` means no period, not an error.
   const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOString() : null;
   const testSessions = testSessionsOf(all, testIntakes);
@@ -210,9 +258,10 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     };
   });
 
-  // How each quote ended on each carrier it went to: done (its final page), declined (the carrier
-  // stopped it), or stopped at its last page; with its minutes from first to last carrier event,
-  // and whether the carrier's login came up in the middle (its session ran out).
+  // How each quote ended on each carrier it went to: done (its final page or final click, after
+  // this quote's own fill there), declined (the carrier stopped it), or stopped at its last page;
+  // with its minutes from first to last carrier event, and whether the carrier's login came up in
+  // the middle (its session ran out).
   const perQuote = new Map();
   for (const e of events) {
     if (!inPeriod.has(e.session) || !e.carrier || !e.page) continue;
@@ -223,9 +272,12 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     q.last = Math.max(q.last, t);
     const page = `${e.page}${e.step ? ` › ${mask(e.step)}` : ''}`;
     if (['page_view', 'fill_run', 'page_layout', 'fill_field', 'field_change'].includes(e.type)) q.lastPage = page;
-    if (FINAL[e.carrier]?.test(page) || FINAL[e.carrier]?.test(e.page)) q.done = true;
+    if (e.type === 'fill_run') q.seenWork = true;
+    // Only after this quote's own fill: the page the panel opens on may be the previous client's
+    // confirmation, or an old quote the agent reopened.
+    if (q.seenWork && (FINAL[e.carrier]?.test(page) || FINAL[e.carrier]?.test(e.page) || finalClick(e))) q.done = true;
     if (e.type === 'fill_run' && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
-    if (e.type === 'page_view' && LOGIN.test(e.page)) { if (q.seenWork) q.logins++; } else if (e.type === 'fill_run') q.seenWork = true;
+    if (e.type === 'page_view' && LOGIN.test(e.page) && q.seenWork) q.logins++;
     perQuote.set(k, q);
   }
   const outcomes = {};
@@ -264,6 +316,9 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     aiRequests: asks.length,
     aiErrorPercent: asks.length ? Math.round((asks.filter((a) => a.error).length / asks.length) * 100) : null,
     restrictedActions: [...actions].filter(([a]) => isRestricted(a)).reduce((x, [, c]) => x + c, 0),
+    // Not the period's: today's rules on the keyed quotes, whenever they were recorded.
+    // All keyed answers, and those the reviewer decided (not confirmed as proposed) apart.
+    answerKey: answerKey ? { quotes: answerKey.quotes, entries: answerKey.entries, proposed: answerKey.proposed, all: keyCounts(answerKey.total), decided: keyCounts(answerKey.decided) } : null,
   };
 
   // Crashes in the panel (client_error), by build and message; test runs too.
@@ -350,23 +405,38 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
   };
 }
 
-// The same as Markdown, for the weekly brief.
-export function markdown(s) {
+const keyCounts = (t) => Object.fromEntries(['cells', 'right', 'wrong', 'missed', 'invented', 'unsure', 'unkeyed'].map((x) => [x, t[x]]));
+
+// The answer key's weekly number: of the keyed answers judged, the share today's rules get right,
+// for every keyed answer and for the reviewer's decided ones (a proposal agrees with the rules by
+// construction), with how many entries were accepted as proposed.
+const keyLine = (a) => {
+  const part = (c) => {
+    const judged = c.right + c.wrong + c.missed + c.invented;
+    return `${judged ? Math.round((c.right / judged) * 100) : '—'}% · ${c.wrong} · ${c.missed} · ${c.invented}`;
+  };
+  return `| Today's rules against TNI's answer key (${a.quotes} keyed intake${a.quotes === 1 ? '' : 's'}, their quotes of any date): right · wrong · missed · invented (must be 0), all answers / decided by the reviewer; entries accepted as proposed | ${part(a.all)} / ${part(a.decided)}; ${a.proposed} of ${a.entries} |`;
+};
+
+// The same as Markdown, for the weekly brief. noTestList: no test-run list was found.
+export function markdown(s, { noTestList = false } = {}) {
   const L = [];
   const list = (rows, unit = '') => (rows.length ? rows.map(([k, v]) => `- ${v}${unit} · ${k}`) : ['None.']);
   L.push(`# Weekly signals ${s.since ? `since ${s.since.slice(0, 16).replace('T', ' ')} UTC` : '(all data)'}`, '');
   L.push(`${s.events} events · ${s.quotes} quotes · ${s.runs} fill runs (${s.blockedRuns} ended with something holding Continue). Newest version seen: ${s.newestVersion ?? '?'}.${s.kpis.testRunsLeftOut ? ` ${s.kpis.testRunsLeftOut} test run(s) left out.` : ''}`, '');
+  if (noTestList) L.push(`**${NO_TEST_LIST}**`, '');
   const k = s.kpis;
   L.push('## Weekly numbers', '', 'Per quote (a quote re-filled many times counts once). Track these week over week.', '', '| Number | Value |', '| --- | --- |',
     `| Quotes (on any carrier · per carrier) | ${k.quotes} · ${k.carrierQuotes} |`,
-    `| Quotes done (reached the carrier's final page) | ${k.donePercent ?? '—'}% |`,
+    `| Quotes done (reached the carrier's final page or printed) | ${k.donePercent ?? '—'}% |`,
     `| Median minutes for a done quote | ${k.medianMinutesDone ?? '—'} |`,
     `| Answers filled by the rules, per quote | ${k.filledPerQuote ?? '—'} |`,
     `| Autofilled answers the agent corrected, per 100 filled (another value or cleared; reformatted apart: ${k.reformatted}) | ${k.correctedPer100Filled ?? '—'} (${k.corrected}) |`,
     `| Left to the agent per quote: ${Object.keys(k.leftPerQuote).join(' / ') || '—'} | ${Object.values(k.leftPerQuote).join(' / ') || '—'} |`,
     `| Problem reports per 10 quotes (plus ${k.problemReportsInTestRuns} in test runs) | ${k.problemReportsPer10Quotes ?? '—'} |`,
     `| AI requests · error rate | ${k.aiRequests} · ${k.aiErrorPercent ?? '—'}% |`,
-    `| Restricted actions by the extension (must be 0) | ${k.restrictedActions} |`, '');
+    `| Restricted actions by the extension (must be 0) | ${k.restrictedActions} |`,
+    ...(k.answerKey ? [keyLine(k.answerKey)] : []), '');
   L.push('## Builds', '', 'Which version and copy logged the period (store: Web Store zip, unpacked: the development package, source: repository files). A problem seen only on older builds may already be fixed.', '');
   L.push('| Version | Channel | Commits | Rule sets | Quotes | Events | Agents | First – last received |', '| --- | --- | --- | --- | --- | --- | --- | --- |');
   for (const b of s.builds) L.push(`| ${b.version} | ${b.channel} | ${b.commits.join(', ') || '—'} | ${b.rules.join(', ') || '—'} | ${b.quotes} | ${b.events} | ${b.agents.join(', ') || '—'} | ${b.first.slice(0, 10)} – ${b.last.slice(0, 10)} |`);
@@ -374,7 +444,7 @@ export function markdown(s) {
   for (const [carrier, f] of Object.entries(s.funnel)) {
     L.push(`**${carrier}** (${f.quotes} quotes)`, '', '| Page | Quotes |', '| --- | --- |', ...f.pages.map((p) => `| ${p.page} | ${p.quotes} |`), '');
   }
-  L.push('## How quotes ended', '', 'Per carrier a quote went to: done (its final page), declined by the carrier, or stopped at its last page (finished elsewhere, abandoned, or still open). A login in the middle means the carrier\'s session ran out.', '');
+  L.push('## How quotes ended', '', 'Per carrier a quote went to: done (its final page or Progressive\'s Print/Send, after the quote\'s own fill), declined by the carrier, or stopped at its last page (finished elsewhere, abandoned, or still open). A login in the middle means the carrier\'s session ran out.', '');
   for (const [carrier, o] of Object.entries(s.outcomes)) {
     L.push(`**${carrier}**: ${o.quotes} quotes · ${o.done} done (median ${o.medianMinutesDone ?? '—'} min) · ${o.declined} declined · ${o.loginInterrupted} interrupted by a login`, '', ...(o.stopped.length ? o.stopped.map(([p, c]) => `- stopped at ${p}: ${c}`) : []), '');
   }

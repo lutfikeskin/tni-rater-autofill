@@ -132,6 +132,7 @@ const NOT_MAPPED = {
     'applicant.fein': 'not asked on the Business Auto application',
     'applicant.email': 'the contact email box is the agency\'s / left as the page has it',
     'applicant.owner2': 'AmWINS asks for one owner',
+    'drivers[].suffix': 'the AmWINS driver section has no suffix box (left out of the name boxes)',
     'operations.personalUse': 'not asked; usage is For Hire (derived) or the agent\'s',
     'operations.vehicleOwnership': 'TNI answers not owned, leased and additional interest No; a lienholder or lessor is added after the quote',
     'operations.usesEld': 'not asked on the Business Auto application',
@@ -351,13 +352,14 @@ test('business structure: a suffix is a corporation, no company is a sole propri
   agentsNote(structure('Synthetic Expediter', amwins));
 });
 
-test('facts the intake lacks are left to the agent: Progressive attestations; AmWINS loss runs are TNI standards', () => {
+test('facts the intake lacks are left to the agent: Progressive\'s prior-insurance fact; USDOT belongs and AmWINS loss runs are TNI standards', () => {
   const p = buildPlan(expediter(), progressive, {});
-  for (const q of ['20F', '2C97']) {
-    assert.ok(AGENT_SOURCES.includes(byQ(p, q).source), `q${q} is the agent's`);
-    agentsNote(byQ(p, q));
-  }
-  assert.match(byQ(p, '20F').note, /belong/i);
+  assert.ok(AGENT_SOURCES.includes(byQ(p, '2C97').source), 'q2C97 is the agent\'s');
+  agentsNote(byQ(p, '2C97'));
+  // TNI 2026-10-20: the USDOT number the lookup found belongs to the business is its standard Yes
+  // (the registered-name check stays in pagekit).
+  assert.equal(byQ(p, '20F').source, 'standard');
+  assert.equal(byQ(p, '20F').value, true);
   const a = buildPlan(with_({ 'drivers.0.maritalStatus': null, 'applicant.yearEstablished': null }), amwins, {});
   // TNI 2026-10-19: these are its standards, no longer the agent's (valued loss runs after a later
   // AmWINS run the same day).

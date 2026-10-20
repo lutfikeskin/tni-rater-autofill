@@ -18,7 +18,7 @@ Read `CLAUDE.md` (identical to `AGENTS.md`) first and follow it: task branch, sc
 ## 1. Group and branch
 
 ```bash
-git switch main && git pull --ff-only && git status --short   # clean tree
+git switch main && git pull --ff-only && git status --short   # clean tree; in a worktree: git fetch origin main, branch from origin/main
 npm ci                                                        # when package-lock.json changed
 ```
 
@@ -29,8 +29,12 @@ Before changing anything, record where `main` stands:
 ```bash
 npm test
 npm run e2e -- --fixtures                        # Progressive layout replays; must match test/e2e-baseline.json
-npm run benchmark -- --intakes <folder> --save reviews/benchmark-base.json   # only if scripts/benchmark.mjs exists and the maintainer gave the PDF folder
+npm run benchmark -- --intakes <folder> --save reviews/benchmark-base.json   # only if the maintainer gave the PDF folder
 ```
+
+When TNI's answer key exists (`layouts/answer-key/key.json`, its PDFs in `layouts/intakes`), add `--key layouts/answer-key/key.json` to that benchmark run (and `--intakes layouts/intakes` if the folder given doesn't hold them), so step 3 can compare the key's score.
+
+The usage data, `reviews/` and `layouts/` are ignored, so a worktree (`.claude/worktrees/<name>`) has none of them: they are in the main checkout folder, the first line of `git worktree list`. From a worktree, pass their paths (`node scripts/benchmark.mjs <main>/server-data --intakes <folder> --save <main>/reviews/benchmark-base.json`), and read raw captures from `<main>/layouts/`.
 
 A check that already fails on `main` is reported as such, not fixed silently inside an unrelated item.
 
@@ -65,14 +69,15 @@ Then compare answers on the same inputs:
 
 - **E2E baseline**: when a replay page's outcome changes, read the report (`reviews/e2e-<date>.md`) and explain every changed page in the PR. Accept it with `npm run e2e -- --update` only when each change is the intended one; never to turn a failure green.
 - **Benchmark** (when it ran in step 1): `npm run benchmark -- --intakes <folder> --against reviews/benchmark-base.json`. Every "now differs" and "handed to the agent" change is either the intended effect, listed in the PR, or a regression to fix before the PR.
+- **TNI's answer key** (when `layouts/answer-key/key.json` exists): run the base in step 1 and the branch both with `--key layouts/answer-key/key.json` (PDFs in `layouts/intakes`). Compare "Against TNI's answer key" before and after, both tables (every keyed answer, and the reviewer's decided answers: entries confirmed as proposed agree with the old rules by construction, so the decided table is the evidence), and read "Answer key compared with …": invented must stay 0, and every keyed answer that became wrong or missed is a regression to fix before the PR unless the maintainer decided the key's answer changes, in which case update the key with `npm run key:sheet -- --key` and say so. Put the counts in the PR (right, wrong, missed, invented, all and decided, before → after), never the key's values: it holds client answers.
 
 Re-read the diff against the item before opening the PR: does it fix the cause the evidence shows, and only that? Run a code review pass when one is available.
 
 ## 4. Documents, PR and ledger
 
 - Update every document that describes the changed behavior, command or data (`CLAUDE.md` rule), and keep `AGENTS.md` and `CLAUDE.md` identical if either changes.
-- Open the PR against `main`. Body: the item IDs and the ledger issue (`Refs #<n>`); expected versus actual for each item; the reproducing test; the checks run, with results; the e2e and benchmark changes, each explained; the documents changed (or why none); and **Watch next week**: each item's signature (event, field, page, result). No client data in the PR.
-- Update the ledger issue: each item's line gets its PR link and status `PR open`. After the maintainer merges: `merged <commit>`. After a store release: `released in <version>`. The next weekly review verifies it on builds that contain the fix.
+- Open the PR against `main`, its title ending with the item IDs (`… (W42-03)`, `… (W42-06, W42-10)`): `npm run ledger` finds an item's PR by its title or by the `PR #<n>` on its ledger line, never by a mention in a body. Body: the item IDs and the ledger issue (`Refs #<n>`); expected versus actual for each item; the reproducing test; the checks run, with results; the e2e and benchmark changes, each explained; the documents changed (or why none); and **Watch next week**: each item's signature in the ledger's structured form (event type, page, field and value). No client data in the PR.
+- Update the ledger issue's body, in place: the body is the ledger, comments are history (`gh issue view <n> --json body --jq .body > <file>`, edit the item's line, `gh issue edit <n> --body-file <file>`). Each item's line gets `PR #<n>` and the status `PR open`; after the maintainer merges, `merged <commit>`; after a store release, `released in <version>`. Write its signature in the structured form the weekly-review skill describes (step 7: `symptom …` or `expect …`), so `npm run ledger` counts it on builds that contain the fix next week. An item found only in a comment moves into the body.
 - Don't merge, bump the version, package for the store, upload or deploy unless the maintainer asks; `docs/chrome-web-store.md` and `docs/hosting.md` cover those steps. Say plainly that merged to `main` is not yet with the agents.
 
 ## 5. Report back
