@@ -282,6 +282,26 @@ export function parseLicense(v) {
   return { state: null, number: plain(s) };
 }
 
+// "Excluded" written in a driver's license-number box, as the whole box or after the number
+// ("EXCLUDED", "12345678 EXCLUDED", "D1234567 excl."): the client wants that driver excluded (TNI,
+// 2026-10-20, after a PA run where the box's "Excluded" was cleaned into a license number, typed
+// and refused). Only these forms count, at the end of the box: Exc, Excl, Exclude and Excluded,
+// with or without a period, or in parentheses ("EXCEPT", "EXCLUSION" or the word before the
+// number don't).
+const EXCLUDED_WORD = /(?:^|[^A-Za-z0-9]+)exc(?:l(?:uded?)?)?\.?\)?$/i;
+
+/**
+ * A license-number box with the "Excluded" at its end taken off. What is written before the word
+ * is the license number when it has a digit; anything else ("DRIVER EXCLUDED") is no number.
+ * @returns {{ license: string|null, excluded: boolean }}
+ */
+function licenseBox(box) {
+  const m = box?.match(EXCLUDED_WORD);
+  if (!m) return { license: box ?? null, excluded: false };
+  const before = clean(box.slice(0, m.index));
+  return { license: /\d/.test(before ?? '') ? before : null, excluded: true };
+}
+
 const KNOWN_FIELDS = new Set([
   'date_of_application', 'email', 'dot_number', 'mc_number', 'mc_dot_60days', 'phone_number', 'company_name',
   'year_established', 'owner_name_1', 'owner_name_2', 'owner_drives', 'years_experience', 'garaging_address',
@@ -460,13 +480,19 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       maritalStatus: txt(MARITAL_FIELDS[i]),
       // Not on the intake (schema NOT_ON_INTAKE): the agent's to set.
       gender: null,
+      // True when the license-number box says "Excluded" (licenseBox); the intake asks nothing else
+      // about it, so it is otherwise unanswered, not No.
+      excluded: null,
     };
     const rawDob = txt(`drv_dob_${n}`);
-    const rawLic = txt(`drv_lic_${n}`);
-    if (!d.first && !d.last && !rawDob && !rawLic) return;
+    const licBox = txt(`drv_lic_${n}`);
+    if (!d.first && !d.last && !rawDob && !licBox) return;
     const idx = record.drivers.length;
     const p = (k) => `drivers[${idx}].${k}`;
     const who = [d.first, d.last].filter(Boolean).join(' ') || `Driver ${n}`;
+    // The license number is the box without an "Excluded" at its end, which marks the driver.
+    const { license: rawLic, excluded } = licenseBox(licBox);
+    if (excluded) d.excluded = true;
 
     if (rawDob) {
       d.dob = toDate(rawDob);
@@ -488,6 +514,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     if (!d.licenseState) check('license-state.missing', p('licenseState'), `${who}: no license state.`);
     if (rawLic && plain(rawLic) !== rawLic.toUpperCase()) {
       info('license.cleaned', p('licenseNumber'), `${who}: license number written as "${rawLic}", entered as ${d.licenseNumber} (letters and digits only).`);
+    }
+    if (excluded) {
+      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}": the driver is to be excluded, and ${d.licenseNumber ? `the license number is ${d.licenseNumber}` : 'it has no license number'}. Excluding them is yours, and it usually needs the insured's signed form: Progressive's exclude question is left to you; AmWINS has none and lists them like any driver.`);
     }
 
     if (name.suffix) {

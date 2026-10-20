@@ -44,7 +44,7 @@ export const TNI_RULES = `
 
 ## Drivers (AddDriver)
 - License state: the full state name. License number: letters and digits only, keeping a state prefix the intake writes ("IL - S123" is "ILS123").
-- Exclude this driver: No for a driver listed on the intake; excluding a driver is the agent's decision.
+- Exclude this driver: No for a driver listed on the intake, except a driver the intake marks excluded ("Excluded" written in their license-number box, which isn't part of the license number): that one is the agent's. Excluding a driver is the agent's decision.
 - Year CDL issued: the intake's CDL year; "Year is unknown" is the agent's.
 - Defensive driver discount: No, unless the intake's description box mentions a defensive driving course (then the agent answers it).
 - Accidents, claims or violations in the past 3 (or 5) years: from the intake's claims answer (its first line; later lines in the claims box sometimes answer other questions). When it is neither Yes nor No: No (TNI standard), unless the intake's notes (the claims box, Additional Notes) mention an accident, claim, violation, ticket or points, or the intake says an SR-22 is needed; then the agent's.

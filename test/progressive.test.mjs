@@ -750,6 +750,22 @@ test('defensive driver discount: No, unless the description box mentions a cours
   assert.deepEqual([fromNotes.value, /defensive driving course/.test(fromNotes.note ?? '')], [null, true]);
 });
 
+// PA 2026-10-20 (live run): the intake's license box said "Excluded" for driver 1 of 4, and the
+// exclude question was answered No, the opposite of the intake.
+test('Exclude this driver: No for a listed driver, never for one the intake marks excluded (the agent\'s)', () => {
+  const record = baseRecord();
+  record.drivers.push({ first: 'Sam', middle: null, last: 'Kone', dob: '03/04/1985', licenseNumber: null, licenseState: 'MD', excluded: true });
+  const step = (drivers, q = '28C1') => byQ(buildPlan(record, progressive, { drivers }), q);
+  assert.deepEqual([step(0).value, step(0).source, step(0).note], [false, 'derived', null], 'the other driver: No, as before');
+  assert.deepEqual([step(1).value, step(1).source, step(1).manualOnly], [null, 'attestation', true]);
+  assert.match(step(1).note, /^The intake marks this driver as excluded: exclude them yourself/);
+  // The box held only the word: no license number, so that box is the agent's too.
+  assert.equal(step(1, '28B9').value, null);
+  // The agent's No in client details: No, as for any listed driver.
+  record.drivers[1].excluded = false;
+  assert.deepEqual([step(1).value, step(1).source], [false, 'derived']);
+});
+
 // TNI, 2026-10-19 (SC live run: each went to the agent and to Luna, though TNI's answer is No).
 test('TNI standards of 2026-10-19: blank placard, claims, filings (no USDOT / MC) and a vehicle under a year are No', () => {
   const step = (record, q) => byQ(buildPlan(record, progressive, { drivers: 0, vehicles: 0 }), q);

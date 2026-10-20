@@ -69,7 +69,7 @@ FIELDS['priorInsurance[0]'] = FIELDS.priorInsurance;
 // A driver's, vehicle's or trailer's answer is in its form row (`rows`, from normalizeIntake).
 const DRIVER = {
   first: ['drv_first'], middle: ['drv_first'], last: ['drv_last'], suffix: ['drv_first', 'drv_last'], dob: ['drv_dob'], licenseNumber: ['drv_lic'],
-  licenseState: ['drv_state', 'drv_lic'], cdl: ['drv_cdl'], cdlYear: ['drv_cdl_yr'],
+  licenseState: ['drv_state', 'drv_lic'], cdl: ['drv_cdl'], cdlYear: ['drv_cdl_yr'], excluded: ['drv_lic'],
 };
 const UNIT = ['type', 'year', 'make', 'model', 'vin', 'value'];
 const LISTS = { drivers: 'drv', vehicles: 'veh', trailers: 'trl' };

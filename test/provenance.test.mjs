@@ -144,6 +144,7 @@ const NOT_MAPPED = {
     'operations.licensePlate': 'not asked on the Business Auto application',
     'drivers[].cdl': 'AmWINS has no CDL question; the license year is TNI\'s birth year + 17',
     'drivers[].cdlYear': 'AmWINS has no CDL question; the license year is TNI\'s birth year + 17',
+    'drivers[].excluded': 'the AmWINS driver section has no exclusion question (its "Exclude …" boxes are coverage exclusions): Check intake tells the agent',
     'trailerInfo.ownership': 'AmWINS has no trailer section (the trailer is a disclosure line)',
     'trailerInfo.hitch': 'AmWINS has no trailer section',
     'trailerInfo.interchange': 'AmWINS has no trailer section',

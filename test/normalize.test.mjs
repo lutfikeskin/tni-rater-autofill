@@ -694,6 +694,50 @@ test('a suffix or a middle initial written in a name box is kept apart from the 
   assert.equal(plan.find((s) => s.q === '2899').ignore, true);
 });
 
+// PA 2026-10-20 (live run): driver 1 of 4 had "Excluded" in the license-number box, meaning the
+// client wants that driver excluded. It was cleaned into a license number, typed and refused after
+// Continue, and Progressive's exclude question was answered No.
+test('"Excluded" in a license-number box marks the driver excluded and is left out of the number', () => {
+  const today = { today: new Date('2026-09-30') };
+  const one = (box) => normalizeIntake({ ...raw, drv_lic_1: box }, today);
+  const read = (r) => [r.record.drivers[0].licenseNumber, r.record.drivers[0].excluded];
+  const codes = (r) => r.warnings.filter((w) => w.path?.startsWith('drivers[0].')).map((w) => w.code);
+  for (const [box, number] of [
+    ['Excluded', null], ['EXCLUDED', null], ['exclude', null], ['Excl', null], ['Excl.', null], ['EXC', null],
+    ['12345678 EXCLUDED', '12345678'], ['D1234567 excl.', 'D1234567'], ['12345678, Excluded', '12345678'],
+    ['12345678 (Excluded)', '12345678'], ['IL - S12345678901 Exc', 'ILS12345678901'],
+    // A word before it is no number.
+    ['Driver excluded', null],
+  ]) {
+    const r = one(box);
+    assert.deepEqual(read(r), [number, true], box);
+    const w = r.warnings.find((x) => x.code === 'license.excluded');
+    assert.deepEqual([w?.level, w?.path], ['check', 'drivers[0].excluded'], box);
+    assert.ok(w.msg.includes(`license-number box "${box}"`), `${box}: the item quotes the box`);
+    // Nothing left is no license number, as for a blank box.
+    assert.equal(codes(r).includes('license.missing'), number == null, box);
+  }
+  // The number before the word is cleaned like any other; the word itself is no cleanup.
+  const dashed = one('D1234-567 excl.');
+  assert.deepEqual(read(dashed), ['D1234567', true]);
+  assert.match(dashed.warnings.find((w) => w.code === 'license.cleaned').msg, /written as "D1234-567", entered as D1234567/);
+  assert.ok(!codes(one('12345678 EXCLUDED')).includes('license.cleaned'));
+  // Anything else is read as before: a number, another word starting with "exc".
+  for (const box of ['12345678', 'D1234567', 'EXCEPT', '12345678 EXCEPT', 'EXCLUSION']) {
+    const r = one(box);
+    assert.deepEqual(read(r), [parseLicense(box).number, null], box);
+    assert.ok(!codes(r).includes('license.excluded'), box);
+  }
+  assert.ok(record.drivers.every((d) => d.excluded === null), 'the sample intake marks no one');
+  // Progressive: the license number box gets the number before the word, or is the agent's; the
+  // exclude question is never No for this driver.
+  const step = (box, q) => buildPlan(one(box).record, progressive, { drivers: 0 }).find((s) => s.q === q);
+  assert.equal(step('12345678 EXCLUDED', '28B9').value, '12345678');
+  assert.equal(step('Excluded', '28B9').value, null);
+  for (const box of ['Excluded', '12345678 EXCLUDED']) assert.deepEqual([step(box, '28C1').value, step(box, '28C1').manualOnly], [null, true], box);
+  assert.equal(step('12345678', '28C1').value, false);
+});
+
 // PR #17 review: a mention ("no bobtail") must never become NTL coverage. The agent sets it.
 test('NTL / non-trucking / bobtail in the claims box asks the agent; coverage.ntl stays unset', () => {
   const today = { today: new Date('2026-09-30') };
