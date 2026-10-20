@@ -778,3 +778,16 @@ test('multi-vehicle intake: unit before the city, three vehicles with their type
   assert.equal(r.operations.businessClass, 'Expediter');
   assert.ok(!w.some((x) => x.path?.startsWith('vehicles')), 'no vehicle warnings');
 });
+
+// TNI (2026-10-20): a company-name box saying there is no company means a sole proprietor.
+test('a company name of NO / N/A / None is no company: a sole proprietor', () => {
+  for (const name of ['NO', 'No.', 'N/A', 'NA', 'N.A.', 'n / a', 'None', 'NONE.', 'Not applicable', 'No company']) {
+    const { record: r, warnings: w } = normalizeIntake({ ...raw, company_name: name }, { today: new Date('2026-09-30') });
+    assert.equal(r.applicant.name, null, name);
+    assert.equal(buildPlan(r, progressive, {}).find((s) => s.q === '22D').value, 'Individual / Sole Proprietor', name);
+    if (!/^(n\/a|na|none)$/i.test(name)) assert.ok(w.some((x) => x.code === 'company.none'), name);
+  }
+  for (const name of ['Nova Freight LLC', 'NOA Trucking', 'Nolan Inc']) {
+    assert.equal(normalizeIntake({ ...raw, company_name: name }, { today: new Date('2026-09-30') }).record.applicant.name, name);
+  }
+});

@@ -63,7 +63,7 @@ test('owner name punctuation and reversed order still match the unique driver DO
   assert.equal(byQ(plan, '295').value, 'Amina');
   assert.equal(byQ(plan, '297').value, 'Kone');
   record.drivers.push({ ...record.drivers[0], dob: '02/03/1985' });
-  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, null);
+  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, '01/02/1980', 'two drivers by that name: the first one listed (TNI, 2026-10-20)');
 });
 
 test('prefilled insurance type without limit or expiry means currently insured No', () => {
@@ -610,7 +610,13 @@ test('the owner is never another driver: first names must agree, and a non-drivi
   o = owner(record);
   assert.equal(o.driver, null, 'the owner drives, but the sole driver has another first name');
   assert.equal(o.first, 'Alice');
-  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, null);
+  // TNI (2026-10-20): the owner is always on the driver list, usually first, so the date of birth
+  // is the first driver's when no name matches; the name parts stay the owner box's.
+  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, '01/02/1990');
+  assert.equal(byQ(buildPlan(record, progressive), '1B8B').value, '01/02/1990');
+  record.applicant.ownerDrives = null;
+  assert.equal(byQ(buildPlan(record, progressive), '2BB').value, '01/02/1990', 'not answered is not "doesn\'t drive"');
+  record.applicant.ownerDrives = true;
   record.drivers = [{ first: 'Alice', middle: null, last: 'Sample', dob: '03/04/1985' }];
   assert.equal(owner(record).driver?.dob, '03/04/1985', 'the exact full name links');
   record.applicant.ownerDrives = false;

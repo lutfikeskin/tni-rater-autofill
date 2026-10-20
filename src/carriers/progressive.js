@@ -44,7 +44,9 @@ const explicitBoolean = (record, path) => {
 // The business owner, matched to their driver row (for date of birth and a clean name split).
 // An intake saying the owner doesn't drive links no row, whatever the names: the name parts come
 // from the owner box alone and the date of birth stays the agent's (a driver with the owner's
-// surname is another person).
+// surname is another person). The owner is always on the driver list, usually first (TNI,
+// 2026-10-20): with no single name match, the date of birth (`dob`) is the first name-matching
+// driver's, else the first driver's.
 export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
@@ -65,7 +67,8 @@ export function owner(r) {
   const driver = fullMatches.length === 1 ? fullMatches[0] : fullMatches.length ? null : lastMatches.length === 1 ? lastMatches[0]
     : repeatedFirst ? sole : firstOnly.length === 1 ? firstOnly[0] : null;
   const first = driver?.first ?? full.split(/\s+/).slice(0, -1).join(' ');
-  return { driver, first: first || null, middle: driver?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : driver?.last ?? full.split(/\s+/).at(-1) ?? null };
+  const dob = (driver ?? fullMatches[0] ?? lastMatches[0] ?? candidates[0])?.dob ?? null;
+  return { driver, dob, first: first || null, middle: driver?.middle ?? null, last: repeatedFirst ? full.split(/\s+/).at(-1) : driver?.last ?? full.split(/\s+/).at(-1) ?? null };
 }
 
 // "Is the customer currently insured with Progressive Commercial Auto?" Yes only when the
@@ -293,8 +296,9 @@ const OTHER_GROUP = { AA: 'Other business coverages', A7: 'Other business covera
 const truckerType = (r) => (isExpediter(r) ? 'Other For-Hire Trucking' : null);
 // LLC / Inc / Corp in the company name means a corporation; no company name means a sole proprietor
 // (the owner-operators quoted so far). A company name without a suffix is the agent's (it may be a
-// partnership or an unsuffixed LLC). Partnerships are never guessed.
-const CORPORATE_SUFFIX = /\b(llc|l\.l\.c|inc|corp|corporation|company|co)\.?$/i;
+// partnership or an unsuffixed LLC). Partnerships are never guessed. LLC / Inc / Corp count
+// anywhere as a word ("SAMPLE LLC DBA EXAMPLE FREIGHT"); Company / Co only at the end.
+const CORPORATE_SUFFIX = /\b(?:l\.?l\.?c|inc|incorporated|corp|corporation)\b|\b(?:company|co)\.?$/i;
 const businessStructure = (r) => (CORPORATE_SUFFIX.test(r.applicant.name ?? '') ? 'Corporation or LLC / Non-Profit'
   : !String(r.applicant.name ?? '').trim() ? 'Individual / Sole Proprietor' : null);
 const businessStructureNote = (r) => (businessStructure(r) == null
@@ -631,7 +635,7 @@ export const progressive = {
       { q: '297', source: 'derived', field: 'AccountInput.BusinessOwnerLastName', ask: 'Last Name', name: 'Owner last name', value: (r) => owner(r).last },
       { q: '298', field: 'AccountInput.BusinessOwnerSuffix', ask: 'Suffix', optional: true, name: 'Owner suffix (optional)', ignore: true },
       { q: '29F', field: 'AccountInput.DriverInPolicyIndicator', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives' },
-      { q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
+      { q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', value: (r) => owner(r).dob },
       // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
       { q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
       { q: '2DD', field: 'AccountInput.PhoneThreeDigitsString', ask: 'Three digit prefix of phone', name: 'Phone prefix (optional)', ignore: true },
@@ -652,7 +656,7 @@ export const progressive = {
       { q: '1B84', source: 'derived', field: 'CurrentAddress.Address1', ask: 'Home Address', name: 'Owner home address (NoHit)', value: (r) => r.garaging?.street ?? null },
       { q: '1B85', field: 'CurrentAddress.City', ask: 'City', path: 'garaging.city', name: 'Owner home city (NoHit)' },
       { q: '1B89', field: 'CurrentAddress.ZipCode', ask: 'Zip Code', path: 'garaging.zip', name: 'Owner home ZIP (NoHit)' },
-      { q: '1B8B', source: 'derived', field: 'NoHitCredit.DOB', ask: 'Date of Birth', name: 'Owner date of birth (NoHit)', kind: 'date', value: (r) => owner(r).driver?.dob ?? null },
+      { q: '1B8B', source: 'derived', field: 'NoHitCredit.DOB', ask: 'Date of Birth', name: 'Owner date of birth (NoHit)', kind: 'date', value: (r) => owner(r).dob },
       { q: '1B8D', field: 'NoHitCredit.SSN', ask: 'Social Security Number', name: 'Social Security Number (never filled; the agent enters one only if the client gave it)', ignore: true },
     ]),
 

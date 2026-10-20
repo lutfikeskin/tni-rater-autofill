@@ -12,6 +12,9 @@ export const ROWS = [1, 2, 3, 4];
 export const MARITAL_FIELDS = ['marital_stat_1.0', 'marital_stat_1.1', 'marital_stat_1.2.0', 'marital_stat_1.2.1'];
 
 const BLANK = /^(n\/?a|none|null|nil|unknown|-+|\.+|select\*?)$/i;
+// A company-name box saying there is no company ("NO", "N.A.", "None.", "No company"): the owner
+// is a sole proprietor (TNI, 2026-10-20). Only for that box: "NO" elsewhere is an answer.
+const NO_COMPANY = /^(?:no(?:ne)?|n\s*[\/.]?\s*a\.?|nil|not applicable|no (?:company|business|name)(?: name)?)\.?$/i;
 // Radius answers that mean the widest band (the carrier rules map them to "more than 500 miles"):
 // unlimited, long haul, nationwide, OTR, "48 states" / "lower 48", anywhere. Whole words only: a
 // bare "48" is 48 miles, and "any" must not be found inside "company".
@@ -356,7 +359,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const rows = { drivers: [], vehicles: [], trailers: [] };
   const record = {
     applicant: {
-      name: txt('company_name'),
+      name: NO_COMPANY.test(txt('company_name') ?? '') ? null : txt('company_name'),
       dot: idNumber('dot_number', 'applicant.dot', 'USDOT #', /^\d{1,8}$/),
       mc: idNumber('mc_number', 'applicant.mc', 'MC #', /^\d{1,8}$/),
       mcDotWithin60Days: yesNo(raw.mc_dot_60days),
@@ -536,6 +539,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     record.drivers.push(d);
     rows.drivers.push(n);
   });
+  if (NO_COMPANY.test(txt('company_name') ?? '')) info('company.none', 'applicant.name', `Company name "${txt('company_name')}": no company, so a sole proprietor.`);
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
   if (a.ownerDrives && a.owner1) {
     if (!record.drivers.some((d) => ownerIsDriver(a.owner1, d))) {

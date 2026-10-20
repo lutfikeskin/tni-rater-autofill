@@ -338,6 +338,10 @@ test('business structure: a suffix is a corporation, no company is a sole propri
   assert.equal(structure('Synthetic Expediter LLC', progressive).value, 'Corporation or LLC / Non-Profit');
   assert.equal(structure('Synthetic Expediter Inc.', progressive).value, 'Corporation or LLC / Non-Profit');
   assert.equal(structure(null, progressive).value, 'Individual / Sole Proprietor');
+  for (const name of ['Sample L.L.C.', 'Sample LLC DBA Example Freight', 'Sample Corp. Trucking', 'Sample, Incorporated']) {
+    assert.equal(structure(name, progressive).value, 'Corporation or LLC / Non-Profit', name);
+  }
+  for (const name of ['Incline Freight', 'Corporate Haulers', 'Cole Co Trucking']) assert.equal(structure(name, progressive).value, null, name);
   agentsNote(structure('Synthetic Expediter', progressive));
   // Codex on 2dcd1e8: a bare name's structure is the agent's, never the AI's (clientFact).
   assert.equal(structure('Synthetic Expediter', progressive).manualOnly, true);
