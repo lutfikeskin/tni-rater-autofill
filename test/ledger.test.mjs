@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import {
   buildContains, cellNumber, combine, compareVersions, fixOf, gitReader, judgeItem, markdown, matches,
-  parseItemLine, parseLedger, parsePattern, parseSignature, scenarioOf, weeklyRows,
+  parseItemLine, parseLedger, parsePattern, parseSignature, scenarioOf, unknownField, weeklyRows,
 } from '../scripts/lib/ledger.mjs';
 
 // ---------- the ledger's text ----------
@@ -81,7 +82,7 @@ test('the ledger gives its period, weekly numbers and items; comment items only 
 
 // ---------- signatures ----------
 
-test('a structured signature names kind, event, conditions and scenario; free text counts the events it names', () => {
+test('a structured signature names kind, event, conditions and scenario; free text only names events', () => {
   const p = parsePattern('symptom fill_field page=AddDriver result=failed label~"license number" when fill_run page=AddDriver');
   assert.equal(p.kind, 'symptom');
   assert.equal(p.type, 'fill_field');
@@ -93,16 +94,41 @@ test('a structured signature names kind, event, conditions and scenario; free te
   assert.deepEqual(two.patterns.map((x) => x.type), ['fill_field', 'check_dismissed']);
   assert.equal(parseSignature('expect agent_click; symptom client_error').patterns.length, 2);
 
-  const free = parseSignature('`fill_field.source`, `check_dismissed` and `key` with `[client]`');
+  // Free text is never judged: no patterns, only the events it names (unknown types and fields left out).
+  const free = parseSignature('`fill_field.source`, `check_dismissed`, `made_up` and `key` with `[client]`');
   assert.equal(free.structured, false);
-  assert.deepEqual(free.patterns.map((x) => [x.kind, x.type, x.conds.map((c) => `${c.path}${c.op}${c.value}`).join(), x.free]), [['expect', 'fill_field', 'source=*', true], ['expect', 'check_dismissed', '', true]]);
-  assert.deepEqual(parseSignature('AddVehicle `fill_run` advanced').patterns.map((x) => x.type), ['fill_run']);
-  assert.equal(parseSignature('`key` with `[client]` inside a word').patterns.length, 0);
+  assert.deepEqual(free.patterns, []);
+  assert.deepEqual(free.named.map((x) => [x.type, x.conds.map((c) => `${c.path}${c.op}${c.value}`).join()]), [['fill_field', 'source=*'], ['check_dismissed', '']]);
+  assert.deepEqual(parseSignature('AddVehicle `fill_run` advanced').named.map((x) => x.type), ['fill_run']);
+  assert.equal(parseSignature('`key` with `[client]` inside a word').named.length, 0);
 
   // A malformed pattern is reported, not guessed at.
   assert.match(parseSignature('`symptom fill_field page`').error, /isn't field=value/);
   assert.throws(() => parsePattern('watch fill_field'), /opens with expect or symptom/);
   assert.throws(() => parsePattern('expect fill_run blockers>many'), /compares with a number/);
+});
+
+test('a condition on a field the server never keeps for that event is refused, not counted', () => {
+  // pageHasValue is a property of a page layout's fields, never of fill_field: such a symptom would
+  // never match, and the item would read as verified as soon as the question was filled.
+  assert.equal(parseSignature('`symptom fill_field key=ref:RiskInput.PrimaryZIP result=noData pageHasValue=true`').error, 'fill_field has no field pageHasValue');
+  assert.equal(parseSignature('`expect * nope=1`').error, 'no event has a field nope');
+  assert.equal(parseSignature('`expect made_up`').error, 'no event type made_up');
+  assert.equal(parseSignature('`expect fill_field result=filled when intake_loaded result=*`').error, 'intake_loaded has no field result');
+  // Common fields, fields the server adds, and dotted paths under a kept field are fine.
+  for (const ok of ['expect fill_field session=* receivedAt=* view=t1', 'expect intake_loaded platform.os=win counts.vehicles>2', 'expect * blockerList~GVW']) assert.doesNotThrow(() => parsePattern(ok), ok);
+  assert.equal(unknownField('page_layout', 'messages'), null);
+  assert.equal(unknownField('fill_run', 'source'), 'fill_run has no field source');
+});
+
+test('every example signature in the review skills parses and names kept fields', () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const files = ['.claude/skills/weekly-review/SKILL.md', '.claude/skills/weekly-review/references/brief-template.md', '.claude/skills/apply-review-fixes/SKILL.md', 'docs/learning.md'];
+  const examples = files.flatMap((f) => [...fs.readFileSync(path.join(root, f), 'utf8').matchAll(/`((?:expect|symptom) [^`]+)`/g)].map((m) => m[1]))
+    // Placeholders (`symptom …`, `expect <event> …`) are the grammar, not examples.
+    .filter((x) => !/[…<]/.test(x));
+  assert.ok(examples.length >= 4, `found ${examples.length} examples`);
+  for (const x of examples) assert.doesNotThrow(() => parsePattern(x), x);
 });
 
 test('conditions match equality, absence, substrings, regexes, numbers, arrays and dotted fields', () => {
@@ -120,7 +146,7 @@ test('conditions match equality, absence, substrings, regexes, numbers, arrays a
 });
 
 test("a symptom's default scenario is the same event where it happens; an expected event has none", () => {
-  const s = scenarioOf(parsePattern('symptom fill_field key=ref:RiskInput.PrimaryZIP result=noData pageHasValue=true'));
+  const s = scenarioOf(parsePattern('symptom fill_field key=ref:USDOTInput.ConfirmInformation result=noData controlKind=radio'));
   assert.deepEqual([s.type, s.conds.map((c) => c.path)], ['fill_field', ['key']]);
   assert.equal(scenarioOf(parsePattern('expect agent_settings')), null);
   assert.equal(scenarioOf(parsePattern('expect agent_settings when intake_loaded')).type, 'intake_loaded');
@@ -233,21 +259,37 @@ test('a symptom on a fixed build recurs; its scenario without it is verified; ne
   const verified = judgeItem(item('- [ ] W43-09 · S3 · Fix · License · approved · signature: `symptom fill_field page=AddDriver result=failed reason=format`'), period(), fixed);
   assert.equal(verified.status, 'verified');
   assert.deepEqual(verified.builds, ['0.9.10 ?']);
+  // Only the maintainer's test runs reached it: no plain "verified".
+  const onTests = judgeItem(item('- [ ] W43-09 · S3 · Fix · License · approved · signature: `symptom fill_field page=AddDriver result=failed reason=format`'), period(), fixed, new Set(['new1', 'new2']));
+  assert.deepEqual([onTests.status, onTests.patterns[0].reachedTests, onTests.patterns[0].testOnly], ['verified (test runs only)', 2, true]);
 });
 
-test('an expected event is verified when seen, recurs when missing from its scenario, and free text is marked', () => {
+test('an expected event is verified when seen, recurs when missing from its scenario; free text is never judged', () => {
   const seen = judgeItem(item('- [ ] W42-07 · S3 · Fix · Source · approved · signature: `expect fill_field source=*`'), period(), fixed);
   assert.equal(seen.status, 'verified');
   const missing = judgeItem(item('- [ ] W42-05 · S3 · Fix · Settings · approved · signature: `expect agent_settings when intake_loaded`'), period(), fixed);
   assert.equal(missing.status, 'recurred');
   assert.equal(missing.patterns[0].missing, 1);
+  // Free text describing a symptom: the named event is on fixed builds (even the failure itself),
+  // and still nothing is proposed; the counts are information only.
+  const free = judgeItem(item('- [ ] W43-03 · S3 · Fix · License · approved · signature: AddDriver `fill_field` failed on the license number'), period(), fixed);
+  assert.equal(free.status, 'check by hand');
+  assert.equal(free.patterns, undefined);
+  assert.deepEqual(free.named.map((x) => [x.text, x.quotes, x.older]), [['fill_field', 2, 1]]);
   const none = judgeItem(item('- [ ] W42-02 · S2 · Fix · Crashes · approved · signature: `client_error`'), period(), fixed);
-  assert.deepEqual([none.status, none.free], ['not exercised', true]);
-  const partly = judgeItem(item('- [ ] W42-07 · S3 · Fix · Both · approved · signature: `fill_field.source`, `check_dismissed`'), period(), fixed);
+  assert.deepEqual([none.status, none.named[0].quotes], ['check by hand', 0]);
+  const partly = judgeItem(item('- [ ] W42-07 · S3 · Fix · Both · approved · signature: `expect fill_field source=*`; `expect check_dismissed`'), period(), fixed);
   assert.equal(partly.status, 'verified in part');
   assert.equal(combine(['recurred', 'verified']), 'recurred');
-  const tests = judgeItem(item('- [ ] W42-07 · S3 · Fix · Source · approved · signature: `expect fill_field source=*`'), period(), fixed, new Set(['new1']));
-  assert.equal(tests.patterns[0].tests, 1);
+  assert.equal(combine(['verified', 'verified (test runs only)']), 'verified (test runs only)');
+  // Seen only in a test run: not plain verified; seen in an agent's quote too: verified.
+  const onTest = judgeItem(item('- [ ] W42-07 · S3 · Fix · Source · approved · signature: `expect fill_field source=*`'), period(), fixed, new Set(['new1']));
+  assert.deepEqual([onTest.status, onTest.patterns[0].tests], ['verified (test runs only)', 1]);
+  const onAgent = judgeItem(item('- [ ] W42-07 · S3 · Fix · Source · approved · signature: `expect fill_field source=*`'), period(), fixed, new Set(['new2']));
+  assert.equal(onAgent.status, 'verified');
+  // A signature the server's fields can't satisfy is reported, not judged.
+  const bad = judgeItem(item('- [ ] W43-02 · S3 · Fix · ZIP · approved · signature: `symptom fill_field result=noData pageHasValue=true`'), period(), fixed);
+  assert.deepEqual([bad.status, bad.note], ['check by hand', 'signature not read: fill_field has no field pageHasValue']);
 });
 
 test('items without a merged fix stay open; ticked, dropped and deferred ones are not judged', () => {
@@ -257,6 +299,10 @@ test('items without a merged fix stay open; ticked, dropped and deferred ones ar
   assert.equal(open('- [ ] W43-01 · S3 · Decide + Fix · USDOT · **answer: Yes**', [{ number: 102, state: 'OPEN' }]).note, '#102 open');
   assert.equal(open('- [ ] W42-13 · S2 · Fix · GVW · **awaiting approval**').note, 'awaiting approval');
   assert.match(open('- [ ] W42-13 · S2 · Fix · GVW · approved', [{ number: 99, state: 'MERGED', onMain: false, base: 'claude/x' }]).note, /#99 merged into claude\/x, not on main/);
+  assert.equal(open('- [ ] W42-13 · S2 · Fix · GVW · approved', [{ number: 98, state: 'MERGED', onMain: null, base: 'main' }]).note, "#98's merge commit not in this clone: git fetch");
+  // A failed PR lookup may hide the fix: checked by hand, not called open.
+  const failed = judgeItem({ ...parseItemLine('- [ ] W42-13 · S2 · Fix · GVW · approved · PR #999'), fix: null, prDetails: [], lookupErrors: ['PR #999: gh pr view: no pull requests found'] }, ev, fixed);
+  assert.deepEqual([failed.status, failed.lookup], ['check by hand', 'PR #999: gh pr view: no pull requests found']);
   assert.equal(open('- [x] W42-01 · S2 · Fix · Keys · approved').status, 'ticked');
   assert.equal(open('- W43-04 · S3 · Address · **dropped**').status, 'dropped');
   assert.equal(open('- W43-06 · S4 · Reworded · **not approved; deferred**').status, 'deferred');
@@ -265,7 +311,7 @@ test('items without a merged fix stay open; ticked, dropped and deferred ones ar
   assert.equal(notYet.status, 'not exercised');
   assert.match(notYet.note, /in no release yet/);
   const noSig = judgeItem(item('- [ ] W42-11 · S3 · Fix · Review scripts · approved'), ev, fixed);
-  assert.deepEqual([noSig.status, noSig.note], ['check by hand', 'no signature: check by hand']);
+  assert.deepEqual([noSig.status, noSig.note], ['check by hand', 'no signature']);
 });
 
 // ---------- weekly numbers and the report ----------
@@ -301,7 +347,8 @@ test('the report holds IDs, builds and counts, never an event\'s values', () => 
   const md = markdown({ ledger: { number: 86, title: 'Weekly review W42 (2026-10-06 – 2026-10-13)' }, since: '2026-10-13T00:00:00.000Z', quotes: 3, testRunsLeftOut: 1, items, weekly: weeklyRows(kpis(3), parseLedger(BODY).numbers), builds: [{ name: '0.9.10 store abc1234', quotes: 2, fixes: 'all 2' }], notes: ['A note.'] });
   assert.match(md, /^# Ledger check: Weekly review W42 .* \(#86\)/);
   assert.match(md, /\| W43-03 \| License \| recurred \| #90 → abc1234, first in 0\.9\.10 · fixed builds: 0\.9\.10 \? \(2 quotes\) · `symptom fill_field page=AddDriver result=failed`: 1 of 2 quotes that reached it; 1 on older builds \|/);
-  assert.match(md, /\| W42-02\* \| Crashes \| not exercised\? \|/);
+  assert.match(md, /\| W42-02\* \| Crashes \| check by hand \| #90 → abc1234, first in 0\.9\.10 · free-text signature; its named events, for information · fixed builds: 0\.9\.10 \? \(2 quotes\) · `client_error` on fixed builds: 0 quotes \|/);
+  assert.match(md, /A free-text signature is not judged/);
   assert.match(md, /plus 1 test run the weekly numbers leave out/);
   assert.match(md, /\| Number \| This period \(3 quotes\) \| W42 \(35 quotes\) \| Trend \|/);
   assert.match(md, /No trend called/);

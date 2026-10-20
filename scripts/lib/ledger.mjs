@@ -7,6 +7,7 @@
 // decides and updates the ledger. scripts/ledger.mjs asks gh and git; nothing here writes anywhere.
 
 import { spawnSync } from 'node:child_process';
+import { COMMON, EVENT_FIELDS } from '../../server/index.mjs';
 import { receivedAt } from './daily.mjs';
 
 // ---------- the ledger's text ----------
@@ -106,12 +107,25 @@ export function parseLedger(body, { title = '', comments = [] } = {}) {
 // absent, `~` a case-insensitive substring or /regex/; a value with spaces goes in double quotes;
 // fields may be dotted (platform.os). `expect`: the fix makes the event appear; `symptom`: the
 // event shows the problem. Several patterns: each in its own backticks, or separated by `;`.
+// Each condition names a field the collection server keeps for that event type (server/index.mjs:
+// COMMON and EVENT_FIELDS, plus what it adds), else the pattern isn't read: a condition on a field
+// the events never carry never matches, and a symptom would read as verified.
 const KIND = /^(expect|symptom)\s/;
 const COND = /^([A-Za-z_][\w.]*)(!=|=|~|>|<)(.*)$/;
 // Where a symptom happens: its exact conditions on these fields make its default scenario.
 const WHERE = new Set(['carrier', 'page', 'step', 'view', 'key', 'q', 'label']);
-// A free-text signature's countable part: event types in backticks (`client_error`, `fill_field.source`).
+// A free-text signature's named events: event types in backticks (`client_error`, `fill_field.source`).
 const EVENT_TOKEN = /^([a-z]+(?:_[a-z]+)+)(?:\.([A-Za-z][\w.]*))?$/;
+const ADDED = ['receivedAt', 'dropped', 'droppedMore'];
+const ANY_FIELD = new Set([...COMMON, ...ADDED, ...Object.values(EVENT_FIELDS).flat()]);
+const fieldsOf = (type) => (type === '*' ? ANY_FIELD : new Set([...COMMON, ...ADDED, ...(EVENT_FIELDS[type] ?? [])]));
+
+/** Why a condition on `path` can't hold for events of `type`, or null (a dotted path under a known field can). */
+export function unknownField(type, path) {
+  const top = String(path).split('.')[0];
+  if (fieldsOf(type).has(top)) return null;
+  return type === '*' ? `no event has a field ${top}` : `${type} has no field ${top}`;
+}
 
 function tokenize(src) {
   const out = [];
@@ -140,7 +154,13 @@ function condition(token, src) {
 function clause(tokens, src) {
   const [type, ...conds] = tokens;
   if (!type || !/^(\*|[a-z][a-z_]*)$/.test(type)) throw new Error(`no event type in "${src}"`);
-  return { type, conds: conds.map((t) => condition(t, src)) };
+  if (type !== '*' && !EVENT_FIELDS[type]) throw new Error(`no event type ${type}`);
+  const parsed = conds.map((t) => condition(t, src));
+  for (const c of parsed) {
+    const why = unknownField(type, c.path);
+    if (why) throw new Error(why);
+  }
+  return { type, conds: parsed };
 }
 
 /** One structured pattern: `symptom fill_field page=AddDriver result=failed label~license`. */
@@ -154,8 +174,9 @@ export function parsePattern(src) {
 }
 
 /**
- * A ledger signature, structured or free text (both accepted). Free text is counted by the event
- * types it names in backticks, read as presence (`free`); anything else in it is the reviewer's.
+ * A ledger signature, structured or free text (both accepted). Free text isn't judged: whether it
+ * describes the fix or the symptom is for a person to read. The event types it names in backticks
+ * (`named`) are counted as information only.
  */
 export function parseSignature(raw) {
   const text = String(raw ?? '').trim();
@@ -170,12 +191,13 @@ export function parseSignature(raw) {
       return { text, structured: true, patterns: [], error: err.message };
     }
   }
-  const patterns = [];
+  const named = [];
   for (const s of spans) {
     const m = EVENT_TOKEN.exec(s);
-    if (m) patterns.push({ kind: 'expect', type: m[1], conds: m[2] ? [{ path: m[2], op: '=', value: '*', re: null }] : [], when: null, text: s, free: true });
+    if (!m || !EVENT_FIELDS[m[1]] || (m[2] && unknownField(m[1], m[2]))) continue;
+    named.push({ type: m[1], conds: m[2] ? [{ path: m[2], op: '=', value: '*', re: null }] : [], text: s });
   }
-  return { text, structured: false, patterns, error: null };
+  return { text, structured: false, patterns: [], named, error: null };
 }
 
 const valueAt = (e, path) => path.split('.').reduce((v, k) => (v == null ? v : v[k]), e);
@@ -297,7 +319,8 @@ const sessionOf = (e) => e.session ?? e.install ?? e.id;
 
 /**
  * What the period's events say about one pattern, counting quotes (sessions), not events.
- * `containsOf(e)`: 'yes' | 'no' | 'unknown' for the event's build.
+ * `containsOf(e)`: 'yes' | 'no' | 'unknown' for the event's build. A "verified" that rests only on
+ * test runs (the maintainer's own quotes) says so: it is not an agent's quote showing the fix held.
  */
 export function judgePattern(p, events, containsOf, testSessions = new Set()) {
   const hit = { yes: new Set(), no: new Set(), unknown: new Set() };
@@ -315,46 +338,71 @@ export function judgePattern(p, events, containsOf, testSessions = new Set()) {
   if (p.kind === 'symptom') status = fixed.size ? 'recurred' : reached.size ? 'verified' : 'not exercised';
   else if (missing) status = 'recurred';
   else status = fixed.size ? 'verified' : 'not exercised';
+  const tests = (set) => [...set].filter((s) => testSessions.has(s)).length;
+  const basis = new Set([...reached, ...fixed]);
+  const testOnly = basis.size > 0 && tests(basis) === basis.size;
+  if (status === 'verified' && testOnly) status = 'verified (test runs only)';
   return {
     text: p.text,
     kind: p.kind,
-    free: !!p.free,
     status,
     quotes: fixed.size,
-    tests: [...fixed].filter((s) => testSessions.has(s)).length,
+    tests: tests(fixed),
     reached: reached.size,
+    reachedTests: tests(reached),
+    testOnly,
     missing,
     older: hit.no.size,
     unplaced: hit.unknown.size,
   };
 }
 
-/** Patterns' statuses as one: any recurred; all verified; some verified (in part); else not exercised. */
+// How many quotes logged a free-text signature's named event, by whether their build has the fix:
+// information for the reviewer, never a status.
+function countNamed(cl, events, containsOf, testSessions) {
+  const hit = { yes: new Set(), no: new Set(), unknown: new Set() };
+  for (const e of events) if (matches(cl, e)) hit[containsOf(e)].add(sessionOf(e));
+  return { text: cl.text, quotes: hit.yes.size, tests: [...hit.yes].filter((s) => testSessions.has(s)).length, older: hit.no.size, unplaced: hit.unknown.size };
+}
+
+/**
+ * Patterns' statuses as one: any recurred; all verified (on test runs only if any is); some
+ * verified (in part); else not exercised.
+ */
 export function combine(statuses) {
   if (!statuses.length) return null;
   if (statuses.includes('recurred')) return 'recurred';
-  if (statuses.every((s) => s === 'verified')) return 'verified';
-  if (statuses.includes('verified')) return 'verified in part';
+  const verified = statuses.filter((s) => s.startsWith('verified'));
+  if (verified.length === statuses.length) return verified.every((s) => s === 'verified') ? 'verified' : 'verified (test runs only)';
+  if (verified.length) return 'verified in part';
   return 'not exercised';
 }
 
 /**
  * One item's proposed status and evidence.
- * @param item  parseItemLine's, with `fix` (fixOf, or null) and `prs` details from gh
+ * @param item  parseItemLine's, with `fix` (fixOf, or null), `prDetails` from gh (`onMain`: true,
+ *   false, or null when the merge commit isn't in this clone) and `lookupErrors` (gh failures)
  * @param events  the period's events
  * @param contains  (event) => 'yes' | 'no' | 'unknown' for this item's fix
  */
 export function judgeItem(item, events, contains, testSessions = new Set()) {
-  const base = { id: item.id, title: item.title, type: item.type, severity: item.severity, inComment: !!item.inComment, prs: item.prDetails ?? [], fix: item.fix ?? null };
+  const lookup = (item.lookupErrors ?? []).join('; ');
+  const base = { id: item.id, title: item.title, type: item.type, severity: item.severity, inComment: !!item.inComment, prs: item.prDetails ?? [], fix: item.fix ?? null, lookup };
   if (item.ticked) return { ...base, status: 'ticked', note: 'closed in the ledger' };
   if (/\bdropped\b/i.test(item.decision)) return { ...base, status: 'dropped', note: item.decision };
   if (/\bdeferred\b|\bnot approved\b/i.test(item.decision)) return { ...base, status: 'deferred', note: item.decision };
   if (!item.fix) {
-    const open = (item.prDetails ?? []).filter((p) => p.state === 'OPEN').map((p) => `#${p.number} open`);
-    const offMain = (item.prDetails ?? []).filter((p) => p.state === 'MERGED' && !p.onMain).map((p) => `#${p.number} merged into ${p.base}, not on main`);
-    const why = [...open, ...offMain].join(', ') || (/\bDecide\b/i.test(item.type ?? '') && !/\banswer:/i.test(item.decision) ? 'question unanswered' : item.decision || 'no PR');
+    const prs = item.prDetails ?? [];
+    const open = prs.filter((p) => p.state === 'OPEN').map((p) => `#${p.number} open`);
+    const unfetched = prs.filter((p) => p.state === 'MERGED' && p.onMain === null).map((p) => `#${p.number}'s merge commit not in this clone: git fetch`);
+    const offMain = prs.filter((p) => p.state === 'MERGED' && p.onMain === false).map((p) => `#${p.number} merged into ${p.base}, not on main`);
+    const why = [...open, ...unfetched, ...offMain].join(', ') || (/\bDecide\b/i.test(item.type ?? '') && !/\banswer:/i.test(item.decision) ? 'question unanswered' : item.decision || 'no PR');
+    // A failed lookup may have hidden the fixing PR: not "open" on that evidence.
+    if (lookup) return { ...base, status: 'check by hand', note: why };
     return { ...base, status: 'still open', note: why };
   }
+  const sig = item.signature;
+  if (sig?.error) return { ...base, status: 'check by hand', note: `signature not read: ${sig.error}` };
   // The builds that logged the period and carry the fix.
   const fixedBuilds = new Map();
   for (const e of events) {
@@ -368,13 +416,13 @@ export function judgeItem(item, events, contains, testSessions = new Set()) {
     const note = item.fix.release ? `no build with the fix (${item.fix.release} or later) logged this period` : 'merged, in no release yet: only a development copy with its commit carries it';
     return { ...base, status: 'not exercised', note, builds, fixedQuotes };
   }
-  const sig = item.signature;
-  if (!sig || sig.error || !sig.patterns.length) {
-    const note = sig?.error ? `signature not read: ${sig.error}` : sig ? 'free-text signature names no event: check by hand' : 'no signature: check by hand';
-    return { ...base, status: 'check by hand', note, builds, fixedQuotes };
+  if (!sig) return { ...base, status: 'check by hand', note: 'no signature', builds, fixedQuotes };
+  if (!sig.structured) {
+    const named = sig.named.map((cl) => countNamed(cl, events, contains, testSessions));
+    return { ...base, status: 'check by hand', note: named.length ? 'free-text signature; its named events, for information' : 'free-text signature', named, builds, fixedQuotes };
   }
   const patterns = sig.patterns.map((p) => judgePattern(p, events, contains, testSessions));
-  return { ...base, status: combine(patterns.map((p) => p.status)), free: !sig.structured, patterns, builds, fixedQuotes };
+  return { ...base, status: combine(patterns.map((p) => p.status)), patterns, builds, fixedQuotes };
 }
 
 // ---------- weekly numbers ----------
@@ -441,14 +489,16 @@ function evidence(r) {
   if (merged.length) parts.push(merged.map((p) => `#${p.number} → ${String(p.mergeCommit).slice(0, 7)}`).join(', ') + (r.fix?.release ? `, first in ${r.fix.release}` : ', unreleased'));
   else if (r.fix) parts.push(`${r.fix.commits.map((c) => c.slice(0, 7)).join(', ')}${r.fix.release ? `, first in ${r.fix.release}` : ', unreleased'}`);
   if (r.note) parts.push(r.note);
+  if (r.lookup) parts.push(`lookup failed: ${r.lookup}`);
   if (r.builds?.length) parts.push(`fixed builds: ${r.builds.join(', ')} (${n(r.fixedQuotes, 'quote')})`);
+  const other = (p) => `${p.older ? `; ${p.older} on older builds` : ''}${p.unplaced ? `; ${p.unplaced} on builds that can't be placed` : ''}`;
   for (const p of r.patterns ?? []) {
-    const tests = p.tests ? `, ${p.tests} test` : '';
-    const other = `${p.older ? `; ${p.older} on older builds` : ''}${p.unplaced ? `; ${p.unplaced} on builds that can't be placed` : ''}`;
-    if (p.kind === 'symptom') parts.push(`\`${p.text}\`: ${p.quotes} of ${n(p.reached, 'quote')} that reached it${tests}${other}`);
-    else if (p.missing) parts.push(`\`${p.text}\`: missing on ${p.missing} of ${n(p.reached, 'quote')}${other}`);
-    else parts.push(`\`${p.text}\`: ${n(p.quotes, 'quote')}${tests}${other}`);
+    const only = p.testOnly ? ' (test runs only)' : '';
+    if (p.kind === 'symptom') parts.push(`\`${p.text}\`: ${p.quotes} of ${n(p.reached, 'quote')} that reached it${p.reachedTests ? `, ${p.reachedTests} test` : ''}${only}${other(p)}`);
+    else if (p.missing) parts.push(`\`${p.text}\`: missing on ${p.missing} of ${n(p.reached, 'quote')}${only}${other(p)}`);
+    else parts.push(`\`${p.text}\`: ${n(p.quotes, 'quote')}${p.tests ? `, ${p.tests} test` : ''}${only}${other(p)}`);
   }
+  for (const x of r.named ?? []) parts.push(`\`${x.text}\` on fixed builds: ${n(x.quotes, 'quote')}${x.tests ? `, ${x.tests} test` : ''}${other(x)}`);
   return parts.join(' · ');
 }
 
@@ -460,11 +510,10 @@ export function markdown(r) {
   L.push("## Last period's decisions", '');
   L.push('| ID | Title | Status (proposed) | Evidence |', '| --- | --- | --- | --- |');
   for (const x of r.items) {
-    const status = `${x.status}${x.free && x.status !== 'check by hand' ? '?' : ''}`;
-    L.push(`| ${x.id}${x.inComment ? '*' : ''} | ${cell(x.title)} | ${status} | ${cell(evidence(x))} |`);
+    L.push(`| ${x.id}${x.inComment ? '*' : ''} | ${cell(x.title)} | ${x.status} | ${cell(evidence(x))} |`);
   }
-  L.push('', 'Proposed from counts of quotes, for the reviewer to confirm: **verified** (on a build with the fix, the expected event was there, or the scenario ran without the symptom), **recurred** (the symptom on a build with the fix, or the expected event missing where it should be), **not exercised** (no build with the fix reached it). A build contains a fix when its commit descends from the fix\'s merge commit, else when its version is at least the first release after it.');
-  if (r.items.some((x) => x.free)) L.push('', '`?`: a free-text signature, read as the presence of the events it names in backticks; write it as `expect …` or `symptom …` to count it exactly.');
+  L.push('', 'Proposed from counts of quotes, for the reviewer to confirm: **verified** (on a build with the fix, the expected event was there, or the scenario ran without the symptom), **recurred** (the symptom on a build with the fix, or the expected event missing where it should be), **not exercised** (no build with the fix reached it); **(test runs only)**: every quote it rests on is a test run, so no quote by an agent has shown it yet. A build contains a fix when its commit descends from the fix\'s merge commit, else when its version is at least the first release after it.');
+  if (r.items.some((x) => x.named)) L.push('', 'A free-text signature is not judged: whether it describes the fix or the symptom is yours to read. The counts of the events it names in backticks are information only; write it as `expect …` or `symptom …` to have it judged.');
   if (r.items.some((x) => x.inComment)) L.push('', '`*`: the line is only in a comment. The issue body is the ledger: move it there.');
   const w = r.weekly;
   L.push('', '## Weekly numbers', '');

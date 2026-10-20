@@ -37,16 +37,21 @@ if (!inputs.length) inputs.push('server-data');
 for (const p of inputs) if (!fs.existsSync(p)) fail(`No usage data at ${p}. Run npm run pull first, or pass the folder (in a worktree, the main checkout's server-data).`);
 
 const repo = opt('repo');
-// One retry: a dropped connection shouldn't end a run of twenty lookups.
+// One retry: a dropped connection shouldn't end a run of twenty lookups. No gh at all ends the run;
+// any other failure is thrown, for the caller to end the run (the ledger) or note on an item (a PR).
 const gh = (...a) => {
   for (let attempt = 1; ; attempt++) {
     try {
       return execFileSync('gh', [...a, ...(repo ? ['--repo', repo] : [])], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
+      if (err.code === 'ENOENT') fail('gh is not installed (https://cli.github.com), or not on PATH.');
       if (attempt < 2) continue;
-      fail(`gh ${a.slice(0, 2).join(' ')} failed: ${String(err.stderr || err.message).split('\n')[0]} (is gh installed and signed in?)`);
+      throw new Error(`gh ${a.slice(0, 2).join(' ')}: ${String(err.stderr || err.message).trim().split('\n')[0]}`);
     }
   }
+};
+const ghOrFail = (...a) => {
+  try { return gh(...a); } catch (err) { return fail(`${err.message} (is gh signed in? gh auth status)`); }
 };
 const notes = [];
 
@@ -60,13 +65,13 @@ if (ledgerOpt && !/^#?\d+$/.test(ledgerOpt)) {
 } else {
   let number = ledgerOpt?.replace('#', '');
   if (!number) {
-    const open = JSON.parse(gh('issue', 'list', '--label', 'weekly-review', '--state', 'open', '--json', 'number,title', '--limit', '10'));
+    const open = JSON.parse(ghOrFail('issue', 'list', '--label', 'weekly-review', '--state', 'open', '--json', 'number,title', '--limit', '10'));
     if (!open.length) fail('No open weekly-review issue. Pass --ledger <number> or a saved body.');
     open.sort((a, b) => b.number - a.number);
     if (open.length > 1) notes.push(`${open.length} open weekly-review issues (${open.map((x) => `#${x.number}`).join(', ')}); read #${open[0].number}. Close the older ones.`);
     number = String(open[0].number);
   }
-  const x = JSON.parse(gh('issue', 'view', number, '--json', 'number,title,body,comments'));
+  const x = JSON.parse(ghOrFail('issue', 'view', number, '--json', 'number,title,body,comments'));
   issue = { number: x.number, title: x.title, body: x.body, comments: (x.comments ?? []).map((c) => c.body) };
 }
 const ledger = parseLedger(issue.body, { title: issue.title, comments: issue.comments });
@@ -108,21 +113,33 @@ if (!git.resolve(git.main)) {
   Object.assign(git, fallback);
 }
 
-// Each item's PRs: those the line names and those naming the ID (gh's search, then the ID checked
-// in the title or body), with their merge commits.
+// Each item's PRs: those the line names and those whose title names the ID (gh's search for the
+// quoted ID, then the title checked: fix PRs end their titles with their IDs, while a body can merely
+// mention an item, as a review or tooling PR does), with their merge commits. A failed lookup is
+// noted on the item.
 const PR_FIELDS = 'number,title,body,state,mergeCommit,baseRefName';
 for (const item of ledger.items) {
   if (item.ticked || /\bdropped\b|\bdeferred\b|\bnot approved\b/i.test(item.decision)) continue;
-  const found = JSON.parse(gh('pr', 'list', '--state', 'all', '--search', `${item.id} in:title,body`, '--json', PR_FIELDS, '--limit', '30'));
-  const byNumber = new Map(found.filter((p) => new RegExp(`\\b${item.id}\\b`).test(`${p.title}\n${p.body}`)).map((p) => [p.number, p]));
-  for (const nr of item.prs) if (!byNumber.has(nr)) byNumber.set(nr, JSON.parse(gh('pr', 'view', String(nr), '--json', PR_FIELDS)));
+  item.lookupErrors = [];
+  const byNumber = new Map();
+  try {
+    const found = JSON.parse(gh('pr', 'list', '--state', 'all', '--search', `"${item.id}" in:title,body`, '--json', PR_FIELDS, '--limit', '100'));
+    for (const p of found) if (new RegExp(`\\b${item.id}\\b`).test(p.title)) byNumber.set(p.number, p);
+  } catch (err) {
+    item.lookupErrors.push(err.message);
+  }
+  for (const nr of item.prs.filter((x) => !byNumber.has(x))) {
+    try { byNumber.set(nr, JSON.parse(gh('pr', 'view', String(nr), '--json', PR_FIELDS))); } catch (err) { item.lookupErrors.push(`PR #${nr}: ${err.message}`); }
+  }
   item.prDetails = [...byNumber.values()].sort((a, b) => a.number - b.number).map((p) => {
     const merge = p.mergeCommit?.oid ?? null;
+    // true: on main; false: merged elsewhere; null: a merge commit this clone doesn't have.
     const onMain = p.state === 'MERGED' && merge ? git.onMain(merge) : false;
     if (p.state === 'MERGED' && merge && onMain === null) notes.push(`${item.id}: #${p.number}'s merge commit ${merge.slice(0, 7)} isn't in this clone (git fetch).`);
-    return { number: p.number, title: p.title, state: p.state, base: p.baseRefName, mergeCommit: merge, onMain: onMain === true };
+    return { number: p.number, title: p.title, state: p.state, base: p.baseRefName, mergeCommit: merge, onMain };
   });
-  const commits = item.prDetails.filter((p) => p.onMain).map((p) => p.mergeCommit);
+  if (item.lookupErrors.length) notes.push(`${item.id}: PR lookup failed (${item.lookupErrors.join('; ')}); its status may miss a PR.`);
+  const commits = item.prDetails.filter((p) => p.onMain === true).map((p) => p.mergeCommit);
   if (item.merged) {
     const c = git.resolve(item.merged);
     if (c && git.onMain(c)) commits.push(c);
@@ -165,8 +182,9 @@ const buildRows = [...builds.values()].map((b) => {
   return { name: b.name, quotes: b.sessions.size, fixes };
 }).sort((a, b) => b.quotes - a.quotes);
 
-const free = items.filter((x) => x.free).map((x) => x.id);
-if (free.length) notes.push(`Free-text signatures (${free.join(', ')}): rewrite them as \`expect …\` or \`symptom …\` to count them exactly.`);
+const free = ledger.items.filter((x) => x.signature && !x.signature.structured).map((x) => x.id);
+if (free.length) notes.push(`Free-text signatures, checked by hand (${free.join(', ')}): write them as \`expect …\` or \`symptom …\` to have them judged.`);
+for (const x of ledger.items.filter((i) => i.signature?.error)) notes.push(`${x.id}: signature not read: ${x.signature.error}.`);
 const kpis = signals(all, { since, testIntakes }).kpis;
 const result = {
   ledger: { number: issue.number, title: ledger.title, week: ledger.week, period: ledger.period },
