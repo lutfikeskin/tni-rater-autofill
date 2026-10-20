@@ -91,7 +91,7 @@ test('sole owner-driver with duplicated first name uses owner surname and driver
   assert.equal(byQ(buildPlan(record, progressive), '2BB').value, null);
 });
 
-test('Progressive standard answers: USDOT belongs to the business is the agent\'s, filings, MCS-90 left to the page', () => {
+test('Progressive standard answers: USDOT belongs to the business is TNI\'s standard Yes, filings, MCS-90 left to the page', () => {
   const record = baseRecord();
   record.applicant.dot = '1234567';
   const plan = buildPlan(record, progressive, {});
@@ -106,6 +106,14 @@ test('Progressive standard answers: USDOT belongs to the business is the agent\'
   assert.equal(byQ(plan, '20F').standard, true);
   assert.equal(byQ(plan, '20F').manualOnly, false);
   assert.deepEqual(byQ(plan, '20F').businessNames, ['Synthetic Expediter LLC']);
+  assert.equal(byQ(plan, '20F').keepChoice, true, 'never pre-selected by Progressive: an answer there is a person\'s');
+  // No business or owner name on the intake: nothing to check the USDOT record against.
+  const nameless = baseRecord();
+  Object.assign(nameless.applicant, { dot: '1234567', name: null, owner1: null });
+  const unchecked = byQ(buildPlan(nameless, progressive, {}), '20F');
+  assert.equal(unchecked.value, null);
+  assert.equal(unchecked.manualOnly, true);
+  assert.match(unchecked.note, /no business or owner name/);
   assert.equal(byQ(plan, 'F11').value, true);
   assert.equal(byQ(plan, 'F11').standard, true, 'kept as TNI\'s 2026-10-01 decision, marked standard');
   assert.equal(plan.find((step) => step.re === '^federal( liability)?( filing)?$').value, true);

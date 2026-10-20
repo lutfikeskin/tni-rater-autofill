@@ -179,6 +179,8 @@ test('manual-only metadata and labels stay agent-owned', () => {
     { fieldType: 'date' }, { fieldType: 'limit' }, { fieldType: 'identity' }, { fieldType: 'identifier' },
     { valueType: 'date' }, { semanticType: 'identity' }, { label: 'Annual distance' },
     { label: 'Liability CSL' }, { label: 'Does VIN belong to this vehicle?' },
+    // Progressive's own wording: "USDOT" in one word.
+    { label: 'Does this USDOT Number belong to the customer\'s business?' },
   ]) {
     assert.match(manualOnlyReason({ label: 'Synthetic bounded field', ...metadata }) ?? '', /review|manual|require/i, JSON.stringify(metadata));
   }

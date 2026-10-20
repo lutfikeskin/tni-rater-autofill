@@ -36,7 +36,7 @@ const TYPED_ID = /\b(vin|license|licence|usdot|dot (number|no|#)|mc (number|no|#
 // `manualOnly`/`fieldType` are explicit metadata for callers that know the field semantics;
 // labels remain a compatibility fallback for reports produced by older page kits.
 const MANUAL_FIELD_TYPES = new Set(['number', 'numeric', 'date', 'limit', 'identity', 'identifier']);
-const REVIEW = /\b(age|date|dob|birth|years?|months?|days?|miles?|mileage|radius|limit|deductible|value|amount|premium|gvw|weight|count|distance|csl)\b|\b(?:dot|vin)\b.*\b(belong|match|registered|correct|valid|verified|identity|same)\b/i;
+const REVIEW = /\b(age|date|dob|birth|years?|months?|days?|miles?|mileage|radius|limit|deductible|value|amount|premium|gvw|weight|count|distance|csl)\b|\b(?:(?:us)?dot|vin)\b.*\b(belong|match|registered|correct|valid|verified|identity|same)\b/i;
 export function manualOnlyReason(item) {
   if (item.manualOnly === true) return 'this field requires agent review';
   if (item.reviewOnly === true) return 'this field requires agent review';

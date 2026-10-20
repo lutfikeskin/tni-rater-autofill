@@ -1292,6 +1292,29 @@
       if (!report.protectedKeys.includes(key)) report.protectedKeys.push(key);
       halt(EDIT_HALT);
     });
+    // Whether the registered names a USDOT lookup offers (Progressive's Business Name choice) are
+    // on the page and none, or several, is the intake's: the identity is then the agent's.
+    const IDENTITY_NOTE = 'The DOT lookup business name differs from the intake. Verify the identity before accepting it.';
+    const identityDiffers = (step, controls) => {
+      if (!step.businessNames?.length) return false;
+      const registered = assign(controls, plan).find((p) => p.step.registeredName)?.control;
+      const names = uniqueBusinessNames(registered ? optionsOf(registered).filter((o) => o.text.trim() && !/^enter a different/i.test(o.text)) : []);
+      const matches = names.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name)));
+      return names.length > 0 && matches.length !== 1;
+    };
+    // A registered name shown only after this fill answered (Progressive shows it right after
+    // "belongs to the business" Yes): that answer is the agent's to verify too, as if the name had
+    // been there first. It stays on the page, and Continue waits.
+    const identityAfterAnswer = (pairs, controls) => {
+      for (const { step, control } of pairs) {
+        const previous = report.filled.find((x) => x.stepId === step.id);
+        if (!previous || step.registeredName || !identityDiffers(step, controls)) continue;
+        report.filled = report.filled.filter((x) => x !== previous);
+        report.checks = report.checks.filter((x) => x.stepId !== step.id);
+        report.noData.push({ ...previous, note: IDENTITY_NOTE, reviewOnly: true, ...describe(control) });
+        handled.set(step.id, { status: 'needs', note: IDENTITY_NOTE });
+      }
+    };
     try {
 
     for (let round = 0; round < maxRounds; round++) {
@@ -1356,6 +1379,7 @@
           handled.set(pair.step.id, { status: 'failed', note: 'a later server response changed this answer' });
         }
       }
+      identityAfterAnswer(allPairs, controls);
       if (report.halted) break;
       // Buttons that must come right after their field (Verify DOT, Lookup VIN) go first.
       if (window === window.top && clickNextAction(controls, true)) {
@@ -1391,17 +1415,10 @@
         }
         if (step.verifyOnly) { report.kept.push(item); handled.set(step.id, { status: null }); continue; }
         if (step.ignore || (!hasValue(c) && consumedPaths().has(step.path))) { handled.set(step.id, { status: null }); continue; }
-        if (step.businessNames?.length) {
-          // The registered names the USDOT lookup offers (Progressive's Business Name choice).
-          const registered = assign(controls, plan).find((p) => p.step.registeredName)?.control;
-          const names = uniqueBusinessNames(registered ? optionsOf(registered).filter((o) => o.text.trim() && !/^enter a different/i.test(o.text)) : []);
-          const matches = names.filter((o) => step.businessNames.some((name) => businessNameKey(o.text) === businessNameKey(name)));
-          if (names.length && matches.length !== 1) {
-            const note = 'The DOT lookup business name differs from the intake. Verify the identity before accepting it.';
-            report.noData.push({ ...item, note, reviewOnly: true, ...describe(c) });
-            handled.set(step.id, { status: 'needs', note });
-            continue;
-          }
+        if (identityDiffers(step, controls)) {
+          report.noData.push({ ...item, note: IDENTITY_NOTE, reviewOnly: true, ...describe(c) });
+          handled.set(step.id, { status: 'needs', note: IDENTITY_NOTE });
+          continue;
         }
         if (step.note || step.value == null) {
           if (step.optional) { handled.set(step.id, { status: null }); continue; }
@@ -1412,7 +1429,9 @@
         // A pre-selected "Enter a different …" isn't an answer worth keeping for pick-not steps.
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '') && !agreesWith(step, c);
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
-        const differs = isChoice && replaceChoices && !agreesWith(step, c);
+        // `keepChoice`: a question the carrier never pre-selects, so a differing choice already
+        // there is a person's: kept and flagged, not replaced.
+        const differs = isChoice && replaceChoices && !step.keepChoice && !agreesWith(step, c);
         const legacyHold = mayHoldLegacyEdit(c) && !refill.has(step.id);
         // An unticked box that should stay unticked already has its answer (live run 2026-10-09:
         // every unticked box was "filled" again on each pass).
@@ -1421,6 +1440,10 @@
           report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
+            report.checks.push({ ...item, note, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note });
+          } else if (step.keepChoice && isChoice && !agreesWith(step, c)) {
+            const note = `The page already has another answer here (${step.name}): left as it is. Check it.`;
             report.checks.push({ ...item, note, ...describe(c) });
             handled.set(step.id, { status: 'needs', note });
           // Review mode confirms every retained standard, including a differing carrier choice.
@@ -1715,7 +1738,9 @@
     const stillHere = !report.navigatedTo && currentPage() === startPage;
     // Answers still waiting for another try when the fill ended are left for the agent, and so is
     // a field the page should have filled itself (emptyNote) but didn't.
-    const finalPairs = stillHere ? assign(collectControls(), plan) : [];
+    const finalControls = stillHere ? collectControls() : [];
+    const finalPairs = stillHere ? assign(finalControls, plan) : [];
+    identityAfterAnswer(finalPairs, finalControls);
     // A unit whose row the page's rows don't show (its VIN on none of them, or on two): its
     // answers stay the agent's, once per unit, naming it and not its VIN.
     for (const step of finalPairs.unwitnessed ?? []) {

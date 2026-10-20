@@ -548,8 +548,12 @@ export const progressive = {
       // a live run: "This should be always yes, because this question appears only after we insert
       // the DOT number and verify it"; it was the agent's from 2026-10-09). The identity check stays
       // (pagekit businessNames): a registered name that differs from the intake leaves this question
-      // and the Business Name choice to the agent, whichever the page shows first.
-      { q: '20F', source: 'standard', ask: 'Does this USDOT Number belong to the customer\'s business?', name: 'USDOT number belongs to the business (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, businessNames, value: () => true },
+      // and the Business Name choice to the agent, also when it shows only after the Yes. With no
+      // business or owner name on the intake there is nothing to check: the agent's. Progressive
+      // never pre-selects it, so an answer already there is a person's (`keepChoice`).
+      { q: '20F', source: 'standard', ask: 'Does this USDOT Number belong to the customer\'s business?', name: 'USDOT number belongs to the business (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, businessNames, keepChoice: true, clientFact: true,
+        value: (r) => (businessNames(r).length ? true : null),
+        note: (r) => (businessNames(r).length ? null : 'The intake has no business or owner name to check the USDOT record against: answer it yourself.') },
       { q: '22F', ask: 'Business Name', registeredName: true, name: 'Business name (USDOT record)', ...registered(), businessNames },
       { q: '277', ask: 'Business Address', name: 'Primary business address (USDOT record)', ...registered(), businessNames },
       // Always the first choice offered. When that's "Enter a different address", the address box

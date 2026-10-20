@@ -350,7 +350,7 @@ test('business structure: a suffix is a corporation, no company is a sole propri
   agentsNote(structure('Synthetic Expediter', amwins));
 });
 
-test('facts the intake lacks are left to the agent: Progressive attestations; AmWINS loss runs are TNI standards', () => {
+test('facts the intake lacks are left to the agent: Progressive\'s prior-insurance fact; USDOT belongs and AmWINS loss runs are TNI standards', () => {
   const p = buildPlan(expediter(), progressive, {});
   assert.ok(AGENT_SOURCES.includes(byQ(p, '2C97').source), 'q2C97 is the agent\'s');
   agentsNote(byQ(p, '2C97'));
