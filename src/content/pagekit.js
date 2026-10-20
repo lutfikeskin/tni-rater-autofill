@@ -825,36 +825,42 @@
     return squash(selectedText(c) ?? '').includes(want) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
   }
 
-  // Returns { ok: true, shown } or { ok: false, reason, options? }.
   // Duck Creek (Progressive) publishes a text field's own format check in its name:
-  // "string_2929|regex:<pattern>:<message>" (license numbers, names, phone parts). Null when none.
+  // "string_2929|regex:<pattern>$:<message>" (license numbers, names, phone parts). Read only when
+  // the pattern ends in its "$" anchor (a message may hold colons too). Null when none.
   function pageFormat(c) {
     const name = String(c.el.getAttribute?.('name') || c.el.name || '');
     const at = name.indexOf('|regex:');
     if (at < 0) return null;
     const rest = name.slice(at + 7);
-    // The pattern ends at its "$" anchor; without one, at the last colon.
-    const end = rest.indexOf('$:') >= 0 ? rest.indexOf('$:') + 1 : rest.lastIndexOf(':');
-    if (end <= 0) return null;
-    try { return { re: new RegExp(rest.slice(0, end)), message: rest.slice(end + 1).trim() || null }; } catch { return null; }
+    const end = rest.search(/(?<!\\)\$:/);
+    if (end < 0) return null;
+    try { return { re: new RegExp(rest.slice(0, end + 1)), message: rest.slice(end + 2).trim() || null }; } catch { return null; }
   }
 
+  // An answer the page's own format check refuses isn't typed (live run 2026-10-20: a license
+  // number that didn't fit the license state's format was typed, Continue clicked, and the page's
+  // error came only then). The agent checks the intake instead; Continue waits.
+  function formatRefused(step, c, text) {
+    if (c.kind !== 'text' || (step.kind && step.kind !== 'text')) return null;
+    const format = pageFormat(c);
+    if (!format || format.re.test(text)) return null;
+    // Plan steps carry a kind; an AI suggestion (answer()) doesn't.
+    const whose = step.kind ? "the intake's answer" : 'this answer';
+    const onPage = String((c.cmp ? c.cmp.getValue?.() : null) ?? c.el.value ?? '').trim() === text.trim();
+    return { ok: false, reason: `the page's own check refuses ${whose}, ${onPage ? 'which is on the page now' : "so it wasn't typed"}${format.message ? `: "${format.message}"` : ''}` };
+  }
+
+  // Returns { ok: true, shown } or { ok: false, reason, options? }.
   async function apply(step, c) {
-    // An answer the page's own format check refuses isn't typed (live run 2026-10-20: a license
-    // number that didn't fit the license state's format was typed, Continue clicked, and the page's
-    // error came only then). The agent checks the intake instead; Continue waits.
-    if (c.kind === 'text' && (!step.kind || step.kind === 'text')) {
-      const format = pageFormat(c);
-      if (format && !format.re.test(textFor(step, c))) {
-        return { ok: false, reason: `the page's own check refuses the intake's answer, so it wasn't typed${format.message ? `: "${format.message}"` : ''}` };
-      }
-    }
     if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
     if (step.kind === 'search-select') return applySearchSelect(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
     if (c.kind === 'text') {
       const text = textFor(step, c);
+      const refused = formatRefused(step, c, text);
+      if (refused) return refused;
       if (c.el.maxLength > 0 && text.length > c.el.maxLength) return { ok: false, reason: `value is longer than the field allows (${c.el.maxLength})` };
       setNativeValue(c.el, text);
       if (c.el.value === '') return { ok: false, reason: 'the page cleared the value (it may need a different format)' };
@@ -952,6 +958,8 @@
       return { ok: true, shown: step.value ? 'checked' : 'unchecked' };
     }
     const text = textFor(step, c);
+    const refused = formatRefused(step, c, text);
+    if (refused) return refused;
     if (c.el.maxLength > 0 && text.length > c.el.maxLength) return { ok: false, reason: `value is longer than the field allows (${c.el.maxLength})` };
     extFocusAndBlur(cmp, el, () => cmp.setValue(text));
     if (!el.value && !cmp.getValue()) return { ok: false, reason: 'the page cleared the value (it may need a different format)' };
@@ -1314,6 +1322,16 @@
       if (!report.protectedKeys.includes(key)) report.protectedKeys.push(key);
       halt(EDIT_HALT);
     });
+    // One failure line per field (key and label; live run 2026-10-20 listed the license number
+    // twice): a later reason replaces an earlier one, except "did not keep", which says less than
+    // the page's own "marks this answer invalid". Returns the reason kept.
+    const addFailed = (item) => {
+      const earlier = report.failed.find((x) => x.key === item.key && x.label === item.label);
+      report.failed = report.failed.filter((x) => x !== earlier);
+      const reason = earlier && /did not keep/.test(item.reason ?? '') ? earlier.reason : item.reason;
+      report.failed.push({ ...item, reason });
+      return reason;
+    };
     try {
 
     for (let round = 0; round < maxRounds; round++) {
@@ -1345,7 +1363,7 @@
         // after a PIP change) is picked again, at most twice; then it's the agent's.
         const own = allPairs.find((p) => p.control === c)?.step;
         if (own && own.value != null && !own.ignore && !own.note && !own.verifyOnly && retryOnce(own.id)) {
-          report.failed = report.failed.filter((x) => x.key !== fieldKey(c));
+          report.failed = report.failed.filter((x) => x.key !== fieldKey(c) || x.label !== c.label);
           handled.delete(own.id);
           refill.add(own.id);
           continue;
@@ -1373,7 +1391,7 @@
           continue;
         }
         if (hasValue(pair.control)) {
-          report.failed.push({ ...previous, reason: 'A later server response changed this answer; check it.' });
+          addFailed({ ...previous, reason: 'A later server response changed this answer; check it.' });
           report.filled = report.filled.filter((x) => x !== previous);
           handled.set(pair.step.id, { status: 'failed', note: 'a later server response changed this answer' });
         }
@@ -1517,13 +1535,8 @@
           retry = true;
           if (serverBacked) break;
         } else {
-          // One line per field (live run 2026-10-20 listed the license number twice). The page's own
-          // "marks this answer invalid" says more than "did not keep", so it stays the reason.
-          const earlier = report.failed.find((x) => x.key === item.key && x.label === item.label);
-          report.failed = report.failed.filter((x) => x !== earlier);
-          const reason = earlier && /did not keep/.test(result.reason ?? '') ? earlier.reason : result.reason;
-          report.failed.push({ ...item, reason, ...describe(c) });
-          handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
+          const reason = addFailed({ ...item, reason: result.reason, ...describe(c) });
+          handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason}` });
           retry = true;
           if (report.halted) break;
           // On pages that redraw after every answer, a failed answer may have redrawn it too: the
@@ -1768,8 +1781,8 @@
         continue;
       }
       if (!refill.has(step.id) || handled.has(step.id) || skippedField(control) || agreesWith(step, control)) continue;
-      report.failed.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, reason: 'the page did not keep the answer; check it', ...describe(control) });
-      handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: the page did not keep the answer` });
+      const reason = addFailed({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, reason: 'the page did not keep the answer; check it', ...describe(control) });
+      handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason}` });
     }
     if (progressed && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
     // The page may have redrawn while filling, so mark the final fields.

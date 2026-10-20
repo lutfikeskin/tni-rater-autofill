@@ -2107,6 +2107,67 @@ test('a field the page marks invalid after the answer is one failure line, not t
   assert.match(report.failed[0].reason, /marks this answer invalid/, 'the page\'s own word kept');
   assert.equal(report.failed[0].path, 'drivers[0].licenseNumber', 'with the intake path, for the usage log');
   assert.equal(report.blockers.filter((b) => /^failed: /.test(b)).length, 1);
+  assert.match(field.input.getAttribute('title') ?? '', /marks this answer invalid/, 'the page mark says what the panel says');
+});
+
+// The live field's own name on that second fill: the refused number is already there, so the line
+// says so instead of "wasn't typed".
+test('a refused answer already on the page is one line that says it is there', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddDriver' });
+  const field = addExtText(h, 'c', '2929', { caption: 'Driver’s License Number', ref: 'DriverInput.DriverLicenseNumber', required: true, value: 'PA12345678' });
+  field.input.value = 'PA12345678';
+  field.input.setAttribute('name', 'string_2929|regex:(?!0{8})^([0-9]{8}|[Ii]{1}nternational|INTERNATIONAL)$:You\'ve entered an invalid driver license number.');
+  field.cmp.isValid = () => false;
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [{ first: 'Sam', last: 'Sample', licenseNumber: 'PA12345678', licenseState: 'PA' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => s.field === 'DriverInput.DriverLicenseNumber'), { maxRounds: 6 });
+  assert.equal(report.failed.length, 1, report.failed.map((x) => x.reason).join(' | '));
+  assert.match(report.failed[0].reason, /own check refuses the intake's answer, which is on the page now: "You've entered/);
+  assert.equal(field.cmp.getValue(), 'PA12345678');
+});
+
+// Reading the page's check from a field's name: only a pattern that ends in "$" before the message
+// (the message may hold colons); anything else, or a pattern that doesn't compile, checks nothing.
+// Only a text answer to a text box is checked, after the read-only check.
+test('the page\'s own format check: what is read from the name, and what it applies to', async () => {
+  const typed = async (name, value, { kind = 'text', readOnly = false } = {}) => {
+    const h = harness({ ext: true, search: '?pageName=AddDriver' });
+    const field = addExtText(h, 'c', '2A01', { caption: 'Synthetic box', ref: 'Test.Box' });
+    field.input.setAttribute('name', name);
+    if (readOnly) field.cmp.readOnly = true;
+    const report = await h.kit.fill([{ id: 'box', field: 'Test.Box', path: 'x.box', ...(kind ? { kind } : {}), value }], { maxRounds: 3 });
+    return { value: field.cmp.getValue(), reason: report.failed[0]?.reason ?? null };
+  };
+  const ZIP = 'string_2A01|regex:^[0-9]{5}(-[0-9]{4})?$:Invalid ZIP: use 12345';
+  assert.equal((await typed(ZIP, '12345')).value, '12345', 'a colon in the message: the pattern still ends at "$"');
+  assert.match((await typed(ZIP, 'abc')).reason, /wasn't typed: "Invalid ZIP: use 12345"/);
+  assert.equal((await typed('string_2A01|regex:^\\$:[0-9]+$:Bad', '$:12')).value, '$:12', 'an escaped "$:" is part of the pattern');
+  for (const name of ['string_2A01|regex:^[0-9]{5}:Invalid ZIP', 'string_2A01|regex:^([0-9$:Bad', 'string_2A01|']) {
+    assert.equal((await typed(name, 'abc')).value, 'abc', `checks nothing: ${name}`);
+  }
+  const LETTERS = 'string_2A01|regex:^[a-z]+$:Letters only';
+  assert.equal((await typed(LETTERS, 5, { kind: 'int' })).value, '5', 'a number answer is not checked');
+  assert.match((await typed(LETTERS, '5', { readOnly: true })).reason, /read-only/, 'read-only first');
+  assert.match((await typed(LETTERS, '5', { kind: null })).reason, /refuses this answer/, 'an answer with no plan step behind it');
+});
+
+// Rows of one question share a key; the label tells them apart. Another row's retry must not drop
+// this row's failure (Continue was clicked with it unanswered).
+test('a retry on one row of a shared field keeps the other row\'s failure', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddDriver' });
+  const alpha = addExtText(h, 'c', '2A01', { caption: 'Alpha', ref: 'Shared.Ref', row: '1_1' });
+  alpha.input.setAttribute('name', 'string_2A01|regex:^[0-9]+$:Digits only');
+  const beta = addExtText(h, 'c', '2A02', { caption: 'Beta', ref: 'Shared.Ref', row: '2_1', value: 'old' });
+  beta.input.value = 'old';
+  beta.cmp.isValid = () => beta.cmp._value !== 'old';
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const report = await h.kit.fill([
+    { id: 'a', selector: `#${alpha.id}`, path: 'x.a', kind: 'text', value: 'abc' },
+    { id: 'b', selector: `#${beta.id}`, path: 'x.b', kind: 'text', value: '123' },
+  ], { maxRounds: 6, advance: { text: '^continue$' } });
+  assert.equal(beta.cmp.getValue(), '123');
+  assert.equal(report.failed.map((x) => x.label).join(' | '), 'Alpha');
+  assert.ok(!next._clicked, 'Continue waits for Alpha');
 });
 
 // SC live run (2026-10-19), second vehicle: Progressive looked the VIN up by itself once it was
