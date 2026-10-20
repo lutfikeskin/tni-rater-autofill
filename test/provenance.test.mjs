@@ -351,13 +351,14 @@ test('business structure: a suffix is a corporation, no company is a sole propri
   agentsNote(structure('Synthetic Expediter', amwins));
 });
 
-test('facts the intake lacks are left to the agent: Progressive attestations; AmWINS loss runs are TNI standards', () => {
+test('facts the intake lacks are left to the agent: Progressive\'s prior-insurance fact; USDOT belongs and AmWINS loss runs are TNI standards', () => {
   const p = buildPlan(expediter(), progressive, {});
-  for (const q of ['20F', '2C97']) {
-    assert.ok(AGENT_SOURCES.includes(byQ(p, q).source), `q${q} is the agent's`);
-    agentsNote(byQ(p, q));
-  }
-  assert.match(byQ(p, '20F').note, /belong/i);
+  assert.ok(AGENT_SOURCES.includes(byQ(p, '2C97').source), 'q2C97 is the agent\'s');
+  agentsNote(byQ(p, '2C97'));
+  // TNI 2026-10-20: the USDOT number the lookup found belongs to the business is its standard Yes
+  // (the registered-name check stays in pagekit).
+  assert.equal(byQ(p, '20F').source, 'standard');
+  assert.equal(byQ(p, '20F').value, true);
   const a = buildPlan(with_({ 'drivers.0.maritalStatus': null, 'applicant.yearEstablished': null }), amwins, {});
   // TNI 2026-10-19: these are its standards, no longer the agent's (valued loss runs after a later
   // AmWINS run the same day).

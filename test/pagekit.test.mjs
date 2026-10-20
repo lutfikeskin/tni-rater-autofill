@@ -2382,6 +2382,132 @@ test('a DOT lookup listing the matching business name twice still counts as one 
   assert.equal(report.failed.length, 0);
 });
 
+// TNI 2026-10-20 (W43-01): Business Owner Info once Verify USDOT found the number: "belongs to the
+// customer's business" (q20F) and the Business Name choice (q22F) listing the lookup's registered
+// name. `shown`: when the page draws that name: before the fill ('first'), right after the Yes
+// ('yes'), that many ms after it, or when a later question is answered ('later'). `later`: what
+// the page does when each of its later questions is answered (one function per question; each is
+// drawn once the one before it is answered), which gives the page rounds after these. `address`:
+// the registered Business Address choice (q277) is on the page too.
+const BELONGS = 'Does this USDOT Number belong to the customer\'s business?';
+async function belongsPage({ applicant = { name: 'Sample Test LLC' }, registered = null, shown = 'first', already = '', invalid = false, address = false, later = null, options = {} } = {}) {
+  const choices = (field, labels) => {
+    const records = labels.map((label) => ({ get: () => label }));
+    Object.assign(field.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+  };
+  // A supported class: Continue would be clicked if nothing held it.
+  const record = { applicant: { dot: '12345678', ...applicant }, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  let name = null;
+  const showName = () => {
+    if (!registered || name) return;
+    name = addExtText(h, 'c', '22F', { caption: 'Business Name', required: true });
+    choices(name, [registered, 'Enter a different Business Name']);
+  };
+  if (shown === 'first') showName();
+  // Progressive may show the registered name only once "belongs" is Yes.
+  const onSet = (_, v) => {
+    if (v !== 'Yes') return;
+    if (shown === 'yes') showName();
+    else if (typeof shown === 'number') setTimeout(showName, shown);
+  };
+  const belongs = addExtText(h, 'd', '20F', { caption: BELONGS, required: true, value: already, onSet });
+  choices(belongs, ['Yes', 'No']);
+  if (invalid) belongs.input.setAttribute('aria-invalid', 'true');
+  const plan = buildPlan(record, progressive).filter((s) => ['20F', '22F', ...(address ? ['277'] : [])].includes(s.q));
+  const addressField = address ? addExtText(h, 'f', '277', { caption: 'Business Address', required: true }) : null;
+  if (addressField) choices(addressField, ['100 Sample Street', 'Enter a different address']);
+  const laters = [].concat(later ?? []);
+  const questions = laters.map((then, i) => addExtText(h, `e${i}`, `E0${i}`, { caption: `Synthetic later question ${i + 1}`,
+    onSet: () => { then({ belongs, address: addressField, showName }); if (questions[i + 1]) h.document.body.append(questions[i + 1].input); } }));
+  for (const q of questions.slice(1)) q.input.remove();
+  questions.forEach((q, i) => plan.push({ id: `later${i}`, selector: `#${q.id}`, path: `test.later${i}`, name: `Later question ${i + 1}`, kind: 'text', value: 'later' }));
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const report = await h.kit.fill(plan, options);
+  const held = (re) => report.blockers.some((b) => b.includes(BELONGS) && re.test(b));
+  return { belongs: belongs.cmp.getValue(), name: name?.cmp.getValue() ?? null, report, held, continued: !!next._clicked,
+    own: (list, label = BELONGS) => list.filter((x) => x.label === label) };
+}
+const identity = (x) => x.reviewOnly && /differs from the intake/.test(x.note);
+
+// The registered name differs from the intake's, before or after the Yes: then it and the Business
+// Name are the agent's, and Continue waits. With no name on the intake to check, it's the agent's
+// too, and an answer already on the page (Progressive never pre-selects one) is kept.
+test('USDOT belongs: Yes when the registered name matches or is not shown; a different name, none to check, or an answer there is the agent\'s', async () => {
+  // The registered name matches, or isn't shown: TNI's standard Yes.
+  for (const registered of [null, 'Sample Test LLC']) {
+    const r = await belongsPage({ registered });
+    assert.equal(r.belongs, 'Yes', `registered name ${registered ?? 'not shown'}`);
+    assert.ok(r.report.filled.some((x) => x.standard && x.label === BELONGS), 'filled as TNI\'s standard');
+    assert.equal(r.report.blockers.length, 0, r.report.blockers.join(' | '));
+  }
+  // A different registered name shown first: neither is answered; this question holds Continue.
+  let r = await belongsPage({ registered: 'Another Carrier Inc' });
+  assert.deepEqual([r.belongs, r.name], ['', '']);
+  assert.equal(r.own(r.report.noData).filter(identity).length, 1);
+  assert.ok(r.held(/./), r.report.blockers.join(' | '));
+  // Shown only after the Yes: the Yes stays on the page, but it is the agent's to verify too, and
+  // the Business Name isn't picked.
+  r = await belongsPage({ registered: 'Another Carrier Inc', shown: 'yes' });
+  assert.equal(r.belongs, 'Yes');
+  assert.ok(!r.report.filled.some((x) => x.label === BELONGS), 'not reported as filled');
+  assert.equal(r.own(r.report.noData).filter(identity).length, 1);
+  assert.equal(r.name, '');
+  assert.equal(r.own(r.report.noData, 'Business Name').filter(identity).length, 1);
+  assert.ok(r.held(/./), r.report.blockers.join(' | '));
+  // No business or owner name on the intake: nothing to compare, so not answered.
+  r = await belongsPage({ applicant: {}, registered: 'Another Carrier Inc', shown: 'yes' });
+  assert.equal(r.belongs, '');
+  assert.ok(r.own(r.report.noData).some((x) => x.manualOnly && /no business or owner name/.test(x.note ?? '')));
+  assert.ok(r.held(/./), r.report.blockers.join(' | '));
+  // An answer already there is a person's, also where Progressive's pre-selected choices are replaced.
+  r = await belongsPage({ registered: 'Sample Test LLC', already: 'No', options: { replaceChoices: true } });
+  assert.equal(r.belongs, 'No');
+  assert.ok(r.own(r.report.checks).some((x) => /already has another answer/.test(x.note)));
+  assert.ok(r.held(/./), r.report.blockers.join(' | '));
+});
+
+// Review of PR #102: the paths around those answers never turn them into a filled Yes, or move
+// one the agent has made their own.
+test('USDOT belongs: an invalid answer, a late registered name and an agent edit keep the identity check', async () => {
+  // A person's "No" the page marks invalid is still kept, never replaced by the standard Yes.
+  let r = await belongsPage({ registered: 'Sample Test LLC', already: 'No', invalid: true, options: { replaceChoices: true } });
+  assert.equal(r.belongs, 'No');
+  assert.ok(!r.report.filled.some((x) => x.label === BELONGS), 'not reported as filled');
+  assert.equal(r.own(r.report.failed).length, 1);
+  assert.ok(r.own(r.report.checks).some((x) => /already has another answer/.test(x.note)));
+  // Answers the identity check left to the agent once a different name showed, then marked invalid:
+  // flagged once, not given again (each try listed them again).
+  const invalidAfter = ({ belongs, address }) => { for (const field of [belongs, address]) field.input.setAttribute('aria-invalid', 'true'); };
+  r = await belongsPage({ registered: 'Another Carrier Inc', shown: 'later', address: true, later: [({ showName }) => showName(), invalidAfter] });
+  assert.equal(r.belongs, 'Yes');
+  for (const label of [BELONGS, 'Business Address']) {
+    assert.equal(r.own(r.report.noData, label).filter(identity).length, 1, `${label}: ${JSON.stringify(r.own(r.report.noData, label))}`);
+    assert.equal(r.own(r.report.noData, label).length, 1, label);
+    assert.equal(r.own(r.report.failed, label).length, 1, label);
+  }
+  // A registered name drawn while the fill waits before Continue: the Yes is the agent's to
+  // verify, and Continue isn't clicked.
+  r = await belongsPage({ registered: 'Another Carrier Inc', shown: 600, options: { advance: { text: '^continue$' } } });
+  assert.equal(r.continued, false, r.report.blockers.join(' | '));
+  assert.equal(r.own(r.report.noData).filter(identity).length, 1);
+  assert.ok(r.held(/^needs you/), r.report.blockers.join(' | '));
+  // The agent changed the Yes before a different name showed: their answer stays theirs, not a
+  // "needs you" item.
+  const edit = ({ belongs, showName }) => {
+    belongs.input.dispatchEvent({ type: 'pointerdown', target: belongs.input, isTrusted: true });
+    belongs.cmp._value = 'No';
+    belongs.input.value = 'No';
+    belongs.input.dispatchEvent({ type: 'change', target: belongs.input, isTrusted: true });
+    showName();
+  };
+  r = await belongsPage({ registered: 'Another Carrier Inc', shown: 'later', later: edit });
+  assert.equal(r.belongs, 'No');
+  assert.equal(r.report.halted, true);
+  assert.equal(r.own(r.report.noData).length, 0, JSON.stringify(r.own(r.report.noData)));
+});
+
 test('AI answers refuse changed values, options, sections and page snapshots', async () => {
   const h = harness();
   const field = new SelectNode([

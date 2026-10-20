@@ -230,6 +230,8 @@ function fieldSteps(rules, record, carrier, active) {
       replace: !!rule.replace,
       // What a lookup put there wins over the intake's wording (no "page differs" flag).
       trustPage: !!rule.trustPage,
+      // A differing choice already on the page is kept and flagged, never replaced (`replaceChoices`).
+      keepChoice: !!rule.keepChoice,
       // May fill its field while it isn't on screen (an earlier step's question added later).
       hidden: !!rule.hidden,
       // One question asked as several boxes (AmWINS' auto symbols 1 to 9): the panel lists it once,
