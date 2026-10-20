@@ -49,7 +49,7 @@ export function owner(r) {
   const full = r.applicant.owner1 ?? '';
   const nameKey = (name) => (String(name ?? '').toLowerCase().match(/\p{L}+/gu) ?? []).sort().join(' ');
   const candidates = r.applicant.ownerDrives === false ? [] : r.drivers;
-  const fullMatches = candidates.filter((d) => nameKey(full) && nameKey(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''}`) === nameKey(full));
+  const fullMatches = candidates.filter((d) => nameKey(full) && nameKey(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''} ${d.suffix ?? ''}`) === nameKey(full));
   // The owner's surname (or a word of a two-word surname) with a matching first name (util.js).
   const lastMatches = candidates.filter((d) => ownerIsDriver(full, d));
   // Some intakes repeat the first name in the sole driver's last-name box. Only connect

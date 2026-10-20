@@ -72,14 +72,15 @@ export function nameWords(name) {
   return String(name ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().match(/\p{L}+/gu) ?? [];
 }
 
-// The intake's owner name is this driver: the same words across the name boxes, or the owner's
-// last word is the driver's surname or one of its words (two-word surnames: "CAMPELO KRAYCHETE")
-// and the owner's first name is one of the driver's given names. A surname alone is a family,
-// not a person: owner "Alice Sample" is not driver "Bob Sample" (nor "Bob Jones Sample").
+// The intake's owner name is this driver: the same words across the name boxes (the suffix
+// too: "SAMPLE EXAMPLO JR"), or the owner's last word is the driver's surname or one of its words
+// (two-word surnames: "CAMPELO KRAYCHETE") and the owner's first name is one of the driver's given
+// names. A surname alone is a family, not a person: owner "Alice Sample" is not driver "Bob
+// Sample" (nor "Bob Jones Sample").
 export function ownerIsDriver(ownerName, d) {
   const owner = nameWords(ownerName);
   if (!owner.length || !d) return false;
-  const driver = nameWords(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''}`);
+  const driver = nameWords(`${d.first ?? ''} ${d.middle ?? ''} ${d.last ?? ''} ${d.suffix ?? ''}`);
   if (owner.length === driver.length && [...owner].sort().join(' ') === [...driver].sort().join(' ')) return true;
   return nameWords(d.last).includes(owner.at(-1)) && nameWords(`${d.first ?? ''} ${d.middle ?? ''}`).includes(owner[0]);
 }
