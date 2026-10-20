@@ -18,7 +18,7 @@ From the ledger report (`npm run ledger`): this period's numbers beside the prev
 | Number | This period (<n> quotes) | Last period (<n> quotes) | Trend |
 | --- | --- | --- | --- |
 | Quotes (any carrier · per carrier) | | | |
-| Quotes done (reached the carrier's final page) | | | |
+| Quotes done (reached the carrier's final page or printed) | | | |
 | Median minutes for a done quote | | | |
 | Answers filled by the rules, per quote | | | |
 | Autofilled answers corrected, per 100 filled | | | |

@@ -1,13 +1,17 @@
 #!/usr/bin/env node
-// The daily review's GitHub side (.github/workflows/daily-review.yml), through the gh CLI:
+// The daily review's GitHub side (.github/workflows/daily-review.yml, and npm run daily on the
+// maintainer's computer: scripts/daily.mjs), through the gh CLI:
 //
 //   node scripts/daily-issue.mjs since
 //       prints where the review starts: the last successful run on the default branch, else a day ago
 //   node scripts/daily-issue.mjs post --summary review-summary.json --server <same|different|…> \
-//       [--server-note text] --run-url <url> [--failed]
+//       [--server-note text] (--run-url <url> | --review <file> [--log <file>]) [--until <time>] \
+//       [--failed [--failed-step <step>]] [--out daily-comment.md] [--post]
 //       comments on the open daily-review issue (or opens one) when something is new: problem
 //       reports, questions without a rule first seen, a usage server that isn't the repository's,
-//       or a run that failed. Nothing new: says nothing.
+//       two days without events (once a quiet stretch), or a run that failed. Nothing new: says
+//       nothing. --until: when the window's download began (else now). Without --post it only
+//       prints what it would say and where: a real post is asked for, never a default.
 //
 // The decisions are scripts/lib/daily.mjs (tested); this file only asks gh and tells it.
 
@@ -36,25 +40,37 @@ if (args[0] === 'since') {
   console.log(windowStart(run, steps));
 } else if (args[0] === 'post') {
   const failed = args.includes('--failed');
+  const dryRun = !args.includes('--post');
   const file = opt('summary');
   const summary = file && fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
-  const facts = { ...summary, server: opt('server') || 'not checked', serverNote: opt('server-note') ?? '', failed, runUrl: opt('run-url') ?? '' };
-  const open = JSON.parse(gh('issue', 'list', '--label', LABEL, '--state', 'open', '--json', 'number,createdAt'));
+  const facts = { ...summary, server: opt('server') || 'not checked', serverNote: opt('server-note') ?? '', failed, failedStep: opt('failed-step') ?? '',
+    runUrl: opt('run-url') ?? '', review: opt('review') ?? '', log: opt('log') ?? '', until: opt('until') };
+  const out = opt('out') ?? 'daily-comment.md';
+  let open;
+  try {
+    open = JSON.parse(gh('issue', 'list', '--label', LABEL, '--state', 'open', '--json', 'number,createdAt'));
+  } catch (e) {
+    if (!dryRun) throw e;
+    console.log(`(dry run, no --post: couldn't list the open issues, ${String(e.message).split('\n')[0]}; as if none were open)`);
+    open = [];
+  }
   const action = decide(facts, open);
   if (action.kind === 'none') {
     console.log('nothing new: no comment');
   } else {
-    fs.writeFileSync('daily-comment.md', commentBody(facts));
-    if (action.kind === 'comment') {
-      gh('issue', 'comment', String(action.number), '--body-file', 'daily-comment.md');
+    fs.writeFileSync(out, commentBody(facts));
+    if (dryRun) {
+      console.log(`dry run, no --post: would ${action.kind === 'comment' ? `comment on #${action.number}` : `open "${action.title}"`} with (${out}):\n\n${fs.readFileSync(out, 'utf8')}`);
+    } else if (action.kind === 'comment') {
+      gh('issue', 'comment', String(action.number), '--body-file', out);
       console.log(`commented on #${action.number}`);
     } else {
       // The label is how the next run finds the issue: create it when the repository lacks it.
       try { gh('label', 'create', LABEL, '--description', 'Daily usage review', '--force'); } catch { /* exists, or no rights: the create below says */ }
-      console.log(gh('issue', 'create', '--title', action.title, '--label', LABEL, '--body-file', 'daily-comment.md').trim());
+      console.log(gh('issue', 'create', '--title', action.title, '--label', LABEL, '--body-file', out).trim());
     }
   }
 } else {
-  console.error('usage: node scripts/daily-issue.mjs since | post --summary file --server status --run-url url [--server-note text] [--failed]');
+  console.error('usage: node scripts/daily-issue.mjs since | post --summary file --server status (--run-url url | --review file [--log file]) [--server-note text] [--until time] [--failed [--failed-step step]] [--out file] [--post]');
   process.exit(1);
 }

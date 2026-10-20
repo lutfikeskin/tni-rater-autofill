@@ -15,9 +15,9 @@ Read `CLAUDE.md` (identical to `AGENTS.md`) first. Its working rules apply throu
 - **Evidence is not authorization.** Agents' majority answers, learner suggestions, AI acceptance rates and page defaults are candidates, never a reason to add a default. A rule that answers a client fact or a TNI decision needs the maintainer's answer (a "Decide" item below).
 - **Build before blame.** Every finding names the builds it was seen on. A problem seen only on builds older than a fix is "Watch", not "Fix".
 - **Count quotes, not events.** Fill runs repeat on a page; one quote re-run twenty times is one quote. Use the per-quote counts the reports give.
-- **Leave test runs out.** Quotes of fixture, synthetic or the maintainer's test intakes are not agents' work. `npm run signals` leaves out intakes marked as a test (`test: true` on `intake_loaded`, when the panel sends it) and the fingerprints listed in `reviews/test-intakes.txt` (local, ignored; one per line). When a new intake looks like a test (quoted many times in a day, a fixture's name in the review), ask the maintainer and add it to the list.
+- **Leave test runs out.** Quotes of fixture, synthetic or the maintainer's test intakes are not agents' work. `npm run signals` and `npm run review` leave out intakes marked as a test (`test: true` on `intake_loaded`, when the panel sends it), the PDFs under `test/fixtures/` and `dist/synthetic-intakes/pdfs/` (by SHA-256, on any computer), and the fingerprints listed in `reviews/test-intakes.txt` (local, ignored; one per line), or the list `--tests <file>` names. A report that says **No test-run list** counted the maintainer's own test quotes as agents' work: run it again with `--tests`. When a new intake looks like a test (quoted many times in a day, a fixture's name in the review), ask the maintainer and add it to the list.
 - **Few quotes, no trend.** Every weekly number is per quote; show each period's quote count beside it, and call no trend when either period has fewer than about 10 quotes.
-- **Local data is in the main checkout.** `server-data/`, `reviews/` (with `reviews/test-intakes.txt`) and `layouts/` are ignored, so a worktree (`.claude/worktrees/<name>`) has none of them; they are in the main checkout folder, the first line of `git worktree list`. From a worktree, pass their paths: `npm run pull -- --out <main>/server-data`, `node scripts/weekly-signals.mjs <main>/server-data --tests <main>/reviews/test-intakes.txt --out <main>/reviews/signals-<date>.md`, and the same data path, `--tests` and `--out` for `scripts/ledger.mjs` and `scripts/benchmark.mjs`. `npm run review` reads `reviews/` of the checkout it runs in (its default `--since` and the test-intake list), so run it in the main checkout.
+- **Local data is in the main checkout.** `server-data/`, `reviews/` (with `reviews/test-intakes.txt`) and `layouts/` are ignored, so a worktree (`.claude/worktrees/<name>`) has none of them; they are in the main checkout folder, the first line of `git worktree list`. From a worktree, pass their paths: `npm run pull -- --out <main>/server-data`, `node scripts/weekly-signals.mjs <main>/server-data --tests <main>/reviews/test-intakes.txt --out <main>/reviews/signals-<date>.md`, and the same data path, `--tests` and `--out` for `scripts/review.mjs`, `scripts/ledger.mjs` and `scripts/benchmark.mjs`. Without `--since`, `scripts/review.mjs` starts from the last review in `reviews/` of the checkout it runs in, so from a worktree pass `--since` too.
 
 ## 1. Set up the period
 
@@ -27,7 +27,7 @@ npm ci                    # only when package-lock.json changed
 npm run pull              # needs the admin token (~/.config/tni-rater/admin-token or RATER_ADMIN_TOKEN); if it's missing, ask
 ```
 
-Make sure `reviews/test-intakes.txt` lists the test intakes: the SHA-256 of every PDF in `test/fixtures/`, `dist/synthetic-intakes/pdfs/` and the maintainer's test intakes (`shasum -a 256 <pdf>`).
+Make sure `reviews/test-intakes.txt` lists the maintainer's test intakes (`shasum -a 256 <pdf>`); the PDFs in `test/fixtures/` and `dist/synthetic-intakes/pdfs/` are left out without it. Working from a git worktree, pass the main checkout's paths to the commands below, as **Local data is in the main checkout** says.
 
 The period starts where the last weekly review ended: the date in the title of the newest GitHub issue labelled `weekly-review` (`gh issue list --label weekly-review --state all --limit 1`), else the newest `reviews/weekly-*.md`, else 7 days ago. Use the same `--since` for every command below. Name this review by the ISO week of its last day: `W<week>` (for example `W42`); its items are `W42-01`, `W42-02`, …
 
@@ -50,9 +50,11 @@ Also read the comments on the open `daily-review` issue since the period start (
 ## 3. Gather the evidence
 
 ```bash
-npm run signals -- --since <since>                                    # reviews/signals-<date>.md: compact, read this first
-npm run review -- --since <since> --out reviews/review-<date>.md      # the full review: AI, problem reports, coverage, learner suggestions, layouts
+npm run signals -- --since <since> [--tests <list>]                                 # reviews/signals-<date>.md: compact, read this first
+npm run review -- --since <since> [--tests <list>] --out reviews/review-<date>.md   # the full review: AI, problem reports, coverage, learner suggestions, layouts
 ```
+
+Both warn on stderr, and say so in the report, when they find no test-run list. Written anywhere in `reviews/` as above, the review also refreshes `reviews/transitions-<date>.md`, `reviews/captures-<date>.md` and the generated layouts in `captures/<carrier>/generated/`. With `--out` anywhere else, those go next to that file instead.
 
 If the maintainer has given a folder with the intake PDFs, also replay the recorded quotes through today's rules:
 

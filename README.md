@@ -170,7 +170,7 @@ The AI runner uses the packaged extension with controlled Luna responses. It che
 
 ## Hosting
 
-Updates reach agents through the Chrome Web Store; their usage logs go to TNI's server on Railway and a daily GitHub Action builds the review. See [docs/hosting.md](docs/hosting.md).
+Updates reach agents through the Chrome Web Store; their usage logs go to TNI's server on Railway and a daily review builds the report (`npm run daily` on the maintainer's computer while GitHub Actions can't run, else the GitHub Action). See [docs/hosting.md](docs/hosting.md).
 
 ## Files
 
