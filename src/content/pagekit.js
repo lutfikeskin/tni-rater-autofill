@@ -1281,6 +1281,16 @@
     if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
     const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], reworded: [], renamed: [], halted: false, rounds: 0 };
+    // One failure line per field (key and label; live run 2026-10-20 listed the license number
+    // twice): a later reason replaces an earlier one, except "did not keep", which says less than
+    // the page's own "marks this answer invalid". Returns the reason kept.
+    const addFailed = (item) => {
+      const earlier = report.failed.find((x) => x.key === item.key && x.label === item.label);
+      report.failed = report.failed.filter((x) => x !== earlier);
+      const reason = earlier && /did not keep/.test(item.reason ?? '') ? earlier.reason : item.reason;
+      report.failed.push({ ...item, reason });
+      return reason;
+    };
     if (stopPages.includes(startPage)) {
       report.halted = true;
       report.reason = 'The carrier stopped this quote on this page: nothing is filled or clicked here.';
@@ -1322,16 +1332,6 @@
       if (!report.protectedKeys.includes(key)) report.protectedKeys.push(key);
       halt(EDIT_HALT);
     });
-    // One failure line per field (key and label; live run 2026-10-20 listed the license number
-    // twice): a later reason replaces an earlier one, except "did not keep", which says less than
-    // the page's own "marks this answer invalid". Returns the reason kept.
-    const addFailed = (item) => {
-      const earlier = report.failed.find((x) => x.key === item.key && x.label === item.label);
-      report.failed = report.failed.filter((x) => x !== earlier);
-      const reason = earlier && /did not keep/.test(item.reason ?? '') ? earlier.reason : item.reason;
-      report.failed.push({ ...item, reason });
-      return reason;
-    };
     try {
 
     for (let round = 0; round < maxRounds; round++) {
