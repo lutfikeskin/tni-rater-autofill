@@ -60,10 +60,12 @@ export function testSessionsOf(all, testIntakes = []) {
 
 /**
  * @param {object[]} all  every event (loadEvents), for which sessions are quotes
- * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>}} opts  since: ISO
- *   time the server received them from; testIntakes: intake fingerprints whose quotes are tests
+ * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>, answerKey?: object|null}} opts  since: ISO
+ *   time the server received them from; testIntakes: intake fingerprints whose quotes are tests;
+ *   answerKey: today's rules scored against TNI's answer key (answer-key.mjs scoreKey: its `total`
+ *   and `quotes`), when one is configured
  */
-export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {}) {
+export function signals(all, { since = null, top: n = 12, testIntakes = [], answerKey = null } = {}) {
   // An unparsable `since` means no period, not an error.
   const from = since && !Number.isNaN(Date.parse(since)) ? new Date(since).toISOString() : null;
   const testSessions = testSessionsOf(all, testIntakes);
@@ -264,6 +266,8 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
     aiRequests: asks.length,
     aiErrorPercent: asks.length ? Math.round((asks.filter((a) => a.error).length / asks.length) * 100) : null,
     restrictedActions: [...actions].filter(([a]) => isRestricted(a)).reduce((x, [, c]) => x + c, 0),
+    // Not the period's: today's rules on the keyed quotes, whenever they were recorded.
+    answerKey: answerKey ? { quotes: answerKey.quotes, ...Object.fromEntries(['cells', 'right', 'wrong', 'missed', 'invented', 'unsure', 'unkeyed'].map((x) => [x, answerKey.total[x]])) } : null,
   };
 
   // Crashes in the panel (client_error), by build and message; test runs too.
@@ -350,6 +354,12 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
   };
 }
 
+// The answer key's weekly number: of the keyed answers judged, the share today's rules get right.
+const keyLine = (a) => {
+  const judged = a.right + a.wrong + a.missed + a.invented;
+  return `| Today's rules against TNI's answer key (${a.quotes} keyed intake${a.quotes === 1 ? '' : 's'}, their quotes of any date): right · wrong · missed · invented (must be 0) | ${judged ? Math.round((a.right / judged) * 100) : '—'}% · ${a.wrong} · ${a.missed} · ${a.invented} |`;
+};
+
 // The same as Markdown, for the weekly brief.
 export function markdown(s) {
   const L = [];
@@ -366,7 +376,8 @@ export function markdown(s) {
     `| Left to the agent per quote: ${Object.keys(k.leftPerQuote).join(' / ') || '—'} | ${Object.values(k.leftPerQuote).join(' / ') || '—'} |`,
     `| Problem reports per 10 quotes (plus ${k.problemReportsInTestRuns} in test runs) | ${k.problemReportsPer10Quotes ?? '—'} |`,
     `| AI requests · error rate | ${k.aiRequests} · ${k.aiErrorPercent ?? '—'}% |`,
-    `| Restricted actions by the extension (must be 0) | ${k.restrictedActions} |`, '');
+    `| Restricted actions by the extension (must be 0) | ${k.restrictedActions} |`,
+    ...(k.answerKey ? [keyLine(k.answerKey)] : []), '');
   L.push('## Builds', '', 'Which version and copy logged the period (store: Web Store zip, unpacked: the development package, source: repository files). A problem seen only on older builds may already be fixed.', '');
   L.push('| Version | Channel | Commits | Rule sets | Quotes | Events | Agents | First – last received |', '| --- | --- | --- | --- | --- | --- | --- | --- |');
   for (const b of s.builds) L.push(`| ${b.version} | ${b.channel} | ${b.commits.join(', ') || '—'} | ${b.rules.join(', ') || '—'} | ${b.quotes} | ${b.events} | ${b.agents.join(', ') || '—'} | ${b.first.slice(0, 10)} – ${b.last.slice(0, 10)} |`);

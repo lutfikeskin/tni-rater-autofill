@@ -30,6 +30,7 @@
     "push-logs": "node scripts/logs-push.mjs",
     "coverage": "node scripts/coverage.mjs server-data",
     "benchmark": "node scripts/benchmark.mjs server-data",
+    "key:sheet": "node scripts/answer-key-sheet.mjs server-data",
     "fixtures:progressive": "node scripts/refresh-fixtures.mjs"
   },
   "devDependencies": {
