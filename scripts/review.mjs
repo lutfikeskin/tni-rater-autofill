@@ -23,7 +23,7 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { loadEvents, quoteSessions } from './lib/events.mjs';
 import { loadLayouts, report as coverageReport } from './coverage.mjs';
-import { receivedAt, uncoveredQuestions } from './lib/daily.mjs';
+import { receivedAt, uncoveredQuestions, lastReceipts } from './lib/daily.mjs';
 import { questionOf } from './lib/learn.mjs';
 import { readTestList, signals, testSessionsOf } from './lib/signals.mjs';
 
@@ -249,6 +249,8 @@ if (opt('summary')) {
     problems: problems.map((e) => ({ t: e.t, receivedAt: e.receivedAt ?? null, agent: e.agent ?? null, page: e.page ?? null, build: buildOf(e), test: tests.has(e.session), text: e.text ?? '' })),
     newQuestions: uncovered.new,
     uncoveredTotal: uncovered.total,
+    // The newest receipt in the whole log, test runs left out, and each install's: the daily heartbeat.
+    ...lastReceipts(all, tests),
   }, null, 1));
 }
 console.log(`${path.relative(process.cwd(), out)}  (${since ? `since ${since}` : 'all data'}: ${quotes.size} quotes, ${decisions.length} AI decisions, ${problems.length} problem reports)`);

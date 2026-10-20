@@ -27,6 +27,7 @@
     "e2e:extension": "node scripts/extension-e2e.mjs",
     "ci": "node scripts/ci-local.mjs",
     "pull": "node scripts/logs-pull.mjs",
+    "daily": "node scripts/daily.mjs",
     "push-logs": "node scripts/logs-push.mjs",
     "coverage": "node scripts/coverage.mjs server-data",
     "benchmark": "node scripts/benchmark.mjs server-data",
