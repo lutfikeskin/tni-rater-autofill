@@ -10,14 +10,17 @@
 // control remains a compatibility fallback for widgets which do not emit those events.
 
 (() => {
-  const VERSION = 8;
+  const VERSION = 9;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
   if (previous) {
-    // Flush any trusted edit before rebaseline or replacing an older recorder. This keeps a
-    // native change that landed immediately before reinjection from disappearing.
-    if (!orphaned) previous.rebaseline?.();
+    // Report what changed since the recorder's last poll before reusing or replacing it, so an
+    // edit that landed immediately before reinjection doesn't disappear into a new baseline: the
+    // panel reinjects on every tab update, and an ExtJS combo pick fires no input/change event
+    // (2026-10-20: a General Liability limit picked just before "Done with this coverage" was never
+    // logged). A version-8 recorder has no poll: it flushes its trusted edits and rebaselines.
+    if (!orphaned) (previous.poll ?? previous.rebaseline)?.();
     // Reusing the current recorder avoids resetting its listeners on every fill. Older versions
     // have no dispose hook, so rebaseline and leave the sole installed recorder in place rather
     // than starting a second timer that would duplicate usage events.
@@ -196,11 +199,25 @@
     return '';
   }
 
+  // A Duck Creek question's caption (Progressive): its own label c_<id> for the field f_<id>, drawn
+  // above the answers, without the smaller note under it (.lowerLabelText). pagekit names the field
+  // by the same caption (ExtJS dctCaption, which this isolated world can't read). textBefore skips
+  // labels, so a radio group took the text of the row above it (2026-10-20: "Does the customer earn
+  // 100% of his or her income from for hire trucking operations?" logged as a cargo commodity).
+  function dctCaption(el) {
+    const id = el.id?.match(/^f_([a-z][0-9a-f]{32}[0-9a-f]+_\d+_\d+)/i)?.[1];
+    const caption = id ? document.getElementById?.(`c_${id}`) : null;
+    if (!caption) return '';
+    return oneLine([...(caption.childNodes ?? [])]
+      .filter((n) => !n.classList?.contains?.('lowerLabelText')).map((n) => n.textContent).join(' ')).slice(0, 160);
+  }
+
   const labels = new Map();
-  function labelFor(key, el) {
+  // el: the field, or a radio's group; control: the field's own control (a radio of the group).
+  function labelFor(key, el, control = el) {
     if (!labels.has(key)) {
       const own = oneLine([...(el.labels ?? [])].map((l) => l.textContent).join(' ') || el.getAttribute('aria-label') || '');
-      labels.set(key, (el.type === 'radio' ? '' : own) || textBefore(el) || own || el.placeholder || el.name || '');
+      labels.set(key, dctCaption(control) || (el.type === 'radio' ? '' : own) || textBefore(el) || own || el.placeholder || el.name || '');
     }
     return labels.get(key);
   }
@@ -220,7 +237,7 @@
       const q = questionId(el);
       if (type === 'radio') {
         const key = fieldKey(el, q, true);
-        const entry = out.get(key) ?? { key, q, kind: 'radio', label: labelFor(key, el.closest('[role=radiogroup], fieldset') ?? el), v: '', controls: [] };
+        const entry = out.get(key) ?? { key, q, kind: 'radio', label: labelFor(key, el.closest('[role=radiogroup], fieldset') ?? el, el), v: '', controls: [] };
         if (!entry.controls.includes(el)) entry.controls.push(el);
         if (el.checked) entry.v = oneLine([...(el.labels ?? [])].map((l) => l.textContent).join(' ')) || el.value;
         out.set(key, entry);
@@ -398,8 +415,11 @@
   // included; a value a page script replaced since is the page's). The extension's own answers
   // were logged by the panel as it gave them, so the rest becomes the new baseline unreported,
   // and the questions they revealed are not announced as new (the fill answered them).
+  // Told to resume while not paused (the panel attaching, after reinjecting it): nothing on the page
+  // is the extension's, so what changed since the last poll is reported as a poll would.
   function resume() {
     if (!isCurrent()) return;
+    if (!paused) { tick(); return; }
     paused = false;
     if (trustedPending.size && pageKey() === page) {
       const changes = [];
@@ -450,6 +470,8 @@
   api = {
     version: VERSION,
     rebaseline,
+    // A poll now, as the timer's (nothing while paused: resume reports the agent's edits then).
+    poll: tick,
     dispose,
     alive: () => !!chrome.runtime?.id,
   };
