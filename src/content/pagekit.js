@@ -826,7 +826,29 @@
   }
 
   // Returns { ok: true, shown } or { ok: false, reason, options? }.
+  // Duck Creek (Progressive) publishes a text field's own format check in its name:
+  // "string_2929|regex:<pattern>:<message>" (license numbers, names, phone parts). Null when none.
+  function pageFormat(c) {
+    const name = String(c.el.getAttribute?.('name') || c.el.name || '');
+    const at = name.indexOf('|regex:');
+    if (at < 0) return null;
+    const rest = name.slice(at + 7);
+    // The pattern ends at its "$" anchor; without one, at the last colon.
+    const end = rest.indexOf('$:') >= 0 ? rest.indexOf('$:') + 1 : rest.lastIndexOf(':');
+    if (end <= 0) return null;
+    try { return { re: new RegExp(rest.slice(0, end)), message: rest.slice(end + 1).trim() || null }; } catch { return null; }
+  }
+
   async function apply(step, c) {
+    // An answer the page's own format check refuses isn't typed (live run 2026-10-20: a license
+    // number that didn't fit the license state's format was typed, Continue clicked, and the page's
+    // error came only then). The agent checks the intake instead; Continue waits.
+    if (c.kind === 'text' && (!step.kind || step.kind === 'text')) {
+      const format = pageFormat(c);
+      if (format && !format.re.test(textFor(step, c))) {
+        return { ok: false, reason: `the page's own check refuses the intake's answer, so it wasn't typed${format.message ? `: "${format.message}"` : ''}` };
+      }
+    }
     if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
     if (step.kind === 'search-select') return applySearchSelect(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
@@ -1495,7 +1517,12 @@
           retry = true;
           if (serverBacked) break;
         } else {
-          report.failed.push({ ...item, reason: result.reason, ...describe(c) });
+          // One line per field (live run 2026-10-20 listed the license number twice). The page's own
+          // "marks this answer invalid" says more than "did not keep", so it stays the reason.
+          const earlier = report.failed.find((x) => x.key === item.key && x.label === item.label);
+          report.failed = report.failed.filter((x) => x !== earlier);
+          const reason = earlier && /did not keep/.test(result.reason ?? '') ? earlier.reason : result.reason;
+          report.failed.push({ ...item, reason, ...describe(c) });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
           retry = true;
           if (report.halted) break;

@@ -2066,6 +2066,49 @@ test('a helper that waited earlier in the fill and was clicked later does not ke
   assert.equal(next._clicked, true, 'nothing left: Continue');
 });
 
+// PA live run (2026-10-20, W43-03): a license number that didn't fit the license state's format was
+// typed and Continue clicked; Progressive's error came only then, and the next fill listed the field
+// twice. The page publishes its check in the field's name: an answer it refuses isn't typed.
+test('license number: an answer the page\'s own format check refuses is not typed, and Continue waits', async () => {
+  const PA = 'string_2929|regex:(?!0{8})^([0-9]{8}|[Ii]{1}nternational|INTERNATIONAL)$:You\'ve entered an invalid driver license number. Please check the number and re-enter.';
+  const run = async (licenseNumber) => {
+    const record = { applicant: {}, garaging: {}, operations: {}, drivers: [{ first: 'Sam', last: 'Sample', licenseNumber, licenseState: 'PA' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+    const h = harness({ ext: true, search: '?pageName=AddDriver' });
+    const field = addExtText(h, 'c', '2929', { caption: 'Driver’s License Number', ref: 'DriverInput.DriverLicenseNumber', required: true });
+    field.input.setAttribute('name', PA);
+    const next = addButton(h, 'Continue');
+    next.onclick = () => { next._clicked = true; };
+    const steps = buildPlan(record, progressive).filter((s) => s.field === 'DriverInput.DriverLicenseNumber');
+    return { field, next, report: await h.kit.fill(steps, { maxRounds: 6, advance: { text: '^continue$' } }) };
+  };
+  let { field, next, report } = await run('PA12345678');
+  assert.equal(field.cmp.getValue(), '', 'not typed');
+  assert.equal(report.failed.length, 1, 'one line for the field');
+  assert.match(report.failed[0].reason, /own check refuses .*invalid driver license number/);
+  assert.equal(report.blockers.filter((b) => /^failed: /.test(b)).length, 1);
+  assert.ok(!next._clicked, 'Continue waits');
+  // A number that fits is typed, and the page continues.
+  ({ field, next, report } = await run('12345678'));
+  assert.equal(field.cmp.getValue(), '12345678');
+  assert.equal(report.failed.length, 0);
+  assert.equal(next._clicked, true);
+});
+
+// The live run's second fill: the field already held the intake's number, which the page marked
+// invalid after Continue.
+test('a field the page marks invalid after the answer is one failure line, not two', async () => {
+  const h = harness({ ext: true, search: '?pageName=AddDriver' });
+  const field = addExtText(h, 'c', '2929', { caption: 'Driver’s License Number', ref: 'DriverInput.DriverLicenseNumber', required: true, value: '12345678' });
+  field.input.value = '12345678';
+  field.cmp.isValid = () => field.cmp._value === '';
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [{ first: 'Sam', last: 'Sample', licenseNumber: '12345678', licenseState: 'PA' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => s.field === 'DriverInput.DriverLicenseNumber'), { maxRounds: 6 });
+  assert.equal(report.failed.length, 1, report.failed.map((x) => x.reason).join(' | '));
+  assert.match(report.failed[0].reason, /marks this answer invalid/, 'the page\'s own word kept');
+  assert.equal(report.failed[0].path, 'drivers[0].licenseNumber', 'with the intake path, for the usage log');
+  assert.equal(report.blockers.filter((b) => /^failed: /.test(b)).length, 1);
+});
+
 // SC live run (2026-10-19), second vehicle: Progressive looked the VIN up by itself once it was
 // typed and the Look up button went away, yet the panel still said "Buttons waiting: lookupVin
 // (waiting for vehicles[1].vin)".
