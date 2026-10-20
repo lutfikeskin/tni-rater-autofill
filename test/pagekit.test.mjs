@@ -1549,6 +1549,47 @@ test('cargo Done verifies a collapsed retained result and rejects expanded or ch
   assert.ok(changedReport.blocked.some((b) => b.id === 'doneCargo'));
 });
 
+// General liability's Done (TNI 2026-10-20): verified once its section's questions are gone and
+// the row keeps the limit; a question still open leaves Done to be tried again.
+function glPlan() {
+  return [
+    { id: 'gl-limit', q: '21D1', field: 'LineInput.GeneralLiabilityLimit', path: 'progressive.q21D1', kind: 'text', value: '$1,000,000/ $2,000,000 Aggregate', gl: 'limit' },
+    { id: 'gl-other', q: '21F3', field: 'GeneralLiabilityInput.GeneralLiabilityTruckOtherBusiness', path: 'progressive.q21F3', kind: 'text', value: null, ignore: true, gl: 'section' },
+    { id: 'done', kind: 'action', action: 'doneGl', text: '^done with this coverage$', pages: ['CoveragesRates'], after: ['progressive.q21D1'], afterAny: [], afterActions: [], afterPages: [], unless: [], verify: 'glClosed' },
+  ];
+}
+
+test('general liability Done verifies a closed section that keeps the limit', async () => {
+  const closed = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  addExtText(closed, 'U', '2211', { caption: 'General Liability', ref: 'LineInput.GeneralLiabilityLimit', value: '$1,000,000/ $2,000,000 Aggregate' });
+  const closedButton = addButton(closed, 'Done with this coverage');
+  closedButton.onclick = () => { closedButton._clicked = true; };
+  const closedReport = await closed.kit.fill(glPlan(), { maxRounds: 5 });
+  assert.equal(closedButton._clicked, true);
+  assert.equal(Array.from(closedReport.actions, (x) => x.id).join(','), 'doneGl');
+  assert.equal(closedReport.halted, false);
+
+  const open = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  addExtText(open, 'U', '225C', { caption: 'General Liability', ref: 'LineInput.GeneralLiabilityLimit', value: '$1,000,000/ $2,000,000 Aggregate' });
+  addExtText(open, 'P', '2233', { caption: 'Does the customer operate businesses other than the for hire trucking operations?', ref: 'GeneralLiabilityInput.GeneralLiabilityTruckOtherBusiness', value: 'No' });
+  const openButton = addButton(open, 'Done with this coverage');
+  openButton.onclick = () => { openButton._clicked = true; };
+  const openReport = await open.kit.fill(glPlan(), { maxRounds: 5 });
+  assert.equal(openButton._clicked, true);
+  assert.ok(Array.from(openReport.invalidatedActions).includes('doneGl'), 'its questions still showing: not done');
+  assert.equal(Array.from(openReport.actions).length, 0);
+
+  const empty = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  addExtText(empty, 'U', '225C', { caption: 'General Liability', ref: 'LineInput.GeneralLiabilityLimit', value: '' });
+  const emptyButton = addButton(empty, 'Done with this coverage');
+  emptyButton.onclick = () => { emptyButton._clicked = true; };
+  const emptyPlan = glPlan();
+  emptyPlan[0].value = null;
+  const emptyReport = await empty.kit.fill(emptyPlan, { maxRounds: 5 });
+  assert.equal(emptyButton._clicked, undefined, 'Done waits for a limit');
+  assert.ok(emptyReport.blocked.some((b) => b.id === 'doneGl'));
+});
+
 test('trusted agent gesture plus input protects the edit and reports no filled answer', async () => {
   const h = harness();
   const edit = makeInput({ id: 'agent-edit', ariaLabel: 'Agent corrected value' });

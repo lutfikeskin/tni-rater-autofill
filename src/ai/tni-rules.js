@@ -66,7 +66,7 @@ export const TNI_RULES = `
 - With several vehicles, each vehicle's coverages are listed under its name; the same per-vehicle standards apply to every vehicle. A trailer's row ("2019 Wilson"): comprehensive and collision $1,000, rental and fire/theft Not selected.
 - Motor Truck Cargo only when the intake asks for it: special cargo questions (mobile/modular homes; business documents) No; "General freight" is category "Consumer Goods", commodity "Other Consumer Goods"; limit and deductible from the intake ("$100K/$1K Ded" is "$100k with a $1,000 Deductible").
 - Refrigeration Breakdown: use the intake's Reefer breakdown option (coverage.reeferBreakdown). If selected, choose "Yes, match Motor Truck Cargo limits". If unselected, No, or blank/null, answer "No"; an unselected Reefer option does not need agent review.
-- General liability: when the intake asks for it, the agent adds it with "+" in the General Liability row (the intake's limit; with none, TNI's default $1M per occurrence / $2M aggregate, confirmed with the client). Its questions are the agent's: leave them.
+- General liability: when the intake asks for it, the filler adds it with "+" in the General Liability row. Its questions: all income from for-hire trucking Yes; a warehouse or premises customers visit, set-up or installation, and other businesses No; oil and gas fields No unless the intake mentions oil or gas work (then the agent's). The limit: the intake's ($1M/$2M is "$1,000,000/ $2,000,000 Aggregate"); with none, TNI's default $1M per occurrence / $2M aggregate, confirmed with the client; a limit Progressive doesn't offer is the agent's. Any other General Liability question is the agent's: leave it.
 - Non-trucking liability (NTL): only when the agent has set coverage.ntl to Yes; a claims-box mention alone is not a request. The filler opens it with "Add Non-Trucking Liability instead?". Its limit and its other questions are the agent's: leave them.
 - Florida: Property Damage Liability Only "Not Selected"; Personal Injury Protection "$10k w/ $0 Deductible" (Florida requires it). Personal Injury Protection in other states (Texas, Maryland): keep what the page has.
 - Arkansas: Personal Injury Protection (the "Limit" list of 5k Medical and Hospital, Income Loss and 5k Accidental Death) "5k Medical and Hospital" alone.
@@ -77,7 +77,7 @@ export const TNI_RULES = `
 - Owner's first and last name, home address, city, ZIP and date of birth from the intake. Never the Social Security Number: that is the agent's.
 
 ## Payment and printing
-- Order on the rates page (no GL requested): add cargo, open the bill plan / billing options, choose automatic payments from a checking account (keep the pre-selected plan), come back to rates, Recalculate, then Print, Email, Fax. With GL requested the agent adds GL and opens the bill plan; Recalculate and Print follow.
+- Order on the rates page: add cargo (Done with this coverage), then general liability when requested (Done with this coverage), open the bill plan / billing options, choose automatic payments from a checking account (keep the pre-selected plan), come back to rates, Recalculate, then Print, Email, Fax.
 - Print: "Insurance Quote (with all bill plans)" and Print; leave Email and Fax unticked. Print/Send is the agent's click (Chrome opens the PDF only for it).
 
 # AmWINS Admitted Placement (Business Auto)

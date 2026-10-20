@@ -1501,8 +1501,8 @@
         if (result.ok) {
           if (currentPage() === 'CoveragesRates') {
             // The bill plan (payment method) stays chosen; the premium needs recalculating.
-            // A cargo answer re-arms Done with this coverage too.
-            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : [])]) {
+            // A cargo or general liability answer re-arms its Done with this coverage too.
+            for (const id of ['recalculate', 'print', 'printSend', ...(step.cargo ? ['doneCargo'] : []), ...(step.gl === 'section' ? ['doneGl'] : [])]) {
               clicked.delete(id);
               report.actions = report.actions.filter((x) => x.id !== id);
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
@@ -1575,6 +1575,12 @@
         const summaryAgrees = cargoSteps.some((s) => moneyTokens(s.value).length >= 2 && moneyTokens(s.value).every((n) => amounts.includes(n)));
         accepted = !expanded && (retained || summaryAgrees);
       }
+      // General liability's Done: its section's questions are gone and the row keeps the limit.
+      if (a.verify === 'glClosed') {
+        const pairs = assign(collectControls(), plan);
+        accepted = !pairs.some(({ step }) => step.gl === 'section')
+          && pairs.some(({ step, control }) => step.gl === 'limit' && hasValue(control) && (step.value == null || agreesWith(step, control)));
+      }
       // `revealed`: the click showed its result: a question appeared, or an answer changed, since
       // the snapshot taken as the button was clicked (a lookup's decoded values, the rows an
       // import redraws, the registered names a USDOT check offers). A redraw of the same
@@ -1633,7 +1639,7 @@
     }
 
     // Its button back on the page (`resolvedBy`: the Add NTL link, NTL removed), or a page the agent
-    // has been to since (`settledByPages`: the bill plan, after adding General Liability).
+    // has been to since (`settledByPages`).
     function settledItem(a) {
       return !!(a.resolvedBy && findButton({ text: a.resolvedBy })) || !!a.settledByPages?.some((p) => visited.has(p));
     }
