@@ -3,12 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import {
   buildContains, cellNumber, combine, compareVersions, fixOf, gitReader, judgeItem, markdown, matches,
   parseItemLine, parseLedger, parsePattern, parseSignature, scenarioOf, unknownField, weeklyRows,
 } from '../scripts/lib/ledger.mjs';
+import { NO_TEST_LIST } from '../scripts/lib/signals.mjs';
 
 // ---------- the ledger's text ----------
 
@@ -328,7 +330,8 @@ test('weekly numbers sit beside the ledger\'s, with a trend only from 10 quotes 
   assert.deepEqual([w.column, w.quotes, w.prevQuotes, w.enough], ['W42', 37, 35, true]);
   const row = (label) => w.rows.find((r) => r.label.startsWith(label));
   assert.deepEqual([row('Quotes (').now, row('Quotes (').trend], ['37 · 39', 'up']);
-  assert.deepEqual([row('Quotes done').before, row('Quotes done').trend], ['50% (Progressive 12/27, AmWINS 9/15)', 'up (better)']);
+  // W42 counted done quotes before a printed one was done (the next test).
+  assert.deepEqual([row('Quotes done').before, row('Quotes done').trend], ['50% (Progressive 12/27, AmWINS 9/15)', 'definition changed']);
   assert.equal(row('AI requests').trend, 'down (better)');
   assert.deepEqual([row('Median minutes').before, row('Median minutes').trend], ['—', '—']);
   assert.equal(row('Left to the agent').now, '1 / 0 / 1 / 0');
@@ -336,6 +339,33 @@ test('weekly numbers sit beside the ledger\'s, with a trend only from 10 quotes 
   assert.equal(few.enough, false);
   assert.ok(few.rows.filter((r) => r.before !== '—').every((r) => r.trend === 'too few quotes'));
   assert.equal(weeklyRows(kpis(6, { restrictedActions: 1 }), prev).rows.at(-1).trend, 'must be 0');
+});
+
+// Post-merge review of #106 and #108: #108 made a printed Progressive quote done (2026-10-20), and
+// the ledger kept the old label, so a trend against an older ledger set two definitions side by side.
+test("a ledger's Quotes done counted before a printed quote was done gets no trend, and the report says why", () => {
+  const OLD = "Quotes done (reached the carrier's final page)";
+  const NEW = "Quotes done (reached the carrier's final page or printed)";
+  const numbers = (label) => parseLedger(BODY.replace(OLD, label)).numbers;
+  const done = (w) => w.rows.find((r) => r.label.startsWith('Quotes done'));
+  // This period's row carries the definition it counts under, as signals and the brief template do.
+  const old = weeklyRows(kpis(37), numbers(OLD));
+  assert.equal(done(old).label, NEW);
+  assert.deepEqual([done(old).trend, old.redefined.map((x) => x.name)], ['definition changed', ['Quotes done']]);
+  // Counted under the new definition: the ledger's label says so, or the issue was opened after the
+  // change (its label copied from a report older than it). Opened before it: the old definition.
+  for (const [w, why] of [[weeklyRows(kpis(37), numbers(NEW)), 'new label'], [weeklyRows(kpis(37), numbers(OLD), { createdAt: '2026-10-21T09:00:00Z' }), 'opened after']]) {
+    assert.deepEqual([done(w).trend, w.redefined], ['up (better)', []], why);
+  }
+  assert.equal(done(weeklyRows(kpis(37), numbers(OLD), { createdAt: '2026-10-18T18:39:03Z' })).trend, 'definition changed');
+  // Without a number in the ledger there is nothing to set apart.
+  assert.deepEqual(weeklyRows(kpis(37), parseLedger(BODY.replace(/^\| Quotes done.*$/m, `| ${OLD} | — |`)).numbers).redefined, []);
+  // Too few quotes: that is the trend cell; the report still says the two definitions differ.
+  const few = weeklyRows(kpis(6), numbers(OLD));
+  assert.equal(done(few).trend, 'too few quotes');
+  const md = markdown({ ledger: { number: 86, title: 'Weekly review W42 (2026-10-06 – 2026-10-13)' }, since: '2026-10-13T00:00:00.000Z', quotes: 6, items: [], weekly: few, builds: [] });
+  assert.match(md, /\*\*Quotes done: two definitions\.\*\* W42's number was counted before the change \(a printed Progressive quote \(Print\/Send or its PDF\) counts as done since 2026-10-20\); this period's follows it, so no trend is called\./);
+  assert.doesNotMatch(markdown({ ledger: { title: 'x' }, since: null, quotes: 37, items: [], weekly: weeklyRows(kpis(37), numbers(NEW)), builds: [] }), /two definitions/);
 });
 
 test('the report holds IDs, builds and counts, never an event\'s values', () => {
@@ -353,4 +383,71 @@ test('the report holds IDs, builds and counts, never an event\'s values', () => 
   assert.match(md, /\| Number \| This period \(3 quotes\) \| W42 \(35 quotes\) \| Trend \|/);
   assert.match(md, /No trend called/);
   assert.doesNotMatch(md, /Ann Example/);
+  assert.doesNotMatch(md, /No test-run list/);
+  // Without a test-run list the report says so, as the review and the signals do.
+  const unlisted = markdown({ ledger: { title: 'x' }, since: null, quotes: 3, noTestList: NO_TEST_LIST, items: [], weekly: weeklyRows(kpis(3), null), builds: [] });
+  assert.ok(unlisted.includes(`**${NO_TEST_LIST}**`));
+});
+
+// Post-merge review of #106: the ledger read reviews/test-intakes.txt from the working folder (a
+// worktree has none) and never counted fixture intakes as tests; it now reads the list as the review
+// and the signals do (readTestList).
+test('the ledger reads the test-run list as the review does, and says when it has none', (t) => {
+  if (spawnSync('git', ['--version']).status !== 0) { t.skip('git is not available here'); return; }
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  // The working folder: a clone of its own (the ledger asks git there) with a list that isn't the
+  // repository's, naming the `listed` and `decoy` quotes; --tests names `listed` only.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-cli-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const a of [['init', '-q'], ['commit', '-q', '--allow-empty', '-m', 'empty']]) {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...a], { cwd: dir, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+  }
+  fs.mkdirSync(path.join(dir, 'reviews'));
+  fs.writeFileSync(path.join(dir, 'reviews', 'test-intakes.txt'), 'aaaaaaaa\ndddddddd\n');
+  const list = path.join(dir, 'tests.txt');
+  fs.writeFileSync(list, '# the maintainer\'s test intake\naaaaaaaa\n');
+  // Four quotes in the period: an agent's, the listed one, the decoy, and one of a committed fixture
+  // PDF (a test on any computer).
+  const fixture = createHash('sha256').update(fs.readFileSync(path.join(root, 'test', 'fixtures', 'sample-intake.pdf'))).digest('hex');
+  const at = '2026-10-14T12:00:00Z';
+  const quote = (session, intakeId) => [
+    { id: `${session}1`, t: at, receivedAt: at, session, type: 'intake_loaded', intakeId },
+    { id: `${session}2`, t: at, receivedAt: at, session, carrier: 'progressive', type: 'page_view', page: 'AddVehicle' },
+  ];
+  const data = path.join(dir, 'events.jsonl');
+  fs.writeFileSync(data, [...quote('agent', 'cccccccc0003'), ...quote('listed', 'aaaaaaaa0001'), ...quote('decoy', 'dddddddd0004'), ...quote('fixture', fixture)].map((e) => JSON.stringify(e)).join('\n'));
+  // A saved ledger body without open items: nothing for gh to look up.
+  const body = path.join(dir, 'ledger.md');
+  fs.writeFileSync(body, '# Weekly review W42 (2026-10-06 – 2026-10-13)\n\n## Weekly numbers\n\n| Number | W42 |\n| --- | --- |\n| Quotes (any carrier · per carrier) | 35 · 42 |\n');
+  const ledger = (...args) => spawnSync(process.execPath, [path.join(root, 'scripts', 'ledger.mjs'), data, '--ledger', body, '--main', 'HEAD', ...args], { cwd: dir, encoding: 'utf8' });
+  const json = (r) => { assert.equal(r.status, 0, r.stderr); return JSON.parse(r.stdout); };
+  const repoList = fs.existsSync(path.join(root, 'reviews', 'test-intakes.txt'));
+
+  // The repository's list, wherever it runs (never the working folder's), and the fixture quote.
+  const plain = json(ledger('--json'));
+  assert.deepEqual([plain.quotes, plain.testRunsLeftOut], [3, 1], 'the fixture quote left out; the working folder\'s list not read');
+  assert.equal(plain.noTestList, repoList ? null : NO_TEST_LIST);
+  const report = ledger('--out', path.join(dir, 'plain.md'));
+  assert.equal(report.status, 0, report.stderr);
+  const md = fs.readFileSync(path.join(dir, 'plain.md'), 'utf8');
+  if (repoList) assert.doesNotMatch(`${report.stderr}${md}`, /No test-run list/, 'the repository\'s list was found');
+  else {
+    assert.ok(report.stderr.includes(`Warning: ${NO_TEST_LIST}`));
+    assert.ok(md.includes(`**${NO_TEST_LIST}**`));
+  }
+
+  // --tests: the listed quote too, and no warning.
+  const listed = json(ledger('--tests', list, '--json'));
+  assert.deepEqual([listed.quotes, listed.testRunsLeftOut, listed.noTestList], [2, 2, null]);
+
+  // Refused as the review refuses them: no value, a missing file, a short or non-hex fingerprint.
+  const short = path.join(dir, 'short.txt');
+  fs.writeFileSync(short, 'abc\n');
+  for (const bad of [['--tests'], ['--tests', '--json'], ['--tests', path.join(dir, 'missing.txt')], ['--tests', short]]) {
+    const r = ledger('--out', path.join(dir, 'bad.md'), ...bad);
+    assert.equal(r.status, 1, `${bad.join(' ')}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /needs a value|no such file|at least 8 hex/);
+  }
+  assert.ok(!fs.existsSync(path.join(dir, 'bad.md')), 'no report written from a bad list');
 });

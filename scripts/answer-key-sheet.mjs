@@ -5,11 +5,14 @@
 //   npm run key:sheet -- --intakes <folder of intake PDFs> [--key layouts/answer-key/key.json] [--tests <file>] [--out <file.html>]
 //   node scripts/answer-key-sheet.mjs server-data --intakes layouts/intakes
 //
-// Quotes are paired with today's rules as the benchmark pairs them; test runs are left out (intakes
-// marked as a test, and the fingerprints in reviews/test-intakes.txt or --tests). --key resumes an
-// existing key: its answers fill the page. Writes layouts/answer-key/sheet-<date>.html, which holds
-// the intakes' answers: it stays in ignored layouts/. Open it in a browser, decide, and save
-// key.json there (layouts/answer-key/key.json).
+// Quotes are paired with today's rules as the benchmark pairs them; test runs are left out as the
+// review leaves them out (readTestList in scripts/lib/signals.mjs): intakes marked as a test, the
+// fixture and synthetic intake PDFs, and this repository's reviews/test-intakes.txt (wherever the
+// script runs from) or --tests <file>. Without a list it warns on stderr and on the sheet; a git
+// worktree has none, so pass the main checkout's. --key resumes an existing key: its answers fill
+// the page. Writes layouts/answer-key/sheet-<date>.html, which holds the intakes' answers: it stays
+// in ignored layouts/. Open it in a browser, decide, and save key.json there
+// (layouts/answer-key/key.json).
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,7 +20,7 @@ import { CARRIERS } from '../src/carriers.js';
 import { loadEvents } from './lib/events.mjs';
 import { benchmark } from './lib/benchmark.mjs';
 import { readIntakes } from './lib/intake-pdfs.mjs';
-import { testSessionsOf } from './lib/signals.mjs';
+import { readTestList, testSessionsOf } from './lib/signals.mjs';
 import { readKey, sheetHtml, sheetModel } from './lib/answer-key.mjs';
 
 const args = process.argv.slice(2);
@@ -34,18 +37,20 @@ let key = null;
 if (values('key').length) {
   try { key = readKey(JSON.parse(fs.readFileSync(values('key')[0], 'utf8'))); } catch (err) { fail(`${values('key')[0]}: ${err.message}`); }
 }
-const testFile = values('tests')[0] ?? (fs.existsSync('reviews/test-intakes.txt') ? 'reviews/test-intakes.txt' : null);
-if (testFile && !fs.existsSync(testFile)) fail(`--tests ${testFile}: no such file.`);
-const testIntakes = testFile ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
+// The test-run list, as the review reads it. Without one, the maintainer's test quotes would be on
+// the sheet as agents' quotes: said on stderr and on the sheet.
+let testList;
+try { testList = readTestList({ tests: values('tests')[0] ?? null }); } catch (err) { fail(err.message); }
+if (testList.warning) console.error(`Warning: ${testList.warning}`);
 
 const events = loadEvents(inputs);
 let tests;
-try { tests = testSessionsOf(events, testIntakes); } catch (err) { fail(`${testFile}: ${err.message}`); }
+try { tests = testSessionsOf(events, testList.intakes); } catch (err) { fail(err.message); }
 const raws = await readIntakes(folders, new Set(events.filter((e) => e.type === 'intake_loaded' && e.intakeId && !tests.has(e.session)).map((e) => e.intakeId)));
 if (!raws.size) fail(`None of the recorded quotes' intake PDFs (test runs left out) is in ${folders.join(', ')}.`);
 const run = benchmark(events, { carriers: CARRIERS, raws, detail: true });
 const rows = run.rows.filter((r) => !tests.has(r.session));
-const model = { generated: new Date().toISOString(), ...sheetModel(rows, { key }) };
+const model = { generated: new Date().toISOString(), noTestList: testList.warning, ...sheetModel(rows, { key }) };
 
 const out = values('out')[0] ?? path.join('layouts', 'answer-key', `sheet-${model.generated.slice(0, 10)}.html`);
 fs.mkdirSync(path.dirname(out), { recursive: true });

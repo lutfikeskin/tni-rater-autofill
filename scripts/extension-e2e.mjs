@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // The real extension (dist/tni-rater-autofill, rebuilt by npm run package) in Chromium, its side
 // panel opened as a page, on the AmWINS mock (test/fixtures/amwins, served by npm run replay on
-// port 8792): loads the sample intake, verifies missing client facts hold Save & Continue,
-// supplies explicit synthetic agent answers using trusted browser controls, then resumes from
-// the panel. Checks retained answers after reloads, stops at the declaration and never submits.
+// port 8792): loads the sample intake, clears one client fact in All client details (the sample
+// answers every AmWINS client fact), verifies the missing fact holds Save & Continue, supplies
+// explicit synthetic agent answers using trusted browser controls, then resumes from the panel.
+// Checks retained answers after reloads, stops at the declaration and never submits.
 // Usage events go to a throwaway local usage server (server/index.mjs on a temporary folder), set
 // as the panel's Server before it opens: the harness fails if anything is sent to the production
 // usage server, or if the intake_loaded event doesn't reach the local one.
@@ -49,19 +50,43 @@ await panel.setInputFiles('#file', 'test/fixtures/sample-intake.pdf');
 await panel.waitForTimeout(2500);
 console.log('site:', await panel.textContent('#site'));
 await panel.waitForTimeout(500);
+// The sample intake answers every client fact AmWINS asks, and TNI's standards answer the rest,
+// so nothing would be left to the agent. Clear the second driver's marital status (Married on the
+// PDF) in All client details, as an agent correcting the intake would: that row's marital status
+// is then a client fact the intake leaves blank (amwins.js `clientFact`), the agent's to answer.
+const CLEARED = 'drivers[1].maritalStatus';
+await panel.bringToFront();
+if (await panel.locator('#check-body').isHidden()) await panel.click('#check-head');
+if (!await panel.locator('#details').evaluate(el => el.open)) await panel.click('#details > summary');
+if (!await panel.locator('details.section[data-id="drivers"]').evaluate(el => el.open)) await panel.click('details.section[data-id="drivers"] > summary');
+const clearedBox = panel.locator(`#f-${CLEARED.replace(/[^\w]/g, '_')}`);
+if (!await clearedBox.inputValue()) throw new Error(`The sample intake no longer answers ${CLEARED}.`);
+await clearedBox.click();
+await clearedBox.press('ControlOrMeta+A');
+await clearedBox.press('Delete');
+await clearedBox.press('Tab'); // the panel saves a client-details edit on change
+try {
+  await panel.waitForFunction(async path => {
+    const { intake } = await chrome.storage.session.get('intake');
+    return intake?.agentEdited?.includes(path) && intake.record.drivers[1].maritalStatus == null;
+  }, CLEARED, { timeout: 5000, polling: 100 });
+} catch (error) {
+  throw new Error(`The panel did not save the cleared ${CLEARED}.`, { cause: error });
+}
 console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#fill-hint'));
 await panel.bringToFront();
 await panel.click('#fill');
 // These are explicit synthetic agent answers for this workflow test, not facts inferred from
-// the PDF (additional interest and vehicles leased are TNI's standard No since 2026-10-09: the
-// extension fills them, and EXACT below still checks both). Never dismiss a review item or
-// inject protected keys to make navigation succeed.
+// the PDF. Never dismiss a review item or inject protected keys to make navigation succeed.
 const AGENT_ANSWERS = [
-  ['Insured Info', /^valued loss runs$/i, 'input[name="valuedLossRuns"][value="0"]', '0'],
-  // How long with the current carrier and claim-free loss runs are TNI standards since 2026-10-19
-  // (1 TO 2 YEARS, No): the extension fills them (EXACT below).
-  // Driver gender and license year are TNI standards since 2026-10-10 (MALE, birth year + 17):
-  // the extension fills them (EXACT below); a Drivers question left unresolved fails the run.
+  // The fact cleared above, answered on the second driver's row only. DIVORCED is neither the
+  // PDF's answer (MARRIED) nor the first driver's (SINGLE), so a refill from the intake or from
+  // the wrong row shows in EXACT below.
+  ['Drivers', /^marital status$/i, '#driversPanel .app-rp-section[data-id="1"] [data-id="martialStatus"]', 'DIVORCED'],
+  // TNI standards the extension fills, checked by EXACT below: additional interest and vehicles
+  // leased No (2026-10-09); driver gender MALE and license year birth year + 17 (2026-10-10); how
+  // long with the current carrier 1 TO 2 YEARS, claim-free and valued loss runs No (2026-10-19).
+  // A question left unresolved on any step fails the run.
 ];
 const manualFailures = [], agentAnswered = new Set();
 const answeredSteps = new Map();
@@ -222,6 +247,8 @@ const kept = await mock.evaluate(() => {
     licenseYear: v('#driversPanel .app-rp-section[data-id="0"] [data-id="licenseYear"]'),
     secondLicenseYear: v('#driversPanel .app-rp-section[data-id="1"] [data-id="licenseYear"]'),
     secondGender: v('#driversPanel .app-rp-section[data-id="1"] [data-id="gender"]'),
+    maritalStatus: v('#driversPanel .app-rp-section[data-id="0"] [data-id="martialStatus"]'),
+    secondMaritalStatus: v('#driversPanel .app-rp-section[data-id="1"] [data-id="martialStatus"]'),
     vehicleLeased: document.querySelector('input[name="vehicleLeased"]:checked')?.value,
     declaration: v('#accept'),
     entityType: v('#entityType'), yrsInBusiness: v('#yrsInBusiness'), mailingState: v('#mailingState'), natureOfBusiness: v('#natureOfBusiness'), ownerDob: v('#ownerDob'),
@@ -232,8 +259,9 @@ const kept = await mock.evaluate(() => {
   };
 });
 // The sample intake: Illinois, vehicle 1 a Van (Cargo Van on AmWINS); drivers born 1988 and 1995,
-// so license years 2005 and 2012 and gender MALE (TNI standards, no gender set).
-const EXACT = { additionalInterest: '0', valuedLossRuns: '0', claimFreeLossRuns: '0', currentCarrier: '1 TO 2 YEARS', licenseYear: '2005', secondLicenseYear: '2012', gender: 'MALE', secondGender: 'MALE', vehicleLeased: '0', prior0: 'NO PRIOR', prior1: 'NO PRIOR', prior2: 'NO PRIOR', mailingState: 'Illinois', bodyType: 'Cargo Van', medicalPayment: '$5,000', towing: '$75', usage: 'FOR HIRE', natureOfBusiness: 'TRANSPORTATION' };
+// so license years 2005 and 2012 and gender MALE (TNI standards, no gender set); the first driver
+// Single on the PDF, the second the agent's DIVORCED (AGENT_ANSWERS).
+const EXACT = { additionalInterest: '0', valuedLossRuns: '0', claimFreeLossRuns: '0', currentCarrier: '1 TO 2 YEARS', licenseYear: '2005', secondLicenseYear: '2012', gender: 'MALE', secondGender: 'MALE', maritalStatus: 'SINGLE', secondMaritalStatus: 'DIVORCED', vehicleLeased: '0', prior0: 'NO PRIOR', prior1: 'NO PRIOR', prior2: 'NO PRIOR', mailingState: 'Illinois', bodyType: 'Cargo Van', medicalPayment: '$5,000', towing: '$75', usage: 'FOR HIRE', natureOfBusiness: 'TRANSPORTATION' };
 const lost = Object.entries(kept).filter(([k, x]) => k !== 'declaration' && (x == null || x === '' || x === false || x === '(missing)' || x === 'State' || (k in EXACT && x !== EXACT[k]))).map(([k]) => k);
 console.log('Kept after the reloads:', JSON.stringify(kept));
 if (lost.length) console.log('LOST:', lost.join(', '));

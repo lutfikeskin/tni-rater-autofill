@@ -54,8 +54,9 @@
   .chip.ok { background: var(--okbg); color: var(--ok); }
   .why { color: var(--warn); font-size: 13px; }
   .why button { margin: 2px 4px 2px 0; font-size: 12.5px; }
-  .resume { background: var(--warnbg); color: var(--warn); border-radius: 6px; padding: 6px 10px; }
-  .resume:empty { display: none; }
+  .resume, .notice { background: var(--warnbg); color: var(--warn); border-radius: 6px; padding: 6px 10px; }
+  .resume:empty, .notice:empty { display: none; }
+  .notice { font-weight: 600; }
   details { margin-top: 4px; font-size: 13px; }
   summary { cursor: pointer; color: var(--accent); }
   .quotes td { font-size: 12.5px; border-top: 1px solid var(--line); }
@@ -80,6 +81,7 @@
 </header>
 <main>
   <div class="intro">
+    <p id="noTestList" class="notice"></p>
     <p id="resume" class="resume"></p>
     <p><b>What this is.</b> Each row is a question these quotes met. Decide TNI's right answer once; the benchmark then scores today's rules against it every week (<code>npm run benchmark -- --key</code>). Most rows start with a <b>proposal</b> from today's rules or the agent's answer. A proposal is not a decision: nothing goes into the key until you confirm it, and the key marks what you confirmed unchanged as <i>proposed</i>. Proposals agree with today's rules by construction, so the benchmark scores the rules twice: on every answer, and on the answers you decided (changed or typed) alone. Changing an answer confirms it as yours. Where an agent answered a standard otherwise, nothing is preselected: choose.</p>
     <ul>
@@ -411,6 +413,8 @@ for (const b of document.querySelectorAll('[data-confirm]')) b.addEventListener(
 document.getElementById('paths').append(...M.paths.map(([p, label]) => el('option', { value: p }, label)));
 document.querySelector('#intakes tbody').append(...M.intakes.map((i) => el('tr', {}, el('td', {}, el('code', {}, i.short)), el('td', {}, i.state ?? '?'), el('td', {}, i.businessClass ?? '?'), el('td', {}, i.carriers.join(', ')), el('td', {}, i.sessions))));
 document.getElementById('leftOut').textContent = `Generated ${M.generated.slice(0, 16).replace('T', ' ')} UTC. Not on this sheet: ${M.left.byId} recorded answers to questions known only by an id (no data-model name or text: the key can't name them), ${M.left.offQuote} on login or portal pages.`;
+// Made without a test-run list: the maintainer's test quotes may be on this sheet as agents' quotes.
+document.getElementById('noTestList').textContent = M.noTestList ?? '';
 fresh();
 let given = 0;
 if (M.key) { try { given = applyKey(M.key); } catch (err) { alert(err.message); } }
