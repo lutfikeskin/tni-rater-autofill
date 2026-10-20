@@ -14,13 +14,17 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 68 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 69 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
   const extraRowKeys = new Map();
   const MARK = 'data-rater-autofill';
   const SKIP_INPUT_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
+  // A search box that is an address question is one (GEICO's street box, with its own suggestion
+  // list), never a portal search or a list's filter box (select2's own box is aria-autocomplete=list
+  // too). The recorder (recorder.js) keeps the same exception.
+  const ADDRESS_SEARCH = 'input[type=search][aria-autocomplete=list][aria-controls]:not(.select2-search__field)';
   // filled: an intake answer (or one worked out from it); standard: a TNI standard answer (plan
   // step `standard`: an assumption such as gender MALE, not a fact from the intake); ai: an answer
   // the AI assistant chose (accepted by the agent or auto-selected); check it. The side panel's key
@@ -47,11 +51,63 @@
   const humanize = (s) => squash(String(s ?? '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\-.[\]$:]+/g, ' '));
   const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 
+  // In page order: what a shadow root holds comes where its host is. GEICO draws its radios in
+  // shadow roots between plain fields; listed after everything else, they came last in the report,
+  // the panel and an `askAfter` anchor's "the next one".
   function deepQueryAll(root, selector, out = []) {
-    out.push(...root.querySelectorAll(selector));
-    for (const el of root.querySelectorAll('*')) if (el.shadowRoot) deepQueryAll(el.shadowRoot, selector, out);
+    for (const el of root.querySelectorAll('*')) {
+      if (el.matches(selector)) out.push(el);
+      if (el.shadowRoot) deepQueryAll(el.shadowRoot, selector, out);
+    }
     return out;
   }
+
+  // GEICO's data-model name of a field (field-key.js): Id_GiveYear_81515 is GiveYear, whatever its
+  // render number.
+  const dataName = (el) => globalThis.__raterFieldKey.dataName?.(el) ?? null;
+
+  // A design-system radio (GEICO's <gds-radio-button>) keeps its <input type=radio> alone in its own
+  // shadow root, under a host named like the input: the host is the option the page shows, and its
+  // `checked` attribute the pick (each input is a native group of its own there, so an option picked
+  // earlier stays checked inside). Null for any other radio.
+  function radioHost(r) {
+    const root = r?.getRootNode?.();
+    const host = root && root !== document ? root.host : null;
+    if (!host || host.getAttribute?.('name') !== r.name) return null;
+    return root.querySelectorAll('input[type=radio]').length === 1 ? host : null;
+  }
+
+  // The words of a host's light-DOM part for one of its slots ([slot=label], [slot=legend]), without
+  // its tooltip's (GEICO's legend holds a <gds-tooltip> whose body is in the page too).
+  function slotText(host, name) {
+    const part = [...(host?.children ?? [])].find((n) => n.getAttribute?.('slot') === name);
+    if (!part) return '';
+    let text = part.textContent ?? '';
+    for (const tip of part.querySelectorAll('gds-tooltip, [role=tooltip]')) if (tip.textContent) text = text.replace(tip.textContent, ' ');
+    return oneLine(text);
+  }
+
+  // A button's words as drawn: its own text; else what its slots show (a design-system button,
+  // GEICO's <gds-button>, keeps its words in the page and only <slot>s in its shadow <button>); else,
+  // inside a shadow root whose host is itself a button (a tag ending in -button, or role=button),
+  // its host's. Not any host's: a tooltip's trigger would read as the tooltip's whole body.
+  function buttonText(el) {
+    const own = oneLine(el.value || el.textContent);
+    if (own) return own;
+    const slotted = oneLine([...(el.querySelectorAll?.('slot') ?? [])].flatMap((s) => s.assignedNodes?.({ flatten: true }) ?? []).map((n) => n.textContent).join(' '));
+    if (slotted) return slotted;
+    const root = el.getRootNode?.();
+    const host = root && root !== document ? root.host : null;
+    return host && (/(^|-)button$/i.test(host.tagName ?? '') || host.getAttribute?.('role') === 'button') ? oneLine(host.textContent) : '';
+  }
+
+  // Disabled on its shadow host as well (<gds-button disabled>). GEICO also disables the inner
+  // <button>; this is in case a page doesn't.
+  const hostDisabled = (el) => {
+    const root = el.getRootNode?.();
+    const host = root && root !== document ? root.host : null;
+    return !!host && (host.hasAttribute?.('disabled') || host.getAttribute?.('aria-disabled') === 'true');
+  };
 
   function isVisible(el) {
     if (el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden') return true;
@@ -88,7 +144,9 @@
     const labelledBy = el.getAttribute('aria-labelledby');
     if (labelledBy) for (const id of labelledBy.split(/\s+/)) { const n = byId(el, id); if (n) parts.push(n.textContent); }
     for (const l of el.labels ?? []) parts.push(textOutsideControls(l));
-    if (el.getAttribute('aria-label')) parts.push(el.getAttribute('aria-label'));
+    // Without markup: GEICO writes some as HTML (<span …>Name</span>'s Driver License State) or
+    // with **…** marks.
+    if (el.getAttribute('aria-label')) parts.push(el.getAttribute('aria-label').replace(/<[^>]*>/g, '').replace(/\*\*/g, ''));
     // No explicit label: the smallest wrapper that holds only this field, preferring its label
     // element; a date picker's calendar (Su Mo Tu …, month names) is not part of the question.
     if (!oneLine(parts.join(''))) {
@@ -104,7 +162,12 @@
     // The tooltip our own marks put on a field is never its question.
     const title = el.dataset?.raPrevTitle ?? (/^Rater Autofill:/.test(el.title ?? '') ? '' : el.title);
     if (!oneLine(parts.join('')) && title) parts.push(title);
-    return oneLine(parts.join(' ')).slice(0, 160) || oneLine(humanize(el.name || el.id));
+    const text = oneLine(parts.join(' ')).slice(0, 160);
+    // No label of its own: its name, GEICO's without the render number (Id_GiveYear_81515: "give
+    // year"). Nor one with no words (GEICO's amount boxes show only their "$" sign beside them).
+    const name = dataName(el);
+    if (name && !/[a-z]/i.test(text)) return oneLine(humanize(name));
+    return text || oneLine(humanize(el.name || el.id));
   }
 
   function withoutCalendar(text) {
@@ -115,6 +178,17 @@
 
   function radioGroupLabel(radios, optionTexts) {
     const first = radios[0];
+    // A design-system group (GEICO's <gds-radio-button-group>): the question is the [slot=legend]
+    // part of the nearest element above the option hosts that holds them all. Each option's shadow
+    // root holds only its own input, so the fieldset and container reading below never reach it.
+    const hosts = radios.map(radioHost);
+    if (hosts.every(Boolean)) {
+      for (let n = hosts[0].parentElement ?? null, i = 0; n && i < 3; n = n.parentElement ?? n.getRootNode?.()?.host ?? null, i++) {
+        if (!hosts.every((h) => n.contains(h))) continue;
+        const legend = slotText(n, 'legend');
+        if (legend) return legend.slice(0, 160);
+      }
+    }
     const group = first.closest('[role=radiogroup]');
     if (group && (group.getAttribute('aria-label') || group.getAttribute('aria-labelledby'))) return labelFor(group);
     const fieldset = first.closest('fieldset');
@@ -132,7 +206,8 @@
       if (t) return t.slice(0, 160);
       if (c.querySelectorAll(CONTROL_SELECTOR).length > radios.length) break;
     }
-    return oneLine(humanize(first.name));
+    // GEICO's two pay-plan lists have no legend: "give pay plan v2", not its render number.
+    return oneLine(humanize(dataName(first) || first.name));
   }
 
   function isRequired(el, label) {
@@ -170,8 +245,9 @@
 
   // The field's name in the carrier's data model: Duck Creek puts it on every input
   // (fieldref="RiskInput.VIN", "ComprehensiveInput.Deductible"). It names what the field holds,
-  // where the question id below is only a number, which Progressive renumbers (2026-10-07).
-  const fieldRef = (el) => el?.getAttribute?.('fieldref') || null;
+  // where the question id below is only a number, which Progressive renumbers (2026-10-07). GEICO
+  // has it in its names instead (dataName: Id_GiveYear_81515 is GiveYear).
+  const fieldRef = (el) => el?.getAttribute?.('fieldref') || dataName(el) || null;
 
   // Duck Creek element ids look like f_<letter><32 hex group id><question id>_<page>_<row>. The
   // question id is a number Progressive reassigns: it keeps a page's rows of one question
@@ -193,7 +269,9 @@
     if (X?.Ajax?.isLoading?.()) return true;
     // #loadingDefault: AmWINS' overlay while it saves or reloads the application (it redraws every
     // step when the reload lands, so nothing may be filled before that).
-    return [...document.querySelectorAll('.x-mask-msg, .x-mask-loading, [class*="loading-mask"], [class*="LoadingMessage"], #loadingDefault')]
+    // #page-load / #extendedWaiting: GEICO's spinners while a step loads and while Recalculate rates
+    // (both stay in the page, display:none, when idle).
+    return [...document.querySelectorAll('.x-mask-msg, .x-mask-loading, [class*="loading-mask"], [class*="LoadingMessage"], #loadingDefault, #page-load.loader-container, #extendedWaiting.loader-container')]
       .some((m) => m.getClientRects().length && getComputedStyle(m).visibility !== 'hidden');
   }
 
@@ -201,7 +279,10 @@
   async function settle({ quietMs = 250, maxMs = 15000 } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
-    mo.observe(document.body, { subtree: true, childList: true });
+    // A pick on a design-system radio redraws nothing: its host's `checked` and its group's
+    // `active-index` change (GEICO). Only these two attributes, so a page's own animations don't
+    // keep the wait going.
+    mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', 'active-index'] });
     const start = Date.now();
     try {
       await sleep(60);
@@ -221,6 +302,9 @@
   // Selectors of rules allowed to fill a field that isn't on screen (set while a fill runs): a
   // question the page adds to an earlier step of a one-address application after it was left.
   let hiddenOk = [];
+  // The units a fill is for (fill `units`, set while a fill runs): which vehicle, driver and
+  // trailer the plan answers for, and which unit forms are already theirs (see assign).
+  let fillUnits = null;
   // In a step section that isn't the one on screen (AmWINS' .form-tab, hidden).
   const otherStep = (el) => { const tab = el?.closest?.('.form-tab'); return !!tab && !isVisible(tab); };
 
@@ -229,12 +313,14 @@
     const groups = new Map();
     for (const el of deepQueryAll(document, CONTROL_SELECTOR)) {
       const type = el.tagName === 'INPUT' ? (el.type || 'text').toLowerCase() : el.tagName.toLowerCase();
-      if (el.tagName === 'INPUT' && SKIP_INPUT_TYPES.has(type)) continue;
+      if (el.tagName === 'INPUT' && SKIP_INPUT_TYPES.has(type) && !(type === 'search' && safeMatches(el, ADDRESS_SEARCH))) continue;
       if (el.disabled || (!isVisible(el) && !hiddenOk.some((sel) => safeMatches(el, sel)))) continue;
       const cmp = extCmp(el);
       if (type === 'radio') {
         const extGroup = cmp?.up?.('radiogroup') ?? null;
-        const key = extGroup ? `x:${extGroup.id}` : `${el.form ? 'f' : ''}:${globalThis.__raterFieldKey(el)}`;
+        // By its name too: two groups with one data-model name (GEICO's two pay-plan lists, both
+        // ref:GivePayPlanV2) are two questions. Nameless radios group as before.
+        const key = extGroup ? `x:${extGroup.id}` : `${el.form ? 'f' : ''}:${globalThis.__raterFieldKey(el)}|${el.name ?? ''}`;
         let g = groups.get(key);
         if (!g) {
           g = { kind: 'radio', el, type, radios: [], cmp: extGroup };
@@ -259,7 +345,10 @@
     for (const g of groups.values()) {
       g.options = g.radios.map((r) => {
         const item = extCmp(r);
-        return { el: r, cmp: item, text: oneLine(String(item?.boxLabel ?? '').replace(/<[^>]+>/g, ' ')) || oneLine([...(r.labels ?? [])].map(textOutsideControls).join(' ')) || r.value, value: r.value };
+        // A design-system option's words are its host's [slot=label] part (GEICO: "Vehicle" for
+        // the value Yes, "Pay In Full" for GEICO_PP_1Pay); its shadow <label> holds only a <slot>.
+        const host = radioHost(r);
+        return { el: r, cmp: item, host, text: oneLine(String(item?.boxLabel ?? '').replace(/<[^>]+>/g, ' ')) || oneLine([...(r.labels ?? [])].map(textOutsideControls).join(' ')) || slotText(host, 'label') || r.value, value: r.value };
       });
       g.label = dctCaption(g.cmp) ?? radioGroupLabel(g.radios, g.options.map((o) => o.text));
       g.q = dctQuestionId(g.cmp?.id ?? g.el.id) ?? (String(g.el.name).match(/^[a-z]+_([0-9A-F]+)/)?.[1] ?? null);
@@ -267,7 +356,7 @@
     }
     for (const c of out) {
       c.text = squash(c.label);
-      c.hint = humanize(c.el.name || c.el.id || '');
+      c.hint = humanize(dataName(c.el) || c.el.name || c.el.id || '');
       c.required = dctRequired(c.cmp) || isRequired(c.el, c.label);
     }
     // The vehicle a per-vehicle row belongs to: a question labelled with it ("2025 RAM PROMASTER
@@ -305,8 +394,12 @@
     try { return cmp.getValue(); } catch { return el?.value || null; }
   }
 
+  // Whether a radio option is the pick: its ExtJS component's value; a design-system option's host
+  // `checked` (radioHost: its own input may still be checked from an earlier pick); else the input.
+  const optionOn = (o) => (o.cmp ? !!cmpValue(o.cmp, o.el) : o.host ? o.host.hasAttribute('checked') : o.el.checked);
+
   function hasValue(c) {
-    if (c.kind === 'radio') return c.options.some((o) => (o.cmp ? !!cmpValue(o.cmp, o.el) : o.el.checked));
+    if (c.kind === 'radio') return c.options.some(optionOn);
     if (c.cmp && c.kind === 'select') {
       const v = cmpValue(c.cmp, c.el);
       return v != null && v !== '' && !isPlaceholderOption(c.cmp.getRawValue?.() ?? '');
@@ -319,8 +412,10 @@
 
   function selectedText(c) {
     if (c.kind === 'checkbox') return c.el.checked ? 'checked' : 'unchecked';
-    if (c.kind === 'radio') return c.options.find((o) => (o.cmp ? cmpValue(o.cmp, o.el) : o.el.checked))?.text ?? null;
+    if (c.kind === 'radio') return c.options.find(optionOn)?.text ?? null;
     if (c.cmp) return oneLine(c.cmp.getRawValue?.() ?? '') || null;
+    // A list taking several choices (GEICO's commodities): all of them.
+    if (c.kind === 'select' && c.el.multiple) return [...(c.el.selectedOptions ?? [])].map((x) => oneLine(x.text)).filter((t) => t && !isPlaceholderOption(t)).join('; ') || null;
     const o = c.el.selectedOptions?.[0];
     return o && !isPlaceholderOption(o.text) ? oneLine(o.text) : null;
   }
@@ -384,6 +479,11 @@
   // A data-model name not on the page while its expected wording is (a renamed field) is reported
   // (`pairs.renamed`) and left with the agent. Then label rules, then a pass on the field's name/id.
   // Each pair says how it was found (`how`).
+  // On a one-address application whose steps share their field names (GEICO's GiveFirstName is the
+  // owner on one step and a driver on another), a rule kept to steps (`steps`) or to a form
+  // (`whenShown` / `unlessShown`: a question only that form asks) is live only there; one that
+  // isn't live neither answers nor claims a field. A unit's form that may be another unit's is held
+  // (`pairs.units`, `pairs.held`; see unitFormsOf).
   function assign(controls, plan) {
     const used = new Set();
     const donePaths = new Set();
@@ -398,12 +498,22 @@
     // list. Never answered or changed; each row is a check for the agent (pairs.extraRows).
     const extraRows = new Map();
     const page = currentPage();
-    const steps = plan.map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
+    // The step on screen, read only for a plan kept to steps ('' when no step is named: then no
+    // stepped rule is live, and GEICO's fields stay the agent's).
+    const stepNow = plan.some((s) => s.steps?.length) ? stepKey() : '';
+    const live = (s) => (!s.steps?.length || stepIs(s.steps, stepNow))
+      && (!s.whenShown || !!shownControl(controls, s.whenShown)) && (!s.unlessShown || !shownControl(controls, s.unlessShown));
+    const steps = plan.filter(live).map((s) => ({ ...s, reC: s.re ? new RegExp(s.re, 'i') : null, exC: s.ex ? new RegExp(s.ex, 'i') : null }));
+    const units = unitFormsOf(controls, steps);
+    // Steps of a held form: they keep their fields (no other rule takes them, and they aren't
+    // unfamiliar), but answer nothing.
+    const isHeld = (s) => !!s.whenShown?.unit && !!units.find((u) => u.list === s.whenShown.unit)?.held;
     // Every witness value an intake unit claims (its VIN): a row reading as none of them isn't ours.
     const wanted = new Set(steps.filter((s) => s.witness).map((s) => idText(s.witness.value)).filter(Boolean));
     const take = (s, c, how, reworded = false) => { used.add(c); donePaths.add(s.path); pairs.push({ step: s, control: c, how, reworded }); };
     const fits = (s, c) => !(c.kind === 'checkbox' && s.kind !== 'bool');
-    const known = (s) => !!(s.field || s.ask?.length || (s.reC && s.pages?.length));
+    // A label pattern kept to pages or steps is a known question there, as a data-model name is.
+    const known = (s) => !!(s.field || s.ask?.length || (s.reC && (s.pages?.length || s.steps?.length)));
     // A question's own pages (`notPages`: never there, whatever finds it).
     const onPage = (s) => (!s.pages?.length || s.pages.includes(page)) && !s.notPages?.includes(page);
     // A data-model name is found on any page, except where the step is fenced off: a trailer's
@@ -448,6 +558,7 @@
     // Distinct known questions may share intake data (business and home ZIP/City).
     // Match every known question; path deduplication applies only to label fallbacks.
     for (const s of steps) {
+      if (isHeld(s)) continue;
       let c = null;
       let how = s.field ? 'field' : 'text';
       const same = found.get(s);
@@ -485,6 +596,15 @@
       }
       if (c) take(s, c, how, !!s.field && worded(s) && !textIs(s, c));
     }
+    // A held form's fields (its steps' and its marker question) that no live step took: nobody
+    // else's, and not unfamiliar either. The form is one check for the agent (fill).
+    const held = new Set();
+    for (const s of steps.filter(isHeld)) {
+      const mine = known(s) ? found.get(s) : s.selector ? controls.filter((x) => safeMatches(x.el, s.selector) || x.radios?.some((r) => safeMatches(r, s.selector))) : [];
+      for (const x of mine) if (!used.has(x)) held.add(x);
+    }
+    for (const u of units) if (u.held && !used.has(u.marker)) held.add(u.marker);
+    for (const x of held) used.add(x);
     // A data-model name not on the page, while its expected wording is: the field was probably renamed.
     pairs.renamed = steps.filter((s) => s.field && worded(s) && onPage(s) && nameHere(s) && !found.get(s).length)
       .flatMap((s) => { const x = controls.find((y) => !used.has(y) && y.ref !== s.field && !claimed.has(y.ref) && textIs(s, y)); return x ? [{ step: s, control: x }] : []; });
@@ -493,13 +613,15 @@
     const fenced = (s, x) => !!s.notWithin?.some((sel) => { try { return !!x.el?.closest(sel); } catch { return false; } });
     for (const field of ['text', 'hint']) {
       for (const s of steps) {
-        if (!s.reC || known(s) || donePaths.has(s.path) || !onPage(s)) continue;
+        if (!s.reC || known(s) || isHeld(s) || donePaths.has(s.path) || !onPage(s)) continue;
         const c = controls.find((x) => !used.has(x) && !repeated.has(x.q) && !perVehicle.has(x) && !fenced(s, x) && x[field] && fits(s, x) && s.reC.test(x[field]) && !(s.exC && s.exC.test(x[field])));
         if (c) take(s, c, field === 'text' ? 'label' : 'name');
       }
     }
     pairs.unwitnessed = unwitnessed;
     pairs.witnessed = witnessed;
+    pairs.held = held;
+    pairs.units = units;
     // Numbered by their place among the page's rows (by their witness controls), never by value.
     const witnesses = steps.filter((s) => s.witness).map((s) => s.witness);
     const rowWitnesses = [...new Set(controls.flatMap((x) => witnesses.some((w) => safeMatches(x.el, w.selector)) ? [x.el] : []))];
@@ -524,6 +646,81 @@
       return { witness, position: rowWitnesses.indexOf(el) + 1, key: count === 1 ? entry.key : entry.rows.get(el) };
     });
     return pairs;
+  }
+
+  // The field a presence condition (`whenShown` / `unlessShown`: { field, label? }) names: one on
+  // the page with that data-model name and, with `label` (a pattern, tested like a rule's label),
+  // a question reading like it (GEICO's trailer form asks GiveOtherVehicleType about "the
+  // customer's trailer", its vehicle form about "the customer's vehicle"). Null when none is.
+  function shownControl(controls, cond) {
+    const re = cond.label ? new RegExp(cond.label, 'i') : null;
+    return controls.find((x) => x.ref === cond.field && (!re || re.test(x.text ?? ''))) ?? null;
+  }
+
+  // The unit forms on screen, one per list (vehicles, drivers, trailers): GEICO draws each vehicle's,
+  // trailer's and driver's form at the same address, one at a time, and the live steps kept to a
+  // unit's form (`whenShown.unit`) answer it for the panel's active unit of that list. A form is
+  // told by its marker question's element name, whose number is new with each form GEICO draws
+  // (Id_YesNoPreQuoteHaveFullVinActivity_85493, then _37768 for the next vehicle). Against the forms
+  // fills have answered each unit on (fill `units.bound`: the panel's, plus this fill's own), a form
+  // is held when it was answered for another unit, or is new while the active unit was answered on
+  // another form: the picker still names the last unit, and the automatic fill of the next form
+  // would type that unit's VIN into it. { list, id, marker, active, count, held, boundTo } each.
+  function unitFormsOf(controls, steps) {
+    const out = [];
+    for (const s of steps) {
+      const list = s.whenShown?.unit;
+      if (!list || out.some((u) => u.list === list)) continue;
+      const marker = shownControl(controls, s.whenShown);
+      const id = marker ? String(marker.el.name || marker.el.id || '') : '';
+      if (!id) continue;
+      const bound = fillUnits?.bound?.[list] ?? {};
+      const active = fillUnits?.active?.[list] ?? 0;
+      const boundTo = Object.hasOwn(bound, id) ? bound[id] : null;
+      const activeForm = Object.keys(bound).find((k) => bound[k] === active) ?? null;
+      const held = (boundTo != null && boundTo !== active) || (boundTo == null && activeForm != null && activeForm !== id);
+      out.push({ list, id, marker, active, count: fillUnits?.count?.[list] ?? 0, held, boundTo });
+    }
+    return out;
+  }
+
+  // The unit forms on screen now, [{ list, id }] as unitFormsOf tells them (by their marker
+  // question's element name), between fills: the recorder sends them with the agent's changes, so
+  // the panel files an edit under the form it was made on, also one no fill has read yet (a trailer
+  // form just opened). [] when the markers fills in this document were given show no form (GEICO's
+  // owner check under Vehicles); null when no fill here gave any. Element names only, no values.
+  function unitFormsNow() {
+    if (!knownUnitMarkers) return null;
+    try {
+      const controls = collectControls();
+      const out = [];
+      for (const m of knownUnitMarkers) {
+        if (out.some((u) => u.list === m.unit)) continue;
+        const marker = shownControl(controls, m);
+        const id = marker ? String(marker.el.name || marker.el.id || '') : '';
+        if (id) out.push({ list: m.unit, id });
+      }
+      return out;
+    } catch {
+      return null;
+    }
+  }
+
+  const unitNoun = (list) => ({ vehicles: 'vehicle', drivers: 'driver', trailers: 'trailer' }[list] ?? 'unit');
+
+  // What the agent is told about a held unit form: the unit by its place in the intake's list,
+  // never by its VIN or name.
+  function heldFormNote(u) {
+    const noun = unitNoun(u.list);
+    const which = u.boundTo != null
+      ? `This form was filled for ${noun} ${Number(u.boundTo) + 1}, and the panel has ${noun} ${Number(u.active) + 1} picked`
+      : `This form may be another ${noun}'s than ${noun} ${Number(u.active) + 1}, which was filled on an earlier form`;
+    if (u.count <= 1) return `${which}. The intake lists ${u.count === 1 ? `one ${noun}` : `no ${noun}s`}: answer this form yourself.`;
+    // A form filled for one unit stays held once the agent picks the unit it is really about: the
+    // note says both ways out, as only the agent can tell whose it is.
+    if (u.boundTo == null) return `${which}: pick the ${noun} this form is about in the panel, then Fill again.`;
+    const filledFor = `${noun} ${Number(u.boundTo) + 1}`;
+    return `${which}: if it is ${filledFor}'s, pick ${filledFor} in the panel, then Fill again; if it is ${noun} ${Number(u.active) + 1}'s, correct its answers yourself.`;
   }
 
   // Letters and digits only, uppercase: how a witness value (a VIN) compares with the page's.
@@ -603,12 +800,18 @@
     });
   }
 
+  // A list's stand-in for what is picked: GEICO starts every coverage list with an
+  // <option value="" hidden> repeating the current choice ("Not Included"). Picking it picks nothing.
+  const standIn = (o) => o.el?.tagName === 'OPTION' && (!!o.el.hidden || !!o.el.disabled || o.value === '');
+
   function matchOption(options, step) {
-    // Options that read the same are the same choice (pages sometimes list one twice).
+    // Options that read the same are the same choice (pages sometimes list one twice), and the
+    // real one of them is the choice, never a stand-in reading like it.
     const seenText = new Set();
+    const real = new Set(options.filter((o) => !standIn(o)).map((o) => squash(o.text)));
     const usable = options.filter((o) => {
       const k = squash(o.text);
-      if (!k || isPlaceholderOption(o.text) || seenText.has(k)) return false;
+      if (!k || isPlaceholderOption(o.text) || seenText.has(k) || (standIn(o) && real.has(k))) return false;
       seenText.add(k);
       return true;
     });
@@ -831,6 +1034,8 @@
     if (step.kind === 'search-select') return applySearchSelect(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
+    // A list taking several choices (GEICO's commodities): setting one value would drop the others.
+    if (c.kind === 'select' && c.el.multiple) return { ok: false, reason: 'this list takes several choices: pick these yourself' };
     if (c.kind === 'text') {
       const text = textFor(step, c);
       if (c.el.maxLength > 0 && text.length > c.el.maxLength) return { ok: false, reason: `value is longer than the field allows (${c.el.maxLength})` };
@@ -853,7 +1058,13 @@
     }
     if (!opt) return noMatch(step, options);
     if (c.kind === 'select') setNativeValue(c.el, opt.value);
-    else if (!opt.el.checked) opt.el.click();
+    else if (!optionOn(opt)) {
+      // A design-system option whose own input is still checked from an earlier pick while its host
+      // isn't (the page shows another option): a click on a checked radio changes nothing and tells
+      // the page nothing, so it is unchecked first.
+      if (opt.host && opt.el.checked) opt.el.checked = false;
+      opt.el.click();
+    }
     return { ok: true, shown: opt.text };
   }
 
@@ -940,8 +1151,17 @@
   // Highlighting
 
   function highlightTargets(c) {
-    if (c.kind !== 'radio') return [c.cmp?.el?.dom?.querySelector?.('.x-form-trigger-wrap') ?? c.el];
-    return c.radios.map((r) => (isVisible(r) && r.getClientRects().length ? r : r.labels?.[0] ?? r));
+    if (c.kind !== 'radio') {
+      // A select2 list's own <select> is a 1-px box: the box drawn after it is what the agent sees.
+      const drawn = c.el.classList?.contains('select2-hidden-accessible') ? c.el.nextElementSibling?.querySelector?.('.select2-selection') ?? null : null;
+      return drawn ? [drawn, c.el] : [c.cmp?.el?.dom?.querySelector?.('.x-form-trigger-wrap') ?? c.el];
+    }
+    // A design-system option is drawn by its host (its own input may be drawn invisibly).
+    return c.radios.map((r) => {
+      const host = radioHost(r);
+      if (host?.getClientRects().length) return host;
+      return isVisible(r) && r.getClientRects().length ? r : r.labels?.[0] ?? r;
+    });
   }
 
   function mark(c, status, note) {
@@ -1002,8 +1222,13 @@
   // ---------------------------------------------------------------------------------------------
   // Clicking buttons (carrier "actions": Verify DOT, Lookup VIN, Add a Commodity, …)
 
-  // Never clicked, whatever a rule says: moving on or committing is always the agent's call.
-  const NEVER_CLICK = /\b(continue|next|start quote|finish|buy|bind|purchase|submit|save|delete|remove|cancel|logout|log out|sign out)\b/i;
+  // Never clicked, whatever a rule says: moving on or committing is always the agent's call. So is
+  // throwing away a form (GEICO's Discard Changes and its "Yes, please discard."), ordering reports
+  // (MVR & CLUE) and signing (eSignature). The words are literal: \bsign\b misses "signature".
+  const NEVER_CLICK = /\b(continue|next|start quote|finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|order|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out)\b/i;
+  // Links of a step progress bar (GEICO's #progressIndicator): each opens its step, so none is a
+  // helper or a Continue.
+  const STEP_LINKS = '#progressIndicator';
 
   // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
   const currentPage = () => (new URLSearchParams(location.search).get('pageName') || (location.pathname + ((location.hash ?? '').startsWith('#/') ? location.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
@@ -1011,26 +1236,30 @@
   function ratesStale() {
     const text = document.body.innerText ?? '';
     // "The coverages have changed, please "recalculate" to see your rate." / "Recalculate to see
-    // coverage cost" (Progressive), or a premium of ****.
-    return /\*{4}|(?:must|please|need to)\W+recalculate|recalculate to see|premium.*(?:out of date|not current)|chang\w*.*recalculate/i.test(text);
+    // coverage cost" (Progressive), or a premium of ****. GEICO: "Please Recalculate Due To Coverage
+    // Change", and "$ --.--" in place of the amounts.
+    return /\*{4}|\$\s*--\.--|(?:must|please|need to)\W+recalculate|recalculate to see|premium.*(?:out of date|not current)|chang\w*.*recalculate/i.test(text);
   }
 
   function premiumReady() {
     if (pageBusy() || ratesStale()) return false;
     const text = document.body.innerText ?? '';
-    // "Total premium amount $12,815.00 per year" (Progressive), "Total premium: $12,345.67".
-    return /(?:total|annual|policy|estimated)\s+premium(?:\s+amount)?\s*:?\s*\$\s*[1-9][\d,]*(?:\.\d{2})?/i.test(text);
+    // "Total premium amount $12,815.00 per year" (Progressive), "Total premium: $12,345.67". GEICO's
+    // summary names each amount after it: "Quote $1,000.00 Due Today $1,000.00 Total".
+    return /(?:total|annual|policy|estimated)\s+premium(?:\s+amount)?\s*:?\s*\$\s*[1-9][\d,]*(?:\.\d{2})?/i.test(text)
+      || /\bquote\s+\$\s*[1-9][\d,]*\.\d{2}\s+due today\s+\$\s*[\d,]+\.\d{2}\s+total\b/i.test(text);
   }
 
   // The page's own "move on" button, only ever used when nothing is left for the agent. Buttons
-  // that commit anything stay off limits whatever the pattern says.
-  const NEVER_ADVANCE = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|logout|log out|sign out|order)\b/i;
+  // that commit anything stay off limits whatever the pattern says, and so do discarding a form and
+  // signing (scripts/lib/signals.mjs RESTRICTED keeps every word of this list).
+  const NEVER_ADVANCE = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out|order)\b/i;
   function findAdvanceButton(pattern) {
     const re = new RegExp(pattern, 'i');
     let best = null;
     for (const el of deepQueryAll(document, 'a, button, [role=button], input[type=button], input[type=submit], .x-btn')) {
-      if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]')) continue;
-      const text = oneLine(el.value || el.textContent);
+      if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]') || hostDisabled(el) || el.closest(STEP_LINKS)) continue;
+      const text = buttonText(el);
       // "Save & Continue" (AmWINS) only saves the draft and opens the next step.
       const committing = NEVER_ADVANCE.test(text.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue'));
       if (text.length > 40 || committing || !re.test(text)) continue;
@@ -1045,10 +1274,12 @@
     let best = null;
     // `unique`: two separate matches (two reefer tiles) leave the choice to the agent.
     const separate = [];
-    for (const el of deepQueryAll(document, 'a, button, [role=button], [role=link], input[type=button], input[type=submit], .x-btn, [onclick]')) {
-      if (!el.getClientRects().length) continue;
-      if (!disabledToo && (el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]'))) continue;
-      const text = oneLine(el.value || el.textContent);
+    // [data-testid][tabindex]: an icon the keyboard reaches that has no role (GEICO's add icons:
+    // Add Driver's +). Never a Continue (findAdvanceButton).
+    for (const el of deepQueryAll(document, 'a, button, [role=button], [role=link], input[type=button], input[type=submit], .x-btn, [onclick], [data-testid][tabindex]:not([tabindex="-1"])')) {
+      if (!el.getClientRects().length || el.closest(STEP_LINKS)) continue;
+      if (!disabledToo && (el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]') || hostDisabled(el))) continue;
+      const text = buttonText(el);
       if (NEVER_CLICK.test(text)) continue;
       const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
         ...[...el.attributes].filter((a) => a.name.startsWith('data-')).map((a) => a.value)].join(' ');
@@ -1067,7 +1298,7 @@
     const want = near.toLowerCase();
     for (let p = el.parentElement, i = 0; p && i < 10; p = p.parentElement, i++) {
       if (!p.textContent.toLowerCase().includes(want)) continue;
-      const alike = [...p.querySelectorAll('a, button, [role=button], .x-btn, [onclick]')].filter((b) => re && re.test(oneLine(b.value || b.textContent)));
+      const alike = [...p.querySelectorAll('a, button, [role=button], .x-btn, [onclick]')].filter((b) => re && re.test(buttonText(b)));
       return alike.filter((b) => !b.contains(el) && !el.contains(b)).length === 0;
     }
     return false;
@@ -1082,6 +1313,18 @@
   const EDIT_HALT_ANSWERS = 'an agent edit interrupted applying the answers; review the page, then request fresh suggestions';
   // Why a fill stops when the agent clicks Stop in the side panel.
   const STOP_HALT = 'You stopped the fill. Nothing more was filled or clicked.';
+  // Why a fill does nothing on a step that is the agent's (fill `stopSteps`: GEICO's MVR & CLUE).
+  const STOP_STEP_HALT = 'This step is yours: nothing is filled or clicked here.';
+  // Why a fill kept to steps does nothing on a step it can't read (stepKey ''): no rule kept to a
+  // step would be live there, so every question would read as unfamiliar and the page as changed.
+  const STEP_UNREAD_HALT = 'The step on screen could not be read (the progress bar and the page title disagree): fill again once the page settles.';
+  // The stop steps fills in this document were given: answer() refuses on them too, even when
+  // the panel's word on the step lags.
+  let knownStopSteps = [];
+  // The unit-form markers (`whenShown` with a `unit`: GEICO's vehicle, trailer and driver forms) of
+  // the last fill in this document whose plan had any: unitFormsNow reads the forms on screen by
+  // them between fills. Null until a fill gives some.
+  let knownUnitMarkers = null;
 
   // The fill running in this frame (its report and how to halt it): the side panel reads how many
   // answers are in so far, and its Stop halts it the way an agent edit does (no Continue after).
@@ -1129,10 +1372,13 @@
       return isControl(document.activeElement) ? document.activeElement : null;
     };
     const gestureTypes = ['pointerdown', 'keydown', 'paste', 'drop'];
+    // The element itself, not its shadow host: at the document, an event from inside a shadow root
+    // names the host (a GEICO radio's <gds-radio-button>, not its input).
+    const realTarget = (event) => event.composedPath?.()[0] ?? event.target ?? null;
     const trackGesture = (event) => {
       if (!event.isTrusted) return;
       lastGesture = Date.now();
-      gestureTarget = event.target ?? null;
+      gestureTarget = realTarget(event);
       gestureControl = popupControl(gestureTarget);
     };
     const sameGroup = (a, b) => a === b || (!!a && !!b && a.type === 'radio' && b.type === 'radio'
@@ -1141,6 +1387,12 @@
       const target = gestureTarget;
       if (!target || !el) return false;
       if (sameGroup(target, el) || sameGroup(gestureControl, el)) return true;
+      // On a design-system option (radioHost): its host, its [slot=label] words, or anything in its
+      // shadow root, is on that option's radio and its group.
+      for (let n = target, i = 0; n && i < 8; n = n.parentElement ?? n.getRootNode?.()?.host ?? null, i++) {
+        const input = n.shadowRoot?.querySelector?.('input[type=radio]');
+        if (input && radioHost(input) === n) return sameGroup(input, el);
+      }
       const label = target.closest?.('label');
       if (label) {
         const forId = label.htmlFor || label.getAttribute?.('for');
@@ -1153,8 +1405,9 @@
       return [...(target.querySelectorAll?.('input, select, textarea') ?? [])].every((x) => sameGroup(x, el));
     };
     const protectEdit = (event) => {
-      if (!event.isTrusted || Date.now() - lastGesture > 2000 || !gestureOn(event.target)) return;
-      const c = collectControls().find((x) => x.el === event.target || x.radios?.includes(event.target));
+      const target = realTarget(event);
+      if (!event.isTrusted || Date.now() - lastGesture > 2000 || !gestureOn(target)) return;
+      const c = collectControls().find((x) => x.el === target || x.radios?.includes(target));
       if (c) onEdit(fieldKey(c), c);
     };
     for (const type of gestureTypes) document.addEventListener(type, trackGesture, true);
@@ -1208,24 +1461,70 @@
   // `doneSteps`: steps of a one-address application (stepKey) already continued from: a step the
   // agent goes back to is theirs, never continued again.
   // `stopPages`: pages where the carrier has stopped the quote: nothing is filled or clicked there.
+  // `stopSteps`: steps of a one-address application that are the agent's (GEICO's MVR & CLUE), by
+  // name: the same, read from the page as the fill starts and again every round (the agent's Next
+  // changes the step without a new address).
+  // `units`: { active, count, bound } per list (vehicles, drivers, trailers): the unit the plan is
+  // for, how many the intake lists, and the unit forms earlier fills answered each unit on (form id
+  // -> index). A form that may be another unit's is held (report.unitHeld); one the plan gives an
+  // answer for is report.unitForm, for the panel to bind to the active unit.
+  // `skipBy` (form-scoped carriers: GEICO): the agent's edits by where they were made, { steps:
+  // { step: keys }, units: { list: keys } (the active units'), forms: { form id: keys }, stepUnits:
+  // { step: list } }. Each round skips, besides `skip`, those of the step and forms on screen
+  // (skipWhere).
+  // A plan kept to steps on a page whose step bar can't be read (stepKey '') does nothing there and
+  // reads nothing for its report (STEP_UNREAD_HALT, report.stepUnread).
   // `hold` (the panel's "Check answers before Continue"): Continue is clicked only when `confirmed`
   // is the page's `receipt()` as the agent approved it (Looks right) and still is; otherwise the
   // report says `held`: 'check' (not approved yet) or 'changed' (the page changed since).
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], hold = false, confirmed = null, run = null } = {}) {
+  // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
+  // rest of its plan is that step's, and the new step gets a fill of its own.
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, hold = false, confirmed = null, run = null } = {}) {
+    // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
+    // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
+    // (skipWhere).
+    const skipKeys = new Set(skip);
+    const scopedKeys = new Set();
+    const skipped = (key) => skipKeys.has(key) || scopedKeys.has(key);
     // An agent edit protects its field. A plain name saved by an older build (field-key v2)
     // protects every row key made from it (name#<row>): it could have been any row's edit.
-    const skipKeys = new Set(skip);
-    const skipped = Set.prototype.has.bind(skipKeys);
-    skipKeys.has = (key) => skipped(key) || skipped(globalThis.__raterFieldKey.rowKeyBase?.(key));
+    const skippedKey = (key) => skipped(key) || skipped(globalThis.__raterFieldKey.rowKeyBase?.(key));
     // A field the agent edited, by its key, or by the question id an older build kept it under
     // (version 3) in a quote begun before this one: left alone rather than overwritten.
-    const skippedField = (c) => skipKeys.has(fieldKey(c)) || skipped(globalThis.__raterFieldKey.legacyKey?.(c.el, { q: c.q }));
+    const skippedField = (c) => skippedKey(fieldKey(c)) || skipped(globalThis.__raterFieldKey.legacyKey?.(c.el, { q: c.q }));
     // Such a question id can't be tied to its question for certain: saved before a renumbering,
     // it now belongs to another question, and the corrected one has a new number. While one is
     // kept, no answer already on a Duck Creek field is replaced, so whichever field the agent
     // corrected keeps their answer (Codex on PR #43).
     const legacyEdits = skip.some((k) => /^[0-9A-F]+(?:@\d+)?$/.test(String(k)));
     const mayHoldLegacyEdit = (c) => legacyEdits && c.q != null && hasValue(c);
+    // The edits (`skipBy`) that apply where the kit is now: `scopedKeys`, set anew each round and for
+    // the final reads, so a form drawn partway through the fill has its own, never the previous
+    // form's. GEICO asks one data-model name on several steps and forms (the owner's GiveLastName
+    // and each driver's; a vehicle's GiveYear and a trailer's), so an edit protects its field only
+    // on its own step, unit or form. On a unit step: the active unit's edits on a form that isn't
+    // held, and every form's own; a held form gets only its own, so its check is gone only once the
+    // agent dismissed or answered that form's. No form on screen (GEICO's owner check under Vehicles
+    // asks Business & Owner Info's questions again, and little else): every step's edits, never a
+    // unit's (the owner's own driver form asks Add Driver's license state, CDL and SR-22).
+    const skipNames = skipBy ? [...Object.keys(skipBy.stepUnits ?? {}), ...Object.keys(skipBy.steps ?? {})] : [];
+    const skipWhere = (units) => {
+      scopedKeys.clear();
+      const key = stepKey();
+      const name = skipNames.find((n) => stepIs([n], key));
+      if (!name) return;
+      const add = (keys) => { for (const k of [].concat(keys ?? [])) scopedKeys.add(k); };
+      const list = Object.hasOwn(skipBy.stepUnits ?? {}, name) ? skipBy.stepUnits[name] : null;
+      if (!list) return add(skipBy.steps?.[name]);
+      if (!units?.length) {
+        for (const keys of Object.values(skipBy.steps ?? {})) add(keys);
+        return;
+      }
+      for (const u of units) {
+        if (!u.held) add(skipBy.units?.[u.list]);
+        add(skipBy.forms?.[u.id]);
+      }
+    };
     const actions = plan.filter((s) => s.kind === 'action');
     plan = plan.filter((s) => s.kind !== 'action');
     const clicked = new Set(doneActions);
@@ -1250,10 +1549,25 @@
     const startPage = currentPage();
     if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
-    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], reworded: [], renamed: [], halted: false, rounds: 0 };
+    const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], reworded: [], renamed: [], halted: false, rounds: 0, unitForm: null, unitHeld: null, stepUnread: false };
+    stopSteps = [].concat(stopSteps ?? []);
+    if (stopSteps.length) knownStopSteps = [...new Set([...knownStopSteps, ...stopSteps])];
+    // Its unit forms' markers, by which unitFormsNow tells the forms on screen between fills.
+    const markers = [...new Map(plan.filter((s) => s.whenShown?.unit).map((s) => [JSON.stringify(s.whenShown), s.whenShown])).values()];
+    if (markers.length) knownUnitMarkers = markers;
     if (stopPages.includes(startPage)) {
       report.halted = true;
       report.reason = 'The carrier stopped this quote on this page: nothing is filled or clicked here.';
+      report.stepKey = stepKey();
+      return report;
+    }
+    // A step that is the agent's, as the fill starts (also at every round, below).
+    const stopAt = stopStepOn(stopSteps);
+    if (stopAt) {
+      report.halted = true;
+      report.reason = STOP_STEP_HALT;
+      report.stopStep = stopAt;
+      report.stepKey = stepKey();
       return report;
     }
     const serverBacked = !!ext();
@@ -1281,9 +1595,20 @@
     // Stopped while the page settled: nothing was done.
     if (!settled || report.halted) {
       if (!settled) halt('The page is still waiting on its server. Review and retry.');
+      report.stepKey = stepKey();
       if (running === thisFill) running = null;
       return report;
     }
+    // The step on screen as the fill begins, on a page with a step progress bar (null elsewhere:
+    // AmWINS' headings change with its dialogs). Read once the page has settled.
+    const startStep = stepBars().length ? stepKey() : null;
+    const stepChanged = () => startStep !== null && stepKey() !== startStep;
+    // A stop step the fill found on screen after it started: it does nothing more, and reads nothing
+    // there for its report.
+    let stoppedAt = '';
+    // A plan kept to steps on a page whose step bar can't be read (STEP_UNREAD_HALT): the same.
+    const steppedPlan = plan.some((s) => s.steps?.length);
+    let unreadStep = false;
     // A real user edit during a fill must survive even while the recorder is paused: its field is
     // protected (also from this fill's later rounds) and the fill stops. The guard stays on until
     // the fill returns, so an edit during the wait before Continue stops that too.
@@ -1321,27 +1646,67 @@
       return moved;
     };
     try {
+    // This fill's units (see unitFormsOf); a form it answers a unit on is that unit's for the rest
+    // of the fill too.
+    fillUnits = {
+      active: { ...units?.active }, count: { ...units?.count },
+      bound: Object.fromEntries(Object.entries(units?.bound ?? {}).map(([list, forms]) => [list, { ...forms }])),
+    };
+    // The lists whose forms the plan gives an answer: only such a form is bound to the active unit.
+    // GEICO's Add Driver while the panel's driver is the owner (whom GEICO already lists) is all
+    // notes: bound to the owner, it would be held as the owner's once the agent picks its driver.
+    const answeredLists = new Set(plan.filter((s) => s.whenShown?.unit && s.value != null && s.value !== '').map((s) => s.whenShown.unit));
 
     for (let round = 0; round < maxRounds; round++) {
       report.rounds = round + 1;
+      // The agent's Next changes the step without a new address: on a step that is the agent's the
+      // fill does nothing more, and another step is left to a fill of its own.
+      stoppedAt = stopStepOn(stopSteps);
+      if (stoppedAt) { report.stopStep = stoppedAt; if (!report.halted) halt(STOP_STEP_HALT); break; }
+      if (stepChanged()) break;
+      // The step can't be read, and the fill began there (a step it began on that turns unreadable
+      // is the agent's Next mid-redraw: the step changed, above). Nothing is done or read here.
+      if (steppedPlan && stepBars().length && stepKey() === '') {
+        unreadStep = true;
+        // Only this halt: the panel tries an automatic fill once more rather than pausing them all.
+        if (!report.halted) { halt(STEP_UNREAD_HALT); report.stepUnread = true; }
+        break;
+      }
       const controls = collectControls();
       roundControls = controls;
       report.fields = Math.max(report.fields, controls.length);
       if (report.halted) break;
       const allPairs = assign(controls, plan);
+      // The agent's edits made where the kit is now, before anything asks whether a field is theirs.
+      if (skipBy) skipWhere(allPairs.units);
       // Review items are flagged in yellow and the rest of the page still fills. Only a stuck
       // page or an agent edit stops the fill.
       const mapped = new Set(allPairs.map((p) => p.control));
       // Rows of one repeated question share a key; their labels (the vehicle) tell them apart.
       const flag = (list, item) => { if (!list.some((x) => x.key === item.key && x.label === item.label)) list.push(item); };
+      // The unit forms on screen (assign): one the plan answers for the active unit is that unit's,
+      // for the panel (report.unitForm) and for the rest of this fill; one that may be another unit's
+      // is held, as one check for the agent, named by its place in the intake's list. Marked done in
+      // the panel (its first question is then the agent's), the form stays held, without the check;
+      // with `skipBy` only an edit filed under that form counts, never one of the active unit's.
+      for (const u of allPairs.units) {
+        if (u.held) {
+          report.unitHeld = { list: u.list, id: u.id };
+          if (!skippedField(u.marker)) flag(report.checks, { label: u.marker.label, path: null, name: `${unitNoun(u.list)} ${Number(u.active) + 1}`, key: fieldKey(u.marker), q: null, controlKind: null, note: heldFormNote(u) });
+        } else if (answeredLists.has(u.list)) {
+          report.unitForm = { list: u.list, id: u.id };
+          (fillUnits.bound[u.list] ??= {})[u.id] = u.active;
+        }
+      }
       // Known questions whose wording changed (answered, and flagged when answered), and fields that
       // read like a known question whose data-model name isn't on the page (left for the agent).
       for (const p of allPairs.filter((x) => x.reworded)) flag(report.reworded, { label: p.control.label, key: fieldKey(p.control), name: p.step.name, field: p.step.field });
       const renamed = new Map(allPairs.renamed.map((r) => [r.control, r.step]));
       for (const [c, step] of renamed) flag(report.renamed, { label: c.label, key: fieldKey(c), name: step.name, field: step.field, now: c.ref ?? null });
       for (const c of controls) {
-        // A row a witness step chooses among is a known question (its unit is named instead).
-        if (mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c)) continue;
+        // A row a witness step chooses among is a known question (its unit is named instead), and
+        // so is a held unit form's (the form is named instead).
+        if (mapped.has(c) || skippedField(c) || allPairs.witnessed.has(c) || allPairs.held.has(c)) continue;
         flag(report.unknown, { label: c.label, key: fieldKey(c), q: c.q, ref: c.ref ?? null, controlKind: c.kind, required: c.required, ...describe(c) });
         mark(c, 'needs', renamed.has(c) ? `Looks like "${renamed.get(c).name}", but the carrier renamed this field: left for you.` : 'Unfamiliar question — left for you.');
       }
@@ -1396,13 +1761,18 @@
         if (!await settle(serverBacked ? {} : { quietMs: 800, maxMs: 8000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
         if (!verifyAction()) break;
         if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+        if (stepChanged()) break;
         continue;
       }
       const pairs = assign(controls, plan).filter(({ step, control }) => !handled.has(step.id) && !skippedField(control));
       let changed = false;
       // A failed answer may still have redrawn the page (new questions): look again next round.
       let retry = false;
+      // Another step on screen since the round began (the agent clicked Next): this round's
+      // questions are that step's no longer, and nothing more is given or clicked for them.
+      let stepMoved = false;
       for (const { step: planned, control: c, how, reworded } of pairs) {
+        if (stepChanged() || stopStepOn(stopSteps)) { stepMoved = true; break; }
         // A known field whose question reads differently now: answered, and the agent checks it.
         const step = reworded ? { ...planned, warn: [planned.warn, `The carrier's wording of this question changed (it read "${[].concat(planned.ask ?? [])[0] ?? planned.re}"): check the answer.`].filter(Boolean).join(' ') } : planned;
         const item = { stepId: step.id, label: c.label, path: step.path, name: step.name, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, how, standard: !!step.standard, manualOnly: !!step.manualOnly,
@@ -1508,6 +1878,15 @@
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
             }
           }
+          // A step-fenced recalculation (GEICO's Recalculate on Quote & Coverages) is due again
+          // after any later answer on its step: the premium shows "$ --.--" until it's clicked,
+          // and Next stays hidden (mock run, 2026-10-20). It still waits for ratesStale() and the
+          // required questions before it's clicked.
+          for (const a of actions.filter((x) => x.needsRecalculation && x.steps?.length && actionHere(x))) {
+            clicked.delete(a.action);
+            report.actions = report.actions.filter((x) => x.id !== a.action);
+            if (!report.invalidatedActions.includes(a.action)) report.invalidatedActions.push(a.action);
+          }
           report.filled.push({ ...item, shown: result.shown });
           // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
           handled.set(step.id, step.standard
@@ -1537,6 +1916,8 @@
         }
       }
       if (report.halted) break;
+      // The next round's start ends the fill (or stops it on a step that is the agent's).
+      if (stepMoved) continue;
       // Nothing left to type or pick: click the next button whose turn it is.
       let helperClicked = false;
       if (!changed && window === window.top) changed = helperClicked = clickNextAction(controls);
@@ -1549,6 +1930,12 @@
       if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: 3000 })) { halt('The page did not settle after the helper.'); break; }
       if (!verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
+      if (stepChanged()) break;
+    }
+    // The agent's step after the last round (Next clicked during its wait): stopped there too.
+    if (!stoppedAt) {
+      stoppedAt = stopStepOn(stopSteps);
+      if (stoppedAt) { report.stopStep = stoppedAt; if (!report.halted) halt(STOP_STEP_HALT); }
     }
 
     function verifyAction() {
@@ -1631,11 +2018,17 @@
       return new Map(controls.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
     }
 
+    // A helper's own pages, and its own steps of a one-address application (`steps`: GEICO's
+    // Recalculate only on Quote & Coverages; a later step's text can ask to recalculate too).
+    function actionHere(a) {
+      return (!a.pages.length || a.pages.includes(currentPage())) && (!a.steps?.length || stepIs(a.steps));
+    }
+
     // A helper the agent must otherwise do by hand is open while the helpers it follows have run
     // and the page hasn't settled it (NTL added, then set back to No, and still on the quote).
     function holdOpen(a) {
       return !!a.missing && a.afterActions.every((id) => clicked.has(id)) && !clicked.has(a.action)
-        && (!a.pages.length || a.pages.includes(currentPage())) && !settledItem(a);
+        && actionHere(a) && !settledItem(a);
     }
 
     // Its button back on the page (`resolvedBy`: the Add NTL link, NTL removed), or a page the agent
@@ -1658,8 +2051,8 @@
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         // A link verified by its going away that is back on its page (NTL removed by hand, then
         // asked for again) is due again.
-        if (clicked.has(a.action) && a.verify === 'gone' && (!a.pages.length || a.pages.includes(currentPage())) && findButton(a)) clicked.delete(a.action);
-        if (clicked.has(a.action) || exhausted.has(a.action) || (a.pages.length && !a.pages.includes(currentPage()))) continue;
+        if (clicked.has(a.action) && a.verify === 'gone' && actionHere(a) && findButton(a)) clicked.delete(a.action);
+        if (clicked.has(a.action) || exhausted.has(a.action) || !actionHere(a)) continue;
         // A blank repeater row is already sufficient: do not add a duplicate merely because
         // its fields have not been filled yet (or the agent went back to this step).
         if (a.unlessSelector && deepQueryAll(document, a.unlessSelector).length) { clicked.add(a.action); continue; }
@@ -1738,12 +2131,12 @@
           const opener = !openersTried.has(a.action) && findButton({ text: a.opener });
           if (!opener) continue;
           openersTried.add(a.action);
-          report.actions.push({ id: `${a.action}:menu`, text: oneLine(opener.value || opener.textContent).slice(0, 60) });
+          report.actions.push({ id: `${a.action}:menu`, text: buttonText(opener).slice(0, 60) });
           opener.click();
           return true;
         }
         clicked.add(a.action);
-        report.actions.push({ id: a.action, text: oneLine(button.value || button.textContent).slice(0, 60) });
+        report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) });
         // What the page shows as the button is clicked (the round's controls are older: answers
         // have landed since): what a `revealed` / `appears` check compares with afterwards.
         pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
@@ -1755,12 +2148,16 @@
     }
 
     // A helper that opened the next page (the vehicle tile opens Add Vehicle) leaves its questions
-    // to that page's own fill: none of them is reported or marked as this page's.
-    const stillHere = !report.navigatedTo && currentPage() === startPage;
+    // to that page's own fill: none of them is reported or marked as this page's. So does the
+    // agent's Next to another step of a one-address application, and a stop step or a step that
+    // can't be read is not read at all.
+    const stillHere = !report.navigatedTo && currentPage() === startPage && !stepChanged() && !stoppedAt && !unreadStep;
     // Answers still waiting for another try when the fill ended are left for the agent, and so is
     // a field the page should have filled itself (emptyNote) but didn't.
     const finalControls = stillHere ? collectControls() : [];
     const finalPairs = stillHere ? assign(finalControls, plan) : [];
+    // A unit form drawn after the last round read the page has its own edits, never the last one's.
+    if (skipBy && stillHere) skipWhere(finalPairs.units);
     identityAfterAnswer(finalPairs, finalControls);
     // A unit whose row the page's rows don't show (its VIN on none of them, or on two): its
     // answers stay the agent's, once per unit, naming it and not its VIN.
@@ -1773,7 +2170,7 @@
     // A row showing a VIN no intake vehicle has: an unintended vehicle may be on the quote. Left
     // as it is (never removed or answered); Continue waits for the agent. Named by its place only.
     for (const { witness, position, key } of finalPairs.extraRows ?? []) {
-      if (skipKeys.has(key)) continue;
+      if (skippedKey(key)) continue;
       const kind = String(witness.path ?? '').match(/^(\w+?)s?\[/)?.[1] ?? 'unit';
       const label = `${kind.replace(/^\w/, (ch) => ch.toUpperCase())} row ${position || '?'} on the page`;
       if (report.checks.some((x) => x.label === label)) continue;
@@ -1792,12 +2189,15 @@
     }
     if (progressed && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
     // The page may have redrawn while filling, so mark the final fields.
-    const controls = collectControls();
+    const controls = stoppedAt || unreadStep ? [] : collectControls();
     const pairs = assign(controls, plan);
+    if (skipBy && stillHere) skipWhere(pairs.units);
     for (const { step, control } of stillHere ? pairs : []) {
       const h = handled.get(step.id);
       if (h?.status) mark(control, h.status, h.note);
     }
+    // A held unit form is marked on its first question, where its check says why.
+    for (const u of stillHere ? pairs.units : []) if (u.held && !skippedField(u.marker)) mark(u.marker, 'needs', heldFormNote(u));
     // An unfamiliar question that went away during the fill (hidden by an answer, such as the
     // equipment amount once "no equipment" is ticked) isn't one the agent has to answer.
     if (stillHere) {
@@ -1816,16 +2216,16 @@
     const matched = new Set(pairs.map((p) => p.control));
     for (const c of stillHere ? controls : []) {
       if (!matched.has(c) && report.unknown.some((x) => x.key === fieldKey(c)) && !skippedField(c)) mark(c, 'needs', 'Unfamiliar question — left for you.');
-      if (!matched.has(c) && c.required && !hasValue(c) && !skippedField(c)) {
+      if (!matched.has(c) && c.required && !hasValue(c) && !skippedField(c) && !pairs.held.has(c)) {
         report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
         mark(c, 'needs', 'required, and not on the intake form');
       }
     }
     // A helper the agent must otherwise do by hand (the vehicle tile) that couldn't be clicked here,
     // once the helpers it follows have run (an NTL still on the quote after the agent set it to No).
-    if (window === window.top && currentPage() === startPage) {
+    if (window === window.top && currentPage() === startPage && !stepChanged() && !stoppedAt && !unreadStep) {
       for (const a of actions) {
-        if (!a.missing || clicked.has(a.action) || (a.pages.length && !a.pages.includes(currentPage())) || findButton(a)
+        if (!a.missing || clicked.has(a.action) || !actionHere(a) || findButton(a)
           || !a.afterActions.every((id) => clicked.has(id)) || a.unlessActions?.some((id) => clicked.has(id))
           || settledItem(a)) continue;
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing });
@@ -1834,7 +2234,7 @@
       // without filling it): the agent finishes it before Continue.
       for (const a of actions) {
         if (!a.unfinished || !a.doneWhen?.length || !clicked.has(a.action) || a.doneWhen.some((id) => clicked.has(id))
-          || (a.pages.length && !a.pages.includes(currentPage()))) continue;
+          || !actionHere(a)) continue;
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.unfinished });
       }
     }
@@ -1894,12 +2294,14 @@
       ...report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
       ...(report.halted ? [report.reason] : []),
     ];
-    report.stepKey = stepKey();
+    // The step this fill was on: the one it started on when the agent moved to another meanwhile
+    // (its items are that step's).
+    report.stepKey = stepChanged() ? startStep : stepKey();
     // A page the plan expects questions on that shows none yet, with nothing done on it, is still
     // drawing (Business Owner Info right after the state is picked, OK 2026-10-07): Continue there
     // only gets "fields are empty" errors. (A tile page that was clicked continues.)
     const notDrawn = !report.fields && !report.actions.length && plan.some((s) => s.pages?.includes(startPage));
-    if (advance && window === window.top && !report.blockers.length && !notDrawn && currentPage() === startPage && !pageBusy()
+    if (advance && window === window.top && !report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
       && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)) {
       // The last answer may still be redrawing part of the page (a new payment method reloads the
       // plan list): a Continue clicked meanwhile is lost. Let it finish first.
@@ -1933,12 +2335,12 @@
           mark(control, 'needs', IDENTITY_NOTE);
           report.blockers.push(`needs you: ${called(item)}`);
         }
-        const button = !changed.length && !moved.length && !pageBusy() && currentPage() === startPage ? findAdvanceButton(advance.text) : null;
+        const button = !changed.length && !moved.length && !pageBusy() && currentPage() === startPage && !stepChanged() ? findAdvanceButton(advance.text) : null;
         // The agent checks the answers first: Continue only for the page as they approved it.
         const approved = !hold || (confirmed != null && confirmed === receipt());
         if (button && !approved) report.held = confirmed == null ? 'check' : 'changed';
         if (button && approved) {
-          const text = oneLine(button.value || button.textContent).slice(0, 40);
+          const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           report.signatureBefore = signature();
           button.click();
@@ -1950,6 +2352,7 @@
     return report;
     } finally {
       hiddenOk = [];
+      fillUnits = null;
       try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
       releaseEditGuard();
       if (running === thisFill) running = null;
@@ -1964,7 +2367,10 @@
   // `protected: true`, and a question the agent edited that was not among the answers gets an item
   // of its own after them (`protected: true`, `ok: false`): the panel protects those keys, and a
   // protected item means the apply halted. Only the items survive the trip to the panel.
-  async function answer(answers, expectedSnapshots, guardToken) {
+  // `stopSteps`: as fill's (by default those fills in this document were given): on a step that is
+  // the agent's, nothing is put in.
+  async function answer(answers, expectedSnapshots, guardToken, { stopSteps = knownStopSteps } = {}) {
+    if (stopStepOn(stopSteps)) return answers.map((a) => ({ key: a.key, label: a.label, ok: false, reason: STOP_STEP_HALT }));
     // A frameId can be reused after navigation. Only the document guarded for this apply may
     // receive its later answers, even after earlier answers changed the original snapshot.
     if (guardToken && answerEditSession?.token !== guardToken) {
@@ -2215,7 +2621,7 @@
       })),
       // Buttons and links on the page (text only), so button actions can be written from layouts.
       buttons: [...new Set(deepQueryAll(document, 'a, button, [role=button], input[type=button], input[type=submit], .x-btn')
-        .filter((el) => el.getClientRects().length).map((el) => r(oneLine(el.value || el.textContent)).slice(0, 60)).filter(Boolean))].slice(0, 80),
+        .filter((el) => el.getClientRects().length).map((el) => r(buttonText(el)).slice(0, 60)).filter(Boolean))].slice(0, 80),
       customWidgets: deepQueryAll(document, '[role=combobox]:not(input):not(select), [role=listbox], [contenteditable=true]')
         .filter(isVisible).slice(0, 50).map((el) => ({ role: el.getAttribute('role') ?? 'contenteditable', label: r(labelFor(el)), selector: cssPath(el) })),
       // Validation and help messages on screen (what the page said about the answers), redacted. A
@@ -2299,9 +2705,45 @@
     return parts.join(' > ');
   }
 
-  // Which step of a one-address application is on screen: its visible headings.
+  // A step progress bar's parts (GEICO's #progressIndicator: one <gds-progress-bar> per step, in
+  // the page itself, value 100 done, 0 to come).
+  const stepBars = () => [...(document.querySelectorAll?.('gds-progress-bar[value]') ?? [])];
+
+  // The bar's one part under way (0 < value < 100), by its words; '' when none or several are.
+  function barStep() {
+    const now = stepBars().filter((b) => { const v = Number(b.getAttribute('value')); return v > 0 && v < 100; });
+    return now.length === 1 ? oneLine(now[0].textContent) : '';
+  }
+
+  // Which step of a one-address application is on screen. With a progress bar, its part under way,
+  // while the page title names it too (GEICO titles each step "GEICO <step>"): the title and the
+  // form were seen to be one step's while the bar was another's mid-redraw (FL capture 007), and
+  // then no step is named, so nothing kept to a step is filled. Otherwise its visible headings
+  // (AmWINS; GEICO's read "Dashboard" on every step).
   function stepKey() {
+    if (stepBars().length) {
+      const bar = barStep();
+      return squash(bar) && squash(document.title).includes(squash(bar)) ? bar : '';
+    }
     return deepQueryAll(document, 'h1, h2, h3').filter(isVisible).map((h) => oneLine(h.textContent)).filter(Boolean).slice(0, 4).join(' / ');
+  }
+
+  // Whether the step on screen (`key`, as stepKey reads it) is one of `names`: one of its parts
+  // (headings are joined by " / ") reads as one of them.
+  function stepIs(names, key = stepKey()) {
+    const parts = String(key ?? '').split(' / ').map(squash).filter(Boolean);
+    return [].concat(names ?? []).some((n) => !!squash(n) && parts.includes(squash(n)));
+  }
+
+  // The step of `stopSteps` (the carrier's steps that are the agent's) on screen, or ''. Any one
+  // reading says so (the bar alone, the step as stepKey reads it, or the title): a stop errs on
+  // the agent's side.
+  function stopStepOn(stopSteps) {
+    if (!stopSteps?.length) return '';
+    const bar = barStep();
+    const key = stepKey();
+    const title = squash(document.title);
+    return stopSteps.find((n) => stepIs([n], bar) || stepIs([n], key) || (!!squash(n) && title.includes(squash(n)))) ?? '';
   }
 
   // The questions on screen, to tell when a step that keeps the same address has changed.
@@ -2315,5 +2757,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 68, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy };
+  globalThis.__raterKit = { version: 69, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

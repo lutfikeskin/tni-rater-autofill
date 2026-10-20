@@ -252,6 +252,12 @@ test('only a known step name is sent as the step', async () => {
   assert.equal(knownStep(amwins, ''), undefined);
   assert.equal(knownStep({ id: 'amwins', layoutSteps: true }, 'Vehicles'), undefined, 'no list of names: no step');
   assert.equal(knownStep({ id: 'progressive' }, 'Vehicles'), undefined);
+  // GEICO's steps, read from its progress bar; its dashboard and gateway names are none of them.
+  const { geico } = await import('../src/carriers/geico.js');
+  assert.equal(knownStep(geico, 'Vehicles'), 'Vehicles');
+  assert.equal(knownStep(geico, 'quote & coverages'), 'Quote & Coverages');
+  assert.equal(knownStep(geico, 'Dashboard'), undefined);
+  assert.equal(knownStep(geico, 'Old Client Trucking LLC'), undefined);
   const change = fieldChangeEvent({ key: 'k', label: 'Owner', kind: 'select', before: '', after: 'Yes', agent: true }, { record, filled: new Map(), redact, step: knownStep(amwins, 'Old Client Trucking LLC') });
   assert.equal('step' in change, false);
 });

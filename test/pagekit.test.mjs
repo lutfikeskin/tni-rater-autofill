@@ -136,14 +136,35 @@ class FakeNode {
     return [...this._attrs.entries()].map(([name, value]) => ({ name, value }));
   }
 
-  getRootNode() { return this.ownerDocument ?? this; }
+  // Its shadow root when it is in one (top-level shadow children have a parentNode, no
+  // parentElement, as in a browser), else its document.
+  getRootNode() {
+    let n = this;
+    while (n.parentElement) n = n.parentElement;
+    return n.parentNode instanceof FakeShadowRoot ? n.parentNode : this.ownerDocument ?? this;
+  }
+
+  // An open shadow root (GEICO draws its radios and buttons in them): reached through shadowRoot,
+  // never by a querySelectorAll of the page.
+  attachShadow() {
+    this.shadowRoot = new FakeShadowRoot(this);
+    return this.shadowRoot;
+  }
+
+  get classList() { return { contains: (name) => this.className.split(/\s+/).includes(name) }; }
+
+  get nextElementSibling() {
+    const siblings = this.parentElement?.children ?? [];
+    return siblings[siblings.indexOf(this) + 1] ?? null;
+  }
 
   append(...nodes) {
     for (const node of nodes) {
       if (!node) continue;
       node.parentElement = this;
-      // The whole subtree joins this document (a radio group appended with its radios).
-      const adopt = (n) => { n.ownerDocument = this.ownerDocument; for (const c of n.children ?? []) adopt(c); };
+      // The whole subtree joins this document (a radio group appended with its radios), shadow
+      // roots included.
+      const adopt = (n) => { n.ownerDocument = this.ownerDocument; for (const c of n.children ?? []) adopt(c); if (n.shadowRoot) adopt(n.shadowRoot); };
       adopt(node);
       this.children.push(node);
     }
@@ -188,7 +209,7 @@ class FakeNode {
   }
 
   contains(node) {
-    for (let p = node; p; p = p.parentElement) if (p === this) return true;
+    for (let p = node; p; p = p.parentElement ?? p.parentNode ?? null) if (p === this) return true;
     return false;
   }
 
@@ -310,6 +331,37 @@ class FakeDocument extends FakeNode {
 
   _dispatch(event) {
     for (const fn of this._listeners.get(event.type) ?? []) fn.call(this, event);
+  }
+}
+
+class FakeShadowRoot extends FakeNode {
+  constructor(host) {
+    super('#shadow-root');
+    this.nodeType = 11;
+    this.host = host;
+    this.ownerDocument = host.ownerDocument;
+  }
+
+  getRootNode() { return this; }
+  getElementById(id) { return this.querySelectorAll('*').find((el) => el.id === id) ?? null; }
+
+  append(...nodes) {
+    super.append(...nodes);
+    for (const node of nodes) if (node) { node.parentElement = null; node.parentNode = this; }
+    return nodes.at(-1);
+  }
+}
+
+// A <slot>: it shows its host's children for its name, and the host's own text in the default one.
+class FakeSlot extends FakeNode {
+  constructor(name = '') { super('slot', name ? { attrs: { name } } : {}); }
+
+  assignedNodes() {
+    const host = this.getRootNode().host;
+    if (!host) return [];
+    const name = this.getAttribute('name') ?? '';
+    const nodes = host.children.filter((c) => (c.getAttribute('slot') ?? '') === name);
+    return !name && host._textContent ? [{ nodeType: 3, textContent: host._textContent }, ...nodes] : nodes;
   }
 }
 
@@ -4009,7 +4061,7 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
     const source = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
     const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
-      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'stepScope'];
+      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'formScoped', 'stepScope', 'tabStep', 'stopNoteFor'];
     vm.runInNewContext(functions.map(name => {
       const match = source.match(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
       assert.ok(match, name);
@@ -4047,3 +4099,981 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
     for (const h of frames) assert.equal((h.document._listeners.get('pointerdown') ?? []).length, 0);
   });
 }
+
+// ---------------------------------------------------------------------------------------------
+// GEICO (sales.geico.com). Its design system (GDS) draws radios and buttons in open shadow roots,
+// names a question Id_<data-model name>_<render number> and renumbers it on every redraw, and gives
+// its coverage lists only an Id_<uuid>_<n> id that Recalculate regenerates. The fakes below draw them
+// as the saved pages do (layouts/geico, never committed); the GEICO mock checks real shadow DOM.
+
+const shadowOf = (host, ...nodes) => { host.attachShadow({ mode: 'open' }).append(...nodes); return host; };
+
+// A GDS radio question: a <gds-radio-button-group> with the question in its [slot=legend] part, and
+// per option a <gds-radio-button> named like the question, holding its own <input type=radio> alone
+// in its shadow root and its words in a [slot=label] part. A pick shows on the hosts' `checked` (as
+// GDS reflects it). Each input is a native group of its own: one picked earlier stays checked, and a
+// click on it then changes nothing and tells the page nothing.
+function gdsRadios(stem, n, question, options, { checked = null, tooltip = null } = {}) {
+  const name = `Id_${stem}_${n}`;
+  const group = new FakeNode('gds-radio-button-group', { id: name });
+  if (question != null) {
+    const legend = new FakeNode('span', { attrs: { slot: 'legend' } });
+    legend.append(new FakeNode('span', { textContent: question }));
+    if (tooltip) {
+      const tip = new FakeNode('gds-tooltip');
+      tip.append(new FakeNode('p', { textContent: tooltip }));
+      legend.append(tip);
+    }
+    group.append(legend);
+  }
+  const hosts = options.map(([value, words], i) => {
+    const host = new FakeNode('gds-radio-button', { id: `${name}${i}`, attrs: { name, value } });
+    const input = makeInput({ type: 'radio', name, id: `${name}${i}-shadow`, value });
+    shadowOf(host, input);
+    host.append(new FakeNode('span', { textContent: words, attrs: { slot: 'label' } }));
+    const click = input.click.bind(input);
+    input.click = () => { const was = input.checked; click(); if (!was) pick(i); };
+    host.input = input;
+    return host;
+  });
+  const pick = (i) => {
+    hosts.forEach((h, j) => (j === i ? h.setAttribute('checked', '') : h.removeAttribute('checked')));
+    group.setAttribute('active-index', String(i));
+  };
+  group.append(...hosts);
+  if (checked != null) { hosts[checked].input.checked = true; pick(checked); }
+  return { group, hosts, inputs: hosts.map((h) => h.input) };
+}
+
+// A GDS button: its words in the page, a <button> of <slot>s in its shadow root.
+function gdsButton(words, { disabled = false } = {}) {
+  const host = new FakeNode('gds-button', { textContent: words, attrs: disabled ? { disabled: '' } : {} });
+  const button = new FakeNode('button');
+  const label = new FakeNode('span');
+  label.append(new FakeSlot());
+  button.append(new FakeSlot('left-visual'), label, new FakeSlot('right-visual'));
+  shadowOf(host, button);
+  return { host, button };
+}
+
+// An event as a listener on the document gets it from inside shadow roots: its target the host in
+// the page, its composedPath() from the element itself out.
+function composedEvent(type, el, { isTrusted = true } = {}) {
+  const path = [];
+  for (let n = el; n; n = n instanceof FakeShadowRoot ? n.host : n.parentElement ?? n.parentNode ?? null) path.push(n);
+  const target = path.find((n) => !(n instanceof FakeShadowRoot) && n.getRootNode() === n.ownerDocument) ?? el;
+  return { type, bubbles: true, isTrusted, target, composedPath: () => path };
+}
+
+// The kit's arrays come from its own realm (vm): compared as plain data.
+const plain = (v) => JSON.parse(JSON.stringify(v));
+
+const geicoRecord = () => ({ applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} });
+
+test('GEICO field keys: the data-model name without its render number, a filing box by its box, coverage lists by name or row', () => {
+  const h = harness({ pathname: '/quote' });
+  const key = (el) => h.context.__raterFieldKey(el);
+  assert.equal(h.context.__raterFieldKey.version, 5);
+  const year = new SelectNode(['2024'], { id: 'Id_GiveYear_81515', name: 'Id_GiveYear_81515' });
+  // A radio option's input id adds its option digit and -shadow; its name doesn't.
+  const radio = makeInput({ type: 'radio', name: 'Id_GiveVehicleOrTrailer_36353', id: 'Id_GiveVehicleOrTrailer_363531-shadow', value: 'No' });
+  const vin = makeInput({ id: 'Id_GiveVinPreQuote_25322', name: 'Id_GiveVinPreQuote_25322maskedField' });
+  // The boxes of one checkbox group share a name; only the id says which box.
+  const boxes = ['FederalLiability', 'MCS90', 'StateFiling'].map((box) => makeInput({ type: 'checkbox', name: 'Id_AddFilings_123', id: `checkbox-Id_AddFilings_123-${box}` }));
+  h.document.body.append(year, radio, vin, ...boxes);
+  assert.deepEqual([year, radio, vin, ...boxes].map(key), ['ref:GiveYear', 'ref:GiveVehicleOrTrailer', 'ref:GiveVinPreQuote',
+    'ref:AddFilings.FederalLiability', 'ref:AddFilings.MCS90', 'ref:AddFilings.StateFiling']);
+  assert.equal(h.context.__raterFieldKey.dataName(year), 'GiveYear');
+  // A redraw renumbers it: the same key, so an agent's edit stays protected.
+  assert.equal(key(makeInput({ type: 'radio', name: 'Id_GiveVehicleOrTrailer_90210', id: 'Id_GiveVehicleOrTrailer_902100-shadow' })), 'ref:GiveVehicleOrTrailer');
+  // Not GEICO's shape: its id, as before. Progressive's data-model names and AmWINS' rows unchanged.
+  for (const id of ['Id_GiveYear', 'Id_GiveYear_12_extra', 'id_GiveYear_12', 'Id_1Year_12']) assert.equal(key(makeInput({ id })), id);
+  assert.equal(key(makeInput({ id: `f_c${'A'.repeat(32)}22F_1_2`, attrs: { fieldref: 'RiskInput.VIN' } })), 'ref:RiskInput.VIN@2');
+  assert.equal(key(makeInput({ type: 'checkbox', name: 'medicalPaymentExclude', id: 'medicalPaymentExclude1_0_' })), 'medicalPaymentExclude#2');
+
+  // Quote & Coverages as drawn after each Recalculate: every list a new uuid and number.
+  const coverages = () => {
+    const box = new FakeNode('div');
+    const lists = [];
+    for (const coverage of ['Liability Coverage', 'Motor Truck Cargo']) {
+      const id = `Id_${randomUUID()}_${10000 + lists.length}`;
+      const legend = new FakeNode('gds-label-legend', { attrs: { element: 'label', for: id } });
+      const tip = new FakeNode('gds-tooltip');
+      tip.append(new FakeNode('p', { textContent: 'What this coverage pays for' }));
+      legend.append(new FakeNode('span', { textContent: coverage }), tip);
+      const list = new SelectNode(['Please Select'], { id });
+      box.append(legend, list);
+      lists.push(list);
+    }
+    // Per-vehicle rows, labelled with the vehicle, its VIN and its premium: never in a key.
+    for (const vin of ['1FTBR3X87MKA12345', '1FTBR3X80MKA12399']) {
+      for (const coverage of ['COMP', 'COLL']) {
+        const list = new SelectNode(['Not Included'], { id: `Id_${randomUUID()}_${20000 + lists.length}_${coverage}`, ariaLabel: `2022 FORD TRANSIT ${vin} $123.00` });
+        box.append(list);
+        lists.push(list);
+      }
+    }
+    const value = makeInput({ id: `Id_${randomUUID()}_30000_CustomizationValue` });
+    value.name = value.id;
+    const bare = new SelectNode(['Other'], { id: `Id_${randomUUID()}_40000` });
+    box.append(value, bare);
+    return { box, lists: [...lists, value], bare };
+  };
+  const first = coverages();
+  h.document.body.append(first.box);
+  const keys = first.lists.map(key);
+  assert.deepEqual(keys, ['cov:liability coverage', 'cov:motor truck cargo', 'cov:COMP#1', 'cov:COLL#1', 'cov:COMP#2', 'cov:COLL#2', 'cov:CustomizationValue#1']);
+  assert.equal(key(first.bare), first.bare.id, 'no coverage name and no label of its own: its id, as before');
+  assert.equal(h.context.__raterFieldKey.dataName(first.lists[0]), null);
+  // A label of its own that names a vehicle is no coverage's name: never in a key.
+  const named = new SelectNode(['Not Included'], { id: `Id_${randomUUID()}_50000` });
+  const vehicle = new FakeNode('label', { textContent: '2022 FORD TRANSIT 1FTBR3X87MKA12345', attrs: { for: named.id } });
+  first.box.append(vehicle, named);
+  assert.equal(key(named), named.id);
+  first.box.remove();
+  const recalculated = coverages();
+  h.document.body.append(recalculated.box);
+  assert.deepEqual(recalculated.lists.map(key), keys, 'new ids, the same keys');
+});
+
+test('GEICO radios: in page order among the other fields, asked by their legend, each option by its words', () => {
+  const h = harness({ pathname: '/quote' });
+  const zip = makeInput({ id: 'Id_GiveInitialZipCode_11111', name: 'Id_GiveInitialZipCode_11111', ariaLabel: '5-Digit ZIP Code' });
+  const kind = gdsRadios('GiveVehicleOrTrailer', 36353, 'What would the customer like to add?', [['Yes', 'Vehicle'], ['No', 'Trailer']], { tooltip: 'A trailer has no engine of its own.' });
+  // Two pay-plan lists share their data-model name and have no legend: two questions, named by it.
+  const plans = [52525, 52526].map((n) => gdsRadios('GivePayPlanV2', n, null, [['GEICO_PP_1Pay', 'Pay In Full']], { checked: n === 52525 ? 0 : null }));
+  const year = new SelectNode(['2024'], { id: 'Id_GiveYear_81515', name: 'Id_GiveYear_81515', ariaLabel: 'Year' });
+  // An amount box whose only words are its "$" sign; a box that isn't GEICO's keeps its "$".
+  const amount = makeInput({ id: 'Id_GiveCostNew_22222', name: 'Id_GiveCostNew_22222', ariaLabel: '$' });
+  const other = makeInput({ id: 'amount', ariaLabel: '$' });
+  const state = new SelectNode(['NE'], { id: 'Id_GiveDriverLicenseState_33333', name: 'Id_GiveDriverLicenseState_33333', ariaLabel: '<span class="name">Driver</span>\'s **License State**' });
+  h.document.body.append(zip, kind.group, ...plans.map((p) => p.group), year, amount, other, state);
+  const page = h.kit.capture(null, []);
+  assert.deepEqual(plain(page.controls.map((c) => [c.ref ?? null, c.kind, c.label])), [
+    ['GiveInitialZipCode', 'text', '5-Digit ZIP Code'],
+    ['GiveVehicleOrTrailer', 'radio', 'What would the customer like to add?'],
+    ['GivePayPlanV2', 'radio', 'give pay plan v2'],
+    ['GivePayPlanV2', 'radio', 'give pay plan v2'],
+    ['GiveYear', 'select', 'Year'],
+    ['GiveCostNew', 'text', 'give cost new'],
+    [null, 'text', '$'],
+    ['GiveDriverLicenseState', 'select', "Driver's License State"],
+  ]);
+  assert.deepEqual(plain(page.controls[1].options), ['Vehicle', 'Trailer']);
+  assert.deepEqual(plain(page.controls.slice(1, 4).map((c) => c.selected)), ['', 'Pay In Full', '']);
+});
+
+// The saved pages show each option's input checked like its host, but each input is a native group
+// of its own: after Yes then No, Yes's input may stay checked while its host isn't. The page shows
+// the hosts.
+test('a GEICO radio is read from its hosts: a stale inner input neither passes for the answer nor blocks the click', async () => {
+  const h = harness({ pathname: '/quote' });
+  const observed = [];
+  h.context.MutationObserver = class { observe(_, options) { observed.push(options); } disconnect() {} };
+  const team = gdsRadios('TeamDrivingOrSlipSeatingYesNo', 36353, 'Do any vehicles require team driving or slip seating?', [['Yes', 'Yes'], ['No', 'No']], { checked: 0 });
+  team.inputs[1].checked = true;
+  h.document.body.append(team.group);
+  const step = { id: 'team', field: 'TeamDrivingOrSlipSeatingYesNo', path: 'operations.teamDriving', name: 'Team driving', kind: 'bool', value: false };
+  const report = await h.kit.fill([step], { maxRounds: 4, replaceChoices: true });
+  assert.deepEqual(team.hosts.map((x) => x.hasAttribute('checked')), [false, true], 'the page shows No');
+  assert.deepEqual(plain(report.filled.map((x) => [x.key, x.shown])), [['ref:TeamDrivingOrSlipSeatingYesNo', 'No']]);
+  assert.deepEqual(plain([...report.failed, ...report.kept]), []);
+  assert.deepEqual(plain(h.kit.readBack([{ key: 'ref:TeamDrivingOrSlipSeatingYesNo' }]).map((x) => x.shown)), ['No']);
+  const again = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true });
+  assert.deepEqual(plain(again.kept.map((x) => x.key)), ['ref:TeamDrivingOrSlipSeatingYesNo'], 'Yes\'s stale input is not the answer');
+  assert.deepEqual(plain(again.filled), []);
+  // The wait after an answer sees the hosts change (a pick redraws nothing).
+  assert.ok(observed.some((o) => o.attributes && String(o.attributeFilter) === 'checked,active-index'));
+});
+
+test('an agent click on a GEICO radio during a fill is the agent\'s edit: protected, and the fill stops', async () => {
+  for (const on of ['input', 'words']) {
+    const h = harness({ pathname: '/quote' });
+    const team = gdsRadios('TeamDrivingOrSlipSeatingYesNo', 36353, 'Do any vehicles require team driving or slip seating?', [['Yes', 'Yes'], ['No', 'No']]);
+    const zip = makeInput({ id: 'Id_GiveZip_11111', name: 'Id_GiveZip_11111', ariaLabel: '5-Digit ZIP Code' });
+    h.document.body.append(team.group, zip);
+    let injected = false;
+    h.document._onAddEvent = (type) => {
+      if (type !== 'input' || injected) return;
+      injected = true;
+      // The agent picks No on its input, or on its words (the host's [slot=label] part). At the
+      // document both events name the host; composedPath() names the element.
+      const gesture = on === 'input' ? team.inputs[1] : team.hosts[1].children.find((c) => c.getAttribute('slot') === 'label');
+      h.document._dispatch(composedEvent('pointerdown', gesture));
+      team.inputs[1].click();
+      h.document._dispatch(composedEvent('input', team.inputs[1]));
+    };
+    const report = await h.kit.fill([
+      { id: 'team', field: 'TeamDrivingOrSlipSeatingYesNo', path: 'operations.teamDriving', name: 'Team driving', kind: 'bool', value: true },
+      { id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' },
+    ], { maxRounds: 4, replaceChoices: true });
+    assert.equal(report.halted, true, on);
+    assert.deepEqual([...report.protectedKeys], ['ref:TeamDrivingOrSlipSeatingYesNo'], on);
+    assert.deepEqual(team.hosts.map((x) => x.hasAttribute('checked')), [false, true], `${on}: the agent's No stays`);
+    assert.equal(zip.value, '', `${on}: nothing more is filled`);
+  }
+});
+
+test('GEICO buttons: a gds-button by its words, not when its host is disabled; progress links never; add icons by token', async () => {
+  const h = harness({ pathname: '/quote' });
+  const progress = new FakeNode('div', { id: 'progressIndicator' });
+  const bar = new FakeNode('gds-progress-bar', { attrs: { value: '100', max: '100' } });
+  const stepLink = new FakeNode('a', { textContent: 'Vehicles', role: 'button', attrs: { href: '#', tabindex: '0' } });
+  bar.append(stepLink);
+  progress.append(bar);
+  const recalc = gdsButton('Recalculate');
+  const print = gdsButton('Print Quote Proposal', { disabled: true });
+  const drivers = new FakeNode('div');
+  const icon = new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '0' } });
+  const unreachable = new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '-1' } });
+  drivers.append(new FakeNode('p', { textContent: 'Add Driver' }), icon);
+  h.document.body.append(progress, recalc.host, print.host, drivers, unreachable);
+  const clicks = [];
+  for (const [id, el] of [['vehicles', stepLink], ['recalculate', recalc.button], ['print', print.button], ['addDriver', icon], ['other', unreachable]]) el.onclick = () => clicks.push(id);
+  const actions = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [
+    { id: 'vehicles', text: '^vehicles$' }, { id: 'recalculate', text: '^recalculate$' }, { id: 'print', text: '^print' },
+    { id: 'addDriver', token: 'addIcon', near: 'Add Driver' },
+  ] }).filter((s) => s.kind === 'action');
+  const report = await h.kit.fill(actions, { maxRounds: 6 });
+  assert.deepEqual(clicks.sort(), ['addDriver', 'recalculate']);
+  assert.equal(report.actions.find((a) => a.id === 'recalculate')?.text, 'Recalculate');
+  assert.deepEqual(plain(h.kit.capture(null, []).buttons), ['Vehicles', 'Recalculate', 'Print Quote Proposal']);
+});
+
+test('discarding a form, ordering reports and signing are never clicked, as a helper or as Continue', async () => {
+  const words = ['Discard Changes', 'Yes, please discard.', 'Order reports', 'eSignature', 'E-Sign', 'Sign'];
+  const h = harness({ pathname: '/quote' });
+  const clicks = [];
+  for (const [i, text] of words.entries()) {
+    const drawn = i % 2 ? gdsButton(text) : null;
+    const button = drawn?.button ?? new FakeNode('button', { textContent: text });
+    button.onclick = () => clicks.push(text);
+    h.document.body.append(drawn?.host ?? button);
+  }
+  const actions = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [
+    { id: 'discard', text: 'discard' }, { id: 'yes', text: '^yes' }, { id: 'order', text: '^order reports$' },
+    { id: 'esign', text: 'e-?sign' }, { id: 'sign', text: '^sign$' },
+  ] }).filter((s) => s.kind === 'action');
+  const report = await h.kit.fill(actions, { maxRounds: 6, advance: { text: words.map((w) => `^${w.replace(/\./g, '\\.')}$`).join('|') } });
+  assert.deepEqual(clicks, []);
+  assert.equal(report.advanced, undefined);
+  assert.deepEqual(plain(report.actions), []);
+});
+
+test('GEICO spinners keep the page busy while they show', () => {
+  for (const id of ['page-load', 'extendedWaiting']) {
+    const h = harness({ pathname: '/quote' });
+    const loader = new FakeNode('div', { id, className: 'loader-container section-loader--show' });
+    h.document.body.append(loader);
+    assert.equal(h.kit.busy(), true, id);
+    // Idle, GEICO leaves it in the page with display:none.
+    loader._visible = false;
+    assert.equal(h.kit.busy(), false, id);
+  }
+});
+
+test("GEICO's premium summary and its stale-rates wording are recognized", async () => {
+  const good = premiumHarness({ recalcResult: 'Quote\n\n$1,000.00\n\nDue Today\n\n$1,000.00\n\nTotal' });
+  good.h.document.body.innerText = 'Quote\n\n$ --.--\n\nDue Today\n\n$ --.--\n\nTotal';
+  await good.h.kit.fill(coverageActionPlan(), { maxRounds: 4 });
+  assert.equal(good.recalc._clicked, true, '"$ --.--" in place of the amounts is out of date');
+  assert.equal(good.bill._clicked, true, '"Quote $… Due Today $… Total" is a current premium');
+  const notice = premiumHarness({ recalcResult: 'Please Recalculate Due To Coverage Change\nQuote\n$1,000.00\nDue Today\n$1,000.00\nTotal' });
+  notice.h.document.body.innerText = 'Please Recalculate Due To Coverage Change';
+  await notice.h.kit.fill(coverageActionPlan(), { maxRounds: 4 });
+  assert.equal(notice.recalc._clicked, true);
+  assert.equal(notice.bill._clicked, undefined, 'amounts under the recalculate notice are not current');
+});
+
+test('a list taking several choices is never set (the agent picks them), and reads as all its picks', async () => {
+  const h = harness({ pathname: '/quote' });
+  const goods = new SelectNode(['Sand', 'Gravel', 'Steel'], { id: 'Id_GiveMtcHaulingCommoditiesCollect_44444', name: 'Id_GiveMtcHaulingCommoditiesCollect_44444', ariaLabel: 'Select up to four commodities' });
+  goods.multiple = true;
+  goods.options[0].picked = goods.options[1].picked = true;
+  Object.defineProperty(goods, 'selectedOptions', { get: () => goods.options.filter((o) => o.picked) });
+  h.document.body.append(goods);
+  const report = await h.kit.fill([{ id: 'goods', field: 'GiveMtcHaulingCommoditiesCollect', path: 'operations.commodities', name: 'Commodities', kind: 'choice', value: 'Steel' }], { maxRounds: 3, replaceChoices: true });
+  assert.deepEqual(plain(report.failed.map((x) => [x.key, x.reason, x.current])), [['ref:GiveMtcHaulingCommoditiesCollect', 'this list takes several choices: pick these yourself', 'Sand; Gravel']]);
+  assert.deepEqual(goods.options.map((o) => !!o.picked), [true, true, false]);
+  assert.equal(goods.value, '');
+});
+
+test('a GEICO coverage list\'s hidden stand-in for its current choice is never the option picked', async () => {
+  const h = harness({ pathname: '/quote' });
+  const comp = new SelectNode([{ text: 'Not Included', value: '' }, { text: 'Not Included', value: 'Not Included' }, { text: '$100 deductible', value: '$100 deductible' }],
+    { id: `Id_${randomUUID()}_97546_COMP` });
+  comp.options[0].hidden = true;
+  h.document.body.append(comp);
+  const report = await h.kit.fill([{ id: 'comp', selector: '[id$="_COMP"]', path: 'vehicles[0].comp', name: 'Comprehensive', kind: 'choice', value: 'Not Included' }], { maxRounds: 3, replaceChoices: true });
+  assert.equal(comp.value, 'Not Included', 'the real option, not the stand-in');
+  assert.deepEqual(plain(report.filled.map((x) => [x.key, x.shown])), [['cov:COMP#1', 'Not Included']]);
+});
+
+test('a search box that is an address question is a question; a site search or a list\'s filter box is not', () => {
+  const h = harness({ pathname: '/quote' });
+  const street = makeInput({ type: 'search', id: 'Id_GiveStreet_12121', name: 'Id_GiveStreet_12121', ariaLabel: 'Street address', attrs: { 'aria-autocomplete': 'list', 'aria-controls': 'address-dropdown-list' } });
+  const site = makeInput({ type: 'search', id: 'site-search', ariaLabel: 'Search' });
+  const filter = makeInput({ type: 'search', className: 'select2-search__field', ariaLabel: 'Search the list', attrs: { 'aria-autocomplete': 'list', 'aria-controls': 'select2-year-results' } });
+  h.document.body.append(street, site, filter);
+  assert.deepEqual(plain(h.kit.capture(null, []).controls.map((c) => c.ref)), ['GiveStreet']);
+});
+
+test('marks go where the agent looks: a GEICO option on its host, a select2 list on its drawn box', async () => {
+  const h = harness({ pathname: '/quote' });
+  const kind = gdsRadios('GiveVehicleOrTrailer', 36353, 'What would the customer like to add?', [['Yes', 'Vehicle'], ['No', 'Trailer']]);
+  const year = new SelectNode(['2024'], { id: 'Id_GiveYear_81515', name: 'Id_GiveYear_81515', ariaLabel: 'Year', className: 'select2-hidden-accessible' });
+  const drawn = new FakeNode('span', { className: 'select2 select2-container' });
+  const selection = new FakeNode('span', { className: 'select2-selection select2-selection--single' });
+  drawn.append(selection);
+  h.document.body.append(kind.group, year, drawn);
+  await h.kit.fill([], { maxRounds: 1 });
+  const marks = (els) => els.map((x) => x.getAttribute('data-rater-autofill'));
+  assert.deepEqual(marks(kind.hosts), ['needs', 'needs']);
+  assert.deepEqual(marks(kind.inputs), [null, null]);
+  assert.deepEqual(marks([selection, year]), ['needs', 'needs']);
+  assert.equal(h.kit.clear(), 4);
+});
+
+// GEICO's steps all share /quote. The step on screen is the progress bar's part under way
+// (#progressIndicator: a <gds-progress-bar> per step, value 100 done, 50 under way, 0 to come),
+// while the title ("GEICO <step>") names it too. `go(step)` moves both, as the agent's Next does.
+const GEICO_STEPS = ['Business Class & USDOT', 'Business & Owner Info', 'Vehicles', 'Drivers & Incidents',
+  'Additional Business Info', 'Quote & Coverages', 'Final Quote Details', 'MVR & CLUE', 'Payment Information'];
+function geicoBar(h, current, { title } = {}) {
+  const box = new FakeNode('div', { id: 'progressIndicator' });
+  const group = new FakeNode('gds-progress-bar-group');
+  const bars = GEICO_STEPS.map((name) => {
+    const bar = new FakeNode('gds-progress-bar', { attrs: { max: '100' } });
+    bar.append(new FakeNode('span', { textContent: name }));
+    return bar;
+  });
+  group.append(...bars);
+  box.append(group);
+  h.document.body.append(box);
+  const go = (step, { title: shown = `GEICO ${step}` } = {}) => {
+    const at = GEICO_STEPS.indexOf(step);
+    bars.forEach((bar, i) => bar.setAttribute('value', String(i < at ? 100 : i === at ? 50 : 0)));
+    h.document.title = shown;
+  };
+  go(current, { title });
+  return { bars, go };
+}
+
+// A GEICO text box or list: named Id_<data-model name>_<render number>.
+const geicoBox = (stem, n, ariaLabel, props = {}) => makeInput({ id: `Id_${stem}_${n}`, name: `Id_${stem}_${n}`, ariaLabel, ...props });
+const geicoList = (stem, n, ariaLabel, options, props = {}) => new SelectNode(options, { id: `Id_${stem}_${n}`, name: `Id_${stem}_${n}`, ariaLabel, ...props });
+
+test('GEICO\'s step is its progress bar\'s part under way while the title names it too; pages without a bar read their headings', async () => {
+  const h = harness({ pathname: '/quote' });
+  // GEICO's headings read "Dashboard" on every step: never the step.
+  h.document.body.append(new FakeNode('h1', { textContent: 'Dashboard' }));
+  const bar = geicoBar(h, 'Vehicles');
+  assert.equal(h.kit.step(), 'Vehicles');
+  assert.equal(h.kit.capture(null, []).step, 'Vehicles');
+  assert.equal((await h.kit.fill([], { maxRounds: 1 })).stepKey, 'Vehicles');
+  // Mid-redraw the title and the form were seen to be one step's and the bar another's: no step.
+  bar.go('Vehicles', { title: 'GEICO Business & Owner Info' });
+  assert.equal(h.kit.step(), '');
+  assert.equal((await h.kit.fill([], { maxRounds: 1 })).stepKey, '');
+  // Two parts under way, or none: no step either.
+  bar.go('Vehicles');
+  bar.bars[3].setAttribute('value', '50');
+  assert.equal(h.kit.step(), '');
+  for (const b of bar.bars) b.setAttribute('value', '100');
+  assert.equal(h.kit.step(), '');
+  // No bar (AmWINS): the visible headings, as before.
+  const plainPage = harness();
+  plainPage.document.body.append(new FakeNode('h3', { textContent: 'Vehicles' }), new FakeNode('h3', { textContent: 'Drivers' }));
+  assert.equal(plainPage.kit.step(), 'Vehicles / Drivers');
+});
+
+test('GEICO steps: a rule kept to a step answers only there, a rule kept to none anywhere, and with no step named nothing kept to one', async () => {
+  const plan = [
+    { id: 'owner', field: 'GiveFirstName', steps: ['Business & Owner Info'], path: 'applicant.firstName', name: 'Owner first name', kind: 'text', value: 'Pat' },
+    { id: 'driver', field: 'GiveFirstName', steps: ['Drivers & Incidents'], path: 'drivers[0].firstName', name: 'Driver first name', kind: 'text', value: 'Sam' },
+    { id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' },
+  ];
+  const run = async (step, title) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, step, { title });
+    const first = geicoBox('GiveFirstName', 40001, 'First Name');
+    const zip = geicoBox('GiveZip', 40002, '5-Digit ZIP Code');
+    h.document.body.append(first, zip);
+    const report = await h.kit.fill(plan, { maxRounds: 6 });
+    return { first: first.value, zip: zip.value, report };
+  };
+  let r = await run('Business & Owner Info');
+  assert.deepEqual([r.first, r.zip], ['Pat', '68102']);
+  r = await run('Drivers & Incidents');
+  assert.deepEqual([r.first, r.zip], ['Sam', '68102']);
+  // No rule for it on this step: the first name is unfamiliar here, never the owner's or a driver's.
+  r = await run('Vehicles');
+  assert.deepEqual([r.first, r.zip], ['', '68102']);
+  assert.deepEqual(plain(r.report.unknown.map((x) => x.key)), ['ref:GiveFirstName']);
+  // The bar says Drivers & Incidents and the title another step: the step can't be read, and a plan
+  // kept to steps does nothing there, not even its rules kept to none (see the unread-step test).
+  r = await run('Drivers & Incidents', 'GEICO Vehicles');
+  assert.deepEqual([r.first, r.zip, r.report.stepKey, r.report.halted], ['', '', '', true]);
+  assert.deepEqual(plain(r.report.filled), []);
+});
+
+test('GEICO forms: a vehicle form\'s rules answer beside its own question, a trailer form\'s beside the trailer wording, a form showing neither neither', async () => {
+  const carrier = { id: 'synthetic', useGenericRules: false, rules: [
+    { field: 'GiveYear', steps: ['Vehicles'], whenShown: { field: 'YesNoPreQuoteHaveFullVinActivity', unit: 'vehicles' }, path: 'vehicles[].year', name: 'Vehicle year', kind: 'choice' },
+    { field: 'GiveYear', steps: ['Vehicles'], whenShown: { field: 'GiveOtherVehicleType', label: '\\btrailer\\b', unit: 'trailers' }, path: 'trailers[].year', name: 'Trailer year', kind: 'choice' },
+    // The owner's driver form (GEICO draws it) has no relationship question; an added driver's has.
+    { field: 'GiveFirstName', steps: ['Drivers & Incidents'], unlessShown: { field: 'GiveDriverRelationshipToBusiness' }, name: 'Owner first name', value: () => 'Pat' },
+    { field: 'GiveFirstName', steps: ['Drivers & Incidents'], whenShown: { field: 'GiveDriverRelationshipToBusiness', unit: 'drivers' }, path: 'drivers[].firstName', name: 'Driver first name' },
+  ] };
+  const record = { ...geicoRecord(), vehicles: [{ year: '2022' }], trailers: [{ year: '2019' }], drivers: [{ firstName: 'Sam' }] };
+  const plan = buildPlan(record, carrier, { vehicles: 0, trailers: 0, drivers: 0 });
+  const vehicleStep = async (kind) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Vehicles');
+    if (kind === 'vehicle') h.document.body.append(gdsRadios('YesNoPreQuoteHaveFullVinActivity', 85493, 'Do you have the VIN handy?', [['Yes', 'Yes'], ['No', 'No']]).group);
+    if (kind !== 'neither') h.document.body.append(geicoList('GiveOtherVehicleType', 85494, `Which of the following best describes the customer's ${kind}?`, ['Box Truck', 'Flatbed']));
+    const year = geicoList('GiveYear', 85495, 'Year', ['2019', '2022']);
+    h.document.body.append(year);
+    const report = await h.kit.fill(plan, { maxRounds: 6 });
+    return { year: year.value, report };
+  };
+  let r = await vehicleStep('vehicle');
+  assert.equal(r.year, '2022');
+  assert.deepEqual(plain(r.report.unitForm), { list: 'vehicles', id: 'Id_YesNoPreQuoteHaveFullVinActivity_85493' });
+  r = await vehicleStep('trailer');
+  assert.equal(r.year, '2019');
+  assert.deepEqual(plain(r.report.unitForm), { list: 'trailers', id: 'Id_GiveOtherVehicleType_85494' });
+  r = await vehicleStep('neither');
+  assert.equal(r.year, '');
+  assert.deepEqual(plain(r.report.unknown.map((x) => x.key)), ['ref:GiveYear']);
+  assert.equal(r.report.unitForm, null);
+
+  const driverStep = async (added) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Drivers & Incidents');
+    const first = geicoBox('GiveFirstName', 34001, 'First Name');
+    h.document.body.append(first);
+    if (added) h.document.body.append(geicoList('GiveDriverRelationshipToBusiness', 34002, 'Relationship to the business', ['Employee', 'Spouse']));
+    await h.kit.fill(plan, { maxRounds: 6 });
+    return first.value;
+  };
+  assert.equal(await driverStep(false), 'Pat');
+  assert.equal(await driverStep(true), 'Sam');
+});
+
+// The forms of GEICO's vehicles share /quote and are drawn one at a time: the panel binds each to
+// the vehicle a fill answered on it (report.unitForm, by its first question's element name, whose
+// number is new with each form) and passes the bindings back (fill `units`).
+const VEHICLE_FORM = { field: 'YesNoPreQuoteHaveFullVinActivity', label: null, unit: 'vehicles' };
+const GEICO_VINS = ['1FTBR3X87MKA12345', '1FTBR3X80MKA12399'];
+const vehicleFormPlan = (i) => [
+  { id: `vin${i}`, field: 'GiveVinPreQuote', steps: ['Vehicles'], whenShown: VEHICLE_FORM, path: `vehicles[${i}].vin`, name: 'VIN', kind: 'text', value: GEICO_VINS[i] },
+  { id: `year${i}`, field: 'GiveYear', steps: ['Vehicles'], whenShown: VEHICLE_FORM, path: `vehicles[${i}].year`, name: 'Vehicle year', kind: 'choice', value: '2022' },
+];
+function geicoVehicleForm(h, n) {
+  const marker = gdsRadios('YesNoPreQuoteHaveFullVinActivity', n, 'Do you have the VIN handy?', [['Yes', 'Yes'], ['No', 'No']]);
+  const vin = makeInput({ id: `Id_GiveVinPreQuote_${n + 1}`, name: `Id_GiveVinPreQuote_${n + 1}maskedField`, ariaLabel: 'VIN', required: true });
+  const year = geicoList('GiveYear', n + 2, 'Year', ['2021', '2022'], { required: true });
+  const form = new FakeNode('div');
+  form.append(marker.group, vin, year);
+  h.document.body.append(form);
+  return { form, marker, vin, year, id: `Id_YesNoPreQuoteHaveFullVinActivity_${n}` };
+}
+const geicoUnits = (active, bound, count = 2) => ({
+  active: { vehicles: active, drivers: 0, trailers: 0 }, count: { vehicles: count, drivers: 1, trailers: 0 }, bound: { vehicles: bound, drivers: {}, trailers: {} },
+});
+
+test('a GEICO unit form that may be another vehicle\'s is held: nothing typed, one check naming the vehicle by its place, its questions not unfamiliar', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Vehicles');
+  const a = geicoVehicleForm(h, 85493);
+  // A new form, nothing bound yet: vehicle 1's, filled, and named for the panel to bind.
+  let report = await h.kit.fill(vehicleFormPlan(0), { maxRounds: 6, units: geicoUnits(0, {}) });
+  assert.deepEqual([a.vin.value, a.year.value], [GEICO_VINS[0], '2022']);
+  assert.deepEqual(plain([report.unitForm, report.unitHeld]), [{ list: 'vehicles', id: a.id }, null]);
+  const held = (r) => {
+    assert.deepEqual(plain([...r.filled, ...r.unknown, ...r.leftRequired, ...r.noData, ...r.failed]), []);
+    assert.equal(r.checks.length, 1);
+    assert.equal(r.checks[0].key, 'ref:YesNoPreQuoteHaveFullVinActivity');
+    for (const vin of GEICO_VINS) assert.ok(!JSON.stringify(plain(r)).includes(vin), 'never its VIN');
+    return r.checks[0].note;
+  };
+
+  // The picker moved to vehicle 2 while vehicle 1's form is still on screen: that form is vehicle 1's.
+  a.vin.value = ''; a.year.value = '';
+  report = await h.kit.fill(vehicleFormPlan(1), { maxRounds: 6, units: geicoUnits(1, { [a.id]: 0 }) });
+  assert.deepEqual([a.vin.value, a.year.value], ['', '']);
+  assert.deepEqual(plain([report.unitForm, report.unitHeld]), [null, { list: 'vehicles', id: a.id }]);
+  // Only the agent can tell whose it is: the note says both ways out.
+  assert.match(held(report), /^This form was filled for vehicle 1, and the panel has vehicle 2 picked: if it is vehicle 1's, pick vehicle 1 in the panel, then Fill again; if it is vehicle 2's, correct its answers yourself\.$/);
+  assert.equal(a.marker.hosts[0].getAttribute('data-rater-autofill'), 'needs', 'marked on its first question');
+
+  // Vehicle 1 saved, the next form drawn: the follow-up fill for vehicle 1 (the picker unchanged)
+  // would put vehicle 1's VIN on what is likely vehicle 2's form.
+  a.form.remove();
+  const b = geicoVehicleForm(h, 37768);
+  report = await h.kit.fill(vehicleFormPlan(0), { maxRounds: 6, units: geicoUnits(0, { [a.id]: 0 }) });
+  assert.deepEqual([b.vin.value, b.year.value], ['', '']);
+  assert.deepEqual(plain([report.unitForm, report.unitHeld]), [null, { list: 'vehicles', id: b.id }]);
+  assert.match(held(report), /^This form may be another vehicle's than vehicle 1, which was filled on an earlier form: pick the vehicle this form is about in the panel/);
+  // One vehicle on the intake: no other to pick.
+  report = await h.kit.fill(vehicleFormPlan(0), { maxRounds: 6, units: geicoUnits(0, { [a.id]: 0 }, 1) });
+  assert.match(held(report), /\. The intake lists one vehicle: answer this form yourself\.$/);
+  // Marked done in the panel (its first question the agent's): still held, without the check.
+  report = await h.kit.fill(vehicleFormPlan(0), { maxRounds: 6, units: geicoUnits(0, { [a.id]: 0 }, 1), skip: ['ref:YesNoPreQuoteHaveFullVinActivity'] });
+  assert.deepEqual([b.vin.value, b.year.value], ['', '']);
+  assert.deepEqual(plain([report.unitHeld, report.checks, report.unknown]), [{ list: 'vehicles', id: b.id }, [], []]);
+  // The agent picks vehicle 2: the new form is its.
+  report = await h.kit.fill(vehicleFormPlan(1), { maxRounds: 6, units: geicoUnits(1, { [a.id]: 0 }) });
+  assert.deepEqual([b.vin.value, b.year.value], [GEICO_VINS[1], '2022']);
+  assert.deepEqual(plain([report.unitForm, report.unitHeld]), [{ list: 'vehicles', id: b.id }, null]);
+  assert.deepEqual(plain(report.checks), []);
+});
+
+test('a GEICO unit form drawn during a fill is held for the rest of it: the unit it began on was answered on the earlier one', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Vehicles');
+  const a = geicoVehicleForm(h, 85493);
+  let b = null;
+  // Its last answer saves the vehicle, and the next form is drawn (in place of a click on Next).
+  a.year.addEventListener('change', () => { if (!b) { a.form.remove(); b = geicoVehicleForm(h, 37768); } });
+  const report = await h.kit.fill(vehicleFormPlan(0), { maxRounds: 6, units: geicoUnits(0, {}) });
+  assert.equal(a.vin.value, GEICO_VINS[0]);
+  assert.ok(b);
+  assert.deepEqual([b.vin.value, b.year.value], ['', '']);
+  assert.deepEqual(plain([report.unitForm, report.unitHeld]), [{ list: 'vehicles', id: a.id }, { list: 'vehicles', id: b.id }]);
+});
+
+// GEICO's Add Driver form (its relationship question is only there) and its trailer form.
+const ADD_DRIVER_FORM = { field: 'GiveDriverRelationshipToBusiness', label: null, unit: 'drivers' };
+const TRAILER_FORM = { field: 'GiveOtherVehicleType', label: '\\btrailer\\b', unit: 'trailers' };
+// What the panel passes as `skipBy` for GEICO (sidepanel fillSkipBy): the agent's edits by the step,
+// active unit or form they were made on.
+const geicoSkipBy = ({ steps = {}, units = {}, forms = {} } = {}) => ({
+  steps, units: { vehicles: [], trailers: [], drivers: [], ...units }, forms,
+  stepUnits: { Vehicles: 'vehicles', 'Drivers & Incidents': 'drivers' },
+});
+
+test('GEICO skipBy: an edit made on a step protects its field there only; the same name on another step still fills', async () => {
+  const plan = [
+    { id: 'owner', field: 'GiveLastName', steps: ['Business & Owner Info'], path: 'applicant.owner1.last', name: 'Owner last name', kind: 'text', value: 'Lane' },
+    { id: 'driver', field: 'GiveLastName', steps: ['Drivers & Incidents'], whenShown: ADD_DRIVER_FORM, path: 'drivers[0].last', name: 'Driver last name', kind: 'text', value: 'Lane' },
+    { id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' },
+  ];
+  const run = async (step, options) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, step);
+    const last = geicoBox('GiveLastName', 40001, 'Last Name');
+    const zip = geicoBox('GiveZip', 40002, '5-Digit ZIP Code');
+    h.document.body.append(last, zip);
+    if (step === 'Drivers & Incidents') h.document.body.append(geicoList('GiveDriverRelationshipToBusiness', 40003, 'What is their relationship to the business?', ['Owner', 'Employee']));
+    const report = await h.kit.fill(plan, { maxRounds: 6, units: geicoUnits(0, {}), ...options });
+    return { last: last.value, zip: zip.value, report };
+  };
+  // The agent corrected the owner's last name and the business ZIP on Business & Owner Info.
+  const skipBy = geicoSkipBy({ steps: { 'Business & Owner Info': ['ref:GiveLastName', 'ref:GiveZip'] } });
+  let r = await run('Business & Owner Info', { skipBy });
+  assert.deepEqual([r.last, r.zip], ['', '']);
+  assert.deepEqual(plain(r.report.skipped.map((x) => x.key)).sort(), ['ref:GiveLastName', 'ref:GiveZip']);
+  // The added driver's last name and another step's ZIP still come from the intake.
+  r = await run('Drivers & Incidents', { skipBy });
+  assert.deepEqual([r.last, r.zip], ['Lane', '68102']);
+  assert.deepEqual(plain(r.report.skipped), []);
+  assert.deepEqual(plain(r.report.unitForm), { list: 'drivers', id: 'Id_GiveDriverRelationshipToBusiness_40003' });
+  // `skip` (edits made where no step was read) applies on every step, as before.
+  r = await run('Drivers & Incidents', { skipBy, skip: ['ref:GiveZip'] });
+  assert.deepEqual([r.last, r.zip], ['Lane', '']);
+});
+
+test('GEICO skipBy on a unit step: a vehicle form gets the active vehicle\'s edits, a trailer form the active trailer\'s, each form its own', async () => {
+  const plan = [
+    { id: 'vyear', field: 'GiveYear', steps: ['Vehicles'], whenShown: VEHICLE_FORM, path: 'vehicles[1].year', name: 'Vehicle year', kind: 'choice', value: '2022' },
+    { id: 'tyear', field: 'GiveYear', steps: ['Vehicles'], whenShown: TRAILER_FORM, path: 'trailers[0].year', name: 'Trailer year', kind: 'choice', value: '2019' },
+  ];
+  const run = async (kind, skipBy) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Vehicles');
+    if (kind === 'vehicle') h.document.body.append(gdsRadios('YesNoPreQuoteHaveFullVinActivity', 85493, 'Do you have the VIN handy?', [['Yes', 'Yes'], ['No', 'No']]).group);
+    h.document.body.append(geicoList('GiveOtherVehicleType', 85494, `Which of the following best describes the customer's ${kind}?`, ['Box Truck', 'Flatbed']));
+    const year = geicoList('GiveYear', 85495, 'Year', ['2019', '2022']);
+    h.document.body.append(year);
+    const report = await h.kit.fill(plan, { maxRounds: 6, units: geicoUnits(1, {}), skipBy });
+    return year.value;
+  };
+  // The agent corrected vehicle 2's year (its form, no VIN): the trailer form's year still fills.
+  const vehicleEdit = geicoSkipBy({ units: { vehicles: ['ref:GiveYear'] } });
+  assert.equal(await run('vehicle', vehicleEdit), '');
+  assert.equal(await run('trailer', vehicleEdit), '2019');
+  // A trailer's edit protects the trailer form's year, never a vehicle's.
+  const trailerEdit = geicoSkipBy({ units: { trailers: ['ref:GiveYear'] } });
+  assert.equal(await run('trailer', trailerEdit), '');
+  assert.equal(await run('vehicle', trailerEdit), '2022');
+  // An edit filed under a form applies on that form only.
+  const formEdit = geicoSkipBy({ forms: { Id_GiveOtherVehicleType_85494: ['ref:GiveYear'] } });
+  assert.equal(await run('trailer', formEdit), '');
+  assert.equal(await run('vehicle', formEdit), '2022');
+  // Edits of another step don't apply here.
+  assert.equal(await run('vehicle', geicoSkipBy({ steps: { 'Business & Owner Info': ['ref:GiveYear'] } })), '2022');
+});
+
+test('GEICO skipBy on a unit step with no unit form on screen: the step\'s own edits, never a unit\'s', async () => {
+  const plan = [{ id: 'count', field: 'GiveNumberOfUnits', steps: ['Vehicles', 'Drivers & Incidents'], path: 'operations.units', name: 'Number of units', kind: 'text', value: '2' }];
+  const run = async (step, skipBy) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, step);
+    const box = geicoBox('GiveNumberOfUnits', 1, 'How many?');
+    h.document.body.append(box);
+    await h.kit.fill(plan, { maxRounds: 6, units: geicoUnits(0, {}), skipBy });
+    return box.value;
+  };
+  // The owner's own driver form asks Add Driver's questions: the picked driver's edits aren't the owner's.
+  for (const step of ['Vehicles', 'Drivers & Incidents']) {
+    assert.equal(await run(step, geicoSkipBy({ units: { vehicles: ['ref:GiveNumberOfUnits'], drivers: ['ref:GiveNumberOfUnits'] } })), '2', step);
+    assert.equal(await run(step, geicoSkipBy({ steps: { [step]: ['ref:GiveNumberOfUnits'] } })), '', step);
+  }
+});
+
+test('GEICO skipBy on a held form: only an edit filed under that form dismisses its check, never the active unit\'s; its own edits stay once its unit is picked', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Vehicles');
+  // Vehicle 1 was filled on an earlier form; the next form is on screen and the picker is still on vehicle 1.
+  const earlier = 'Id_YesNoPreQuoteHaveFullVinActivity_85493';
+  const b = geicoVehicleForm(h, 37768);
+  const marker = 'ref:YesNoPreQuoteHaveFullVinActivity';
+  const fill = (skipBy) => h.kit.fill(vehicleFormPlan(0), { maxRounds: 6, units: geicoUnits(0, { [earlier]: 0 }), skipBy });
+  // Vehicle 1's edits (its first question, on its own form and as vehicle 1) never answer this form's check.
+  let report = await fill(geicoSkipBy({ units: { vehicles: [marker] }, forms: { [earlier]: [marker] } }));
+  assert.deepEqual(plain([report.unitHeld, report.checks.map((x) => x.key)]), [{ list: 'vehicles', id: b.id }, [marker]]);
+  assert.deepEqual([b.vin.value, b.year.value], ['', '']);
+  assert.equal(b.marker.hosts[0].getAttribute('data-rater-autofill'), 'needs');
+  // Dismissed on this form: still held, without the check.
+  report = await fill(geicoSkipBy({ forms: { [b.id]: [marker] } }));
+  assert.deepEqual(plain([report.unitHeld, report.checks]), [{ list: 'vehicles', id: b.id }, []]);
+  assert.deepEqual([b.vin.value, b.year.value], ['', '']);
+  // The agent picks a year on the held form, then picks vehicle 2: their choice stays, the rest fills.
+  b.year.value = '2021';
+  report = await h.kit.fill(vehicleFormPlan(1), { maxRounds: 6, replaceChoices: true, units: geicoUnits(1, { [earlier]: 0 }), skipBy: geicoSkipBy({ forms: { [b.id]: ['ref:GiveYear'] } }) });
+  assert.deepEqual([b.vin.value, b.year.value], [GEICO_VINS[1], '2021']);
+  assert.deepEqual(plain([report.unitForm, report.unitHeld]), [{ list: 'vehicles', id: b.id }, null]);
+});
+
+test('a GEICO unit form is bound only when the plan answers it: the owner-listed Add Driver binds nothing, and the driver picked next fills it', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Drivers & Incidents');
+  const first = geicoBox('GiveFirstName', 34001, 'First Name');
+  h.document.body.append(first, geicoList('GiveDriverRelationshipToBusiness', 34002, 'What is their relationship to the business?', ['Owner', 'Employee']));
+  const id = 'Id_GiveDriverRelationshipToBusiness_34002';
+  const note = 'The panel\'s driver is the owner, whom GEICO already lists: pick the driver this form is for in the panel, then Fill again.';
+  const driverPlan = (i, value) => [{ id: `first${i}`, field: 'GiveFirstName', steps: ['Drivers & Incidents'], whenShown: ADD_DRIVER_FORM, path: `drivers[${i}].first`, name: 'Driver first name', kind: 'text', value, note: value == null ? note : null }];
+  const units = (active, bound) => ({ active: { vehicles: 0, drivers: active, trailers: 0 }, count: { vehicles: 1, drivers: 2, trailers: 0 }, bound: { vehicles: {}, drivers: bound, trailers: {} } });
+  // The picker on the owner: every answer is a note, so the form is nobody's yet.
+  let report = await h.kit.fill(driverPlan(0, null), { maxRounds: 6, units: units(0, {}) });
+  assert.equal(first.value, '');
+  assert.deepEqual(plain([report.unitForm, report.unitHeld, report.checks]), [null, null, []]);
+  assert.deepEqual(plain(report.noData.map((x) => x.note)), [note]);
+  // The agent picks driver 2: the form is not held, and is now driver 2's.
+  report = await h.kit.fill(driverPlan(1, 'Sam'), { maxRounds: 6, units: units(1, {}) });
+  assert.equal(first.value, 'Sam');
+  assert.deepEqual(plain([report.unitForm, report.unitHeld, report.checks]), [{ list: 'drivers', id }, null, []]);
+});
+
+test('a GEICO form filled for one driver while the panel has another picked: the note says both ways out', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Drivers & Incidents');
+  const first = geicoBox('GiveFirstName', 34001, 'First Name');
+  h.document.body.append(first, geicoList('GiveDriverRelationshipToBusiness', 34002, 'What is their relationship to the business?', ['Owner', 'Employee']));
+  const id = 'Id_GiveDriverRelationshipToBusiness_34002';
+  const plan = [{ id: 'first2', field: 'GiveFirstName', steps: ['Drivers & Incidents'], whenShown: ADD_DRIVER_FORM, path: 'drivers[2].first', name: 'Driver first name', kind: 'text', value: 'Sam' }];
+  const units = { active: { vehicles: 0, drivers: 2, trailers: 0 }, count: { vehicles: 1, drivers: 3, trailers: 0 }, bound: { vehicles: {}, drivers: { [id]: 1 }, trailers: {} } };
+  const report = await h.kit.fill(plan, { maxRounds: 6, units });
+  assert.equal(first.value, '');
+  assert.deepEqual(plain([report.unitHeld, report.checks.map((x) => [x.name, x.note])]), [{ list: 'drivers', id }, [['driver 3',
+    'This form was filled for driver 2, and the panel has driver 3 picked: if it is driver 2\'s, pick driver 2 in the panel, then Fill again; if it is driver 3\'s, correct its answers yourself.']]]);
+});
+
+// The questions that start GEICO's forms (fill plan `whenShown.unit`), as the panel's plan gives them.
+const TRAILER_YEAR = { id: 'tyear', field: 'GiveYear', steps: ['Vehicles'], whenShown: TRAILER_FORM, path: 'trailers[0].year', name: 'Trailer year', kind: 'choice', value: '2019' };
+const trailerForm = (h, n) => {
+  const type = geicoList('GiveOtherVehicleType', n, 'Which of the following best describes the customer\'s trailer?', ['Flatbed', 'Dry Van']);
+  const year = geicoList('GiveYear', n + 1, 'Year', ['2019', '2022']);
+  const form = new FakeNode('div');
+  form.append(type, year);
+  h.document.body.append(form);
+  return { form, type, year, id: `Id_GiveOtherVehicleType_${n}` };
+};
+
+test('unitFormsNow names the unit forms on screen between fills, by the markers a fill here was given, element names only', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Vehicles');
+  const zipOnly = [{ id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' }];
+  // No fill has said which questions start a form: the kit can't tell.
+  assert.equal(h.kit.unitFormsNow(), null);
+  const a = geicoVehicleForm(h, 85493);
+  // A plan with no unit forms (Progressive's, AmWINS') tells it nothing.
+  await h.kit.fill(zipOnly, { maxRounds: 2 });
+  assert.equal(h.kit.unitFormsNow(), null);
+  await h.kit.fill([...vehicleFormPlan(0), TRAILER_YEAR], { maxRounds: 6, units: geicoUnits(0, {}) });
+  assert.equal(a.vin.value, GEICO_VINS[0]);
+  assert.deepEqual(plain(h.kit.unitFormsNow()), [{ list: 'vehicles', id: a.id }]);
+  assert.ok(!JSON.stringify(plain(h.kit.unitFormsNow())).includes(GEICO_VINS[0]), 'never a value');
+  // Vehicle 1 saved, the agent opens the trailer form: named before any fill has read it, also
+  // after a fill whose plan has no unit forms.
+  a.form.remove();
+  const t = trailerForm(h, 51200);
+  await h.kit.fill(zipOnly, { maxRounds: 2 });
+  assert.deepEqual(plain(h.kit.unitFormsNow()), [{ list: 'trailers', id: t.id }]);
+  // A vehicle form's type list reads "…vehicle?": not the trailer form.
+  t.type.setAttribute('aria-label', 'Which of the following best describes the customer\'s vehicle?');
+  assert.deepEqual(plain(h.kit.unitFormsNow()), []);
+  // No form on screen (the owner check under Vehicles): none.
+  t.form.remove();
+  assert.deepEqual(plain(h.kit.unitFormsNow()), []);
+  // It never throws: a page it can't read gives no answer.
+  h.document.querySelectorAll = () => { throw new Error('unreadable'); };
+  assert.equal(h.kit.unitFormsNow(), null);
+});
+
+test('GEICO skipBy is read again each round: a form drawn partway through a fill gets its own edits, never the previous form\'s', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Vehicles');
+  const a = geicoVehicleForm(h, 85493);
+  let b = null;
+  // Its last answer saves the vehicle, and the next form is drawn (in place of a click on Next).
+  a.year.addEventListener('change', () => { if (!b) { a.form.remove(); b = geicoVehicleForm(h, 37768); } });
+  // The agent answered vehicle 1's first question (its VIN handy?) themselves.
+  const marker = 'ref:YesNoPreQuoteHaveFullVinActivity';
+  const report = await h.kit.fill(vehicleFormPlan(0), { maxRounds: 6, units: geicoUnits(0, {}), skipBy: geicoSkipBy({ units: { vehicles: [marker] } }) });
+  assert.equal(a.vin.value, GEICO_VINS[0]);
+  assert.ok(b);
+  assert.deepEqual([b.vin.value, b.year.value], ['', '']);
+  // The new form is held: its check and mark are there, vehicle 1's edit doesn't answer them.
+  assert.deepEqual(plain([report.unitForm, report.unitHeld]), [{ list: 'vehicles', id: a.id }, { list: 'vehicles', id: b.id }]);
+  assert.deepEqual(plain(report.checks.map((x) => [x.key, x.name])), [[marker, 'vehicle 1']]);
+  assert.equal(b.marker.hosts[0].getAttribute('data-rater-autofill'), 'needs');
+  assert.ok(!report.skipped.some((x) => x.key === marker), 'not skipped on the new form');
+});
+
+test('GEICO skipBy on a unit step with no unit form (the owner check under Vehicles): every step\'s edits apply, no unit\'s', async () => {
+  const OWNER_CHECK = { field: 'GiveSocialSecurityNumber' };
+  const plan = [
+    { id: 'owner', field: 'GiveLastName', steps: ['Business & Owner Info'], path: 'applicant.owner1.last', name: 'Owner last name', kind: 'text', value: 'Lane' },
+    { id: 'ownerAgain', field: 'GiveLastName', steps: ['Vehicles'], whenShown: OWNER_CHECK, path: 'applicant.owner1.last', name: 'Owner last name', kind: 'text', value: 'Lane' },
+    { id: 'zipAgain', field: 'GiveZip', steps: ['Vehicles'], whenShown: OWNER_CHECK, path: 'garaging.zip', name: 'Business ZIP', kind: 'text', value: '68102' },
+    { id: 'units', field: 'GiveNumberOfUnits', steps: ['Vehicles'], whenShown: OWNER_CHECK, path: 'operations.units', name: 'Number of units', kind: 'text', value: '2' },
+    ...vehicleFormPlan(0),
+  ];
+  const run = async (skipBy, { form = false } = {}) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Vehicles');
+    const last = geicoBox('GiveLastName', 61001, 'Business Owner Last Name');
+    const zip = geicoBox('GiveZip', 61002, '5-Digit ZIP Code');
+    const count = geicoBox('GiveNumberOfUnits', 61003, 'How many?');
+    h.document.body.append(last, zip, count, geicoBox('GiveSocialSecurityNumber', 61004, 'Business Owner Social Security Number'));
+    if (form) geicoVehicleForm(h, 85493);
+    const report = await h.kit.fill(plan, { maxRounds: 6, units: geicoUnits(0, {}), skipBy });
+    return { values: [last.value, zip.value, count.value], skipped: plain(report.skipped.map((x) => x.key)).sort() };
+  };
+  // The owner's last name corrected on Business & Owner Info: not typed over where GEICO asks it again.
+  const corrected = geicoSkipBy({ steps: { 'Business & Owner Info': ['ref:GiveLastName'], 'Quote & Coverages': ['ref:GiveZip'] }, units: { vehicles: ['ref:GiveNumberOfUnits'], drivers: ['ref:GiveZip'] } });
+  let r = await run(corrected);
+  assert.deepEqual(r.values, ['', '', '2']);
+  assert.deepEqual(r.skipped, ['ref:GiveLastName', 'ref:GiveZip']);
+  // Another unit's edits don't apply here.
+  r = await run(geicoSkipBy({ units: { drivers: ['ref:GiveLastName'] } }));
+  assert.deepEqual(r.values, ['Lane', '68102', '2']);
+  // With a vehicle form on screen, other steps' edits stay theirs (its questions are the form's).
+  r = await run(corrected, { form: true });
+  assert.ok(!r.skipped.includes('ref:GiveLastName') && !r.skipped.includes('ref:GiveZip'));
+});
+
+test('a recorder in the kit\'s world names the unit form an agent change was made on, before any fill has read it', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Vehicles');
+  const a = geicoVehicleForm(h, 85493);
+  await h.kit.fill([...vehicleFormPlan(0), TRAILER_YEAR], { maxRounds: 6, units: geicoUnits(0, {}) });
+  const recorder = recorderHarness(h.document);
+  // GEICO's recorder runs in the kit's (isolated) world.
+  recorder.context.__raterKit = h.kit;
+  const lastChange = () => recorder.sent.filter((m) => m.event === 'field_changes').at(-1);
+  // Vehicle 1 saved; the agent opens the trailer form and picks its year at once.
+  a.form.remove();
+  const t = trailerForm(h, 51200);
+  recorder.tick();
+  recorder.trusted(t.year);
+  t.year.value = '2022';
+  recorder.tick();
+  let message = lastChange();
+  assert.deepEqual(plain(message.changes.map((c) => [c.key, c.agent])), [['ref:GiveYear', true]]);
+  assert.deepEqual(plain(message.forms), [{ list: 'trailers', id: t.id }]);
+  // The owner check under Vehicles: no unit form.
+  t.form.remove();
+  const last = geicoBox('GiveLastName', 61001, 'Business Owner Last Name');
+  h.document.body.append(last, geicoBox('GiveSocialSecurityNumber', 61004, 'Business Owner Social Security Number'));
+  recorder.tick();
+  recorder.trusted(last);
+  last.value = 'Lane';
+  recorder.tick();
+  message = lastChange();
+  assert.deepEqual(plain([message.changes.map((c) => c.key), message.forms]), [['ref:GiveLastName'], []]);
+});
+
+test('a GEICO step that can\'t be read (its bar and title disagree): a plan kept to steps does nothing there and reads nothing for its report', async () => {
+  const plan = [
+    { id: 'owner', field: 'GiveFirstName', steps: ['Business & Owner Info'], path: 'applicant.firstName', name: 'Owner first name', kind: 'text', value: 'Pat' },
+    { id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' },
+  ];
+  const h = harness({ pathname: '/quote' });
+  const bar = geicoBar(h, 'Quote & Coverages', { title: 'GEICO Final Quote Details' });
+  const zip = geicoBox('GiveZip', 1, '5-Digit ZIP Code', { required: true });
+  const payPlan = gdsRadios('GivePayPlanV2', 2, 'How would the customer like to pay?', [['GEICO_PP_1Pay', 'Pay In Full'], ['GEICO_PP_12Pay', 'Monthly']]);
+  // Enough unfamiliar questions to read as a changed page, were they read.
+  const others = [3, 4, 5, 6, 7].map((n) => geicoBox(`GiveUnmapped${n}`, n, `Question ${n}`, { required: true }));
+  h.document.body.append(zip, payPlan.group, ...others);
+  const next = addButton(h, 'Next');
+  next.onclick = () => { next._clicked = true; };
+  const report = await h.kit.fill(plan, { maxRounds: 6, advance: { text: '^next$' } });
+  assert.deepEqual(plain([report.halted, report.reason, report.stepKey]), [true, 'The step on screen could not be read (the progress bar and the page title disagree): fill again once the page settles.', '']);
+  // Said apart from other halts: the panel tries an automatic fill once more instead of pausing them.
+  assert.equal(report.stepUnread, true);
+  assert.equal(zip.value, '');
+  assert.equal(next._clicked, undefined);
+  // Nothing of the page is the report's: no unfamiliar question (none for the AI assistant), no
+  // required one, no changed page, no marks.
+  assert.deepEqual(plain([...report.filled, ...report.unknown, ...report.leftRequired, ...report.noData, ...report.checks, ...report.labels]), []);
+  assert.equal(report.pageChanged, false);
+  assert.ok(report.blockers.includes(report.reason));
+  assert.deepEqual([zip, ...others].map((x) => x.getAttribute('data-rater-autofill')), [null, null, null, null, null, null]);
+  // A plan kept to no step has nothing a step decides: it fills there as before.
+  const stepless = await h.kit.fill(plan.filter((s) => !s.steps), { maxRounds: 6 });
+  assert.deepEqual([stepless.halted, zip.value], [false, '68102']);
+  // Once the bar and the title agree, the plan fills.
+  zip.value = '';
+  bar.go('Quote & Coverages');
+  const settled = await h.kit.fill(plan, { maxRounds: 6 });
+  assert.deepEqual([settled.halted, settled.stepKey, zip.value, settled.stepUnread], [false, 'Quote & Coverages', '68102', false]);
+  assert.equal(settled.unknown.length, 6);
+});
+
+test('on a step that is the agent\'s (stopSteps) nothing is typed or clicked, also when the agent moves there during the fill', async () => {
+  const stopSteps = ['Final Quote Details', 'MVR & CLUE', 'Payment Information'];
+  const [go] = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [{ id: 'go', text: '^go$' }] }).filter((s) => s.kind === 'action');
+  const plan = [
+    { id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' },
+    { id: 'city', field: 'GiveCity', path: 'garaging.city', name: 'City', kind: 'text', value: 'Omaha' },
+    go,
+  ];
+  const page = (step, title) => {
+    const h = harness({ pathname: '/quote' });
+    const bar = geicoBar(h, step, { title });
+    const zip = geicoBox('GiveZip', 1, '5-Digit ZIP Code');
+    const city = geicoBox('GiveCity', 2, 'City');
+    const clicks = [];
+    for (const text of ['Go', 'Next']) addButton(h, text).onclick = () => clicks.push(text);
+    h.document.body.append(zip, city);
+    return { h, bar, zip, city, clicks, fill: () => h.kit.fill(plan, { maxRounds: 6, stopSteps, advance: { text: '^next$' } }) };
+  };
+  const stopped = (p, report, step) => {
+    assert.equal(report.halted, true, step);
+    assert.equal(report.reason, 'This step is yours: nothing is filled or clicked here.');
+    assert.equal(report.stopStep, step);
+    assert.equal(report.stepUnread, false, 'a step that is the agent\'s, not one that could not be read');
+    assert.deepEqual(p.clicks, [], 'no helper and no Continue');
+    assert.equal(p.city.value, '');
+  };
+  // On it as the fill starts: by the bar and the title, or by the title alone (the bar disagrees).
+  for (const [step, title, at] of [['MVR & CLUE', undefined, 'MVR & CLUE'], ['Quote & Coverages', 'GEICO Payment Information', 'Payment Information']]) {
+    const p = page(step, title);
+    const report = await p.fill();
+    stopped(p, report, at);
+    assert.equal(p.zip.value, '');
+    assert.deepEqual(plain([...report.filled, ...report.actions]), []);
+    assert.equal(report.stepKey, title ? '' : step);
+    // The AI assistant's answers are not put in there either.
+    const answers = await p.h.kit.answer([{ key: 'ref:GiveZip', label: '5-Digit ZIP Code', value: '68102' }]);
+    assert.deepEqual(plain(answers.map((x) => [x.ok, x.reason])), [[false, 'This step is yours: nothing is filled or clicked here.']]);
+    assert.equal(p.zip.value, '');
+  }
+  // A kit no fill has told: the panel's stop steps, with the answers.
+  const fresh = page('Payment Information');
+  const answers = await fresh.h.kit.answer([{ key: 'ref:GiveZip', label: '5-Digit ZIP Code', value: '68102' }], null, null, { stopSteps });
+  assert.equal(answers[0].ok, false);
+  assert.equal(fresh.zip.value, '');
+  // Another step fills and clicks as before.
+  const quote = page('Vehicles');
+  const report = await quote.fill();
+  assert.deepEqual([quote.zip.value, quote.city.value, report.halted], ['68102', 'Omaha', false]);
+  assert.deepEqual(quote.clicks, ['Go', 'Next']);
+  // The agent clicks Next to MVR & CLUE while the first answer goes in: nothing more there, and
+  // nothing of that step is read for the report.
+  const moving = page('Quote & Coverages');
+  moving.zip.addEventListener('change', () => moving.bar.go('MVR & CLUE'));
+  const movedReport = await moving.fill();
+  assert.equal(moving.zip.value, '68102');
+  stopped(moving, movedReport, 'MVR & CLUE');
+  assert.equal(movedReport.stepKey, 'Quote & Coverages', 'the report is the step the fill was on');
+  assert.deepEqual(plain(movedReport.labels), []);
+});
+
+test('a fill ends when the agent moves to another step: the rest of its plan is not given there, nor is Continue clicked, and that step\'s questions are not its', async () => {
+  const plan = [
+    { id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' },
+    { id: 'city', field: 'GiveCity', path: 'garaging.city', name: 'City', kind: 'text', value: 'Omaha' },
+  ];
+  const h = harness({ pathname: '/quote' });
+  const bar = geicoBar(h, 'Vehicles');
+  const zip = geicoBox('GiveZip', 1, '5-Digit ZIP Code');
+  const city = geicoBox('GiveCity', 2, 'City');
+  const next = addButton(h, 'Next');
+  next.onclick = () => { next._clicked = true; };
+  h.document.body.append(zip, city);
+  zip.addEventListener('change', () => {
+    bar.go('Drivers & Incidents');
+    h.document.body.append(geicoBox('GiveDriverLicenseNumber', 3, 'License number', { required: true }));
+  });
+  const report = await h.kit.fill(plan, { maxRounds: 6, advance: { text: '^next$' } });
+  assert.deepEqual([zip.value, city.value, report.halted], ['68102', '', false]);
+  assert.equal(next._clicked, undefined);
+  assert.equal(report.stepKey, 'Vehicles');
+  assert.deepEqual(plain([...report.unknown, ...report.leftRequired, ...report.noData]), []);
+  // The step changes as an answer goes in that the page then drops (a round goes on to its next
+  // answer after one not kept): that next answer isn't given on the new step either.
+  const dropped = harness({ pathname: '/quote' });
+  const droppedBar = geicoBar(dropped, 'Vehicles');
+  const zip2 = geicoBox('GiveZip', 1, '5-Digit ZIP Code');
+  const city2 = geicoBox('GiveCity', 2, 'City');
+  dropped.document.body.append(zip2, city2);
+  zip2.addEventListener('change', () => { droppedBar.go('Drivers & Incidents'); zip2.value = ''; });
+  await dropped.kit.fill(plan, { maxRounds: 6 });
+  assert.equal(city2.value, '');
+
+  // Without a bar (AmWINS' headings change with its dialogs) the fill goes on as before.
+  const amwinsLike = harness({ pathname: '/app' });
+  const heading = new FakeNode('h3', { textContent: 'Vehicles' });
+  const z = geicoBox('GiveZip', 1, 'ZIP');
+  const c = geicoBox('GiveCity', 2, 'City');
+  amwinsLike.document.body.append(heading, z, c);
+  z.addEventListener('change', () => { heading.textContent = 'Drivers'; });
+  await amwinsLike.kit.fill(plan, { maxRounds: 6 });
+  assert.deepEqual([z.value, c.value], ['68102', 'Omaha']);
+});
+
+test('a helper kept to a step (GEICO\'s Recalculate) is clicked, or the agent\'s, only on that step', async () => {
+  const actions = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [
+    { id: 'recalculate', text: '^recalculate$', steps: ['Quote & Coverages'], needsRecalculation: true, verify: 'premium' },
+    { id: 'addVehicle', text: '^add vehicle$', steps: ['Vehicles'], missing: 'Add each vehicle yourself.' },
+  ] }).filter((s) => s.kind === 'action');
+  const run = async (step) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, step);
+    // A later step's text can read like the stale premium too.
+    h.document.body.innerText = 'Quote $ --.-- Due Today $ --.-- Total';
+    const recalc = gdsButton('Recalculate');
+    recalc.button.onclick = () => { recalc.clicked = true; h.document.body.innerText = 'Quote $1,000.00 Due Today $1,000.00 Total'; };
+    h.document.body.append(recalc.host);
+    const report = await h.kit.fill(actions, { maxRounds: 4 });
+    return { clicked: !!recalc.clicked, actions: plain(report.actions.map((a) => a.id)), needs: plain(report.noData.map((x) => x.note)) };
+  };
+  assert.deepEqual(await run('Quote & Coverages'), { clicked: true, actions: ['recalculate'], needs: [] });
+  assert.deepEqual(await run('Final Quote Details'), { clicked: false, actions: [], needs: [] });
+  assert.deepEqual(await run('Vehicles'), { clicked: false, actions: [], needs: ['Add each vehicle yourself.'] });
+});

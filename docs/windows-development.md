@@ -57,13 +57,15 @@ These commands serve their own local fixtures:
 ```powershell
 npm run mock:amwins
 npm run mock:amwins -- --reversed
+npm run mock:geico
 npm run e2e -- --fixtures
 npm run e2e -- --fixtures --renumber
 npm run mock:luna
 ```
 
 Luna needs the package built above. Some fixture assets come from pinned CDNs,
-so browser installation and those replays need internet access.
+so browser installation and those replays need internet access; the GEICO mock
+loads nothing from the network.
 
 The packaged extension check also needs the replay server. In one terminal:
 

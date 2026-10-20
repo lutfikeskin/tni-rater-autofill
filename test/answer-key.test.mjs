@@ -77,6 +77,12 @@ test('readKey takes the four kinds of answer and refuses ids, bad answers and qu
   assert.equal(quotePage('progressive', '/Login/'), false);
   assert.equal(quotePage('amwins', '/application/businessauto › Drivers'), true);
   assert.equal(quotePage('amwins', '/application/commercialproperty'), false);
+  // GEICO: every step is /quote; the gateway (its search and the agent's dashboard) is not the quote.
+  assert.equal(quotePage('geico', '/quote'), true);
+  assert.equal(quotePage('geico', '/quote › Vehicles'), true);
+  assert.equal(quotePage('geico', '/'), false);
+  assert.equal(quotePage('geico', '/dashboard'), false);
+  assert.equal(quotePage('geico', '/quotes'), false);
 });
 
 test('scoreKey: right, wrong, missed and invented against TNI\'s answers', () => {
@@ -171,6 +177,16 @@ test('keyCells joins an AmWINS answer recorded without its step to the one step 
   const row = (question, session) => ({ question, session, intakeId: 'i1', carrier: 'amwins', page: question.split('|')[1], status: 'value', group: 'kept', detail: { unit: '' } });
   const cells = keyCells([row('amwins|/application/businessauto|any vehicle not owned', 'old'), row('amwins|/application/businessauto › Underwriting|any vehicle not owned', 'new')]);
   assert.deepEqual(cells.map((c) => c.cell), ['amwins|/application/businessauto › Underwriting|any vehicle not owned']);
+});
+
+// The coverage steps of the one-address carriers are coverage choices, quote by quote, as
+// Progressive's CoveragesRates: AmWINS' Coverages and GEICO's Quote & Coverages.
+test('sheetModel asks for the client\'s coverage choices on every carrier\'s coverage page', () => {
+  const row = (question) => ({ question, session: 's1', intakeId: 'i1', carrier: question.split('|')[0], page: question.split('|')[1], kind: 'choice', status: 'value', source: 'derived',
+    group: 'kept', detail: { unit: '', state: 'FL', businessClass: 'Freight Hauler', record: {}, step: { kind: 'choice', value: 'x' } } });
+  const m = sheetModel([row('geico|/quote › Quote & Coverages|ref:CargoLimit'), row('amwins|/application/businessauto › Coverages|cargo'), row('geico|/quote › Vehicles|ref:GiveFarthestOneWayDistance')]);
+  assert.deepEqual(Object.fromEntries(m.questions.map((q) => [q.id, q.group])), {
+    'geico|/quote › Quote & Coverages|ref:CargoLimit': 'coverage', 'amwins|/application/businessauto › Coverages|cargo': 'coverage', 'geico|/quote › Vehicles|ref:GiveFarthestOneWayDistance': 'derived' });
 });
 
 test('sheetModel groups standards, intake fields and the agent\'s questions, and lists the quotes that need their own answer', () => {

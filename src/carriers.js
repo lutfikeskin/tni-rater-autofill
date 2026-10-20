@@ -1,18 +1,33 @@
 // Per-carrier settings. `rules` are exact mappings for that carrier's pages and always win over
 // the generic label rules in rules.js. A rule targets a field by one of:
 //   q        the carrier's own question id (Duck Creek sites like Progressive)
+//   field    the field's data-model name (Progressive's fieldref, GEICO's Id_<Name>_<n> stem)
+//   ask      the question's exact text, as a check on the name or on its own
 //   selector a CSS selector
 //   label    a regex on the field's label (same format as rules.js), plus optional `not`
 // and gets its value from `path` (a client-record path) or `value(record, active)`. A rule with
 // `note` and no value marks the field for the agent and never fills it.
 //
+// On a one-address application a rule names the step(s) it answers on (`steps`, from
+// `layoutSteps`: GEICO's GiveFirstName is the owner on one step and a driver on another), and
+// a rule for one form of a step names a question only that form asks: `whenShown` (or
+// `unlessShown`) `{ field, label?, unit? }`, with `unit` ('vehicles', 'drivers', 'trailers') when
+// the form is for the panel's active vehicle, driver or trailer. Either may be a function of
+// (record, active); so may `verifyOnly` (checked against the intake, never typed).
+//
 // `layoutUrl` (or else `autoFillUrl`): the carrier's quote pages, where page layouts are recorded
 // as the agent works even without a fill. A carrier with neither gets layouts from fills only.
-// `layoutSteps`: one address for several steps (AmWINS), as the list of its step headings; each
-// layout also names its step, and fill and field-change events name it only when it is one of them.
+// `layoutSteps`: one address for several steps, as the list of its step names (AmWINS' headings,
+// GEICO's progress bar); each layout also names its step, and fill and field-change events name it
+// only when it is one of them.
 //
 // `quoteSteps`: the quote's steps in order, for the side panel's page strip, each with the pages
-// (`pages`) or the one-address step heading (`step`, one of `layoutSteps`) that are part of it.
+// (`pages`) or the one-address step (`step`, one of `layoutSteps`) that are part of it.
+//
+// `vehicleSteps` / `driverSteps`: one-address steps that show one vehicle's (or trailer's) form, or
+// one driver's, at a time: the agent's edits there are kept per unit. `stopSteps`: steps that are
+// the agent's, by name, with what the panel says there: nothing is filled or clicked on them. An
+// action's `steps`: the only steps it is clicked on.
 //
 // `world: 'MAIN'` runs the page script in the page's own JavaScript world, needed when the
 // carrier's widgets (e.g. ExtJS) are only reachable through the page's own objects.
@@ -21,16 +36,11 @@
 
 import { progressive } from './carriers/progressive.js';
 import { amwins } from './carriers/amwins.js';
+import { geico } from './carriers/geico.js';
 
 export const CARRIERS = [
   progressive,
-  {
-    id: 'geico',
-    name: 'GEICO',
-    hosts: [/(^|\.)geico\.com$/],
-    // Empty until we capture GEICO's quote pages; the generic label rules do the work meanwhile.
-    rules: [],
-  },
+  geico,
   amwins,
   {
     id: 'test',
@@ -40,11 +50,13 @@ export const CARRIERS = [
   },
 ];
 
-// Practice copies of carrier pages served from this repo (test/replay, test/mock-progressive).
+// Practice copies of carrier pages served from this repo (test/replay, test/mock-progressive,
+// test/fixtures/amwins, test/fixtures/geico).
 // They get the real carrier's rules, but aren't real quotes, so usage isn't recorded for them.
 const PRACTICE = [
   { path: /^\/test\/(replay|mock-progressive)\//, carrier: 'progressive' },
   { path: /^\/test\/fixtures\/amwins\//, carrier: 'amwins' },
+  { path: /^\/test\/fixtures\/geico\//, carrier: 'geico' },
 ];
 
 export function carrierForUrl(url) {

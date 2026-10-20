@@ -1,7 +1,7 @@
 // Answer provenance (Contract 2, docs/intake-and-rules.md): every carrier rule that computes an
 // answer says where it comes from; facts and attestations the intake doesn't supply are never
 // filled; standards are marked, and become check items for a business class the rules weren't
-// written for (review mode). Plus: every intake field is read by both carriers, or its absence is
+// written for (review mode). Plus: every intake field is read by each carrier, or its absence is
 // listed here with the reason.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,8 +10,11 @@ import { buildPlan, supportedClass, reviewWarn, SOURCES, AGENT_SOURCES } from '.
 import { SECTIONS } from '../src/schema.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
+import { geico } from '../src/carriers/geico.js';
 
-const CARRIERS = [progressive, amwins];
+// Every carrier with rules; those with TNI standards (GEICO has none recorded: docs/intake-and-rules.md).
+const RULE_CARRIERS = [progressive, amwins, geico];
+const STANDARD_CARRIERS = [progressive, amwins];
 
 // An expediter with everything the intake can give (the shape of test/progressive.test.mjs).
 const expediter = () => ({
@@ -52,7 +55,7 @@ const RECORDS = () => [
 ];
 
 test('every rule that computes an answer declares a valid source', () => {
-  for (const carrier of CARRIERS) {
+  for (const carrier of RULE_CARRIERS) {
     for (const rule of carrier.rules) {
       const where = `${carrier.id}: ${rule.name ?? rule.q ?? rule.selector ?? rule.label ?? rule.path}`;
       // A source may depend on the record: every record's must be valid.
@@ -68,7 +71,7 @@ test('every rule that computes an answer declares a valid source', () => {
 });
 
 test('facts and attestations are never filled; standards are marked', () => {
-  for (const carrier of CARRIERS) {
+  for (const carrier of RULE_CARRIERS) {
     let facts = 0, standards = 0;
     for (const record of RECORDS()) {
       for (const active of [{}, { vehicles: 0, drivers: 0, trailers: 0 }]) {
@@ -83,7 +86,9 @@ test('facts and attestations are never filled; standards are marked', () => {
         }
       }
     }
-    assert.ok(facts > 0 && standards > 0, `${carrier.id}: both kinds are present`);
+    assert.ok(facts > 0, `${carrier.id}: facts are present`);
+    if (STANDARD_CARRIERS.includes(carrier)) assert.ok(standards > 0, `${carrier.id}: standards are present`);
+    else assert.equal(standards, 0, `${carrier.id}: no TNI standard is recorded`);
   }
 });
 
@@ -102,6 +107,7 @@ const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'
 const SOURCE = {
   progressive: stripComments(fs.readFileSync(new URL('../src/carriers/progressive.js', import.meta.url), 'utf8')),
   amwins: stripComments(fs.readFileSync(new URL('../src/carriers/amwins.js', import.meta.url), 'utf8')),
+  geico: stripComments(fs.readFileSync(new URL('../src/carriers/geico.js', import.meta.url), 'utf8')),
 };
 // Not mapped on purpose, with the reason.
 const NOT_MAPPED = {
@@ -156,6 +162,25 @@ const NOT_MAPPED = {
     'coverage.hasGl': 'AmWINS Business Auto has no other-coverages question',
     'claims.text': 'the claims box is read by the intake reader into hasClaims and notes',
   },
+  geico: {
+    'applicant.fein': 'not asked before Final Quote Details, which is the agent\'s (stopSteps)',
+    'applicant.yearEstablished': 'GEICO asks how many years the business has been operating (applicant.yearsInBusiness)',
+    'applicant.yearsExperience': 'not asked on the captured quotes',
+    'operations.usesEld': 'not asked on the captured quotes',
+    'operations.eldBrand': 'not asked on the captured quotes',
+    'operations.movingState': 'not asked on the captured quotes',
+    'operations.canadaLoads': 'not asked on the captured quotes',
+    'operations.licensePlate': 'not asked on the captured quotes',
+    'drivers[].middle': 'GEICO\'s driver forms have no middle name box (a lone initial is left out of the owner\'s first name)',
+    'drivers[].licenseNumber': 'not asked on the captured driver forms; the steps after Quote & Coverages are the agent\'s',
+    'drivers[].cdlYear': 'GEICO asks only whether the driver has a CDL',
+    'drivers[].gender': 'not asked on the captured driver forms',
+    'trailerInfo.ownership': 'not asked on the captured trailer form',
+    'trailerInfo.hitch': 'not asked on the captured trailer form (a gooseneck hitch isn\'t a Gooseneck Trailer)',
+    'trailerInfo.interchangeLimit': 'only whether trailer interchange is wanted is mapped',
+    'claims.hasClaims': 'incidents on Drivers & Incidents are added by the agent (not mapped)',
+    'claims.notes': 'nothing GEICO asks on the mapped steps reads the claims box\'s other answers',
+  },
 };
 // Read by a helper in another module, so the text search of the carrier file can't see it.
 const READ_INDIRECTLY = {
@@ -171,11 +196,16 @@ const READ_INDIRECTLY = {
     'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
     'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
   },
+  geico: {
+    'applicant.applicationDate': 'util.priorPolicyExpired (current GEICO policy, current auto insurance, current GL)',
+    'claims.text': 'normalize.intakeNotes (an NTL mention holds the liability coverage)',
+    'notes.text': 'normalize.intakeNotes (an NTL mention holds the liability coverage)',
+  },
 };
 
 test('every intake field is consumed by each carrier, or its absence is explained here', () => {
   const paths = SECTIONS.flatMap((s) => s.fields.map(([path]) => path));
-  for (const carrier of CARRIERS) {
+  for (const carrier of RULE_CARRIERS) {
     const byPath = new Set(carrier.rules.map((r) => r.path?.replace(/\[\d+\]/, '[]')).filter(Boolean));
     const consumed = (path) => {
       if (byPath.has(path)) return true;
@@ -521,7 +551,7 @@ test('deductibles are TNI\'s standard $1,000 (no intake deductible field exists)
 // --- Review mode ------------------------------------------------------------------------------------
 
 test('supportedClass: expediter, freight hauler and general freight; a missing class is unsupported', () => {
-  for (const carrier of CARRIERS) {
+  for (const carrier of STANDARD_CARRIERS) {
     assert.equal(supportedClass(expediter(), carrier), true, carrier.id);
     // Codex on 2dcd1e8: AmWINS's freight answers (isFreight) need expediting or general freight.
     assert.equal(supportedClass(with_({ 'operations.businessClass': 'Freight Hauler', 'operations.whatHaul': 'Furniture' }), carrier), carrier === progressive, carrier.id);
@@ -534,7 +564,9 @@ test('supportedClass: expediter, freight hauler and general freight; a missing c
     assert.equal(supportedClass(with_({ 'operations.businessClass': null, 'operations.whatHaul': 'General freight' }), carrier), false, 'a missing class is unsupported');
     assert.equal(supportedClass(with_({ 'operations.businessClass': '' }), carrier), false);
   }
-  assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dump Truck' }), { id: 'geico', rules: [] }), true, 'no classes declared: no gate');
+  assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dump Truck' }), { id: 'unclassed', rules: [] }), true, 'no classes declared: no gate');
+  // GEICO declares none: it has no standard for review mode to hold.
+  assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dump Truck' }), geico), true, 'GEICO: no gate');
   assert.equal(supportedClass(expediter(), null), true);
 });
 
@@ -564,7 +596,7 @@ test('Progressive: review mode exactly when its for-hire answer is the agent\'s 
 
 test('review mode: every standard step is a check item naming the class and carrier; none for an expediter', () => {
   const dump = with_({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' });
-  for (const carrier of CARRIERS) {
+  for (const carrier of STANDARD_CARRIERS) {
     const want = `Review mode: the business class "Dump Truck" isn't validated for ${carrier.name}; confirm this standard answer.`;
     assert.equal(reviewWarn(dump, carrier), want);
     const plan = field(buildPlan(dump, carrier, { trailers: 0 }));
@@ -606,7 +638,7 @@ test('a derived answer names the intake answers it was worked out from', () => {
   }
   // Evidence only: tracing never changes the record it reads (audit 2026-10-10: two traced plans
   // compared with each other couldn't show that), so every later step sees the intake as it is.
-  for (const carrier of [amwins, progressive]) {
+  for (const carrier of [amwins, progressive, geico]) {
     const rec = expediter();
     const before = structuredClone(rec);
     buildPlan(rec, carrier, { drivers: 0, vehicles: 0, trailers: 0 });

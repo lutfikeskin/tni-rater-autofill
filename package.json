@@ -22,6 +22,7 @@
     "review": "node scripts/review.mjs server-data",
     "e2e": "node scripts/e2e.mjs",
     "mock:amwins": "node scripts/amwins-mock.mjs",
+    "mock:geico": "node scripts/geico-mock.mjs",
     "test:intakes": "node scripts/intake-mocks.mjs",
     "mock:luna": "node scripts/luna-mock.mjs",
     "ai:eval": "node scripts/ai-eval.mjs",

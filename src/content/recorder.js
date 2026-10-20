@@ -8,9 +8,13 @@
 //
 // A trusted input/change event identifies the exact control the agent changed. A gesture on that
 // control remains a compatibility fallback for widgets which do not emit those events.
+//
+// GEICO (sales.geico.com) draws its radios and buttons inside open shadow roots: the snapshot
+// reads through them, and every event is taken at the element it happened on (composedPath), not
+// at the shadow host it reaches the window as.
 
 (() => {
-  const VERSION = 9;
+  const VERSION = 10;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
@@ -37,8 +41,64 @@
     && globalThis.__raterRecorder === api;
 
   const SKIP_TYPES = new Set(['hidden', 'submit', 'button', 'reset', 'image', 'file', 'password', 'search']);
+  // A search box that is an address question is recorded, as pagekit collects it: GEICO's street
+  // box (type=search with its suggestion list). A site search or a select2 list's filter box is not.
+  const ADDRESS_SEARCH = 'input[type=search][aria-autocomplete=list][aria-controls]:not(.select2-search__field)';
   const TICK_MS = 1500;
   const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
+  // As pagekit's squash and humanize.
+  const squash = (s) => String(s ?? '').toLowerCase().replace(/['’*]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const humanize = (s) => squash(String(s ?? '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_\-.[\]$:]+/g, ' '));
+
+  // Every match under root in page order, open shadow roots included: a shadow root's matches at
+  // its host's place, as pagekit's deepQueryAll. A page with no shadow root (Progressive, AmWINS)
+  // is read with one query, as before.
+  function deepAll(root, selector) {
+    const all = [...(root.querySelectorAll?.('*') ?? [])];
+    if (!all.some((el) => el.shadowRoot)) return [...(root.querySelectorAll?.(selector) ?? [])];
+    const out = [];
+    for (const el of all) {
+      if (el.matches?.(selector)) out.push(el);
+      if (el.shadowRoot) out.push(...deepAll(el.shadowRoot, selector));
+    }
+    return out;
+  }
+
+  // The element an event happened on. An event from inside a shadow root reaches the window
+  // retargeted to the host (GEICO's <gds-radio-button>, <gds-button>), which is no control.
+  const eventTarget = (e) => e.composedPath?.()[0] ?? e.target;
+
+  // A design-system radio option (GEICO's <gds-radio-button>): its radio input is alone in the
+  // option's own shadow root, named like the option. Another tree's radios don't uncheck it, so the
+  // pick is the host's [checked] (as pagekit's optionOn reads it), and the option's words are its
+  // [slot=label] child. Null for any other radio.
+  const radioHost = (el) => {
+    const root = el?.getRootNode?.();
+    const host = root?.host;
+    if (!host || el.type?.toLowerCase() !== 'radio' || host.getAttribute?.('name') !== el.name) return null;
+    return (root.querySelectorAll?.('input[type=radio]') ?? []).length === 1 ? host : null;
+  };
+  const radioOn = (el) => {
+    const host = radioHost(el);
+    return host ? host.hasAttribute?.('checked') === true : !!el.checked;
+  };
+  // The words of a host's direct child in slot `name`, without a tooltip in it (GEICO's legend holds
+  // a <gds-tooltip> whose body is ordinary text).
+  const slotText = (host, name) => {
+    const part = [...(host?.children ?? [])].find((n) => n.getAttribute?.('slot') === name);
+    if (!part) return '';
+    let text = part.textContent ?? '';
+    for (const tip of part.querySelectorAll?.('gds-tooltip, [role=tooltip]') ?? []) text = text.replace(tip.textContent, ' ');
+    return oneLine(text);
+  };
+  // The radio of the option a gesture is on: its card, its slotted words, anything in its shadow root.
+  const optionRadio = (target) => {
+    for (let n = target, i = 0; n && i < 12; n = n.parentElement ?? n.getRootNode?.()?.host ?? null, i++) {
+      const radio = n.shadowRoot?.querySelector?.('input[type=radio]');
+      if (radio && radioHost(radio) === n) return radio;
+    }
+    return null;
+  };
 
   let lastTrusted = 0;
   let lastTrustedControl = null;
@@ -58,11 +118,13 @@
     if (isControl(target)) return target;
     const direct = target?.closest?.('input, select, textarea');
     if (isControl(direct)) return direct;
+    const option = optionRadio(target);
+    if (option) return option;
     const wrapper = target?.closest?.('.x-form-trigger-wrap');
     const nested = wrapper?.querySelector?.('input, select, textarea');
     if (isControl(nested)) return nested;
-    const option = target?.closest?.('[role=option], .x-boundlist-item');
-    const popup = option?.closest?.('[role=listbox], .x-boundlist');
+    const listOption = target?.closest?.('[role=option], .x-boundlist-item');
+    const popup = listOption?.closest?.('[role=listbox], .x-boundlist');
     if (popup) {
       const popupId = popup.id || popup.getAttribute?.('id');
       if (popupId) {
@@ -80,8 +142,9 @@
       const focusedControl = focused?.closest?.('input, select, textarea');
       if (isControl(focusedControl)) return focusedControl;
     }
+    // A label names a control of its own tree (a shadow root's label, one of its own radios).
     const id = target?.htmlFor || target?.getAttribute?.('for');
-    const linked = id ? document.getElementById?.(id) : null;
+    const linked = id ? (target.getRootNode?.()?.getElementById?.(id) ?? document.getElementById?.(id)) : null;
     return isControl(linked) ? linked : null;
   };
 
@@ -97,11 +160,12 @@
   for (const type of ['pointerdown', 'mousedown', 'keydown', 'paste', 'drop']) {
     listen(type, (e) => {
       if (!e.isTrusted) return;
+      const target = eventTarget(e);
       lastTrusted = Date.now();
-      lastTrustedControl = controlForEvent(e.target);
+      lastTrustedControl = controlForEvent(target);
       if (GESTURE_TYPES.has(type)) {
         lastGesture = lastTrusted;
-        lastGestureTarget = e.target ?? null;
+        lastGestureTarget = target ?? null;
         // Mapped now: an ExtJS option pick resolves through the focused combo, valid only now.
         lastGestureControl = lastTrustedControl;
       }
@@ -152,20 +216,29 @@
   // script which immediately changes the same control is not mistaken for the agent's answer.
   // Ordinary text waits for the existing poll, coalescing a typing sequence into one event;
   // discrete controls still flush immediately so follow-up questions can be detected promptly.
+  // GEICO's radio input sits in a shadow root: its input event (composed) reaches the window as the
+  // option host's, and its change event (not composed) doesn't reach it at all.
   const trustedValue = (e) => {
-    if (!isCurrent() || !e.isTrusted || !isControl(e.target)) return;
+    const el = eventTarget(e);
+    if (!isCurrent() || !e.isTrusted || !isControl(el)) return;
     // While the kit puts answers in, a value event counts as the agent's only within 2 s of a
     // trusted gesture on that control (the rule of pagekit's guardEdits); otherwise it is the
     // fill's own click.
-    if (paused && (Date.now() - lastGesture > 2000 || !gestureOn(e.target))) return;
-    trustedPending.set(e.target, oneControlState(e.target));
-    const discrete = isDiscreteControl(e.target);
-    if (discrete) trustedImmediate.add(e.target);
+    if (paused && (Date.now() - lastGesture > 2000 || !gestureOn(el))) return;
+    trustedPending.set(el, oneControlState(el));
+    const discrete = isDiscreteControl(el);
+    if (discrete) trustedImmediate.add(el);
     // Once an explicit value event exists, the broad gesture fallback must not classify another
     // control changed in the same polling window as manual.
     lastTrusted = 0;
     lastTrustedControl = null;
-    if (discrete) Promise.resolve().then(() => flushTrusted({ immediateOnly: true }));
+    if (!discrete) return;
+    const flush = () => flushTrusted({ immediateOnly: true });
+    // A design-system option shows the pick on its host only once the page has handled the event,
+    // after this capture listener: flushed in a later task, or the snapshot reads the old pick and
+    // the agent's change is lost.
+    if (radioHost(el)) setTimeout(flush, 0);
+    else Promise.resolve().then(flush);
   };
   listen('input', trustedValue);
   listen('change', trustedValue);
@@ -212,12 +285,30 @@
       .filter((n) => !n.classList?.contains?.('lowerLabelText')).map((n) => n.textContent).join(' ')).slice(0, 160);
   }
 
+  // A design-system radio group's question (GEICO), as pagekit's radioGroupLabel reads it: the
+  // [slot=legend] child of the nearest element around the option. The option's own shadow root has
+  // no text before its radio, so textBefore finds nothing there.
+  function legendFor(control) {
+    for (let n = radioHost(control), i = 0; n && i < 4; n = n.parentElement ?? n.getRootNode?.()?.host ?? null, i++) {
+      const text = slotText(n, 'legend');
+      if (text) return text;
+    }
+    return '';
+  }
+
+  // GEICO's data-model name (field-key.js), without the render number its name and id carry.
+  const dataName = (el) => {
+    try { return globalThis.__raterFieldKey?.dataName?.(el) ?? null; } catch { return null; }
+  };
+
   const labels = new Map();
   // el: the field, or a radio's group; control: the field's own control (a radio of the group).
   function labelFor(key, el, control = el) {
     if (!labels.has(key)) {
       const own = oneLine([...(el.labels ?? [])].map((l) => l.textContent).join(' ') || el.getAttribute('aria-label') || '');
-      labels.set(key, dctCaption(control) || (el.type === 'radio' ? '' : own) || textBefore(el) || own || el.placeholder || el.name || '');
+      const name = dataName(control);
+      labels.set(key, dctCaption(control) || legendFor(control) || (el.type === 'radio' ? '' : own) || textBefore(el) || own
+        || el.placeholder || (name ? humanize(name) : el.name) || '');
     }
     return labels.get(key);
   }
@@ -231,15 +322,15 @@
 
   function snapshot() {
     const out = new Map();
-    for (const el of document.querySelectorAll('input, select, textarea')) {
+    for (const el of deepAll(document, 'input, select, textarea')) {
       const type = (el.type || el.tagName).toLowerCase();
-      if (SKIP_TYPES.has(type) || el.disabled || !isVisible(el)) continue;
+      if ((SKIP_TYPES.has(type) && !(type === 'search' && el.matches?.(ADDRESS_SEARCH))) || el.disabled || !isVisible(el)) continue;
       const q = questionId(el);
       if (type === 'radio') {
         const key = fieldKey(el, q, true);
         const entry = out.get(key) ?? { key, q, kind: 'radio', label: labelFor(key, el.closest('[role=radiogroup], fieldset') ?? el, el), v: '', controls: [] };
         if (!entry.controls.includes(el)) entry.controls.push(el);
-        if (el.checked) entry.v = oneLine([...(el.labels ?? [])].map((l) => l.textContent).join(' ')) || el.value;
+        if (radioOn(el)) entry.v = oneLine([...(el.labels ?? [])].map((l) => l.textContent).join(' ')) || slotText(radioHost(el), 'label') || el.value;
         out.set(key, entry);
         continue;
       }
@@ -273,7 +364,17 @@
   // h1-h3 headings. Sent with each batch of changes, new questions and page arrival, so the panel
   // can name the step a change was on and see the agent move to the next step (its steps share the
   // page's address); the panel keeps it only as one of such a carrier's step names.
+  // A page with a step progress bar (GEICO: every step is /quote, and its visible headings read
+  // "Dashboard" on every step) names the step by the one part under way (0 < value < 100), as
+  // pagekit's stepKey reads it, only while the page title names it too: mid-redraw, the bar and the
+  // form can be different steps', and then no step is named.
   const stepKey = () => {
+    const bars = [...(document.querySelectorAll?.('gds-progress-bar[value]') ?? [])].filter((el) => el.tagName === 'GDS-PROGRESS-BAR');
+    if (bars.length) {
+      const current = bars.filter((el) => { const v = Number(el.getAttribute?.('value')); return v > 0 && v < 100; });
+      const step = current.length === 1 ? oneLine(current[0].textContent) : '';
+      return squash(step) && squash(document.title).includes(squash(step)) ? step : undefined;
+    }
     const headings = [...(document.querySelectorAll?.('h1, h2, h3') ?? [])].filter((el) => /^H[1-3]$/.test(el.tagName ?? '')
       && el.getClientRects?.().length && globalThis.getComputedStyle?.(el)?.visibility !== 'hidden');
     return headings.map((el) => oneLine(el.textContent)).filter(Boolean).slice(0, 4).join(' / ') || undefined;
@@ -285,6 +386,16 @@
   const MESSAGES = '[role=alert], .x-form-error-msg, .x-form-invalid-under, [class*="error-message"], [class*="validation-message"], [class*="help-block"]';
   const messages = () => new Set([...(document.querySelectorAll?.(MESSAGES) ?? [])]
     .filter((el) => el.getClientRects?.().length).map((el) => oneLine(el.textContent)).filter(Boolean));
+
+  // The unit forms on screen as the kit reads them (pagekit unitFormsNow): GEICO draws every
+  // vehicle's, trailer's and driver's form at one address, one at a time. [{ list, id }], the id the
+  // form's first question's element name; [] when none is; null when no fill has told the kit which
+  // questions start a form, or the kit runs in another world (Progressive's, in the page's own). Sent
+  // with each batch of changes, so the panel files an agent edit under the form it was made on, also
+  // one no fill has read yet. Element names only, never a value.
+  const unitForms = () => {
+    try { return globalThis.__raterKit?.unitFormsNow?.() ?? null; } catch { return null; }
+  };
 
   let paused = false;
   let page = pageKey();
@@ -339,7 +450,7 @@
       .filter(([key, c]) => !prev.has(key) && (!immediateOnly || !c.controls.some((el) => deferred.has(el))))
       .map(([key]) => key);
     for (const [key, c] of cur) if (!c.controls.some((el) => deferred.has(el))) prev.set(key, c);
-    if (changes.length) send({ event: 'field_changes', page, step: stepKey(), changes });
+    if (changes.length) send({ event: 'field_changes', page, step: stepKey(), forms: unitForms(), changes });
     if (appeared.length) send({ event: 'new_fields', page, step: stepKey(), keys: appeared });
     for (const el of pending) {
       trustedPending.delete(el);
@@ -364,7 +475,7 @@
     const shown = messages();
     const newMessages = [...shown].some((m) => !prevMessages.has(m));
     prevMessages = shown;
-    if (changes.length) send({ event: 'field_changes', page, step: stepKey(), changes });
+    if (changes.length) send({ event: 'field_changes', page, step: stepKey(), forms: unitForms(), changes });
     // A trusted value event is valid for one snapshot only. This also drops controls that were
     // replaced by a redraw before the poll, keeping an old element from authorizing later edits.
     trustedPending.clear();
@@ -416,10 +527,16 @@
   // were logged by the panel as it gave them, so the rest becomes the new baseline unreported,
   // and the questions they revealed are not announced as new (the fill answered them).
   // Told to resume while not paused (the panel attaching, after reinjecting it): nothing on the page
-  // is the extension's, so what changed since the last poll is reported as a poll would.
+  // is the extension's, so what changed since the last poll is reported as a poll would, and the
+  // step on screen is sent again: a reused recorder had sent it to the panel before, and a panel
+  // that was closed and opened again doesn't know it (GEICO's steps all share /quote).
   function resume() {
     if (!isCurrent()) return;
-    if (!paused) { tick(); return; }
+    if (!paused) {
+      shownStep = undefined;
+      tick();
+      return;
+    }
     paused = false;
     if (trustedPending.size && pageKey() === page) {
       const changes = [];
@@ -428,7 +545,7 @@
         const before = prev.get(key)?.v ?? '';
         if (before !== c.v) changes.push({ key, q: c.q, label: c.label, kind: c.kind, combo: c.combo, before, after: c.v, agent: true });
       }
-      if (changes.length) send({ event: 'field_changes', page, changes });
+      if (changes.length) send({ event: 'field_changes', page, forms: unitForms(), changes });
     }
     trustedPending.clear();
     trustedImmediate.clear();
@@ -440,11 +557,20 @@
   // extension's own clicks are untrusted and never reported. Only the button's text (60
   // characters) and the step on screen.
   const BUTTONS = 'a, button, [role=button], input[type=button], input[type=submit], .x-btn';
+  // A button's words: its own, else the words slotted into it. GEICO's <gds-button> draws a
+  // <button> in its shadow root around a <slot>: "Next" is the host's text, shown through the slot.
+  // Not the host's whole text: a tooltip's icon button (<gds-tooltip>) would be logged with the help
+  // paragraph its host holds.
+  const buttonText = (el) => oneLine(el.value || el.textContent)
+    || oneLine([...(el.querySelectorAll?.('slot') ?? [])].flatMap((s) => [...(s.assignedNodes?.({ flatten: true }) ?? [])])
+      .map((n) => n.textContent).join(' '));
   listen('click', (e) => {
     if (!isCurrent() || !e.isTrusted) return;
-    const el = e.target?.closest?.(BUTTONS);
+    // The button on the click's path, also inside a shadow root: the click reaches the window as the
+    // <gds-button> host's, which is no button, and was never reported (2026-10-20 GEICO captures).
+    const el = (e.composedPath?.() ?? []).find((n) => n.matches?.(BUTTONS)) ?? e.target?.closest?.(BUTTONS);
     if (!el) return;
-    const text = oneLine(el.value || el.textContent).slice(0, 60);
+    const text = buttonText(el).slice(0, 60);
     if (text) send({ event: 'agent_click', page, step: stepKey(), text });
   });
 

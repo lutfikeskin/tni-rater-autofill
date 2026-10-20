@@ -209,7 +209,7 @@ export const intakeNotes = (record) => [record?.claims?.text, record?.notes?.tex
 export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.text].filter(Boolean).join('\n') || null;
 
 export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
-export const ntlCheckMessage = (line) => `The claims box or Additional Notes mention non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. AmWINS has no NTL option the filler knows: quote it by hand.`;
+export const ntlCheckMessage = (line) => `The claims box or Additional Notes mention non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. AmWINS has no NTL option the filler knows: quote it by hand. On GEICO the filler leaves the liability coverage and its limit to you.`;
 
 // Words in the claims notes that answer the ownership question. Only the form's three answers
 // are taken as the answer; the others count as mentions, so "on a lease, truck owned" is not
@@ -223,8 +223,8 @@ const ownershipLines = (text) => String(text ?? '').split('\n').filter((line) =>
 // A generational suffix written into a driver's name box ("SAMPLE, JR", "EXAMPLO III"), and a
 // lone letter after the first name ("JORDAN L"), its middle initial. Carriers' driver name boxes
 // take letters, digits, spaces, hyphens and apostrophes only (Progressive refused the comma, AR
-// 2026-10-19) and have no suffix box, so both are kept apart: the suffix in `suffix`, the initial
-// in `middle`. A first name of one letter ("A J") is left as it is.
+// 2026-10-19), and only GEICO's Add Driver form has a suffix box, so both are kept apart: the
+// suffix in `suffix`, the initial in `middle`. A first name of one letter ("A J") is left as it is.
 const NAME_SUFFIX = /^(.*?[^\s,])[\s,]+(jr|sr|ii|iii|iv)\.?$/i;
 export function splitName(first, last) {
   const out = { first, middle: null, last, suffix: null, suffixIn: null };
@@ -453,10 +453,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
   }
   if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
-  // TNI's standard for a blank (2026-10-09): 0 years, established this year (the carrier rules
-  // fill it; the record stays blank, so a later answer here replaces it).
+  // TNI's standard for a blank (2026-10-09): 0 years, established this year (AmWINS' rules fill
+  // it, GEICO's leave it to the agent; the record stays blank, so a later answer here replaces it).
   if (a.yearsInBusiness == null && a.yearsExperience == null) {
-    check('years-in-business.default', 'applicant.yearsInBusiness', `Years in business and year established are blank: the quote gets 0 years (New Venture), established ${year}. If the client has been in business longer, enter Years in business or Year established.`);
+    check('years-in-business.default', 'applicant.yearsInBusiness', `Years in business and year established are blank: the AmWINS quote gets 0 years (New Venture), established ${year}; GEICO's question about it is left to you. If the client has been in business longer, enter Years in business or Year established.`);
   }
 
   // --- Garaging address -----------------------------------------------------------------------
@@ -519,14 +519,15 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     }
     if (excluded) {
       // What the carriers do with it (TNI 2026-10-20): Progressive's exclude question is Yes; AmWINS
-      // has none, and the license number gets "(Excluded)" after it.
+      // has none, and the license number gets "(Excluded)" after it. GEICO's Add Driver form asks
+      // nothing about it (the driver is filled, with a warning).
       const amwins = d.licenseNumber ? 'their license number gets "(Excluded)" after it' : 'type "(Excluded)" after the license number you enter';
-      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}": the driver is to be excluded, and ${d.licenseNumber ? `the license number is ${d.licenseNumber}` : 'it has no license number'}. Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. An exclusion usually needs the insured's signed form.`);
+      check('license.excluded', p('excluded'), `${who}: license-number box "${licBox}": the driver is to be excluded, and ${d.licenseNumber ? `the license number is ${d.licenseNumber}` : 'it has no license number'}. Progressive's exclude question gets Yes; on AmWINS, which has no such question, ${amwins}. GEICO asks nothing about it: the driver's answers are filled with a warning, and the exclusion is yours. An exclusion usually needs the insured's signed form.`);
     }
 
     if (name.suffix) {
       const box = name.suffixIn === 'first' ? 'first-name' : 'last-name';
-      info('name.suffix', p('suffix'), `${who}: ${box} box "${boxes[name.suffixIn]}" read as ${name.suffixIn === 'first' ? 'first' : 'last'} name ${d[name.suffixIn]} and suffix ${d.suffix}. The carriers' driver pages have no suffix box, so it is left out there.`);
+      info('name.suffix', p('suffix'), `${who}: ${box} box "${boxes[name.suffixIn]}" read as ${name.suffixIn === 'first' ? 'first' : 'last'} name ${d[name.suffixIn]} and suffix ${d.suffix}. Progressive's and AmWINS' driver pages have no suffix box, so it is left out there; GEICO's Add Driver form gets it.`);
     }
     if (name.middle) info('name.middle-initial', p('middle'), `${who}: first-name box "${boxes.first}" read as first name ${d.first} and middle initial ${d.middle}.`);
     if (d.first && /\s/.test(d.first)) {

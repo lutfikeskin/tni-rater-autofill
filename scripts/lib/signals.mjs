@@ -16,8 +16,9 @@ import { receivedAt } from './daily.mjs';
 // Numbers and quoted values masked, so one problem across vehicles, amounts and options counts once.
 export const mask = (s) => String(s ?? '').replace(/"[^"]*"/g, '"…"').replace(/\d+/g, '#').replace(/\s+/g, ' ').trim();
 // Actions the extension must never take itself: every word of pagekit's NEVER_ADVANCE (a test keeps
-// them in step), plus `sign` for signing. "Save & Continue" is not one, as in pagekit, which reads it as Continue.
-export const RESTRICTED = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|logout|log out|sign out|order|sign)\b/i;
+// them in step), signing and discarding a form among them. "Save & Continue" is not one, as in
+// pagekit, which reads it as Continue.
+export const RESTRICTED = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|logout|log out|sign out|order|sign|signature|esign|esignature)\b/i;
 export const isRestricted = (action) => RESTRICTED.test(action.replace(/^(helper|advance) /, '').replace(/^"?save\s*(?:&|and)\s*continue"?$/i, 'continue'));
 const tally = (map, key, n = 1) => map.set(key, (map.get(key) ?? 0) + n);
 const top = (map, n) => [...map].sort((a, b) => b[1] - a[1]).slice(0, n);
@@ -33,13 +34,15 @@ const byVersion = (a, b) => {
 
 // The page (or one-address application step) where a quote is done, per carrier: Progressive's
 // quote summary, print confirmation or the printed quote PDF, AmWINS' last application step
-// (Underwriting) or its submission notice. A heuristic for the weekly numbers, not a carrier's
-// definition. A printed quote is done (TNI, 2026-10-20): Print/Send opens the PDF in a tab the
+// (Underwriting) or its submission notice, GEICO's steps after Quote & Coverages (its stop steps,
+// reached with a rated quote; the agent's from there). A heuristic for the weekly numbers, not a
+// carrier's definition. A printed quote is done (TNI, 2026-10-20): Print/Send opens the PDF in a tab the
 // panel then follows, so the confirmation page in the quote tab may not be logged after it. The
 // panel's own page strip (a carrier's `quoteSteps`) is a separate list.
 export const FINAL = {
   progressive: /^(Quote|PrintEmailFaxConfirm|\/Express\/PDFHandler\.ashx)$/i,
   amwins: /› (Underwriting|Thank you for the submission)/,
+  geico: /› (Final Quote Details|MVR & CLUE|Payment Information)$/,
 };
 // The agent's own click that ends a quote, on the page it is made: Progressive's Print/Send (the
 // agent's since 2026-10-07; logged in the quote tab, whether or not the PDF's page is).
@@ -276,7 +279,9 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     // Only after this quote's own fill: the page the panel opens on may be the previous client's
     // confirmation, or an old quote the agent reopened.
     if (q.seenWork && (FINAL[e.carrier]?.test(page) || FINAL[e.carrier]?.test(e.page) || finalClick(e))) q.done = true;
-    if (e.type === 'fill_run' && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
+    // A stop page is the carrier's refusal (Progressive's DeclinationNotice); a stop step that is a
+    // final page (GEICO's) is the agent's part of a quote that got there.
+    if (e.type === 'fill_run' && !FINAL[e.carrier]?.test(page) && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
     if (e.type === 'page_view' && LOGIN.test(e.page) && q.seenWork) q.logins++;
     perQuote.set(k, q);
   }

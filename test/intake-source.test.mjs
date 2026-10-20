@@ -9,6 +9,7 @@ import { SECTIONS, NOT_ON_INTAKE } from '../src/schema.js';
 import { quoteProgress, carrierForUrl } from '../src/carriers.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
+import { geico } from '../src/carriers/geico.js';
 
 const pdf = (name) => new Uint8Array(fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url)));
 const raw = await readIntakeFields(pdfjs, pdf('sample-intake.pdf'));
@@ -100,7 +101,12 @@ test('the page strip names the quote step a page or a one-address step is on', (
   assert.deepEqual(quoteProgress(practice, 'AddDriver'), { name: 'Drivers', index: 2, count: 7 }, 'practice pages too');
   assert.deepEqual(quoteProgress(amwins, '/application/businessauto', 'Vehicles'), { name: 'Vehicles', index: 2, count: 5 });
   assert.equal(quoteProgress(amwins, '/application/businessauto', undefined), null, 'an AmWINS step not read yet');
-  assert.equal(quoteProgress({ id: 'geico' }, '/quote'), null);
+  assert.equal(quoteProgress({ id: 'portal-only' }, '/quote'), null, 'a carrier without steps');
+  // GEICO: nine steps at one address, each its own step heading.
+  assert.deepEqual(quoteProgress(geico, '/quote', 'Vehicles'), { name: 'Vehicles', index: 2, count: 9 });
+  assert.deepEqual(quoteProgress(geico, '/quote', 'Payment Information'), { name: 'Payment Information', index: 8, count: 9 });
+  assert.equal(quoteProgress(geico, '/quote', undefined), null, 'a GEICO step not read yet');
+  assert.deepEqual(geico.quoteSteps.map((s) => s.step), geico.layoutSteps);
   // A page belongs to one step only.
   const pages = progressive.quoteSteps.flatMap((s) => s.pages);
   assert.equal(new Set(pages).size, pages.length);

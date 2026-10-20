@@ -43,7 +43,7 @@ A check that already fails on `main` is reported as such, not fixed silently ins
 Follow `docs/corrections.md` for every item, and read the document for its layer from the table in `CLAUDE.md` (intake and rules, browser filling, AI assistance, learning, hosting).
 
 1. **Restate it** as expected versus actual for its scenario: carrier, page, state or product, entity (which vehicle, driver or trailer), and the build it was seen on. Separate a one-client correction from a reusable rule.
-2. **Reproduce it first** with the smallest test that fails for the right reason: a unit test in the matching file (`test/progressive.test.mjs`, `test/normalize.test.mjs`, `test/pagekit.test.mjs`, `test/learn.test.mjs`, …), a scrubbed fixture (`test/fixtures/`), or a synthetic intake. Never commit a raw carrier page, a client PDF or a client value; raw evidence stays in ignored `layouts/`.
+2. **Reproduce it first** with the smallest test that fails for the right reason: a unit test in the matching file (`test/progressive.test.mjs`, `test/geico.test.mjs`, `test/normalize.test.mjs`, `test/pagekit.test.mjs`, `test/learn.test.mjs`, …), a scrubbed fixture (`test/fixtures/`; GEICO's `quote.html` is rebuilt by `node scripts/geico-fixture.mjs`, which reads the raw pages from `layouts/geico`, the main checkout's from a worktree, and writes nothing on a privacy finding), or a synthetic intake. Never commit a raw carrier page, a client PDF or a client value; raw evidence stays in ignored `layouts/`.
 3. **Fix the layer that owns the cause**, keeping its contracts:
    - a rule declares its answer's `source`; facts and attestations stay the agent's (`test/provenance.test.mjs`);
    - exact mappings and calculations stay in code; the model only resolves a bounded choice; a standard represented in `src/ai/tni-rules.js` changes there too;
@@ -61,6 +61,7 @@ Run `npm test` and the checks the `docs/testing.md` table lists for the layers t
 | Intake reading or normalizing | `test/normalize.test.mjs`, `test/intake-regressions.test.mjs` |
 | Progressive rules or page execution | `test/progressive.test.mjs`, `test/pagekit.test.mjs`, `npm run e2e -- --fixtures` (and `-- --renumber` for matching changes) |
 | AmWINS rules or flow | `npm run mock:amwins` |
+| GEICO rules or quote flow | `test/geico.test.mjs`, `test/geico-fixture.test.mjs`, the GEICO tests in `test/pagekit.test.mjs`, `test/recorder.test.mjs` and `test/sidepanel-safety.test.mjs`, `npm run mock:geico` |
 | Panel or packaged behavior | `test/sidepanel-safety.test.mjs`, then `npm run package`, `npm run replay` (port 8792) and `npm run e2e:extension` |
 | AI validation, approval, caching | `test/luna.test.mjs`, `test/ai-eval.test.mjs`, `npm run mock:luna` (after `npm run package`) |
 | Events, learning, reports, server | the matching `usage`, `usage-log`, `learn`, `coverage`, `signals`, `server`, `consistency` tests |
