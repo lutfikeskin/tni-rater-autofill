@@ -131,6 +131,7 @@ const NOT_MAPPED = {
     'applicant.fein': 'not asked on the Business Auto application',
     'applicant.email': 'the contact email box is the agency\'s / left as the page has it',
     'applicant.owner2': 'AmWINS asks for one owner',
+    'drivers[].suffix': 'the AmWINS driver section has no suffix box (left out of the name boxes)',
     'operations.personalUse': 'not asked; usage is For Hire (derived) or the agent\'s',
     'operations.vehicleOwnership': 'TNI answers not owned, leased and additional interest No; a lienholder or lessor is added after the quote',
     'operations.usesEld': 'not asked on the Business Auto application',

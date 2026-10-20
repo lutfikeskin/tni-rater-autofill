@@ -220,6 +220,26 @@ const NEGATION = /\b(not|no|never|without|none)\b|n't\b/i;
 const TRAILER_WORD = /\btrailers?\b/i;
 const ownershipLines = (text) => String(text ?? '').split('\n').filter((line) => new RegExp(OWNERSHIP_WORDS.source, 'i').test(line));
 
+// A generational suffix written into a driver's name box ("CLEMENT, JR", "NEWTON III"), and a
+// lone letter after the first name ("TIFFANY L"), its middle initial. Carriers' driver name boxes
+// take letters, digits, spaces, hyphens and apostrophes only (Progressive refused the comma, AR
+// 2026-10-19) and have no suffix box, so both are kept apart: the suffix in `suffix`, the initial
+// in `middle`. A first name of one letter ("A J") is left as it is.
+const NAME_SUFFIX = /^(.*?[^\s,])[\s,]+(jr|sr|ii|iii|iv)\.?$/i;
+export function splitName(first, last) {
+  const out = { first, middle: null, last, suffix: null, suffixIn: null };
+  for (const box of ['first', 'last']) {
+    const m = out.suffix ? null : String(out[box] ?? '').trim().match(NAME_SUFFIX);
+    if (m) Object.assign(out, { [box]: m[1], suffix: m[2], suffixIn: box });
+  }
+  const words = String(out.first ?? '').trim().split(/\s+/);
+  if (words.length >= 2 && /^\p{L}\.?$/u.test(words.at(-1)) && (words[0].match(/\p{L}/gu) ?? []).length >= 2) {
+    out.middle = words.at(-1).replace('.', '');
+    out.first = words.slice(0, -1).join(' ');
+  }
+  return out;
+}
+
 /**
  * The ownership answer written in the claims notes when the ownership box is blank ("Financed").
  * Only an unambiguous note is taken: exactly one ownership word, which is one of owned / leased
@@ -432,8 +452,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
 
   // --- Drivers --------------------------------------------------------------------------------
   ROWS.forEach((n, i) => {
+    const boxes = { first: txt(`drv_first_${n}`), last: txt(`drv_last_${n}`) };
+    const name = splitName(boxes.first, boxes.last);
     const d = {
-      first: txt(`drv_first_${n}`), middle: null, last: txt(`drv_last_${n}`), dob: null, licenseNumber: null,
+      first: name.first, middle: name.middle, last: name.last, suffix: name.suffix, dob: null, licenseNumber: null,
       licenseState: txt(`drv_state_${n}`), cdl: yesNo(raw[`drv_cdl_${n}`]), cdlYear: toInt(raw[`drv_cdl_yr_${n}`]),
       maritalStatus: txt(MARITAL_FIELDS[i]),
       // Not on the intake (schema NOT_ON_INTAKE): the agent's to set.
@@ -468,6 +490,11 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       info('license.cleaned', p('licenseNumber'), `${who}: license number written as "${rawLic}", entered as ${d.licenseNumber} (letters and digits only).`);
     }
 
+    if (name.suffix) {
+      const box = name.suffixIn === 'first' ? 'first-name' : 'last-name';
+      info('name.suffix', p('suffix'), `${who}: ${box} box "${boxes[name.suffixIn]}" read as ${name.suffixIn === 'first' ? 'first' : 'last'} name ${d[name.suffixIn]} and suffix ${d.suffix}. The carriers' driver pages have no suffix box, so it is left out there.`);
+    }
+    if (name.middle) info('name.middle-initial', p('middle'), `${who}: first-name box "${boxes.first}" read as first name ${d.first} and middle initial ${d.middle}.`);
     if (d.first && /\s/.test(d.first)) {
       check('name.multi-word-first', p('first'), `${who}: first-name box has more than one word ("${d.first}"). Check the license for which part is the middle name.`);
     }
