@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { RESTRICTED, isRestricted, markdown, mask, signals, testSessionsOf } from '../scripts/lib/signals.mjs';
 
 // Two quotes on two builds: what each left, held and reported.
@@ -133,6 +134,29 @@ test('weekly-signals fails loudly on --since without a valid date and on a missi
     const r = run(log, '--all', '--json', '--tests', list);
     assert.equal(r.status, 1);
     assert.match(r.stderr, /at least 8 hex/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// Audit 2026-10-19: run where there is no reviews/test-intakes.txt (a git worktree), the signals
+// counted the maintainer's test quotes as agents' work without saying so.
+test('weekly-signals says when it has no test-run list', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'signals-'));
+  try {
+    const log = path.join(dir, 'events.jsonl');
+    fs.writeFileSync(log, JSON.stringify({ id: '1', t: '2026-10-06T12:00:00Z', receivedAt: '2026-10-06T12:00:00Z', session: 's', type: 'intake_loaded' }) + '\n');
+    // From a folder without reviews/, as a worktree is.
+    const signalsIn = (...args) => spawnSync(process.execPath, [fileURLToPath(new URL('../scripts/weekly-signals.mjs', import.meta.url)), log, '--all', ...args], { encoding: 'utf8', cwd: dir });
+    const none = signalsIn('--out', path.join(dir, 'none.md'));
+    assert.equal(none.status, 0, none.stderr);
+    assert.match(none.stderr, /Warning: No test-run list: test quotes are counted as agents' work/);
+    assert.match(fs.readFileSync(path.join(dir, 'none.md'), 'utf8'), /\*\*No test-run list: test quotes are counted as agents' work/);
+    const list = path.join(dir, 'tests.txt');
+    fs.writeFileSync(list, 'deadbeef\n');
+    const listed = signalsIn('--tests', list, '--out', path.join(dir, 'listed.md'));
+    assert.equal(listed.status, 0, listed.stderr);
+    assert.doesNotMatch(`${listed.stderr}${fs.readFileSync(path.join(dir, 'listed.md'), 'utf8')}`, /No test-run list/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -7,9 +7,10 @@
 //  - transitions: what changed on a page right after an answer, counted across quotes
 //    (scripts/lib/transitions.mjs).
 // Observations from the recordings gathered, not the carrier's rules. Reports go to
-// reviews/transitions-<date>.md (git-ignored: built from usage logs, review before sharing).
+// reviews/transitions-<date>.md (git-ignored: built from usage logs, review before sharing), or
+// the file --out names (scripts/review.mjs puts it next to its own report).
 //
-//   node scripts/transitions.mjs server-data [more logs...]
+//   node scripts/transitions.mjs server-data [more logs...] [--out file.md]
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,9 +18,11 @@ import { loadEvents } from './lib/events.mjs';
 import { buildLayouts } from './lib/layouts.mjs';
 import { layoutTransitions, summarizeTransitions } from './lib/transitions.mjs';
 
-const inputs = process.argv.slice(2);
-if (!inputs.length) {
-  console.error('usage: node scripts/transitions.mjs <server-data folder | usage logs>...');
+const args = process.argv.slice(2);
+const outIdx = args.indexOf('--out');
+const inputs = outIdx >= 0 ? args.filter((_, i) => i !== outIdx && i !== outIdx + 1) : args;
+if (!inputs.length || (outIdx >= 0 && !args[outIdx + 1])) {
+  console.error('usage: node scripts/transitions.mjs <server-data folder | usage logs>... [--out file.md]');
   process.exit(1);
 }
 
@@ -70,7 +73,7 @@ if (transitions.length) {
   p('');
 }
 
-const out = path.join('reviews', `transitions-${new Date().toISOString().slice(0, 10)}.md`);
+const out = outIdx >= 0 ? args[outIdx + 1] : path.join('reviews', `transitions-${new Date().toISOString().slice(0, 10)}.md`);
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.writeFileSync(out, `${md.join('\n')}\n`);
 console.log(`${out}: ${conditions} condition(s), ${unknown} unknown, ${unseen} answer(s) not seen yet, ${transitions.length} transition(s)`);

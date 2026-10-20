@@ -9,13 +9,15 @@
 //
 // --tests: a file of intake fingerprints (full or leading hex, at least 8 characters, one per line, # for comments) whose
 // quotes are test runs; they, and intakes the agent marked as a test, are left out and counted.
+// Without a list (none given, no reviews/test-intakes.txt here, as in a git worktree) it warns, and
+// the report says test quotes are counted as agents' work.
 //
 // Writes reviews/signals-<date>.md (git-ignored: problem reports are agents' own words).
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadEvents } from './lib/events.mjs';
-import { markdown, signals } from './lib/signals.mjs';
+import { markdown, NO_TEST_LIST, signals } from './lib/signals.mjs';
 
 const args = process.argv.slice(2);
 const fail = (msg) => { console.error(msg); process.exit(1); };
@@ -38,6 +40,7 @@ const testsOpt = opt('tests');
 if (testsOpt && !fs.existsSync(testsOpt)) fail(`--tests ${testsOpt}: no such file.`);
 const testFile = testsOpt ?? (fs.existsSync('reviews/test-intakes.txt') ? 'reviews/test-intakes.txt' : null);
 const testIntakes = testFile ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
+if (!testFile) console.error(`Warning: ${NO_TEST_LIST} Pass --tests <file> (from a git worktree, the main checkout's reviews/test-intakes.txt).`);
 let result;
 try { result = signals(loadEvents(inputs), { since, testIntakes }); } catch (err) { fail(`${testFile ?? 'signals'}: ${err.message}`); }
 // A fingerprint list that hides many quotes may be hiding real ones.
@@ -48,5 +51,5 @@ if (args.includes('--json')) {
 }
 const out = opt('out') ?? path.join('reviews', `signals-${new Date().toISOString().slice(0, 10)}.md`);
 fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, markdown(result));
+fs.writeFileSync(out, markdown(result, { noTestList: !testFile }));
 console.log(`${out}  (${result.quotes} quotes, ${result.problems.length} problem reports, newest version ${result.newestVersion ?? '?'})`);

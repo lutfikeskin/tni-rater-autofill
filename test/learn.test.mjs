@@ -570,9 +570,10 @@ test('learning: one observation on a sibling step suppresses a qualifying label 
 });
 
 // Codex on PR #56: two questions reading the same are two rows, each named by what tells them apart.
-test('the review names two questions reading the same apart', async () => {
+test('the review names two questions reading the same apart', async (t) => {
   const { execFileSync } = await import('node:child_process');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.mkdirSync(path.join(dir, 'events'));
   const row = (id, key) => ({ id, t: at(1), session: 's', carrier: 'progressive', type: 'fill_field', page: 'BusinessOwnerInfo', q: id, key, label: 'City', result: 'filled', timing: { ms: 10, settleMs: 0, ajax: 0, revealed: 0, removed: 0, changed: 0 } });
   // Audit 2026-10-08 (finding 7): an agent's change to an autofilled field is a correction only when
@@ -590,6 +591,86 @@ test('the review names two questions reading the same apart', async () => {
   assert.match(md, /\| Autofilled answers the agent corrected \(another value or cleared\) · reformatted \| 2 · 1 \|/, 'different, format and cleared by the agent on an autofilled field');
   assert.match(md, /\| Autofilled answers the agent put back after they changed \(a carrier overwrite, or the agent's own edit\) \| 2 \|/, 'an edited text box and a select from another answer');
   assert.match(md, /\| Autofilled answers the agent re-entered unchanged \(from an empty field; not corrections\) \| 2 \|/, 'a text box entered and a select from nothing');
+});
+
+// Audit 2026-10-19: review.mjs ran transitions.mjs, captures.mjs and build-layouts.mjs in the
+// repository, so the review run above replaced the day's real transitions and captures reports
+// (and generated layouts) on every npm test in the main checkout.
+test('a review written elsewhere (--out) writes nothing into the repository\'s reviews/ or captures/', async (t) => {
+  const { execFileSync } = await import('node:child_process');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const script = (name) => path.join(root, 'scripts', name);
+  const today = new Date().toISOString().slice(0, 10);
+  const context = { state: 'ZZ', businessClass: 'Review Out Test', vehicleTypes: ['Van'], trailers: false };
+  const key = layoutKey('progressive', context);
+  const inRepo = [`reviews/transitions-${today}.md`, `reviews/captures-${today}.md`, `captures/progressive/generated/${key}.json`].map((f) => path.join(root, f));
+  const stamps = () => inRepo.map((f) => (fs.existsSync(f) ? fs.statSync(f).mtimeMs : null));
+  const before = stamps();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'data'));
+  fs.writeFileSync(path.join(dir, 'data', '2026-10-05.jsonl'), `${JSON.stringify({ id: 'l1', t: at(1), session: 's', carrier: 'progressive', type: 'page_layout', page: 'AddVehicle', context, fields: [{ q: '2B9D', kind: 'select', label: 'Farthest distance', options: ['50 miles'] }] })}\n`);
+  const out = path.join(dir, 'out');
+  execFileSync(process.execPath, [script('review.mjs'), path.join(dir, 'data'), '--all', '--out', path.join(out, 'review.md')], { stdio: 'ignore' });
+  assert.deepEqual(stamps(), before, 'no report or layout written or replaced in the repository');
+  // They went next to the review instead.
+  assert.ok(fs.existsSync(path.join(out, `transitions-${today}.md`)), 'the transitions report next to the review');
+  assert.ok(fs.existsSync(path.join(out, 'captures', 'progressive', 'generated', `${key}.json`)), 'the generated layout next to the review');
+  if (fs.existsSync(path.join(root, 'layouts'))) assert.ok(fs.existsSync(path.join(out, `captures-${today}.md`)), 'the captures report next to the review');
+  // The scripts on their own (the review runs them from the repository).
+  fs.mkdirSync(path.join(dir, 'layouts'));
+  execFileSync(process.execPath, [script('transitions.mjs'), path.join(dir, 'data'), '--out', path.join(dir, 'transitions.md')], { cwd: root, stdio: 'ignore' });
+  execFileSync(process.execPath, [script('captures.mjs'), path.join(dir, 'layouts'), '--out', path.join(dir, 'captures.md')], { cwd: root, stdio: 'ignore' });
+  assert.match(fs.readFileSync(path.join(dir, 'transitions.md'), 'utf8'), /^# When questions show/);
+  assert.match(fs.readFileSync(path.join(dir, 'captures.md'), 'utf8'), /^# Manual captures/);
+  assert.deepEqual(stamps(), before, 'transitions.mjs and captures.mjs with --out write only there');
+});
+
+// Audit 2026-10-19: the review read only <repository>/reviews/test-intakes.txt, which a git
+// worktree doesn't have, and then counted the maintainer's test quotes as agents' work silently.
+test('the review leaves out the quotes --tests lists, and says when it has no test-run list', async (t) => {
+  const { spawnSync } = await import('node:child_process');
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  const review = (...args) => spawnSync(process.execPath, [path.join(root, 'scripts', 'review.mjs'), ...args], { encoding: 'utf8' });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rater-review-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // Three quotes: one listed as a test, one marked as a test in the panel, one an agent's.
+  const quote = (session, intakeId, x = {}) => [
+    { id: `${session}1`, t: at(1), session, type: 'intake_loaded', state: 'VA', intakeId, ...x },
+    { id: `${session}2`, t: at(2), session, carrier: 'progressive', type: 'page_view', page: 'AddVehicle' },
+  ];
+  const data = path.join(dir, 'data');
+  fs.mkdirSync(data);
+  fs.writeFileSync(path.join(data, '2026-10-05.jsonl'), [...quote('a', 'aaaaaaaa0001'), ...quote('b', 'bbbbbbbb0002', { test: true }), ...quote('c', 'cccccccc0003')].map((e) => JSON.stringify(e)).join('\n'));
+  const list = path.join(dir, 'tests.txt');
+  fs.writeFileSync(list, '# the maintainer\'s test intake\naaaaaaaa\n');
+
+  const listed = review(data, '--all', '--tests', list, '--out', path.join(dir, 'listed.md'));
+  assert.equal(listed.status, 0, listed.stderr);
+  const md = fs.readFileSync(path.join(dir, 'listed.md'), 'utf8');
+  assert.match(md, /\| Quotes started \| 1 \(VA 1\) · 2 test run\(s\) left out \|/, 'the listed and the marked quote left out');
+  assert.doesNotMatch(`${listed.stderr}${md}`, /No test-run list/);
+
+  const unlisted = review(data, '--all', '--out', path.join(dir, 'unlisted.md'));
+  assert.equal(unlisted.status, 0, unlisted.stderr);
+  const plain = fs.readFileSync(path.join(dir, 'unlisted.md'), 'utf8');
+  if (fs.existsSync(path.join(root, 'reviews', 'test-intakes.txt'))) {
+    assert.doesNotMatch(`${unlisted.stderr}${plain}`, /No test-run list/, 'the repository\'s list was found');
+  } else {
+    assert.match(unlisted.stderr, /Warning: No test-run list: test quotes are counted as agents' work/);
+    assert.match(plain, /\*\*No test-run list: test quotes are counted as agents' work/);
+    assert.match(plain, /\| Quotes started \| 2 \(VA 2\) · 1 test run\(s\) left out \|/, 'the quote marked as a test still left out');
+  }
+
+  // Checked as weekly-signals checks it.
+  const short = path.join(dir, 'short.txt');
+  fs.writeFileSync(short, 'abc\n');
+  for (const bad of [['--tests'], ['--tests', '--all'], ['--tests', path.join(dir, 'missing.txt')], ['--tests', short]]) {
+    const r = review(data, '--out', path.join(dir, 'bad.md'), ...bad);
+    assert.equal(r.status, 1, `${bad.join(' ')}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, /needs a value|no such file|at least 8 hex/);
+  }
+  assert.ok(!fs.existsSync(path.join(dir, 'bad.md')), 'no review written from a bad list');
 });
 
 // Codex on PR #56: two controls reading the same at once (Rates' cargo section and cargo row) stay two

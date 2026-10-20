@@ -40,6 +40,9 @@ const LOGIN = /\/(auth\/)?login\b|\/login\//i;
 // A test run: an intake the agent marked as a test (`test` on intake_loaded), or one of the
 // fingerprints the reviewer listed (`testIntakes`, full or leading hex).
 export const MIN_TEST_PREFIX = 8;
+// What the reports say when no list was found (a git worktree has no reviews/ folder): the
+// maintainer's test quotes then count as agents' work.
+export const NO_TEST_LIST = 'No test-run list: test quotes are counted as agents\' work (intakes marked as a test are still left out).';
 const isTest = (e, testIntakes) => e.test === true || (!!e.intakeId && [...testIntakes].some((id) => String(e.intakeId).toLowerCase().startsWith(id)));
 
 // The sessions that are test runs: an intake loaded as one (marked before, `test` on
@@ -350,12 +353,13 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [] } = {
   };
 }
 
-// The same as Markdown, for the weekly brief.
-export function markdown(s) {
+// The same as Markdown, for the weekly brief. noTestList: no test-run list was found.
+export function markdown(s, { noTestList = false } = {}) {
   const L = [];
   const list = (rows, unit = '') => (rows.length ? rows.map(([k, v]) => `- ${v}${unit} · ${k}`) : ['None.']);
   L.push(`# Weekly signals ${s.since ? `since ${s.since.slice(0, 16).replace('T', ' ')} UTC` : '(all data)'}`, '');
   L.push(`${s.events} events · ${s.quotes} quotes · ${s.runs} fill runs (${s.blockedRuns} ended with something holding Continue). Newest version seen: ${s.newestVersion ?? '?'}.${s.kpis.testRunsLeftOut ? ` ${s.kpis.testRunsLeftOut} test run(s) left out.` : ''}`, '');
+  if (noTestList) L.push(`**${NO_TEST_LIST}**`, '');
   const k = s.kpis;
   L.push('## Weekly numbers', '', 'Per quote (a quote re-filled many times counts once). Track these week over week.', '', '| Number | Value |', '| --- | --- |',
     `| Quotes (on any carrier · per carrier) | ${k.quotes} · ${k.carrierQuotes} |`,
