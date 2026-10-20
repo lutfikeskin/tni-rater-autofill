@@ -105,10 +105,11 @@ npm run transitions  # when follow-up questions show, answers not seen yet, what
 npm run captures  # manual captures in layouts/, per scenario in order, with what changed between them -> reviews/
 npm run summary   # intake problems, corrections, failures, time per page
 npm run signals   # builds that logged the period, how far quotes got, what was left and why, what held Continue, problem reports with their build -> reviews/
+npm run ledger    # the open weekly-review issue's items: which builds carry each fix, verified / recurred / not exercised, weekly numbers vs. last -> reviews/
 node scripts/find-intake.mjs <folder of intake PDFs> server-data   # which intake a session used
 ```
 
-`signals` isn't part of `npm run review`; the weekly review reads both (see the `weekly-review` and `apply-review-fixes` skills in `.claude/skills/`). `learn` prints rule lines ready to paste into `src/carriers/<carrier>.js`. **Review each one**: a consistent answer isn't always a correct one. Generated layouts are git-ignored; review them before committing any.
+`signals` and `ledger` aren't part of `npm run review`; the weekly review reads all three (see the `weekly-review` and `apply-review-fixes` skills in `.claude/skills/`). `learn` prints rule lines ready to paste into `src/carriers/<carrier>.js`. **Review each one**: a consistent answer isn't always a correct one. Generated layouts are git-ignored; review them before committing any.
 
 To measure a rule change on recorded quotes before release, replay them through the rules, given a folder with their intake PDFs (matched by fingerprint, never copied). It isn't part of `npm run review`:
 
@@ -178,7 +179,7 @@ The AI runner uses the packaged extension with controlled Luna responses. It che
 
 ## Hosting
 
-Updates reach agents through the Chrome Web Store; their usage logs go to TNI's server on Railway and a daily GitHub Action builds the review. See [docs/hosting.md](docs/hosting.md).
+Updates reach agents through the Chrome Web Store; their usage logs go to TNI's server on Railway and a daily review builds the report (`npm run daily` on the maintainer's computer while GitHub Actions can't run, else the GitHub Action). See [docs/hosting.md](docs/hosting.md).
 
 ## Files
 

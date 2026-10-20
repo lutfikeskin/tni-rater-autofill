@@ -8,7 +8,10 @@
 //   node scripts/weekly-signals.mjs server-data [more logs...] [--since 2026-10-06[T06:00]] [--all] [--tests reviews/test-intakes.txt] [--json] [--out file.md]
 //
 // --tests: a file of intake fingerprints (full or leading hex, at least 8 characters, one per line, # for comments) whose
-// quotes are test runs; they, and intakes the agent marked as a test, are left out and counted.
+// quotes are test runs; they, fixture intakes and intakes the agent marked as a test, are left out
+// and counted (readTestList in scripts/lib/signals.mjs, shared with review.mjs). Without a list
+// (none given, no reviews/test-intakes.txt in this repository, as in a git worktree) it warns, and
+// the report says the maintainer's test quotes are counted as agents' work.
 //
 // --key: TNI's answer key (default layouts/answer-key/key.json, when it exists) and --intakes the
 // folder with its intakes' PDFs (default layouts/intakes): the weekly numbers then show today's rules
@@ -20,7 +23,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CARRIERS } from '../src/carriers.js';
 import { loadEvents } from './lib/events.mjs';
-import { markdown, signals, testSessionsOf } from './lib/signals.mjs';
+import { markdown, readTestList, signals, testSessionsOf } from './lib/signals.mjs';
 import { benchmark } from './lib/benchmark.mjs';
 import { readIntakes } from './lib/intake-pdfs.mjs';
 import { readKey, scoreKey } from './lib/answer-key.mjs';
@@ -42,10 +45,10 @@ for (const p of inputs) {
 const since = args.includes('--all') ? null : opt('since') ?? new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
 if (since && Number.isNaN(Date.parse(since))) fail(`--since ${since} is not a date.`);
 
-const testsOpt = opt('tests');
-if (testsOpt && !fs.existsSync(testsOpt)) fail(`--tests ${testsOpt}: no such file.`);
-const testFile = testsOpt ?? (fs.existsSync('reviews/test-intakes.txt') ? 'reviews/test-intakes.txt' : null);
-const testIntakes = testFile ? fs.readFileSync(testFile, 'utf8').split('\n').map((l) => l.replace(/#.*/, '').trim()).filter(Boolean) : [];
+let testList;
+try { testList = readTestList({ tests: opt('tests') }); } catch (err) { fail(err.message); }
+const { file: testFile, intakes: testIntakes, warning } = testList;
+if (warning) console.error(`Warning: ${warning}`);
 const events = loadEvents(inputs);
 
 // TNI's answer key, when one is configured: today's rules on the quotes it covers.
@@ -61,7 +64,7 @@ if (keyFile) {
   if (absent) console.error(`Warning: ${absent} of the answer key's intake PDFs are not in ${folder}; their quotes are not scored.`);
   // Test runs are left out, as the sheet leaves them out.
   let tests;
-  try { tests = testSessionsOf(events, testIntakes); } catch (err) { fail(`${testFile}: ${err.message}`); }
+  try { tests = testSessionsOf(events, testIntakes); } catch (err) { fail(`${testFile ?? 'signals'}: ${err.message}`); }
   // Only the keyed intakes' quotes are replayed. Every quote's page layouts stay: a question recorded
   // without its name takes it from the layouts, as the sheet named it.
   const keyed = new Set(events.filter((e) => e.type === 'intake_loaded' && key.quotes[e.intakeId] && !tests.has(e.session)).map((e) => e.session));
@@ -70,7 +73,7 @@ if (keyFile) {
 }
 
 let result;
-try { result = signals(events, { since, testIntakes, answerKey }); } catch (err) { fail(`${testFile ?? 'signals'}: ${err.message}`); }
+try { result = signals(events, { since, testIntakes, answerKey }); } catch (err) { fail(`signals: ${err.message}`); }
 // A fingerprint list that hides many quotes may be hiding real ones.
 if (result.kpis.testRunsLeftOut > 3) console.error(`Warning: ${result.kpis.testRunsLeftOut} quotes left out as test runs${testFile ? ` (${testFile})` : ''}. Check the list.`);
 if (args.includes('--json')) {
@@ -79,5 +82,5 @@ if (args.includes('--json')) {
 }
 const out = opt('out') ?? path.join('reviews', `signals-${new Date().toISOString().slice(0, 10)}.md`);
 fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, markdown(result));
+fs.writeFileSync(out, markdown(result, { noTestList: !!warning }));
 console.log(`${out}  (${result.quotes} quotes, ${result.problems.length} problem reports, newest version ${result.newestVersion ?? '?'})`);
