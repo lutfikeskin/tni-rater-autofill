@@ -52,6 +52,7 @@ const QUOTE = /^https:\/\/sales\.geico\.com\/quote(?:[?#/]|$)/i;
 // Filled: the quote, and the gateway's pages, where a quote starts with its ZIP in the Start New
 // Quote window (drawn over any gateway page: FL live run, 2026-10-21, over Recent Policies and Quotes).
 const FILLED = /^https:\/\/(?:sales\.geico\.com\/quote|gateway2\.geico\.com)(?:[?#/]|$)/i;
+const GATEWAY = /^https:\/\/gateway2\.geico\.com(?:[?#/]|$)/i;
 // The quote's own page, where the gateway's rules never apply.
 const GATEWAY_OFF = ['/quote'];
 const STOP_AT_QUOTE = 'TNI stops GEICO quotes at Quote & Coverages: go back there and print the quote proposal.';
@@ -509,8 +510,8 @@ export const geico = {
   autoFillUrl: FILLED,
   layoutUrl: QUOTE,
   // The Start New Quote window opens over a gateway page already drawn: its first fill runs when
-  // its questions show (the recorder's new_fields), as on arriving at a page.
-  fillOnDraw: true,
+  // its questions show (the recorder's new_fields), as on arriving at a page. The gateway only.
+  fillOnDraw: GATEWAY,
   // One address for every step: the step is read from the progress bar (pagekit stepKey) and named
   // in layouts, fill and field-change events only when it is one of these (src/usage.js knownStep).
   layoutSteps: STEPS,

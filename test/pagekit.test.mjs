@@ -5179,6 +5179,22 @@ test('a step with waitFor is answered only once that question has its answer; on
   assert.equal(type2.value, '');
   assert.deepEqual(plain(report.failed.map((x) => [x.key, x.reason])), [['ref:GiveOtherVehicleType', 'the page was still working on this question; check it']]);
 
+  // A VIN GEICO doesn't decode: the year stays empty. Answered once the wait runs out, and a later
+  // fill of the same form doesn't wait for that year again.
+  const h4 = harness({ pathname: '/quote' });
+  geicoBar(h4, 'Vehicles');
+  const type4 = geicoList('GiveOtherVehicleType', 42, 'Which of the following best describes the customer\'s vehicle?', ['', 'Dump Truck', 'Tractor']);
+  h4.document.body.append(geicoList('GiveYear', 41, 'Year', ['', '2016']), type4);
+  let started = clock.Date.now();
+  report = await h4.kit.fill([step], { maxRounds: 60 });
+  assert.equal(type4.value, 'Tractor');
+  assert.deepEqual([report.failed.length, clock.Date.now() - started >= 8000], [0, true], 'waited out, then answered');
+  type4.value = '';
+  started = clock.Date.now();
+  report = await h4.kit.fill([step], { maxRounds: 60 });
+  assert.equal(type4.value, 'Tractor');
+  assert.ok(clock.Date.now() - started < 2000, `the next fill waited ${clock.Date.now() - started} ms`);
+
   // No such question on the page (no VIN decode drawn): answered at once.
   const h3 = harness({ pathname: '/quote' });
   geicoBar(h3, 'Vehicles');

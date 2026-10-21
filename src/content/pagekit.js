@@ -919,6 +919,9 @@
   // Waiting for the page (fill: `waitFor`).
   const WAIT_MS = 8000;
   const WAIT_ROUND_MS = 400;
+  // The questions a fill waited the whole WAIT_MS for in this document: the page isn't working on
+  // them (a VIN GEICO doesn't decode leaves its year for the agent), so no later fill waits again.
+  const waitedOut = new WeakSet();
 
   const noMatch = (step, options) => ({
     ok: false,
@@ -1499,7 +1502,7 @@
   // answered while that question is on the page without an answer: the page is still working it out,
   // and its answer redraws the form (FL live run 2, 2026-10-21: the VIN decode cleared the vehicle
   // type, distance and personal use the fill had just given). It waits at most WAIT_MS, a round every
-  // WAIT_ROUND_MS, then is answered as before.
+  // WAIT_ROUND_MS, then is answered as before; a question waited out so is not waited for again.
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
   async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null } = {}) {
@@ -1838,7 +1841,10 @@
         }
         // The question it waits for is on the page without an answer yet: the page is still working.
         const pending = step.waitFor ? shownControl(controls, { field: step.waitFor }) : null;
-        if (pending && !hasValue(pending) && mayWait(step.id)) { retry = true; waited = true; continue; }
+        if (pending && !hasValue(pending) && !waitedOut.has(pending.el)) {
+          if (mayWait(step.id)) { retry = true; waited = true; continue; }
+          waitedOut.add(pending.el);
+        }
         // A pre-selected "Enter a different …" isn't an answer worth keeping for pick-not steps.
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '') && !agreesWith(step, c);
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';

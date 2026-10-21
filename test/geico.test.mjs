@@ -91,7 +91,9 @@ test('GEICO is registered: the quote and the gateway are filled', () => {
     assert.ok(geico.autoFillUrl.test(url), url);
     assert.ok(!geico.layoutUrl.test(url), url);
   }
-  assert.equal(geico.fillOnDraw, true);
+  // Drawn over a gateway page: its first fill when drawn. The quote's steps draw with their questions.
+  assert.ok(geico.fillOnDraw.test('https://gateway2.geico.com/recent-policy-and-quotes'));
+  assert.ok(!geico.fillOnDraw.test('https://sales.geico.com/quote'));
   for (const url of ['https://sales.geico.com/dashboard', 'https://sales.geico.com/quotes', 'http://sales.geico.com/quote', 'https://gateway2.geico.com.example.test/']) {
     assert.ok(!geico.autoFillUrl.test(url), url);
     assert.ok(!geico.layoutUrl.test(url), url);
