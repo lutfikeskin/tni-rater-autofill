@@ -541,6 +541,22 @@ test('the business address: unit from the intake, street by GEICO\'s suggestion,
   assert.equal(hashNumber.value, '12');
   agents(hashType);
   for (const s of unit('Rear')) agents(s);
+  // W43-36 (TNI, 2026-10-21): GA's unit was "Apt A", a letter: both boxes were left to the agent, who
+  // typed A, picked Apartment and took the unit off the street. A letter after the kind is its number.
+  assert.deepEqual(unit('Apt A').map((s) => s.value), ['A', 'Apartment']);
+  for (const [u, want] of [['Apt. B', ['B', 'Apartment']], ['Apartment C', ['C', 'Apartment']], ['Unit 4B', ['4B', 'Unit']], ['Ste. 200', ['200', 'Suite']], ['Suite #3', ['3', 'Suite']], ['Apt5', ['5', 'Apartment']]]) {
+    assert.deepEqual(unit(u).map((s) => s.value), want, u);
+  }
+  const [letterNumber, letterType] = unit('#A');
+  assert.equal(letterNumber.value, 'A');
+  agents(letterType);
+  // A kind GEICO's Unit Type doesn't list: its number filled, the type the agent's, named.
+  const [hangarNumber, hangarType] = unit('Hngr 3');
+  assert.equal(hangarNumber.value, '3');
+  agents(hangarType);
+  assert.match(hangarType.note, /GEICO's Unit Type has no "Hngr"/);
+  // A kind without a number is no number: "Suite" alone stays the agent's.
+  for (const s of unit('Suite')) agents(s);
   // No unit: both boxes as the page has them.
   assert.deepEqual(unit(null).map((s) => s.ignore), [true, true]);
   const p = plan(intake());
@@ -551,6 +567,25 @@ test('the business address: unit from the intake, street by GEICO\'s suggestion,
     ['address-suggest', 'derived', '1 Test Way, Testville, NE 68000', '1 Test Way', true, null]);
   // The unit has boxes of its own; a ZIP+4 is cut to its ZIP.
   assert.equal(one(plan(with_({ 'garaging.unit': 'Suite 200', 'garaging.zip': '68000-1234' })), street.name, BOI).value, '1 Test Way, Testville, NE 68000');
+  // W43-36: a street still ending in its unit (one the intake's address split didn't take off) gives
+  // it to the unit boxes, and is typed, and left when GEICO suggests nothing, without it: GEICO's
+  // suggestion still matches. The intake's own unit wins; a street name that only reads like a unit
+  // stays the street's.
+  const split = (s, u = null) => {
+    const q = plan(with_({ 'garaging.street': s, 'garaging.unit': u }));
+    const [st, number, kind] = [street.name, 'Business unit number', 'Business unit type'].map((name) => one(q, name, BOI));
+    return [st.value, st.fallback, number.value, kind.value];
+  };
+  const typed = '1 Test Way, Testville, NE 68000';
+  assert.deepEqual(split('1 Test Way Apt A'), [typed, '1 Test Way', 'A', 'Apartment']);
+  assert.deepEqual(split('1 Test Way, Suite 200'), [typed, '1 Test Way', '200', 'Suite']);
+  assert.deepEqual(split('1 Test Way Ste. B'), [typed, '1 Test Way', 'B', 'Suite']);
+  assert.deepEqual(split('1 Test Way Apartment 12'), [typed, '1 Test Way', '12', 'Apartment']);
+  assert.deepEqual(split('1 Test Way Unit 4B'), [typed, '1 Test Way', '4B', 'Unit']);
+  assert.deepEqual(split('1 Test Way #12').slice(0, 3), [typed, '1 Test Way', '12']);
+  assert.deepEqual(split('1 Test Way', 'Unit 4'), [typed, '1 Test Way', '4', 'Unit']);
+  assert.deepEqual(split('1 Test Way Apt A', 'Suite 9'), ['1 Test Way Apt A, Testville, NE 68000', '1 Test Way Apt A', '9', 'Suite']);
+  for (const s of ['1 Unit Rd', '100 Avenue A', '1 Test Way Apt', '12 Suite Ln']) assert.deepEqual(split(s), [`${s}, Testville, NE 68000`, s, null, null], s);
   agents(one(plan(with_({ 'garaging.street': null })), street.name, BOI));
   assert.deepEqual([one(p, 'Owner phone (the intake\'s phone)').value, one(p, 'Business phone').value, one(p, 'Customer email').value], ['(555) 010-0100', '(555) 010-0100', 'client@example.test']);
   const raw = plan(with_({ 'applicant.phone': '555-0100' }));

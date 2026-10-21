@@ -246,7 +246,8 @@ const ownerDrivesNote = (r) => (typeof r.applicant.ownerDrives === 'boolean' ? n
 // when it has the intake's house number, and flagged as differing when not (`checkNumber`).
 const streetLine = (r) => {
   const g = r.garaging ?? {};
-  return g.street ? [g.street, g.city, [g.state, zip5(r) ?? g.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ') : null;
+  const { street } = streetParts(r);
+  return street ? [street, g.city, [g.state, zip5(r) ?? g.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ') : null;
 };
 const streetNote = (r) => (r.garaging?.street ? null : 'The intake has no street: enter the business address yourself.');
 // What GEICO's USDOT record must show to be the client's business (W43-24): the intake's house
@@ -263,19 +264,39 @@ const recordWords = (r) => {
 };
 const RECORD_NOTE = 'Check GEICO\'s USDOT record against the client\'s business, then answer it yourself.';
 
-// The unit ("Apt 5", "Suite 200", "#12", "Lot 7", "Trlr 3"), as GEICO's Unit Number and Unit Type.
-// A unit without a number, or without a word naming its kind ("#12"), is the agent's; no unit on
-// the intake leaves both boxes as they are.
+// The unit ("Apt 5", "Suite 200", "#12", "Lot 7", "Trlr 3", "Apt A"), as GEICO's Unit Number and Unit
+// Type. Its number has a digit, or is one letter (TNI, 2026-10-21, W43-36: GA's "Apt A" was left to
+// the agent, who typed A and picked Apartment). A unit without a number, or without a word naming one
+// of GEICO's kinds ("#12", "Hngr 3"), is the agent's for what it lacks; no unit on the intake leaves
+// both boxes as they are.
 const UNIT_TYPES = { apt: 'Apartment', apartment: 'Apartment', unit: 'Unit', ste: 'Suite', suite: 'Suite', lot: 'Lot',
   bldg: 'Building', building: 'Building', rm: 'Room', room: 'Room', trlr: 'Trailer' };
-const unitText = (r) => String(r.garaging?.unit ?? '').trim();
+const UNIT_NUMBER = String.raw`(?:[\w-]*\d[\w-]*|[a-z])`;
+const UNIT_TEXT = new RegExp(String.raw`^(?:([a-z]+)(?:\.?\s*#\s*|\.\s*|\s+|(?=\d))|#\s*)?(${UNIT_NUMBER})$`, 'i');
+// A street still ending in its unit, when the intake's address split didn't take it off ("1 Main St
+// Apt A", W43-36): the unit goes to GEICO's boxes, and the street is typed without it, so GEICO's
+// suggestion for the address still matches. Only these kinds, after a house number and a street: a
+// street named like a unit ("1 Unit Rd", "100 Avenue A") stays whole. The intake's own unit wins.
+const STREET_UNIT = new RegExp(String.raw`^(\d\S*\s+.*?\S)[,\s]+((?:apt|apartment|unit|ste|suite)\.?\s*#?\s*${UNIT_NUMBER}|#\s*${UNIT_NUMBER})$`, 'i');
+const streetParts = (r) => {
+  const street = String(r.garaging?.street ?? '').trim();
+  const unit = String(r.garaging?.unit ?? '').trim();
+  const m = !unit && street.match(STREET_UNIT);
+  return m ? { street: m[1], unit: m[2] } : { street: street || null, unit };
+};
+const unitText = (r) => streetParts(r).unit;
 const unitParts = (r) => {
-  const m = unitText(r).match(/^(?:([a-z]+)\.?\s*)?#?\s*([\w-]*\d[\w-]*)$/i);
-  return m ? { type: m[1] ? UNIT_TYPES[m[1].toLowerCase()] ?? null : null, number: m[2] } : { type: null, number: null };
+  const m = unitText(r).match(UNIT_TEXT);
+  return m ? { word: m[1] ?? null, type: m[1] ? UNIT_TYPES[m[1].toLowerCase()] ?? null : null, number: m[2] } : { word: null, type: null, number: null };
 };
 const noUnit = (r) => !unitText(r);
 const unitNumberNote = (r) => (unitText(r) && !unitParts(r).number ? `The intake's unit ${quote(unitText(r))} has no number for GEICO's Unit Number box: enter it yourself.` : null);
-const unitTypeNote = (r) => (unitText(r) && !unitParts(r).type ? `The intake's unit ${quote(unitText(r))} doesn't say which kind it is (apartment, suite, lot…): pick it yourself.` : null);
+const unitTypeNote = (r) => {
+  const { word, type } = unitParts(r);
+  if (!unitText(r) || type) return null;
+  return word ? `The intake's unit ${quote(unitText(r))}: GEICO's Unit Type has no ${quote(word)}. Pick its kind yourself.`
+    : `The intake's unit ${quote(unitText(r))} doesn't say which kind it is (apartment, suite, lot…): pick it yourself.`;
+};
 
 // Shown on Business & Owner Info, and again with the owner's Social Security number (OWNER_CHECK).
 const OWNER_IDENTITY = [
@@ -284,7 +305,7 @@ const OWNER_IDENTITY = [
   { field: 'GiveLastName', ask: 'Business Owner Last Name', name: 'Owner last name', source: 'derived', value: ownerLast, note: (r) => (ownerLast(r)?.length > MAX_NAME ? nameNote(ownerLast(r), 'owner\'s last name') : null) },
   { field: 'GiveDateOfBirth', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', source: 'derived', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
   { field: 'GiveStreet', path: 'garaging.street', name: 'Business street (GEICO\'s suggestion for the intake\'s address)', kind: 'address-suggest', source: 'derived',
-    value: streetLine, fallback: (r) => r.garaging?.street ?? null, checkNumber: true, note: streetNote },
+    value: streetLine, fallback: (r) => streetParts(r).street, checkNumber: true, note: streetNote },
   { field: 'GiveUnitNumber', ask: 'Unit Number', path: 'garaging.unit', name: 'Business unit number', source: 'derived', value: (r) => unitParts(r).number, ignore: noUnit, note: unitNumberNote },
   { field: 'GiveUnitType', ask: 'Unit Type', path: 'garaging.unit', name: 'Business unit type', kind: 'choice', source: 'derived', value: (r) => unitParts(r).type, ignore: noUnit, note: unitTypeNote },
   { field: 'GiveZip', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'Business ZIP', source: 'derived', value: zip5, note: zipNote },
