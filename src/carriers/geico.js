@@ -246,6 +246,17 @@ const streetLine = (r) => {
   return g.street ? [g.street, g.city, [g.state, zip5(r) ?? g.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ') : null;
 };
 const streetNote = (r) => (r.garaging?.street ? null : 'The intake has no street: enter the business address yourself.');
+// What GEICO's USDOT record must show to be the client's business (W43-24): the intake's house
+// number, its street's name (its first word that isn't a direction or a street type) and ZIP. None
+// without all three.
+const STREET_WORDS_SKIPPED = /^(?:n|s|e|w|ne|nw|se|sw|north|south|east|west|st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|way|ct|court|hwy|highway|pkwy|parkway|pl|place|ter|terrace|cir|circle)$/i;
+const recordWords = (r) => {
+  const m = String(r.garaging?.street ?? '').trim().match(/^(\d+[a-z]?)\s+(.+)$/i);
+  const name = m?.[2].split(/[\s.,]+/).find((w) => w && !STREET_WORDS_SKIPPED.test(w));
+  const zip = zip5(r);
+  return m && name && zip ? [m[1], name, zip] : null;
+};
+const RECORD_NOTE = 'Check GEICO\'s USDOT record against the client\'s business, then answer it yourself.';
 
 // The unit ("Apt 5", "Suite 200", "#12", "Lot 7", "Trlr 3"), as GEICO's Unit Number and Unit Type.
 // A unit without a number, or without a word naming its kind ("#12"), is the agent's; no unit on
@@ -720,9 +731,11 @@ export const geico = {
       { field: 'GiveDepartmentOfTransportationNumberStatus', ask: 'Does the customer have a USDOT Number registered to themselves or their business?', name: 'Has a USDOT number',
         kind: 'choice', source: 'derived', clientFact: true, value: dotStatus, note: dotStatusNote },
       // "USDOT Information: Is this the customer's business?", under GEICO's record of the number:
-      // the agent checks it against the client (Progressive's standard Yes is Progressive's).
-      { field: 'GiveExtendUsDotVerifyBusinessAddress', name: 'USDOT record is the client\'s business', source: 'attestation',
-        note: 'Check GEICO\'s USDOT record against the client\'s business, then answer it yourself.' },
+      // Yes when the record (the question's text) shows the intake's house number, street and ZIP;
+      // otherwise the agent checks it against the client (TNI, FL live run 5, 2026-10-21, W43-24).
+      { field: 'GiveExtendUsDotVerifyBusinessAddress', name: 'USDOT record is the client\'s business (Yes when it shows the intake\'s street and ZIP)', kind: 'bool',
+        source: (r) => (recordWords(r) ? 'derived' : 'attestation'), value: (r) => (recordWords(r) ? true : null), labelHas: recordWords,
+        labelNote: RECORD_NOTE, note: (r) => (recordWords(r) ? null : RECORD_NOTE) },
     ]),
 
     // --- Business & Owner Info -----------------------------------------------------------------
