@@ -90,7 +90,7 @@ Load the client's TNI Commercial Insurance Quote Application (PDF) in the side p
 
 • Progressive Commercial Auto (ForAgentsOnly)
 • AmWINS Admitted Placement – Business Auto
-• GEICO commercial pages (common fields)
+• GEICO Commercial Auto (sales.geico.com quote)
 
 What it does
 • Reads the quote application on your computer and lets you check and correct it before filling.

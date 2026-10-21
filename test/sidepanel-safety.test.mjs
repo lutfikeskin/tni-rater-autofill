@@ -8,6 +8,8 @@ import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
 import { intakeNotes } from '../src/normalize.js';
 import { amwins } from '../src/carriers/amwins.js';
+import { geico } from '../src/carriers/geico.js';
+import { quoteProgress } from '../src/carriers.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
@@ -79,8 +81,11 @@ function extractFunction(name) {
         if (name !== 'persistGuardedEdits' && /\bpersistGuardedEdits\(/.test(source)) source += `\n${extractFunction('persistGuardedEdits')}`;
         // Agent-edit scoping is shared by many functions: bring its helpers along.
         if (name !== 'agentEdited' && /\bagentEdited\(/.test(source)) source += `\n${extractFunction('agentEdited')}`;
-        // So are a fill's context and its tab's maps (fillContext, rememberFill).
-        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults']) {
+        // So are a fill's context and its tab's maps (fillContext, rememberFill), and the tab's
+        // step with the stops it may carry (tabStep, stopNoteFor: GEICO's stop steps), and the agent's
+        // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
+        // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen).
+        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
@@ -133,7 +138,7 @@ function harness() {
     clearTimeout: (handle) => cleared.push(handle),
     renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {}, save: () => {},
     ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {}, restoreDoneActions: async () => {}, persistDoneActions: async () => {},
-    seedQuoteState: () => {}, noteQuoteState: () => {},
+    seedQuoteState: () => {}, noteQuoteState: () => {}, knownStep,
     dropReports() {}, clientNote() {}, fillProblem() {}, answeredOnPage() {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
@@ -662,8 +667,9 @@ test('an automatic follow-up on a step without a report fills it as a new page, 
     reports: new Map([['1|Insured Info', { fields: 9 }]]), tabSteps: new Map([[1, 'Vehicles']]) };
   const context = { state, pageOf: (u) => u, fillPage: (o) => fills.push(o), reportKey: (tabId) => `${tabId}|${state.tabSteps.get(tabId)}`,
     fillContext: () => { throw new Error('no follow-up fill'); } };
-  // autoFill alone: its helpers (fillContext and the rest) are the stubs above.
-  vm.runInNewContext(extractFunction('autoFill').split('\nfunction ')[0], context);
+  // autoFill alone: its helpers (fillContext and the rest) are the stubs above; its stop check is
+  // the panel's own (no stop here).
+  vm.runInNewContext(`${extractFunction('autoFill').split('\nfunction ')[0]}\n${extractFunction('stopNoteFor')}`, context);
   await context.autoFill('Quote');
   assert.deepEqual(JSON.parse(JSON.stringify(fills)), [{ auto: 'page' }]);
   // Back on the step that has its report: a follow-up there stays a follow-up.
@@ -1743,7 +1749,8 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   const make = () => {
     const state = { tab, doneActions: new Set() };
     const context = { state, usage: { currentSession: () => session }, Promise, Set,
-      doneActionsStore: { get: async (scope, tabId) => memoryStore[`${scope}:${tabId}`] ?? [], set: async (scope, tabId, ids) => { memoryStore[`${scope}:${tabId}`] = ids; } }, doneActionsQueue: Promise.resolve() };
+      doneActionsStore: { get: async (scope, tabId) => memoryStore[`${scope}:${tabId}`] ?? [], set: async (scope, tabId, ids) => { memoryStore[`${scope}:${tabId}`] = ids; } }, doneActionsQueue: Promise.resolve(),
+      unitFormsStore: { get: async () => null } };
     vm.runInNewContext(`var doneActionsQueue = Promise.resolve();\n${SIDEPANEL.match(/const doneRestored = new Set\(\);/)[0]}\n` + ['persistDoneActions', 'restoreDoneActions'].map(extractFunction).join('\n'), context);
     return context;
   };
@@ -2564,9 +2571,9 @@ test('picking another vehicle replaces a capture waiting for the previous one', 
 test('layouts are taken by themselves only on the carrier\'s named quote pages', () => {
   const { context } = layoutHarness(() => []);
   const scheduled = () => { const fn = context.pending; context.pending = null; return !!fn; };
-  // A carrier with no quote-page address (GEICO for now): its portal, account and search pages
-  // are never captured on their own; fills still record theirs.
-  context.state.tab.carrier = { id: 'geico' };
+  // A carrier with no quote-page address: its portal, account and search pages are never
+  // captured on their own; fills still record theirs.
+  context.state.tab.carrier = { id: 'portal-only' };
   context.scheduleLayout('Vehicles', 'arrived');
   assert.equal(scheduled(), false);
   context.state.tab.carrier = { id: 'progressive', autoFillUrl: /\/Express\/Default\.aspx/ };
@@ -2576,6 +2583,15 @@ test('layouts are taken by themselves only on the carrier\'s named quote pages',
   context.state.tab.url = 'https://portal.example/Express/Default.aspx?pageName=Vehicles';
   context.scheduleLayout('Vehicles', 'arrived');
   assert.equal(scheduled(), true);
+  // GEICO: the quote at sales.geico.com/quote, never the agent gateway or the dashboard (portal
+  // pages, whose text the intake's redaction may not cover).
+  context.state.tab.carrier = geico;
+  for (const [url, quote] of [['https://sales.geico.com/quote', true], ['https://sales.geico.com/quote?step=2', true], ['https://sales.geico.com/quotes', false],
+    ['https://sales.geico.com/dashboard', false], ['https://gateway2.geico.com/', false], ['https://gateway2.geico.com/quote', false]]) {
+    context.state.tab.url = url;
+    context.scheduleLayout('/quote', 'arrived');
+    assert.equal(scheduled(), quote, url);
+  }
 });
 
 test('two quote tabs keep their own last layout', async () => {
@@ -3443,17 +3459,22 @@ test('loading another intake keeps the first intake\'s edit keys and helper reco
     agentKeysStore: { get: async () => records.keys, set: async (v) => { records.keys = v; } },
     doneActionsStore: {
       clear: async (scope) => { for (const k of Object.keys(memory)) if (k.startsWith(`doneActions:${scope}:`)) delete memory[k]; },
-      scopes: async () => Object.keys(memory).map((k) => k.split(':')[1]),
+      scopes: async () => Object.keys(memory).filter((k) => k.startsWith('doneActions:')).map((k) => k.split(':')[1]),
+    },
+    // The unit forms (GEICO) are kept and let go with the helper records.
+    unitFormsStore: {
+      clear: async (scope) => { for (const k of Object.keys(memory)) if (k.startsWith(`unitForms:${scope}:`)) delete memory[k]; },
+      scopes: async () => Object.keys(memory).filter((k) => k.startsWith('unitForms:')).map((k) => k.split(':')[1]),
     },
     intakesSeenStore: { get: async () => records.seen, set: async (v) => { records.seen = v; } },
   };
   vm.runInNewContext(['clearAgentKeys', 'pruneAgentRecords'].map(extractFunction).join('\n'), context);
   const day = 86_400_000;
-  const seed = () => { records.keys = [{ scope: 'A', tabId: 7, page: 'Quote', keys: ['k'] }]; memory['doneActions:A:7'] = ['addVehicle:0']; };
+  const seed = () => { records.keys = [{ scope: 'A', tabId: 7, page: 'Quote', keys: ['k'] }]; memory['doneActions:A:7'] = ['addVehicle:0']; memory['unitForms:A:7'] = { vehicles: { form1: 0 } }; };
   seed();
   assert.deepEqual(JSON.parse(JSON.stringify(await context.pruneAgentRecords('A', 1000 * day))), []);
   assert.deepEqual(JSON.parse(JSON.stringify(await context.pruneAgentRecords('B', 1001 * day))), [], 'loading B keeps A');
-  assert.deepEqual([records.keys.length, memory['doneActions:A:7']], [1, ['addVehicle:0']]);
+  assert.deepEqual([records.keys.length, memory['doneActions:A:7'], memory['unitForms:A:7']], [1, ['addVehicle:0'], { vehicles: { form1: 0 } }]);
   assert.deepEqual(JSON.parse(JSON.stringify(await context.pruneAgentRecords('A', 1002 * day))), [], 'A again (the same PDF): its records are still there');
   await context.clearAgentKeys('B');
   assert.deepEqual([records.keys.length, memory['doneActions:A:7']], [1, ['addVehicle:0']], 'Clear on B leaves A');
@@ -3461,6 +3482,14 @@ test('loading another intake keeps the first intake\'s edit keys and helper reco
   assert.equal(records.keys.length, 1, 'nothing is cleared without an intake');
   await context.clearAgentKeys('A');
   assert.deepEqual([records.keys.length, Object.keys(memory)], [0, []]);
+  // A unit-form record alone still dates its intake, so it is let go in time.
+  const seenBefore = records.seen;
+  memory['unitForms:old:3'] = { drivers: { form2: 1 } };
+  records.seen = {};
+  await context.pruneAgentRecords('A', 1000 * day);
+  assert.equal(records.seen.old, new Date(1000 * day).toISOString());
+  delete memory['unitForms:old:3'];
+  records.seen = seenBefore;
   // Another intake's records go after 30 days without being loaded...
   seed();
   await context.pruneAgentRecords('A', 1000 * day);
@@ -3495,6 +3524,7 @@ test('Clear is done only once the helper records are gone, and a restore waits f
       clear: (scope) => new Promise((resolve) => { releaseClear = () => { delete memory[`doneActions:${scope}:7`]; resolve(); }; }),
       get: async (scope, tabId) => memory[`doneActions:${scope}:${tabId}`] ?? [],
     },
+    unitFormsStore: { clear: async () => {}, get: async () => null },
     usage: { currentSession: () => ({ intakeId: 'A' }) }, state: { tab: { id: 7 }, doneActions: new Set() },
   };
   vm.runInNewContext(`${SIDEPANEL.match(/const doneRestored = new Set\(\);/)[0]}\n${['clearAgentKeys', 'restoreDoneActions'].map(extractFunction).join('\n')}`, context);
@@ -3757,8 +3787,8 @@ function tabRecordsHarness(localData = {}, sessionData = {}, locks) {
   vm.createContext(context);
   vm.runInContext(SIDEPANEL.slice(SIDEPANEL.includes('const TAB_RECORDS_SESSION_KEY') ? SIDEPANEL.indexOf('const TAB_RECORDS_SESSION_KEY') : SIDEPANEL.indexOf('const AGENT_KEYS_KEY'), SIDEPANEL.indexOf('const FNV_OFFSET'))
     + '\nconst doneRestored = new Set();\n'
-    + ['persistAgentKeys', 'persistGuardedEdits', 'restoreAgentKeys', 'persistDoneActions', 'restoreDoneActions', 'clearAgentKeys', 'pruneAgentRecords'].map(extractFunction).join('\n')
-    + '\nglobalThis.stores = { agentKeysStore, doneActionsStore };', context);
+    + ['persistAgentKeys', 'persistGuardedEdits', 'restoreAgentKeys', 'persistDoneActions', 'persistUnitForms', 'restoreDoneActions', 'clearAgentKeys', 'pruneAgentRecords'].map(extractFunction).join('\n')
+    + '\nglobalThis.stores = { agentKeysStore, doneActionsStore, unitFormsStore };', context);
   return { context, state, localData, sessionData, locks, setIntake: (id) => { intakeId = id; } };
 }
 
@@ -4193,7 +4223,7 @@ test('Clear also cancels an origin edit write already waiting on local storage',
   const state = { agentKeysEpochs: new Map(), tab: { id: 1 }, agentKeys: new Map() };
   const context = { state, usage: { currentSession: () => ({ intakeId: 'origin' }) }, agentKeysQueue: Promise.resolve(),
     agentKeysStore: { get: () => { readStarted(); return reading; }, set: async value => { records = structuredClone(value); } },
-    doneActionsQueue: Promise.resolve(), doneActionsStore: { clear: async () => {} } };
+    doneActionsQueue: Promise.resolve(), doneActionsStore: { clear: async () => {} }, unitFormsStore: { clear: async () => {} } };
   vm.runInNewContext(['persistGuardedEdits', 'clearAgentKeys'].map(extractFunction).join('\n'), context);
   const writing = context.persistGuardedEdits({ scope: 'origin', tabId: 1, page: 'Quote', keys: state.agentKeys, epoch: 0 }, ['late-key']);
   await entered;
@@ -4207,6 +4237,7 @@ test('Clear also cancels an origin edit write already waiting on local storage',
 // The same panel replaces its live sets, but must reread each fingerprint's durable helpers.
 test('completed helpers survive actual intake A to B to A loading and panel reload', async () => {
   const memory = new Map();
+  const forms = new Map();
   const make = () => {
     const h = harness(), { context, state } = h;
     let scope = 'A', loading = 'A', refreshed;
@@ -4216,6 +4247,8 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
       doneActionsQueue: Promise.resolve(), doneRestored: new Set(),
       doneActionsStore: { get: async (id, tab) => memory.get(`${id}|${tab}`) ?? [],
         set: async (id, tab, ids) => { memory.set(`${id}|${tab}`, [...ids]); } },
+      unitFormsStore: { get: async (id, tab) => forms.get(`${id}|${tab}`) ?? null,
+        set: async (id, tab, value) => { forms.set(`${id}|${tab}`, structuredClone(value)); } },
       $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }),
       normalizeIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
       store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
@@ -4223,7 +4256,7 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
       uploadNow() {}, render() {}, reviewClaimsBox() {}, reviewIntake() {},
       refreshTab: () => { refreshed = h.refreshTab(); return refreshed; },
     });
-    vm.runInNewContext(['loadFile', 'persistDoneActions', 'restoreDoneActions'].map(extractFunction).join('\n'), context);
+    vm.runInNewContext(['loadFile', 'persistDoneActions', 'persistUnitForms', 'restoreDoneActions'].map(extractFunction).join('\n'), context);
     return { h, context, state, load: async id => {
       loading = id;
       await context.loadFile({ name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) });
@@ -4234,16 +4267,22 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
   await first.load('A');
   first.state.doneActions.add('lookupVin:0'); first.state.doneActions.add('addDriver:0');
   await first.context.persistDoneActions();
+  // GEICO's unit forms go and come back with them.
+  first.state.unitForms.vehicles.Id_Marker_101 = 0;
+  await first.context.persistUnitForms();
   await first.load('B');
   assert.equal(first.state.doneActions.size, 0, 'a different intake has no completed helpers');
+  assert.deepEqual(JSON.parse(JSON.stringify(first.state.unitForms)), { vehicles: {}, drivers: {}, trailers: {} }, 'nor unit forms');
   await first.load('A');
   assert.deepEqual([...first.state.doneActions].sort(), ['addDriver:0', 'lookupVin:0'], 'A restores after replacement');
+  assert.deepEqual(JSON.parse(JSON.stringify(first.state.unitForms.vehicles)), { Id_Marker_101: 0 });
   first.state.doneActions.delete('lookupVin:0');
   await first.h.refreshTab();
   assert.equal(first.state.doneActions.has('lookupVin:0'), false, 'ordinary arrivals still respect an intentional rerun');
   const reopened = make();
   await reopened.load('A');
   assert.deepEqual([...reopened.state.doneActions].sort(), ['addDriver:0', 'lookupVin:0'], 'the durable records also restore after panel reload');
+  assert.deepEqual(JSON.parse(JSON.stringify(reopened.state.unitForms.vehicles)), { Id_Marker_101: 0 }, 'the unit forms too');
 });
 
 for (const failAt of ['first-guard-read', 'second-guard-read', 'answer-transport']) {
@@ -4648,4 +4687,752 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   await sandbox.applyCheckChoice(4, intake.warnings[4].choices[2]);
   assert.equal(JSON.stringify(record), before);
   assert.deepEqual([...intake.done], []);
+});
+
+// ---------------------------------------------------------------------------------------------
+// GEICO (survey 2026-10-20): every step of the quote is one address (sales.geico.com/quote), the
+// Vehicles and Drivers & Incidents steps draw one unit's form at a time, and Final Quote Details,
+// MVR & CLUE and Payment Information are the agent's (src/carriers/geico.js).
+
+test('a stop is the carrier\'s stop page or, on a one-address application, a step that is the agent\'s', () => {
+  const state = { tab: { id: 3 }, tabSteps: new Map([[3, 'MVR & CLUE']]) };
+  const context = { state };
+  vm.runInNewContext(extractFunction('stopNoteFor'), context);
+  const progressive = { stopPages: { DeclinationNotice: 'Declined.' } };
+  assert.equal(context.stopNoteFor(progressive, 'DeclinationNotice'), 'Declined.');
+  assert.equal(context.stopNoteFor(progressive, 'Rates'), null);
+  // The step the tab is on (noteStep), or the one the caller has from the page.
+  assert.equal(context.stopNoteFor(geico, '/quote'), geico.stopSteps['MVR & CLUE']);
+  assert.equal(context.stopNoteFor(geico, '/quote', 'Payment Information'), geico.stopSteps['Payment Information']);
+  assert.equal(context.stopNoteFor(geico, '/quote', 'Quote & Coverages'), null);
+  state.tabSteps.set(3, 'Vehicles');
+  assert.equal(context.stopNoteFor(geico, '/quote'), null);
+  state.tabSteps.delete(3);
+  assert.equal(context.stopNoteFor(geico, '/quote'), null, 'a step not read yet is no stop here (the kit reads it on the page)');
+  // Step names count only for a carrier with steps; no steps known, or no carrier: no stop.
+  state.tabSteps.set(3, 'MVR & CLUE');
+  assert.equal(context.stopNoteFor({ stopSteps: geico.stopSteps }, '/quote'), null);
+  delete state.tabSteps;
+  assert.equal(context.stopNoteFor(geico, '/quote'), null);
+  assert.equal(context.stopNoteFor(undefined, '/quote'), null);
+  // Every other check goes through it: only its own lookup, the stop page's arrival log and the
+  // stop page's wording read stopPages.
+  assert.equal((SIDEPANEL.match(/stopPages\?\.\[/g) ?? []).length, 3);
+});
+
+// The stop harness on GEICO's quote: the tab on `step` (as noteStep heard it).
+function stopStepHarness(step = 'Quote & Coverages') {
+  const t = stopHarness();
+  Object.assign(t.state, { tab: { id: 4, url: 'https://sales.geico.com/quote', carrier: geico }, tabSteps: new Map([[4, step]]), autoPages: new Set(['/quote']), reports: new Map() });
+  Object.assign(t.context, { knownStep, renderSite: () => t.context.showStopPage() });
+  vm.runInContext(extractFunction('noteStep'), t.context);
+  const show = (to, event = 'step_shown', extra = {}) => t.context.noteStep({ ra: 'usage', event, page: '/quote', step: to, ...extra }, { tab: { id: 4 }, frameId: 0 });
+  return { ...t, show };
+}
+
+test('on a stop step nothing is filled, clicked or scheduled, manual or automatic, and Luna is not asked', async () => {
+  for (const step of Object.keys(geico.stopSteps)) {
+    const t = stopStepHarness(step);
+    await t.context.fillPage({ auto: 'page' });
+    await t.context.fillPage();
+    t.context.scheduleAutoFill('/quote');
+    await t.context.autoFill('/quote');
+    assert.deepEqual([t.kits, t.timers, t.state.filling], [[], [], false], step);
+    const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: '/quote' };
+    assert.equal(t.context.aiActionCurrent(ctx, []), false, step);
+    // Said as the step's own, about no client (no "GEICO stopped this quote").
+    const note = t.ui['stop-note'];
+    assert.equal(note.hidden, false);
+    const text = JSON.stringify(note.children);
+    assert.ok(text.includes(`${step}: yours`) && text.includes(geico.stopSteps[step]), step);
+    assert.match(text, /Nothing on this step is filled or clicked/);
+    assert.match(text, /"role":"alert"/);
+    assert.doesNotMatch(text, /stopped this quote|another client/);
+  }
+  // The step before them is filled and followed up as before.
+  const t = stopStepHarness('Quote & Coverages');
+  t.context.scheduleAutoFill('/quote');
+  assert.equal(t.timers.length, 1);
+  assert.equal(t.context.aiActionCurrent({ intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: '/quote' }, []), true);
+  t.context.showStopPage();
+  assert.equal(t.ui['stop-note'].hidden, true);
+});
+
+test('each arrival at a stop step is logged once as a fill_run blocker, with the step\'s name only', () => {
+  const t = stopStepHarness('Quote & Coverages');
+  t.show('Final Quote Details');
+  // Shown again, new questions on it, changes on it: the same arrival.
+  t.show('Final Quote Details');
+  t.show('Final Quote Details', 'new_fields');
+  t.show('Final Quote Details', 'field_changes', { changes: [] });
+  assert.equal(t.stops().length, 1);
+  // A reloaded document on it is a new one, as for a stop page.
+  t.show('Final Quote Details', 'page_view', { from: null, fields: 3 });
+  t.show('MVR & CLUE');
+  const stops = JSON.parse(JSON.stringify(t.stops()));
+  assert.deepEqual(stops.map((e) => [e.blockerList, e.step, e.auto, e.page, e.advanced]), [
+    [['stop: Final Quote Details'], 'Final Quote Details', 'stop', '/quote', null],
+    [['stop: Final Quote Details'], 'Final Quote Details', 'stop', '/quote', null],
+    [['stop: MVR & CLUE'], 'MVR & CLUE', 'stop', '/quote', null],
+  ]);
+  for (const k of ['filled', 'failed', 'noData', 'kept', 'leftRequired', 'unknown', 'ms', 'fields']) assert.equal(stops[0][k], 0, k);
+  assert.doesNotMatch(JSON.stringify(t.logged), /Synthetic Client/);
+  assert.equal(t.ui['stop-note'].hidden, false);
+  // Back on a step that is not the agent's: nothing logged, the note goes. A heading that is no
+  // step name changes nothing.
+  t.show('Quote & Coverages');
+  t.show('Jordan Avery Trucking LLC');
+  assert.equal(t.stops().length, 3);
+  assert.equal(t.ui['stop-note'].hidden, true);
+  // Practice copies log nothing; nor does a tab that showed it before this client was loaded,
+  // though the step's note (about no client) is said all the same.
+  const practice = stopStepHarness();
+  practice.state.tab.carrier = { ...geico, practice: true };
+  practice.show('MVR & CLUE');
+  assert.deepEqual(practice.stops(), []);
+  const before = stopStepHarness();
+  before.state.layoutHold = true;
+  before.show('Payment Information');
+  assert.deepEqual(before.stops(), []);
+  assert.equal(before.ui['stop-note'].hidden, false);
+});
+
+// The site strip and Fill button as renderSite draws them, for a tab on `step`.
+function siteHarness(carrier, step) {
+  const el = () => ({ hidden: false, textContent: '', disabled: false, className: '', title: '', alt: '', children: [], isConnected: true,
+    classList: { toggle() {} }, replaceChildren(...c) { this.children = c; }, getAttribute: () => null, removeAttribute() {}, cloneNode: () => el(), replaceWith() {} });
+  const ui = {};
+  const state = { tab: { id: 4, url: 'https://sales.geico.com/quote', carrier }, intake: { record: {} }, filling: false, reports: new Map(), autoPages: new Set(), tabSteps: new Map(step ? [[4, step]] : []) };
+  const context = { state, URL, inExtension: true, $: (id) => (ui[id] ??= el()), h: (tag, props) => ({ tag, props }), quoteProgress,
+    reportShown: () => false, currentReportKey: () => '4|/quote', showStopPage() {}, showStateNote() {}, showReviewMode() {}, renderSteps() {} };
+  vm.runInNewContext(`${PAGE_HELPERS}\n${extractFunction('renderSite')}`, context);
+  context.renderSite();
+  return ui;
+}
+
+test('on a stop step the panel offers no fill; on the other steps it names the step', () => {
+  const stopped = siteHarness(geico, 'MVR & CLUE');
+  assert.equal(stopped.fill.disabled, true);
+  assert.equal(stopped['fill-hint'].textContent, 'Nothing on this page is filled or clicked.');
+  assert.deepEqual([stopped['site-step'].textContent, stopped['site-count'].textContent], ['MVR & CLUE page', 'Step 8 of 9']);
+  const vehicles = siteHarness(geico, 'Vehicles');
+  assert.equal(vehicles.fill.disabled, false);
+  assert.deepEqual([vehicles['site-step'].textContent, vehicles['site-count'].textContent], ['Vehicles page', 'Step 3 of 9']);
+  assert.equal(vehicles['fill-hint'].textContent, 'Nothing is submitted. Review, then click Next yourself.');
+  // A step not read yet: no stop in the panel (the kit still reads the page), no place in the strip.
+  const unread = siteHarness(geico, null);
+  assert.equal(unread.fill.disabled, false);
+  assert.equal(unread['site-step'].hidden, true);
+});
+
+test('a one-address step about one vehicle or driver is scoped like Progressive\'s vehicle and driver pages', () => {
+  const state = { tab: { id: 1, carrier: geico }, active: { vehicles: 1, drivers: 2, trailers: 0 }, tabSteps: new Map([[1, 'Vehicles']]), viewTabs: new Map([[1, 1]]) };
+  const context = { state };
+  vm.runInNewContext(['reportKey', 'editScope', 'viewOf'].map(extractFunction).join('\n'), context);
+  assert.equal(context.reportKey(1, '/quote', geico, { vehicles: 1 }, 'Vehicles'), '1|/quote|v1|Vehicles');
+  assert.equal(context.reportKey(1, '/quote', geico, { drivers: 2 }, 'Drivers & Incidents'), '1|/quote|d2|Drivers & Incidents');
+  assert.equal(context.reportKey(1, '/quote', geico, { vehicles: 1 }, 'Quote & Coverages'), '1|/quote||Quote & Coverages', 'other steps are quote-wide');
+  // With no step given: the tab's, and the vehicle the panel's picker is on.
+  assert.equal(context.reportKey(1, '/quote', geico), '1|/quote|v1|Vehicles');
+  assert.equal(context.viewOf(1, '/quote', geico), 't1:v1');
+  assert.equal(context.editScope('/quote', geico), '/quote|v1');
+  // The step the page named wins over the tab's, which can lag it by a message.
+  state.tabSteps.set(1, 'Business & Owner Info');
+  assert.equal(context.editScope('/quote', geico), '/quote|s:Business & Owner Info');
+  assert.equal(context.editScope('/quote', geico, 'Vehicles'), '/quote|v1');
+  assert.equal(context.editScope('/quote', geico, 'Drivers & Incidents'), '/quote|d2');
+  assert.equal(context.reportKey(1, '/quote', geico, state.active, 'Vehicles'), '1|/quote|v1|Vehicles');
+  // Another tab's report is never scoped by the step of the tab in front.
+  assert.equal(context.reportKey(2, '/quote', geico), '2|/quote||');
+  // AmWINS (no unit steps) and Progressive (page names) as before.
+  assert.equal(context.reportKey(1, '/application/businessauto', amwins, { vehicles: 1 }, 'Vehicles'), '1|/application/businessauto||Vehicles');
+  const progressive = { vehiclePages: ['AddVehicle'], driverPage: 'AddDriver' };
+  assert.equal(context.reportKey(1, 'AddVehicle', progressive, { vehicles: 1 }), '1|AddVehicle|v1|');
+  assert.equal(context.reportKey(1, 'Rates', progressive, { vehicles: 1 }), '1|Rates||');
+  assert.equal(context.viewOf(1, 'AddDriver', progressive), 't1:d2');
+});
+
+// GEICO asks one field name on several steps and forms at one address (the owner's and each
+// driver's name, the business's and each vehicle's ZIP, a vehicle's and a trailer's year): an
+// owner's name corrected on Business & Owner Info left every driver's name unfilled, a vehicle
+// edit the trailer form's answers (review 2026-10-20). An edit is kept to its step and form.
+test('an agent edit on GEICO is scoped by its step, and on a unit step by its form; other carriers as before', () => {
+  const state = { tab: { id: 1, carrier: geico }, active: { vehicles: 1, drivers: 2, trailers: 0 }, tabSteps: new Map([[1, 'Business & Owner Info']]), unitShown: null };
+  const context = { state };
+  vm.runInNewContext(extractFunction('editScope'), context);
+  const scope = (step, shown = null) => { state.unitShown = shown; return context.editScope('/quote', geico, step); };
+  assert.equal(scope('Business & Owner Info'), '/quote|s:Business & Owner Info', 'a step about no unit');
+  assert.equal(scope('Quote & Coverages'), '/quote|s:Quote & Coverages');
+  // No unit form seen on the step yet: the picker's unit, as before.
+  assert.equal(scope('Vehicles'), '/quote|v1');
+  assert.equal(scope('Drivers & Incidents'), '/quote|d2');
+  // The form the tab's latest fill ended on there: its unit, or the form itself while held.
+  assert.equal(scope('Vehicles', { step: 'Vehicles', list: 'vehicles', id: 'Id_V', held: false }), '/quote|v1');
+  assert.equal(scope('Vehicles', { step: 'Vehicles', list: 'trailers', id: 'Id_T', held: false }), '/quote|tr0', 'the trailer form is the trailer\'s');
+  assert.equal(scope('Vehicles', { step: 'Vehicles', list: 'vehicles', id: 'Id_H', held: true }), '/quote|f:Id_H', 'a held form is its own');
+  assert.equal(scope('Drivers & Incidents', { step: 'Drivers & Incidents', list: 'drivers', id: 'Id_D', held: true }), '/quote|f:Id_D');
+  // A form seen on another step says nothing about this one.
+  assert.equal(scope('Drivers & Incidents', { step: 'Vehicles', list: 'vehicles', id: 'Id_H', held: true }), '/quote|d2');
+  assert.equal(scope('Business & Owner Info', { step: 'Vehicles', list: 'vehicles', id: 'Id_H', held: true }), '/quote|s:Business & Owner Info');
+  // A step not known: the page. None given: the tab's.
+  assert.equal(scope(null), '/quote');
+  assert.equal(scope(undefined), '/quote|s:Business & Owner Info');
+  state.tabSteps.delete(1);
+  assert.equal(scope(undefined), '/quote');
+  // Another tab's units and form (rememberFill), not the tab in front's.
+  state.unitShown = { step: 'Vehicles', list: 'vehicles', id: 'Id_H', held: true };
+  assert.equal(context.editScope('/quote', geico, 'Vehicles', { active: { vehicles: 0 }, shown: { step: 'Vehicles', list: 'vehicles', id: 'Id_V', held: false } }), '/quote|v0');
+  assert.equal(context.editScope('/quote', geico, 'Vehicles', { active: { vehicles: 0 }, shown: null }), '/quote|v0');
+  // Progressive and AmWINS as before, whatever the tab's shown form.
+  state.tabSteps.set(1, 'Vehicles');
+  const progressive = { vehiclePages: ['AddVehicle'], trailerPages: ['AddTrailer'], driverPage: 'AddDriver' };
+  assert.deepEqual(['AddVehicle', 'AddTrailer', 'AddDriver', 'Rates'].map((p) => context.editScope(p, progressive)), ['AddVehicle|v1', 'AddTrailer|tr0', 'AddDriver|d2', 'Rates']);
+  assert.deepEqual(['Vehicles', 'Drivers', null, undefined].map((s) => context.editScope('/application/businessauto', amwins, s)), Array(4).fill('/application/businessauto'));
+});
+
+test('a GEICO fill always leaves the page\'s own edits alone, and the kit gets the rest by step, unit and form', () => {
+  const context = { state: { active: { vehicles: 0, drivers: 0, trailers: 0 } } };
+  vm.runInNewContext(`${extractFunction('fillSkip')}\n${extractFunction('fillSkipBy')}`, context);
+  const keys = new Map([
+    ['/quote', new Set(['ref:GiveNote'])],
+    ['/quote|s:Business & Owner Info', new Set(['ref:GiveLastName', 'ref:GiveZip'])],
+    ['/quote|v1', new Set(['ref:GiveYear'])], ['/quote|v0', new Set(['ref:GiveVin'])], ['/quote|tr0', new Set(['ref:GiveOtherVehicleType'])],
+    ['/quote|d1', new Set(['ref:GiveFirstName'])], ['/quote|f:Id_H', new Set(['ref:GiveCostNew'])],
+    ['/other', new Set(['a'])], ['/other|s:Vehicles', new Set(['b'])], ['/other|f:Id_X', new Set(['c'])],
+  ]);
+  assert.deepEqual([...context.fillSkip(keys, '/quote|v1', '/quote', geico)], ['ref:GiveNote'], 'only the edits made where no step was read');
+  assert.deepEqual(JSON.parse(JSON.stringify(context.fillSkipBy(keys, '/quote', geico, { vehicles: 1, drivers: 1, trailers: 0 }))), {
+    steps: { 'Business & Owner Info': ['ref:GiveLastName', 'ref:GiveZip'] },
+    units: { vehicles: ['ref:GiveYear'], trailers: ['ref:GiveOtherVehicleType'], drivers: ['ref:GiveFirstName'] },
+    forms: { Id_H: ['ref:GiveCostNew'] },
+    stepUnits: { Vehicles: 'vehicles', 'Drivers & Incidents': 'drivers' },
+  });
+  assert.deepEqual([...context.fillSkipBy(keys, '/quote', geico).units.vehicles], ['ref:GiveVin'], 'the picker\'s units when none are given');
+  assert.deepEqual(JSON.parse(JSON.stringify(context.fillSkipBy(new Map(), '/quote', geico))), {
+    steps: {}, units: { vehicles: [], trailers: [], drivers: [] }, forms: {}, stepUnits: { Vehicles: 'vehicles', 'Drivers & Incidents': 'drivers' } });
+  // Other carriers: the fill's own scope, as before, and nothing by step.
+  const progressive = { id: 'progressive', vehiclePages: ['AddVehicle'] };
+  const prog = new Map([['AddVehicle|v1', new Set(['a'])], ['AddVehicle', new Set(['b'])]]);
+  assert.deepEqual([...context.fillSkip(prog, 'AddVehicle|v1', 'AddVehicle', progressive)], ['a']);
+  assert.deepEqual([...context.fillSkip(prog, 'AddVehicle|v0', 'AddVehicle', progressive)], []);
+  assert.equal(context.fillSkipBy(prog, 'AddVehicle', progressive), null);
+  const amw = new Map([['/application/businessauto', new Set(['c'])]]);
+  assert.deepEqual([...context.fillSkip(amw, '/application/businessauto', '/application/businessauto', amwins)], ['c']);
+  assert.equal(context.fillSkipBy(amw, '/application/businessauto', amwins), null);
+});
+
+test('both fills hand GEICO\'s kit its skip and skipBy for the plan\'s units; other carriers no skipBy', async () => {
+  for (const [carrier, which] of [[geico, 'fillPage'], [geico, 'autoFill'], [undefined, 'fillPage'], [undefined, 'autoFill']]) {
+    const t = fillHarness(carrier ? { carrier } : {});
+    t.context.fillOptions = (c, extra) => extra;
+    t.state.agentKeys = new Map([['/quote-A', new Set(['ref:GiveNote'])], ['/quote-A|s:Business & Owner Info', new Set(['ref:GiveLastName'])], ['/quote-A|v1', new Set(['ref:GiveYear'])]]);
+    t.state.active = { drivers: 0, vehicles: 1, trailers: 0 };
+    const run = which === 'fillPage' ? t.context.fillPage() : t.context.autoFill('/quote-A');
+    await t.started;
+    assert.deepEqual([...t.seen.options.skip], ['ref:GiveNote'], `${which}: the page's own`);
+    if (carrier) {
+      assert.deepEqual(JSON.parse(JSON.stringify(t.seen.options.skipBy)).steps, { 'Business & Owner Info': ['ref:GiveLastName'] });
+      assert.deepEqual([...t.seen.options.skipBy.units.vehicles], ['ref:GiveYear'], `${which}: the plan's vehicle`);
+    } else assert.equal('skipBy' in t.seen.options, false, `${which}: AmWINS' options as before`);
+    t.release(t.results);
+    await run;
+  }
+});
+
+test('a continued GEICO step is remembered per vehicle by the step the kit read, not the tab\'s', () => {
+  const state = { active: { vehicles: 0, drivers: 0 }, doneSteps: new Set(), autoPaused: false, tab: { id: 1, carrier: geico }, tabSteps: new Map([[1, 'Business & Owner Info']]) };
+  const context = { state, knownStep, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, persistDoneActions: () => {} };
+  vm.runInNewContext(['stepScope', 'afterFill'].map(extractFunction).join('\n'), context);
+  context.afterFill([{ advanced: 'Next', signatureBefore: 'before', stepKey: 'Vehicles' }], { carrier: geico, page: '/quote' });
+  context.afterFill([{ advanced: 'Next', signatureBefore: 'before', stepKey: 'Business Class & USDOT' }], { carrier: geico, page: '/quote' });
+  assert.deepEqual([...state.doneSteps], ['/quote|v0|Vehicles', '/quote||Business Class & USDOT']);
+});
+
+// The fill options as the panel builds them: the declaration itself, with its scope helpers.
+function fillOptionsOf(state, carrier, active) {
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  const context = { state, URL, knownStep, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
+  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\nglobalThis.fillOptions = fillOptions;`, context);
+  return context.fillOptions(carrier, {}, false, active);
+}
+
+// The panel's word on the tab's step lags the page by a message (the recorder's step comes after
+// the questions), and GEICO's Vehicles is continued once per vehicle.
+test('steps already continued reach the kit by their own step: per vehicle on GEICO, as before elsewhere', () => {
+  const base = { active: { vehicles: 0, drivers: 0, trailers: 0 }, agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), intake: { record: {} } };
+  const quote = { ...base, tab: { id: 1, url: 'https://sales.geico.com/quote', carrier: geico }, tabSteps: new Map([[1, 'Business & Owner Info']]),
+    doneSteps: new Set(['/quote||Business Class & USDOT', '/quote|v0|Vehicles', '/quote|d0|Drivers & Incidents', '/other|v0|Vehicles']) };
+  const done = (state, carrier, active) => [...fillOptionsOf(state, carrier, active).doneSteps];
+  // The tab still said Business & Owner Info as the fill on Vehicles began.
+  assert.deepEqual(done(quote, geico), ['Business Class & USDOT', 'Vehicles', 'Drivers & Incidents']);
+  assert.deepEqual(done(quote, geico, { vehicles: 1, drivers: 0, trailers: 0 }), ['Business Class & USDOT', 'Drivers & Incidents'], 'the next vehicle\'s Vehicles is a new step');
+  assert.deepEqual(done(quote, geico, { vehicles: 0, drivers: 1, trailers: 0 }), ['Business Class & USDOT', 'Vehicles'], 'and the next driver\'s Drivers & Incidents');
+  quote.tabSteps.set(1, 'Vehicles');
+  quote.active = { vehicles: 1, drivers: 0, trailers: 0 };
+  assert.deepEqual(done(quote, geico, { vehicles: 0, drivers: 0, trailers: 0 }), ['Business Class & USDOT', 'Vehicles', 'Drivers & Incidents'], 'the plan\'s vehicle, not the picker\'s');
+  // AmWINS: its raw headings (not always step names) pass as before, whatever the tab's step and row.
+  const amw = { ...base, tab: { id: 1, url: 'https://x.test/application/businessauto', carrier: amwins }, tabSteps: new Map([[1, 'Vehicles']]),
+    doneSteps: new Set(['/application/businessauto||Draft Application Saved! / Vehicles', '/application/businessauto||Drivers', '/other||Drivers']) };
+  assert.deepEqual(done(amw, amwins, { vehicles: 1, drivers: 1, trailers: 0 }), ['Draft Application Saved! / Vehicles', 'Drivers']);
+  // Progressive: per vehicle on its vehicle pages, by the page alone.
+  const progressive = { id: 'progressive', vehiclePages: ['/AddVehicle'] };
+  const prog = { ...base, tab: { id: 1, url: 'https://x.test/AddVehicle', carrier: progressive }, tabSteps: new Map(),
+    doneSteps: new Set(['/AddVehicle|v0|Vehicle Information', '/AddVehicle|v1|Vehicle Information / Common Questions', '/Rates||Rates']) };
+  assert.deepEqual(done(prog, progressive, { vehicles: 1 }), ['Vehicle Information / Common Questions']);
+});
+
+test('the kit is told the stop steps by name, and the plan\'s units with the forms they were filled on', () => {
+  const state = { tab: { id: 1, url: 'https://sales.geico.com/quote', carrier: geico }, active: { vehicles: 0, drivers: 0, trailers: 0 }, agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(), tabSteps: new Map(),
+    intake: { record: { vehicles: [{}, {}], drivers: [{}, {}], trailers: [{}] } }, unitForms: { vehicles: { Id_Marker_101: 0 }, drivers: {}, trailers: {} } };
+  const options = fillOptionsOf(state, geico, { vehicles: 1, drivers: 1, trailers: 0 });
+  assert.deepEqual([...options.stopSteps], ['Final Quote Details', 'MVR & CLUE', 'Payment Information']);
+  assert.deepEqual(JSON.parse(JSON.stringify(options.units)), {
+    active: { vehicles: 1, drivers: 1, trailers: 0 }, count: { vehicles: 2, drivers: 2, trailers: 1 }, bound: { vehicles: { Id_Marker_101: 0 }, drivers: {}, trailers: {} } });
+  options.units.bound.vehicles.Id_Marker_202 = 1;
+  assert.deepEqual(Object.keys(state.unitForms.vehicles), ['Id_Marker_101'], 'a copy: nothing the kit does writes the panel\'s record');
+  // Other carriers: no stop steps, nothing bound, the plan's units all the same.
+  const plain = fillOptionsOf({ ...state, unitForms: undefined, intake: { record: {} } }, { id: 'progressive' });
+  assert.deepEqual(JSON.parse(JSON.stringify([plain.stopSteps, plain.units])), [[], {
+    active: { vehicles: 0, drivers: 0, trailers: 0 }, count: { vehicles: 0, drivers: 0, trailers: 0 }, bound: { vehicles: {}, drivers: {}, trailers: {} } }]);
+  // Both fills hand over the units their plan was built for.
+  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance, ctx\.active\);/g) ?? []).length, 2);
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  assert.match(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start)), /stopSteps: Object\.keys\(carrier\.stopSteps \?\? \{\}\)/);
+});
+
+// Survey 2026-10-20: once a vehicle is saved, GEICO draws the next vehicle's form at the same
+// address, and the automatic follow-up fill would type the saved vehicle's VIN and year into it.
+// The form a fill answered is bound to the unit its plan was for; the agent's pick lets it go.
+test('the unit form a fill answered is bound to the unit its plan was for, on the fill\'s own tab', async () => {
+  const h = harness();
+  const persisted = [];
+  h.context.persistUnitForms = (tabId, forms) => persisted.push([tabId, JSON.parse(JSON.stringify(forms))]);
+  h.state.tab = { id: 7, url: 'https://sales.geico.com/quote', carrier: geico };
+  h.state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
+  const fill = (frames, active, tabId = 7) => h.rememberFill(frames, { tabId, carrier: geico, page: '/quote', scope: '/quote', active });
+  fill([{ filled: [], unitForm: { list: 'vehicles', id: 'Id_YesNoPreQuoteHaveFullVinActivity_85493' } }], { vehicles: 0, drivers: 0, trailers: 0 });
+  // The next form, filled once the agent picked vehicle 2, and an Add Driver form.
+  fill([{ filled: [], unitForm: { list: 'vehicles', id: 'Id_YesNoPreQuoteHaveFullVinActivity_37768' } }, { filled: [], unitForm: { list: 'drivers', id: 'Id_GiveDriverRelationshipToBusiness_83448' } }], { vehicles: 1, drivers: 1, trailers: 0 });
+  assert.deepEqual(JSON.parse(JSON.stringify(h.state.unitForms)), {
+    vehicles: { Id_YesNoPreQuoteHaveFullVinActivity_85493: 0, Id_YesNoPreQuoteHaveFullVinActivity_37768: 1 }, drivers: { Id_GiveDriverRelationshipToBusiness_83448: 1 }, trailers: {} });
+  assert.deepEqual(persisted.map(([id]) => id), [7, 7], 'kept for a panel reload');
+  // A fill without a unit form, or with one the kit named oddly, binds nothing.
+  fill([{ filled: [] }, { filled: [], unitForm: { list: 'pets', id: 'x' } }, { filled: [], unitForm: { list: 'vehicles', id: '' } }], { vehicles: 0 });
+  assert.equal(persisted.length, 2);
+  // A fill finishing while another tab is in front binds on its own tab.
+  h.state.tab = { id: 8, url: 'https://sales.geico.com/quote', carrier: geico };
+  fill([{ filled: [], unitForm: { list: 'trailers', id: 'Id_GiveOtherVehicleType_55555' } }], { vehicles: 0, drivers: 0, trailers: 0 });
+  assert.deepEqual(JSON.parse(JSON.stringify(h.state.tabSessions.get(7).unitForms.trailers)), { Id_GiveOtherVehicleType_55555: 0 });
+  assert.deepEqual(JSON.parse(JSON.stringify(h.state.unitForms.trailers)), {});
+  // Each quote tab keeps its own forms when the agent switches tabs.
+  const geicoTab = (id) => ({ id, url: 'https://sales.geico.com/quote' });
+  h.context.carrierForUrl = () => geico;
+  h.state.tab = { ...geicoTab(1), carrier: geico };
+  h.state.unitForms = { vehicles: { Id_Marker_1: 0 }, drivers: {}, trailers: {} };
+  h.setActiveTab(geicoTab(2));
+  await h.refreshTab();
+  assert.deepEqual(JSON.parse(JSON.stringify(h.state.unitForms)), { vehicles: {}, drivers: {}, trailers: {} });
+  h.setActiveTab(geicoTab(1));
+  await h.refreshTab();
+  assert.deepEqual(JSON.parse(JSON.stringify(h.state.unitForms.vehicles)), { Id_Marker_1: 0 });
+  // Never in the usage log: a fill's events carry no unit form.
+  const frame = { fields: 1, filled: [], unitForm: { list: 'vehicles', id: 'Id_Marker_1' }, unitHeld: { list: 'vehicles', id: 'Id_Marker_2' } };
+  assert.doesNotMatch(JSON.stringify(fillEvents([frame], { carrier: 'geico', page: '/quote', redact: (x) => x })), /Id_Marker/);
+});
+
+test('a GEICO fill notes the unit form it ended on, and files the agent\'s edits during it by that form', async () => {
+  const h = harness();
+  h.context.persistUnitForms = () => {};
+  h.state.tab = { id: 7, url: 'https://sales.geico.com/quote', carrier: geico };
+  h.state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
+  h.state.unitShown = null;
+  const active = { vehicles: 1, drivers: 0, trailers: 0 };
+  // `scope`: what the fill began with, which GEICO's bookkeeping no longer uses.
+  const fill = (frames, tabId = 7) => h.rememberFill(frames.map((f) => ({ filled: [], ...f })), { tabId, carrier: geico, page: '/quote', scope: '/quote|v0', active });
+  const edited = (maps = h.state) => Object.fromEntries([...maps.agentKeys].filter(([, k]) => k.size).map(([s, k]) => [s, [...k]]));
+  const shown = (maps = h.state) => JSON.parse(JSON.stringify(maps.unitShown));
+  fill([{ stepKey: 'Vehicles', unitForm: { list: 'vehicles', id: 'Id_V2' }, protectedKeys: ['ref:GiveYear'] }]);
+  assert.deepEqual(shown(), { step: 'Vehicles', list: 'vehicles', id: 'Id_V2', held: false });
+  // The trailer form, filled after it.
+  fill([{ stepKey: 'Vehicles', unitForm: { list: 'trailers', id: 'Id_T1' }, protectedKeys: ['ref:GiveCostExcludingPermanentlyAttachedEquipment'] }]);
+  assert.deepEqual(shown(), { step: 'Vehicles', list: 'trailers', id: 'Id_T1', held: false });
+  // A held form wins over a filled one: it is the one the agent looks at.
+  fill([{ stepKey: 'Vehicles', unitForm: { list: 'vehicles', id: 'Id_V2' }, unitHeld: { list: 'vehicles', id: 'Id_V3' }, protectedKeys: ['ref:GiveOtherVehicleType'] }]);
+  assert.deepEqual(shown(), { step: 'Vehicles', list: 'vehicles', id: 'Id_V3', held: true });
+  fill([{ stepKey: 'Vehicles', unitHeld: { list: 'vehicles', id: 'Id_V3' } }, { unitForm: { list: 'vehicles', id: 'Id_V2' } }]);
+  assert.equal(shown().id, 'Id_V3', 'in any frame');
+  // A step about no unit leaves the form as it was; a step the kit couldn't read too, and its edits
+  // go to the page, left alone by every fill.
+  fill([{ stepKey: 'Business & Owner Info', protectedKeys: ['ref:GiveLastName'] }]);
+  fill([{ stepKey: '', protectedKeys: ['ref:GiveDescription'] }]);
+  assert.equal(shown().id, 'Id_V3');
+  // A fill on a unit step that read nothing (the page never settled, Stop): the form may still be
+  // there, and an edit on it is still its own (verifier D5).
+  fill([{ stepKey: 'Vehicles', fields: 0, halted: true, reason: 'The page is still waiting on its server. Review and retry.' }]);
+  assert.deepEqual(shown(), { step: 'Vehicles', list: 'vehicles', id: 'Id_V3', held: true });
+  // A unit step that shows no form, read (its form closed, the owner's own driver form): noted with
+  // no form, and an edit there is the step's, never the picked driver's (verifier round 2, D3).
+  fill([{ stepKey: 'Drivers & Incidents', fields: 4, protectedKeys: ['ref:GiveFirstName'] }]);
+  assert.deepEqual(shown(), { step: 'Drivers & Incidents', list: null, id: null, held: false });
+  assert.deepEqual(edited(), {
+    '/quote|v1': ['ref:GiveYear'], '/quote|tr0': ['ref:GiveCostExcludingPermanentlyAttachedEquipment'], '/quote|f:Id_V3': ['ref:GiveOtherVehicleType'],
+    '/quote|s:Business & Owner Info': ['ref:GiveLastName'], '/quote': ['ref:GiveDescription'], '/quote|s:Drivers & Incidents': ['ref:GiveFirstName'],
+  });
+  // A fill finishing while another tab is in front: its own tab's form and keys.
+  h.state.unitShown = { step: 'Vehicles', list: 'vehicles', id: 'Id_V3', held: true };
+  fill([{ stepKey: 'Vehicles', unitForm: { list: 'vehicles', id: 'Id_V9' }, protectedKeys: ['ref:GiveZip'] }], 8);
+  const other = h.state.tabSessions.get(8);
+  assert.deepEqual([shown(other), edited(other)], [{ step: 'Vehicles', list: 'vehicles', id: 'Id_V9', held: false }, { '/quote|v1': ['ref:GiveZip'] }]);
+  assert.equal(shown().id, 'Id_V3', 'the tab in front keeps its own');
+  // A new tab starts with none; the tab's own comes back with it.
+  h.context.carrierForUrl = () => geico;
+  h.setActiveTab({ id: 9, url: 'https://sales.geico.com/quote' });
+  await h.refreshTab();
+  assert.equal(h.state.unitShown, null);
+  h.setActiveTab({ id: 7, url: 'https://sales.geico.com/quote' });
+  await h.refreshTab();
+  assert.equal(shown().id, 'Id_V3');
+  // Progressive: the scope the fill began with, as before, and no form noted.
+  const p = harness();
+  p.context.persistUnitForms = () => {};
+  p.state.tab = { ...quoteTab(1), carrier: { id: 'progressive' } };
+  p.rememberFill([{ filled: [], stepKey: 'Vehicles', unitForm: { list: 'vehicles', id: 'Id_V2' }, protectedKeys: ['k'] }], { tabId: 1, carrier: { id: 'progressive', vehiclePages: ['AddVehicle'] }, page: 'AddVehicle', scope: 'AddVehicle|v0', active });
+  assert.deepEqual([edited(p.state), p.state.unitShown ?? null], [{ 'AddVehicle|v0': ['k'] }, null]);
+});
+
+test('picking a unit in the panel lets go of the forms bound to it, and only those', () => {
+  const persisted = [];
+  const state = { tab: { id: 7 }, unitForms: { vehicles: { A: 0, B: 1, C: 1 }, drivers: { D: 1 }, trailers: {} } };
+  const context = { state, persistUnitForms: (tabId, forms) => persisted.push([tabId, JSON.parse(JSON.stringify(forms))]) };
+  vm.runInNewContext(extractFunction('releaseUnitForms'), context);
+  context.releaseUnitForms('vehicles', 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.unitForms)), { vehicles: { A: 0 }, drivers: { D: 1 }, trailers: {} });
+  assert.deepEqual(persisted, [[7, { vehicles: { A: 0 }, drivers: { D: 1 }, trailers: {} }]]);
+  context.releaseUnitForms('vehicles', 3);
+  context.releaseUnitForms('trailers', 0);
+  assert.equal(persisted.length, 1, 'nothing let go: nothing written');
+  state.unitForms = undefined;
+  context.releaseUnitForms('vehicles', 0);
+  assert.equal(persisted.length, 1, 'a tab with no unit forms');
+  // The form on the page is no exception: picking the next vehicle before saving this one's form
+  // must not let the next fill type the next vehicle into it (review 2026-10-20).
+  state.unitForms = { vehicles: { A: 0, B: 1 }, drivers: {}, trailers: {} };
+  state.unitShown = { step: 'Vehicles', list: 'vehicles', id: 'A', held: false };
+  context.releaseUnitForms('vehicles', 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.unitForms.vehicles)), { A: 0 });
+  assert.doesNotMatch(extractFunction('releaseUnitForms'), /unitShown/);
+  // The picker does it before the unit changes, before anything waits.
+  assert.match(extractFunction('renderPickers'), /releaseUnitForms\(list, i\);\s+state\.active\[list\] = i;\s+await save\(\);/);
+});
+
+test('unit forms are kept like helper records: across a panel reload, per intake and tab, gone with Clear or a new browser session', async () => {
+  const first = tabRecordsHarness();
+  first.state.unitForms = { vehicles: { Id_Marker_101: 0 }, drivers: { Id_Driver_202: 1 }, trailers: {} };
+  await first.context.persistUnitForms();
+  assert.deepEqual(first.localData['unitForms:A:7'], { vehicles: { Id_Marker_101: 0 }, drivers: { Id_Driver_202: 1 }, trailers: {} });
+  // The reloaded panel bound a form since it opened: its own binding stays.
+  const reload = tabRecordsHarness(first.localData, first.sessionData, first.locks);
+  reload.state.unitForms = { vehicles: { Id_Marker_303: 1 }, drivers: { Id_Driver_202: 0 }, trailers: {} };
+  await reload.context.restoreDoneActions(7);
+  assert.deepEqual(JSON.parse(JSON.stringify(reload.state.unitForms)), { vehicles: { Id_Marker_303: 1, Id_Marker_101: 0 }, drivers: { Id_Driver_202: 0 }, trailers: {} });
+  // Nothing bound: no record. Clear: gone with the intake's other records.
+  reload.state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
+  await reload.context.persistUnitForms();
+  assert.equal('unitForms:A:7' in first.localData, false);
+  reload.state.unitForms = { vehicles: { Id_Marker_404: 0 }, drivers: {}, trailers: {} };
+  await reload.context.persistUnitForms();
+  await reload.context.clearAgentKeys('A');
+  assert.equal('unitForms:A:7' in first.localData, false);
+  // Another intake's tab record is its own; a fresh browser session expires every one (tab ids
+  // are reused across restarts).
+  reload.setIntake('B');
+  await reload.context.persistUnitForms();
+  assert.ok(first.localData['unitForms:B:7']);
+  const restarted = tabRecordsHarness({ ...first.localData, tabRecordsSession: 'earlier-browser' });
+  restarted.setIntake('B');
+  await restarted.context.restoreDoneActions(7);
+  assert.deepEqual(JSON.parse(JSON.stringify(restarted.state.unitForms)), { vehicles: {}, drivers: {}, trailers: {} });
+  assert.equal(Object.keys(restarted.localData).some((k) => k.startsWith('unitForms:')), false);
+  // A damaged record restores only what it can.
+  const odd = tabRecordsHarness({ tabRecordsSession: 'same', 'unitForms:A:7': { vehicles: { Y: 'one', Z: -1, W: 2 }, drivers: 'x' } }, { tabRecordsSession: 'same' });
+  await odd.context.restoreDoneActions(7);
+  assert.deepEqual(JSON.parse(JSON.stringify(odd.state.unitForms)), { vehicles: { W: 2 }, drivers: {}, trailers: {} });
+});
+
+test('an automatic fill that holds a form as maybe another unit\'s shows its report', async () => {
+  for (const unitHeld of [null, { list: 'vehicles', id: 'Id_Marker_37768' }]) {
+    const t = fillHarness({ carrier: geico });
+    t.state.reportFor = { filled: 0 };
+    const run = t.context.autoFill('/quote-A');
+    await t.started;
+    t.release([{ frameId: 0, result: { ...t.results[0].result, stepKey: 'Vehicles', unitHeld } }]);
+    await run;
+    assert.equal(t.seen.rendered, unitHeld ? 1 : 0, 'the hold\'s item is in the report, not behind the last form\'s');
+  }
+});
+
+// GEICO's progress bar and title can disagree while a step is drawn: the kit halts and reads nothing
+// there (pagekit), and a fill on Vehicles once offered the pay plan and coverage lists to Luna.
+test('an automatic GEICO fill that halted on a step it couldn\'t read doesn\'t ask Luna; other halts as before', async () => {
+  const UNREAD = 'The step on screen could not be read (the progress bar and the page title disagree): fill again once the page settles.';
+  for (const [carrier, stepKey, asked] of [[geico, '', false], [geico, 'Not a step', false], [geico, 'Vehicles', true], [undefined, '', true], [undefined, 'Vehicles / A value', true]]) {
+    const t = fillHarness(carrier ? { carrier } : {});
+    let assisted = 0;
+    t.context.assistAfterFill = () => { assisted++; };
+    t.state.reportFor = { filled: 0 };
+    const run = t.context.autoFill('/quote-A');
+    await t.started;
+    t.release([{ frameId: 0, result: { ...t.results[0].result, stepKey, halted: true, reason: UNREAD } }]);
+    await run;
+    assert.equal(assisted, asked ? 1 : 0, `${carrier?.id ?? 'amwins'} on "${stepKey}"`);
+  }
+});
+
+test('an agent edit on GEICO is protected per vehicle or driver by the step it came with', () => {
+  const state = { intake: { record: {} }, tab: { id: 1, url: 'https://sales.geico.com/quote', carrier: geico }, filled: new Map(), labels: new Map(), choices: new Map(),
+    agentKeys: new Map(), visitedPages: new Set(), autoPages: new Set(), layoutReadyTabs: new Set(), layoutNewTabs: new Set(), quoteStates: new Map(),
+    active: { vehicles: 1, drivers: 0, trailers: 0 }, tabSteps: new Map([[1, 'Business & Owner Info']]) };
+  const context = { state, URL, $: () => ({ checked: false }), usage: { log() {}, currentSession: () => ({ keySalt: 's' }) }, redactor: () => (s) => s, redactionTerms: () => [],
+    fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), knownStep, viewOf: () => 't1', scheduleLayout() {}, scheduleAutoFill() {}, quoteStatePick: () => undefined,
+    persistAgentKeys() {}, settleRejectedAi: async () => false, answeredOnPage() {} };
+  vm.runInNewContext(`${PAGE_HELPERS}\n${extractFunction('onRecorderMessage')}`, context);
+  const change = (step, key) => context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: '/quote', step, changes: [{ key, before: '', after: 'x', agent: true }] }, { tab: { id: 1 }, frameId: 0 });
+  // The tab still says Business & Owner Info: the change's own step decides.
+  change('Vehicles', 'ref:GiveZip');
+  change('Business & Owner Info', 'ref:GiveBusinessName');
+  change('Drivers & Incidents', 'ref:GiveFirstName');
+  assert.deepEqual([...state.agentKeys].map(([scope, keys]) => [scope, [...keys]]), [['/quote|v1', ['ref:GiveZip']], ['/quote|s:Business & Owner Info', ['ref:GiveBusinessName']], ['/quote|d0', ['ref:GiveFirstName']]]);
+  // On the trailer form the latest fill ended on: the trailer's. On a form held as maybe another
+  // unit's: that form's. A step the recorder couldn't name: the tab's.
+  state.agentKeys.clear();
+  state.unitShown = { step: 'Vehicles', list: 'trailers', id: 'Id_GiveOtherVehicleType_55555', held: false };
+  change('Vehicles', 'ref:GiveYear');
+  state.unitShown = { step: 'Vehicles', list: 'vehicles', id: 'Id_YesNoPreQuoteHaveFullVinActivity_37768', held: true };
+  change('Vehicles', 'ref:GiveOtherVehicleType');
+  change('Somewhere else', 'ref:GiveDescription');
+  assert.deepEqual([...state.agentKeys].map(([scope, keys]) => [scope, [...keys]]), [['/quote|tr0', ['ref:GiveYear']], ['/quote|f:Id_YesNoPreQuoteHaveFullVinActivity_37768', ['ref:GiveOtherVehicleType']],
+    ['/quote|s:Business & Owner Info', ['ref:GiveDescription']]]);
+  // The panel hears the step before the same message is scoped.
+  assert.match(extractFunction('wire'), /addListener\(noteStep\);\s+chrome\.runtime\.onMessage\.addListener\(onRecorderMessage\);/);
+});
+
+// Verifier, round 2 (D1, D3, D4): an edit on a unit form no fill had read yet (the trailer form just
+// opened, a form the kit would hold) was filed under the picker's vehicle, then typed over by the
+// next fill; one on GEICO's owner check (identity questions under the Vehicles title, no unit form)
+// under vehicle 1. The recorder now says which unit forms are on screen (pagekit unitFormsNow).
+test('a GEICO edit on a unit step is filed by the unit forms on screen with it; other carriers as before', () => {
+  const state = { tab: { id: 1, carrier: geico }, active: { vehicles: 1, drivers: 2, trailers: 0 }, tabSteps: new Map([[1, 'Vehicles']]),
+    unitShown: { step: 'Vehicles', list: 'vehicles', id: 'Id_V1', held: false }, unitForms: { vehicles: { Id_V1: 1 }, drivers: {}, trailers: {} } };
+  const context = { state };
+  vm.runInNewContext(extractFunction('changeScopes'), context);
+  const scopes = (step, forms, carrier = geico, page = '/quote') => [...context.changeScopes(page, carrier, step, forms)];
+  // A step about no unit: the step's, whatever is on screen. No step known: the page's; none given: the tab's.
+  assert.deepEqual(scopes('Business & Owner Info', [{ list: 'vehicles', id: 'Id_V1' }]), ['/quote|s:Business & Owner Info']);
+  assert.deepEqual(scopes('Quote & Coverages', null), ['/quote|s:Quote & Coverages']);
+  assert.deepEqual(scopes(null, []), ['/quote']);
+  assert.deepEqual(scopes(undefined, []), ['/quote|s:Vehicles']);
+  // A unit step with no unit form on screen (the owner check, a list): the step's.
+  assert.deepEqual(scopes('Vehicles', []), ['/quote|s:Vehicles']);
+  assert.deepEqual(scopes('Drivers & Incidents', []), ['/quote|s:Drivers & Incidents']);
+  // The trailer form just opened, while the tab's latest fill ended on the vehicle's: the trailer's.
+  assert.deepEqual(scopes('Vehicles', [{ list: 'trailers', id: 'Id_T1' }]), ['/quote|f:Id_T1', '/quote|tr0']);
+  // The active vehicle's form: its own and the vehicle's.
+  assert.deepEqual(scopes('Vehicles', [{ list: 'vehicles', id: 'Id_V1' }]), ['/quote|f:Id_V1', '/quote|v1']);
+  // A form the kit holds (new while the active vehicle was filled on another, or filled for
+  // another vehicle): its own only, before any fill has held it.
+  assert.deepEqual(scopes('Vehicles', [{ list: 'vehicles', id: 'Id_V2' }]), ['/quote|f:Id_V2']);
+  state.unitForms.vehicles = { Id_V0: 0 };
+  assert.deepEqual(scopes('Vehicles', [{ list: 'vehicles', id: 'Id_V0' }]), ['/quote|f:Id_V0']);
+  // No form filled for the active vehicle yet: a new one is its.
+  assert.deepEqual(scopes('Vehicles', [{ list: 'vehicles', id: 'Id_V2' }]), ['/quote|f:Id_V2', '/quote|v1']);
+  // Two forms on screen; a driver's form; odd entries skipped.
+  assert.deepEqual(scopes('Vehicles', [{ list: 'vehicles', id: 'Id_V2' }, { list: 'trailers', id: 'Id_T1' }, { list: 'vehicles', id: 'Id_V2' }]), ['/quote|f:Id_V2', '/quote|v1', '/quote|f:Id_T1', '/quote|tr0']);
+  assert.deepEqual(scopes('Drivers & Incidents', [{ list: 'drivers', id: 'Id_D1' }]), ['/quote|f:Id_D1', '/quote|d2']);
+  assert.deepEqual(scopes('Vehicles', [{ list: 'pets', id: 'x' }, { list: 'vehicles', id: '' }, null]), ['/quote|s:Vehicles']);
+  // No forms known (no fill in that document named its markers): the tab's latest form, as before.
+  assert.deepEqual(scopes('Vehicles', null), ['/quote|v1']);
+  assert.deepEqual(scopes('Vehicles', undefined), ['/quote|v1']);
+  state.unitShown = { step: 'Vehicles', list: 'vehicles', id: 'Id_H', held: true };
+  assert.deepEqual(scopes('Vehicles', null), ['/quote|f:Id_H']);
+  // The units and forms given, not the panel's.
+  assert.deepEqual([...context.changeScopes('/quote', geico, 'Vehicles', [{ list: 'vehicles', id: 'Id_V0' }], { active: { vehicles: 0 }, bound: { vehicles: { Id_V0: 0 } } })], ['/quote|f:Id_V0', '/quote|v0']);
+  // Progressive and AmWINS: editScope's one scope, whatever the recorder says is on screen.
+  const progressive = { vehiclePages: ['AddVehicle'], trailerPages: ['AddTrailer'], driverPage: 'AddDriver' };
+  const forms = [{ list: 'vehicles', id: 'Id_V1' }];
+  for (const f of [forms, [], null]) {
+    assert.deepEqual(['AddVehicle', 'AddTrailer', 'AddDriver', 'Rates'].map((p) => scopes(undefined, f, progressive, p)), [['AddVehicle|v1'], ['AddTrailer|tr0'], ['AddDriver|d2'], ['Rates']]);
+    assert.deepEqual(['Vehicles', 'Drivers', null, undefined].map((s) => scopes(s, f, amwins, '/application/businessauto')), Array(4).fill(['/application/businessauto']));
+  }
+});
+
+test('the recorder\'s field_changes file a GEICO edit under each scope its forms give, the tab\'s latest form when it names none', () => {
+  const state = { intake: { record: {} }, tab: { id: 1, url: 'https://sales.geico.com/quote', carrier: geico }, filled: new Map(), labels: new Map(), choices: new Map(),
+    agentKeys: new Map(), visitedPages: new Set(), autoPages: new Set(), layoutReadyTabs: new Set(), layoutNewTabs: new Set(), quoteStates: new Map(),
+    active: { vehicles: 1, drivers: 0, trailers: 0 }, tabSteps: new Map([[1, 'Vehicles']]),
+    unitShown: { step: 'Vehicles', list: 'vehicles', id: 'Id_V1', held: false }, unitForms: { vehicles: { Id_V1: 1 }, drivers: {}, trailers: {} } };
+  let persisted = 0;
+  const context = { state, URL, $: () => ({ checked: false }), usage: { log() {}, currentSession: () => ({ keySalt: 's' }) }, redactor: () => (s) => s, redactionTerms: () => [],
+    fieldChangeEvent: (c) => ({ type: 'field_change', key: c.key }), knownStep, viewOf: () => 't1', scheduleLayout() {}, scheduleAutoFill() {}, quoteStatePick: () => undefined,
+    persistAgentKeys() { persisted++; }, settleRejectedAi: async () => false, answeredOnPage() {} };
+  vm.runInNewContext(`${PAGE_HELPERS}\n${extractFunction('onRecorderMessage')}`, context);
+  const change = (key, forms, page = '/quote', step = 'Vehicles') => context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page, step, ...(forms === undefined ? {} : { forms }),
+    changes: [{ key, before: '', after: 'x', agent: true }] }, { tab: { id: 1 }, frameId: 0 });
+  const edited = () => [...state.agentKeys].map(([scope, keys]) => [scope, [...keys]]);
+  change('ref:GiveYear', [{ list: 'trailers', id: 'Id_T1' }]);
+  change('ref:GiveLastName', []);
+  change('ref:GiveOtherVehicleType', [{ list: 'vehicles', id: 'Id_V2' }]);
+  change('ref:GiveVin', undefined);
+  assert.deepEqual(edited(), [['/quote|f:Id_T1', ['ref:GiveYear']], ['/quote|tr0', ['ref:GiveYear']], ['/quote|s:Vehicles', ['ref:GiveLastName']],
+    ['/quote|f:Id_V2', ['ref:GiveOtherVehicleType']], ['/quote|v1', ['ref:GiveVin']]]);
+  assert.equal(persisted, 4, 'kept once per batch');
+  // Progressive: its page's scope as before, whatever the message carries.
+  state.agentKeys.clear();
+  state.tab = { id: 1, url: 'https://x.test/AddVehicle', carrier: { id: 'progressive', vehiclePages: ['AddVehicle'] } };
+  change('k', [{ list: 'trailers', id: 'Id_T1' }], 'AddVehicle', undefined);
+  change('r', [], 'Rates', undefined);
+  assert.deepEqual(edited(), [['AddVehicle|v1', ['k']], ['Rates', ['r']]]);
+});
+
+test('a GEICO form bound to its unit takes the edits filed under it to that unit, for the unit\'s next form', () => {
+  const h = harness();
+  const persisted = [];
+  h.context.persistUnitForms = () => {};
+  h.context.persistAgentKeys = (tabId) => persisted.push(tabId);
+  h.state.tab = { id: 7, url: 'https://sales.geico.com/quote', carrier: geico };
+  h.state.unitForms = { vehicles: { Id_V1: 0 }, drivers: {}, trailers: {} };
+  h.state.unitShown = { step: 'Vehicles', list: 'vehicles', id: 'Id_V2', held: true };
+  h.state.agentKeys = new Map([['/quote|f:Id_V2', new Set(['ref:GiveOtherVehicleType'])], ['/quote|v1', new Set(['ref:GiveVin'])], ['/quote|f:Id_X', new Set(['ref:GiveYear'])]]);
+  const edited = (maps = h.state) => Object.fromEntries([...maps.agentKeys].filter(([, k]) => k.size).map(([s, k]) => [s, [...k]]));
+  const fill = (unitForm, active, tabId = 7) => h.rememberFill([{ fields: 9, filled: [], stepKey: 'Vehicles', unitForm }], { tabId, carrier: geico, page: '/quote', scope: '/quote', active });
+  // The agent edited the held form, picked vehicle 2, and the next fill answered the form for it.
+  fill({ list: 'vehicles', id: 'Id_V2' }, { vehicles: 1, drivers: 0, trailers: 0 });
+  assert.deepEqual(edited(), { '/quote|f:Id_V2': ['ref:GiveOtherVehicleType'], '/quote|v1': ['ref:GiveVin', 'ref:GiveOtherVehicleType'], '/quote|f:Id_X': ['ref:GiveYear'] });
+  assert.deepEqual(persisted, [7, 7], 'the fill\'s edits, then the copy');
+  // A form with nothing filed under it: nothing copied.
+  fill({ list: 'trailers', id: 'Id_T1' }, { vehicles: 1, drivers: 0, trailers: 0 });
+  assert.deepEqual(persisted, [7, 7, 7]);
+  assert.equal(edited()['/quote|tr0'], undefined);
+  // A fill finishing while another tab is in front: that tab's keys.
+  h.context.tabMaps(8).agentKeys.set('/quote|f:Id_V5', new Set(['ref:GiveYear']));
+  fill({ list: 'vehicles', id: 'Id_V5' }, { vehicles: 0, drivers: 0, trailers: 0 }, 8);
+  assert.deepEqual(edited(h.state.tabSessions.get(8)), { '/quote|f:Id_V5': ['ref:GiveYear'], '/quote|v0': ['ref:GiveYear'] });
+  assert.equal(edited()['/quote|v0'], undefined);
+  // Progressive: nothing of the kind.
+  const p = harness();
+  p.context.persistUnitForms = () => {};
+  p.state.tab = { ...quoteTab(1), carrier: { id: 'progressive' } };
+  p.state.agentKeys = new Map([['AddVehicle|f:Id_V2', new Set(['k'])]]);
+  p.rememberFill([{ fields: 3, filled: [], unitForm: { list: 'vehicles', id: 'Id_V2' } }], { tabId: 1, carrier: { id: 'progressive', vehiclePages: ['AddVehicle'] }, page: 'AddVehicle', scope: 'AddVehicle|v0', active: { vehicles: 0 } });
+  assert.deepEqual(edited(p.state), { 'AddVehicle|f:Id_V2': ['k'] });
+});
+
+// Verifier, round 2 (L1): the undo recomputed the scope, and after Next or a pick took the field
+// back from another step's or unit's edits.
+test('undoing Mark done takes the field back from where it was marked, though the step or form moved on', async () => {
+  const state = { tab: { id: 1, url: 'https://sales.geico.com/quote', carrier: geico }, active: { vehicles: 1, drivers: 0, trailers: 0 }, tabSteps: new Map([[1, 'Vehicles']]),
+    unitShown: { step: 'Vehicles', list: 'vehicles', id: 'Id_H', held: true }, agentKeys: new Map([['/quote|v1', new Set(['ref:GiveYear'])]]), filling: false };
+  const node = () => ({ hidden: true, children: [], focus() {}, replaceChildren(...c) { this.children = c; } });
+  const itemOf = () => {
+    const parts = { '.mark-done': node(), '.need-note': node() };
+    return { dataset: {}, classList: { remove() {} }, querySelector: (sel) => parts[sel] };
+  };
+  const undos = [];
+  const context = { state, URL, persistAgentKeys: async () => {}, pageOf: (url) => new URL(url).pathname, recount() {},
+    settleNeed: (item, how, undo) => { item.dataset.settled = how; undos.push(undo); } };
+  vm.runInNewContext(`${extractFunction('markDone')}\n${extractFunction('undoMarkDone')}`, context);
+  const keys = (scope) => [...(state.agentKeys.get(scope) ?? [])];
+  // Marked on a held form; the agent then picks its vehicle and a fill binds it.
+  await context.markDone(itemOf(), 'ref:GiveYear', 1, '/quote');
+  assert.deepEqual(keys('/quote|f:Id_H'), ['ref:GiveYear']);
+  state.unitShown = { step: 'Vehicles', list: 'vehicles', id: 'Id_H', held: false };
+  await undos[0]();
+  assert.deepEqual([keys('/quote|f:Id_H'), keys('/quote|v1')], [[], ['ref:GiveYear']], 'the vehicle\'s own edit stays');
+  // Marked on Business & Owner Info; the agent then clicks Next.
+  state.tabSteps.set(1, 'Business & Owner Info');
+  await context.markDone(itemOf(), 'ref:GiveLastName', 1, '/quote');
+  state.tabSteps.set(1, 'Drivers & Incidents');
+  state.agentKeys.set('/quote|d0', new Set(['ref:GiveLastName']));
+  await undos[1]();
+  assert.deepEqual([keys('/quote|s:Business & Owner Info'), keys('/quote|d0')], [[], ['ref:GiveLastName']]);
+  // Mark done hands its own scope to the undo.
+  assert.match(extractFunction('markDone'), /undoMarkDone\(item, key, tabId, page, scope\)/);
+});
+
+// Verifier, round 2 (L3): GEICO's progress bar and title disagree for a moment right after Next;
+// the kit halts there reading nothing (pagekit stepUnread), and that paused every automatic fill
+// on the quote until the agent clicked Fill.
+test('a step the kit couldn\'t read pauses nothing, and an automatic fill there is tried once more until a fill reads a step', () => {
+  const UNREAD = 'The step on screen could not be read (the progress bar and the page title disagree): fill again once the page settles.';
+  const h = harness();
+  h.context.persistUnitForms = () => {};
+  const retries = [];
+  h.context.scheduleAutoFill = (page) => retries.push(page);
+  const quote = { id: 7, url: 'https://sales.geico.com/quote', carrier: geico };
+  h.state.tab = quote;
+  h.state.unitShown = null;
+  const unread = { fields: 0, filled: [], halted: true, reason: UNREAD, stepUnread: true, stepKey: '' };
+  const read = { fields: 6, filled: [], stepKey: 'Vehicles' };
+  const fill = (frames, auto = false) => h.rememberFill(frames, { tabId: 7, carrier: geico, page: '/quote', active: { vehicles: 0, drivers: 0, trailers: 0 }, auto });
+  const retryTimers = () => h.scheduled.filter((s) => s.ms === 1500);
+  h.state.autoPending = true;
+  fill([unread], true);
+  assert.deepEqual([h.state.autoPaused, h.state.autoPending, h.state.unreadRetried, h.cleared.length], [false, true, true, 0], 'no pause, pending work kept');
+  assert.equal(retryTimers().length, 1);
+  retryTimers()[0].fn();
+  assert.deepEqual(retries, ['/quote']);
+  // Unread again (the retry, or the page's own automatic fill): no second retry.
+  fill([unread], 'page');
+  assert.equal(retryTimers().length, 1, 'one retry');
+  assert.equal(h.state.autoPaused, false);
+  // A fill that reads a step: the next unread step gets its retry.
+  fill([read], true);
+  assert.equal(h.state.unreadRetried, false);
+  fill([unread], 'page');
+  assert.equal(retryTimers().length, 2);
+  // Read since the retry was set, or the tab is on another page: no retry.
+  fill([read]);
+  retryTimers()[1].fn();
+  fill([unread], true);
+  h.state.tab = { ...quote, url: 'https://sales.geico.com/dashboard' };
+  retryTimers()[2].fn();
+  h.state.tab = quote;
+  assert.deepEqual(retries, ['/quote']);
+  // A fill the agent asked for is not retried, nor paused.
+  fill([read]);
+  fill([unread]);
+  assert.deepEqual([retryTimers().length, h.state.autoPaused, h.state.unreadRetried], [3, false, false]);
+  // Any other halt pauses as before, an unread frame beside it or not.
+  fill([unread, { fields: 2, filled: [], halted: true, reason: 'You changed a field during the fill.' }], true);
+  assert.equal(h.state.autoPaused, true);
+  // Kept per tab, reset with a new intake.
+  assert.match(extractFunction('refreshTab'), /'autoPaused', 'unreadRetried',/);
+  assert.match(SIDEPANEL, /state\.unitShown = null;\n\s+state\.unreadRetried = false;/);
+});
+
+test('both fills tell their bookkeeping whether they were automatic: only an automatic one is retried on a step the kit couldn\'t read', async () => {
+  const UNREAD = 'The step on screen could not be read (the progress bar and the page title disagree): fill again once the page settles.';
+  for (const [which, retried] of [['autoFill', true], ['fillPage', false], ['fillPage auto', true]]) {
+    const t = fillHarness({ carrier: geico });
+    const timers = [];
+    t.context.setTimeout = (fn, ms) => { timers.push(ms); return 1; };
+    t.state.reportFor = { filled: 0 };
+    const run = which === 'autoFill' ? t.context.autoFill('/quote-A') : t.context.fillPage(which === 'fillPage auto' ? { auto: 'page' } : {});
+    await t.started;
+    t.release([{ frameId: 0, result: { ...t.results[0].result, fields: 0, filled: [], protectedKeys: [], actions: [], stepKey: '', halted: true, reason: UNREAD, stepUnread: true } }]);
+    await run;
+    assert.deepEqual([t.state.autoPaused, timers.includes(1500)], [false, retried], which);
+  }
+});
+
+test('the report of a step the kit couldn\'t read doesn\'t say automatic filling paused; another halt\'s still does', () => {
+  const UNREAD = 'The step on screen could not be read (the progress bar and the page title disagree): fill again once the page settles.';
+  const state = { tab: { id: 7, url: 'Quote' } };
+  const { context } = reportHarness(state);
+  const empty = { fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [] };
+  context.renderReport([{ ...empty, halted: true, reason: UNREAD, stepUnread: true }]);
+  assert.equal(state.reportFor.error, UNREAD);
+  context.renderReport([{ ...empty, halted: true, reason: 'The page is still waiting on its server. Review and retry.' }]);
+  assert.equal(state.reportFor.error, 'Automatic filling and helpers paused. The page is still waiting on its server. Review and retry.');
+  context.renderReport([{ ...empty, halted: true, reason: UNREAD, stepUnread: true }, { ...empty, halted: true, reason: 'You stopped the fill.' }]);
+  assert.equal(state.reportFor.error, 'Automatic filling and helpers paused. You stopped the fill.', 'the frame that paused is the one said');
 });

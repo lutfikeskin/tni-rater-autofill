@@ -8,6 +8,22 @@
 
 const tidy = (s) => String(s ?? '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
+// GEICO's element names and ids, Id_<data-model name>_<render number> (a checkbox group's box:
+// checkbox-Id_<name>_<n>-<box>), read as src/content/field-key.js dataName reads them. The number
+// changes on every redraw, so a layout recorded before the kit sent `ref` for them (the FL captures
+// of 2026-10-20) named one question differently on every step and after every Recalculate.
+const DATA_NAME = /^Id_([A-Za-z][A-Za-z0-9]*)_\d+(?:maskedField|-shadow)?$/;
+const BOX_NAME = /^checkbox-Id_([A-Za-z][A-Za-z0-9]*)_\d+-([A-Za-z0-9]+)$/;
+function dataName(f) {
+  const box = String(f.id ?? '').match(BOX_NAME);
+  if (box) return `${box[1]}.${box[2]}`;
+  for (const s of [f.name, f.id]) {
+    const m = String(s ?? '').match(DATA_NAME);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 // A question's identity on a page: its question id, else its element id, data-id or name, else its
 // kind and label. One with none of them (no label either), or one that repeats on the page (a row
 // per vehicle), can't be told apart and is left out (null).
@@ -15,6 +31,9 @@ export function fieldId(f) {
   // Its data-model name first (recorded since 0.9.9): question ids are reassigned (2026-10-07).
   if (f.ref) return `ref:${f.ref}`;
   if (f.q) return f.q;
+  // A GEICO question recorded without its name: the name its id carries, as the kit now sends it.
+  const name = dataName(f);
+  if (name) return `ref:${name}`;
   if (f.id) return `#${f.id}`;
   if (f.dataId) return `data:${f.dataId}`;
   if (f.name) return `name:${f.name}`;

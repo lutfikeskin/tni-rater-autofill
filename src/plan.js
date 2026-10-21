@@ -75,6 +75,9 @@ function actionSteps(carrier, record, active) {
       path: `action.${a.id}`,
       name: `Click ${a.id}`,
       pages: [].concat(a.page ?? []),
+      // The carrier's steps it is clicked on, on a one-address application whose step is read from
+      // the page (GEICO's progress bar): never on another step, whose button may read the same.
+      steps: a.steps ? [].concat(a.steps) : null,
       text: resolve(a.text) ?? null,
       token: a.token ?? null,
       near: a.near ?? null,
@@ -128,6 +131,14 @@ function actionSteps(carrier, record, active) {
 // Rows of one question for several vehicles or trailers (Progressive's Rates shows every unit's
 // coverages on one page): each step finds its own row by the unit's year, make and model.
 const unitRows = (record) => (record.vehicles?.length ?? 0) > 1 || (record.trailers?.length ?? 0) > 0;
+
+// A form told by a question only it asks (`whenShown` / `unlessShown`, GEICO's vehicle, trailer
+// and driver forms): its data-model name, a pattern its text must match, and the unit it is for
+// ('vehicles', 'drivers', 'trailers'). A function gets the record and the active units.
+function shownOn(cond, record, active) {
+  const c = typeof cond === 'function' ? cond(record, active) : cond;
+  return c?.field ? { field: c.field, label: c.label ?? null, unit: c.unit ?? null } : null;
+}
 
 function fieldSteps(rules, record, carrier, active) {
   const review = !supportedClass(record, carrier);
@@ -205,6 +216,11 @@ function fieldSteps(rules, record, carrier, active) {
       // else its question on the page: exact text(s), or `label` (re) on these pages,
       ask: rule.ask ? [].concat(rule.ask) : null,
       pages: rule.page ? [].concat(rule.page) : null,
+      // on these steps of a one-address application (read from the page: GEICO's progress bar),
+      steps: rule.steps ? [].concat(rule.steps) : null,
+      // while a form's own question is on the page (or isn't), for the unit that form is for,
+      whenShown: shownOn(rule.whenShown, record, active),
+      unlessShown: shownOn(rule.unlessShown, record, active),
       // a select, radio, checkbox or text box, when a text is shared by two kinds of field,
       control: rule.control ?? null,
       // Its data-model name only on its own pages (`pageOnly`: a trailer's questions carry the
@@ -230,7 +246,8 @@ function fieldSteps(rules, record, carrier, active) {
       notWithin: rule.notWithin ?? null,
       note,
       ignore,
-      verifyOnly: !!rule.verifyOnly,
+      // Checked against the intake, never typed (a VIN decode's year): may depend on the unit.
+      verifyOnly: typeof rule.verifyOnly === 'function' ? !!rule.verifyOnly(record, active) : !!rule.verifyOnly,
       // Our answer replaces what the page put there (e.g. a lookup's body type).
       replace: !!rule.replace,
       // What a lookup put there wins over the intake's wording (no "page differs" flag).

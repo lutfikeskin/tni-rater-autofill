@@ -63,7 +63,7 @@ function tabRecordsReady() {
     const previous = (await local.get(TAB_RECORDS_SESSION_KEY))[TAB_RECORDS_SESSION_KEY];
     if (previous !== nonce) {
       // Also expire legacy records without a nonce: their numeric tabs cannot be identified.
-      await local.remove((await storedKeys(local)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX)));
+      await local.remove((await storedKeys(local)).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX) || k.startsWith(UNIT_FORMS_PREFIX)));
       await local.set({ [AGENT_KEYS_KEY]: [], [TAB_RECORDS_SESSION_KEY]: nonce });
     }
   };
@@ -105,6 +105,22 @@ const doneActionsStore = inExtension && globalThis.chrome?.storage?.local
       clear: async (scope) => { for (const k of Object.keys(memory)) if (k.startsWith(scope ? `${DONE_ACTIONS_PREFIX}${scope}:` : DONE_ACTIONS_PREFIX)) delete memory[k]; },
       scopes: async () => Object.keys(memory).filter((k) => k.startsWith(DONE_ACTIONS_PREFIX)).map((k) => k.slice(DONE_ACTIONS_PREFIX.length).replace(/:[^:]*$/, '')) };
 let doneActionsQueue = Promise.resolve();
+// Which form on the page each vehicle, driver and trailer was filled on (state.unitForms), kept
+// per intake and tab like the helper records above and on the same queue: GEICO draws every unit's
+// form at one address, and a panel reloaded mid-quote must still know that the form it filled for
+// vehicle 1 isn't vehicle 2's. Element names only: `{ vehicles: { <name>: <index> }, … }`.
+const UNIT_FORMS_PREFIX = 'unitForms:';
+const unitFormsKey = (scope, tabId) => `${UNIT_FORMS_PREFIX}${scope}:${tabId}`;
+const anyUnitForms = (forms) => Object.values(forms ?? {}).some((list) => Object.keys(list ?? {}).length > 0);
+const unitFormsStore = inExtension && globalThis.chrome?.storage?.local
+  ? { get: async (scope, tabId) => { await tabRecordsReady(); return (await chrome.storage.local.get(unitFormsKey(scope, tabId)))[unitFormsKey(scope, tabId)] ?? null; },
+      set: async (scope, tabId, forms) => { await tabRecordsReady(); return anyUnitForms(forms) ? chrome.storage.local.set({ [unitFormsKey(scope, tabId)]: forms }) : chrome.storage.local.remove(unitFormsKey(scope, tabId)); },
+      clear: async (scope) => { await tabRecordsReady(); return chrome.storage.local.remove((await storedKeys(chrome.storage.local)).filter((k) => k.startsWith(scope ? `${UNIT_FORMS_PREFIX}${scope}:` : UNIT_FORMS_PREFIX))); },
+      scopes: async () => { await tabRecordsReady(); return (await storedKeys(chrome.storage.local)).filter((k) => k.startsWith(UNIT_FORMS_PREFIX)).map((k) => k.slice(UNIT_FORMS_PREFIX.length).replace(/:[^:]*$/, '')); } }
+  : { get: async (scope, tabId) => memory[unitFormsKey(scope, tabId)] ?? null,
+      set: async (scope, tabId, forms) => { if (anyUnitForms(forms)) memory[unitFormsKey(scope, tabId)] = forms; else delete memory[unitFormsKey(scope, tabId)]; },
+      clear: async (scope) => { for (const k of Object.keys(memory)) if (k.startsWith(scope ? `${UNIT_FORMS_PREFIX}${scope}:` : UNIT_FORMS_PREFIX)) delete memory[k]; },
+      scopes: async () => Object.keys(memory).filter((k) => k.startsWith(UNIT_FORMS_PREFIX)).map((k) => k.slice(UNIT_FORMS_PREFIX.length).replace(/:[^:]*$/, '')) };
 // When each intake (by fingerprint) was last loaded: the age of its edit keys and helper records,
 // which have no time of their own, so pruneAgentRecords can let old intakes' records go.
 const INTAKES_SEEN_KEY = 'intakesSeen';
@@ -224,7 +240,7 @@ function aiAnswerOrigin(frames, x, answerFrame) {
 
 function aiActionCurrent(ctx, list) {
   return !!ctx.intake && state.intake === ctx.intake && state.tab?.id === ctx.tabId
-    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page && !state.tab?.carrier?.stopPages?.[ctx.page]
+    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page && !stopNoteFor(state.tab?.carrier, ctx.page)
     && list.every(x => [...state.aiCache.values()].includes(x));
 }
 
@@ -267,6 +283,9 @@ const state = {
   autoTimer: null,
   autoPending: false,
   autoPaused: false,
+  // An automatic fill that found a step it couldn't read (pagekit stepUnread) is tried once more;
+  // per tab, until a fill reads a step again (rememberFill).
+  unreadRetried: false,
   pagePending: null, // a page the tab moved to while a fill ran: filled when that fill ends (runPendingPage)
   // Page layouts: the last one logged per quote and page (or vehicle/driver on its page), the
   // chain that logs them one at a time, the capture waiting for the page to be quiet, failures.
@@ -290,6 +309,14 @@ const state = {
   layoutErrorsLogged: new Set(),
   // Carrier buttons already clicked in this quote (Verify DOT, Bill plan options, …).
   doneActions: new Set(),
+  // The form each vehicle, driver and trailer was filled on, where every unit's form is drawn at
+  // one address (GEICO; pagekit unitForm): list -> { the form's marker element name -> its index }.
+  // Per tab like the above, and persisted with it (persistUnitForms).
+  unitForms: { vehicles: {}, drivers: {}, trailers: {} },
+  // The unit form the tab's latest fill ended on, held (pagekit unitHeld) or filled (unitForm):
+  // { step, list, id, held }, or null. The agent's edits on a unit step are scoped by it
+  // (editScope). Not persisted.
+  unitShown: null,
   visitedPages: new Set(),
   // AI assistant: the latest request (older answers arriving late are dropped) and suggestions
   // per page and set of questions, so a refill doesn't ask again.
@@ -523,7 +550,7 @@ function clearAgentKeys(scope) {
   epochs.set(scope, (epochs.get(scope) ?? 0) + 1);
   const task = agentKeysQueue.then(async () => agentKeysStore.set((await agentKeysStore.get()).filter((x) => x.scope !== scope)));
   agentKeysQueue = task.catch(() => {});
-  doneActionsQueue = doneActionsQueue.then(() => doneActionsStore.clear(scope)).catch(() => {});
+  doneActionsQueue = doneActionsQueue.then(() => Promise.all([doneActionsStore.clear(scope), unitFormsStore.clear(scope)])).catch(() => {});
   // Done once the helper records are gone too: the same PDF loaded again right after a Clear must
   // not get the cleared intake's helper ids back (units taken as already added; Codex on PR #65).
   return Promise.all([task, doneActionsQueue]);
@@ -537,8 +564,8 @@ async function pruneAgentRecords(current, now = Date.now()) {
   if (!current) return [];
   const seen = await intakesSeenStore.get();
   seen[current] = new Date(now).toISOString();
-  const [keys, doneScopes] = await Promise.all([agentKeysStore.get(), doneActionsStore.scopes()]);
-  for (const scope of new Set([...keys.map((x) => x.scope), ...doneScopes])) if (scope && !seen[scope]) seen[scope] = seen[current];
+  const [keys, doneScopes, unitScopes] = await Promise.all([agentKeysStore.get(), doneActionsStore.scopes(), unitFormsStore.scopes()]);
+  for (const scope of new Set([...keys.map((x) => x.scope), ...doneScopes, ...unitScopes])) if (scope && !seen[scope]) seen[scope] = seen[current];
   const others = Object.keys(seen).filter((scope) => scope !== current).sort((a, b) => Date.parse(seen[b]) - Date.parse(seen[a]));
   const gone = others.filter((scope, i) => i >= KEEP_INTAKES - 1 || now - Date.parse(seen[scope]) > KEEP_INTAKE_DAYS * 86_400_000);
   for (const scope of gone) delete seen[scope];
@@ -555,17 +582,32 @@ function persistDoneActions(tabId = state.tab?.id, doneActions = state.doneActio
   return doneActionsQueue;
 }
 
+// The tab's unit forms (state.unitForms), saved like its helper records: as they are now.
+function persistUnitForms(tabId = state.tab?.id, unitForms = state.unitForms) {
+  const scope = usage.currentSession()?.intakeId;
+  if (!scope || !Number.isInteger(tabId)) return Promise.resolve();
+  const forms = JSON.parse(JSON.stringify(unitForms ?? {}));
+  doneActionsQueue = doneActionsQueue.then(() => unitFormsStore.set(scope, tabId, forms)).catch(() => {});
+  return doneActionsQueue;
+}
+
 // Once per tab and intake while the panel is open (after a reload): later arrivals keep the
-// panel's own set, which may have dropped a button to run again (Print / Send on a return).
+// panel's own set, which may have dropped a button to run again (Print / Send on a return). The
+// tab's unit forms come back with them; a form the panel has bound since keeps its own unit.
 const doneRestored = new Set();
 async function restoreDoneActions(tabId) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId) || doneRestored.has(`${scope}|${tabId}`)) return;
   await doneActionsQueue; // a Clear's removal still queued is done first
-  const ids = await doneActionsStore.get(scope, tabId);
+  const [ids, forms] = await Promise.all([doneActionsStore.get(scope, tabId), unitFormsStore.get(scope, tabId)]);
   if (state.tab?.id !== tabId || usage.currentSession()?.intakeId !== scope) return;
   doneRestored.add(`${scope}|${tabId}`);
   for (const id of Array.isArray(ids) ? ids : []) if (typeof id === 'string' && id) state.doneActions.add(id);
+  const mine = state.unitForms ??= { vehicles: {}, drivers: {}, trailers: {} };
+  for (const list of ['vehicles', 'drivers', 'trailers']) {
+    const kept = forms?.[list] && typeof forms[list] === 'object' ? forms[list] : {};
+    for (const [id, i] of Object.entries(kept)) if (id && Number.isInteger(i) && i >= 0 && !Object.hasOwn(mine[list] ??= {}, id)) mine[list][id] = i;
+  }
 }
 
 // Durable decisions store display text separately from the exact live-value fingerprint.
@@ -744,6 +786,9 @@ async function loadFile(file) {
   state.active = { drivers: 0, vehicles: 0, trailers: 0 };
   state.filled = new Map();
   state.doneActions = new Set();
+  state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
+  state.unitShown = null;
+  state.unreadRetried = false;
   doneRestored.clear(); // every tab set was reset; retained helpers must rehydrate for this intake
   discardAiSuggestions();
   await store.set('session', usage.startSession(summary.intakeId));
@@ -1097,6 +1142,9 @@ function renderPickers() {
       h('div', { class: 'pills' }, record[list].map((it, i) => h('button', {
         type: 'button', class: 'pill', 'aria-pressed': String(state.active[list] === i),
         onclick: async () => {
+          // The agent says the form on the page is this one's: the form it was filled on before
+          // (unitForms) no longer holds this form back.
+          releaseUnitForms(list, i);
           state.active[list] = i;
           await save();
           renderPickers();
@@ -1105,6 +1153,20 @@ function renderPickers() {
           scheduleLayout(pageOf(state.tab?.url), 'picked');
         },
       }, `${i + 1}. ${describe(it) || what}`))))));
+}
+
+// Picking vehicle (driver, trailer) `index` in the panel: the forms bound to it (unitForms) are
+// let go, so the form on the page now can be filled for it (pagekit holds a form while the active
+// unit was filled on another one). Other units' forms stay theirs, the one on the page too: picking
+// the next vehicle before saving this one must not type the next vehicle into it. (The kit binds
+// only a form it answered something on, so the owner's Add Driver, which GEICO already lists and
+// the kit leaves empty, never holds the next driver back.)
+function releaseUnitForms(list, index) {
+  const forms = state.unitForms?.[list];
+  if (!forms) return;
+  const gone = Object.keys(forms).filter((id) => forms[id] === index);
+  for (const id of gone) delete forms[id];
+  if (gone.length) persistUnitForms(state.tab?.id, state.unitForms);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1136,12 +1198,12 @@ async function refreshTab() {
   }
   if (tab?.id !== state.tab?.id) {
     // `active`: each quote tab is on its own vehicle and driver (Continue is remembered per vehicle).
-    const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'agentKeys', 'doneActions', 'visitedPages', 'doneSteps', 'assistPage', 'active'];
+    const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'unreadRetried', 'agentKeys', 'doneActions', 'unitForms', 'unitShown', 'visitedPages', 'doneSteps', 'assistPage', 'active'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
     const previous = state.tabSessions.get(tab?.id);
     Object.assign(state, previous ?? {
-      filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false,
-      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(), assistPage: null,
+      filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false,
+      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null,
       active: { ...state.active },
     });
     if (state.intake) renderPickers();
@@ -1207,10 +1269,11 @@ function onRecorderMessage(msg, sender) {
     log({ type: 'page_view', carrier, page: msg.page, view: viewOf(sender.tab.id, samePage(msg.page)), from: msg.from, fields: msg.fields });
     // Arriving at a carrier stop page (a new document, a reload, or a move from another page; not
     // its "-Reload" re-render): logged as a fill run that stopped, with the page name only, and
-    // only once the tab is shown to be this intake's quote.
+    // only once the tab is shown to be this intake's quote. A step that is the agent's (stopSteps)
+    // is logged as the step arrives (noteStep), and its note shown here too.
     const stopPage = samePage(msg.page);
-    if (state.tab.carrier?.stopPages?.[stopPage]) {
-      if ((!msg.from || samePage(msg.from) !== stopPage) && stopPageIsOurs()) {
+    if (stopNoteFor(state.tab.carrier, stopPage)) {
+      if (state.tab.carrier.stopPages?.[stopPage] && (!msg.from || samePage(msg.from) !== stopPage) && stopPageIsOurs()) {
         log(...fillEvents([{ fields: 0, blockers: [`stop: ${stopPage}`] }], { carrier, page: stopPage, view: viewOf(sender.tab.id, stopPage), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text }));
       }
       showStopPage();
@@ -1243,8 +1306,11 @@ function onRecorderMessage(msg, sender) {
     return;
   }
   if (msg.event === 'field_changes') {
+    // The step the changes were made on, as the recorder read it with them: the panel's own word on
+    // the tab's step can come a message late, and GEICO's Vehicles is scoped per vehicle.
+    const step = knownStep(state.tab.carrier, msg.step);
     const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices, redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt,
-      step: knownStep(state.tab.carrier, msg.step) };
+      step };
     const view = viewOf(sender.tab.id, samePage(msg.page));
     log(...msg.changes.map((c) => ({ carrier, page: msg.page, view, ...fieldChangeEvent(c, ctx) })));
     scheduleLayout(layoutPage, 'changed');
@@ -1256,9 +1322,12 @@ function onRecorderMessage(msg, sender) {
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
-      const keys = state.agentKeys.get(editScope(page)) ?? new Set();
-      byAgent.forEach((c) => keys.add(c.key));
-      state.agentKeys.set(editScope(page), keys);
+      // On GEICO, by the unit forms on screen as the recorder saw them (changeScopes).
+      for (const scope of changeScopes(page, state.tab.carrier, step, msg.forms)) {
+        const keys = state.agentKeys.get(scope) ?? new Set();
+        byAgent.forEach((c) => keys.add(c.key));
+        state.agentKeys.set(scope, keys);
+      }
       persistAgentKeys();
       // What the agent answered is no longer left for them in step 3 (an answer cleared still is).
       answeredOnPage(page, byAgent.filter((c) => c.after !== '').map((c) => c.key));
@@ -1308,7 +1377,7 @@ function viewOf(tabId, page, carrier = state.tab?.carrier) {
     state.viewTabs.set(tabId, state.viewTabs.size + 1);
     saveViews();
   }
-  const entity = stepScope(page, carrier).split('|')[1];
+  const entity = stepScope(page, carrier, state.active, tabStep(carrier, tabId)).split('|')[1];
   return `t${state.viewTabs.get(tabId)}${entity ? `:${entity}` : ''}`;
 }
 
@@ -1322,19 +1391,114 @@ function resetViews() {
   saveViews();
 }
 
-function stepScope(page, carrier = state.tab?.carrier, active = state.active) {
-  const entity = carrier?.vehiclePages?.includes(page) ? `v${active.vehicles ?? 0}`
+// The step a tab of a one-address application (AmWINS, GEICO) is on, as the panel last heard it
+// (noteStep, renderReport); undefined for carriers whose pages have their own addresses. It can lag
+// the page by a message: callers that have the step the page itself named pass that instead.
+function tabStep(carrier = state.tab?.carrier, tabId = state.tab?.id) {
+  return carrier?.layoutSteps ? state.tabSteps?.get(tabId) : undefined;
+}
+
+// On a one-address application, a step about one vehicle or driver (GEICO's Vehicles, Drivers &
+// Incidents: `vehicleSteps`, `driverSteps`) is scoped like Progressive's Add Vehicle and Add Driver.
+function stepScope(page, carrier = state.tab?.carrier, active = state.active, step = tabStep(carrier)) {
+  const entity = carrier?.vehiclePages?.includes(page) || (step && carrier?.vehicleSteps?.includes(step)) ? `v${active.vehicles ?? 0}`
     : carrier?.trailerPages?.includes(page) ? `tr${active.trailers ?? 0}`
-      : carrier?.driverPage && carrier.driverPage === page ? `d${active.drivers ?? 0}` : '';
+      : (carrier?.driverPage && carrier.driverPage === page) || (step && carrier?.driverSteps?.includes(step)) ? `d${active.drivers ?? 0}` : '';
   return `${page}|${entity}|`;
 }
 
 // Agent edits are protected per page, and on a page about one vehicle or driver per that vehicle
 // or driver (the scope of stepScope): correcting the first vehicle's value on Add Vehicle doesn't
-// leave the next vehicle's box alone.
-function editScope(page, carrier = state.tab?.carrier) {
-  const scope = stepScope(page, carrier);
+// leave the next vehicle's box alone. `step`: the step the page named, when the caller has it.
+// Where one address holds every step and unit form (formScoped: GEICO), whose steps and forms
+// share field names (the owner's and each driver's name, the business's and each vehicle's ZIP):
+// per step (`|s:<step>`), and on a unit step per form, the one the tab's latest fill ended on
+// there (unitShown): its own while held as maybe another unit's (`|f:<id>`), else its unit's
+// (`|v<i>`, `|tr<j>`, `|d<k>`); with none there (the owner check, the owner's driver form), the
+// step's (`|s:<step>`, as changeScopes); before a fill read the step, the step's unit. No step
+// known: the page.
+// `active`, `shown`: those of the fill's tab (rememberFill).
+function editScope(page, carrier = state.tab?.carrier, step = tabStep(carrier), { active = state.active, shown = state.unitShown } = {}) {
+  if (formScoped(carrier)) {
+    if (!step) return page;
+    const list = carrier.vehicleSteps?.includes(step) ? 'vehicles' : carrier.driverSteps?.includes(step) ? 'drivers' : null;
+    if (!list) return `${page}|s:${step}`;
+    const here = shown?.step === step ? shown : null;
+    if (here?.held) return `${page}|f:${here.id}`;
+    if (here && !here.list) return `${page}|s:${step}`;
+    const unit = here?.list ?? list;
+    return `${page}|${{ vehicles: 'v', trailers: 'tr', drivers: 'd' }[unit]}${active?.[unit] ?? 0}`;
+  }
+  const scope = stepScope(page, carrier, state.active, step);
   return scope.endsWith('||') ? page : scope.slice(0, -1);
+}
+
+// One address for every step and every vehicle's, trailer's and driver's form (GEICO: its
+// vehicleSteps and driverSteps): the agent's edits are kept per step and form (editScope).
+function formScoped(carrier) {
+  return !!(carrier?.vehicleSteps?.length || carrier?.driverSteps?.length);
+}
+
+// One vehicle's (trailer's, driver's) edits on a one-address application: `|v<i>`, `|tr<j>`, `|d<k>`.
+function unitScope(page, list, index) {
+  return `${page}|${{ vehicles: 'v', trailers: 'tr', drivers: 'd' }[list]}${index ?? 0}`;
+}
+
+// Where the agent's changes on the page are filed (the recorder's field_changes). Where one address
+// holds every step and form (formScoped), on a unit step by the unit forms the recorder saw on
+// screen with them (`forms`: [{ list, id }], pagekit unitFormsNow): each form's own (`|f:<id>`),
+// and its unit's too unless the kit would hold it as maybe another unit's (bound to another, or new
+// while the active unit was filled on another: pagekit unitFormsOf, against the tab's unitForms).
+// None on screen (GEICO's owner check under Vehicles, a list): the step's. Forms not known (no fill
+// in that document has named them): the tab's latest form (editScope). Elsewhere one scope, as
+// editScope files it (Progressive and AmWINS as before). Element names only.
+function changeScopes(page, carrier = state.tab?.carrier, step = tabStep(carrier), forms = null, { active = state.active, bound = state.unitForms } = {}) {
+  if (!formScoped(carrier)) return [editScope(page, carrier, step)];
+  if (!step) return [page];
+  const list = carrier.vehicleSteps?.includes(step) ? 'vehicles' : carrier.driverSteps?.includes(step) ? 'drivers' : null;
+  if (!list) return [`${page}|s:${step}`];
+  if (!Array.isArray(forms)) return [editScope(page, carrier, step, { active })];
+  const shown = forms.filter((u) => ['vehicles', 'drivers', 'trailers'].includes(u?.list) && typeof u.id === 'string' && u.id);
+  if (!shown.length) return [`${page}|s:${step}`];
+  const scopes = new Set();
+  for (const { list: unit, id } of shown) {
+    const forUnit = bound?.[unit] ?? {};
+    const index = active?.[unit] ?? 0;
+    const boundTo = Object.hasOwn(forUnit, id) ? forUnit[id] : null;
+    const activeForm = Object.keys(forUnit).find((k) => forUnit[k] === index) ?? null;
+    const held = (boundTo != null && boundTo !== index) || (boundTo == null && activeForm != null && activeForm !== id);
+    scopes.add(`${page}|f:${id}`);
+    if (!held) scopes.add(unitScope(page, unit, index));
+  }
+  return [...scopes];
+}
+
+// The agent's keys a fill leaves alone wherever it is: its edit scope's. Where one address holds
+// every step and form (formScoped), only the page's own (edits made where no step was read): the
+// kit leaves each step's and form's alone as it reads them on screen (fillSkipBy).
+function fillSkip(agentKeys, scope, page, carrier) {
+  return [...(agentKeys?.get(formScoped(carrier) ? page : scope) ?? [])];
+}
+
+// Where one address holds every step and form (formScoped), the agent's edits by where they were
+// made, for the kit to leave alone on that step or form only (pagekit skipBy): per step (`|s:`),
+// the active units' (the plan's vehicle, trailer and driver), per form (`|f:`), and which steps are
+// about a vehicle or a driver. Null for other carriers. Keys and element names only.
+function fillSkipBy(agentKeys, page, carrier, active = state.active) {
+  if (!formScoped(carrier)) return null;
+  const keysOf = (scope) => [...(agentKeys?.get(scope) ?? [])];
+  const steps = {}, forms = {};
+  for (const [scope, keys] of agentKeys ?? []) {
+    const rest = String(scope).startsWith(`${page}|`) ? String(scope).slice(page.length + 1) : '';
+    if (rest.startsWith('s:')) steps[rest.slice(2)] = [...keys];
+    if (rest.startsWith('f:')) forms[rest.slice(2)] = [...keys];
+  }
+  return {
+    steps,
+    units: { vehicles: keysOf(`${page}|v${active?.vehicles ?? 0}`), trailers: keysOf(`${page}|tr${active?.trailers ?? 0}`), drivers: keysOf(`${page}|d${active?.drivers ?? 0}`) },
+    forms,
+    stepUnits: Object.fromEntries([...(carrier.vehicleSteps ?? []).map((s) => [s, 'vehicles']), ...(carrier.driverSteps ?? []).map((s) => [s, 'drivers'])]),
+  };
 }
 
 // Whether the agent settled this field on the page. A row key (name#<row>, field-key v3) is also
@@ -1344,13 +1508,17 @@ function agentEdited(page, key) {
   return !!keys && (keys.has(key) || keys.has(String(key ?? '').match(/^(.+)#\d+$/)?.[1]));
 }
 
-const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checked) => ({
+// `active`: the vehicle, driver and trailer the fill's plan is for (fillContext), which the agent's
+// picker may have left since.
+const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checked, active = state.active) => ({
   replaceChoices: !!carrier.replaceChoices,
   // Carriers whose pages never wait on a server per answer are filled a round at a time.
   batch: !!carrier.batch,
   // Steps of a one-address application already continued from (a step the agent goes back to
-  // isn't continued again).
-  doneSteps: [...state.doneSteps].filter((s) => s.startsWith(stepScope(pageOf(state.tab?.url), carrier))).map((s) => s.slice(stepScope(pageOf(state.tab?.url), carrier).length)),
+  // isn't continued again). Each entry is scoped by its own step, not the one the panel last heard
+  // the tab was on: GEICO's Vehicles is continued per vehicle, its other steps once a quote.
+  doneSteps: [...state.doneSteps].map((s) => [s, s.slice(s.indexOf('|', String(pageOf(state.tab?.url)).length + 1) + 1)])
+    .filter(([s, raw]) => s === stepScope(pageOf(state.tab?.url), carrier, active, carrier.layoutSteps ? knownStep(carrier, raw) : undefined) + raw).map(([, raw]) => raw),
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
   advance: autoAdvance && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
@@ -1363,6 +1531,17 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
   visitedPages: [...state.visitedPages],
   // The carrier's own stop (see showStopPage): the page kit refuses to fill or click there too.
   stopPages: Object.keys(carrier.stopPages ?? {}),
+  // Steps that are the agent's (GEICO's MVR & CLUE, Payment Information), by name: the kit reads
+  // the step on the page at the start and every round, as the panel's word on it can lag.
+  stopSteps: Object.keys(carrier.stopSteps ?? {}),
+  // Which vehicle, driver and trailer the plan is for, how many the intake lists, and the forms
+  // earlier fills on this tab answered for them (unitForms): a form that may be another unit's is
+  // left for the agent (pagekit unitHeld). Element names and numbers only.
+  units: {
+    active: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, active?.[list] ?? 0])),
+    count: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, state.intake?.record?.[list]?.length ?? 0])),
+    bound: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...state.unitForms?.[list] }])),
+  },
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
   skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
   ...extra,
@@ -1390,7 +1569,7 @@ function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = f
   return {
     run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite,
     intake: state.intake, revision: state.intakeRevision, ids: { session: session?.id ?? null, intakeId: session?.intakeId ?? null },
-    view: viewOf(tabId, page, carrier), scope: editScope(page, carrier), active: { ...state.active },
+    view: viewOf(tabId, page, carrier), scope: editScope(page, carrier, tabStep(carrier, tabId)), active: { ...state.active },
     settings: { autoAdvance: !!$('auto-advance').checked, autoFollowUps: !!$('auto-followups').checked, autoPages: !!$('auto-pages').checked, overwrite: !!overwrite },
   };
 }
@@ -1487,7 +1666,7 @@ function logFillError(ctx, error) {
 }
 
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
-  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || state.tab?.carrier?.stopPages?.[page]) return;
+  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page)) return;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
   state.autoTimer = setTimeout(() => { if (fillCurrent(ctx)) autoFill(page); }, 600);
@@ -1496,7 +1675,7 @@ function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.inta
 async function autoFill(page) {
   // The client may have been cleared while this fill was waiting to run.
   if (state.autoPaused || state.filling || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
-  if (state.tab.carrier.stopPages?.[page]) return;
+  if (stopNoteFor(state.tab.carrier, page)) return;
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
   // step themselves (same address, new questions). It's filled as a new page, with its report.
@@ -1523,10 +1702,11 @@ async function autoFill(page) {
     // The list page may have picked the next vehicle or driver: the plan is for that one.
     ctx.active = { ...state.active };
     const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
-    const skip = [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])];
+    const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
+    const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // Honor the latest switch after preparation, and log the same value used by the kit.
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
-    const options = fillOptions(carrier, { overwrite: false, skip, keepMarks: true }, ctx.settings.autoAdvance);
+    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true }, ctx.settings.autoAdvance, ctx.active);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
@@ -1536,8 +1716,10 @@ async function autoFill(page) {
     rememberFill(frames, ctx);
     followUp = afterFill(frames, ctx);
     const hasWarnings = frames.some((f) => f.unknown?.length);
-    // Held for the agent's check (Check answers before Continue): Looks right is in its report.
-    const held = frames.some((f) => f.held);
+    // Held for the agent's check (Check answers before Continue): Looks right is in its report. A
+    // unit form held as maybe another vehicle's or driver's (pagekit unitHeld) is said there too:
+    // a quiet follow-up would leave the agent looking at the last form's report.
+    const held = frames.some((f) => f.held || f.unitHeld);
     const current = fillCurrent(ctx);
     // The page showed another step than the panel knew (the recorder's step came late): a new
     // step, with a report of its own, as above.
@@ -1577,9 +1759,12 @@ async function autoFill(page) {
   }
   if (!fillCurrent(ctx)) return;
   // The page moved on to a stop page while this ran: its card stays on top of this fill's report.
-  if (state.tab?.carrier?.stopPages?.[pageOf(state.tab?.url)]) showStopPage();
+  if (stopNoteFor(state.tab?.carrier, pageOf(state.tab?.url))) showStopPage();
   runPendingPage(ctx);
-  if (assistFrames) assistAfterFill(assistFrames, { tabId, page, carrier }, followUp);
+  // A fill that halted on a step it couldn't read (GEICO's progress bar and title disagreeing:
+  // pagekit reads nothing there) leaves the page to the agent: Luna isn't asked about it.
+  const unread = formScoped(carrier) && !!assistFrames?.some((f) => f.halted && !knownStep(carrier, f.stepKey));
+  if (assistFrames && !unread) assistAfterFill(assistFrames, { tabId, page, carrier }, followUp);
 }
 
 function runPendingPage(ctx) {
@@ -1668,6 +1853,11 @@ async function captureLayout(job, reason) {
     // names (knownStep), like fill and field-change events: a heading can name the insured, and
     // the tab may still show the previous client's quote. Any other heading: no step.
     const step = carrier.layoutSteps ? knownStep(carrier, top.step) : undefined;
+    // A stop step (GEICO's Payment Information, MVR & CLUE) is the agent's alone: no layout of it,
+    // whose labels and messages may repeat payment or report details. By its title too, since the
+    // kit reads no step when the progress bar and the title disagree.
+    const stopTitle = Object.keys(carrier.stopSteps ?? {}).some((n) => String(top.title ?? '').toLowerCase().includes(n.toLowerCase()));
+    if ((step && carrier.stopSteps?.[step]) || stopTitle) return;
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     // What the page said about the answers (validation, errors, help), as pagekit's capture reads
     // and redacts it: the carrier's own wording of a refusal, which no other event carries.
@@ -1698,7 +1888,7 @@ async function captureLayout(job, reason) {
     const signature = await sha256Hex(JSON.stringify(messages.length ? [shape, messages] : shape));
     if (!jobCurrent(job) || superseded(job)) return;
     // Per quote tab too: each tab keeps its own quote state (refreshTab).
-    const scope = `${job.session}|${tabId}|${carrier.id}|${editScope(page)}|${step ?? ''}`;
+    const scope = `${job.session}|${tabId}|${carrier.id}|${editScope(page, carrier, step)}|${step ?? ''}`;
     // An empty page counts only when questions went away (an answer hid the last one) or a message
     // appeared: a fill or an arrival that finds nothing is a page still loading, or one without questions.
     if (!fields.length && !why().split('+').some((r) => r === 'removed' || (r === 'messages' && messages.length))) return;
@@ -1835,35 +2025,93 @@ function tabMaps(tabId) {
   if (!Number.isInteger(tabId) || state.tab?.id === tabId) return state;
   let saved = state.tabSessions.get(tabId);
   if (!saved) {
-    saved = { filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false,
-      agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(), assistPage: null, active: { ...state.active } };
+    saved = { filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false,
+      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null, active: { ...state.active } };
     state.tabSessions.set(tabId, saved);
   }
   return saved;
 }
 
 // Bookkeeping of a fill's results, for the tab, carrier and page the fill was about (fillContext;
-// `scope`: the page's edit scope as the fill saw it, `editScope`), never the tab in front now.
-function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carrier, page = pageOf(state.tab?.url), scope = editScope(page, carrier) } = {}) {
+// `scope`: the page's edit scope as the fill saw it, `editScope`, except where one address holds
+// every step and form (formScoped); `active`: the vehicle, driver and trailer its plan was for;
+// `auto`: an automatic fill's), never the tab in front now.
+function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carrier, page = pageOf(state.tab?.url), scope = editScope(page, carrier), active = state.active,
+  intake = state.intake, revision = state.intakeRevision, auto = false } = {}) {
   const maps = tabMaps(tabId);
   if (state.intake && !state.intake.ntlAdded && frames.some((f) => (f.actions ?? []).some((a) => a.id === 'addNtl'))) {
     state.intake.ntlAdded = true;
     save();
   }
-  const keys = maps.agentKeys.get(scope) ?? new Set();
+  const unitOk = (u) => ['vehicles', 'drivers', 'trailers'].includes(u?.list) && typeof u.id === 'string' && u.id;
+  // Where one address holds every step and unit form (formScoped: GEICO): the form the page shows
+  // now, held (pagekit unitHeld, the one the agent has to look at) or else filled (unitForm), with
+  // the step it is on. The agent's edits there are scoped by it (editScope). A unit step that shows
+  // none (its form closed, or the owner check) is noted with no form; any other step leaves it as
+  // it was, and so does a fill that read nothing (the page never settled, Stop): the form may still
+  // be there.
+  const scoped = formScoped(carrier);
+  const step = scoped ? knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey) : undefined;
+  if (scoped) {
+    const held = frames.findLast((f) => unitOk(f.unitHeld));
+    const frame = held ?? frames.findLast((f) => unitOk(f.unitForm));
+    if (frame) {
+      const { list, id } = held ? frame.unitHeld : frame.unitForm;
+      maps.unitShown = { step: knownStep(carrier, frame.stepKey), list, id, held: !!held };
+    } else if (step && (carrier.vehicleSteps?.includes(step) || carrier.driverSteps?.includes(step)) && frames.some((f) => f.fields > 0)) maps.unitShown = { step, list: null, id: null, held: false };
+  }
+  // The agent's edits during the fill. Where every step and form shares the address, under the
+  // step the fill read and the form it ended on (just noted), not the scope it began with: the
+  // agent may have moved on meanwhile. A step the kit couldn't read: the page's, left alone by
+  // every fill.
+  const editedIn = scoped ? editScope(page, carrier, step ?? null, { active, shown: maps.unitShown }) : scope;
+  const keys = maps.agentKeys.get(editedIn) ?? new Set();
   for (const key of frames.flatMap((f) => f.protectedKeys ?? [])) keys.add(key);
-  maps.agentKeys.set(scope, keys);
+  maps.agentKeys.set(editedIn, keys);
   persistAgentKeys(tabId, maps.agentKeys);
-  if (frames.some((f) => f.halted)) {
+  // A step the kit couldn't read (pagekit stepUnread: GEICO's progress bar and title disagree for a
+  // moment right after Next) pauses nothing: an automatic fill there is tried once more shortly,
+  // and not again until a fill reads a step. A fill the agent asked for isn't retried.
+  if (frames.some((f) => f.halted && !f.stepUnread)) {
     maps.autoPaused = true;
     if (maps === state) {
       state.autoPending = false;
       clearTimeout(state.autoTimer);
     }
   }
+  if (frames.some((f) => f.fields > 0 && knownStep(carrier, f.stepKey))) maps.unreadRetried = false;
+  else if (auto && !maps.unreadRetried && frames.some((f) => f.halted && f.stepUnread)) {
+    maps.unreadRetried = true;
+    setTimeout(() => {
+      if (fillCurrent({ tabId, intake, revision }) && pageOf(state.tab?.url) === page && state.unreadRetried) scheduleAutoFill(page);
+    }, 1500);
+  }
   for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) maps.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) maps.doneActions.add(a.id);
   persistDoneActions(tabId, maps.doneActions);
+  // The unit form this fill answered (pagekit unitForm: its marker's element name, new with every
+  // form GEICO draws) is now that vehicle's, driver's or trailer's: a follow-up fill never types
+  // this unit's answers into the next unit's form, drawn at the same address (survey 2026-10-20).
+  // The agent's edits filed under the form itself (made while it was held, changeScopes) become the
+  // unit's too: GEICO draws a new form, a new marker, when the agent opens a saved vehicle again.
+  const forms = frames.map((f) => f.unitForm).filter(unitOk);
+  if (forms.length) {
+    maps.unitForms ??= { vehicles: {}, drivers: {}, trailers: {} };
+    let copied = false;
+    for (const { list, id } of forms) {
+      const index = active?.[list] ?? 0;
+      (maps.unitForms[list] ??= {})[id] = index;
+      const own = scoped ? maps.agentKeys.get(`${page}|f:${id}`) : null;
+      if (!own?.size) continue;
+      const unit = unitScope(page, list, index);
+      const keys = maps.agentKeys.get(unit) ?? new Set();
+      for (const key of own) keys.add(key);
+      maps.agentKeys.set(unit, keys);
+      copied = true;
+    }
+    persistUnitForms(tabId, maps.unitForms);
+    if (copied) persistAgentKeys(tabId, maps.agentKeys);
+  }
   for (const x of frames.flatMap((f) => f.filled)) maps.filled.set(x.key, { path: x.path, shown: x.shown, standard: !!x.standard });
   // The quote's state this fill picked (AmWINS' risk state): the recorder is paused while filling.
   const quoteKey = carrier?.quoteState?.key;
@@ -1942,7 +2190,7 @@ function renderSite() {
   $('recording').hidden = !state.intake || !!carrier?.practice;
   site.title = title;
   site.classList.toggle('on', !!carrier);
-  const stopped = !!carrier?.stopPages?.[page];
+  const stopped = !!stopNoteFor(carrier, page);
   const canFill = inExtension && !!carrier && !!state.intake && !stopped;
   $('fill').disabled = !canFill || state.filling;
   // On a one-address application (AmWINS) every step shares the address: "again" only once this
@@ -1965,12 +2213,12 @@ function renderSite() {
   renderSteps();
 }
 
-// Which report a page has: its tab and page (on a page about one vehicle or driver, that one:
-// stepScope) and, on a one-address application (AmWINS), its step, which changes while the address
-// stays. Null off a rater page.
-function reportKey(tabId, page, carrier, active = state.active, step = state.tabSteps.get(tabId)) {
+// Which report a page has: its tab and page (on a page or step about one vehicle or driver, that
+// one: stepScope) and, on a one-address application (AmWINS, GEICO), its step, which changes while
+// the address stays. Null off a rater page.
+function reportKey(tabId, page, carrier, active = state.active, step = state.tabSteps?.get(tabId)) {
   if (!Number.isInteger(tabId) || !carrier) return null;
-  return `${tabId}|${stepScope(page, carrier, active)}${carrier.layoutSteps ? step ?? '' : ''}`;
+  return `${tabId}|${stepScope(page, carrier, active, step ?? null)}${carrier.layoutSteps ? step ?? '' : ''}`;
 }
 function currentReportKey() { return reportKey(state.tab?.id, pageOf(state.tab?.url), state.tab?.carrier); }
 
@@ -2084,7 +2332,7 @@ function renderSteps() {
   const carrier = state.tab?.carrier;
   const page = pageOf(state.tab?.url);
   const onRater = inExtension && !!carrier;
-  const stopped = !!carrier?.stopPages?.[page];
+  const stopped = !!stopNoteFor(carrier, page);
   const report = showReport();
   // The fill running on this tab: its progress and Stop in step 2, step 3 waits for its report.
   const filling = state.filling && !!state.fillingFor && state.fillingFor.tabId === state.tab?.id;
@@ -2153,16 +2401,26 @@ function showReviewMode() {
 // automatically or on request, and Luna isn't asked; the panel says why above both steps (outside
 // the fill report, which Clear marks empties) and the page is the agent's. The carrier's reason is
 // said of this client only once the tab is shown to be this intake's quote (stopPageIsOurs).
+// Steps of a one-address application that are the agent's (GEICO's Final Quote Details, MVR &
+// CLUE, Payment Information: `stopSteps`) are kept the same way; their note is the step's, about
+// no client, so it is said as it is.
 function showStopPage() {
   const carrier = state.tab?.carrier;
   const page = pageOf(state.tab?.url);
-  const note = state.intake ? carrier?.stopPages?.[page] : null;
+  const step = tabStep(carrier);
+  const note = state.intake ? stopNoteFor(carrier, page, step) : null;
   const box = $('stop-note');
   box.hidden = !note;
   if (!note) { box.replaceChildren(); return; }
   clearTimeout(state.autoTimer);
   state.autoPending = false;
   state.pagePending = null;
+  if (!carrier.stopPages?.[page]) {
+    box.replaceChildren(h('div', { class: 'agent-page stop-page', role: 'alert' },
+      h('b', {}, `${step}: yours`), h('p', {}, note),
+      h('p', { class: 'small' }, 'Nothing on this step is filled or clicked.')));
+    return;
+  }
   const ours = stopPageIsOurs();
   box.replaceChildren(h('div', { class: 'agent-page stop-page', role: 'alert' },
     h('b', {}, ours ? `${carrier.name} stopped this quote` : `${carrier.name} stop page`),
@@ -2239,6 +2497,13 @@ function showStateNote() {
     h('button', { type: 'button', class: 'link small', onclick: () => { pick.dismissed = `${intakeId}|${pick.code}`; showStateNote(); } }, `${differs.picked} is right for this client`)));
 }
 
+// What the carrier's stop says on this page, or on the step this tab is on (`step`, its name):
+// null where filling and clicking are allowed. Every check of a stop goes through it, so a stop
+// step is refused wherever a stop page is (fill, follow-ups, Luna, the panel's buttons).
+function stopNoteFor(carrier, page, step = tabStep(carrier)) {
+  return carrier?.stopPages?.[page] ?? (step ? carrier?.stopSteps?.[step] : null) ?? null;
+}
+
 // A tab may still show the previous client's quote after an intake is loaded (or the panel
 // started): the same evidence as for layouts (a new page since, or a fill with this intake).
 function stopPageIsOurs() {
@@ -2264,7 +2529,7 @@ async function runKit(tabId, carrier, func, args = [], frameIds) {
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
 async function fillPage({ auto = false, confirmed = null } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
-  if (state.intake && state.tab?.carrier?.stopPages?.[pageOf(state.tab.url)]) { showStopPage(); return; }
+  if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
@@ -2318,7 +2583,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
       fillProblem(ctx, 'You stopped the fill. Nothing was filled or clicked.', 'notice');
       return;
     }
-    const options = fillOptions(carrier, { overwrite, skip: [...(tabMaps(tabId).agentKeys.get(ctx.scope) ?? [])], ...(confirmed ? { confirmed } : {}), run: ctx.run }, ctx.settings.autoAdvance);
+    const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run }, ctx.settings.autoAdvance, ctx.active);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -2476,7 +2742,8 @@ function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, i
   const clicked = frames.some((f) => (f.actions ?? []).some((a) => !a.alreadyShown));
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
-  const doneKey = advanced?.stepKey ? stepScope(page, carrier, active) + advanced.stepKey : null;
+  // Scoped by the step the fill continued from, as the kit read it (the tab's step is noted later).
+  const doneKey = advanced?.stepKey ? stepScope(page, carrier, active, carrier?.layoutSteps ? knownStep(carrier, advanced.stepKey) : undefined) + advanced.stepKey : null;
   if (doneKey) maps.doneSteps.add(doneKey);
   // Keep the origin's bookkeeping, but never start helpers or Continue work in another tab.
   if (!fillCurrent(ctx)) return false;
@@ -2567,13 +2834,14 @@ async function markDone(item, key, tabId, page, x = null) {
   keys.add(key);
   state.agentKeys.set(scope, keys);
   await persistAgentKeys();
-  // Already the agent's (an edit on the page): nothing to undo.
-  settleNeed(item, 'marked', had ? null : () => undoMarkDone(item, key, tabId, page));
+  // Already the agent's (an edit on the page): nothing to undo. The undo takes it back from where
+  // it was marked: the step, unit or form may be another by then (Next, a pick, a fill).
+  settleNeed(item, 'marked', had ? null : () => undoMarkDone(item, key, tabId, page, scope));
 }
 
-async function undoMarkDone(item, key, tabId, page) {
+async function undoMarkDone(item, key, tabId, page, scope = editScope(page)) {
   if (state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || item.dataset.settled !== 'marked') return;
-  state.agentKeys.get(editScope(page))?.delete(key);
+  state.agentKeys.get(scope)?.delete(key);
   await persistAgentKeys();
   item.classList.remove('resolved');
   delete item.dataset.settled;
@@ -2764,9 +3032,10 @@ function renderReport(frames, ctx = {}) {
   const key = reportKey(tabId, page, carrier, ctx.active ?? state.active);
   // A page of tiles only (Most Common Vehicles) has no fields but may still need the agent.
   if (!fields && !all('actions').length && !all('noData').length) {
-    const halted = frames.find((f) => f.halted);
+    // A step the kit couldn't read pauses nothing (rememberFill): its reason alone.
+    const halted = frames.find((f) => f.halted && !f.stepUnread) ?? frames.find((f) => f.halted);
     putReport({ key, tabId, page, at: Date.now(), ...(halted
-      ? { error: `Automatic filling and helpers paused. ${halted.reason ?? 'Review this page before retrying.'}` }
+      ? { error: `${halted.stepUnread ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
       : { notice: 'No questions found on this page.' }) }, [], []);
     renderSteps();
     return;
@@ -3466,8 +3735,9 @@ async function applyAi(list, ctx, decision) {
       const expected = startedFrames.has(frameId) ? null : ctx.snapshots.map(r => r.result);
       startedFrames.add(frameId);
       dispatched = true;
-      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t) => globalThis.__raterKit.answer(a, snapshots, t),
-        [[a], expected, guardToken], [frameId]);
+      // The carrier's stop steps go along: after a reload no fill has told this document about them.
+      const answerFrames = await runKit(ctx.tabId, ctx.carrier, (a, snapshots, t, o) => globalThis.__raterKit.answer(a, snapshots, t, o),
+        [[a], expected, guardToken, { stopSteps: Object.keys(ctx.carrier.stopSteps ?? {}) }], [frameId]);
       for (const frame of answerFrames) for (const item of frame.result ?? []) {
         if (item && typeof item === 'object') results.push({ ...item, frameId: frame.frameId, documentId: frame.documentId });
       }
@@ -4149,12 +4419,22 @@ async function openPdfInTab() {
 // with new questions, with each batch of changes and whenever the headings change (step_shown): for
 // the page strip and the report shown (renderSite), so the agent's own Continue to the next step,
 // or a click on another step's tab, is followed. A fill's own step is noted by renderReport.
+// Registered before onRecorderMessage, which then scopes the same message by this step.
+// Arriving at a step that is the agent's (stopSteps: GEICO's MVR & CLUE, Payment Information; a
+// move from another step, or a new document on it) is logged as a fill run that stopped, as a stop
+// page is, with the step's name only, once the tab is shown to be this intake's quote.
 function noteStep(msg, sender) {
   if (msg?.ra !== 'usage' || !['field_changes', 'new_fields', 'page_view', 'step_shown'].includes(msg.event) || !state.intake || sender.tab?.id !== state.tab?.id) return;
-  const step = knownStep(state.tab.carrier, msg.step);
-  if (!step || state.tabSteps.get(sender.tab.id) === step) return;
-  state.tabSteps.set(sender.tab.id, step);
-  renderSite();
+  const carrier = state.tab.carrier;
+  const step = knownStep(carrier, msg.step);
+  if (!step) return;
+  const moved = state.tabSteps.get(sender.tab.id) !== step;
+  if (moved) state.tabSteps.set(sender.tab.id, step);
+  if (carrier?.stopSteps?.[step] && (moved || (msg.event === 'page_view' && !msg.from)) && !carrier.practice && stopPageIsOurs()) {
+    const page = samePage(msg.page) || pageOf(state.tab.url);
+    usage.log(...fillEvents([{ fields: 0, blockers: [`stop: ${step}`] }], { carrier: carrier.id, page, view: viewOf(sender.tab.id, page), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text, step }));
+  }
+  if (moved) renderSite();
 }
 
 // What the agent did on this intake, for the file menu's question and the same-file note:
@@ -4266,8 +4546,9 @@ function wire() {
   wireUsage();
   wireAi();
   if (inExtension) {
-    chrome.runtime.onMessage.addListener(onRecorderMessage);
+    // The step first: a field change or new question is scoped by the step it came with.
     chrome.runtime.onMessage.addListener(noteStep);
+    chrome.runtime.onMessage.addListener(onRecorderMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);

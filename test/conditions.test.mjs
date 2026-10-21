@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
 import { inferShowWhen, fieldId } from '../scripts/lib/conditions.mjs';
 import { buildLayouts } from '../scripts/lib/layouts.mjs';
 import { layoutTransitions, summarizeTransitions } from '../scripts/lib/transitions.mjs';
@@ -197,4 +199,49 @@ test('a coverage group where the question stays while its trigger changes rules 
   ];
   const f = buildLayouts(events)[0].layout.pages.Operations.fields.find((x) => x.q === '2A2');
   assert.deepEqual([f.showWhen, f.condition], [undefined, 'unknown']);
+});
+
+// GEICO names a question Id_<data-model name>_<render number> and renumbers it on every redraw. The
+// FL captures of 2026-10-20 were recorded before the kit sent `ref` for them: each layout named a
+// question by another number, so no condition could ever be seen across two layouts.
+const FIELD_KEY = fs.readFileSync(new URL('../src/content/field-key.js', import.meta.url), 'utf8');
+const kitContext = {};
+vm.runInNewContext(FIELD_KEY, kitContext, { filename: 'src/content/field-key.js' });
+const { dataName } = kitContext.__raterFieldKey;
+
+test('a GEICO question recorded without its name is known by the name its id carries, as the kit names it', () => {
+  const samples = [
+    { kind: 'text', id: 'Id_GiveInitialZipCode_54827', name: 'Id_GiveInitialZipCode_54827' },
+    // A radio option's input: the name has no option digit, the id has it and -shadow.
+    { kind: 'radio', id: 'Id_GiveHasFilingsYesNo_148170-shadow', name: 'Id_GiveHasFilingsYesNo_14817' },
+    { kind: 'radio', id: 'Id_GiveHasFilingsYesNo_148171-shadow' },
+    { kind: 'text', id: 'Id_GiveVinPreQuote_31337', name: 'Id_GiveVinPreQuote_31337maskedField' },
+    // The boxes of a checkbox group share one name; the box is in the id.
+    { kind: 'checkbox', id: 'checkbox-Id_AddFilings_20517-MCS90', name: 'Id_AddFilings_20517' },
+    { kind: 'checkbox', id: 'checkbox-Id_AddFilings_20517-StateFiling', name: 'Id_AddFilings_20517' },
+    // A coverage list (a UUID has dashes) and the portal's own controls have no data-model name.
+    { kind: 'select', id: 'Id_0f8e2a7c-1b3d-4e5f-9a6b-7c8d9e0f1a2b_412_COMP' },
+    { kind: 'select', id: 'Id_a1b2c3d4-1b3d-4e5f-9a6b-7c8d9e0f1a2b_412' },
+    { kind: 'checkbox', id: 'darkModeSwitch-button-switch-checkbox', name: 'darkModeSwitch-button-switch-checkbox' },
+    { kind: 'text', id: 'Id_GiveInitialZipCode', name: 'Id_GiveInitialZipCode' },
+  ];
+  for (const f of samples) {
+    const name = dataName({ id: f.id, name: f.name });
+    assert.equal(fieldId(f), name ? `ref:${name}` : `#${f.id}`, f.id);
+  }
+  assert.deepEqual(samples.map((f) => fieldId(f)).slice(0, 6),
+    ['ref:GiveInitialZipCode', 'ref:GiveHasFilingsYesNo', 'ref:GiveHasFilingsYesNo', 'ref:GiveVinPreQuote', 'ref:AddFilings.MCS90', 'ref:AddFilings.StateFiling']);
+  // As a layout the kit records now (its name in `ref`), whatever the number.
+  assert.equal(fieldId({ kind: 'radio', id: 'Id_GiveFilingType_521330-shadow', name: 'Id_GiveFilingType_52133' }), fieldId({ kind: 'radio', ref: 'GiveFilingType', id: 'Id_GiveFilingType_10-shadow' }));
+  // A Duck Creek question id still comes first.
+  assert.equal(fieldId({ q: '2A1', id: 'Id_GiveHasFilingsYesNo_14817' }), '2A1');
+});
+
+test('a GEICO follow-up\'s condition is seen across layouts that numbered its questions differently', () => {
+  const filings = (n, selected) => ({ kind: 'radio', id: `Id_GiveHasFilingsYesNo_${n}0-shadow`, name: `Id_GiveHasFilingsYesNo_${n}`,
+    label: 'Does the business need filings?', options: ['Yes', 'No'], selected });
+  const filingType = (n) => ({ kind: 'radio', id: `Id_GiveFilingType_${n}0-shadow`, name: `Id_GiveFilingType_${n}`, label: 'Filing type', options: ['Federal', 'State'] });
+  const when = inferShowWhen([snap(filings(101, 'Yes'), filingType(102)), snap(filings(203, 'Yes'), filingType(204)), snap(filings(305, 'No')), snap(filings(407, 'No'))]);
+  const c = when.get('ref:GiveFilingType');
+  assert.deepEqual([c.trigger, [...c.is], c.shown, c.hidden], ['ref:GiveHasFilingsYesNo', ['Yes'], 2, 2]);
 });

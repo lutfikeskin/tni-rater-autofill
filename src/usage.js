@@ -193,7 +193,7 @@ function isComboPick(change, choices) {
  *   filled: field key -> what autofill put there; labels: field key -> question text as the fill
  *   engine read it (more reliable than the recorder's guess); choices: field key -> Set of a combo's
  *   options as the fill engine saw them; keySalt: the session's (see fieldKeyOf); step: the
- *   step of a one-address application (AmWINS) the recorder read, one of its names (see knownStep)
+ *   step of a one-address application (AmWINS, GEICO) the recorder read, one of its names (see knownStep)
  */
 export function fieldChangeEvent(change, { record, filled, redact, labels, choices, keySalt, step }) {
   const ours = filled.get(change.key) ?? null;
@@ -230,12 +230,12 @@ export function fieldChangeEvent(change, { record, filled, redact, labels, choic
   };
 }
 
-// The step of a one-address application (AmWINS: Insured Info, Vehicles, …), whose steps share
-// the page's address: pagekit's `stepKey` (the visible headings) on fill events and page layouts,
-// the recorder's reading of the same headings on field changes. Only a heading that is one of the
-// carrier's own step names (`layoutSteps`) is sent, as that name: a heading can name the insured,
-// and the tab may still show the previous client's quote, whose names the loaded intake's
-// redaction doesn't know (Codex on PR #65). Absent on carriers whose pages have names of their own (audit 2026-10-08).
+// The step of a one-address application (AmWINS: Insured Info, Vehicles, …; GEICO: Business Class &
+// USDOT, Vehicles, …), whose steps share the page's address: pagekit's `stepKey` (AmWINS' visible
+// headings, GEICO's progress bar) on fill events and page layouts, the recorder's reading of the
+// same on field changes. Only a heading that is one of the carrier's own step names (`layoutSteps`)
+// is sent, as that name: a heading can name the insured, and the tab may still show the previous
+// client's quote, whose names the loaded intake's redaction doesn't know (Codex on PR #65). Absent on carriers whose pages have names of their own (audit 2026-10-08).
 export const STEP_MAX = 120;
 export function knownStep(carrier, headings) {
   const names = Array.isArray(carrier?.layoutSteps) ? carrier.layoutSteps : [];
@@ -253,7 +253,7 @@ const stepOf = (step, redact) => (step ? { step: redact(String(step)).slice(0, S
 // several copies (audit 2026-10-08, finding 7). The panel fetches them from its own package. Every
 // module the plan, the record's normalization and the carriers import is here (test/usage.test.mjs
 // checks the import graph), since each one changes the answers a fill puts on the page.
-export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js'];
+export const RULE_FILES = ['src/normalize.js', 'src/rules.js', 'src/plan.js', 'src/schema.js', 'src/util.js', 'src/carriers.js', 'src/carriers/progressive.js', 'src/carriers/amwins.js', 'src/carriers/geico.js'];
 export async function rulesHash(texts) {
   return (await sha256Hex(texts.join('\n'))).slice(0, 12);
 }

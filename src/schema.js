@@ -49,7 +49,8 @@ export const SECTIONS = [
     ['drivers[].first', 'First name'],
     ['drivers[].middle', 'Middle name'],
     ['drivers[].last', 'Last name'],
-    // Read off the end of a name box ("SAMPLE, JR"); no carrier's driver page has a box for it.
+    // Read off the end of a name box ("SAMPLE, JR"). GEICO's Add Driver form has a Suffix list
+    // for it; Progressive's and AmWINS' driver pages have no box for it.
     ['drivers[].suffix', 'Suffix (Jr, Sr, II…)'],
     ['drivers[].dob', 'Date of birth', 'date'],
     ['drivers[].licenseNumber', 'License #'],
@@ -62,7 +63,7 @@ export const SECTIONS = [
     ['drivers[].gender', 'Gender', 'choice'],
     // "Excluded" written in the license-number box: the client wants this driver excluded.
     // Progressive's exclude question is Yes; AmWINS has none and gets "(Excluded)" after the license
-    // number (TNI 2026-10-20).
+    // number (TNI 2026-10-20). GEICO's Add Driver form asks nothing about it: filled, with a warning.
     ['drivers[].excluded', 'Excluded driver', 'bool'],
   ] },
   { id: 'vehicles', title: 'Vehicles', list: 'vehicles', item: 'Vehicle', fields: [

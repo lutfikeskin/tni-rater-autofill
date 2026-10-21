@@ -3,8 +3,8 @@
 // before a push spends paid GitHub minutes on them. Stops at the first failure.
 //
 //   npm run ci           -> unit tests, package, store ZIP check, packaged-extension E2E with the
-//                           replay server, AmWINS (normal and reversed), Progressive fixture
-//                           replays, Luna mock
+//                           replay server, AmWINS (normal and reversed), GEICO mock, Progressive
+//                           fixture replays, Luna mock
 //   npm run ci -- --quick -> unit tests and package only (checks.yml)
 //
 // Uses the installed node_modules (no `npm ci`) and Playwright's Chromium (`npx playwright install
@@ -72,6 +72,7 @@ try {
     await withReplay(() => run('Packaged extension', ['run', 'e2e:extension']));
     run('AmWINS mock', ['run', 'mock:amwins']);
     run('AmWINS mock, reversed', ['run', 'mock:amwins', '--', '--reversed']);
+    run('GEICO mock', ['run', 'mock:geico']);
     run('Progressive fixtures', ['run', 'e2e', '--', '--fixtures']);
     run('Luna mock', ['run', 'mock:luna']);
   }

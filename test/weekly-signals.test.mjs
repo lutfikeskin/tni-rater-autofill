@@ -99,6 +99,26 @@ test("a final page or click before the quote's own fill is not its end", () => {
   assert.equal(s.outcomes.amwins.done, 0);
 });
 
+// GEICO's stop steps log a fill run with a `stop:` blocker, as Progressive's DeclinationNotice does,
+// but they follow a rated quote: done, not declined.
+test('a GEICO quote that reaches Final Quote Details is done, not declined', () => {
+  const geico = (session, n, x) => ({ id: `${session}${n}`, t: at(n), receivedAt: at(n), session, v: '0.9.9', carrier: 'geico', page: '/quote', ...x });
+  const events = [...week(),
+    geico('g1', 0, { type: 'intake_loaded', carrier: undefined, page: undefined }), geico('g2', 0, { type: 'intake_loaded', carrier: undefined, page: undefined }),
+    geico('g1', 1, { type: 'fill_run', step: 'Quote & Coverages', blockers: 0, blockerList: [], clicked: ['recalculate'] }),
+    geico('g1', 2, { type: 'fill_run', step: 'Final Quote Details', blockers: 1, blockerList: ['stop: Final Quote Details'], auto: 'stop' }),
+    // Stopped on Vehicles: neither done nor declined.
+    geico('g2', 3, { type: 'fill_run', step: 'Vehicles', blockers: 1, blockerList: ['unfamiliar: Trailer type'] })];
+  const s = signals(events, { since: '2026-10-06' });
+  assert.equal(s.outcomes.geico.quotes, 2);
+  assert.equal(s.outcomes.geico.done, 1);
+  assert.equal(s.outcomes.geico.declined, 0);
+  assert.deepEqual(s.outcomes.geico.stopped, [['/quote › Vehicles', 1]]);
+  // Progressive's stop page is still a decline.
+  const p = signals([...week(), later(1, { type: 'fill_run', page: 'DeclinationNotice', blockers: 1, blockerList: ['stop: DeclinationNotice'], auto: 'stop' })], { since: '2026-10-06' });
+  assert.equal(p.outcomes.progressive.declined, 1);
+});
+
 test('signals flags a restricted action the extension clicked', () => {
   const events = week();
   events.push({ id: 'x', t: '2026-10-06T13:00:00Z', receivedAt: '2026-10-06T13:00:00Z', session: 'new', v: '0.9.9', carrier: 'amwins', type: 'fill_run', page: '/application', advanced: 'Submit Application', clicked: [] });

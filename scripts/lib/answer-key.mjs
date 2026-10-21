@@ -58,12 +58,15 @@ export const byIdOnly = (question) => {
 };
 
 // The quote's own pages: not a carrier's login or portal pages (Progressive's are recorded by path,
-// its quote pages by name), nor another product's application (AmWINS' commercial property).
+// its quote pages by name), nor another product's application (AmWINS' commercial property). Every
+// GEICO step is sales.geico.com/quote (a step after ' › '); its gateway's search and dashboard
+// ('/', '/dashboard') are not the quote.
 export function quotePage(carrier, page) {
   const p = String(page ?? '');
   if (/\/(auth\/)?login\b/i.test(p)) return false;
   if (carrier === 'progressive') return !p.startsWith('/');
   if (carrier === 'amwins') return p.startsWith('/application/businessauto');
+  if (carrier === 'geico') return /^\/quote(?:\/|$)/i.test(p.split(' › ')[0]);
   return true;
 }
 
@@ -293,8 +296,9 @@ export function compareKey(before, after) {
 
 // ---- The review sheet ----
 
-// Coverage pages: what the client asked for decides these, quote by quote.
-const COVERAGE_PAGE = /CoveragesRates|› Coverages/;
+// Coverage pages (Progressive's CoveragesRates, the AmWINS and GEICO coverage steps): what the
+// client asked for decides these, quote by quote.
+const COVERAGE_PAGE = /CoveragesRates|› (?:Quote & )?Coverages\b/;
 
 // How a value reads on the sheet.
 function show(step, kind) {

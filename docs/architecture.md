@@ -22,7 +22,7 @@ flowchart TD
     J --> K[Reviewed improvements and tested releases]
 ```
 
-The side panel injects the fill engine into the open carrier tab. It uses the live DOM and supported widget APIs, not downloaded HTML as a runtime template. Progressive finds questions by their data-model names (`fieldref`) or their text on the page, never by question ids, which Progressive renumbers, with reviewed fallbacks; AmWINS uses selectors and labels; GEICO currently has generic label rules only.
+The side panel injects the fill engine into the open carrier tab. It uses the live DOM and supported widget APIs, not downloaded HTML as a runtime template. Progressive finds questions by their data-model names (`fieldref`) or their text on the page, never by question ids, which Progressive renumbers, with reviewed fallbacks; AmWINS uses selectors and labels; GEICO uses the data-model names inside its element names (`Id_<Name>_<n>`, without the number it changes on every redraw), each rule kept to the steps it answers on, which pagekit reads from the progress bar since every step shares one address. Progressive and GEICO turn the generic label rules off. GEICO's support is mapped from saved pages and captures and not yet checked live.
 
 The client record, and the intake PDF for the panel's PDF view, live in Chrome session storage. AI-enabled requests send unresolved choice questions, options, active intake context and relevant TNI rules to OpenAI GPT-6 Luna with the agent's per-device key. Luna's automatic selection is separately opt-in; picks remain held for agent approval. Pending automatic decisions survive a panel reload, including saved choices from a retired assistant that still require manual review. Usage events are separately queued locally and uploaded to the configured collection server. These are different data paths.
 
@@ -30,7 +30,7 @@ The client record, and the intake PDF for the panel's PDF view, live in Chrome s
 
 - The reader extracts named fillable PDF fields, not general document understanding or handwriting.
 - Rules compute answers; the browser engine finds controls and checks whether values stick. Carrier acceptance is not semantic correctness.
-- Each rule declares its answer's `source` (intake, derived, standard, fact, attestation). Facts and attestations the intake lacks are never filled; standards are tagged in the panel and, for a business class outside the carrier's `supportedClasses` (review mode), become check items that hold Continue. See [intake and rules](intake-and-rules.md).
+- Each rule declares its answer's `source` (intake, derived, standard, fact, attestation). Facts and attestations the intake lacks are never filled; standards are tagged in the panel and, for a business class outside the carrier's `supportedClasses` (review mode), become check items that hold Continue. TNI has recorded no GEICO standard, so GEICO declares no classes, and there every question the intake doesn't answer is the agent's. See [intake and rules](intake-and-rules.md).
 - AI assists unresolved questions; it does not reliably audit all answers already filled by rules.
 - Feedback produces review material and candidate rules. There is no automatic model training or rule deployment.
 - Separate driver/vehicle records exist, but driver exclusion, per-vehicle coverage intent, and driver-to-vehicle relationships are not fully modeled.

@@ -53,5 +53,6 @@ jobs:
           }
       - run: npm run mock:amwins
       - run: npm run mock:amwins -- --reversed
+      - run: npm run mock:geico
       - run: npm run e2e -- --fixtures
       - run: npm run mock:luna
