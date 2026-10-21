@@ -3340,6 +3340,9 @@ function renderReport(frames, ctx = {}) {
     body)] : [];
   const nodes = [
     agentPage ? h('p', { class: 'agent-page' }, agentPage) : null,
+    // An answer picked in place of one the page doesn't offer (pagekit `orMost`: GEICO's pay plan
+    // with no 11 Payments, W43-32): named here; nothing is left for the agent by it.
+    ...filled.filter((x) => x.said).map((x) => h('p', { class: 'card quiet said' }, x.said)),
     frames.some((f) => f.halted) ? h('p', { class: 'card bad' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then fill again.`) : null,
     pageChanged ? h('p', { class: 'card bad' }, pageChanged) : null,
     // The AI's messages and its approval card go here, above the items (runAssist).

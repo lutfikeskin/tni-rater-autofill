@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 80 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 81 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -956,6 +956,8 @@
   // How long the page is quiet before such a helper is clicked.
   const LOAD_QUIET_MS = 1000;
   const LOAD_HALT = 'The page was still loading after a minute: wait for it, then fill again.';
+  // A helper clicked once a quote (`once`: GEICO's Recalculate, W43-31) whose result didn't show.
+  const ONCE_UNVERIFIED = 'it was clicked, but the page showed no current premium afterwards. Check the page and click Recalculate yourself: the fill clicks it once a quote.';
   // What a `whenClear` helper waits for (its `why`).
   const NOTHING_LEFT = 'nothing left for you on the page';
   // What holds Continue after the agent's own button during a fill (`notePress`).
@@ -1776,6 +1778,8 @@
     const consumedPaths = () => new Set(actions.filter((a) => clicked.has(a.action)).flatMap((a) => a.after));
     // Choices whose option isn't offered yet (`whenOffered`), by step id.
     const unoffered = new Map();
+    // Options picked in place of one never offered (`orMost`), by step id: what the report says.
+    const substituted = new Map();
     const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
     // Steps waiting for the page (`waitFor`): since when, by step id.
     const waitingSince = new Map();
@@ -2025,7 +2029,7 @@
       if (window === window.top && clickNextAction(controls, true)) {
         // A lookup (Import Data) may wait on its server without changing the page for a while.
         if (!await settle(serverBacked ? {} : { quietMs: 800, maxMs: 8000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
-        if (!verifyAction()) break;
+        if (!await verifyAction()) break;
         if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
         if (stepChanged()) break;
         continue;
@@ -2212,21 +2216,23 @@
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
             }
           }
-          // A step-fenced recalculation is due again after any later answer on its step (GEICO's
-          // Recalculate on Quote & Coverages, mock run, 2026-10-20, until it became the agent's on
-          // 2026-10-21: the premium showed "$ --.--" until it was clicked, and Next stayed hidden). It still waits for ratesStale() and the
-          // required questions before it's clicked.
-          for (const a of actions.filter((x) => x.needsRecalculation && x.steps?.length && actionHere(x))) {
+          // A step-fenced recalculation is due again after any later answer on its step (the
+          // premium showed "$ --.--" until it was clicked, and Next stayed hidden: GEICO mock run,
+          // 2026-10-20). It still waits for ratesStale() and the required questions before it's
+          // clicked. One clicked once a quote (`once`: GEICO's, W43-31) never is again.
+          for (const a of actions.filter((x) => x.needsRecalculation && !x.once && x.steps?.length && actionHere(x))) {
             clicked.delete(a.action);
             report.actions = report.actions.filter((x) => x.id !== a.action);
             if (!report.invalidatedActions.includes(a.action)) report.invalidatedActions.push(a.action);
           }
-          report.filled.push({ ...item, shown: result.shown });
+          // An option picked in place of one never offered (`orMost`) is named in the report.
+          const instead = substituted.get(step.id);
+          report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}) });
           unoffered.delete(step.id);
           // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
           handled.set(step.id, step.standard
-            ? { status: 'standard', note: `TNI standard answer, not from the intake: ${step.name}` }
-            : { status: 'filled', note: `filled from intake: ${step.name}` });
+            ? { status: 'standard', note: instead ?? `TNI standard answer, not from the intake: ${step.name}` }
+            : { status: 'filled', note: instead ?? `filled from intake: ${step.name}` });
           if (step.warn) {
             report.checks.push({ ...item, note: step.warn, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.warn });
@@ -2238,7 +2244,7 @@
         } else if (step.whenOffered && /^no option matches/.test(result.reason ?? '')) {
           // Not offered yet: a helper may show it (GEICO's 11 Payments, behind View More Payment
           // Plans). Tried again each round; never offered by the fill's end, it is the agent's.
-          unoffered.set(step.id, { item: { ...item, ...describe(c) }, control: c, step });
+          unoffered.set(step.id, { item: { ...item, ...describe(c) }, control: c, step, options: result.options ?? [] });
         } else if (/did not keep/.test(result.reason ?? '') && !report.halted && retryOnce(step.id)) {
           // Often a later redraw resets it (a coverage list reloading): try again next round.
           refill.add(step.id);
@@ -2257,6 +2263,10 @@
       if (report.halted) break;
       // The next round's start ends the fill (or stops it on a step that is the agent's).
       if (stepMoved) continue;
+      // A choice never offered once the helper that shows every option has been clicked (`orMost`:
+      // GEICO's pay plans after View More Payment Plans, W43-32): the option with the highest count
+      // among its question's fields is its answer, given next round.
+      if (!changed && substitute()) continue;
       // Nothing left to type or pick: click the next button whose turn it is.
       let helperClicked = false;
       if (!changed && window === window.top && !agentPressed) {
@@ -2264,11 +2274,13 @@
         changed = helperClicked = clickNextAction(controls);
         // A helper that loads a view (GEICO's "+", Add Driver) is clicked on a page quiet for a
         // second (FL live run 4, 2026-10-21: Add Driver 2 s after the list showed, and GEICO's
-        // spinner stayed until the agent reloaded): once it is due, the page is waited for, and
+        // spinner stayed until the agent reloaded), and one that waits for a quiet page for its own
+        // time (`quietMs`: GEICO's Recalculate, W43-31): once it is due, the page is waited for, and
         // clicked next round if nothing changed meanwhile (a page that changed is read again).
         if (loadDue) {
           const before = signature();
-          if (!await settle({ quietMs: LOAD_QUIET_MS, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
+          const due = actions.find((x) => x.action === loadDue);
+          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
           quiet = !agentPressed && signature() === before ? { action: loadDue, sig: before } : null;
           continue;
         }
@@ -2294,9 +2306,11 @@
       // click or a batch of answers still needs the wait. (Waiting twice cost Progressive about
       // 0.3 s per answer.)
       // A helper that draws a new view (`loads`: GEICO's add icons and the chooser's Next) is waited
-      // for as long as a step's load.
+      // for as long as a step's load, and so is one that rates the quote (GEICO's Recalculate, its
+      // spinner up while it rates).
       const loads = helperClicked && !!pendingAction?.loads;
-      if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads ? LOAD_MS : 3000 })) {
+      const rates = helperClicked && pendingAction?.verify === 'premium';
+      if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads || rates ? LOAD_MS : 3000 })) {
         halt(loads ? LOAD_HALT : 'The page did not settle after the helper.');
         break;
       }
@@ -2319,7 +2333,7 @@
         }
         if (!await settle({ quietMs: 250, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
       }
-      if (!verifyAction()) break;
+      if (!await verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
       if (stepChanged()) break;
     }
@@ -2336,7 +2350,7 @@
         || resultShown(a, assign(controls, plan));
     }
 
-    function verifyAction() {
+    async function verifyAction() {
       const a = pendingAction;
       pendingAction = null;
       if (!a) return true;
@@ -2346,6 +2360,14 @@
       }
       let accepted = true;
       if (a.verify === 'premium') accepted = premiumReady();
+      // Clicked once a quote (`once`: GEICO's Recalculate, W43-31): never again, also when its
+      // result didn't show; from here it is the agent's, and they're told.
+      if (!accepted && a.once) {
+        report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, reason: ONCE_UNVERIFIED });
+        return false;
+      }
+      // The answers it may have redrawn (`keepAnswers`), read again once its result shows.
+      if (accepted && a.kept) await answersKept(a);
       // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
       // screen but disabled is not gone.
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
@@ -2416,6 +2438,113 @@
     // What the page's questions show, by question: the snapshot a `revealed` check compares with.
     function controlSnapshot(controls) {
       return new Map(controls.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
+    }
+
+    // Each question by its field and its place among the fields of that key (`key#n`): a GEICO
+    // coverage row's label holds its premium, which a recalculation changes.
+    function answerPlaces(controls) {
+      const seen = new Map();
+      return controls.map((c) => {
+        const key = fieldKey(c);
+        const n = (seen.get(key) ?? 0) + 1;
+        seen.set(key, n);
+        return [`${key}#${n}`, c];
+      });
+    }
+    function answerShown(c) {
+      return c.kind === 'text' ? c.el.value : selectedText(c);
+    }
+
+    // The answers on the page as a helper that redraws them is clicked (`keepAnswers`: GEICO's
+    // Recalculate, W43-31): the fill's (any fill's, the page agreeing with its step) and the agent's.
+    function answersNow() {
+      const controls = collectControls();
+      const pairs = assign(controls, plan);
+      return answerPlaces(controls).flatMap(([at, c]) => {
+        if (!hasValue(c)) return [];
+        const step = pairs.find((p) => p.control === c)?.step;
+        const agents = skippedField(c);
+        const ours = !agents && !!step && step.value != null && !step.ignore && !step.note && !step.verifyOnly && agreesWith(step, c);
+        return agents || ours ? [{ at, stepId: ours ? step.id : null, shown: answerShown(c) }] : [];
+      });
+    }
+
+    // Once its result shows (W43-31: GEICO drew its own choices back after a Recalculate the fill
+    // clicked): an answer the page shows otherwise now is given back once if it was the fill's, and
+    // left as it is if it was the agent's. Each is red, and one more item says the premium may not
+    // be for the answers shown. The helper isn't clicked again (`once`): the agent recalculates,
+    // and Print waits for them (`whenClear`).
+    async function answersKept(a) {
+      const now = new Map(answerPlaces(collectControls()));
+      const changed = a.kept.flatMap((k) => {
+        const c = now.get(k.at);
+        return c && answerShown(c) !== k.shown ? [{ k, c }] : [];
+      });
+      if (!changed.length) return;
+      const pairs = assign([...now.values()], plan);
+      const given = new Set();
+      for (const { k, c } of changed) {
+        const step = k.stepId != null ? pairs.find((p) => p.control === c && p.step.id === k.stepId)?.step : null;
+        if (!step) continue;
+        let result;
+        try { result = await apply(step, c); } catch (e) { result = { ok: false }; }
+        if (result.ok) given.add(k.at);
+      }
+      if (given.size) await settle({ quietMs: 250, maxMs: LOAD_MS });
+      const after = new Map(answerPlaces(collectControls()));
+      for (const { k, c: before } of changed) {
+        const c = after.get(k.at) ?? before;
+        const step = k.stepId != null ? plan.find((s) => s.id === k.stepId) : null;
+        // A choice's own words only (a typed box may hold a client's value).
+        const was = c.kind === 'text' ? '' : ` (it was "${k.shown}")`;
+        const back = !!step && given.has(k.at) && after.has(k.at) && agreesWith(step, c);
+        const reason = !step ? `the page changed your answer when it recalculated${was}: answer it again, then click Recalculate yourself.`
+          : back ? 'the page changed this answer when it recalculated, and the fill put it back: click Recalculate yourself, then check the answer is kept.'
+            : `the page changed this answer when it recalculated${was}, and the fill couldn't put it back: answer it yourself, then click Recalculate.`;
+        const key = fieldKey(c);
+        report.filled = report.filled.filter((x) => x.key !== key);
+        report.kept = report.kept.filter((x) => x.key !== key);
+        report.failed.push({ stepId: step?.id ?? null, label: c.label, path: step?.path ?? null, name: step?.name ?? c.label, key, q: c.q ?? null, controlKind: c.kind, reason, ...describe(c) });
+        mark(c, 'failed', reason);
+        if (step) handled.set(step.id, { status: 'failed', note: reason });
+      }
+      const n = changed.length;
+      report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null,
+        reason: `the page changed ${n === 1 ? 'an answer' : `${n} answers`} when it recalculated (marked above), so the premium may not be for the answers shown. Check them and click Recalculate yourself: the fill clicks it once a quote.` });
+    }
+
+    // A choice never offered once the helper that shows every option was clicked in this fill
+    // (`orMost`: GEICO's pay plans, W43-32: TX offers no 11 Payments): among the options of every
+    // field of its question, the one with the highest count (`count`'s first group; `one`: an option
+    // that counts 1) becomes its answer, given next round and named in the report. No option with a
+    // count, or one of its fields already answered: still the agent's.
+    function substitute() {
+      const byPath = new Map();
+      for (const u of unoffered.values()) {
+        const m = u.step.orMost;
+        if (!m || !report.actions.some((x) => x.id === m.after)) continue;
+        byPath.set(u.step.path, [...(byPath.get(u.step.path) ?? []), u]);
+      }
+      let any = false;
+      for (const [path, group] of byPath) {
+        if (report.filled.some((x) => x.path === path) || plan.some((s) => s.path === path && substituted.has(s.id))) continue;
+        const { count, one, name } = group[0].step.orMost;
+        const counted = (text) => (one && new RegExp(one, 'i').test(text) ? 1 : Number(new RegExp(count, 'i').exec(text)?.[1] ?? NaN));
+        let best = null;
+        for (const u of group) {
+          for (const text of u.options) {
+            const n = counted(oneLine(text));
+            if (Number.isFinite(n) && (!best || n > best.n)) best = { n, text: oneLine(text), id: u.step.id };
+          }
+        }
+        if (!best) continue;
+        const step = plan.find((s) => s.id === best.id);
+        substituted.set(step.id, `The page doesn't offer "${step.value}" here: the fill picked "${best.text}", ${name}.`);
+        step.value = best.text;
+        unoffered.delete(step.id);
+        any = true;
+      }
+      return any;
     }
 
     // A helper's own pages, and its own steps of a one-address application (`steps`: GEICO's
@@ -2546,14 +2675,15 @@
           opener.click();
           return true;
         }
-        if (a.loads && !(quiet?.action === a.action && quiet.sig === signature())) { loadDue = a.action; return false; }
+        if ((a.loads || a.quietMs) && !(quiet?.action === a.action && quiet.sig === signature())) { loadDue = a.action; return false; }
         quiet = null;
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
         // What the page shows as the button is clicked (the round's controls are older: answers
         // have landed since): what a `revealed` / `appears` check compares with afterwards.
         pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
-          : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length } : a;
+          : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length }
+            : a.keepAnswers ? { ...a, kept: answersNow() } : a;
         button.click();
         return true;
       }
@@ -2638,8 +2768,8 @@
     }
     // A choice never offered (`whenOffered`), unless another rule for the same question answered it
     // (GEICO's two pay plan groups, one of which lists 11 Payments), or a helper that may show it is
-    // still waiting (View More Payment Plans, for the agent's answers, or for the agent's Recalculate:
-    // GEICO hides the link while the premium is out of date): the agent's.
+    // still waiting (View More Payment Plans, for the agent's answers, or for a Recalculate: GEICO hides
+    // the link while the premium is out of date): the agent's, or the offered plan with the most (`orMost`).
     const offerPending = report.blocked.some((x) => !clicked.has(x.id) && x.waits?.some((w) => w.say === NOTHING_LEFT))
       || (unoffered.size > 0 && actions.some((a) => a.needsPremium && !clicked.has(a.action) && actionHere(a)) && !premiumReady());
     for (const { item, control, step } of unoffered.values()) {
@@ -3245,5 +3375,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 80, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 81, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

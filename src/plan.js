@@ -117,6 +117,13 @@ function actionSteps(carrier, record, active) {
       // Waits until the fill has left nothing on the page for the agent (GEICO's Recalculate, View
       // More Payment Plans and Print Quote Proposal: TNI, 2026-10-21).
       whenClear: !!a.whenClear,
+      // How long the page is quiet before the click (GEICO's Recalculate: W43-31).
+      quietMs: resolve(a.quietMs) ?? null,
+      // Clicked once a quote, never due again after a later answer (GEICO's Recalculate: W43-31).
+      once: !!a.once,
+      // The answers on the page are read as it is clicked and checked once its result shows: one
+      // the fill gave that changed is given back once, and every change is the agent's (W43-31).
+      keepAnswers: !!a.keepAnswers,
       unfinished: resolve(a.unfinished) ?? null,
       unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (/:driver$/.test(id) || (a.scope === 'driver' && !/:/.test(id))
         ? `${id.replace(/:driver$/, '')}:${active.drivers ?? 0}`
@@ -272,6 +279,10 @@ function fieldSteps(rules, record, carrier, active) {
       // A choice whose option a helper shows (GEICO's 11 Payments, behind View More Payment Plans):
       // not offered yet, it waits instead of failing; never offered, it is the agent's.
       whenOffered: !!rule.whenOffered,
+      // Never offered once a helper has shown every option (`after`: its id), the option with the
+      // highest count instead (`count`: a pattern whose first group is the count; `one`: an option
+      // that counts 1), named in the report as `name` (GEICO's pay plan: W43-32).
+      orMost: rule.orMost ? { count: rule.orMost.count, one: rule.orMost.one ?? null, after: rule.orMost.after, name: rule.orMost.name } : null,
       // May fill its field while it isn't on screen (an earlier step's question added later).
       hidden: !!rule.hidden,
       // One question asked as several boxes (AmWINS' auto symbols 1 to 9): the panel lists it once,
