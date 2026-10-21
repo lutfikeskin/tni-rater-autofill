@@ -4814,14 +4814,14 @@ test('unitFormsNow names the unit forms on screen between fills, by the markers 
   assert.equal(h.kit.unitFormsNow(), null);
   await h.kit.fill([...vehicleFormPlan(0), TRAILER_YEAR], { maxRounds: 6, units: geicoUnits(0, {}) });
   assert.equal(a.vin.value, GEICO_VINS[0]);
-  assert.deepEqual(plain(h.kit.unitFormsNow()), [{ list: 'vehicles', id: a.id }]);
+  assert.deepEqual(plain(h.kit.unitFormsNow()), [{ list: 'vehicles', id: a.id, blank: true }]);
   assert.ok(!JSON.stringify(plain(h.kit.unitFormsNow())).includes(GEICO_VINS[0]), 'never a value');
   // Vehicle 1 saved, the agent opens the trailer form: named before any fill has read it, also
   // after a fill whose plan has no unit forms.
   a.form.remove();
   const t = trailerForm(h, 51200);
   await h.kit.fill(zipOnly, { maxRounds: 2 });
-  assert.deepEqual(plain(h.kit.unitFormsNow()), [{ list: 'trailers', id: t.id }]);
+  assert.deepEqual(plain(h.kit.unitFormsNow()), [{ list: 'trailers', id: t.id, blank: true }]);
   // A vehicle form's type list reads "…vehicle?": not the trailer form.
   t.type.setAttribute('aria-label', 'Which of the following best describes the customer\'s vehicle?');
   assert.deepEqual(plain(h.kit.unitFormsNow()), []);
@@ -4904,7 +4904,7 @@ test('a recorder in the kit\'s world names the unit form an agent change was mad
   recorder.tick();
   let message = lastChange();
   assert.deepEqual(plain(message.changes.map((c) => [c.key, c.agent])), [['ref:GiveYear', true]]);
-  assert.deepEqual(plain(message.forms), [{ list: 'trailers', id: t.id }]);
+  assert.deepEqual(plain(message.forms), [{ list: 'trailers', id: t.id, blank: true }]);
   // The owner check under Vehicles: no unit form.
   t.form.remove();
   const last = geicoBox('GiveLastName', 61001, 'Business Owner Last Name');
@@ -5076,4 +5076,78 @@ test('a helper kept to a step (GEICO\'s Recalculate) is clicked, or the agent\'s
   assert.deepEqual(await run('Quote & Coverages'), { clicked: true, actions: ['recalculate'], needs: [] });
   assert.deepEqual(await run('Final Quote Details'), { clicked: false, actions: [], needs: [] });
   assert.deepEqual(await run('Vehicles'), { clicked: false, actions: [], needs: ['Add each vehicle yourself.'] });
+});
+
+// FL live run, 2026-10-21: GEICO drew the owner's date of birth and each VIN with their mask as the
+// value, and the fill kept them as page values that differ from the intake.
+test('a GEICO box showing only its mask has no answer yet: the intake\'s date of birth and VIN go in', async () => {
+  for (const [mask, vinMask] of [['MM/DD/YYYY', '_'.repeat(17)], ['__/__/____', '_________________'], ['MM/DD/YY', '']]) {
+    const h = harness({ pathname: '/quote' });
+    const dob = geicoBox('GiveDateOfBirth', 99843, 'Date of Birth');
+    dob.value = mask;
+    const vin = makeInput({ id: 'Id_GiveVinPreQuote_64606', name: 'Id_GiveVinPreQuote_64606maskedField', ariaLabel: 'vin' });
+    vin.value = vinMask;
+    // A real value is still kept and flagged.
+    const first = geicoBox('GiveFirstName', 1, 'Business Owner First Name');
+    first.value = 'Pat';
+    h.document.body.append(dob, vin, first);
+    const report = await h.kit.fill([
+      { id: 'dob', field: 'GiveDateOfBirth', path: 'drivers[0].dob', name: 'Owner date of birth', kind: 'date', value: '04/29/1971' },
+      { id: 'vin', field: 'GiveVinPreQuote', path: 'vehicles[0].vin', name: 'VIN', kind: 'text', value: GEICO_VINS[0] },
+      { id: 'first', field: 'GiveFirstName', path: 'drivers[0].first', name: 'Owner first name', kind: 'text', value: 'Sam' },
+    ], { maxRounds: 4 });
+    assert.deepEqual([dob.value, vin.value, first.value], ['04/29/1971', GEICO_VINS[0], 'Pat'], mask);
+    assert.deepEqual(plain(report.kept.filter((x) => x.differs).map((x) => x.key)), ['ref:GiveFirstName'], mask);
+  }
+  // A partly typed date is an answer.
+  const h = harness({ pathname: '/quote' });
+  const dob = geicoBox('GiveDateOfBirth', 99843, 'Date of Birth');
+  dob.value = '04/__/____';
+  h.document.body.append(dob);
+  await h.kit.fill([{ id: 'dob', field: 'GiveDateOfBirth', path: 'drivers[0].dob', name: 'Owner date of birth', kind: 'date', value: '04/29/1971' }], { maxRounds: 3 });
+  assert.equal(dob.value, '04/__/____');
+});
+
+// FL live run, 2026-10-21: every fill set the liability limit again, GEICO requoted and put its own
+// back, and the agent's choices went with it. A choice the page took back is the page's (or the
+// agent's, through GEICO's own dialog): kept, flagged, never given again on that step.
+test('GEICO Quote & Coverages: a choice an earlier fill gave that the page took back is kept and flagged', async () => {
+  const h = harness({ pathname: '/quote' });
+  const bar = geicoBar(h, 'Quote & Coverages');
+  const comp = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_20000_COMP`, value: 'Not Included' });
+  h.document.body.append(comp);
+  const step = { id: 'comp', selector: '[id$="_COMP"]', steps: ['Quote & Coverages'], path: 'geico.qCOMP', name: 'Comprehensive', kind: 'choice', value: '$1,000 deductible' };
+  const takenBack = (keys) => ({ steps: ['Quote & Coverages'], keys });
+  // The step's first fill: GEICO's pre-selection replaced.
+  let report = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, takenBack: takenBack({}) });
+  assert.equal(comp.value, '$1,000 deductible');
+  const key = report.filled[0].key;
+  assert.equal(key, 'cov:COMP#1');
+  // GEICO puts its own back: left as it is, a check for the agent.
+  comp.value = 'Not Included';
+  report = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, takenBack: takenBack({ [key]: true }) });
+  assert.equal(comp.value, 'Not Included');
+  assert.deepEqual(plain(report.filled), []);
+  assert.deepEqual(plain(report.checks.map((x) => [x.key, x.note])), [[key, 'The page changed this back after it was filled (Comprehensive): left as it is. Check it.']]);
+  // The agent asks to replace answers: given again.
+  report = await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, overwrite: true, takenBack: takenBack({ [key]: true }) });
+  assert.equal(comp.value, '$1,000 deductible');
+  // Another key, or another step: a pre-selection is replaced as before.
+  comp.value = 'Not Included';
+  await h.kit.fill([step], { maxRounds: 3, replaceChoices: true, takenBack: takenBack({ 'cov:COMP#2': true }) });
+  assert.equal(comp.value, '$1,000 deductible');
+  comp.value = 'Not Included';
+  bar.go('Vehicles');
+  await h.kit.fill([{ ...step, steps: ['Vehicles'] }], { maxRounds: 3, replaceChoices: true, takenBack: takenBack({ [key]: true }) });
+  assert.equal(comp.value, '$1,000 deductible');
+});
+
+test('unitFormsNow says whether a unit form is new: its first question unanswered', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Vehicles');
+  const a = geicoVehicleForm(h, 85493);
+  await h.kit.fill(vehicleFormPlan(0), { maxRounds: 6, units: geicoUnits(0, {}) });
+  assert.deepEqual(plain(h.kit.unitFormsNow()), [{ list: 'vehicles', id: a.id, blank: true }]);
+  a.marker.hosts[0].input.click();
+  assert.deepEqual(plain(h.kit.unitFormsNow()), [{ list: 'vehicles', id: a.id, blank: false }]);
 });

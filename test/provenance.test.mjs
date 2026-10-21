@@ -12,9 +12,9 @@ import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
 
-// Every carrier with rules; those with TNI standards (GEICO has none recorded: docs/intake-and-rules.md).
+// Every carrier with rules; those with TNI standards (docs/intake-and-rules.md).
 const RULE_CARRIERS = [progressive, amwins, geico];
-const STANDARD_CARRIERS = [progressive, amwins];
+const STANDARD_CARRIERS = [progressive, amwins, geico];
 
 // An expediter with everything the intake can give (the shape of test/progressive.test.mjs).
 const expediter = () => ({
@@ -171,6 +171,7 @@ const NOT_MAPPED = {
     'operations.movingState': 'not asked on the captured quotes',
     'operations.canadaLoads': 'not asked on the captured quotes',
     'operations.licensePlate': 'not asked on the captured quotes',
+    'operations.vehicleOwnership': 'the finance or leasing company is asked on Final Quote Details, the agent\'s; comprehensive and collision are TNI\'s standard whatever the ownership',
     'drivers[].middle': 'GEICO\'s driver forms have no middle name box (a lone initial is left out of the owner\'s first name)',
     'drivers[].licenseNumber': 'not asked on the captured driver forms; the steps after Quote & Coverages are the agent\'s',
     'drivers[].cdlYear': 'GEICO asks only whether the driver has a CDL',
@@ -554,7 +555,7 @@ test('supportedClass: expediter, freight hauler and general freight; a missing c
   for (const carrier of STANDARD_CARRIERS) {
     assert.equal(supportedClass(expediter(), carrier), true, carrier.id);
     // Codex on 2dcd1e8: AmWINS's freight answers (isFreight) need expediting or general freight.
-    assert.equal(supportedClass(with_({ 'operations.businessClass': 'Freight Hauler', 'operations.whatHaul': 'Furniture' }), carrier), carrier === progressive, carrier.id);
+    assert.equal(supportedClass(with_({ 'operations.businessClass': 'Freight Hauler', 'operations.whatHaul': 'Furniture' }), carrier), carrier !== amwins, carrier.id);
     assert.equal(supportedClass(with_({ 'operations.businessClass': 'Freight Hauler', 'operations.whatHaul': 'General freight' }), carrier), true, carrier.id);
     // Progressive's for-hire / business-type answers need an expediter or a freight hauler class;
     // AmWINS's freight answers also read general freight on what they haul.
@@ -565,8 +566,6 @@ test('supportedClass: expediter, freight hauler and general freight; a missing c
     assert.equal(supportedClass(with_({ 'operations.businessClass': '' }), carrier), false);
   }
   assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dump Truck' }), { id: 'unclassed', rules: [] }), true, 'no classes declared: no gate');
-  // GEICO declares none: it has no standard for review mode to hold.
-  assert.equal(supportedClass(with_({ 'operations.businessClass': 'Dump Truck' }), geico), true, 'GEICO: no gate');
   assert.equal(supportedClass(expediter(), null), true);
 });
 

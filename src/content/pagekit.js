@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 69 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 70 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -385,7 +385,7 @@
   function describe(c) {
     const options = /agent|producer/i.test(c.label ?? '') ? []
       : [...new Set(optionsOf(c).map((o) => o.text).filter((t) => t && !isPlaceholderOption(t)))];
-    return { options, section: sectionOf(c.el), current: c.kind === 'text' ? (c.el.value ? 'has a value' : null) : selectedText(c) };
+    return { options, section: sectionOf(c.el), current: c.kind === 'text' ? (textValue(c.el) ? 'has a value' : null) : selectedText(c) };
   }
 
   // An ExtJS field's value. A combo whose list was never loaded (or was torn down by a redraw)
@@ -398,13 +398,19 @@
   // `checked` (radioHost: its own input may still be checked from an earlier pick); else the input.
   const optionOn = (o) => (o.cmp ? !!cmpValue(o.cmp, o.el) : o.host ? o.host.hasAttribute('checked') : o.el.checked);
 
+  // A masked box that shows only its mask ("__/__/____", "MM/DD/YYYY", a VIN's seventeen "_") holds
+  // no answer yet: GEICO's owner date of birth and VIN were kept as page values that differ from
+  // the intake (FL live run, 2026-10-21).
+  const MASK_ONLY = /^(?:[\s_\-/.()#*]|MM|DD|YYYY|YY)*$/i;
+  const textValue = (el) => (MASK_ONLY.test(el.value ?? '') ? '' : el.value ?? '');
+
   function hasValue(c) {
     if (c.kind === 'radio') return c.options.some(optionOn);
     if (c.cmp && c.kind === 'select') {
       const v = cmpValue(c.cmp, c.el);
       return v != null && v !== '' && !isPlaceholderOption(c.cmp.getRawValue?.() ?? '');
     }
-    if (c.kind === 'text') return c.el.value.trim() !== '';
+    if (c.kind === 'text') return textValue(c.el).trim() !== '';
     if (c.kind === 'checkbox') return c.el.checked;
     const o = c.el.selectedOptions?.[0];
     return !!o && o.value !== '' && !isPlaceholderOption(o.text);
@@ -688,7 +694,8 @@
   // question's element name), between fills: the recorder sends them with the agent's changes, so
   // the panel files an edit under the form it was made on, also one no fill has read yet (a trailer
   // form just opened). [] when the markers fills in this document were given show no form (GEICO's
-  // owner check under Vehicles); null when no fill here gave any. Element names only, no values.
+  // owner check under Vehicles); null when no fill here gave any. Element names only, no values:
+  // `blank` says whether the marker question is still unanswered (a new form, not a saved unit's).
   function unitFormsNow() {
     if (!knownUnitMarkers) return null;
     try {
@@ -698,7 +705,7 @@
         if (out.some((u) => u.list === m.unit)) continue;
         const marker = shownControl(controls, m);
         const id = marker ? String(marker.el.name || marker.el.id || '') : '';
-        if (id) out.push({ list: m.unit, id });
+        if (id) out.push({ list: m.unit, id, blank: !hasValue(marker) });
       }
       return out;
     } catch {
@@ -1474,12 +1481,16 @@
   // (skipWhere).
   // A plan kept to steps on a page whose step bar can't be read (stepKey '') does nothing there and
   // reads nothing for its report (STEP_UNREAD_HALT, report.stepUnread).
+  // `takenBack` ({ steps, keys }: GEICO's Quote & Coverages): on those steps, a choice whose field
+  // key an earlier fill on this tab answered (keys) and that the page now shows otherwise was taken
+  // back by the page (GEICO puts its own coverage back when the agent backs out of a requote): kept
+  // and flagged, never given again, unless the agent asks to replace answers (`overwrite`).
   // `hold` (the panel's "Check answers before Continue"): Continue is clicked only when `confirmed`
   // is the page's `receipt()` as the agent approved it (Looks right) and still is; otherwise the
   // report says `held`: 'check' (not approved yet) or 'changed' (the page changed since).
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, hold = false, confirmed = null, run = null } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -1810,7 +1821,10 @@
         const isChoice = c.kind === 'radio' || c.kind === 'select' || c.kind === 'checkbox';
         // `keepChoice`: a question the carrier never pre-selects, so a differing choice already
         // there is a person's: kept and flagged, not replaced.
-        const differs = isChoice && replaceChoices && !step.keepChoice && !agreesWith(step, c);
+        // An answer an earlier fill gave here that the page has since taken back (`takenBack`).
+        const tookBack = isChoice && !overwrite && !!takenBack?.keys && Object.hasOwn(takenBack.keys, fieldKey(c)) && stepIs(takenBack.steps)
+          && !agreesWith(step, c) && !refill.has(step.id) && !report.filled.some((x) => x.stepId === step.id);
+        const differs = isChoice && replaceChoices && !step.keepChoice && !tookBack && !agreesWith(step, c);
         const legacyHold = mayHoldLegacyEdit(c) && !refill.has(step.id);
         // An unticked box that should stay unticked already has its answer (live run 2026-10-09:
         // every unticked box was "filled" again on each pass).
@@ -1819,6 +1833,10 @@
           report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
+            report.checks.push({ ...item, note, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note });
+          } else if (tookBack) {
+            const note = `The page changed this back after it was filled (${step.name}): left as it is. Check it.`;
             report.checks.push({ ...item, note, ...describe(c) });
             handled.set(step.id, { status: 'needs', note });
           } else if (step.keepChoice && isChoice && !agreesWith(step, c)) {
@@ -1878,9 +1896,9 @@
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
             }
           }
-          // A step-fenced recalculation (GEICO's Recalculate on Quote & Coverages) is due again
-          // after any later answer on its step: the premium shows "$ --.--" until it's clicked,
-          // and Next stays hidden (mock run, 2026-10-20). It still waits for ratesStale() and the
+          // A step-fenced recalculation is due again after any later answer on its step (GEICO's
+          // Recalculate on Quote & Coverages, mock run, 2026-10-20, until it became the agent's on
+          // 2026-10-21: the premium showed "$ --.--" until it was clicked, and Next stayed hidden). It still waits for ratesStale() and the
           // required questions before it's clicked.
           for (const a of actions.filter((x) => x.needsRecalculation && x.steps?.length && actionHere(x))) {
             clicked.delete(a.action);
@@ -2539,7 +2557,7 @@
 
   function shownNow(c) {
     if (c.kind === 'checkbox') return (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) ? 'checked' : 'unchecked';
-    if (c.kind === 'text') return c.el.value || (c.cmp ? String(cmpValue(c.cmp, c.el) ?? '') : '');
+    if (c.kind === 'text') return textValue(c.el) || (c.cmp ? String(cmpValue(c.cmp, c.el) ?? '') : '');
     return selectedText(c) ?? '';
   }
 
@@ -2757,5 +2775,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 69, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 70, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

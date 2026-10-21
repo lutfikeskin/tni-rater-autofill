@@ -1512,6 +1512,9 @@ function agentEdited(page, key) {
 // picker may have left since.
 const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checked, active = state.active) => ({
   replaceChoices: !!carrier.replaceChoices,
+  // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
+  // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only.
+  takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: Object.fromEntries([...(state.filled?.keys() ?? [])].map((key) => [key, true])) } : null,
   // Carriers whose pages never wait on a server per answer are filled a round at a time.
   batch: !!carrier.batch,
   // Steps of a one-address application already continued from (a step the agent goes back to
@@ -1681,6 +1684,9 @@ async function autoFill(page) {
   // step themselves (same address, new questions). It's filled as a new page, with its report.
   if (!state.reports.has(reportKey(tabId, page, carrier))) { fillPage({ auto: 'page' }); return; }
   const stepBefore = state.tabSteps?.get(tabId);
+  // A step the carrier redraws on every answer (GEICO's Quote & Coverages: noFollowUpSteps) is
+  // filled when it opens and on Fill this page, never again by itself.
+  if (carrier.noFollowUpSteps?.includes(stepBefore)) return;
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto: true });
@@ -2410,7 +2416,10 @@ function showStopPage() {
   const step = tabStep(carrier);
   const note = state.intake ? stopNoteFor(carrier, page, step) : null;
   const box = $('stop-note');
-  box.hidden = !note;
+  // A step the fill still answers, with what the carrier says there (GEICO: stop at Quote & Coverages).
+  const stepNote = !note && state.intake && step ? carrier?.stepNotes?.[step] ?? null : null;
+  box.hidden = !note && !stepNote;
+  if (stepNote) { box.replaceChildren(h('div', { class: 'agent-page', role: 'status' }, h('b', {}, step), h('p', {}, stepNote))); return; }
   if (!note) { box.replaceChildren(); return; }
   clearTimeout(state.autoTimer);
   state.autoPending = false;
@@ -2534,6 +2543,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
   if (state.filling || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
+  // Back on a step that is filled once (noFollowUpSteps) after its fill: only the agent fills it again.
+  if (auto && state.tab.carrier.noFollowUpSteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
   // The carrier's portal pages outside a quote (Progressive's home / quote search) are never
   // filled, and the AI isn't asked about them.
   if (!onQuotePage()) {
@@ -2629,6 +2640,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
 // list) and the driver list work the same way (a driver or trailer counts as entered once its
 // page was filled).
 async function pickListItem(carrier, page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
+  await pickUnitForm(carrier, ctx);
+  if (!fillCurrent(ctx)) return;
   await verifyListed(carrier, page, ctx);
   // Another tab came to the front while the list was read: its own fill picks for it.
   if (!fillCurrent(ctx)) return;
@@ -2648,6 +2661,40 @@ async function pickListItem(carrier, page, ctx = { tabId: state.tab?.id, intake:
     if (!fillCurrent(ctx)) return;
     renderPickers();
   }
+}
+
+// Where one address draws each unit's form (formScoped: GEICO's Add Vehicle or Trailer, Add
+// Driver), a new, blank form while the panel's unit was already filled on another one is the next
+// intake unit no form was filled for (FL live run, 2026-10-21: the second vehicle's and the second
+// driver's forms waited for a pick). The driver the carrier lists itself (`listedDriver`: GEICO's
+// owner who drives) is never the one an Add Driver form is for. A form with answers (a saved unit
+// opened again) or with no unit left keeps the pagekit hold.
+async function pickUnitForm(carrier, ctx) {
+  if (!formScoped(carrier) || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
+  let forms = null;
+  try {
+    const frames = await runKit(ctx.tabId, carrier, () => globalThis.__raterKit?.unitFormsNow?.() ?? null);
+    forms = frames.map((f) => f?.result).find(Array.isArray) ?? null;
+  } catch { return; }
+  if (!fillCurrent(ctx)) return;
+  const record = ctx.intake.record ?? {};
+  let picked = false;
+  for (const { list, id, blank } of forms ?? []) {
+    const bound = state.unitForms?.[list] ?? {};
+    if (!blank || Object.hasOwn(bound, id)) continue;
+    const listed = list === 'drivers' ? carrier.listedDriver?.(record) ?? -1 : -1;
+    const taken = new Set(Object.values(bound));
+    const free = (i) => !taken.has(i) && i !== listed;
+    const active = state.active[list] ?? 0;
+    if (free(active)) continue;
+    const next = (record[list] ?? []).findIndex((_, i) => free(i));
+    if (next < 0) continue;
+    state.active[list] = next;
+    picked = true;
+  }
+  if (!picked) return;
+  await save();
+  if (fillCurrent(ctx)) renderPickers();
 }
 
 // On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each

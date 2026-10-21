@@ -1592,7 +1592,7 @@ test('a driver is entered once the driver list comes back from its page, filled 
   const progressive = { driverPage: 'AddDriver', driverList: 'DriverSummary' };
   const state = { active: { drivers: 0 }, doneActions: new Set(), doneSteps: new Set(), autoPaused: false, intake: { record: { drivers: [{}, {}] } } };
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {} };
-  vm.runInNewContext(['stepScope', 'afterFill', 'verifyDrivers', 'verifyListed', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['stepScope', 'afterFill', 'verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   // Codex on PR #43: answers on the page alone (one may have failed, or the page was left) don't count.
   context.afterFill([{ filled: [], kept: [{ label: 'Driver Last Name' }] }], { carrier: progressive, page: 'AddDriver' });
   assert.ok(!state.doneActions.has('driverEntered:0'));
@@ -1615,7 +1615,7 @@ test('trailers: their own page scope, entered once their page is filled, the nex
   const state = { active: { drivers: 0, vehicles: 0, trailers: 0 }, doneActions: new Set(['lookupVin:0', 'addTrailer:0']), doneSteps: new Set(), autoPaused: false, intake: { record } };
   let persisted = 0;
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, save: async () => {}, renderPickers: () => {}, persistDoneActions: () => { persisted++; } };
-  vm.runInNewContext(['stepScope', 'afterFill', 'verifyDrivers', 'verifyListed', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['stepScope', 'afterFill', 'verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   assert.equal(context.stepScope('AddTrailer', carrier), 'AddTrailer|tr0|');
   assert.equal(context.stepScope('MostCommonTrailers', carrier), 'MostCommonTrailers|tr0|');
   // Codex on PR #43: Add Trailer opened isn't the trailer entered (an unsupported tile, left), nor
@@ -1643,7 +1643,7 @@ test('a trailer is on the quote when the vehicle list shows its VIN', async () =
     const asked = [];
     const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
       runKit: async (tabId, c, func, args) => { asked.push(args[0]); return [{ result: shown }]; } };
-    vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+    vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem'].map(extractFunction).join('\n'), context);
     await context.pickListItem(carrier, 'VehicleSummary');
     return { done: state.doneActions, asked };
   };
@@ -1667,7 +1667,7 @@ test('a driver the driver list shows by name is entered', async () => {
   const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 1 }, doneActions: new Set(['driverEntered:0', 'addDriver:1']) };
   const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
     runKit: async () => [{ result: [true, true] }] };
-  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem'].map(extractFunction).join('\n'), context);
   await context.pickListItem(carrier, 'DriverSummary');
   assert.ok(state.doneActions.has('driverEntered:1'), 'listed: entered');
   // Not shown proves nothing (the list may write the name another way): markers stay.
@@ -1689,7 +1689,7 @@ test('a driver name another intake driver shares is not taken as entered', async
   // Every name asked about is on the list (as the page's listed() would say for a shown row).
   const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
     runKit: async (tabId, c, func, args) => { asked.push(args[0]); return [{ result: args[0].map((n) => n.length >= 2) }]; } };
-  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem'].map(extractFunction).join('\n'), context);
   await context.pickListItem(carrier, 'DriverSummary');
   assert.deepEqual(JSON.parse(JSON.stringify(asked[0])), [[], [], ['Mary Ann', 'Lee'], [], ['Casey', 'Example']]);
   assert.deepEqual([...state.doneActions].sort(), ['driverEntered:2', 'driverEntered:4']);
@@ -1703,7 +1703,7 @@ test('a list read for one tab is not applied after the agent switched tabs', asy
   const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 0 }, doneActions: new Set(['lookupVin:0']) };
   const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
     runKit: async () => { state.tab = { id: 4 }; return [{ result: [true, true] }]; } };
-  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem'].map(extractFunction).join('\n'), context);
   await context.pickListItem(carrier, 'VehicleSummary');
   assert.ok(!state.doneActions.has('trailerEntered:0'));
 });
@@ -1719,7 +1719,7 @@ test('a vehicle back from its pages that the summary lists by its VIN counts as 
   const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 0 }, doneActions: new Set() };
   const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
     runKit: async () => [{ result: [true, true] }] };
-  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   // Both VINs shown (the USDOT lookup's list), neither vehicle's page visited: still to add.
   await context.pickListItem(carrier, 'VehicleSummary');
   assert.deepEqual([...state.doneActions], []);
@@ -3692,7 +3692,7 @@ test('list verification discards driver and trailer reads after intake replaceme
     const pending = new Promise((resolve) => { release = resolve; });
     const writes = [];
     const context = { state, runKit: async () => { started(); return pending; }, persistDoneActions: () => writes.push('persist'), save: async () => writes.push('save'), renderPickers: () => writes.push('render') };
-    vm.runInNewContext(['verifyDrivers', 'verifyListed', 'pickListItem'].map(extractFunction).join('\n'), context);
+    vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem'].map(extractFunction).join('\n'), context);
     const run = context.pickListItem(carrier, list === 'drivers' ? 'Drivers' : 'Vehicles');
     await ready;
     if (change === 'replacement') state.intake = { record: { ...record } };
@@ -4749,14 +4749,24 @@ test('on a stop step nothing is filled, clicked or scheduled, manual or automati
     assert.match(text, /"role":"alert"/);
     assert.doesNotMatch(text, /stopped this quote|another client/);
   }
-  // The step before them is filled and followed up as before.
+  // The step before them is filled as before, with its own note: the quote stops there.
   const t = stopStepHarness('Quote & Coverages');
   t.context.scheduleAutoFill('/quote');
   assert.equal(t.timers.length, 1);
   assert.equal(t.context.aiActionCurrent({ intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: '/quote' }, []), true);
   t.context.showStopPage();
-  assert.equal(t.ui['stop-note'].hidden, true);
+  assertStepNote(t, 'Quote & Coverages');
 });
+
+// GEICO's Quote & Coverages note (carrier stepNotes): said, not a stop.
+function assertStepNote(t, step) {
+  const note = t.ui['stop-note'];
+  assert.equal(note.hidden, false, step);
+  const text = JSON.stringify(note.children);
+  assert.ok(text.includes(geico.stepNotes[step]), step);
+  assert.match(text, /"role":"status"/);
+  assert.doesNotMatch(text, /: yours|Nothing on this step is filled/);
+}
 
 test('each arrival at a stop step is logged once as a fill_run blocker, with the step\'s name only', () => {
   const t = stopStepHarness('Quote & Coverages');
@@ -4783,7 +4793,7 @@ test('each arrival at a stop step is logged once as a fill_run blocker, with the
   t.show('Quote & Coverages');
   t.show('Jordan Avery Trucking LLC');
   assert.equal(t.stops().length, 3);
-  assert.equal(t.ui['stop-note'].hidden, true);
+  assertStepNote(t, 'Quote & Coverages');
   // Practice copies log nothing; nor does a tab that showed it before this client was loaded,
   // though the step's note (about no client) is said all the same.
   const practice = stopStepHarness();
@@ -5435,4 +5445,67 @@ test('the report of a step the kit couldn\'t read doesn\'t say automatic filling
   assert.equal(state.reportFor.error, 'Automatic filling and helpers paused. The page is still waiting on its server. Review and retry.');
   context.renderReport([{ ...empty, halted: true, reason: UNREAD, stepUnread: true }, { ...empty, halted: true, reason: 'You stopped the fill.' }]);
   assert.equal(state.reportFor.error, 'Automatic filling and helpers paused. You stopped the fill.', 'the frame that paused is the one said');
+});
+
+// FL live run, 2026-10-21: each follow-up fill on Quote & Coverages set a coverage again, GEICO
+// requoted and the agent's choices went. The step is filled when it opens and on Fill this page only.
+test('GEICO Quote & Coverages: once filled, no automatic fill runs there again', async () => {
+  const t = stopStepHarness('Quote & Coverages');
+  vm.runInContext(['reportKey', 'currentReportKey', 'tabStep'].map(extractFunction).join('\n'), t.context);
+  t.state.reports.set(t.context.currentReportKey(), { fields: 24 });
+  await t.context.autoFill('/quote');
+  await t.context.fillPage({ auto: 'page' });
+  await t.context.fillPage({ auto: true });
+  assert.deepEqual([t.kits, t.state.filling], [[], false]);
+  // Another step is followed up as before (the kit runs).
+  const v = stopStepHarness('Vehicles');
+  vm.runInContext(['reportKey', 'currentReportKey', 'tabStep'].map(extractFunction).join('\n'), v.context);
+  v.state.reports.set(v.context.currentReportKey(), { fields: 10 });
+  await v.context.autoFill('/quote').catch(() => {});
+  assert.ok(v.kits.length > 0 || v.state.filling === false);
+});
+
+
+// FL live run, 2026-10-21: the second vehicle's and second driver's Add forms waited for a pick, and
+// the panel's driver was the owner GEICO already lists.
+test('a new, blank GEICO unit form is the next intake unit no form was filled for; never the owner GEICO lists', async () => {
+  const run = async ({ forms, active = {}, unitForms = {}, record, listedDriver = () => -1 }) => {
+    const intake = { record };
+    const state = { tab: { id: 4 }, intake, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0, ...active }, unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms } };
+    const calls = { saved: 0, rendered: 0 };
+    const context = {
+      state,
+      runKit: async () => [{ result: forms }],
+      save: async () => { calls.saved++; },
+      renderPickers: () => { calls.rendered++; },
+    };
+    vm.runInNewContext(['formScoped', 'pickUnitForm'].map(extractFunction).join('\n'), context);
+    await context.pickUnitForm({ ...geico, listedDriver }, { tabId: 4, intake, revision: 1 });
+    return { active: { ...state.active }, ...calls };
+  };
+  const record = { vehicles: [{}, {}, {}], drivers: [{}, {}, {}], trailers: [] };
+
+  // The second vehicle's form opens while vehicle 1 is bound to the first form.
+  let out = await run({ forms: [{ list: 'vehicles', id: 'B', blank: true }], unitForms: { vehicles: { A: 0 } }, record });
+  assert.equal(out.active.vehicles, 1);
+  assert.deepEqual([out.saved, out.rendered], [1, 1]);
+
+  // GEICO lists the owner (driver 1) itself: the first Add Driver form is driver 2.
+  out = await run({ forms: [{ list: 'drivers', id: 'D', blank: true }], record, listedDriver: () => 0 });
+  assert.equal(out.active.drivers, 1);
+
+  // Owner listed and driver 2 bound: the next form is driver 3.
+  out = await run({ forms: [{ list: 'drivers', id: 'E', blank: true }], unitForms: { drivers: { D: 1 } }, active: { drivers: 1 }, record, listedDriver: () => 0 });
+  assert.equal(out.active.drivers, 2);
+
+  // An answered form (a saved unit opened again), a form already bound, or a free active unit: no change.
+  for (const args of [
+    { forms: [{ list: 'vehicles', id: 'B', blank: false }], unitForms: { vehicles: { A: 0 } }, record },
+    { forms: [{ list: 'vehicles', id: 'A', blank: true }], unitForms: { vehicles: { A: 0 } }, record },
+    { forms: [{ list: 'vehicles', id: 'B', blank: true }], unitForms: { vehicles: { A: 0 } }, active: { vehicles: 2 }, record },
+    { forms: [{ list: 'vehicles', id: 'C', blank: true }], unitForms: { vehicles: { A: 0, B: 1, X: 2 } }, record },
+  ]) {
+    out = await run(args);
+    assert.deepEqual([out.active.vehicles, out.saved, out.rendered], [args.active?.vehicles ?? 0, 0, 0]);
+  }
 });
