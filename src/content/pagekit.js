@@ -922,6 +922,9 @@
   // The questions a fill waited the whole WAIT_MS for in this document: the page isn't working on
   // them (a VIN GEICO doesn't decode leaves its year for the agent), so no later fill waits again.
   const waitedOut = new WeakSet();
+  // Address boxes a fill left without a suggestion (`checkNumber`: GEICO's street), with what it
+  // left in them: still the agent's on a later fill while the box holds that.
+  const unpicked = new WeakMap();
   // The same for a question that was never drawn, by the unit form it would be on (its marker
   // question's element; the page's body without one): step ids per form.
   const waitedOutUndrawn = new WeakMap();
@@ -936,9 +939,15 @@
   });
 
   // Address boxes with the carrier's own address suggestions: type the whole one-line address,
-  // wait for the suggestion list, pick its first entry (which fills street, city and ZIP).
-  // No suggestion means the address needs the agent; the ZIP/city rules then check the rest.
-  const SUGGESTION_SELECTOR = '[role=option], .x-boundlist-item, .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li';
+  // wait for the suggestion list, pick its first entry for that address (which fills street, city
+  // and ZIP): one with its house number and, when both show one, its ZIP. No such suggestion means
+  // the address needs the agent; the ZIP/city rules then check the rest. GEICO's are
+  // <gds-dropdown-list-item type="address">, in its address wrapper's shadow root, read as list items
+  // (its script; FL live run 3, 2026-10-21).
+  const SUGGESTION_SELECTOR = '[role=option], .x-boundlist-item, .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li, gds-dropdown-list-item[type=address]';
+  // An address's house number (its leading number) and ZIP (after a state's two letters).
+  const houseNumberOf = (text) => String(text ?? '').match(/^\s*(\d+)\b/)?.[1] ?? null;
+  const zipOf = (text) => String(text ?? '').match(/\b[A-Z]{2}\s+(\d{5})(?:-\d{4})?\b/i)?.[1] ?? null;
   const shownSuggestions = () => deepQueryAll(document, SUGGESTION_SELECTOR).filter((el) => el.getClientRects().length && oneLine(el.textContent));
   async function applyAddress(step, c) {
     const text = String(step.value);
@@ -964,11 +973,21 @@
       for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1 && added.length < 40) added.push(n);
     }) : null;
     mo?.observe(document.body, { subtree: true, childList: true });
+    // A suggestion for this address: the same house number, and the same ZIP when both show one
+    // (another town's same street is not it).
+    const wantZip = zipOf(text);
+    const fits = (x) => {
+      const shown = oneLine(x.textContent);
+      return (!houseNumber || houseNumberOf(shown) === houseNumber) && (!wantZip || !zipOf(shown) || zipOf(shown) === wantZip);
+    };
     let first = null;
+    let offered = false;
     try {
       for (const start = Date.now(); !first && Date.now() - start < 4000;) {
         await sleep(200);
-        first = freshPac() ?? shownSuggestions().find((x) => !before.has(x)) ?? null;
+        const fresh = shownSuggestions().filter((x) => !before.has(x));
+        offered ||= fresh.length > 0;
+        first = freshPac() ?? fresh.find(fits) ?? null;
       }
     } finally {
       mo?.disconnect();
@@ -982,6 +1001,8 @@
         el.dispatchEvent(new Event('change', { bubbles: true }));
       }
       el.blur?.();
+      if (step.checkNumber) unpicked.set(el, el.value);
+      if (offered) return { ok: false, reason: `none of the page's address suggestions has the intake's house number${wantZip ? ' and ZIP' : ''}: pick the address yourself` };
       const seen = [...new Set(added.filter((n) => n.getClientRects?.().length).map((n) => `${n.tagName.toLowerCase()}${n.id ? `#${String(n.id).replace(/\d{3,}/g, '#')}` : ''}${typeof n.className === 'string' && n.className.trim() ? `.${n.className.trim().split(/\s+/).slice(0, 3).join('.')}` : ''}${n.getAttribute?.('role') ? `[role=${n.getAttribute('role')}]` : ''}`))].slice(0, 8);
       return { ok: false, reason: `the page offered no address suggestion; check the address, city and ZIP${seen.length ? ` (new on the page: ${seen.join(', ')})` : ''}` };
     }
@@ -1217,8 +1238,10 @@
 
   // Does the field already hold the answer we'd give?
   function agreesWith(step, c) {
-    // The chosen suggestion rewrites the typed address in the page's own format.
-    if (step.kind === 'address-suggest') return c.kind === 'text' && hasValue(c);
+    // The chosen suggestion rewrites the typed address in the page's own format. `checkNumber`: an
+    // address the page put there itself (GEICO's, from its USDOT record) agrees only with the
+    // intake's house number.
+    if (step.kind === 'address-suggest') return c.kind === 'text' && hasValue(c) && (!step.checkNumber || houseNumberOf(c.el.value) === houseNumberOf(step.value));
     if (step.kind === 'search-select') return squash(selectedText(c) ?? '').includes(squash(step.value));
     if (c.kind === 'checkbox') return typeof step.value === 'boolean' && (c.cmp ? !!cmpValue(c.cmp, c.el) : c.el.checked) === step.value;
     if (step.kind === 'selected-option') return /^selected\b/i.test(selectedText(c) ?? '');
@@ -1912,6 +1935,14 @@
         // An unticked box that should stay unticked already has its answer (live run 2026-10-09:
         // every unticked box was "filled" again on each pass).
         const answered = hasValue(c) || (c.kind === 'checkbox' && step.value === false && !c.el.checked);
+        // A street an earlier fill left without a suggestion is not answered while the box holds
+        // what that fill left: it stays the agent's, never taken as the page's.
+        if (step.checkNumber && unpicked.has(c.el) && unpicked.get(c.el) === c.el.value) {
+          const reason = 'no address suggestion was picked for it: pick the address yourself';
+          report.failed.push({ ...item, reason, ...describe(c) });
+          handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason}` });
+          continue;
+        }
         if (legacyHold || (!overwrite && answered && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {

@@ -35,8 +35,10 @@
 //   and the vehicle type and distance chosen before it cleared (GEICO redraws the form: FL live run 2,
 //   2026-10-21);
 // - a 5-digit ZIP draws its City list and picks the city (__geicoMock.cities, else SAMPLE CITY);
-// - the address box offers suggestions (li[role=option] under #address-dropdown-list: markup assumed,
-//   the open list was never captured); picking one fills street, ZIP and City;
+// - the address box offers a suggestion in its wrapper's shadow root, as GEICO's script draws them
+//   (gds-dropdown-list#address-dropdown-list > gds-dropdown-list-item[type=address], a "listitem"; the
+//   open list was never captured): the typed street with the city, state and ZIP; picking it fills
+//   street, ZIP and City;
 // - unit forms prefill the parking address from Business & Owner Info, as GEICO did on the FL run;
 // - the unit lists: Next on a vehicle or trailer form (Save and Continue on Add Driver, Next on the
 //   owner's driver form) saves the unit and draws the list, one row per unit; the add icon opens the
@@ -607,27 +609,33 @@
     }
   }
 
-  // --- Address suggestions (markup assumed: the open list was never captured) --------------------------------
+  // --- Address suggestions (GEICO's markup from its script: the open list was never captured) ---------------
   let suggest = null;
   function suggestions(box) {
     suggest?.remove();
+    suggest = null;
     const q = box.value.trim();
     if (q.length < 3) return;
     const zip = Object.keys(state.cities)[0] ?? '68102';
-    suggest = Object.assign(document.createElement('ul'), { id: box.getAttribute('aria-controls') || 'address-dropdown-list' });
+    const street = q.split(',')[0].trim();
+    suggest = document.createElement('gds-dropdown-list');
+    suggest.id = box.getAttribute('aria-controls') || 'address-dropdown-list';
     suggest.setAttribute('role', 'listbox');
-    for (const line of [`${q}, ${state.cities[zip] ?? 'SAMPLE CITY'}, NE ${zip}`]) {
-      const li = Object.assign(document.createElement('li'), { textContent: line });
-      li.setAttribute('role', 'option');
-      li.dataset.street = q;
-      li.dataset.zip = zip;
-      suggest.append(li);
-    }
+    suggest.setAttribute('aria-label', 'Address suggestions');
+    const item = Object.assign(document.createElement('gds-dropdown-list-item'), { textContent: `${street}, ${state.cities[zip] ?? 'SAMPLE CITY'}, NE ${zip} US` });
+    item.setAttribute('type', 'address');
+    item.setAttribute('role', 'listitem');
+    item.dataset.index = '0';
+    item.dataset.street = street;
+    item.dataset.zip = zip;
+    suggest.append(item);
+    suggest.box = box;
     box.setAttribute('aria-expanded', 'true');
-    box.closest('gds-input-wrapper, div')?.after(suggest);
+    const container = box.closest('gds-address-auto-complete-wrapper')?.shadowRoot?.querySelector('.dropdown-container');
+    if (container) container.append(suggest); else box.closest('gds-input-wrapper, div')?.after(suggest);
   }
   function pickSuggestion(li) {
-    const box = $$('input[type=search][aria-controls]', form).find((b) => b.getAttribute('aria-controls') === suggest?.id) ?? $('input[type=search]', form);
+    const box = suggest.box;
     box.value = li.dataset.street;
     box.setAttribute('aria-expanded', 'false');
     const zip = byStem('GiveZip');
@@ -641,7 +649,7 @@
     const path = e.composedPath();
     const progress = path.find((n) => n.tagName === 'A' && n.closest?.('#progressIndicator'));
     if (progress) { e.preventDefault(); return record({ type: 'click', target: 'progress', text: oneLine(progress.textContent), isTrusted: e.isTrusted }); }
-    const option = path.find((n) => n.getAttribute?.('role') === 'option' && n.dataset?.street != null);
+    const option = path.find((n) => n.tagName === 'GDS-DROPDOWN-LIST-ITEM' && n.dataset?.street != null);
     if (option) { record({ type: 'click', target: 'option', text: oneLine(option.textContent), isTrusted: e.isTrusted }); return pickSuggestion(option); }
     const radio = path.find((n) => n.tagName === 'GDS-RADIO-BUTTON');
     if (radio) {

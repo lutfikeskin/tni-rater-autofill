@@ -150,9 +150,20 @@ const GATEWAY = (rule) => !!rule.notPages?.includes('/quote') && !rule.steps;
 
 test('every rule names its steps (never one that is the agent\'s), how it is found, and a stable name', () => {
   const gateway = geico.rules.filter(GATEWAY);
+  const product = 'input[name="lob-selection"]';
+  const other = `${product}:not(#commercial):not([value="commercial"])`;
   assert.deepEqual(gateway.map((r) => [r.selector, r.notPages, r.steps ?? null]), [['#start-quote-zip', ['/quote'], null], ['#dashboard-usdot', ['/quote'], null],
-    ['input[name="header-search-type"], #search-input-id, input[name="lob-selection"], [id^="alerts-pref"]', ['/quote'], null]]);
-  assert.equal(gateway[2].ignore, true, 'the gateway\'s own controls are never answered');
+    [`${product}#commercial, ${product}[value="commercial"]`, ['/quote'], null], ['#start-quote-usdot', ['/quote'], null],
+    ...['input[name="header-search-type"]', '#search-input-id', other, other, other, '[id^="alerts-pref"]'].map((sel) => [sel, ['/quote'], null])]);
+  // The gateway's own controls are never answered, one rule each (a selector rule answers its first
+  // match only: FL live run 3, 2026-10-21, the header search took the rule that named the products).
+  assert.deepEqual(gateway.slice(4).map((r) => r.ignore), [true, true, true, true, true, true]);
+  // Search Products (TNI, FL live run 3): Commercial Auto/Trucking ticked; its USDOT box the intake's.
+  const p = plan(intake());
+  const commercial = one(p, 'Start quote: Commercial Auto/Trucking (TNI: ticked)');
+  assert.deepEqual([commercial.kind, commercial.value, commercial.source], ['bool', true, 'standard']);
+  assert.deepEqual([one(p, 'Start quote: USDOT number (Search Products)').value, one(p, 'Start quote: USDOT number').value], ['1234567', '1234567']);
+  assert.equal(one(plan(with_({ 'applicant.dot': null })), 'Start quote: USDOT number (Search Products)').ignore, true, 'no USDOT on the intake: left as it is');
   for (const rule of geico.rules.filter((r) => !GATEWAY(r))) {
     const where = rule.name ?? rule.field ?? rule.ask;
     assert.ok(Array.isArray(rule.steps) && rule.steps.length, `${where}: steps`);
@@ -175,6 +186,8 @@ const STANDARDS = [
   'Years with the current auto insurer (1-3 with a current policy)', 'Liability insurance the business has (None unless the notes say)',
   'Named additional insured or waiver of subrogation (TNI: No)', 'Blanket additional insured by contract (TNI: No)', 'Blanket waiver of subrogation by contract (TNI: No)',
   'Medical payments (FL: Not Included, PIP instead)', 'Comprehensive', 'Collision', 'Refrigeration breakdown (Yes with a reefer)',
+  'Business description (For Hire Trucking for an expediter or freight hauler)', 'More about the business (Other For-Hire Trucking for an expediter or freight hauler)',
+  'Start quote: Commercial Auto/Trucking (TNI: ticked)',
 ];
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
@@ -487,7 +500,7 @@ test('ownership type from the company name; no suffix, or no name, is the agent\
   }
 });
 
-test('the business address: unit from the intake, street the agent\'s, phone and email', () => {
+test('the business address: unit from the intake, street by GEICO\'s suggestion, phone and email', () => {
   const unit = (u) => { const p = plan(with_({ 'garaging.unit': u })); return [one(p, 'Business unit number', BOI), one(p, 'Business unit type', BOI)]; };
   assert.deepEqual(unit('Suite 200').map((s) => [s.value, s.ignore]), [['200', false], ['Suite', false]]);
   assert.deepEqual(unit('Apt 5').map((s) => s.value), ['5', 'Apartment']);
@@ -498,10 +511,14 @@ test('the business address: unit from the intake, street the agent\'s, phone and
   // No unit: both boxes as the page has them.
   assert.deepEqual(unit(null).map((s) => s.ignore), [true, true]);
   const p = plan(intake());
-  const street = one(p, 'Business street', BOI);
-  assert.equal(street.source, 'fact');
-  agents(street);
-  assert.match(street.note, /"1 Test Way"/);
+  // FL live run 3, 2026-10-21 (W43-09): the intake's address typed whole, GEICO's suggestion for it
+  // picked (the page kit: its house number and ZIP); none, and the street alone is the agent's to pick.
+  const street = one(p, 'Business street (GEICO\'s suggestion for the intake\'s address)', BOI);
+  assert.deepEqual([street.kind, street.source, street.value, street.fallback, street.checkNumber, street.note],
+    ['address-suggest', 'derived', '1 Test Way, Testville, NE 68000', '1 Test Way', true, null]);
+  // The unit has boxes of its own; a ZIP+4 is cut to its ZIP.
+  assert.equal(one(plan(with_({ 'garaging.unit': 'Suite 200', 'garaging.zip': '68000-1234' })), street.name, BOI).value, '1 Test Way, Testville, NE 68000');
+  agents(one(plan(with_({ 'garaging.street': null })), street.name, BOI));
   assert.deepEqual([one(p, 'Owner phone (the intake\'s phone)').value, one(p, 'Business phone').value, one(p, 'Customer email').value], ['(555) 010-0100', '(555) 010-0100', 'client@example.test']);
   const raw = plan(with_({ 'applicant.phone': '555-0100' }));
   agents(one(raw, 'Owner phone (the intake\'s phone)'));
@@ -511,13 +528,25 @@ test('the business address: unit from the intake, street the agent\'s, phone and
   assert.deepEqual([start.ignore, start.value], [true, null]);
 });
 
-test('business class: descriptions are the agent\'s picks; team driving and the placard from the intake', () => {
-  const p = plan(intake());
-  for (const name of ['Business description (the agent\'s pick)', 'More about the business (the agent\'s pick)']) {
-    const s = one(p, name);
-    assert.deepEqual([s.value, s.source, s.manualOnly], [null, null, false], `${name}: the AI assistant may suggest it`);
-    assert.match(s.note, /"Expediter"/);
+test('business class: For Hire Trucking for an expediter or freight hauler (TNI), else the agent\'s picks; team driving and the placard from the intake', () => {
+  const DESCRIPTIONS = ['Business description (For Hire Trucking for an expediter or freight hauler)', 'More about the business (Other For-Hire Trucking for an expediter or freight hauler)'];
+  // TNI, 2026-10-21: "that's the equivalent of Expediter and General Freight Hauler".
+  for (const businessClass of ['Expediter', 'Freight Hauler', 'General Freight Hauler', 'General Freight Hauling']) {
+    const p = plan(with_({ 'operations.businessClass': businessClass }));
+    assert.deepEqual(DESCRIPTIONS.map((name) => [one(p, name, BCU).value, one(p, name, BCU).source, one(p, name, BCU).kind, one(p, name, BCU).note]),
+      [['For Hire Trucking', 'standard', 'choice', null], ['Other For-Hire Trucking', 'standard', 'choice', null]], businessClass);
   }
+  // Any other class (or none): the agent's picks, the intake's words quoted; the AI assistant may suggest them.
+  for (const businessClass of ['Household Goods Mover', 'Dump Truck', 'Freight Forwarder', null]) {
+    const p = plan(with_({ 'operations.businessClass': businessClass }));
+    for (const name of DESCRIPTIONS) {
+      const s = one(p, name, BCU);
+      agents(s);
+      assert.deepEqual([s.source, s.standard, s.manualOnly], ['derived', false, false], `${businessClass}: ${name}`);
+      if (businessClass) assert.match(s.note, new RegExp(`"${businessClass}"`));
+    }
+  }
+  const p = plan(intake());
   assert.deepEqual([one(p, 'Team driving or slip seating').value, one(p, 'Hazardous material placard').value], [false, false]);
   assert.equal(value(with_({ 'operations.teamDriving': true }), 'Team driving or slip seating'), true);
   agents(one(plan(with_({ 'operations.teamDriving': null })), 'Team driving or slip seating'));
