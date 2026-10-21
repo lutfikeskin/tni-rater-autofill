@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 78 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 79 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -611,6 +611,8 @@
               if (w?.value && !wanted.has(w.value) && !extraRows.has(w.el)) extraRows.set(w.el, s.witness);
             }
           } else c = matching[0] ?? null;
+          // An ignored step for every match (`every`: the gateway's other product boxes, however many).
+          if (s.ignore && s.every) for (const x of matching.slice(1)) take(s, x, how);
         }
         // A dropdown with no usable label, known by one of its options ("NO PRIOR").
         if (!c && s.withOption) { how = 'option'; c = controls.find((x) => !used.has(x) && optionsOf(x).some((o) => squash(o.text) === squash(s.withOption))); }
@@ -3123,5 +3125,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 78, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 79, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

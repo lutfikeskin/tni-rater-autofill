@@ -259,6 +259,8 @@ function fieldSteps(rules, record, carrier, active) {
       notWithin: rule.notWithin ?? null,
       note,
       ignore,
+      // An ignored selector rule that takes every match it finds, not only its first.
+      every: !!rule.every,
       // Checked against the intake, never typed (a VIN decode's year): may depend on the unit.
       verifyOnly: typeof rule.verifyOnly === 'function' ? !!rule.verifyOnly(record, active) : !!rule.verifyOnly,
       // Our answer replaces what the page put there (e.g. a lookup's body type).

@@ -159,14 +159,14 @@ const GATEWAY = (rule) => !!rule.notPages?.includes('/quote') && !rule.steps;
 test('every rule names its steps (never one that is the agent\'s), how it is found, and a stable name', () => {
   const gateway = geico.rules.filter(GATEWAY);
   const product = 'input[name="lob-selection"]';
-  // The product boxes Commercial Auto's rule didn't take, however many (W43-25): up to eight.
-  const others = Array(8).fill(product);
   assert.deepEqual(gateway.map((r) => [r.selector, r.notPages, r.steps ?? null]), [['#start-quote-zip', ['/quote'], null], ['#dashboard-usdot', ['/quote'], null],
     [`${product}#commercial, ${product}[value="commercial"]`, ['/quote'], null], ['#start-quote-usdot', ['/quote'], null],
-    ...['input[name="header-search-type"]', '#search-input-id', ...others, '[id^="alerts-pref"]'].map((sel) => [sel, ['/quote'], null])]);
+    ...['input[name="header-search-type"]', '#search-input-id', product, '[id^="alerts-pref"]'].map((sel) => [sel, ['/quote'], null])]);
   // The gateway's own controls are never answered, one rule each (a selector rule answers its first
   // match only: FL live run 3, 2026-10-21, the header search took the rule that named the products).
   assert.ok(gateway.slice(4).every((r) => r.ignore === true));
+  // The product boxes Commercial Auto's rule didn't take, however many (W43-25): one rule for all.
+  assert.deepEqual(gateway.filter((r) => r.every).map((r) => r.selector), [product]);
   // Search Products (TNI, FL live run 3): Commercial Auto/Trucking ticked; its USDOT box the intake's.
   const p = plan(intake());
   const commercial = one(p, 'Start quote: Commercial Auto/Trucking (TNI: ticked)');
