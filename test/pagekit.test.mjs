@@ -4457,6 +4457,19 @@ test('a helper that loads a view is clicked only once the page has been quiet fo
   await h.kit.fill(plan, { maxRounds: 6 });
   assert.ok(clickedAt != null, 'clicked');
   assert.ok(clickedAt - lastDraw >= 1000, `clicked ${clickedAt - lastDraw} ms after the page's last change`);
+
+  // One that isn't due (it waits on an answer the agent gives) waits for no quiet page: the fill
+  // ends at once, never held for the second (or stopped as still loading on a busy page).
+  const g = harness({ pathname: '/quote' });
+  const row2 = new FakeNode('li', { className: 'add-state' });
+  row2.append(new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '0' } }));
+  g.document.body.append(row2);
+  const waiting = [{ ...actions[0], after: ['geico.qGiveVehicleOrTrailer'] }];
+  const plan2 = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: waiting }).filter((s) => s.kind === 'action');
+  const start = clock.Date.now();
+  const report = await g.kit.fill(plan2, { maxRounds: 6 });
+  assert.equal(report.halted, false, report.reason);
+  assert.ok(clock.Date.now() - start < 1000, `the fill took ${clock.Date.now() - start} ms`);
 });
 
 test('a one-address unit list: how many units it lists and which of them it shows, within the list only', () => {
@@ -5461,21 +5474,31 @@ test('a Continue with quietMs waits for the page, and a question drawn meanwhile
 test('a button the agent clicks during a fill is the step\'s move: the fill clicks no Continue after it', async () => {
   const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
   const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
-  const h = harness({ pathname: '/quote' });
-  geicoBar(h, 'Business Class & USDOT');
-  const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
-  const clicks = [];
-  const next = gdsButton('Next');
-  next.button.onclick = (e) => clicks.push(e?.isTrusted ? 'agent' : 'fill');
-  h.document.body.append(dot, next.host);
-  // The agent's own Next, a moment after the answer (GEICO hasn't moved yet).
-  dot.addEventListener('change', () => setTimeout(() => {
-    const event = { type: 'click', target: next.button, isTrusted: true, composedPath: () => [next.button, next.host] };
-    next.button.dispatchEvent(event);
-    next.button.onclick(event);
-  }, 200));
-  const report = await h.kit.fill(plan, { maxRounds: 6, advance });
-  assert.deepEqual(plain([clicks, report.advanced ?? null, report.agentPressed]), [['agent'], null, true]);
+  const run = async (press) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Business Class & USDOT');
+    const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
+    const clicks = [];
+    const next = gdsButton('Next');
+    next.button.onclick = (e) => clicks.push(e?.isTrusted ? 'agent' : 'fill');
+    // A section heading the agent may open meanwhile (GEICO's gds-accordion: a toggle, no move).
+    const heading = new FakeNode('div', { attrs: { role: 'button', 'aria-expanded': 'false' } });
+    const toggle = new FakeNode('button', { attrs: { 'aria-expanded': 'false' } });
+    h.document.body.append(dot, next.host, heading, toggle);
+    const target = { next: next.button, heading, toggle }[press];
+    // The agent's click a moment after the answer (GEICO hasn't moved yet).
+    dot.addEventListener('change', () => setTimeout(() => {
+      const event = { type: 'click', target, isTrusted: true, composedPath: () => (press === 'next' ? [next.button, next.host] : [target]) };
+      target.dispatchEvent(event);
+      if (press === 'next') next.button.onclick(event);
+    }, 200));
+    const report = await h.kit.fill(plan, { maxRounds: 6, advance });
+    return plain([clicks, report.advanced ?? null, report.agentPressed ?? null, report.blockers.filter((x) => /Continue is yours/.test(x)).length]);
+  };
+  // Their Next: no Next from the fill, and the panel is told why (a blocker, logged).
+  assert.deepEqual(await run('next'), [['agent'], null, true, 1]);
+  // A section heading or another toggle moves nothing: the fill's Next as usual.
+  for (const press of ['heading', 'toggle']) assert.deepEqual(await run(press), [['fill'], 'Next', null, 0], press);
 });
 
 test('unitFormsNow says whether a unit form is new: its first question unanswered', async () => {
