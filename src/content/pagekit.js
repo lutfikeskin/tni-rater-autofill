@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 74 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 75 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -2279,12 +2279,12 @@
     }
 
     // What this fill has left for the agent so far (`whenClear` helpers wait for none): its needs-you,
-    // failed and check items, an answer kept that differs, and an empty question no rule knows.
-    function leftForAgent(controls, pairs) {
-      const known = new Set(pairs.map((p) => p.control));
+    // failed and check items, an answer kept that differs, and an empty question it reported as
+    // unfamiliar (only those the panel lists, so the agent can answer or mark each one done).
+    function leftForAgent(controls) {
       return report.noData.length + report.failed.length + report.checks.length + report.leftRequired.length
         + report.kept.filter((x) => x.differs).length
-        + controls.filter((c) => !known.has(c) && !hasValue(c) && !skippedField(c)).length;
+        + controls.filter((c) => !hasValue(c) && !skippedField(c) && report.unknown.some((x) => x.key === fieldKey(c))).length;
     }
 
     function clickNextAction(controls, immediateOnly = false) {
@@ -2337,7 +2337,7 @@
         // A page button that the carrier refuses while a required question is empty (Rates' bill
         // plan, SC 2026-10-07: clicked right after UM/UIM were cleared, and nothing opened).
         const openRequired = a.waitRequired ? controls.filter((c) => c.required && !hasValue(c) && !skippedField(c)) : [];
-        const leftOpen = a.whenClear ? leftForAgent(controls, pairs) : 0;
+        const leftOpen = a.whenClear ? leftForAgent(controls) : 0;
         const ready = !holds.length && !openRequired.length && !leftOpen && (!a.afterAny?.length || a.afterAny.some(has))
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
@@ -2474,7 +2474,7 @@
     // (GEICO's two pay plan groups, one of which lists 11 Payments), or a helper that may show it is
     // still waiting (View More Payment Plans, for the agent's answers): the agent's.
     for (const { item, control, step } of unoffered.values()) {
-      if (handled.has(step.id) || report.blocked.some((x) => x.waits?.some((w) => w.say === NOTHING_LEFT)) || report.filled.some((x) => x.path === step.path) || report.kept.some((x) => x.path === step.path)) continue;
+      if (handled.has(step.id) || report.blocked.some((x) => !clicked.has(x.id) && x.waits?.some((w) => w.say === NOTHING_LEFT)) || report.filled.some((x) => x.path === step.path) || report.kept.some((x) => x.path === step.path)) continue;
       const note = `The page doesn't offer "${step.value}" here: pick it yourself.`;
       report.noData.push({ ...item, note });
       handled.set(step.id, { status: 'needs', note });
@@ -3057,5 +3057,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 74, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 75, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();
