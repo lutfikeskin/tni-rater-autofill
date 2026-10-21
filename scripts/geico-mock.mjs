@@ -148,6 +148,10 @@ const EXPECT = {
     'cov:Bodily Injury or Combined Single Limit Liability': '$750,000 Combined Single Limit',
     GiveMtcEligibleRequireCoverageYesNo: 'Yes', GiveMtcRequireCoverageForMobileHomesYesNo: 'No', GiveMtcRequireCoverageForBusinessDocumentYesNo: 'No',
     'cov:Motor Truck Cargo': '$100k/$1000 deductible', GiveMotorTruckGeneralLiabilityCoverageRequired: 'No',
+    // TNI's (FL live run 4, 2026-10-21): UM/UIM $100,000 CSL, road service accepted, 11 Payments.
+    'cov:Uninsured Motorist Bodily Injury (includes Underinsured)': '$100,000 Combined Single Limit',
+    // The installments group (the second): 11 Payments is one of its plans View More shows.
+    'cov:ERS#1': 'I accept this coverage', 'cov:ERS#2': 'I accept this coverage', 'GivePayPlanV2#2': 'GEICO_PP_11Pay',
   },
 };
 // Questions the fill must leave to the agent, each with its note (report.noData), by field key:
@@ -161,8 +165,8 @@ const NEEDS_YOU = [
   ['Vehicles: vehicle 1', /\S/, ['ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: trailer 1', /trailer/, ['ref:GiveOtherVehicleType']],
-  ['Quote & Coverages', /\S/, ['ref:GivePayPlanV2', 'cov:uninsured motorist bodily injury includes underinsured', 'cov:medical payments med',
-    ...['FT', 'Rental', 'ERS'].flatMap((c) => [`cov:${c}#1`, `cov:${c}#2`]),
+  ['Quote & Coverages', /\S/, ['cov:medical payments med',
+    ...['FT', 'Rental'].flatMap((c) => [`cov:${c}#1`, `cov:${c}#2`]),
     'ref:GiveMtcRequireCoverageForMobileHomesYesNo', 'ref:GiveMtcRequireCoverageForBusinessDocumentYesNo', 'ref:GiveMtcHaulingCommoditiesCollect']],
 ];
 const STOP_STEPS = Object.keys(geico.stopSteps ?? {});
@@ -704,18 +708,17 @@ async function scenario() {
   await continued('Additional Business Info', 'Next', 'quote');
 
   // Quote & Coverages: the fill runs when the step opens and again only for questions it draws
-  // (geico.newQuestionsOnlySteps: fillDrawn), never after an answer alone. The agent changes the
-  // liability limit, opens Motor Truck Cargo and answers its questions the intake doesn't; each
-  // question that draws the next gets the panel's follow-up. Collision's deductibles show a moment
-  // after comprehensive is chosen (FL live run 2, 2026-10-21), and the fill waits for them. The
-  // fills never click Recalculate (FL live run, 2026-10-21: each fill's Recalculate redrew the step
-  // and took back the agent's choices); the agent does, and the fill after its redraw (new ids for
-  // every coverage list) keeps the agent's limit and changes nothing, so the premium stays rated.
-  await fillDrawn('Quote & Coverages');
-  await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
+  // (geico.newQuestionsOnlySteps: fillDrawn), never after an answer alone. It opens Motor Truck Cargo
+  // (a collapsed card; the intake asks for cargo: W43-16), and each cargo question that draws the next
+  // gets the panel's follow-up. Collision's deductibles show a moment after comprehensive is chosen
+  // (FL live run 2, 2026-10-21), and the fill waits for them. The agent changes the liability limit,
+  // answers the cargo questions the intake doesn't and marks the rest done; nothing clicked meanwhile
+  // (`whenClear`). Then Fill this page: Recalculate, View More Payment Plans, 11 Payments, Print Quote
+  // Proposal, once each (TNI, FL live run 4, 2026-10-21: W43-18), and the agent's limit kept.
   const CARGO = 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]';
-  await agent.open(CARGO, 'Motor Truck Cargo');
   await fillDrawn('Quote & Coverages');
+  if (!doneActions.has('openCargo')) fail('Quote & Coverages: the fill did not open Motor Truck Cargo');
+  await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
   await agent.open(CARGO, 'Motor Truck Cargo');
   await agent.radio('GiveMtcRequireCoverageForMobileHomesYesNo', 'No');
   await fillDrawn('Quote & Coverages');
@@ -726,18 +729,28 @@ async function scenario() {
   await agent.open(CARGO, 'Motor Truck Cargo');
   await agent.pickList('GiveMtcHaulingCommoditiesCollect', ['Miscellaneous Goods - Containerized Freight']);
   await fillDrawn('Quote & Coverages');
-  for (const f of fills.filter((x) => x.form === 'Quote & Coverages' && x.report.actions?.length)) fail(`Quote & Coverages: a fill clicked ${f.report.actions.map((a) => a.text).join(', ')}`);
-  const recalcs = (await mock()).recalcs;
-  if (recalcs) fail(`Quote & Coverages: Recalculate was clicked ${recalcs} time(s) before the agent's`);
-  await agent.press('Recalculate');
-  await page.waitForFunction((n) => window.__geicoMock.recalcs > n, recalcs, { timeout: 15000 });
+  const early = fills.filter((x) => x.form === 'Quote & Coverages').flatMap((f) => f.report.actions ?? []).filter((a) => a.id !== 'openCargo');
+  if (early.length) fail(`Quote & Coverages: a fill clicked ${early.map((a) => a.text).join(', ')} with questions left for the agent`);
+  if ((await mock()).recalcs) fail('Quote & Coverages: Recalculate was clicked with questions left for the agent');
+  // What is left and stays as GEICO has it: marked done (sidepanel markDone: the step's agent keys).
+  const leftKeys = [...(needsSeen.get('Quote & Coverages')?.keys() ?? [])];
+  for (const key of leftKeys) keysIn(`${PAGE}|s:Quote & Coverages`).add(key);
+  lines.push(`  (agent marked ${leftKeys.length} item(s) done)`);
+  const done = await fill('Quote & Coverages');
+  await page.waitForTimeout(700);
   await settled();
   await poll();
-  if (!(await mock()).premium) fail('Quote & Coverages: the agent\'s Recalculate left the premium out of date');
+  // Recalculate leaves the report's actions once a later answer (the pay plan) re-arms it; the page's
+  // own count says it ran, once (the click checks below say by whom).
+  const clickedIds = done.actions?.map((a) => a.id) ?? [];
+  if (JSON.stringify(clickedIds) !== JSON.stringify(['morePayPlans', 'printProposal'])) fail(`Quote & Coverages: the fill clicked [${clickedIds.join(', ')}], expected [morePayPlans, printProposal] after Recalculate`);
+  if ((await mock()).recalcs !== 1) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s), expected once`);
+  if (!(await mock()).premium) fail('Quote & Coverages: the fill\'s Recalculate left the premium out of date');
+  if ((await values())['GivePayPlanV2#2'] !== 'GEICO_PP_11Pay') fail(`Quote & Coverages: the pay plan is ${JSON.stringify((await values())['GivePayPlanV2#2'])}, not 11 Payments`);
   const after = await fill('Quote & Coverages');
   await corrected('Quote & Coverages', 'cov:bodily injury or combined single limit liability', 'cov:Bodily Injury or Combined Single Limit Liability', '$750,000 Combined Single Limit');
-  if (after.filled.length) fail(`Quote & Coverages: the fill after the agent's Recalculate changed ${after.filled.map((x) => x.label).join('; ')}`);
-  if (!(await mock()).premium) fail('Quote & Coverages: the fill after the agent\'s Recalculate put the premium out of date');
+  if (after.filled.length || after.actions?.length) fail(`Quote & Coverages: the fill after Print changed ${after.filled.map((x) => x.label).join('; ')} / clicked ${(after.actions ?? []).map((a) => a.text).join(', ')}`);
+  if (!(await mock()).premium) fail('Quote & Coverages: the fill after Print put the premium out of date');
   await leave('Quote & Coverages');
   await agent.go('Next', 'final-quote-details');
 
@@ -810,8 +823,9 @@ if (ownerCheck && (filledOn('Vehicles: owner check', 'ref:GiveLastName') || owne
 // when the page is done" on), once, its list's "+" and, for a vehicle, the chooser's Next: vehicle 2's
 // and driver 2's, never the trailer's (added with the setting off). Its Continues, once each, where
 // nothing was left for the agent: the owner's driver form, Add Driver, both lists with every intake
-// unit, Additional Business Info. Never Recalculate, another Next, Save and Continue or Looks Good,
-// Discard, Print, a progress link, an edit icon, a link.
+// unit, Additional Business Info. On Quote & Coverages, once each: Motor Truck Cargo's chevron,
+// Recalculate, View More Payment Plans and Print Quote Proposal (TNI, 2026-10-21). Never another Next,
+// Save and Continue or Looks Good, Discard, a progress link, another edit icon or link.
 const isAdd = (e) => e.type === 'click' && (e.target === 'addIcon' || (e.target === 'button' && e.text === 'Next' && e.view === 'vehicle-or-trailer'));
 const adds = final.log.filter((e) => !e.isTrusted && isAdd(e)).map((e) => `${e.target} on ${e.view}`);
 const wantAdds = ['addIcon on vehicle-list', 'button on vehicle-or-trailer', 'addIcon on driver-list'];
@@ -822,8 +836,13 @@ const wantContinues = ['Looks Good on vehicle-list', 'Next on owner-driver', 'Sa
 if (JSON.stringify(continues) !== JSON.stringify(wantContinues)) fail(`the extension's Continues were [${continues.join(', ')}], expected [${wantContinues.join(', ')}]`);
 const picks = final.log.filter((e) => !e.isTrusted && e.type === 'click' && e.target === 'option').map((e) => e.view);
 if (JSON.stringify(picks) !== '["business-owner"]') fail(`the extension picked address suggestions on [${picks.join(', ')}], expected [business-owner]`);
+const isQuoteHelper = (e) => e.type === 'click' && e.view === 'quote' && (e.target === 'editIcon' || (e.target === 'button' && /^(recalculate|print quote proposal)$/i.test(e.text ?? ''))
+  || (e.target === 'link' && /^view more payment plans$/i.test(e.text ?? '')));
+const helperClicks = final.log.filter((e) => !e.isTrusted && isQuoteHelper(e)).map((e) => `${e.target}${e.text ? ` ${e.text}` : ''}`);
+const wantHelpers = ['editIcon', 'button Recalculate', 'link View More Payment Plans', 'button Print Quote Proposal'];
+if (JSON.stringify(helperClicks) !== JSON.stringify(wantHelpers)) fail(`the extension's Quote & Coverages clicks were [${helperClicks.join(', ')}], expected [${wantHelpers.join(', ')}]`);
 const kitClicks = final.log.filter((e) => !e.isTrusted && (e.type === 'click' || e.type === 'disabled'))
-  .filter((e) => !['radio', 'checkbox', 'option'].includes(e.target) && !isAdd(e) && !isContinue(e));
+  .filter((e) => !['radio', 'checkbox', 'option'].includes(e.target) && !isAdd(e) && !isContinue(e) && !isQuoteHelper(e));
 for (const e of kitClicks) fail(`the extension clicked ${e.target}${e.text ? ` "${e.text}"` : ''} on ${e.step}`);
 for (const e of final.stopActions.filter((x) => !x.isTrusted)) fail(`${e.step}: the extension did ${e.type} on ${e.target} (a stop step)`);
 // The Social Security number: never typed, by anyone here.

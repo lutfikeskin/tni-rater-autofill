@@ -5390,6 +5390,53 @@ test('a Continue with quietMs waits for the page, and a question drawn meanwhile
   assert.deepEqual(plain([p.clicks, report.advanced]), [['Next'], 'Next']);
 });
 
+// FL live run 4, 2026-10-21 (W43-18, TNI): GEICO's pay plan is 11 Payments, one of the plans "View
+// More Payment Plans" shows; the fill clicks Recalculate, View More, picks 11 Payments and prints,
+// only once nothing on the page is left for the agent. `whenOffered`: a choice whose option isn't
+// shown yet waits (a helper may show it) instead of failing; `whenClear`: a helper waits until the
+// fill has left nothing for the agent.
+test('a choice waits for its option to be offered, and a helper waits until nothing is left for the agent', async () => {
+  const page = ({ leftOpen }) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Quote & Coverages');
+    const plans = gdsRadios('GivePayPlanV2', 31, null, [['GEICO_PP_1Pay', 'Pay In Full'], ['GEICO_PP_9Pay', '9 Payments'], ['GEICO_PP_11Pay', '11 Payments']], { checked: 0 });
+    for (const host of plans.hosts.slice(1)) { host._visible = false; host.input._visible = false; }
+    const more = new FakeNode('a', { textContent: 'View More Payment Plans', attrs: { href: '#' } });
+    const clicks = [];
+    more.onclick = () => { clicks.push('more'); for (const host of plans.hosts) { host._visible = true; host.input._visible = true; } };
+    const print = gdsButton('Print Quote Proposal');
+    print.button.onclick = () => clicks.push('print');
+    h.document.body.append(plans.group, more, print.host);
+    if (leftOpen) h.document.body.append(gdsRadios('GiveMtcDoesTransportLiveAnimalsYesNo', 32, 'Does the insured transport live animals?', [['Yes', 'Yes'], ['No', 'No']]).group);
+    return { h, plans, clicks };
+  };
+  const rules = [
+    { field: 'GivePayPlanV2', path: 'geico.qGivePayPlanV2', name: 'Payment plan (TNI: 11 Payments)', kind: 'choice', source: 'standard', value: () => '11 Payments', whenOffered: true },
+    { field: 'GiveMtcDoesTransportLiveAnimalsYesNo', name: 'Cargo: live animals', source: 'fact', note: 'Answer it yourself.' },
+  ];
+  const actions = [
+    { id: 'morePayPlans', text: '^view more payment plans$', whenClear: true },
+    { id: 'printProposal', text: '^print quote proposal$', whenClear: true, afterValue: ['geico.qGivePayPlanV2', '^11 payments'] },
+  ];
+  const plan = () => buildPlan(geicoRecord(), { id: 'geico', useGenericRules: false, rules, actions });
+  // A question left for the agent: nothing clicked, and the plan not offered yet is no failure.
+  let p = page({ leftOpen: true });
+  let report = await p.h.kit.fill(plan(), { maxRounds: 8, replaceChoices: true });
+  assert.deepEqual(plain([p.clicks, report.failed, report.noData.map((x) => x.key)]), [[], [], ['ref:GiveMtcDoesTransportLiveAnimalsYesNo']]);
+  assert.ok(report.blocked.some((b) => b.id === 'morePayPlans' && /nothing left for you/.test(b.why)), JSON.stringify(report.blocked));
+  // Nothing left: View More, 11 Payments, then Print.
+  p = page({ leftOpen: false });
+  report = await p.h.kit.fill(plan(), { maxRounds: 8, replaceChoices: true });
+  assert.deepEqual(plain(p.clicks), ['more', 'print']);
+  assert.equal(p.plans.inputs[2].checked, true);
+  assert.deepEqual(plain(report.failed), []);
+  // Never offered: the agent's, once the fill is done.
+  p = page({ leftOpen: false });
+  p.h.document.body.children.splice(p.h.document.body.children.indexOf(p.h.document.body.children.find((n) => n.tagName === 'A')), 1);
+  report = await p.h.kit.fill(plan(), { maxRounds: 8, replaceChoices: true });
+  assert.deepEqual(plain(report.noData.map((x) => [x.key, x.note])), [['ref:GivePayPlanV2', 'The page doesn\'t offer "11 Payments" here: pick it yourself.']]);
+});
+
 test('unitFormsNow says whether a unit form is new: its first question unanswered', async () => {
   const h = harness({ pathname: '/quote' });
   geicoBar(h, 'Vehicles');

@@ -114,6 +114,9 @@ function actionSteps(carrier, record, active) {
       doneWhen: resolve(a.doneWhen) ?? [],
       // Waits while a required question on the page is empty (the carrier would refuse the click).
       waitRequired: !!a.waitRequired,
+      // Waits until the fill has left nothing on the page for the agent (GEICO's Recalculate, View
+      // More Payment Plans and Print Quote Proposal: TNI, 2026-10-21).
+      whenClear: !!a.whenClear,
       unfinished: resolve(a.unfinished) ?? null,
       unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (/:driver$/.test(id) || (a.scope === 'driver' && !/:/.test(id))
         ? `${id.replace(/:driver$/, '')}:${active.drivers ?? 0}`
@@ -264,6 +267,9 @@ function fieldSteps(rules, record, carrier, active) {
       trustPage: !!rule.trustPage,
       // A differing choice already on the page is kept and flagged, never replaced (`replaceChoices`).
       keepChoice: !!rule.keepChoice,
+      // A choice whose option a helper shows (GEICO's 11 Payments, behind View More Payment Plans):
+      // not offered yet, it waits instead of failing; never offered, it is the agent's.
+      whenOffered: !!rule.whenOffered,
       // May fill its field while it isn't on screen (an earlier step's question added later).
       hidden: !!rule.hidden,
       // One question asked as several boxes (AmWINS' auto symbols 1 to 9): the panel lists it once,

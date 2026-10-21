@@ -34,8 +34,9 @@
 // agent makes from a long list with the intake's words quoted (business description, vehicle and
 // trailer type), which the AI assistant may suggest for the agent's approval.
 //
-// The agent makes the coverage choices and clicks Recalculate on Quote & Coverages, and prints the
-// quote proposal there. The quote stops at Quote & Coverages: Final Quote Details leads to MVR & CLUE,
+// On Quote & Coverages the fill opens Motor Truck Cargo when the intake asks for it, and once
+// nothing there is left for the agent clicks Recalculate, picks 11 Payments under View More Payment
+// Plans and prints the quote proposal (TNI, FL live run 4, 2026-10-21). The quote stops at Quote & Coverages: Final Quote Details leads to MVR & CLUE,
 // which orders paid reports (stopSteps: nothing is filled or clicked there). With "Click Continue when
 // the page is done" on, the fill adds each intake vehicle, trailer and driver not on the quote yet
 // (TNI, 2026-10-21): the list's "+", the chooser's Vehicle or Trailer and its Next (`actions`,
@@ -335,6 +336,9 @@ const noPhysicalDamage = (r) => String(otherNotes(r) ?? '').split('\n').map((s) 
 const physicalDamageNote = (what) => (r) => (noPhysicalDamage(r) ? `The intake's notes say ${quote(noPhysicalDamage(r), 80)}: answer ${what} yourself.` : null);
 const physicalDamageSource = (r) => (noPhysicalDamage(r) ? 'fact' : 'standard');
 const DEDUCTIBLE = '$1,000 deductible';
+// TNI's uninsured motorist limit and pay plan on GEICO (FL live run 4, 2026-10-21: W43-17, W43-18).
+const UM_LIMIT = '$100,000 Combined Single Limit';
+const PAY_PLAN = '11 Payments';
 
 // Farthest one-way distance: the intake's radius in miles, as GEICO's band; long haul ("Unlimited",
 // OTR, 48 states) is 501 miles, "More than 500". The FL list starts at 101-200: a band the page
@@ -534,7 +538,10 @@ const glLimitNote = (r) => (glLimit(r) ? null
       : 'General liability is requested without a limit on the intake: choose it yourself.');
 
 // A vehicle's rows on Quote & Coverages, one per vehicle, by the coverage their list's id ends in:
-// comprehensive and collision are TNI's $1,000 deductibles, the rest the agent's.
+// comprehensive and collision are TNI's $1,000 deductibles, road service accepted on every vehicle
+// (emergency, and heavy vehicle on a heavy truck: TNI, FL live run 4, 2026-10-21, W43-17), the rest
+// the agent's.
+const ROAD_SERVICE = 'I accept this coverage';
 const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 'Fire and theft'], ['Rental', 'Rental reimbursement'],
   ['RRWDT', 'Rental reimbursement with downtime'], ['ERS', 'Emergency road service'], ['HVRS', 'Heavy vehicle road service']];
 
@@ -547,6 +554,8 @@ const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 
 const adds = (list) => (r, a) => !!a.adding?.click && a.adding.list === list && a.adding.index === (a[list] ?? 0);
 // The chooser's answer for it: Vehicle or Trailer (null on the driver list, or with none to add).
 const chosen = (r, a) => ({ vehicles: 'Vehicle', trailers: 'Trailer' })[a.adding?.list] ?? null;
+// The Motor Truck Cargo card on Quote & Coverages (W43-16).
+const CARGO_CARD = 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]';
 const UNIT = { vehicles: ['vehicle', 'Vehicle'], trailers: ['trailer', 'Trailer'], drivers: ['driver', 'Driver'] };
 // Each helper is per unit (its id ends in the unit's index), clicked once a quote: a unit is never
 // added twice. The "+" counts once a question shows (the chooser, Add Driver's form), the chooser's
@@ -619,6 +628,19 @@ export const geico = {
     addUnit('trailers', VEHICLE_LIST, '+, Trailer, Next'),
     chooseUnit('trailers'),
     addUnit('drivers', DRIVER_LIST, 'the driver list\'s +'),
+
+    // Quote & Coverages (TNI, FL live run 4, 2026-10-21). Motor Truck Cargo is a card under
+    // "Optional 12 Mo. GEICO Commercial Policy Add-Ons", collapsed until its chevron is opened; its
+    // questions show one at a time after each answer (W43-16). Opened when the intake asks for cargo.
+    { id: 'openCargo', steps: [COVERAGES], token: 'editIcon', within: CARGO_CARD, label: 'Motor Truck Cargo',
+      when: (r) => r.coverage?.cargo === true, unlessSelector: `${CARGO_CARD}.expanded`, verify: 'revealed' },
+    // Then, once nothing on the step is left for the agent (`whenClear`), each once (W43-18):
+    // Recalculate while the rates are out of date, View More Payment Plans for TNI's 11 Payments
+    // (picked by its rule), and Print Quote Proposal once 11 Payments is chosen. Next stays the
+    // agent's: it leads to MVR & CLUE, whose reports cost the agency.
+    { id: 'recalculate', steps: [COVERAGES], text: '^recalculate$', waitRequired: true, needsRecalculation: true, verify: 'premium', whenClear: true },
+    { id: 'morePayPlans', steps: [COVERAGES], text: '^view more payment plans$', needsPremium: true, whenClear: true },
+    { id: 'printProposal', steps: [COVERAGES], text: '^print quote proposal$', needsPremium: true, whenClear: true, afterValue: ['geico.qGivePayPlanV2', `^${PAY_PLAN}`] },
   ],
   // Continue, with "Click Continue when the page is done" on, once nothing is left for the agent
   // (TNI, FL live run 3, 2026-10-21: "with Click Continue when its done on, GEICO's should click
@@ -650,12 +672,13 @@ export const geico = {
   },
   // What the panel says on a step the fill still answers.
   stepNotes: {
-    [COVERAGES]: 'Make the coverage choices, click Recalculate, then Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',
+    [COVERAGES]: 'Answer what is left for you here (or mark it done) and click Fill this page: with nothing left, the fill clicks Recalculate, picks 11 Payments under View More Payment Plans and clicks Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',
   },
   // GEICO requotes when a coverage changes, and puts back its own choices when the agent backs out
   // (FL live run, 2026-10-21: every follow-up fill set the liability limit again, and GEICO redrew the
   // quote each time, losing the agent's choices). On Quote & Coverages: no follow-up fill (only the
-  // step's first fill and Fill this page), no button clicked (the agent's Recalculate), and an answer
+  // step's first fill and Fill this page), Recalculate and the rest only once nothing is left for the
+  // agent (`whenClear`, W43-18), and an answer
   // the fill gave that the page shows otherwise since is kept, flagged (pagekit `takenBack`).
   // Its follow-up fills run only for questions it draws (FL live run 2, 2026-10-21: each cargo
   // question waited for the agent's Fill, and GEICO's own No to cargo stood until then), never after
@@ -863,14 +886,19 @@ export const geico = {
     // --- Quote & Coverages ---------------------------------------------------------------------
     ...on(COVERAGES, {}, [
       fact('PolicyTermSliderCollect', 'Policy term'),
-      // Two groups (pay in full and installments, each with its own name): one rule each.
-      ...[1, 2].map(() => fact('GivePayPlanV2', 'Payment plan', { each: true, note: 'The payment plan is yours to pick with the client.' })),
+      // TNI's 11 Payments (FL live run 4, 2026-10-21, W43-18), one of the plans View More Payment
+      // Plans shows (`whenOffered`: waited for until then). Two groups (pay in full and
+      // installments, each with its own name): one rule each; the one listing it is answered.
+      ...[1, 2].map(() => ({ field: 'GivePayPlanV2', name: 'Payment plan (TNI: 11 Payments)', kind: 'choice', source: 'standard', value: () => PAY_PLAN, each: true, whenOffered: true })),
       { q: 'LiabilityCoverage', ask: 'Liability Coverage', control: 'select', name: 'Liability coverage', kind: 'choice', source: 'derived', value: liabilityType, note: liabilityNote },
       // The intake's limit, by its amount ($1M CSL is "$1,000,000 Combined Single Limit"). A split
       // limit, State Minimum or one GEICO doesn't offer finds no option: the agent's, never the next one up.
       { ask: 'Bodily Injury or Combined Single Limit Liability', control: 'select', path: 'coverage.autoLiabLimit', name: 'Liability limit', kind: 'choice',
         note: (r) => ntlNote(r) ?? (liabilityType(r) ? null : 'Pick the liability limit yourself, with the liability coverage.') },
-      { q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', name: 'Uninsured motorist bodily injury', source: 'fact' },
+      // TNI's $100,000 CSL, in every state (FL live run 4, 2026-10-21, W43-17: GEICO pre-selected
+      // $750,000). A state without that option leaves it to the agent.
+      { q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', name: 'Uninsured motorist bodily injury (TNI: $100,000 CSL)',
+        kind: 'choice', source: 'standard', value: () => UM_LIMIT },
       // FL: one choice each, kept as GEICO has them (pipKept).
       { q: 'Stacked', ask: 'Is Stacked', control: 'select', name: 'Stacked uninsured motorist', ...pipKept('stacked uninsured motorist') },
       { q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', name: 'Medical payments (FL: Not Included, PIP instead)', kind: 'choice',
@@ -882,7 +910,9 @@ export const geico = {
       // comprehensive and collision are $1,000 deductibles (physicalDamageSource); the rest are the agent's.
       ...ROW_COVERAGES.map(([suffix, name]) => (['COMP', 'COLL'].includes(suffix)
         ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, kind: 'choice', source: physicalDamageSource, value: () => DEDUCTIBLE, note: physicalDamageNote(name.toLowerCase()) }
-        : { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })),
+        : ['ERS', 'HVRS'].includes(suffix)
+          ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name: `${name} (TNI: accepted)`, kind: 'choice', source: 'standard', value: () => ROAD_SERVICE }
+          : { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })),
       // The same customization questions as on the vehicle form, per vehicle. Found by their text:
       // their rows don't name the vehicle, so with several vehicles they are the agent's.
       { q: 'CustomizationValue', ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', scope: 'vehicle', name: 'Customization value (the attached equipment value)',
