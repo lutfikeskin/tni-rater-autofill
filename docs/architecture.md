@@ -30,7 +30,7 @@ The client record, and the intake PDF for the panel's PDF view, live in Chrome s
 
 - The reader extracts named fillable PDF fields, not general document understanding or handwriting.
 - Rules compute answers; the browser engine finds controls and checks whether values stick. Carrier acceptance is not semantic correctness.
-- Each rule declares its answer's `source` (intake, derived, standard, fact, attestation). Facts and attestations the intake lacks are never filled; standards are tagged in the panel and, for a business class outside the carrier's `supportedClasses` (review mode), become check items that hold Continue. TNI has recorded no GEICO standard, so GEICO declares no classes, and there every question the intake doesn't answer is the agent's. See [intake and rules](intake-and-rules.md).
+- Each rule declares its answer's `source` (intake, derived, standard, fact, attestation). Facts and attestations the intake lacks are never filled; standards are tagged in the panel and, for a business class outside the carrier's `supportedClasses` (review mode), become check items that hold Continue. GEICO's standards were recorded after its first live run (2026-10-21); it declares Progressive's classes. See [intake and rules](intake-and-rules.md).
 - AI assists unresolved questions; it does not reliably audit all answers already filled by rules.
 - Feedback produces review material and candidate rules. There is no automatic model training or rule deployment.
 - Separate driver/vehicle records exist, but driver exclusion, per-vehicle coverage intent, and driver-to-vehicle relationships are not fully modeled.

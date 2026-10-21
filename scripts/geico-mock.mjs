@@ -25,8 +25,9 @@
 // `skipBy`. The panel's part is played here: the plan per fill (buildPlan with the picker's vehicle,
 // driver and trailer), the fill options as sidepanel.js fillOptions builds them for GEICO
 // (replaceChoices, stopSteps, units with the forms each unit was filled on, dropped for a unit picked
-// again, fillSkip, fillSkipBy), rememberFill's bookkeeping, and the follow-up fills when new
-// questions show. Every request off the computer is refused.
+// again, fillSkip, fillSkipBy, takenBack with the keys filled so far), rememberFill's bookkeeping,
+// and the follow-up fills when new questions show (none on Quote & Coverages once it was filled:
+// geico.noFollowUpSteps; the agent's own Fill there). Every request off the computer is refused.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -114,22 +115,25 @@ const EXPECT = {
   },
   // The trailer's year as the agent picked it before any fill read the form (the intake has 2015),
   // never a truck's; its type left for the agent though they picked vehicle 2's (the same field name).
-  'Vehicles: trailer 1': { GiveYear: '2016', GiveOtherVehicleType: '', GiveStreet: '1 Test Way', GiveZip: '68102', GiveCity: 'OMAHA' },
+  'Vehicles: trailer 1': { GiveYear: '2016', GiveOtherVehicleType: '', GiveStreet: '1 Test Way', GiveZip: '68102', GiveCity: 'OMAHA', GiveCommercialVehicleCompCollision: 'Yes' },
   // The owner's own answers (their driver row), on the form GEICO adds for an owner who drives.
   'Drivers & Incidents: owner': { GiveDriverLicenseState: 'Nebraska', GiveCertificateOfFinancialResponsibilityDriverYesNo: 'No', CommercialDriverLicense: 'Yes' },
   // The added driver's name from the intake, though the agent corrected the owner's (the same field
-  // names) on Business & Owner Info.
+  // names) on Business & Owner Info; Employee, TNI's standard for a driver besides the owner.
   'Drivers & Incidents: driver 2': {
     GiveFirstName: 'CASEY', GiveLastName: 'EXAMPLE', GiveDriverSuffix: '', GiveDateOfBirth: '07/09/1995', GiveDriverLicenseState: 'Iowa',
     GiveDriverRelationshipToBusiness: 'Employee', CommercialDriverLicense: 'No',
   },
   'Additional Business Info': {
-    GiveBusinessStartDate: '7+', GiveNumberOfEmployees: '', GiveCurrentAutoInsuranceStatus: 'Yes', GiveYearsWithCurrentAutoInsurer: '',
-    GiveCurrentBodilyInjuryLimits: '$1,000,000/$1,000,000 or $1,000,000 CSL', GiveHasFilingsYesNo: 'No',
+    // The drivers besides the owner, 1-3 years with a current policy, no other liability policy and no
+    // additional insured or waiver: TNI's standards.
+    GiveBusinessStartDate: '7+', GiveNumberOfEmployees: '1', GiveCurrentAutoInsuranceStatus: 'Yes', GiveYearsWithCurrentAutoInsurer: '1-3 Years',
+    GiveCurrentBodilyInjuryLimits: '$1,000,000/$1,000,000 or $1,000,000 CSL', GiveHasFilingsYesNo: 'No', GiveOtherLiabilityInsurance: 'None',
+    GiveInsuredOrWaiverYesNo: 'No', GiveHasContractForBlanketAiEndorsement: 'No',
   },
   'Quote & Coverages': {
     'cov:Liability Coverage': 'Bodily Injury and Property Damage Liability',
-    // The intake's $1M CSL, changed by the agent, and kept through Recalculate's redraw.
+    // The intake's $1M CSL, changed by the agent, and kept through the agent's Recalculate and the fill after it.
     'cov:Bodily Injury or Combined Single Limit Liability': '$750,000 Combined Single Limit',
     GiveMtcEligibleRequireCoverageYesNo: 'Yes', GiveMtcRequireCoverageForMobileHomesYesNo: 'No', GiveMtcRequireCoverageForBusinessDocumentYesNo: 'No',
     'cov:Motor Truck Cargo': '$100k/$1000 deductible', GiveMotorTruckGeneralLiabilityCoverageRequired: 'No',
@@ -137,8 +141,8 @@ const EXPECT = {
 };
 // Questions the fill must leave to the agent, each with its note (report.noData), by field key:
 // the facts the intake doesn't give, the agent's picks from long lists, the attestation, the
-// Social Security number; the per-vehicle coverage rows of both vehicles (found by each one's
-// year, make and model). [form, note pattern, keys].
+// Social Security number; the per-vehicle coverage rows of both vehicles but comprehensive and
+// collision (TNI's $1,000 deductible), found by each one's year, make and model. [form, note pattern, keys].
 const NEEDS_YOU = [
   ['Business Class & USDOT', /\S/, ['ref:GivePrimaryBusinessDescription', 'ref:GiveSecondaryBusinessDescription', 'ref:GiveExtendUsDotVerifyBusinessAddress']],
   ['Business & Owner Info', /\S/, ['ref:GiveStreet', 'ref:GiveEffectiveDate']],
@@ -146,14 +150,11 @@ const NEEDS_YOU = [
   ['Vehicles: vehicle 1', /\S/, ['ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: or trailer', /\S/, ['ref:GiveVehicleOrTrailer']],
   ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
-  ['Vehicles: trailer 1', /trailer/, ['ref:GiveOtherVehicleType', 'ref:GiveCommercialVehicleCompCollision']],
+  ['Vehicles: trailer 1', /trailer/, ['ref:GiveOtherVehicleType']],
   // The owner, whom GEICO already lists, is not added twice.
   ['Drivers & Incidents: driver 2 (picker on the owner)', /already lists/, ['ref:GiveFirstName', 'ref:GiveLastName', 'ref:GiveDateOfBirth', 'ref:GiveDriverLicenseState']],
-  ['Drivers & Incidents: driver 2', /\S/, ['ref:GiveDriverRelationshipToBusiness']],
-  ['Additional Business Info', /\S/, ['ref:GiveNumberOfEmployees', 'ref:GiveYearsWithCurrentAutoInsurer', 'ref:GiveOtherLiabilityInsurance', 'ref:GiveInsuredOrWaiverYesNo',
-    'ref:GiveHasContractForBlanketAiEndorsement']],
   ['Quote & Coverages', /\S/, ['ref:GivePayPlanV2', 'cov:uninsured motorist bodily injury includes underinsured', 'cov:medical payments med',
-    ...['COMP', 'COLL', 'FT', 'Rental', 'ERS'].flatMap((c) => [`cov:${c}#1`, `cov:${c}#2`]),
+    ...['FT', 'Rental', 'ERS'].flatMap((c) => [`cov:${c}#1`, `cov:${c}#2`]),
     'ref:GiveMtcRequireCoverageForMobileHomesYesNo', 'ref:GiveMtcRequireCoverageForBusinessDocumentYesNo', 'ref:GiveMtcHaulingCommoditiesCollect']],
 ];
 const STOP_STEPS = Object.keys(geico.stopSteps ?? {});
@@ -303,6 +304,7 @@ const failures = [];
 const fail = (msg) => failures.push(msg);
 const fills = [];
 const needsSeen = new Map();
+const filledKeys = new Set();
 const left = {};
 let run = 0;
 let totalMs = 0;
@@ -325,6 +327,7 @@ async function fill(form) {
       bound: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...unitForms[list] }])),
     },
     skip: keysOf(PAGE), skipBy: skipBy(), run: ++run,
+    takenBack: geico.keepTakenBack?.length ? { steps: geico.keepTakenBack, keys: Object.fromEntries([...filledKeys].map((key) => [key, true])) } : null,
   };
   await tellRecorder('pause');
   const t0 = Date.now();
@@ -343,6 +346,7 @@ async function fill(form) {
   else if (stepList(reportStep) && report.fields > 0) unitShown = { step: reportStep, list: null, id: null, held: false };
   for (const key of report.protectedKeys ?? []) keysIn(editScope(reportStep ?? null)).add(key);
   for (const id of report.invalidatedActions ?? []) doneActions.delete(id);
+  for (const x of report.filled) filledKeys.add(x.key);
   for (const a of report.actions ?? []) doneActions.add(a.id);
   // The form it answered is the plan's unit's now, and so are the edits filed under the form itself
   // (made while it was held, or before a fill had read it): GEICO draws a new form when the agent
@@ -603,8 +607,6 @@ async function scenario() {
     pick('drivers', 1);
     await fillAll('Drivers & Incidents: driver 2');
   }
-  await agent.radio('GiveDriverRelationshipToBusiness', 'Employee');
-  await fillAll('Drivers & Incidents: driver 2');
   await leave('Drivers & Incidents: driver 2');
   await agent.go('Save and Continue', 'driver-list');
   await agent.go('Looks Good', 'business-info');
@@ -614,48 +616,39 @@ async function scenario() {
   await leave('Additional Business Info');
   await agent.go('Next', 'quote');
 
-  // Quote & Coverages: the agent changes the liability limit, opens Motor Truck Cargo and answers its
-  // questions the intake doesn't; the fills keep the agent's limit through Recalculate's redraw (new
-  // ids for every coverage list), and Recalculate is clicked once the fills' answers are in.
-  await fillAll('Quote & Coverages');
+  // Quote & Coverages: the fill runs once on its own (no follow-ups there: geico.noFollowUpSteps);
+  // the agent changes the liability limit, opens Motor Truck Cargo and answers its questions the intake
+  // doesn't, pressing the panel's Fill after each (fill()). The fills never click Recalculate (FL live
+  // run, 2026-10-21: each fill's Recalculate redrew the step and took back the agent's choices); the
+  // agent does, and the fill after its redraw (new ids for every coverage list) keeps the agent's
+  // limit and changes nothing, so the premium stays rated.
+  await fill('Quote & Coverages');
   await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
-  const recalcsAtCorrection = (await mock()).recalcs;
   const CARGO = 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]';
   await agent.open(CARGO, 'Motor Truck Cargo');
-  await fillAll('Quote & Coverages');
+  await fill('Quote & Coverages');
   await agent.open(CARGO, 'Motor Truck Cargo');
   await agent.radio('GiveMtcRequireCoverageForMobileHomesYesNo', 'No');
-  await fillAll('Quote & Coverages');
+  await fill('Quote & Coverages');
   await agent.open(CARGO, 'Motor Truck Cargo');
   await agent.radio('GiveMtcRequireCoverageForBusinessDocumentYesNo', 'No');
-  await fillAll('Quote & Coverages');
+  await fill('Quote & Coverages');
   // The commodities (required: Recalculate waits for them).
   await agent.open(CARGO, 'Motor Truck Cargo');
   await agent.pickList('GiveMtcHaulingCommoditiesCollect', ['Miscellaneous Goods - Containerized Freight']);
-  const last = await fillAll('Quote & Coverages');
-  const rated = await mock();
-  if (!rated.recalcs) fail('Quote & Coverages: Recalculate was never clicked');
-  else if (!rated.premium) {
-    // Out of date. The agent's own change is theirs to rate; answers the fills gave after their last
-    // Recalculate (cargo, which the agent opened later) are the fill's: it should have clicked it
-    // again. Either way the agent recalculates, to go on.
-    const clickedAt = fills.findLastIndex((f) => f.report.actions?.some((a) => a.id === 'recalculate'));
-    const after = fills.slice(clickedAt + 1).filter((f) => f.form === 'Quote & Coverages').flatMap((f) => f.report.filled.map((x) => x.label));
-    const waits = last.blocked?.find((b) => b.id === 'recalculate')?.why;
-    if (after.length) fail(`Quote & Coverages: the premium is out of date: the fills answered ${after.length} question(s) after their last Recalculate (${after.join('; ')}) and did not click it again${waits ? ` (${waits})` : ''}`);
-    else if (waits) fail(`Quote & Coverages: Recalculate is still ${waits} with everything answered`);
-    const recalcs = rated.recalcs;
-    await agent.press('Recalculate');
-    await page.waitForFunction((n) => window.__geicoMock.recalcs > n, recalcs, { timeout: 15000 });
-    await settled();
-    await poll();
-  }
-  // Fill this page once more, on the page Recalculate redrew.
-  if ((await mock()).recalcs > recalcsAtCorrection) {
-    await fillAll('Quote & Coverages');
-    await corrected('Quote & Coverages', 'cov:bodily injury or combined single limit liability', 'cov:Bodily Injury or Combined Single Limit Liability', '$750,000 Combined Single Limit');
-  }
-  if (!(await mock()).premium) fail('Quote & Coverages: the last fill put the premium out of date again');
+  await fill('Quote & Coverages');
+  for (const f of fills.filter((x) => x.form === 'Quote & Coverages' && x.report.actions?.length)) fail(`Quote & Coverages: a fill clicked ${f.report.actions.map((a) => a.text).join(', ')}`);
+  const recalcs = (await mock()).recalcs;
+  if (recalcs) fail(`Quote & Coverages: Recalculate was clicked ${recalcs} time(s) before the agent's`);
+  await agent.press('Recalculate');
+  await page.waitForFunction((n) => window.__geicoMock.recalcs > n, recalcs, { timeout: 15000 });
+  await settled();
+  await poll();
+  if (!(await mock()).premium) fail('Quote & Coverages: the agent\'s Recalculate left the premium out of date');
+  const after = await fill('Quote & Coverages');
+  await corrected('Quote & Coverages', 'cov:bodily injury or combined single limit liability', 'cov:Bodily Injury or Combined Single Limit Liability', '$750,000 Combined Single Limit');
+  if (after.filled.length) fail(`Quote & Coverages: the fill after the agent's Recalculate changed ${after.filled.map((x) => x.label).join('; ')}`);
+  if (!(await mock()).premium) fail('Quote & Coverages: the fill after the agent\'s Recalculate put the premium out of date');
   await leave('Quote & Coverages');
   await agent.go('Next', 'final-quote-details');
 
@@ -718,14 +711,16 @@ if (unitForms.trailers[units.trailers[0]?.form] !== 0) fail('Vehicles: the trail
 // form, kept with that form once the agent picked its vehicle, and the trailer's year picked before
 // any fill read its form, are checked by corrected().)
 const filledOn = (form, key) => fills.some((f) => f.form === form && f.report.filled.some((x) => x.key === key));
+if (left['Drivers & Incidents: driver 2'] && !filledOn('Drivers & Incidents: driver 2', 'ref:GiveDriverRelationshipToBusiness')) fail('Drivers & Incidents: driver 2\'s relationship (Employee, TNI\'s standard) was never filled');
+for (const key of ['COMP', 'COLL'].flatMap((c) => [`cov:${c}#1`, `cov:${c}#2`])) if (left['Quote & Coverages'] && !filledOn('Quote & Coverages', key)) fail(`Quote & Coverages: ${key} was never filled with TNI's $1,000 deductible`);
 if (left['Drivers & Incidents: driver 2'] && !filledOn('Drivers & Incidents: driver 2', 'ref:GiveLastName')) fail('Drivers & Incidents: driver 2\'s last name was never filled: the agent\'s correction of the owner\'s last name on Business & Owner Info kept the fill from it');
 if (left['Vehicles: trailer 1'] && !/trailer/.test(needsSeen.get('Vehicles: trailer 1')?.get('ref:GiveOtherVehicleType') ?? '')) fail('Vehicles: the trailer\'s type was never left for the agent with the trailer\'s note: the agent\'s pick of vehicle 2\'s type kept the fill from it');
 const ownerCheck = left['Vehicles: owner check'];
 if (ownerCheck && (filledOn('Vehicles: owner check', 'ref:GiveLastName') || ownerCheck.GiveLastName === record.drivers[0].last)) fail(`Vehicles: owner check: the owner's last name was typed with the intake's (${JSON.stringify(ownerCheck.GiveLastName)}): the agent's correction on Business & Owner Info didn't reach the step that asks it again`);
-// Clicks the kit made (untrusted): only radios, boxes and Recalculate. Never Next, Save and Continue,
+// Clicks the kit made (untrusted): only radios and boxes. Never Recalculate, Next, Save and Continue,
 // Looks Good, Discard, Print, a progress link, an add or edit icon, a link.
 const kitClicks = final.log.filter((e) => !e.isTrusted && (e.type === 'click' || e.type === 'disabled'))
-  .filter((e) => !['radio', 'checkbox'].includes(e.target) && !(e.target === 'button' && /^recalculate$/i.test(e.text)));
+  .filter((e) => !['radio', 'checkbox'].includes(e.target));
 for (const e of kitClicks) fail(`the extension clicked ${e.target}${e.text ? ` "${e.text}"` : ''} on ${e.step}`);
 for (const e of final.stopActions.filter((x) => !x.isTrusted)) fail(`${e.step}: the extension did ${e.type} on ${e.target} (a stop step)`);
 // The Social Security number: never typed, by anyone here.

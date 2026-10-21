@@ -1,5 +1,5 @@
 // GEICO commercial auto (sales.geico.com/quote), opened from the agents' gateway
-// (gateway2.geico.com), which is never filled.
+// (gateway2.geico.com), where only the start box (ZIP, USDOT number) is filled.
 //
 // A single-page application on one address. Its steps (Business Class & USDOT … Payment
 // Information) are told apart by the progress bar at the top: the one part between 0 and 100,
@@ -25,29 +25,33 @@
 // and `unit` makes that question the form's identity: a form filled for one unit is never filled
 // again with another's (the kit holds it until the agent picks its unit in the panel).
 //
-// Mapped from the saved NE pages and the FL captures (2026-10-20). TNI has recorded no standard
-// for GEICO (docs/intake-and-rules.md), so no rule here is `standard`. A question the intake
-// answers is filled from it (`intake`, or `derived` by an exact transform below, each with a case
-// close by where it must not apply). Every other question is the agent's: a `fact` or `attestation`
-// with a short note, since GEICO's humanized radio labels slip past the AI assistant's own guards
-// and an unmapped one would be offered to it; or a choice the agent makes from a long list with the
-// intake's words quoted (business description, vehicle and trailer type), which the AI assistant
-// may suggest for the agent's approval.
+// Mapped from the saved NE pages and the FL captures (2026-10-20). A question the intake answers is
+// filled from it (`intake`, or `derived` by an exact transform below, each with a case close by
+// where it must not apply). TNI's own answers for GEICO (`standard`, after the first FL live run,
+// 2026-10-21; docs/intake-and-rules.md) fill what the intake doesn't. Every other question is the
+// agent's: a `fact` or `attestation` with a short note, since GEICO's humanized radio labels slip
+// past the AI assistant's own guards and an unmapped one would be offered to it; or a choice the
+// agent makes from a long list with the intake's words quoted (business description, vehicle and
+// trailer type), which the AI assistant may suggest for the agent's approval.
 //
-// Phase 1: the agent clicks Next on every step, opens each vehicle, trailer and driver form, and
-// does Final Quote Details, MVR & CLUE and Payment Information (stopSteps: nothing is filled or
-// clicked there). Recalculate is the only button the fill clicks.
+// Phase 1: the agent clicks Next on every step, opens each vehicle, trailer and driver form, makes
+// the coverage choices and clicks Recalculate on Quote & Coverages, and prints the quote proposal
+// there. The quote stops at Quote & Coverages: Final Quote Details leads to MVR & CLUE, which orders
+// paid reports (stopSteps: nothing is filled or clicked there). The fill clicks no button.
 
 import { owner, ownerDobNote as noOwnerDob } from './progressive.js';
-import { isLongHaul, intakeNotes, ntlMention, parseRadius } from '../normalize.js';
+import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
 const STEPS = ['Business Class & USDOT', 'Business & Owner Info', 'Vehicles', 'Drivers & Incidents',
   'Additional Business Info', 'Quote & Coverages', 'Final Quote Details', 'MVR & CLUE', 'Payment Information'];
 const [BUSINESS_CLASS, BUSINESS_OWNER, VEHICLES, DRIVERS, MORE_BUSINESS, COVERAGES] = STEPS;
 
-// The quote itself, never the gateway or the agents' dashboard (both on geico.com too).
+// The quote itself, never the agents' dashboard (sales.geico.com/dashboard).
 const QUOTE = /^https:\/\/sales\.geico\.com\/quote(?:[?#/]|$)/i;
+// Filled: the quote, and the gateway's start page, where a quote starts with its ZIP.
+const FILLED = /^https:\/\/(?:sales\.geico\.com\/quote(?:[?#/]|$)|gateway2\.geico\.com\/?(?:[?#]|$))/i;
+const STOP_AT_QUOTE = 'TNI stops GEICO quotes at Quote & Coverages: go back there and print the quote proposal.';
 
 // The forms of one step, by a question only that form asks.
 // - The vehicle form's first question, on all four FL vehicle forms and the NE one (absent on the
@@ -250,6 +254,15 @@ const typeNote = (unit, of) => (r, a) => {
   const type = of(r, a)?.type;
   return type ? `The ${unit} type is yours to pick: the intake says ${quote(type)}.` : `The intake has no type for this ${unit}: pick it yourself.`;
 };
+// TNI, 2026-10-21: a cargo van (the intake's "Van", or "Cargo Van") is GEICO's Delivery Van, not
+// one of its four other vans, and a Semi Truck is GEICO's Tractor. Any other type stays the
+// agent's pick.
+const CARGO_VAN = /^(?:cargo\s+)?van$/i;
+const SEMI_TRUCK = /^semi[\s-]*truck$/i;
+const vehicleType = (r, a) => {
+  const type = String(vehicleOf(r, a)?.type ?? '').trim();
+  return CARGO_VAN.test(type) ? 'Delivery Van' : SEMI_TRUCK.test(type) ? 'Tractor' : null;
+};
 const valueNote = (unit, of) => (r, a) => {
   const v = of(r, a)?.value;
   return v != null && typeof v !== 'number' ? `The intake's ${unit} value ${quote(v)} isn't a dollar amount: enter it yourself.` : null;
@@ -258,25 +271,33 @@ const valueNote = (unit, of) => (r, a) => {
 // Customizations (GEICO's tooltip: parts and equipment attached to the vehicle) are the intake's
 // attached equipment value, one answer for all the vehicles. $0 is No for every vehicle; a value is
 // Yes, and the amount itself, only with one vehicle (or trailer): with several, which one carries it
-// isn't on the intake. None (blank, or one the intake reader couldn't read) is the agent's, not No:
-// the no-equipment standards are Progressive's and AmWINS'.
+// isn't on the intake. None (blank, or one the intake reader couldn't read) is TNI's standard No
+// (2026-10-21, as Progressive's and AmWINS' no-equipment standards).
 const severalVehicles = (r) => (r.vehicles?.length ?? 0) > 1;
-const customization = (r) => (r.operations?.equipVehicle === 0 ? false : r.operations?.equipVehicle > 0 && !severalVehicles(r) ? true : null);
+const noEquipValue = (r) => r.operations?.equipVehicle == null;
+const customization = (r) => (r.operations?.equipVehicle === 0 || noEquipValue(r) ? false : r.operations?.equipVehicle > 0 && !severalVehicles(r) ? true : null);
 const customizationNote = (r) => (r.operations?.equipVehicle > 0 && severalVehicles(r)
-  ? `The intake gives one attached equipment value ($${r.operations.equipVehicle.toLocaleString('en-US')}) for ${r.vehicles.length} vehicles: answer whether this vehicle has customizations yourself.`
-  : customization(r) == null ? 'The intake has no attached equipment value (or one that couldn\'t be read): answer it yourself.' : null);
+  ? `The intake gives one attached equipment value ($${r.operations.equipVehicle.toLocaleString('en-US')}) for ${r.vehicles.length} vehicles: answer whether this vehicle has customizations yourself.` : null);
 const customizationValue = (r) => (r.operations?.equipVehicle === 0 ? 0
   : r.operations?.equipVehicle > 0 && (r.vehicles?.length ?? 0) === 1 ? r.operations.equipVehicle : null);
 const customizationValueNote = (r) => (r.operations?.equipVehicle > 0 && severalVehicles(r)
   ? `The intake gives one attached equipment value ($${r.operations.equipVehicle.toLocaleString('en-US')}) for ${r.vehicles.length} vehicles: enter this vehicle's yourself.`
-  : customization(r) == null ? customizationNote(r) : null);
+  : noEquipValue(r) ? 'The intake has no attached equipment value (or one that couldn\'t be read): enter it yourself.' : null);
 const trailerCustomizationValue = (r) => (r.trailerInfo?.equipTrailer === 0 ? 0
   : r.trailerInfo?.equipTrailer > 0 && (r.trailers?.length ?? 0) === 1 ? r.trailerInfo.equipTrailer : null);
 const trailerCustomizationNote = (r) => (r.trailerInfo?.equipTrailer > 0 && (r.trailers?.length ?? 0) > 1
   ? `The intake gives one trailer equipment value ($${r.trailerInfo.equipTrailer.toLocaleString('en-US')}) for ${r.trailers.length} trailers: enter this trailer's yourself.`
   : r.trailerInfo?.equipTrailer == null ? 'The intake has no trailer equipment value (or one that couldn\'t be read): answer it yourself.' : null);
 
-const compCollNote = (r) => `Whether the client wants comprehensive or collision isn't on the intake${r.operations?.vehicleOwnership ? ` (vehicle ownership: ${quote(r.operations.vehicleOwnership, 30)})` : ''}: answer it yourself.`;
+// Comprehensive and collision: TNI's standard (2026-10-21) is to add them, each with a $1,000
+// deductible, on every vehicle and trailer, unless the intake's notes say the client doesn't want
+// physical damage ("no comp/coll", "no physical damage", "liability only"): then they are the
+// agent's, with the line quoted.
+const NO_PHYSICAL_DAMAGE = /\bno\s+(?:comp(?:rehensive)?|coll(?:ision)?|phys(?:ical)?\s*dam(?:age)?|pd)\b|\bliability\s+only\b|\bwithout\s+(?:comp(?:rehensive)?|coll(?:ision)?|phys(?:ical)?\s*dam(?:age)?)\b|\b(?:doesn'?t|does not|don'?t|do not)\s+(?:want|need)\s+(?:comp(?:rehensive)?|coll(?:ision)?|phys(?:ical)?\s*dam(?:age)?)\b/i;
+const noPhysicalDamage = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => NO_PHYSICAL_DAMAGE.test(s))?.slice(0, 80) ?? null;
+const physicalDamageNote = (what) => (r) => (noPhysicalDamage(r) ? `The intake's notes say ${quote(noPhysicalDamage(r), 80)}: answer ${what} yourself.` : null);
+const physicalDamageSource = (r) => (noPhysicalDamage(r) ? 'fact' : 'standard');
+const DEDUCTIBLE = '$1,000 deductible';
 
 // Farthest one-way distance: the intake's radius in miles, as GEICO's band; long haul ("Unlimited",
 // OTR, 48 states) is 501 miles, "More than 500". The FL list starts at 101-200: a band the page
@@ -323,12 +344,11 @@ const ownerListedNote = (r, a) => (r.applicant.ownerDrives === true && !!owner(r
   ? 'The panel\'s driver is the owner, whom GEICO already lists: pick the driver this form is for in the panel, then Fill again.' : null);
 const driverNote = (more) => (r, a) => ownerListedNote(r, a) ?? (more ? more(r, a) : null);
 // "What is their relationship to the business?": Owner for a driver who is one of the intake's
-// owners; anyone else's (employee or other) is the agent's, never defaulted.
-const relationship = (r, a) => {
-  const d = driverOf(r, a);
-  return d && (ownerIsDriver(r.applicant.owner1, d) || ownerIsDriver(r.applicant.owner2, d)) ? 'Owner' : null;
-};
-const relationshipNote = (r, a) => (relationship(r, a) ? null : 'Whether this driver is an employee or other isn\'t on the intake: answer it yourself.');
+// owners; any other driver is TNI's standard Employee (2026-10-21).
+const isOwner = (r, d) => !!d && (ownerIsDriver(r.applicant.owner1, d) || ownerIsDriver(r.applicant.owner2, d));
+const relationship = (r, a) => (!driverOf(r, a) ? null : isOwner(r, driverOf(r, a)) ? 'Owner' : 'Employee');
+const relationshipSource = (r, a) => (driverOf(r, a) && !isOwner(r, driverOf(r, a)) ? 'standard' : 'derived');
+const relationshipNote = (r, a) => (relationship(r, a) ? null : 'The intake has no driver for this form: answer it yourself.');
 // SR-22: the intake's one answer for the business. No is No for every driver; Yes only when GEICO
 // lists one driver: on the owner's form, the owner matched to the intake's only driver; on Add
 // Driver, the intake's only driver when the owner doesn't drive. Otherwise (several drivers, or the
@@ -363,6 +383,17 @@ const currentAuto = (r) => {
   if (!AUTO.test(String(p.type ?? '').trim())) return null;
   return DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p) ? 'Yes' : null;
 };
+// "How many employees does the customer's business have…?" TNI (2026-10-21): the intake's drivers
+// other than the owner(s), as GEICO's band. No drivers on the intake is the agent's.
+const employees = (r) => {
+  if (!r.drivers?.length) return null;
+  const n = r.drivers.filter((d) => !isOwner(r, d)).length;
+  return n === 0 ? 'None' : n === 1 ? '1' : n <= 3 ? '2-3' : n <= 5 ? '4-5' : n <= 10 ? '6-10' : n <= 20 ? '11-20' : '21+';
+};
+// "How long has the customer been with their current auto insurance company?" TNI (2026-10-21):
+// 1-3 Years when the intake shows a current auto policy (proof of prior insurance); otherwise the
+// agent's.
+const yearsWithInsurer = (r) => (currentAuto(r) === 'Yes' ? '1-3 Years' : null);
 const currentAutoNote = (r) => (currentAuto(r) != null ? null
   : !prior(r) ? 'The intake\'s current insurance section is blank: answer it yourself.'
     : prior(r).expiration && priorPolicyExpired(r, prior(r)) ? 'The intake\'s current policy has expired: answer it yourself.'
@@ -386,16 +417,16 @@ const currentBiNote = (r) => (currentBi(r) != null ? null
     : 'The intake has no current auto policy limit GEICO lists: answer it yourself.');
 // "What kind of liability insurance does the customer currently have to cover their business?" GL
 // for a current general liability policy on the intake. You marking that the client has GL
-// (coverage.hasGl) doesn't say GL or a business owner's policy, and a GL request (coverage.gl) is
-// not GL they have; nothing on the intake is not None: the agent's.
-const otherLiability = (r) => {
+// (coverage.hasGl) doesn't say GL or a business owner's policy: the agent's. Otherwise TNI's
+// standard None (2026-10-21, as Progressive's other business coverages): a GL request
+// (coverage.gl) is not GL they have.
+const currentGl = (r) => {
   const p = prior(r);
-  return p && /general\s+liability/i.test(p.type ?? '') && !noPriorInsurance(p) && DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p)
-    ? 'General Liability Policy (GL)' : null;
+  return !!p && /general\s+liability/i.test(p.type ?? '') && !noPriorInsurance(p) && DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p);
 };
-const otherLiabilityNote = (r) => (otherLiability(r) ? null
-  : r.coverage?.hasGl === true ? 'You marked that the client has general liability: pick GL or a business owner\'s policy yourself.'
-    : 'What liability insurance the business already has isn\'t on the intake: answer it yourself.');
+const otherLiability = (r) => (currentGl(r) ? 'General Liability Policy (GL)' : r.coverage?.hasGl === true ? null : 'None');
+const otherLiabilitySource = (r) => (currentGl(r) ? 'derived' : r.coverage?.hasGl === true ? 'fact' : 'standard');
+const otherLiabilityNote = (r) => (r.coverage?.hasGl === true && !currentGl(r) ? 'You marked that the client has general liability: pick GL or a business owner\'s policy yourself.' : null);
 
 // --- Quote & Coverages -------------------------------------------------------------------------
 
@@ -417,6 +448,23 @@ const liabilityNote = (r) => ntlNote(r) ?? (liabilityType(r) ? null
   : /non-?trucking/i.test(r.coverage?.autoLiability ?? '') ? 'The intake asks for non-trucking liability: pick GEICO\'s liability coverage yourself.'
     : /^no$/i.test(String(r.coverage?.autoLiability ?? '').trim()) ? 'The intake says no auto liability: answer it yourself.'
       : 'The intake doesn\'t say which liability coverage: answer it yourself.');
+
+// Florida (the garaging state): GEICO offers Basic Personal Injury Protection, which TNI takes over
+// medical payments (2026-10-21): Medical Payments is Not Included, and the PIP lists (one choice
+// each in FL) are kept as GEICO has them. Elsewhere all of them are the agent's.
+const florida = (r) => String(r.garaging?.state ?? '').trim().toUpperCase() === 'FL';
+const pipKept = (name) => ({ ignore: florida, source: (r) => (florida(r) ? null : 'fact'),
+  emptyNote: `GEICO left ${name} empty: pick it yourself.` });
+
+// Refrigeration breakdown: the intake's Yes or No. Left blank, TNI's standard (2026-10-21): Yes when
+// the intake lists a reefer (a refrigerated vehicle or trailer), else No. An intake No with a reefer
+// listed is the agent's.
+const REEFER = /\breefer\b|\brefrigerat/i;
+const hasReefer = (r) => [...(r.vehicles ?? []), ...(r.trailers ?? [])].some((u) => REEFER.test(String(u?.type ?? '')));
+const reeferBreakdown = (r) => (typeof r.coverage?.reeferBreakdown !== 'boolean' ? hasReefer(r)
+  : r.coverage.reeferBreakdown || !hasReefer(r) ? r.coverage.reeferBreakdown : null);
+const reeferSource = (r) => (typeof r.coverage?.reeferBreakdown !== 'boolean' ? 'standard' : reeferBreakdown(r) == null ? 'fact' : 'intake');
+const reeferNote = (r) => (reeferSource(r) === 'fact' ? 'The intake says no reefer breakdown but lists a reefer: answer it yourself.' : null);
 
 // Motor truck cargo: the intake's limit and deductible as GEICO's pair ("$100k/$1000 deductible",
 // matched by its amounts). No deductible on the intake is the agent's: Progressive's $1,000 is
@@ -441,7 +489,7 @@ const glLimitNote = (r) => (glLimit(r) ? null
       : 'General liability is requested without a limit on the intake: choose it yourself.');
 
 // A vehicle's rows on Quote & Coverages, one per vehicle, by the coverage their list's id ends in:
-// all the agent's (TNI has recorded no GEICO coverage standard).
+// comprehensive and collision are TNI's $1,000 deductibles, the rest the agent's.
 const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 'Fire and theft'], ['Rental', 'Rental reimbursement'],
   ['RRWDT', 'Rental reimbursement with downtime'], ['ERS', 'Emergency road service'], ['HVRS', 'Heavy vehicle road service']];
 
@@ -449,10 +497,9 @@ export const geico = {
   id: 'geico',
   name: 'GEICO',
   hosts: [/(^|\.)geico\.com$/],
-  // Fills, and page layouts taken as the agent works, on the quote only: never the gateway or the
-  // dashboard, where a start-quote ZIP and USDOT box would take the intake's (another client's in
-  // the NE run).
-  autoFillUrl: QUOTE,
+  // Fills on the quote and on the gateway's start page, where the quote starts with the ZIP (TNI,
+  // 2026-10-21); never the dashboard. Page layouts as the agent works: the quote only.
+  autoFillUrl: FILLED,
   layoutUrl: QUOTE,
   // One address for every step: the step is read from the progress bar (pagekit stepKey) and named
   // in layouts, fill and field-change events only when it is one of these (src/usage.js knownStep).
@@ -461,6 +508,9 @@ export const geico = {
   // The generic label rules misfired on GEICO's pages (FL: the first driver in the owner's boxes,
   // the intake's phone in the mobile-homes cargo question).
   useGenericRules: false,
+  // TNI's GEICO standards were set on a for-hire freight quote (FL, 2026-10-21): an expediter or a
+  // freight hauler, as Progressive's. Any other class fills them in review mode (plan.js).
+  supportedClasses: [/expedit/i, /^(?:general\s+)?freight\s+haul(?:er|ing)$/i],
   // GEICO pre-selects answers everywhere (No on cargo, hired autos, non-owned and general
   // liability, Yes on the registered state, a value in every coverage list): ours replace them, as
   // on Progressive; anything the agent changed is left alone.
@@ -469,20 +519,36 @@ export const geico = {
   // kept per unit (the panel's active vehicle or driver).
   vehicleSteps: [VEHICLES],
   driverSteps: [DRIVERS],
+  // The intake driver GEICO lists itself (the owner who drives, added on Business & Owner Info): an
+  // Add Driver form is never theirs (sidepanel pickUnitForm). -1 for none.
+  listedDriver: (r) => (r.applicant?.ownerDrives === true && owner(r).driver ? r.drivers.indexOf(owner(r).driver) : -1),
   // Steps that are the agent's: nothing is filled or clicked there (not even on Fill this page), and
   // the AI assistant isn't asked.
+  // The quote stops at Quote & Coverages (TNI, 2026-10-21): going on leads to MVR & CLUE, whose
+  // reports cost the agency and are run only once the client shows interest in the offer.
   stopSteps: {
-    // Not recorded or mapped yet (FEIN, license numbers, the SSN may be asked).
-    'Final Quote Details': 'Final Quote Details is yours: nothing is filled or clicked on this step. Check the quote and continue yourself.',
-    'MVR & CLUE': 'MVR & CLUE orders driving and claims reports: that is yours. Nothing is filled or clicked on this step.',
+    'Final Quote Details': `Final Quote Details is yours: nothing is filled or clicked on this step. ${STOP_AT_QUOTE}`,
+    'MVR & CLUE': `MVR & CLUE orders driving and claims reports, which cost the agency: that is yours. Nothing is filled or clicked on this step. ${STOP_AT_QUOTE}`,
     'Payment Information': 'Payment Information is yours: nothing is filled or clicked on this step.',
   },
-  // Recalculate on Quote & Coverages once the coverages are in, while the premium shows "$ --.--" or
-  // "Please Recalculate"; never on a later step, whose text can read the same.
-  actions: [
-    { id: 'recalculate', text: '^recalculate$', steps: [COVERAGES], waitRequired: true, needsRecalculation: true, verify: 'premium' },
-  ],
+  // What the panel says on a step the fill still answers.
+  stepNotes: {
+    [COVERAGES]: 'Make the coverage choices, click Recalculate, then Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',
+  },
+  // GEICO requotes when a coverage changes, and puts back its own choices when the agent backs out
+  // (FL live run, 2026-10-21: every follow-up fill set the liability limit again, and GEICO redrew the
+  // quote each time, losing the agent's choices). On Quote & Coverages: no follow-up fill (only the
+  // step's first fill and Fill this page), no button clicked (the agent's Recalculate), and an answer
+  // the fill gave that the page shows otherwise since is kept, flagged (pagekit `takenBack`).
+  noFollowUpSteps: [COVERAGES],
+  keepTakenBack: [COVERAGES],
   rules: [
+    // --- The gateway's start page (gateway2.geico.com) ------------------------------------------
+    // The quote starts with the ZIP (and the USDOT check beside it); the rest of the page is
+    // GEICO's dashboard, never answered.
+    { page: '/', selector: '#start-quote-zip', name: 'Start quote: ZIP (the garaging ZIP)', path: 'garaging.zip', source: 'derived', value: zip5, note: zipNote },
+    { page: '/', selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
+    { page: '/', selector: 'input[name="header-search-type"], #search-input-id, input[name="lob-selection"], [id^="alerts-pref"]', name: 'Gateway dashboard (not the quote)', q: 'gatewayDashboard', ignore: true },
     // --- Business Class & USDOT ----------------------------------------------------------------
     ...on(BUSINESS_CLASS, {}, [
       { field: 'GiveInitialZipCode', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'ZIP code (the garaging ZIP)', source: 'derived', value: zip5, note: zipNote },
@@ -559,17 +625,21 @@ export const geico = {
       { field: 'GiveMake', path: 'vehicles[].make', name: 'Vehicle make', kind: 'choice', verifyOnly: hasVin },
       { field: 'GiveModel', path: 'vehicles[].model', name: 'Vehicle model', kind: 'choice', verifyOnly: hasVin },
       // 40 kinds of vehicle: "Van" alone is five of them.
-      { field: 'GiveOtherVehicleType', ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (the agent\'s pick)', note: typeNote('vehicle', vehicleOf) },
+      { field: 'GiveOtherVehicleType', ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', kind: 'choice',
+        source: (r, a) => (vehicleType(r, a) ? 'standard' : null), value: vehicleType, note: (r, a) => (vehicleType(r, a) ? null : typeNote('vehicle', vehicleOf)(r, a)) },
       { field: 'GiveAnyVehicleCustomizationYesNo', ask: 'Does the customer have any customizations?', path: 'operations.equipVehicle', name: 'Customizations (from the attached equipment value)',
-        kind: 'bool', source: 'derived', clientFact: true, value: customization, note: customizationNote },
+        kind: 'bool', source: (r) => (noEquipValue(r) ? 'standard' : 'derived'), clientFact: true, value: customization, note: customizationNote },
       { field: 'GiveTotalCustomizationValue', ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', name: 'Customization value (the attached equipment value)',
         kind: 'money', source: 'derived', value: customizationValue, note: customizationValueNote },
       // Its value without the customizations: the intake's vehicle value (today's, never cost new).
       { field: 'GiveCostExcludingPermanentlyAttachedEquipment', path: 'vehicles[].value', name: 'Vehicle value without customizations', kind: 'money', note: valueNote('vehicle', vehicleOf) },
       fact('GiveDetailedCostNew', 'Cost new', { note: 'What the vehicle cost new isn\'t on the intake (its value there is today\'s): answer it yourself.' }),
-      // Also sets GEICO's lowest liability limit: never worked out from the type or model.
-      fact('GiveGrossVehicleWeight', 'Gross vehicle weight', { ask: 'What is the Gross Vehicle Weight (GVW)?', note: 'The gross vehicle weight isn\'t on the intake: answer it from the registration.' }),
-      fact('GiveCommercialVehicleCompCollision', 'Comprehensive or collision wanted', { ask: 'Would the customer like to add comprehensive or collision coverage?', note: compCollNote }),
+      // Also sets GEICO's lowest liability limit: never worked out from the type or model. TNI
+      // (2026-10-21): GEICO's own band, from the VIN, is kept.
+      { field: 'GiveGrossVehicleWeight', ask: 'What is the Gross Vehicle Weight (GVW)?', name: 'Gross vehicle weight (as GEICO has it)', ignore: true,
+        emptyNote: 'GEICO left the gross vehicle weight empty, and it isn\'t on the intake: answer it from the registration.' },
+      { field: 'GiveCommercialVehicleCompCollision', ask: 'Would the customer like to add comprehensive or collision coverage?', name: 'Comprehensive or collision wanted (TNI: Yes)',
+        kind: 'bool', source: physicalDamageSource, value: () => true, note: physicalDamageNote('whether to add comprehensive or collision') },
       ...parking('vehicle'),
       { field: 'GiveFarthestOneWayDistance', ask: 'What is the farthest one-way distance (in miles) this vehicle travels for work?', name: 'Farthest one-way distance (from the radius)',
         kind: 'choice', source: 'derived', value: distanceBand, note: distanceNote },
@@ -588,8 +658,8 @@ export const geico = {
       { field: 'GiveYear', ask: 'Year', path: 'trailers[].year', name: 'Trailer year', kind: 'choice' },
       // 19 kinds of trailer: a gooseneck hitch isn't a Gooseneck Trailer.
       { field: 'GiveOtherVehicleType', q: 'GiveOtherVehicleType.trailer', ask: 'Which of the following best describes the customer\'s trailer?', name: 'Trailer type (the agent\'s pick)', note: typeNote('trailer', trailerOf) },
-      fact('GiveCommercialVehicleCompCollision', 'Trailer comprehensive or collision wanted', { q: 'GiveCommercialVehicleCompCollision.trailer', ask: 'Would the customer like to add comprehensive or collision coverage?',
-        note: 'Whether the client wants comprehensive or collision on this trailer isn\'t on the intake: answer it yourself.' }),
+      { field: 'GiveCommercialVehicleCompCollision', q: 'GiveCommercialVehicleCompCollision.trailer', ask: 'Would the customer like to add comprehensive or collision coverage?', name: 'Trailer comprehensive or collision wanted (TNI: Yes)',
+        kind: 'bool', source: physicalDamageSource, value: () => true, note: physicalDamageNote('whether to add comprehensive or collision on this trailer') },
       { field: 'GiveTotalCustomizationValue', q: 'GiveTotalCustomizationValue.trailer', path: 'trailerInfo.equipTrailer', name: 'Trailer customization value (the trailer equipment value)',
         kind: 'money', source: 'derived', value: trailerCustomizationValue, note: trailerCustomizationNote },
       { field: 'GiveCostExcludingPermanentlyAttachedEquipment', path: 'trailers[].value', name: 'Trailer value without customizations', kind: 'money', note: valueNote('trailer', trailerOf) },
@@ -616,7 +686,7 @@ export const geico = {
       { field: 'GiveDriverSuffix', ask: 'Suffix', path: 'drivers[].suffix', name: 'Driver suffix', kind: 'choice', optional: true, note: driverNote() },
       { field: 'GiveDateOfBirth', ask: 'Date of Birth', path: 'drivers[].dob', name: 'Driver date of birth', kind: 'date', note: driverNote(dobNote) },
       { field: 'GiveDriverLicenseState', ask: 'Driver\'s License State', path: 'drivers[].licenseState', name: 'Driver license state', kind: 'state', note: driverNote() },
-      { field: 'GiveDriverRelationshipToBusiness', ask: 'What is their relationship to the business?', name: 'Driver\'s relationship to the business', kind: 'choice', source: 'derived', clientFact: true,
+      { field: 'GiveDriverRelationshipToBusiness', ask: 'What is their relationship to the business?', name: 'Driver\'s relationship to the business (Owner, else Employee)', kind: 'choice', source: relationshipSource, clientFact: true,
         value: relationship, note: driverNote(relationshipNote) },
       { field: 'CommercialDriverLicense', ask: 'Does this driver have a CDL?', path: 'drivers[].cdl', name: 'Driver has a CDL', kind: 'bool', note: driverNote() },
       // Hidden on the captured Add Driver form.
@@ -627,18 +697,20 @@ export const geico = {
     ...on(MORE_BUSINESS, {}, [
       { field: 'GiveBusinessStartDate', ask: 'How many years has this business been operating?', path: 'applicant.yearsInBusiness', name: 'Years in business', kind: 'choice', source: 'derived',
         value: (r) => startBucket(r.applicant.yearsInBusiness), note: (r) => (startBucket(r.applicant.yearsInBusiness) == null ? 'The intake has no years in business (or year established): answer it yourself.' : null) },
-      // The drivers aren't the employees.
-      fact('GiveNumberOfEmployees', 'Number of employees', { ask: 'How many employees does the customer\'s business have, including part-time employees?' }),
+      { field: 'GiveNumberOfEmployees', ask: 'How many employees does the customer\'s business have, including part-time employees?', name: 'Number of employees (the drivers besides the owner)', kind: 'choice',
+        source: (r) => (employees(r) ? 'standard' : 'fact'), value: employees, note: (r) => (employees(r) ? null : 'The intake lists no drivers: answer how many employees the business has yourself.') },
       { field: 'GiveCurrentAutoInsuranceStatus', ask: 'Does the customer currently have personal or commercial auto insurance?', name: 'Currently has auto insurance', kind: 'choice', source: 'derived', clientFact: true, value: currentAuto, note: currentAutoNote },
       fact('GiveInsurancePriorToBeingDeployed', 'Insured before being deployed'),
-      fact('GiveYearsWithCurrentAutoInsurer', 'Years with the current auto insurer', { ask: 'How long has the customer been with their current auto insurance company?' }),
+      { field: 'GiveYearsWithCurrentAutoInsurer', ask: 'How long has the customer been with their current auto insurance company?', name: 'Years with the current auto insurer (1-3 with a current policy)', kind: 'choice',
+        source: (r) => (yearsWithInsurer(r) ? 'standard' : 'fact'), value: yearsWithInsurer, note: (r) => (yearsWithInsurer(r) ? null : currentAutoNote(r) ?? 'The intake shows no current auto policy: answer it yourself.') },
       { field: 'GiveCurrentBodilyInjuryLimits', ask: 'What bodily injury limits does the customer currently have on their vehicle insurance?', path: 'priorInsurance[0].limit', name: 'Current bodily injury limits',
         kind: 'choice', source: 'derived', value: currentBi, note: currentBiNote },
-      { field: 'GiveOtherLiabilityInsurance', ask: 'What kind of liability insurance does the customer currently have to cover their business?', name: 'Liability insurance the business has',
-        kind: 'choice', source: 'derived', clientFact: true, value: otherLiability, note: otherLiabilityNote },
-      fact('GiveInsuredOrWaiverYesNo', 'Named additional insured or waiver of subrogation', { ask: 'Does the customer need to add a named additional insured or a designated insured? Or do they need a named waiver of subrogation?' }),
-      fact('GiveHasContractForBlanketAiEndorsement', 'Blanket additional insured by contract', { ask: 'Does the customer have a contract that requires a blanket additional insured endorsement?' }),
-      fact('GiveHasContractForBlanketWosEndorsement', 'Blanket waiver of subrogation by contract'),
+      { field: 'GiveOtherLiabilityInsurance', ask: 'What kind of liability insurance does the customer currently have to cover their business?', name: 'Liability insurance the business has (None unless the notes say)',
+        kind: 'choice', source: otherLiabilitySource, clientFact: true, value: otherLiability, note: otherLiabilityNote },
+      // TNI (2026-10-21): No for every intake.
+      { field: 'GiveInsuredOrWaiverYesNo', ask: 'Does the customer need to add a named additional insured or a designated insured? Or do they need a named waiver of subrogation?', name: 'Named additional insured or waiver of subrogation (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
+      { field: 'GiveHasContractForBlanketAiEndorsement', ask: 'Does the customer have a contract that requires a blanket additional insured endorsement?', name: 'Blanket additional insured by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
+      { field: 'GiveHasContractForBlanketWosEndorsement', name: 'Blanket waiver of subrogation by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
       { field: 'GiveHasFilingsYesNo', ask: 'Is the customer required to provide proof of insurance/filings to a state or federal agency?', path: 'operations.filingsRequired', name: 'Filings required', kind: 'bool', note: filingsNote },
       // Shown after Yes (FL): only a box the intake names is ticked.
       { field: 'AddFilings.FederalLiability', ask: 'Federal Liability (includes MCS-90)', path: 'operations.filingsWhich', name: 'Federal liability filing', kind: 'bool', source: 'derived',
@@ -659,14 +731,18 @@ export const geico = {
       { ask: 'Bodily Injury or Combined Single Limit Liability', control: 'select', path: 'coverage.autoLiabLimit', name: 'Liability limit', kind: 'choice',
         note: (r) => ntlNote(r) ?? (liabilityType(r) ? null : 'Pick the liability limit yourself, with the liability coverage.') },
       { q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', name: 'Uninsured motorist bodily injury', source: 'fact' },
-      { q: 'Stacked', ask: 'Is Stacked', control: 'select', name: 'Stacked uninsured motorist', source: 'fact' },
-      { q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', name: 'Medical payments', source: 'fact' },
-      // FL: each offers one choice.
-      { q: 'BasicPip', ask: 'Basic Personal Injury Protection', control: 'select', name: 'Basic personal injury protection', source: 'fact' },
-      { q: 'PipOptions', ask: 'PIP Options', control: 'select', name: 'PIP options', source: 'fact' },
-      { q: 'ExcludedWorkLoss', ask: 'Excluded Work Loss', control: 'select', name: 'Excluded work loss', source: 'fact' },
-      // A vehicle's coverage rows: its year, make and model name them (scope 'vehicle').
-      ...ROW_COVERAGES.map(([suffix, name]) => ({ q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })),
+      // FL: one choice each, kept as GEICO has them (pipKept).
+      { q: 'Stacked', ask: 'Is Stacked', control: 'select', name: 'Stacked uninsured motorist', ...pipKept('stacked uninsured motorist') },
+      { q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', name: 'Medical payments (FL: Not Included, PIP instead)', kind: 'choice',
+        source: (r) => (florida(r) ? 'standard' : 'fact'), value: (r) => (florida(r) ? 'Not Included' : null) },
+      { q: 'BasicPip', ask: 'Basic Personal Injury Protection', control: 'select', name: 'Basic personal injury protection', ...pipKept('basic personal injury protection') },
+      { q: 'PipOptions', ask: 'PIP Options', control: 'select', name: 'PIP options', ...pipKept('the PIP options') },
+      { q: 'ExcludedWorkLoss', ask: 'Excluded Work Loss', control: 'select', name: 'Excluded work loss', ...pipKept('excluded work loss') },
+      // A vehicle's coverage rows: its year, make and model name them (scope 'vehicle'). TNI's
+      // comprehensive and collision are $1,000 deductibles (physicalDamageSource); the rest are the agent's.
+      ...ROW_COVERAGES.map(([suffix, name]) => (['COMP', 'COLL'].includes(suffix)
+        ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, kind: 'choice', source: physicalDamageSource, value: () => DEDUCTIBLE, note: physicalDamageNote(name.toLowerCase()) }
+        : { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })),
       // The same customization questions as on the vehicle form, per vehicle. Found by their text:
       // their rows don't name the vehicle, so with several vehicles they are the agent's.
       { q: 'CustomizationValue', ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', scope: 'vehicle', name: 'Customization value (the attached equipment value)',
@@ -681,7 +757,8 @@ export const geico = {
         kind: 'bool', source: (r) => (isMover(r) ? 'derived' : 'fact'), value: (r) => (isMover(r) ? true : null),
         note: (r) => (isMover(r) ? null : 'Whether they haul household goods or cotton ginned within 72 hours isn\'t on the intake: answer it yourself.') },
       fact('GiveMtcDoesTransportLiveAnimalsYesNo', 'Cargo: live animals'),
-      { field: 'GiveMtcRequireCoverageForRefrigerationBreakdownYesNo', path: 'coverage.reeferBreakdown', name: 'Refrigeration breakdown', kind: 'bool' },
+      { field: 'GiveMtcRequireCoverageForRefrigerationBreakdownYesNo', ask: 'Does the customer require refrigeration breakdown coverage?', path: 'coverage.reeferBreakdown', name: 'Refrigeration breakdown (Yes with a reefer)', kind: 'bool',
+        source: reeferSource, value: reeferBreakdown, note: reeferNote },
       // A list the fill can't set (several picks): the agent's.
       fact('GiveMtcHaulingCommoditiesCollect', 'Cargo commodities', { ask: 'Select up to four commodities the customer hauls the most',
         note: (r) => `Pick up to four commodities yourself${r.operations.whatHaul ? `: the intake says they haul ${quote(r.operations.whatHaul)}` : ''}.` }),
