@@ -58,11 +58,14 @@
 //   and VIN as saved); a comprehensive deductible lengthens that vehicle's collision, rental and road
 //   service lists (…Full); any coverage or add-on change makes the quote stale (premiums "$ --.--",
 //   "Please Recalculate Due To Coverage Change", Print and Next hidden, Recalculate shown); Recalculate
-//   redraws the step with new numbers and UUIDs, the answers kept, and a new rated premium;
+//   redraws the step with new numbers and UUIDs, the answers kept (but those in recalcResets, set by the
+//   runner for the next Recalculate only: GEICO's own choices drawn back, as on FL live run 6), and a
+//   new rated premium; with ?plans=no11 the plans offered have no 11 Payments (TX, 2026-10-21);
 // - Final Quote Details, MVR & CLUE, Payment Information (never captured): placeholder views; every click
 //   or fill there is recorded in stopActions.
 // Start options: ?view=<id> (a view, at its step), ?delay=<ms> (page loads, default 400; lookups take
-// half, Recalculate twice), ?radio=attribute|property|redraw, ?ssn=0 (skip the owner/SSN sub-form).
+// half, Recalculate twice), ?radio=attribute|property|redraw, ?ssn=0 (skip the owner/SSN sub-form),
+// ?plans=no11 (no 11 Payments among the plans).
 //
 // What happened is kept in window.__geicoMock for the runner (scripts/geico-mock.mjs):
 //   log          [{ type, view, step, target, text, isTrusted }]; type is view | click | change | input
@@ -97,11 +100,11 @@
   const STOP_VIEWS = ['final-quote-details', 'mvr-and-clue', 'payment-information'];
   const state = (window.__geicoMock = {
     log: [], view: null, step: null, renders: 0, saved: [], units: { vehicles: [], trailers: [], drivers: [] }, business: null, editing: null,
-    stopActions: [], recalcs: 0, premium: '',
+    stopActions: [], recalcs: 0, premium: '', recalcResets: null,
     decodes: { '1FTBR3X80MKA12345': { year: '2019', make: 'RAM', model: '1500' }, '1FTBR3X87MKA12399': { year: '2021', make: 'RAM', model: '2500' },
       '54DC4W1B5KS800000': { year: '2019', make: 'RAM', model: 'PROMASTER' } },
     cities: { 68102: 'OMAHA' },
-    options: { radio: params.get('radio') ?? 'attribute', delay, ssn: params.get('ssn') !== '0' },
+    options: { radio: params.get('radio') ?? 'attribute', delay, ssn: params.get('ssn') !== '0', plans: params.get('plans') ?? 'all' },
   });
   const form = $('#salesForm');
   const pageLoad = $('#page-load');
@@ -636,7 +639,8 @@
     slot('recalc')?.classList.remove('hide');
   }
   function recalculate(host) {
-    const keep = values();
+    const keep = { ...values(), ...(state.recalcResets ?? {}) };
+    state.recalcResets = null;
     host.setAttribute('disabled', '');
     waiting.style.display = 'block';
     later(delay * 2, () => {
@@ -695,7 +699,10 @@
   ENTER['vehicle-list'] = () => drawList(['vehicles', 'trailers']);
   ENTER['driver-list'] = () => drawList(['drivers']);
   ENTER['owner-driver'] = nameSpans;
-  ENTER.quote = () => { nameSpans(); vehicleRows(); reprice(); state.premium = oneLine(slot('rated')?.querySelector('p')?.textContent); };
+  ENTER.quote = () => {
+    if (state.options.plans === 'no11') $$('gds-radio-button[value="GEICO_PP_11Pay"]', form).forEach((r) => r.remove());
+    nameSpans(); vehicleRows(); reprice(); state.premium = oneLine(slot('rated')?.querySelector('p')?.textContent);
+  };
   function summary() {
     const b = state.business;
     if (!b) return;

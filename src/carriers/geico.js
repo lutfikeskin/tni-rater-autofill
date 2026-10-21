@@ -34,10 +34,11 @@
 // agent makes from a long list with the intake's words quoted (business description, vehicle and
 // trailer type), which the AI assistant may suggest for the agent's approval.
 //
-// On Quote & Coverages the fill opens Motor Truck Cargo when the intake asks for it; Recalculate is
-// the agent's, and once the premium is current and nothing there is left for the agent the fill
-// picks 11 Payments under View More Payment Plans and prints the quote proposal (TNI, FL live runs 4
-// and 6, 2026-10-21). The quote stops at Quote & Coverages: Final Quote Details leads to MVR & CLUE,
+// On Quote & Coverages the fill opens Motor Truck Cargo when the intake asks for it; once nothing
+// there is left for the agent and the page is quiet it clicks Recalculate, once a quote, checks
+// every answer after GEICO's redraw, and with the premium current picks 11 Payments (or the plan
+// with the most payments offered) under View More Payment Plans and prints the quote proposal (TNI,
+// FL live runs 4 and 6, 2026-10-21; W43-31, W43-32). The quote stops at Quote & Coverages: Final Quote Details leads to MVR & CLUE,
 // which orders paid reports (stopSteps: nothing is filled or clicked there). With "Fill the pages" or
 // "Click Continue when the page is done" on, or on the agent's Fill this page, the fill adds each
 // intake vehicle, trailer and driver not on the quote yet (TNI, 2026-10-21): the list's "+", the
@@ -687,16 +688,22 @@ export const geico = {
     // clicked once: its chevron toggles, so a second click (a retry of a slow card) would close it.
     { id: 'openCargo', steps: [COVERAGES], token: 'editIcon', within: CARGO_CARD, label: 'Motor Truck Cargo',
       when: (r) => r.coverage?.cargo === true, unlessSelector: `${CARGO_CARD}.expanded` },
-    // Then, once nothing on the step is left for the agent (`whenClear`) and the premium is current,
-    // each once (W43-18): View More Payment Plans for TNI's 11 Payments (picked by its rule), and
-    // Print Quote Proposal once 11 Payments is chosen. Recalculate is the agent's: after each one
-    // the fill clicked, GEICO drew the coverages again with its own choices wherever one wasn't
-    // saved yet (liability and UM back to $750,000, road service declined, cargo $5k), the fill's
-    // and the agent's alike;
-    // after each the agent clicked, here and in the runs before, it kept what the page showed (FL live
-    // run 6, 2026-10-21). Next stays the agent's: it leads to MVR & CLUE, whose reports cost the agency.
+    // Then, once nothing on the step is left for the agent (`whenClear`): Recalculate while the rates
+    // are out of date, once a quote (TNI, 2026-10-21, W43-31). After each Recalculate the fill clicked
+    // at once, GEICO drew the coverages again with its own choices wherever one wasn't saved yet
+    // (liability and UM back to $750,000, road service declined, cargo $5k), the fill's and the
+    // agent's alike; after each the agent clicked, it kept what the page showed (FL live run 6,
+    // 2026-10-21). So it waits for a page quiet for 2 s (`quietMs`), and after GEICO's redraw every
+    // answer is checked (`keepAnswers`): one of the fill's that GEICO changed is put back once, the
+    // agent's is left, and each is a red item; it is never clicked again (`once`), so the agent
+    // recalculates after that. With the premium current, each once (W43-18): View More Payment Plans
+    // for TNI's 11 Payments (picked by its rule, or the plan with the most payments offered: W43-32),
+    // and Print Quote Proposal once a plan is picked. Next stays the agent's: it leads to MVR & CLUE,
+    // whose reports cost the agency.
+    { id: 'recalculate', steps: [COVERAGES], text: '^recalculate$', waitRequired: true, needsRecalculation: true, verify: 'premium', whenClear: true,
+      quietMs: 2000, once: true, keepAnswers: true },
     { id: 'morePayPlans', steps: [COVERAGES], text: '^view more payment plans$', needsPremium: true, whenClear: true },
-    { id: 'printProposal', steps: [COVERAGES], text: '^print quote proposal$', needsPremium: true, whenClear: true, afterValue: ['geico.qGivePayPlanV2', `^${PAY_PLAN}`] },
+    { id: 'printProposal', steps: [COVERAGES], text: '^print quote proposal$', needsPremium: true, whenClear: true, after: ['geico.qGivePayPlanV2'] },
   ],
   // Continue, with "Click Continue when the page is done" on, once nothing is left for the agent
   // (TNI, FL live run 3, 2026-10-21: "with Click Continue when its done on, GEICO's should click
@@ -741,7 +748,7 @@ export const geico = {
   },
   // What the panel says on a step the fill still answers.
   stepNotes: {
-    [COVERAGES]: 'Answer what is left for you here (or mark it done) and click Fill this page, which also puts back any of its answers GEICO changed back. Then click Recalculate yourself: once the premium is current, the fill picks 11 Payments under View More Payment Plans and clicks Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',
+    [COVERAGES]: 'Answer what is left for you here (or mark it done) and click Fill this page, which also puts back any of its answers GEICO changed back. With nothing left, the fill clicks Recalculate once and checks every answer afterwards; if GEICO changed one, it is marked red and Recalculate is yours from then on. With the premium current, the fill picks 11 Payments (or the plan with the most payments GEICO offers) under View More Payment Plans and clicks Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',
   },
   // GEICO requotes when a coverage changes, and puts back its own choices when the agent backs out
   // (FL live run, 2026-10-21: every follow-up fill set the liability limit again, and GEICO redrew the
@@ -969,8 +976,12 @@ export const geico = {
       fact('PolicyTermSliderCollect', 'Policy term'),
       // TNI's 11 Payments (FL live run 4, 2026-10-21, W43-18), one of the plans View More Payment
       // Plans shows (`whenOffered`: waited for until then). Two groups (pay in full and
-      // installments, each with its own name): one rule each; the one listing it is answered.
-      ...[1, 2].map(() => ({ field: 'GivePayPlanV2', name: 'Payment plan (TNI: 11 Payments)', kind: 'choice', source: 'standard', value: () => PAY_PLAN, each: true, whenOffered: true })),
+      // installments, each with its own name): one rule each; the one listing it is answered. Not
+      // offered once View More Payment Plans was clicked (TX: Pay In Full, 4 Payments Bi-Monthly
+      // Plan, 9 Payments): the plan with the most payments offered, Pay In Full counting one, named
+      // in the report (TNI, 2026-10-21, W43-32).
+      ...[1, 2].map(() => ({ field: 'GivePayPlanV2', name: 'Payment plan (TNI: 11 Payments)', kind: 'choice', source: 'standard', value: () => PAY_PLAN,
+        each: true, whenOffered: true, orMost: { count: '^(\\d+)\\s+payments?\\b', one: '^pay\\s+in\\s+full\\b', after: 'morePayPlans', name: 'the plan with the most payments GEICO offers' } })),
       { q: 'LiabilityCoverage', ask: 'Liability Coverage', control: 'select', name: 'Liability coverage', kind: 'choice', source: 'derived', value: liabilityType, note: liabilityNote },
       // The intake's limit, by its amount ($1M CSL is "$1,000,000 Combined Single Limit"). A split
       // limit, State Minimum or one GEICO doesn't offer finds no option: the agent's, never the next one up.
