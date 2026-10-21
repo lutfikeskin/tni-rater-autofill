@@ -205,17 +205,19 @@ const filingTypeNote = (r) => {
 const filingBoxes = (r) => (r.operations.filingsRequired === true && which(r) && !ONLY_FR.test(which(r))
   ? { federal: federalLiability(which(r)) || null, state: STATE_FILING.test(which(r)) || null } : { federal: null, state: null });
 // Whether proof of insurance or filings go to an agency: the intake's Yes or No; blank, TNI's No
-// (W43-34) unless the intake names filings, says an SR-22 is needed (proof of insurance to a state),
-// or its notes mention a filing.
-const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bsr[\s-]?22\b|\bfr[\s-]?44\b|\bform\s+[eh]\b/i;
-const filingsMention = (r) => (which(r) ? 'which' : r.operations.needSr22 === true ? 'sr22' : notesLine(FILING_WORDS)(r) ? 'notes' : null);
+// (W43-34) unless the intake names filings or a line of its notes mentions one. An SR-22 or FR-44
+// (the intake's SR-22 answer, filings naming only those, a notes line naming only those) doesn't
+// stop the No: GEICO's question excludes them (above).
+const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\b/i;
+const FR_FILINGS = /\b(?:sr[\s-]?22|fr[\s-]?44)(?:\s+filings?)?\b/gi;
+const OTHER_FILING = { test: (s) => FILING_WORDS.test(s.replace(FR_FILINGS, ' ')) };
+const filingsMention = (r) => (which(r) && !ONLY_FR.test(which(r)) ? 'which' : notesLine(OTHER_FILING)(r) ? 'notes' : null);
 const filingsNote = (r) => {
   const f = r.operations.filingsRequired;
   if (f === true && ONLY_FR.test(which(r))) return `The intake names only ${quote(which(r), 40)}, which GEICO doesn't count as a filing here: answer it yourself.`;
   if (f != null) return null;
   return { which: `The intake leaves "filings required" blank but names filings (${quote(which(r), 40)}): answer it yourself.`,
-    sr22: 'The intake leaves "filings required" blank but says an SR-22 is needed: answer it yourself.',
-    notes: `The intake leaves "filings required" blank, and its notes say ${quote(notesLine(FILING_WORDS)(r), 80)}: answer it yourself.` }[filingsMention(r)] ?? null;
+    notes: `The intake leaves "filings required" blank, and its notes say ${quote(notesLine(OTHER_FILING)(r), 80)}: answer it yourself.` }[filingsMention(r)] ?? null;
 };
 
 // --- Business owner ----------------------------------------------------------------------------
@@ -355,17 +357,22 @@ const valueNote = (unit, of) => (r, a) => {
 // Yes, and the amount itself, only with one vehicle (or trailer): with several, which one carries it
 // isn't on the intake. None (blank, or one the intake reader couldn't read) is TNI's standard No
 // (2026-10-21, as Progressive's and AmWINS' no-equipment standards).
+// None on the intake, when a line of its notes mentions customizations or attached equipment, is
+// the agent's, the line quoted, for the Yes/No and the value alike (W43-30). Ordinary freight
+// wording ("hauls construction equipment") isn't one.
 const severalVehicles = (r) => (r.vehicles?.length ?? 0) > 1;
 const noEquipValue = (r) => r.operations?.equipVehicle == null;
-const customization = (r) => (r.operations?.equipVehicle === 0 || noEquipValue(r) ? false : r.operations?.equipVehicle > 0 && !severalVehicles(r) ? true : null);
+const CUSTOMIZED = /\bcustomi[sz]\w*|\bcustom[\s-]+(?:built|made|parts?|equipment|work|body|bed)\b|\bmodifications?\s+(?:to|on)\s+(?:the\s+|its\s+|their\s+)?(?:truck|vehicle|van|trailer|unit)s?\b|\bmodified\s+(?:truck|vehicle|van|trailer|body|bed)s?\b|\baftermarket\b|\bupfit\w*|\b(?:attached|installed|mounted|added)\s+equipment\b|\bequipment\s+(?:attached|installed|mounted|added)\b|\bpermanently\s+attached\b/i;
+const customizedNote = notesLine(CUSTOMIZED);
+const customization = (r) => (r.operations?.equipVehicle === 0 ? false : noEquipValue(r) ? (customizedNote(r) ? null : false)
+  : r.operations?.equipVehicle > 0 && !severalVehicles(r) ? true : null);
 const customizationNote = (r) => (r.operations?.equipVehicle > 0 && severalVehicles(r)
-  ? `The intake gives one attached equipment value ($${r.operations.equipVehicle.toLocaleString('en-US')}) for ${r.vehicles.length} vehicles: answer whether this vehicle has customizations yourself.` : null);
+  ? `The intake gives one attached equipment value ($${r.operations.equipVehicle.toLocaleString('en-US')}) for ${r.vehicles.length} vehicles: answer whether this vehicle has customizations yourself.`
+  : noEquipValue(r) && customizedNote(r) ? `The intake has no attached equipment value, and its notes say ${quote(customizedNote(r), 80)}: answer whether this vehicle has customizations yourself.` : null);
 // The customization value, wherever GEICO asks it (the vehicle and trailer forms, each vehicle on
 // Quote & Coverages): the intake's equipment value. None on the intake is TNI's 0 (W43-30, TNI,
-// 2026-10-21: "always 0 unless something different is mentioned in the notes"), unless a line of the
-// intake's notes mentions customizations or equipment: then the agent's, the line quoted.
-const CUSTOMIZED = /\bcustomi[sz]\w*|\bcustom[\s-]+(?:built|made|parts?|equipment|work|body|bed)\b|\bmodifi\w*|\baftermarket\b|\bupfit\w*|\bequipment\b/i;
-const customizedNote = notesLine(CUSTOMIZED);
+// 2026-10-21: "always 0 unless something different is mentioned in the notes"), unless a notes line
+// mentions customizations (above).
 const noValueNote = (unit) => (r) => (customizedNote(r) ? `The intake has no ${unit} equipment value, and its notes say ${quote(customizedNote(r), 80)}: enter it yourself.` : null);
 const valueSource = (none) => (r) => (!none(r) ? 'derived' : customizedNote(r) ? 'fact' : 'standard');
 const customizationValue = (r) => (r.operations?.equipVehicle === 0 ? 0
@@ -594,12 +601,13 @@ const isMover = (r) => /^household\s+goods\s+mover$/i.test(String(r.operations.b
 // Household goods or cotton ginned within 72 hours: Yes for a household goods mover; otherwise TNI's
 // No (W43-30, 2026-10-21: "default No unless business type, commodities or notes mention household
 // moving"), unless the business class, what they haul or a line of the notes mentions household
-// goods, moving or cotton: then the agent's, quoted.
-const HOUSEHOLD = /\bhousehold\b|\bmov(?:er|ers|ing)\b|\brelocat\w*|\bcotton\b|\bginn(?:ed|ing)\b/i;
+// goods, household moving (a home, residential or office move, a moving company) or cotton: then the
+// agent's, quoted. Freight that "keeps moving", or a "prime mover", isn't household moving.
+const HOUSEHOLD = /\bhousehold\b|\b(?:home|house|residential|apartment|office|furniture)\s+(?:mov(?:e|es|ers?|ing)|relocations?)\b|\bmoving\s+(?:company|companies|services?|business)\b|\bcotton\b|\bginn(?:ed|ing)\b/i;
 const householdMention = (r) => (HOUSEHOLD.test(freightWords(r)) ? freightWords(r) : notesLine(HOUSEHOLD)(r));
 const household = (r) => (isMover(r) ? true : householdMention(r) ? null : false);
 const householdSource = (r) => (isMover(r) ? 'derived' : householdMention(r) ? 'fact' : 'standard');
-const householdNote = (r) => (!isMover(r) && householdMention(r) ? `The intake mentions household goods, moving or cotton (${quote(householdMention(r), 80)}): answer it yourself.` : null);
+const householdNote = (r) => (!isMover(r) && householdMention(r) ? `The intake mentions household goods, household moving or cotton (${quote(householdMention(r), 80)}): answer it yourself.` : null);
 
 // Motor truck cargo (TNI, FL live run 5, 2026-10-21, W43-23). What the intake says about the freight:
 // its business class and what they haul.
@@ -921,7 +929,7 @@ export const geico = {
       { field: 'GiveOtherVehicleType', waitFor: afterDecode, ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', kind: 'choice',
         source: (r, a) => (vehicleType(r, a) ? 'standard' : null), value: vehicleType, note: (r, a) => (vehicleType(r, a) ? null : typeNote('vehicle', vehicleOf)(r, a)) },
       { field: 'GiveAnyVehicleCustomizationYesNo', waitFor: afterDecode, ask: 'Does the customer have any customizations?', path: 'operations.equipVehicle', name: 'Customizations (from the attached equipment value)',
-        kind: 'bool', source: (r) => (noEquipValue(r) ? 'standard' : 'derived'), clientFact: true, value: customization, note: customizationNote },
+        kind: 'bool', source: valueSource(noEquipValue), clientFact: true, value: customization, note: customizationNote },
       { field: 'GiveTotalCustomizationValue', waitFor: afterDecode, ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', name: 'Customization value (the attached equipment value, else TNI: 0)',
         kind: 'money', source: valueSource(noEquipValue), value: customizationValue, note: customizationValueNote },
       // Its value without the customizations: the intake's vehicle value (today's, never cost new).
@@ -986,7 +994,9 @@ export const geico = {
       { field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', path: 'operations.needSr22', name: 'SR-22 (this driver; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Driver, note: driverNote(sr22Note(sr22Driver)) },
       // Asked again on Add Driver for a driver who is the business's owner, with the owner's mobile
       // phone (PA live run, 2026-10-21, W43-29: both unfamiliar, the first answered by the AI
-      // assistant from the intake): the intake's owner-drives answer and its phone.
+      // assistant from the intake): the intake's owner-drives answer and its phone. Open (W43-26): on
+      // that run GEICO redrew this question as Yes after Save and Continue; the answer here is the
+      // same one the agent approved there.
       { field: 'GiveOwnerActiveDriverStatusYesNo', q: 'GiveOwnerActiveDriverStatusYesNo.driver', ask: 'Is the owner a driver on the policy?', path: 'applicant.ownerDrives', name: 'Owner is a driver (Add Driver)', kind: 'bool', note: driverNote(ownerDrivesNote) },
       { field: 'GiveMobilePhoneNumber', ask: 'Owner\'s Mobile Phone Number', path: 'applicant.phone', name: 'Owner\'s mobile phone (the intake\'s phone)', note: driverNote(phoneNote) },
     ]),
@@ -1079,7 +1089,7 @@ export const geico = {
       { field: 'GiveMtcRequireCoverageForMobileHomesYesNo', ask: 'Does the customer require coverage for mobile or modular homes or buildings, business documents, or non-negotiable securities?',
         name: 'Cargo: mobile homes, business documents or securities (TNI: No unless the intake names them)', kind: 'bool', ...cargoNo(MOBILE_HOMES, 'mobile or modular homes, business documents or securities') },
       // A household goods mover hauls household goods: Yes. Otherwise TNI's No (W43-30), unless the
-      // intake's class, haul or notes mention household goods, moving or cotton: then the agent's.
+      // intake's class, haul or notes mention household goods, household moving or cotton: then the agent's.
       { field: 'GiveMtcRequireCoverageForBusinessDocumentYesNo', ask: 'Will the customer be hauling household goods or cotton that was ginned within 72 hours?',
         name: 'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)',
         kind: 'bool', source: householdSource, value: household, note: householdNote },

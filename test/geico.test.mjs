@@ -404,6 +404,21 @@ test('customizations come from the attached equipment value; the amount only wit
   }
   // The intake's own value is never overridden by a mention.
   assert.equal(value(with_({ 'operations.equipVehicle': 5000, 'notes.text': 'Aftermarket upfit' }), VALUE, VEH), 5000);
+  // The Yes/No follows the same notes (review of #139): none on the intake with a notes line about
+  // customizations is the agent's, quoted, not the standard No.
+  const YES_NO = 'Customizations (from the attached equipment value)';
+  for (const text of ['Liftgate and custom-built bed added 2024', 'Ladder rack is permanently attached', 'Modifications to the truck: crane']) {
+    const s = one(plan(with_({ 'operations.equipVehicle': null, 'notes.text': text })), YES_NO);
+    agents(s);
+    assert.equal(s.source, 'fact', text);
+    assert.ok(s.note.includes(text), s.note);
+  }
+  // Ordinary freight wording isn't a customization: the standard No and 0 stay.
+  for (const text of ['Hauls construction equipment', 'Equipment rental deliveries', 'Modified schedule in winter']) {
+    const r = with_({ 'operations.equipVehicle': null, 'notes.text': text });
+    const [yesNo, amount] = [one(plan(r), YES_NO), one(plan(r), VALUE, VEH)];
+    assert.deepEqual([yesNo.value, yesNo.source, amount.value, amount.source], [false, 'standard', 0, 'standard'], text);
+  }
 });
 
 test('distance, personal use and where the unit is parked', () => {
@@ -674,10 +689,14 @@ test('filings: the kind and the boxes from which filings the intake names', () =
   assert.equal(value(intake(), FILINGS), true);
   assert.equal(value(with_({ 'operations.filingsRequired': false, 'operations.filingsWhich': null }), FILINGS), false);
   agents(one(plan(with_({ 'operations.filingsWhich': 'SR-22' })), FILINGS));
-  // Blank: TNI's No (W43-34), unless the intake names filings, needs an SR-22 or its notes mention one.
-  const silent = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': null })), FILINGS);
-  assert.deepEqual([silent.value, silent.source, silent.standard], [false, 'standard', true]);
-  for (const [changes, says] of [[{ 'operations.filingsWhich': 'BMC-91' }, /names filings \("BMC-91"\)/], [{ 'operations.needSr22': true }, /SR-22 is needed/],
+  // Blank: TNI's No (W43-34), unless the intake names filings or its notes mention one. An SR-22 or
+  // FR-44 isn't one: GEICO's question excludes them (review of #139).
+  for (const changes of [{}, { 'operations.needSr22': true }, { 'operations.filingsWhich': 'SR-22' }, { 'operations.filingsWhich': 'SR-22 / FR-44' },
+    { 'notes.text': 'Owner needs an SR-22 filing' }, { 'claims.notes': 'FR-44 on file' }]) {
+    const silent = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': null, ...changes })), FILINGS);
+    assert.deepEqual([silent.value, silent.source, silent.standard], [false, 'standard', true], JSON.stringify(changes));
+  }
+  for (const [changes, says] of [[{ 'operations.filingsWhich': 'BMC-91' }, /names filings \("BMC-91"\)/], [{ 'notes.text': 'SR-22 and BMC-91 filings' }, /"SR-22 and BMC-91 filings"/],
     [{ 'notes.text': 'Needs MCS-90 for the broker' }, /"Needs MCS-90 for the broker"/], [{ 'claims.notes': 'State filing pending' }, /"State filing pending"/]]) {
     const s = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': null, ...changes })), FILINGS);
     agents(s);
@@ -956,18 +975,19 @@ test('cargo: the intake\'s limit and deductible as one pair; never a default ded
   agents(one(plan(with_({ 'coverage.cargo': false })), 'Motor truck cargo limit and deductible'));
   agents(one(plan(with_({ 'coverage.cargo': null })), 'Motor truck cargo wanted'));
   // Household goods: Yes for a household goods mover; otherwise TNI's No (W43-30), unless the class,
-  // what they haul or the notes mention household goods, moving or cotton: then the agent's, quoted.
+  // what they haul or the notes mention household goods, household moving or cotton: then the agent's, quoted.
   const GOODS = 'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)';
   const goods = (changes) => one(plan(with_(changes)), GOODS);
   const mover = goods({ 'operations.businessClass': 'Household Goods Mover' });
   assert.deepEqual([mover.value, mover.source, mover.note], [true, 'derived', null]);
-  for (const changes of [{}, { 'operations.businessClass': 'Expediter', 'operations.whatHaul': null }, { 'operations.whatHaul': 'Removals of office furniture' }]) {
+  for (const changes of [{}, { 'operations.businessClass': 'Expediter', 'operations.whatHaul': null }, { 'operations.whatHaul': 'Removals of office furniture' },
+    { 'notes.text': 'Keeps loads moving 24/7' }, { 'operations.whatHaul': 'Prime movers and parts' }, { 'notes.text': 'Relocating the yard to Omaha in May' }]) {
     const s = goods(changes);
     assert.deepEqual([s.value, s.source, s.standard, s.note], [false, 'standard', true, null], JSON.stringify(changes));
   }
   for (const [changes, says] of [[{ 'operations.whatHaul': 'Household goods, local moves' }, /"Expediter \/ Household goods, local moves"/],
     [{ 'operations.businessClass': 'Moving company' }, /"Moving company \/ General freight"/], [{ 'operations.whatHaul': 'Ginned cotton bales' }, /cotton bales/],
-    [{ 'notes.text': 'Some residential relocation work' }, /"Some residential relocation work"/]]) {
+    [{ 'notes.text': 'Some residential relocation work' }, /"Some residential relocation work"/], [{ 'notes.text': 'Also does home moves on weekends' }, /home moves/]]) {
     const s = goods(changes);
     agents(s);
     assert.equal(s.source, 'fact');
