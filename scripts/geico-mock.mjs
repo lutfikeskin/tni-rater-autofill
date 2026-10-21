@@ -665,6 +665,10 @@ async function scenario() {
   const listOff = await fill('Vehicles: list');
   if (listOff.actions?.length) fail(`Vehicles: the fill clicked ${listOff.actions.map((a) => a.id).join(', ')} with "Click Continue when the page is done" off`);
   await agent.click('[data-testid="addIcon"]', 'Add Vehicle or Trailer');
+  // GEICO draws the chooser a moment after "+" (FL live run 4): the agent waits for it.
+  await page.waitForFunction(() => window.__geicoMock.view === 'vehicle-or-trailer', null, { timeout: 15000 });
+  await settled();
+  await poll();
   const chose = await fill('Vehicles: or trailer');
   if ((await values()).GiveVehicleOrTrailer !== 'No') fail(`Vehicles: the chooser was not answered Trailer for the trailer (${JSON.stringify((await values()).GiveVehicleOrTrailer)})`);
   if (chose.actions?.length || (await mock()).view !== 'vehicle-or-trailer') fail('Vehicles: the chooser\'s Next was clicked with "Click Continue when the page is done" off');

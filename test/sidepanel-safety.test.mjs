@@ -3601,6 +3601,33 @@ test('a Continue that did not take after its retry pauses automatic filling, tel
   assert.match(extractFunction('afterFill'), /watchNextStep\(carrier, page, advanced\.signatureBefore, doneKey, run, ctx\)/);
 });
 
+// FL live run 4, 2026-10-21 (W43-13): GEICO hadn't moved 6 s after the fill's Next, and the retry
+// clicked Next again on top of the agent's own (three Nexts in 8 s). A carrier without the retry
+// (`continueRetry: false`) is never clicked again: it is waited for longer, then the agent is told.
+test('a Continue on a carrier without the retry is never clicked again: waited for, then the agent is told', async () => {
+  const logged = [], appended = [];
+  let fills = 0, reads = 0;
+  const state = { tab: { id: 1, url: 'Step' }, intake: {}, filling: false, pagePending: null, autoPaused: false, advanceRetried: new Set(), doneSteps: new Set(['Step||Vehicles']) };
+  const context = { state, pageOf: (u) => u, $: () => ({ checked: true }), setTimeout: (fn) => fn(), fillProblem: (ctx, text) => appended.push(text),
+    runKit: async () => { reads++; return [{ frameId: 0, result: 'same' }]; }, fillPage: () => { fills++; }, usage: { log: (e) => logged.push(e) } };
+  vm.runInNewContext(extractFunction('watchNextStep'), context);
+  const geico = { id: 'geico', continueRetry: false };
+  await context.watchNextStep(geico, 'Step', 'same', 'Step||Vehicles', 'run-1');
+  assert.equal(fills, 0, 'never clicked again');
+  assert.ok(reads > 20, `waited longer than the retry's 6 s (${reads} reads)`);
+  assert.equal(state.autoPaused, true);
+  assert.equal(state.doneSteps.has('Step||Vehicles'), true, 'its Continue stays done');
+  assert.match(appended[0], /Continue didn't take: click it yourself\./);
+  assert.deepEqual(JSON.parse(JSON.stringify(logged)), [{ type: 'fill_error', carrier: 'geico', page: 'Step', run: 'run-1', auto: 'page', error: 'continue did not take' }]);
+  // While GEICO's page loads, nothing counts: the next step is filled when it comes, up to a minute.
+  state.autoPaused = false;
+  reads = 0;
+  context.runKit = async () => [{ frameId: 0, result: ++reads < 150 ? null : 'next' }];
+  await context.watchNextStep(geico, 'Step', 'same', 'Step||Other');
+  assert.equal(fills, 1, 'the next step, after 45 s of loading');
+  assert.equal(state.autoPaused, false);
+});
+
 test('the fill hint says Continue is clicked for the agent only while that setting is on and the carrier has an advance pattern', () => {
   const body = extractFunction('renderSite');
   // GEICO (an advance pattern up to Additional Business Info, unit lists): with the setting on, the
