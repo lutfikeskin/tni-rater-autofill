@@ -437,6 +437,9 @@ test('USDOT: the number and whether there is one, from the intake', () => {
   assert.deepEqual([verify.source, verify.value, verify.labelHas, verify.steps], ['derived', true, ['1', 'Test', '68000'], [BCU, ABI]]);
   assert.match(verify.labelNote, /Check GEICO's USDOT record/);
   assert.deepEqual(one(plan(with_({ 'garaging.street': '4521 N. Ocean Blvd' })), RECORD).labelHas, ['4521', 'Ocean', '68000'], 'a direction and a street type are no name');
+  // Every word of the name, never its first alone ("of" matches any record), and no unit.
+  assert.deepEqual(one(plan(with_({ 'garaging.street': '100 Avenue of the Americas Suite 5' })), RECORD).labelHas, ['100', 'of', 'the', 'Americas', '68000']);
+  assert.deepEqual(one(plan(with_({ 'garaging.street': '100 Old Dixie Hwy #2' })), RECORD).labelHas, ['100', 'Old', 'Dixie', '68000']);
   // Without a house number, a street name or a ZIP: the agent's attestation, never the AI's.
   for (const changes of [{ 'garaging.street': 'Test Way' }, { 'garaging.street': null }, { 'garaging.zip': null }, { 'garaging.street': '12 N St' }]) {
     const s = one(plan(with_(changes)), RECORD);

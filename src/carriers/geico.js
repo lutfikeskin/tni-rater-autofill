@@ -247,14 +247,16 @@ const streetLine = (r) => {
 };
 const streetNote = (r) => (r.garaging?.street ? null : 'The intake has no street: enter the business address yourself.');
 // What GEICO's USDOT record must show to be the client's business (W43-24): the intake's house
-// number, its street's name (its first word that isn't a direction or a street type) and ZIP. None
-// without all three.
+// number, every word of its street's name (each word up to a unit, such as Apt or Suite, that isn't a
+// direction or a street type: "Avenue of the Americas" is of, the and Americas, never "of" alone)
+// and ZIP. None without all three.
 const STREET_WORDS_SKIPPED = /^(?:n|s|e|w|ne|nw|se|sw|north|south|east|west|st|street|ave|avenue|rd|road|blvd|boulevard|dr|drive|ln|lane|way|ct|court|hwy|highway|pkwy|parkway|pl|place|ter|terrace|cir|circle)$/i;
 const recordWords = (r) => {
   const m = String(r.garaging?.street ?? '').trim().match(/^(\d+[a-z]?)\s+(.+)$/i);
-  const name = m?.[2].split(/[\s.,]+/).find((w) => w && !STREET_WORDS_SKIPPED.test(w));
+  const street = m?.[2].split(/\s*(?:#|\b(?:apt|apartment|suite|ste|unit)\b)/i)[0] ?? '';
+  const name = street.split(/[\s.,]+/).filter((w) => w && !STREET_WORDS_SKIPPED.test(w));
   const zip = zip5(r);
-  return m && name && zip ? [m[1], name, zip] : null;
+  return m && name.length && zip ? [m[1], ...name, zip] : null;
 };
 const RECORD_NOTE = 'Check GEICO\'s USDOT record against the client\'s business, then answer it yourself.';
 
