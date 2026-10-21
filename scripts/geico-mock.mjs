@@ -169,7 +169,7 @@ const NEEDS_YOU = [
   ['Vehicles: vehicle 1', /\S/, ['ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: trailer 1', /trailer/, ['ref:GiveOtherVehicleType']],
-  ['Quote & Coverages', /\S/, ['cov:medical payments med', 'ref:GiveMtcRequireCoverageForBusinessDocumentYesNo']],
+  ['Quote & Coverages', /\S/, ['cov:medical payments med']],
 ];
 const STOP_STEPS = Object.keys(geico.stopSteps ?? {});
 

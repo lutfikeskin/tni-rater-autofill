@@ -166,7 +166,6 @@ const NOT_MAPPED = {
     'applicant.fein': 'not asked before Final Quote Details, which is the agent\'s (stopSteps)',
     'applicant.yearEstablished': 'GEICO asks how many years the business has been operating (applicant.yearsInBusiness)',
     'applicant.yearsExperience': 'not asked on the captured quotes',
-    'operations.usesEld': 'not asked on the captured quotes',
     'operations.eldBrand': 'not asked on the captured quotes',
     'operations.movingState': 'not asked on the captured quotes',
     'operations.canadaLoads': 'not asked on the captured quotes',
@@ -200,7 +199,8 @@ const READ_INDIRECTLY = {
   geico: {
     'applicant.applicationDate': 'util.priorPolicyExpired (current GEICO policy, current auto insurance, current GL)',
     'claims.text': 'normalize.intakeNotes (an NTL mention holds the liability coverage)',
-    'notes.text': 'normalize.intakeNotes (an NTL mention holds the liability coverage)',
+    'claims.notes': 'normalize.otherNotes (no physical damage, and a mention that leaves a TNI standard to the agent)',
+    'notes.text': 'normalize.intakeNotes and otherNotes (NTL, no physical damage, a mention that leaves a TNI standard to the agent)',
   },
 };
 
