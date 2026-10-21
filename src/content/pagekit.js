@@ -2244,10 +2244,11 @@
           refill.add(step.id);
           retry = true;
           if (serverBacked) break;
-        } else if (step.keepUnlisted && /^no option matches/.test(result.reason ?? '') && hasValue(c)) {
+        } else if (step.keepUnlisted && /^no option matches/.test(result.reason ?? '') && hasValue(c) && !/^other\b/i.test(oneLine(selectedText(c) ?? ''))) {
           // A list without the answer that already holds the page's own (`keepUnlisted`: GEICO's
           // cities for the ZIP, TNI, 2026-10-21, W43-35: one city and OTHER in GA, "failed: City"
-          // on two steps, and the agent kept GEICO's): kept, with a check naming the answer.
+          // on two steps, and the agent kept GEICO's): kept, with a check naming the answer. Its
+          // OTHER is no answer to keep (review of #141): that still fails.
           const note = `The page's list has no "${step.value}" (${step.name}): its "${selectedText(c)}" is left as it is. Check it.`;
           report.kept.push(item);
           report.checks.push({ ...item, note, ...describe(c) });

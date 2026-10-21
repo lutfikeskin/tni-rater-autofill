@@ -4733,6 +4733,12 @@ test('GEICO\'s City: one the list doesn\'t have leaves GEICO\'s, with a check na
   r = await run('Business & Owner Info', ['', 'CONYERS', 'OTHER'], '');
   assert.deepEqual([r.city, r.checks, r.failed.length], ['', [], 1]);
   assert.match(r.failed[0].reason, /no option matches "Testville"/);
+  // GEICO's OTHER is no city (review of #141): not kept, still a failure.
+  for (const other of ['OTHER', 'Other city']) {
+    r = await run('Business & Owner Info', ['', 'CONYERS', other], other);
+    assert.deepEqual([r.city, r.checks, r.kept, r.failed.length], [other, [], [], 1], other);
+    assert.match(r.failed[0].reason, /no option matches "Testville"/);
+  }
 });
 
 test('marks go where the agent looks: a GEICO option on its host, a select2 list on its drawn box', async () => {

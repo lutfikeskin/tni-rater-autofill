@@ -4951,11 +4951,29 @@ test('on GEICO\'s Add USDOT Number screen the panel says so in red, and nothing 
   assert.doesNotMatch(text, /USDOT/);
   t.context.scheduleAutoFill('/quote');
   assert.equal(t.timers.length, 1);
-  // Questions drawn on the same step end it too.
+  // A question or list GEICO draws while the screen shows doesn't end it (review of #141); a new
+  // document does.
   const again = stopStepHarness('Business & Owner Info');
   again.state.stopScreens = new Map([[4, { name: 'USDOT Number', page: '/quote' }]]);
-  again.show('Business & Owner Info', 'new_fields');
+  for (const event of ['new_fields', 'list_shown', 'field_changes', 'step_shown']) {
+    again.show('Business & Owner Info', event);
+    assert.equal(again.state.stopScreens.has(4), true, event);
+  }
+  again.context.scheduleAutoFill('/quote');
+  assert.equal(again.timers.length, 0);
+  again.show('Business & Owner Info', 'page_view');
   assert.equal(again.state.stopScreens.has(4), false);
+  // Two GEICO quote tabs (review of #141): the screen is the tab's that shows it. Tab 7 shows it,
+  // tab 4 is filled: tab 4's fills and follow-ups go on, tab 7's are refused.
+  const two = stopStepHarness('Business & Owner Info');
+  two.state.stopScreens = new Map([[7, { name: 'USDOT Number', page: '/quote' }]]);
+  assert.equal(two.context.stopNoteFor(geico, '/quote'), null);
+  assert.match(two.context.stopNoteFor(geico, '/quote', undefined, 7), /Add USDOT Number or Skip is yours/);
+  two.context.scheduleAutoFill('/quote', { tabId: 7, intake: two.state.intake, revision: two.state.intakeRevision });
+  assert.equal(two.timers.length, 0, 'tab 7: refused');
+  two.context.scheduleAutoFill('/quote');
+  assert.equal(two.timers.length, 1, 'tab 4: scheduled');
+  assert.equal(two.context.aiActionCurrent({ intake: two.state.intake, tabId: 4, tabUrl: two.state.tab.url, page: '/quote' }, []), true);
 });
 
 // The site strip and Fill button as renderSite draws them, for a tab on `step`.

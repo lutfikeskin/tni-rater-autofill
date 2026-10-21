@@ -241,7 +241,7 @@ function aiAnswerOrigin(frames, x, answerFrame) {
 
 function aiActionCurrent(ctx, list) {
   return !!ctx.intake && state.intake === ctx.intake && state.tab?.id === ctx.tabId
-    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page && !stopNoteFor(state.tab?.carrier, ctx.page)
+    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page && !stopNoteFor(state.tab?.carrier, ctx.page, undefined, ctx.tabId)
     && list.every(x => [...state.aiCache.values()].includes(x));
 }
 
@@ -1712,7 +1712,7 @@ function logFillError(ctx, error) {
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page)) return;
+  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId)) return;
   if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
@@ -1977,7 +1977,8 @@ async function captureLayout(job, reason) {
 // known by a button only it shows, as a layout reads the page: said in red above the steps while the
 // tab shows it (showStopPage), its arrival logged as a fill run that stopped, as a stop step's is,
 // and nothing filled, clicked or asked of the AI there (stopNoteFor). A layout read without it, a
-// move to a step or a new document (noteStep, the page_view arrival) ends it.
+// move to a step or a new document (noteStep, the page_view arrival) ends it; a question or list
+// GEICO draws while the screen is up doesn't (review of #141).
 function noteStopScreen({ tabId, carrier, page }, step, buttons) {
   const name = stopScreen(carrier, buttons);
   const was = state.stopScreens.get(tabId);
@@ -2586,10 +2587,12 @@ function showStateNote() {
 
 // What the carrier's stop says on this page, or on the step this tab is on (`step`, its name):
 // null where filling and clicking are allowed. Every check of a stop goes through it, so a stop
-// step is refused wherever a stop page is (fill, follow-ups, Luna, the panel's buttons).
-function stopNoteFor(carrier, page, step = tabStep(carrier)) {
-  // A screen that is the agent's (`stopButtons`), while the tab shows it on this page (noteStopScreen).
-  const screen = state.stopScreens?.get(state.tab?.id);
+// step is refused wherever a stop page is (fill, follow-ups, Luna, the panel's buttons). `tabId`:
+// the tab being filled or asked about (a follow-up's, the AI's), the shown one by default.
+function stopNoteFor(carrier, page, step, tabId = state.tab?.id) {
+  if (step === undefined) step = tabStep(carrier, tabId);
+  // A screen that is the agent's (`stopButtons`), while that tab shows it on this page (noteStopScreen).
+  const screen = state.stopScreens?.get(tabId);
   const said = screen?.page === page ? carrier?.stopButtons?.[screen.name]?.note : null;
   return carrier?.stopPages?.[page] ?? (step ? carrier?.stopSteps?.[step] : null)
     ?? (typeof said === 'function' ? said(state.intake?.record ?? null) : said) ?? null;
@@ -4630,8 +4633,9 @@ function noteStep(msg, sender) {
     const page = samePage(msg.page) || pageOf(state.tab.url);
     usage.log(...fillEvents([{ fields: 0, blockers: [`stop: ${step}`] }], { carrier: carrier.id, page, view: viewOf(sender.tab.id, page), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text, step }));
   }
-  // A stop screen (noteStopScreen) ends with a move to a step, or with questions drawn on one.
-  const screenOver = !!state.stopScreens?.has(sender.tab.id) && (moved || ['new_fields', 'page_view', 'list_shown'].includes(msg.event));
+  // A stop screen (noteStopScreen) ends with a move to a step or a new document: a question or list
+  // drawn while it shows doesn't end it (a layout read without its button does).
+  const screenOver = !!state.stopScreens?.has(sender.tab.id) && (moved || msg.event === 'page_view');
   if (screenOver) state.stopScreens.delete(sender.tab.id);
   if (moved || screenOver) renderSite();
 }
