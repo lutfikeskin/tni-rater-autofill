@@ -549,8 +549,9 @@ const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 
 
 // The unit the panel is adding (`adding`, sidepanel pickUnitToAdd): the intake's next vehicle, then
 // trailer, not on the quote yet on Vehicles, the next driver on Drivers & Incidents; its index is
-// the picker's (a[list]). `click`: the panel's "Click Continue when the page is done" is on, and the
-// fill clicks the helpers below for it; off, it only answers the chooser.
+// the picker's (a[list]). `click`: the panel's "Fill the pages" or "Click Continue when the page is
+// done" is on (W43-20), and the fill clicks the helpers below for it; both off, it only answers the
+// chooser.
 const adds = (list) => (r, a) => !!a.adding?.click && a.adding.list === list && a.adding.index === (a[list] ?? 0);
 // The chooser's answer for it: Vehicle or Trailer (null on the driver list, or with none to add).
 const chosen = (r, a) => ({ vehicles: 'Vehicle', trailers: 'Trailer' })[a.adding?.list] ?? null;
@@ -616,8 +617,8 @@ export const geico = {
     { steps: [VEHICLES], selector: VEHICLE_LIST, lists: ['vehicles', 'trailers'] },
     { steps: [DRIVERS], selector: DRIVER_LIST, lists: ['drivers'] },
   ],
-  // The units the fill adds itself, behind the panel's "Click Continue when the page is done" (TNI,
-  // FL live run 2026-10-21: "click + and add the new vehicle", "click Next after choosing Vehicle or
+  // The units the fill adds itself, behind the panel's "Fill the pages" or "Click Continue when the
+  // page is done" (TNI, FL live run 5, 2026-10-21, W43-20; FL live run 2026-10-21: "click + and add the new vehicle", "click Next after choosing Vehicle or
   // Trailer"): on the vehicle list the "+" for the next intake vehicle, then trailer, not on the
   // quote, the chooser answered for it (GiveVehicleOrTrailer) and its Next; on the driver list the
   // "+" for the next intake driver (never the owner GEICO lists). The unit's form is then filled
