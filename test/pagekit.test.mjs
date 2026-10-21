@@ -5212,6 +5212,66 @@ test('GEICO Quote & Coverages: a choice an earlier fill gave that the page took 
   assert.equal(comp.value, '$1,000 deductible');
 });
 
+// FL live run 3, 2026-10-21: "with Click Continue when its done on, GEICO's should click Next".
+// Only on its steps (never Quote & Coverages, whose Next leads to MVR & CLUE), never the chooser's
+// Next (the add helpers' own), and per form and button: Vehicles is left by each unit's Next, then
+// by Looks Good.
+test('a Continue kept to steps, never inside the chooser, and continued per form and button', async () => {
+  const advance = { text: '^(next|save and continue)$', steps: ['Business Class & USDOT', 'Vehicles'], notWithin: '[id^="Id_Chooser_"]', byForm: true };
+  const plan = [{ id: 'zip', field: 'GiveZip', path: 'garaging.zip', name: 'ZIP', kind: 'text', value: '68102' }];
+  const page = (step, { chooser = false } = {}) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, step);
+    h.document.body.append(geicoBox('GiveZip', 1, '5-Digit ZIP Code'));
+    const clicks = [];
+    const next = gdsButton('Next');
+    next.button.onclick = () => clicks.push('Next');
+    if (chooser) {
+      const box = new FakeNode('div', { id: 'Id_Chooser_123' });
+      box.append(next.host);
+      h.document.body.append(box);
+    } else h.document.body.append(next.host);
+    return { h, clicks };
+  };
+  let p = page('Business Class & USDOT');
+  let report = await p.h.kit.fill(plan, { maxRounds: 4, advance });
+  assert.deepEqual(plain([p.clicks, report.advanced, report.advanceKey]), [['Next'], 'Next', 'Business Class & USDOT@next']);
+  // Continued there already (the panel's doneSteps hold its key): the agent's now.
+  p = page('Business Class & USDOT');
+  report = await p.h.kit.fill(plan, { maxRounds: 4, advance, doneSteps: ['Business Class & USDOT@next'] });
+  assert.deepEqual(plain([p.clicks, report.advanced ?? null]), [[], null]);
+  // Not one of its steps (Quote & Coverages), or a step that can't be read: never.
+  p = page('Quote & Coverages');
+  await p.h.kit.fill(plan, { maxRounds: 4, advance });
+  assert.deepEqual(p.clicks, []);
+  // The chooser's Next is never Continue.
+  p = page('Vehicles', { chooser: true });
+  report = await p.h.kit.fill(plan, { maxRounds: 4, advance });
+  assert.deepEqual(plain([p.clicks, report.advanced ?? null]), [[], null]);
+  // A unit's form: its key names the form, so the next unit's form is continued too.
+  const formPage = (n) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Vehicles');
+    const f = geicoVehicleForm(h, n);
+    const clicks = [];
+    const next = gdsButton('Next');
+    next.button.onclick = () => clicks.push('Next');
+    h.document.body.append(next.host);
+    return { h, f, clicks };
+  };
+  const formPlan = [{ id: 'handy0', field: 'YesNoPreQuoteHaveFullVinActivity', steps: ['Vehicles'], path: 'vehicles[0].vin', name: 'VIN handy', kind: 'radio', value: 'Yes' }, ...vehicleFormPlan(0)];
+  const first = formPage(85493);
+  report = await first.h.kit.fill(formPlan, { maxRounds: 8, advance, units: geicoUnits(0, {}) });
+  assert.equal(report.advanceKey, 'Vehicles@next@Id_YesNoPreQuoteHaveFullVinActivity_85493');
+  const second = formPage(37768);
+  report = await second.h.kit.fill(formPlan, { maxRounds: 8, advance, units: geicoUnits(0, {}), doneSteps: ['Vehicles@next@Id_YesNoPreQuoteHaveFullVinActivity_85493'] });
+  assert.deepEqual(plain([second.clicks, report.advanceKey]), [['Next'], 'Vehicles@next@Id_YesNoPreQuoteHaveFullVinActivity_37768']);
+  // Without byForm (AmWINS), a step is continued once, by its name, as before.
+  p = page('Business Class & USDOT');
+  report = await p.h.kit.fill(plan, { maxRounds: 4, advance: { text: '^next$' } });
+  assert.deepEqual(plain([p.clicks, report.advanceKey ?? null]), [['Next'], null]);
+});
+
 test('unitFormsNow says whether a unit form is new: its first question unanswered', async () => {
   const h = harness({ pathname: '/quote' });
   geicoBar(h, 'Vehicles');
@@ -5265,13 +5325,78 @@ test('a step with waitFor is answered only once that question has its answer; on
   assert.equal(type4.value, 'Tractor');
   assert.ok(clock.Date.now() - started < 2000, `the next fill waited ${clock.Date.now() - started} ms`);
 
-  // No such question on the page (no VIN decode drawn): answered at once.
+  // No such question on the page yet: GEICO draws the decoded year only when its decode comes back
+  // (FL live run 3, 2026-10-21), so it is waited for too. One never drawn is waited out, then
+  // answered, and not waited for again on that form.
   const h3 = harness({ pathname: '/quote' });
   geicoBar(h3, 'Vehicles');
   const type3 = geicoList('GiveOtherVehicleType', 32, 'Which of the following best describes the customer\'s vehicle?', ['', 'Dump Truck', 'Tractor']);
   h3.document.body.append(type3);
   report = await h3.kit.fill([step], { maxRounds: 3 });
+  assert.deepEqual([type3.value, report.failed.length], ['', 1], 'still waiting when its rounds ran out');
+  started = clock.Date.now();
+  report = await h3.kit.fill([step], { maxRounds: 60 });
+  assert.deepEqual([type3.value, report.failed.length, clock.Date.now() - started >= 8000], ['Tractor', 0, true]);
+  type3.value = '';
+  started = clock.Date.now();
+  await h3.kit.fill([step], { maxRounds: 60 });
   assert.equal(type3.value, 'Tractor');
+  assert.ok(clock.Date.now() - started < 2000, `the next fill waited ${clock.Date.now() - started} ms`);
+});
+
+// FL live run 3, 2026-10-21: the fill typed the VIN and picked Delivery Van at once; GEICO drew the
+// decoded year 1.5 s later and cleared the type, distance and personal use. On the semi truck the
+// year came in during the fill and the type list was filled again a moment after the fill's last
+// look: Tractor was gone, and the agent picked it again.
+test('a waitFor question drawn late is waited for; what it redraws a moment later is waited out, and a cleared answer is given again', async () => {
+  const typeStep = { id: 'type', field: 'GiveOtherVehicleType', path: 'geico.qGiveOtherVehicleType', name: 'Vehicle type', kind: 'choice', value: 'Tractor', waitFor: 'GiveYear' };
+  const distanceStep = { id: 'distance', field: 'GiveFarthestOneWayDistance', path: 'geico.qGiveFarthestOneWayDistance', name: 'Distance', kind: 'choice', value: '101-200', waitFor: 'GiveYear' };
+  const TYPES = ['', 'Dump Truck', 'Tractor'];
+  // The decode: the year drawn with its value, then (`lag` ms later) the type list drawn anew and
+  // the distance emptied.
+  const decodingPage = (lag) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Vehicles');
+    const type = geicoList('GiveOtherVehicleType', 12, 'Which of the following best describes the customer\'s vehicle?', TYPES);
+    const distance = geicoList('GiveFarthestOneWayDistance', 13, 'How far?', ['', '0-100', '101-200']);
+    h.document.body.append(type, distance);
+    const seen = {};
+    setTimeout(() => {
+      const year = geicoList('GiveYear', 11, 'Year', ['', '2016']);
+      year.value = '2016';
+      h.document.body.append(year);
+      setTimeout(() => { seen.typeAtRedraw = type.value; type.value = ''; distance.value = ''; }, lag);
+    }, 1500);
+    return { h, type, distance, seen };
+  };
+  const p = decodingPage(300);
+  const report = await p.h.kit.fill([typeStep, distanceStep], { maxRounds: 60 });
+  assert.equal(p.seen.typeAtRedraw, '', 'nothing picked before the redraw');
+  assert.deepEqual([p.type.value, p.distance.value, report.failed.length], ['Tractor', '101-200', 0]);
+
+  // The year already in, and the type list drawn anew just after the fill's last answer: the fill's
+  // last look, once the page has gone quiet, gives it again.
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Vehicles');
+  const type = geicoList('GiveOtherVehicleType', 22, 'Which of the following best describes the customer\'s vehicle?', TYPES);
+  const year = geicoList('GiveYear', 21, 'Year', ['', '2016']);
+  year.value = '2016';
+  h.document.body.append(year, type);
+  let cleared = 0;
+  type.addEventListener('change', () => { if (!cleared++) setTimeout(() => { type.value = ''; }, 300); });
+  const again = await h.kit.fill([typeStep], { maxRounds: 60 });
+  assert.deepEqual([type.value, cleared, again.filled.length, again.failed.length], ['Tractor', 2, 1, 0]);
+  // A plan that waits on nothing takes no last look: an answer cleared after the fill stays for the
+  // follow-up, as before.
+  const plainPage = harness({ pathname: '/quote' });
+  geicoBar(plainPage, 'Vehicles');
+  const plainType = geicoList('GiveOtherVehicleType', 32, 'Which of the following best describes the customer\'s vehicle?', TYPES);
+  plainPage.document.body.append(plainType);
+  let plainCleared = 0;
+  plainType.addEventListener('change', () => { if (!plainCleared++) setTimeout(() => { plainType.value = ''; }, 300); });
+  await plainPage.kit.fill([{ ...typeStep, waitFor: null }], { maxRounds: 60 });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.deepEqual([plainType.value, plainCleared], ['', 1], 'cleared after the fill ended: left to the follow-up');
 });
 
 // FL live run 2: a leased vehicle's collision row offers only "Not Included" until its comprehensive

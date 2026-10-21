@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 72 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 73 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -922,6 +922,12 @@
   // The questions a fill waited the whole WAIT_MS for in this document: the page isn't working on
   // them (a VIN GEICO doesn't decode leaves its year for the agent), so no later fill waits again.
   const waitedOut = new WeakSet();
+  // The same for a question that was never drawn, by the unit form it would be on (its marker
+  // question's element; the page's body without one): step ids per form.
+  const waitedOutUndrawn = new WeakMap();
+  // Once the question waited for comes in, the page goes on redrawing for a moment (GEICO fills its
+  // vehicle type list again after the decoded year): this long without a change before the answer.
+  const AFTER_WAIT_QUIET_MS = 800;
 
   const noMatch = (step, options) => ({
     ok: false,
@@ -1271,11 +1277,14 @@
   // that commit anything stay off limits whatever the pattern says, and so do discarding a form and
   // signing (scripts/lib/signals.mjs RESTRICTED keeps every word of this list).
   const NEVER_ADVANCE = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out|order)\b/i;
-  function findAdvanceButton(pattern) {
+  // `notWithin`: never a button inside this (GEICO's chooser behind Add Vehicle or Trailer, whose
+  // Next opens a unit's form: the add helpers' own, after their "+").
+  function findAdvanceButton(pattern, { notWithin = null } = {}) {
     const re = new RegExp(pattern, 'i');
     let best = null;
     for (const el of deepQueryAll(document, 'a, button, [role=button], input[type=button], input[type=submit], .x-btn')) {
       if (!el.getClientRects().length || el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]') || hostDisabled(el) || el.closest(STEP_LINKS)) continue;
+      if (notWithin && insideOf(el, notWithin)) continue;
       const text = buttonText(el);
       // "Save & Continue" (AmWINS) only saves the draft and opens the next step.
       const committing = NEVER_ADVANCE.test(text.replace(/^save\s*(?:&|and)\s*continue$/i, 'continue'));
@@ -1481,8 +1490,14 @@
   // `replaceChoices`: a dropdown/radio/checkbox answer the page pre-selected (not the agent) is
   // replaced when it differs from ours; agent changes are protected by `skip`.
   // `visitedPages`: pages already seen in this quote (for actions that wait on a page).
-  // `advance`: { text, exceptPages } — when the page ends with nothing for the agent to look at
-  // (no unfamiliar required fields, nothing missing, nothing failed), click its Continue button.
+  // `advance`: { text, exceptPages, steps, notWithin, byForm } — when the page ends with nothing for
+  // the agent to look at (no unfamiliar required fields, nothing missing, nothing failed), click its
+  // Continue button. `steps`: on a one-address application, only on these steps (GEICO's, up to
+  // Additional Business Info). `notWithin`: no button inside this. `byForm`: a step that shows
+  // several forms and lists in turn (GEICO's Vehicles: each unit's form, then the list) is continued
+  // per form and button, not once a step: `report.advanceKey` is the step, the button's words and the
+  // unit form on screen ("Vehicles@next@Id_YesNoPreQuoteHaveFullVinActivity_63452"), which
+  // `doneSteps` then holds.
   // `batch`: for pages whose answers never wait on a server (AmWINS): every answer the round can
   // see is given in one pass and checked on the spot, with one wait for the page per round
   // instead of one per answer. What an answer reveals or redraws is picked up next round, and
@@ -1511,10 +1526,15 @@
   // is the page's `receipt()` as the agent approved it (Looks right) and still is; otherwise the
   // report says `held`: 'check' (not approved yet) or 'changed' (the page changed since).
   // A step with `waitFor` (a data-model name: GEICO's decoded year on a vehicle with a VIN) isn't
-  // answered while that question is on the page without an answer: the page is still working it out,
-  // and its answer redraws the form (FL live run 2, 2026-10-21: the VIN decode cleared the vehicle
-  // type, distance and personal use the fill had just given). It waits at most WAIT_MS, a round every
-  // WAIT_ROUND_MS, then is answered as before; a question waited out so is not waited for again.
+  // answered while that question isn't drawn yet or is on the page without an answer: the page is
+  // still working it out, and its answer redraws the form (FL live run 2, 2026-10-21: the VIN decode
+  // cleared the vehicle type, distance and personal use the fill had just given; FL live run 3: GEICO
+  // draws the year only when its decode comes back, after them). It waits at most WAIT_MS, a round
+  // every WAIT_ROUND_MS, then is answered as before; a question waited out so is not waited for
+  // again. One that came in while the step waited is followed by AFTER_WAIT_QUIET_MS without a change
+  // on the page, then read again. A fill such a step was on the page for takes one more look at the
+  // end, once the page has gone quiet: an answer it gave that the page has cleared since is given
+  // again.
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
   async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null } = {}) {
@@ -1585,6 +1605,12 @@
       if (!waitingSince.has(id)) waitingSince.set(id, Date.now());
       return Date.now() - waitingSince.get(id) < WAIT_MS;
     };
+    // Steps done waiting this fill (what they waited for came in, or the wait ran out).
+    const waitOver = new Set();
+    // A step that waits on the page (`waitFor`) was on it this fill, and the last look (see `waitFor`
+    // above) once taken.
+    let waitShown = false;
+    let lastLook = false;
     // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
     let ajaxCount = 0;
     const countAjax = () => { ajaxCount++; };
@@ -1851,11 +1877,26 @@
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
           continue;
         }
-        // The question it waits for is on the page without an answer yet: the page is still working.
-        const pending = step.waitFor ? shownControl(controls, { field: step.waitFor }) : null;
-        if (pending && !hasValue(pending) && !waitedOut.has(pending.el)) {
-          if (mayWait(step.id)) { retry = true; waited = true; continue; }
-          waitedOut.add(pending.el);
+        // The question it waits for isn't drawn yet, or is on the page without an answer yet: the page
+        // is still working. Once it is in, what it redraws comes a moment later: the page goes quiet
+        // first, and the round reads it again.
+        if (step.waitFor) waitShown = true;
+        if (step.waitFor && !waitOver.has(step.id)) {
+          const pending = shownControl(controls, { field: step.waitFor });
+          const anchor = (step.whenShown ? shownControl(controls, step.whenShown)?.el : null) ?? document.body;
+          const undrawn = waitedOutUndrawn.get(anchor) ?? new Set();
+          const working = pending ? !hasValue(pending) && !waitedOut.has(pending.el) : !undrawn.has(step.id);
+          if (working) {
+            if (mayWait(step.id)) { retry = true; waited = true; continue; }
+            if (pending) waitedOut.add(pending.el); else waitedOutUndrawn.set(anchor, undrawn.add(step.id));
+            waitOver.add(step.id);
+          } else if (waitingSince.has(step.id)) {
+            waitOver.add(step.id);
+            await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS });
+            retry = true;
+            waited = true;
+            break;
+          }
         }
         // A pre-selected "Enter a different …" isn't an answer worth keeping for pick-not steps.
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '') && !agreesWith(step, c);
@@ -1981,7 +2022,18 @@
       let helperClicked = false;
       if (!changed && window === window.top) changed = helperClicked = clickNextAction(controls);
       progressed = changed;
-      if (!changed && !retry) break;
+      if (!changed && !retry) {
+        // A fill with a step that waits on the page takes one more look once the page has gone quiet:
+        // an answer the page cleared after the last round read it (GEICO fills its type list again a
+        // moment after the decoded year: FL live run 3, the Cascadia's Tractor) is given again
+        // (changedSinceFilled).
+        if (!lastLook && waitShown && report.filled.length && window === window.top) {
+          lastLook = true;
+          await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS });
+          continue;
+        }
+        break;
+      }
       if (!changed) {
         if (waited) await sleep(WAIT_ROUND_MS);
         continue;
@@ -2371,7 +2423,8 @@
     // only gets "fields are empty" errors. (A tile page that was clicked continues.)
     const notDrawn = !report.fields && !report.actions.length && plan.some((s) => s.pages?.includes(startPage));
     if (advance && window === window.top && !report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
-      && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)) {
+      && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)
+      && (!advance.steps?.length || (!!report.stepKey && stepIs(advance.steps, report.stepKey)))) {
       // The last answer may still be redrawing part of the page (a new payment method reloads the
       // plan list): a Continue clicked meanwhile is lost. Let it finish first.
       if (serverBacked) await settle({ quietMs: 500, maxMs: 6000 });
@@ -2404,7 +2457,10 @@
           mark(control, 'needs', IDENTITY_NOTE);
           report.blockers.push(`needs you: ${called(item)}`);
         }
-        const button = !changed.length && !moved.length && !pageBusy() && currentPage() === startPage && !stepChanged() ? findAdvanceButton(advance.text) : null;
+        const found = !changed.length && !moved.length && !pageBusy() && currentPage() === startPage && !stepChanged() ? findAdvanceButton(advance.text, advance) : null;
+        // Per form and button (`byForm`): one already continued from is the agent's now.
+        const key = found && advance.byForm ? [report.stepKey, squash(buttonText(found)), unitFormsNow()?.[0]?.id ?? ''].filter(Boolean).join('@') : report.stepKey;
+        const button = found && !(advance.byForm && doneSteps.includes(key)) ? found : null;
         // The agent checks the answers first: Continue only for the page as they approved it.
         const approved = !hold || (confirmed != null && confirmed === receipt());
         if (button && !approved) report.held = confirmed == null ? 'check' : 'changed';
@@ -2415,6 +2471,7 @@
           button.click();
           // Recorded once the click went out, never before it.
           report.advanced = text;
+          if (advance.byForm) report.advanceKey = key;
         }
       }
     }
@@ -2846,5 +2903,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 72, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 73, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();
