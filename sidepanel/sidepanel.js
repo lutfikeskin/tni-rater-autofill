@@ -1536,6 +1536,9 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
   // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
   // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only.
   takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: Object.fromEntries([...(state.filled?.keys() ?? [])].map((key) => [key, true])) } : null,
+  // The field keys this tab's fills answered: one the page has reset since is given again only on a
+  // quiet page (W43-21). Keys only.
+  filledBefore: [...(state.filled?.keys() ?? [])],
   // Carriers whose pages never wait on a server per answer are filled a round at a time.
   batch: !!carrier.batch,
   // Steps of a one-address application already continued from (a step the agent goes back to

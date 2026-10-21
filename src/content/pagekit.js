@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 75 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 76 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -943,6 +943,8 @@
   const NOTHING_LEFT = 'nothing left for you on the page';
   // What holds Continue after the agent's own button during a fill (`notePress`).
   const AGENT_PRESSED = 'you clicked a button during the fill: Continue is yours';
+  // How long the page is quiet before an answer it reset is given again (`filledBefore`).
+  const RESET_QUIET_MS = 1000;
 
   const noMatch = (step, options) => ({
     ok: false,
@@ -1576,7 +1578,7 @@
   // again.
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [] } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -1695,6 +1697,10 @@
     // Answers this fill gave that their field no longer shows (a later server response rewrote or
     // cleared them), each with its question as `pairs` read it. A field the agent edited, and a
     // lookup box its helper has used, don't count.
+    // Field keys this tab's fills answered before (`filledBefore`), and whether this fill has waited
+    // for a quiet page before giving one the page reset again.
+    const filledKeys = new Set(filledBefore);
+    let resetWaited = false;
     const changedSinceFilled = (pairs) => {
       const consumed = consumedPaths();
       return report.filled.flatMap((previous) => {
@@ -2000,6 +2006,17 @@
             handled.set(step.id, { status: 'needs', note: step.warn });
           } else handled.set(step.id, { status: null });
           continue;
+        }
+        // A choice an earlier answer gave that the page has since reset (an earlier fill's, or this
+        // fill's: changedSinceFilled) is given again only on a page quiet for a second, once a fill,
+        // and the page is read again first (FL live run 5, 2026-10-21, W43-21: GEICO cleared the
+        // business description when the agent answered the USDOT record, and the answer given again
+        // a second later showed but GEICO's Next refused it).
+        if (isChoice && !resetWaited && !agreesWith(step, c) && (refill.has(step.id) || filledKeys.has(fieldKey(c)))) {
+          resetWaited = true;
+          if (!await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000 })) { halt('The page is still waiting on its server. Review and retry.'); break; }
+          retry = true;
+          break;
         }
         // Timing and side effects of this answer, for working out which questions could be
         // answered together: did it reach the server, did questions appear or disappear, did
@@ -3057,5 +3074,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 75, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 76, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();
