@@ -1592,7 +1592,7 @@ test('a driver is entered once the driver list comes back from its page, filled 
   const progressive = { driverPage: 'AddDriver', driverList: 'DriverSummary' };
   const state = { active: { drivers: 0 }, doneActions: new Set(), doneSteps: new Set(), autoPaused: false, intake: { record: { drivers: [{}, {}] } } };
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {} };
-  vm.runInNewContext(['stepScope', 'afterFill', 'verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['stepScope', 'afterFill', 'verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickUnitToAdd', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   // Codex on PR #43: answers on the page alone (one may have failed, or the page was left) don't count.
   context.afterFill([{ filled: [], kept: [{ label: 'Driver Last Name' }] }], { carrier: progressive, page: 'AddDriver' });
   assert.ok(!state.doneActions.has('driverEntered:0'));
@@ -1615,7 +1615,7 @@ test('trailers: their own page scope, entered once their page is filled, the nex
   const state = { active: { drivers: 0, vehicles: 0, trailers: 0 }, doneActions: new Set(['lookupVin:0', 'addTrailer:0']), doneSteps: new Set(), autoPaused: false, intake: { record } };
   let persisted = 0;
   const context = { state, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, save: async () => {}, renderPickers: () => {}, persistDoneActions: () => { persisted++; } };
-  vm.runInNewContext(['stepScope', 'afterFill', 'verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['stepScope', 'afterFill', 'verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickUnitToAdd', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   assert.equal(context.stepScope('AddTrailer', carrier), 'AddTrailer|tr0|');
   assert.equal(context.stepScope('MostCommonTrailers', carrier), 'MostCommonTrailers|tr0|');
   // Codex on PR #43: Add Trailer opened isn't the trailer entered (an unsupported tile, left), nor
@@ -1643,7 +1643,7 @@ test('a trailer is on the quote when the vehicle list shows its VIN', async () =
     const asked = [];
     const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
       runKit: async (tabId, c, func, args) => { asked.push(args[0]); return [{ result: shown }]; } };
-    vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem'].map(extractFunction).join('\n'), context);
+    vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickUnitToAdd', 'pickListItem'].map(extractFunction).join('\n'), context);
     await context.pickListItem(carrier, 'VehicleSummary');
     return { done: state.doneActions, asked };
   };
@@ -1667,7 +1667,7 @@ test('a driver the driver list shows by name is entered', async () => {
   const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 1 }, doneActions: new Set(['driverEntered:0', 'addDriver:1']) };
   const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
     runKit: async () => [{ result: [true, true] }] };
-  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickUnitToAdd', 'pickListItem'].map(extractFunction).join('\n'), context);
   await context.pickListItem(carrier, 'DriverSummary');
   assert.ok(state.doneActions.has('driverEntered:1'), 'listed: entered');
   // Not shown proves nothing (the list may write the name another way): markers stay.
@@ -1689,7 +1689,7 @@ test('a driver name another intake driver shares is not taken as entered', async
   // Every name asked about is on the list (as the page's listed() would say for a shown row).
   const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
     runKit: async (tabId, c, func, args) => { asked.push(args[0]); return [{ result: args[0].map((n) => n.length >= 2) }]; } };
-  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickUnitToAdd', 'pickListItem'].map(extractFunction).join('\n'), context);
   await context.pickListItem(carrier, 'DriverSummary');
   assert.deepEqual(JSON.parse(JSON.stringify(asked[0])), [[], [], ['Mary Ann', 'Lee'], [], ['Casey', 'Example']]);
   assert.deepEqual([...state.doneActions].sort(), ['driverEntered:2', 'driverEntered:4']);
@@ -1703,7 +1703,7 @@ test('a list read for one tab is not applied after the agent switched tabs', asy
   const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 0 }, doneActions: new Set(['lookupVin:0']) };
   const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
     runKit: async () => { state.tab = { id: 4 }; return [{ result: [true, true] }]; } };
-  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickUnitToAdd', 'pickListItem'].map(extractFunction).join('\n'), context);
   await context.pickListItem(carrier, 'VehicleSummary');
   assert.ok(!state.doneActions.has('trailerEntered:0'));
 });
@@ -1719,7 +1719,7 @@ test('a vehicle back from its pages that the summary lists by its VIN counts as 
   const state = { tab: { id: 3 }, intake: { record }, active: { vehicles: 0, trailers: 0, drivers: 0 }, doneActions: new Set() };
   const context = { state, persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {},
     runKit: async () => [{ result: [true, true] }] };
-  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickUnitToAdd', 'pickListItem', 'unitArrival'].map(extractFunction).join('\n'), context);
   // Both VINs shown (the USDOT lookup's list), neither vehicle's page visited: still to add.
   await context.pickListItem(carrier, 'VehicleSummary');
   assert.deepEqual([...state.doneActions], []);
@@ -3602,7 +3602,8 @@ test('a Continue that did not take after its retry pauses automatic filling, tel
 
 test('the fill hint says Continue is clicked for the agent only while that setting is on and the carrier has an advance pattern', () => {
   const body = extractFunction('renderSite');
-  assert.match(body, /: carrier && \$\('auto-advance'\)\.checked && carrier\.advance \? 'Clicks Continue once nothing is left for you\. Never submits or binds\.'\s+: carrier \? 'Nothing is submitted\. Review, then click Next yourself\.'/);
+  // GEICO (no advance pattern, unit lists): with the setting on, the units it adds are named instead.
+  assert.match(body, /: carrier && \$\('auto-advance'\)\.checked && carrier\.advance \? 'Clicks Continue once nothing is left for you\. Never submits or binds\.'\s+\/\/[^\n]*\n\s+: carrier && \$\('auto-advance'\)\.checked && carrier\.unitLists \? 'Adds the intake\\'s vehicles, trailers and drivers not on the quote yet\. Nothing is submitted: click Next yourself\.'\s+: carrier \? 'Nothing is submitted\. Review, then click Next yourself\.'/);
   assert.match(extractFunction('wireUsage'), /\$\('auto-advance'\)\.addEventListener\('change', async \(e\) => \{ const saving = usage\.saveSettings\(\{ autoAdvance: e\.target\.checked \}\); renderSite\(\); await saving; logSettings\('changed', 'autoAdvance'\); \}\);/, 'the hint follows the switch');
 });
 
@@ -3692,7 +3693,7 @@ test('list verification discards driver and trailer reads after intake replaceme
     const pending = new Promise((resolve) => { release = resolve; });
     const writes = [];
     const context = { state, runKit: async () => { started(); return pending; }, persistDoneActions: () => writes.push('persist'), save: async () => writes.push('save'), renderPickers: () => writes.push('render') };
-    vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickListItem'].map(extractFunction).join('\n'), context);
+    vm.runInNewContext(['verifyDrivers', 'verifyListed', 'formScoped', 'pickUnitForm', 'pickUnitToAdd', 'pickListItem'].map(extractFunction).join('\n'), context);
     const run = context.pickListItem(carrier, list === 'drivers' ? 'Drivers' : 'Vehicles');
     await ready;
     if (change === 'replacement') state.intake = { record: { ...record } };
@@ -5570,4 +5571,64 @@ test('GEICO: questions drawn over a gateway page no fill answered anything on ge
   context.state.tab.carrier = { id: 'progressive', layoutUrl: /./ };
   drawn();
   assert.equal(fills.length, 2);
+});
+
+// FL live run, 2026-10-21: "click + and add the new vehicle", "click Next after choosing Vehicle or
+// Trailer". On GEICO's unit lists the panel names the unit the fill adds (ctx.adding), by the intake's
+// order, from what the list shows and the forms fills answered, and moves the picker to it.
+test('GEICO: the next intake unit not on the quote is the one added; never one listed, filled, or past the intake\'s count', async () => {
+  const run = async ({ step = 'Vehicles', forms = [], lists, active = {}, unitForms = {}, done = [], record, autoAdvance = true }) => {
+    const intake = { record };
+    const state = { tab: { id: 4 }, intake, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0, ...active },
+      unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms }, doneActions: new Set(done) };
+    const calls = { saved: 0, rendered: 0, persisted: 0, asked: null };
+    const context = {
+      state, knownStep,
+      runKit: async (tabId, carrier, fn, args) => { calls.asked = args[0]; return [{ result: { step, forms, lists } }]; },
+      fillCurrent: () => true,
+      persistDoneActions: () => { calls.persisted++; },
+      save: async () => { calls.saved++; },
+      renderPickers: () => { calls.rendered++; },
+    };
+    vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
+    const ctx = { tabId: 4, intake, revision: 1, settings: { autoAdvance } };
+    await context.pickUnitToAdd(geico, ctx);
+    return JSON.parse(JSON.stringify({ adding: ctx.adding, active: { ...state.active }, done: [...state.doneActions].sort(), ...calls }));
+  };
+  const VIN1 = '1FTBR3X80MKA12345';
+  const record = {
+    applicant: { ownerDrives: true, owner1: 'Sample Driver' },
+    vehicles: [{ vin: VIN1 }, { vin: null }], trailers: [{ vin: null }],
+    drivers: [{ first: 'Sample', last: 'Driver' }, { first: 'Casey', last: 'Example' }],
+  };
+  // The vehicle list after vehicle 1's form (filled on form A): vehicle 2 is next, and the picker moves to it.
+  let out = await run({ lists: [{ rows: 1, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0 } }, record });
+  assert.deepEqual(out.adding, { list: 'vehicles', index: 1, click: true });
+  assert.deepEqual([out.active.vehicles, out.saved, out.rendered], [1, 1, 1]);
+  assert.deepEqual(out.done, ['vehicleEntered:0']);
+  // Only the VINs, names and the selectors go to the page.
+  assert.deepEqual(out.asked, [{ selector: '#summaryPage-AddCommercialVehicle', items: [VIN1, '', ''] }, { selector: '#summaryPage-AddDriver', items: [['Sample', 'Driver'], ['Casey', 'Example']] }]);
+  // Both vehicles in (vehicle 2 filled on form B): the trailer, Trailer on the chooser.
+  out = await run({ lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record });
+  assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: true });
+  // The setting off: the same unit, for the chooser's answer only.
+  out = await run({ lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record, autoAdvance: false });
+  assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: false });
+  // As many units listed as the intake has (one added by hand, with no fill): nothing is added.
+  out = await run({ lists: [{ rows: 3, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0 } }, record });
+  assert.equal(out.adding, null);
+  // The chooser (no list, no form on screen): the unit from what was recorded, the picker moved.
+  out = await run({ lists: [null, null], done: ['vehicleEntered:0'], record });
+  assert.deepEqual([out.adding, out.active.vehicles, out.persisted], [{ list: 'vehicles', index: 1, click: true }, 1, 0]);
+  // A unit form on screen: the unit is named, the picker left to pickUnitForm.
+  out = await run({ lists: [null, null], forms: [{ list: 'vehicles', id: 'B', blank: true }], done: ['vehicleEntered:0'], record });
+  assert.deepEqual([out.adding?.index, out.active.vehicles, out.saved], [1, 0, 0]);
+  // Drivers: the owner GEICO lists (driver 1) is never added; driver 2 is, until the list shows them.
+  out = await run({ step: 'Drivers & Incidents', lists: [null, { rows: 1, shown: [true, false] }], record });
+  assert.deepEqual([out.adding, out.active.drivers], [{ list: 'drivers', index: 1, click: true }, 1]);
+  out = await run({ step: 'Drivers & Incidents', lists: [null, { rows: 1, shown: [true, true] }], record });
+  assert.equal(out.adding, null);
+  assert.deepEqual(out.done, ['driverEntered:0', 'driverEntered:1']);
+  // Another step, or a carrier without unit lists: nothing.
+  for (const args of [{ step: 'Additional Business Info', lists: [null, null], record }]) assert.equal((await run(args)).adding, null);
 });

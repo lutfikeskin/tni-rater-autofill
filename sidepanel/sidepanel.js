@@ -1726,7 +1726,8 @@ async function autoFill(page) {
     if (!fillCurrent(ctx)) return;
     // The list page may have picked the next vehicle or driver: the plan is for that one.
     ctx.active = { ...state.active };
-    const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
+    // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
+    const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // Honor the latest switch after preparation, and log the same value used by the kit.
@@ -2229,6 +2230,8 @@ function renderSite() {
     : stopped ? 'Nothing on this page is filled or clicked.'
     : carrier && state.tab.background ? 'Fills the quote tab in the background. Go back to it to review.'
     : carrier && $('auto-advance').checked && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
+    // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd).
+    : carrier && $('auto-advance').checked && carrier.unitLists ? 'Adds the intake\'s vehicles, trailers and drivers not on the quote yet. Nothing is submitted: click Next yourself.'
     : carrier ? 'Nothing is submitted. Review, then click Next yourself.'
       : noAccess
         ? "The extension can't read this page. Allow it on this site (toolbar icon or site access), then reload."
@@ -2588,7 +2591,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); return; }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
-  const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
+  // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
+  const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
   // Step 2 shows how far it is and its Stop; step 3 waits for the new report (the last one stays
@@ -2665,6 +2669,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
 async function pickListItem(carrier, page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
   await pickUnitForm(carrier, ctx);
   if (!fillCurrent(ctx)) return;
+  await pickUnitToAdd(carrier, ctx);
+  if (!fillCurrent(ctx)) return;
   await verifyListed(carrier, page, ctx);
   // Another tab came to the front while the list was read: its own fill picks for it.
   if (!fillCurrent(ctx)) return;
@@ -2718,6 +2724,69 @@ async function pickUnitForm(carrier, ctx) {
   if (!picked) return;
   await save();
   if (fillCurrent(ctx)) renderPickers();
+}
+
+// Where one address shows the quote's unit lists on a step (carrier.unitLists: GEICO's Vehicles and
+// Trailers, Drivers), the unit the fill adds next (`ctx.adding`: { list, index, click }, for the
+// plan: the chooser's answer and the add helpers), by the intake's order (vehicles, then trailers).
+// A unit is on the quote once a fill answered a form for it (state.unitForms: its form was left to
+// show the list again) or the list shows it (its VIN; a driver's first and last name on one line,
+// not one another driver's name also holds), marked `<unit>Entered:<i>` while the list is on screen,
+// as Progressive's are. The driver GEICO lists itself (listedDriver) is never added. No unit is
+// added while the list holds as many units as the intake lists or more (one the agent added by hand,
+// or GEICO itself). With no unit form on screen (the list, the chooser, the owner's own forms) the
+// picker moves to that unit, so the plan is for it. `click` only with "Click Continue when the page
+// is done" on (the setting when the fill began): off, the chooser is answered and the agent clicks.
+async function pickUnitToAdd(carrier, ctx) {
+  ctx.adding = null;
+  if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
+  const record = ctx.intake.record ?? {};
+  const vin = (u) => String(u?.vin ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const words = (d) => [d?.first, d?.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
+  const drivers = (record.drivers ?? []).map(words);
+  const idOf = (list, u, i) => (list !== 'drivers' ? vin(u)
+    : drivers.some((other, j) => j !== i && drivers[i].every((w) => other.includes(w))) ? [] : [u?.first, u?.last].filter(Boolean));
+  const specs = carrier.unitLists.map((s) => ({ ...s, items: s.lists.flatMap((list) => (record[list] ?? []).map((u, i) => idOf(list, u, i))) }));
+  let seen = null;
+  try {
+    const frames = await runKit(ctx.tabId, carrier, (specs) => {
+      const kit = globalThis.__raterKit;
+      if (!kit?.unitList) return null;
+      return { step: kit.step?.() ?? '', forms: kit.unitFormsNow?.() ?? null, lists: specs.map((s) => kit.unitList(s.selector, s.items)) };
+    }, [specs.map(({ selector, items }) => ({ selector, items }))]);
+    seen = frames.map((f) => f?.result).find((x) => x && Array.isArray(x.lists)) ?? null;
+  } catch { return; }
+  if (!seen || !fillCurrent(ctx)) return;
+  const step = knownStep(carrier, seen.step);
+  const at = specs.findIndex((s) => s.steps.includes(step));
+  if (at < 0) return;
+  const spec = specs[at];
+  const shown = seen.lists[at];
+  const marker = (list) => `${{ vehicles: 'vehicle', trailers: 'trailer', drivers: 'driver' }[list]}Entered`;
+  const listed = spec.lists.includes('drivers') ? carrier.listedDriver?.(record) ?? -1 : -1;
+  const bound = (list, i) => Object.values(state.unitForms?.[list] ?? {}).includes(i);
+  let offset = 0;
+  for (const list of spec.lists) {
+    (record[list] ?? []).forEach((_, i) => {
+      if (shown && (shown.shown[offset + i] || bound(list, i))) state.doneActions.add(`${marker(list)}:${i}`);
+    });
+    offset += record[list]?.length ?? 0;
+  }
+  if (shown) persistDoneActions(ctx.tabId, state.doneActions);
+  const entered = (list, i) => i === listed || bound(list, i) || state.doneActions.has(`${marker(list)}:${i}`);
+  const total = spec.lists.reduce((n, list) => n + (record[list]?.length ?? 0), 0);
+  if (shown && shown.rows >= total) return;
+  for (const list of spec.lists) {
+    const index = (record[list] ?? []).findIndex((_, i) => !entered(list, i));
+    if (index < 0) continue;
+    ctx.adding = { list, index, click: !!ctx.settings?.autoAdvance };
+    if (Array.isArray(seen.forms) && !seen.forms.length && state.active[list] !== index) {
+      state.active[list] = index;
+      await save();
+      if (fillCurrent(ctx)) renderPickers();
+    }
+    return;
+  }
 }
 
 // On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each

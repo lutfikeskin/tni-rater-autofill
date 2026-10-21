@@ -34,10 +34,12 @@
 // agent makes from a long list with the intake's words quoted (business description, vehicle and
 // trailer type), which the AI assistant may suggest for the agent's approval.
 //
-// Phase 1: the agent clicks Next on every step, opens each vehicle, trailer and driver form, makes
-// the coverage choices and clicks Recalculate on Quote & Coverages, and prints the quote proposal
-// there. The quote stops at Quote & Coverages: Final Quote Details leads to MVR & CLUE, which orders
-// paid reports (stopSteps: nothing is filled or clicked there). The fill clicks no button.
+// The agent clicks Next on every step (and Save and Continue, Looks Good), makes the coverage choices
+// and clicks Recalculate on Quote & Coverages, and prints the quote proposal there. The quote stops at
+// Quote & Coverages: Final Quote Details leads to MVR & CLUE, which orders paid reports (stopSteps:
+// nothing is filled or clicked there). With "Click Continue when the page is done" on, the fill adds
+// each intake vehicle, trailer and driver not on the quote yet (TNI, 2026-10-21): the list's "+", the
+// chooser's Vehicle or Trailer and its Next (`actions`, unitLists). It clicks no other button.
 
 import { owner, ownerDobNote as noOwnerDob } from './progressive.js';
 import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius } from '../normalize.js';
@@ -70,6 +72,15 @@ const OWNER_DRIVER_FORM = { field: 'GiveDriverRelationshipToBusiness' };
 // - The owner's identity again, with their Social Security number (FL capture 007, after Business
 //   & Owner Info's Next, under the title of Vehicles).
 const OWNER_CHECK = { field: 'GiveSocialSecurityNumber' };
+
+// The lists of the units on the quote (NE Vehicles2, Drivers & Incidents2): one row per unit, a
+// vehicle's or trailer's with its VIN in its headline, a driver's with their name, and last the add
+// row, whose "+" (an icon, data-testid addIcon) opens the chooser or Add Driver. The incidents' list
+// below the drivers has an add row of its own: each "+" is found within its own list's add row.
+const VEHICLE_LIST = '#summaryPage-AddCommercialVehicle';
+const DRIVER_LIST = '#summaryPage-AddDriver';
+// The chooser's buttons (NE Vehicles3): Next, which opens the form for the unit picked, and Cancel.
+const CHOOSER_BUTTONS = '[id^="Id_VehicleOrTrailerCollectAdaptiveActionSet_Container_"]';
 
 // A step's rules (the whole step, or one form of it with `form`).
 const on = (steps, form, rules) => rules.map((rule) => ({ steps: [].concat(steps), ...form, ...rule }));
@@ -345,6 +356,14 @@ const parking = (unit) => [
 // --- Drivers -----------------------------------------------------------------------------------
 
 const driverOf = (r, a) => r.drivers?.[a.drivers ?? 0] ?? null;
+// The intake driver GEICO lists itself: the owner who drives, matched to their driver row (GEICO
+// adds them on Business & Owner Info). -1 for none.
+const listedDriver = (r) => (r.applicant?.ownerDrives === true && owner(r).driver ? r.drivers.indexOf(owner(r).driver) : -1);
+// Add Driver by itself only when GEICO's own driver rows are known: the owner doesn't drive, or
+// drives and is one of the intake's drivers. An owner who drives under a name no driver row matches
+// (or an unanswered "owner drives") may be one of them spelled otherwise: adding the drivers is then
+// the agent's, so no driver is added twice.
+const driversKnown = (r) => r.applicant?.ownerDrives === false || listedDriver(r) >= 0;
 // An Add Driver form while the panel's driver is the owner, whom GEICO already lists as a driver
 // (Business & Owner Info: the owner drives): filling it would add the owner twice. The panel's
 // picker starts on the first driver, often the owner.
@@ -501,6 +520,32 @@ const glLimitNote = (r) => (glLimit(r) ? null
 const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 'Fire and theft'], ['Rental', 'Rental reimbursement'],
   ['RRWDT', 'Rental reimbursement with downtime'], ['ERS', 'Emergency road service'], ['HVRS', 'Heavy vehicle road service']];
 
+// --- Adding units --------------------------------------------------------------------------------
+
+// The unit the panel is adding (`adding`, sidepanel pickUnitToAdd): the intake's next vehicle, then
+// trailer, not on the quote yet on Vehicles, the next driver on Drivers & Incidents; its index is
+// the picker's (a[list]). `click`: the panel's "Click Continue when the page is done" is on, and the
+// fill clicks the helpers below for it; off, it only answers the chooser.
+const adds = (list) => (r, a) => !!a.adding?.click && a.adding.list === list && a.adding.index === (a[list] ?? 0);
+// The chooser's answer for it: Vehicle or Trailer (null on the driver list, or with none to add).
+const chosen = (r, a) => ({ vehicles: 'Vehicle', trailers: 'Trailer' })[a.adding?.list] ?? null;
+const UNIT = { vehicles: ['vehicle', 'Vehicle'], trailers: ['trailer', 'Trailer'], drivers: ['driver', 'Driver'] };
+// Each helper is per unit (its id ends in the unit's index), clicked once a quote: a unit is never
+// added twice. The "+" counts once a question shows (the chooser, Add Driver's form), the chooser's
+// Next once the unit's form does. A "+" clicked for a unit that got no form, and isn't on the list
+// (the chooser cancelled), is the agent's: the list says so (`unfinished`).
+const addUnit = (list, listSelector, how) => ({
+  id: `add${UNIT[list][1]}`, steps: [list === 'drivers' ? DRIVERS : VEHICLES], token: 'addIcon', within: `${listSelector} > li.add-state`,
+  loads: true, verify: 'revealed', scope: UNIT[list][0], label: list === 'drivers' ? 'Add Driver' : 'Add Vehicle or Trailer',
+  when: (r, a) => adds(list)(r, a) && (list !== 'drivers' || driversKnown(r)),
+  doneWhen: (r, a) => [`${UNIT[list][0]}Entered:${a[list] ?? 0}`],
+  unfinished: (r, a) => `The "+" was clicked for ${UNIT[list][0]} ${(a[list] ?? 0) + 1} of the intake, but no form was filled for it and it isn't on the list: add it yourself (${how}), then fill.`,
+});
+const chooseUnit = (list) => ({
+  id: `choose${UNIT[list][1]}`, steps: [VEHICLES], text: '^next$', within: CHOOSER_BUTTONS, moveOn: true,
+  loads: true, verify: 'revealed', after: ['geico.qGiveVehicleOrTrailer'], scope: UNIT[list][0], when: adds(list),
+});
+
 export const geico = {
   id: 'geico',
   name: 'GEICO',
@@ -531,8 +576,29 @@ export const geico = {
   vehicleSteps: [VEHICLES],
   driverSteps: [DRIVERS],
   // The intake driver GEICO lists itself (the owner who drives, added on Business & Owner Info): an
-  // Add Driver form is never theirs (sidepanel pickUnitForm). -1 for none.
-  listedDriver: (r) => (r.applicant?.ownerDrives === true && owner(r).driver ? r.drivers.indexOf(owner(r).driver) : -1),
+  // Add Driver form is never theirs, nor is Add Driver clicked for them (sidepanel pickUnitForm,
+  // pickUnitToAdd). -1 for none.
+  listedDriver,
+  // The lists of the units on the quote, by step (sidepanel pickUnitToAdd): which intake units each
+  // shows (a VIN, a driver's name), how many it lists, and so the next unit to add.
+  unitLists: [
+    { steps: [VEHICLES], selector: VEHICLE_LIST, lists: ['vehicles', 'trailers'] },
+    { steps: [DRIVERS], selector: DRIVER_LIST, lists: ['drivers'] },
+  ],
+  // The units the fill adds itself, behind the panel's "Click Continue when the page is done" (TNI,
+  // FL live run 2026-10-21: "click + and add the new vehicle", "click Next after choosing Vehicle or
+  // Trailer"): on the vehicle list the "+" for the next intake vehicle, then trailer, not on the
+  // quote, the chooser answered for it (GiveVehicleOrTrailer) and its Next; on the driver list the
+  // "+" for the next intake driver (never the owner GEICO lists). The unit's form is then filled
+  // for it (pagekit unit forms). Saving it (Next, Save and Continue), Looks Good and Discard stay
+  // the agent's: no step is left by these.
+  actions: [
+    addUnit('vehicles', VEHICLE_LIST, '+, Vehicle, Next'),
+    chooseUnit('vehicles'),
+    addUnit('trailers', VEHICLE_LIST, '+, Trailer, Next'),
+    chooseUnit('trailers'),
+    addUnit('drivers', DRIVER_LIST, 'the driver list\'s +'),
+  ],
   // Steps that are the agent's: nothing is filled or clicked there (not even on Fill this page), and
   // the AI assistant isn't asked.
   // The quote stops at Quote & Coverages (TNI, 2026-10-21): going on leads to MVR & CLUE, whose
@@ -627,8 +693,12 @@ export const geico = {
     // The owner's identity again, with the Social Security number.
     ...on(VEHICLES, { whenShown: OWNER_CHECK }, OWNER_IDENTITY),
     ...on(VEHICLES, {}, [
-      // The chooser behind Add Vehicle or Trailer: the agent adds each unit.
-      fact('GiveVehicleOrTrailer', 'Vehicle or trailer to add', { ask: 'What would the customer like to add?', note: 'Pick Vehicle or Trailer for the unit you are adding yourself.' }),
+      // The chooser behind Add Vehicle or Trailer: the unit the panel is adding (the intake's next
+      // vehicle, then trailer, not on the quote: pickUnitToAdd), also when the agent clicked "+".
+      // With none left, or the list not read yet, it is the agent's (a fact: never the AI assistant's).
+      { field: 'GiveVehicleOrTrailer', ask: 'What would the customer like to add?', name: 'Vehicle or trailer to add (the next intake unit not on the quote)', kind: 'choice',
+        source: (r, a) => (chosen(r, a) ? 'derived' : 'fact'), value: chosen,
+        note: (r, a) => (chosen(r, a) ? null : 'Every intake vehicle and trailer looks to be on the quote already: pick Vehicle or Trailer for the unit you are adding yourself.') },
       // GEICO works it out from the values (disabled), on both forms.
       { field: 'GiveStatedAmount', name: 'Stated amount (GEICO works it out)', ignore: true },
     ]),

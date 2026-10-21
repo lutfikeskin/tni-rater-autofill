@@ -81,6 +81,13 @@ function actionSteps(carrier, record, active) {
       text: resolve(a.text) ?? null,
       token: a.token ?? null,
       near: a.near ?? null,
+      // `within`: only a button inside this container (GEICO's add icon of one list); `moveOn`
+      // with it: a Next there that opens a form, no step's move (GEICO's chooser), which pagekit
+      // checks against NEVER_ADVANCE instead of NEVER_CLICK. `loads`: its click draws a new view,
+      // waited for as a step's load.
+      within: a.within ?? null,
+      moveOn: !!(a.moveOn && a.within),
+      loads: !!a.loads,
       unique: !!a.unique,
       // A helper the agent must otherwise do by hand: what the panel says when it can't be clicked.
       label: a.label ?? null,

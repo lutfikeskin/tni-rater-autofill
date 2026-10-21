@@ -3,9 +3,10 @@
 // built from the saved NE pages and the FL captures, client details replaced) with the site's
 // behaviour played by test/fixtures/geico/mock.js, filled step by step by the real fill engine and
 // GEICO rules the way the side panel does it, and the agent's part played with real (trusted)
-// clicks and keys: Next on every step, Add Vehicle or Trailer and its chooser, Add Driver, the
-// answers the intake doesn't give, a few corrections, Looks Good. Then every answer is checked
-// against what TNI expects.
+// clicks and keys: Next on every step, the answers the intake doesn't give, a few corrections, Looks
+// Good, and the trailer's Add Vehicle or Trailer and Next with "Click Continue when the page is done"
+// off. With it on, the extension adds vehicle 2 and driver 2 itself (the list's "+", the chooser's
+// Vehicle and Next). Then every answer is checked against what TNI expects.
 //
 //   npm run mock:geico             # exits 1 on a wrong answer, a missing needs-you item, an agent
 //                                  # correction the next fill overwrote (one made on a form no fill
@@ -13,8 +14,10 @@
 //                                  # again, one that kept another step's or form's answer from being
 //                                  # filled, the agent's changes sent without the unit forms on
 //                                  # screen, one unit's answers on another's form, a click the
-//                                  # extension must never make, anything done on a stop step, a
-//                                  # filled Social Security number or a page error
+//                                  # extension must never make (one besides the "+" and the
+//                                  # chooser's Next for each unit it adds, once, with the setting
+//                                  # on), anything done on a stop step, a filled Social Security
+//                                  # number or a page error
 //   npm run mock:geico -- --headed # watch it
 //
 // As the extension does it: field-key.js, pagekit.js and recorder.js run in an isolated world of
@@ -23,7 +26,7 @@
 // reads them (`forms`), are kept where they were made (sidepanel.js changeScopes: per step, and on
 // Vehicles and Drivers & Incidents per form and its unit) and are the next fills' `skip` and
 // `skipBy`. The panel's part is played here: the plan per fill (buildPlan with the picker's vehicle,
-// driver and trailer), the fill options as sidepanel.js fillOptions builds them for GEICO
+// driver and trailer, and the unit it adds: pickUnitToAdd), the fill options as sidepanel.js fillOptions builds them for GEICO
 // (replaceChoices, stopSteps, units with the forms each unit was filled on, dropped for a unit picked
 // again, fillSkip, fillSkipBy, takenBack with the keys filled so far), rememberFill's bookkeeping,
 // and the follow-up fills when new questions show (on Quote & Coverages only those, never after an
@@ -148,11 +151,8 @@ const NEEDS_YOU = [
   ['Business & Owner Info', /\S/, ['ref:GiveStreet', 'ref:GiveEffectiveDate']],
   ['Vehicles: owner check', /never filled/, ['ref:GiveSocialSecurityNumber']],
   ['Vehicles: vehicle 1', /\S/, ['ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
-  ['Vehicles: or trailer', /\S/, ['ref:GiveVehicleOrTrailer']],
   ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: trailer 1', /trailer/, ['ref:GiveOtherVehicleType']],
-  // The owner, whom GEICO already lists, is not added twice.
-  ['Drivers & Incidents: driver 2 (picker on the owner)', /already lists/, ['ref:GiveFirstName', 'ref:GiveLastName', 'ref:GiveDateOfBirth', 'ref:GiveDriverLicenseState']],
   ['Quote & Coverages', /\S/, ['ref:GivePayPlanV2', 'cov:uninsured motorist bodily injury includes underinsured', 'cov:medical payments med',
     ...['FT', 'Rental', 'ERS'].flatMap((c) => [`cov:${c}#1`, `cov:${c}#2`]),
     'ref:GiveMtcRequireCoverageForMobileHomesYesNo', 'ref:GiveMtcRequireCoverageForBusinessDocumentYesNo', 'ref:GiveMtcHaulingCommoditiesCollect']],
@@ -266,6 +266,47 @@ function skipBy() {
     stepUnits: Object.fromEntries([...geico.vehicleSteps.map((s) => [s, 'vehicles']), ...geico.driverSteps.map((s) => [s, 'drivers'])]),
   };
 }
+// The unit the fill adds (sidepanel.js pickUnitToAdd): on GEICO's unit lists, the intake's next
+// vehicle, then trailer (or driver; never the owner GEICO lists), that no fill answered a form for and
+// the list doesn't show (marked `<unit>Entered:<i>` while the list is on screen), unless the list holds
+// as many units as the intake or more. With no unit form on screen the picker moves to it. `click`
+// with "Click Continue when the page is done" on (settings.autoAdvance).
+const settings = { autoAdvance: true };
+async function pickUnitToAdd() {
+  const vin = (u) => String(u?.vin ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const words = (d) => [d?.first, d?.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
+  const drivers = (record.drivers ?? []).map(words);
+  const idOf = (list, u, i) => (list !== 'drivers' ? vin(u)
+    : drivers.some((other, j) => j !== i && drivers[i].every((w) => other.includes(w))) ? [] : [u?.first, u?.last].filter(Boolean));
+  const specs = geico.unitLists.map((s) => ({ ...s, items: s.lists.flatMap((list) => (record[list] ?? []).map((u, i) => idOf(list, u, i))) }));
+  const seen = await inWorld(`(() => { const kit = globalThis.__raterKit; const specs = ${JSON.stringify(specs.map(({ selector, items }) => ({ selector, items })))};
+    return { step: kit.step(), forms: kit.unitFormsNow(), lists: specs.map((s) => kit.unitList(s.selector, s.items)) }; })()`);
+  const at = specs.findIndex((s) => s.steps.includes(knownStep(geico, seen.step)));
+  if (at < 0) return null;
+  const spec = specs[at];
+  const shown = seen.lists[at];
+  const marker = (list) => `${{ vehicles: 'vehicle', trailers: 'trailer', drivers: 'driver' }[list]}Entered`;
+  const listed = spec.lists.includes('drivers') ? geico.listedDriver(record) : -1;
+  const bound = (list, i) => Object.values(unitForms[list] ?? {}).includes(i);
+  let offset = 0;
+  for (const list of spec.lists) {
+    (record[list] ?? []).forEach((_, i) => { if (shown && (shown.shown[offset + i] || bound(list, i))) doneActions.add(`${marker(list)}:${i}`); });
+    offset += record[list]?.length ?? 0;
+  }
+  const entered = (list, i) => i === listed || bound(list, i) || doneActions.has(`${marker(list)}:${i}`);
+  if (shown && shown.rows >= spec.lists.reduce((n, list) => n + (record[list]?.length ?? 0), 0)) return null;
+  for (const list of spec.lists) {
+    const index = (record[list] ?? []).findIndex((_, i) => !entered(list, i));
+    if (index < 0) continue;
+    if (Array.isArray(seen.forms) && !seen.forms.length && active[list] !== index) {
+      active[list] = index;
+      lines.push(`  (the panel moved to ${list.slice(0, -1)} ${index + 1}: the next to add)`);
+    }
+    return { list, index, click: settings.autoAdvance };
+  }
+  return null;
+}
+
 // Picking unit `index` of `list` (renderPickers / releaseUnitForms): only the forms bound to it are let
 // go. The form on the page stays the unit's it was filled for: picking the next vehicle before saving
 // this one must not type the next vehicle into it.
@@ -316,8 +357,10 @@ async function fill(form) {
   const step = await inWorld('__raterKit.step()');
   const shown = (await mock()).step;
   if (step !== shown) fail(`${form}: the kit reads the step as ${JSON.stringify(step)} while the page is on ${shown}`);
+  // The list may have moved the picker to the unit the fill adds.
+  const adding = await pickUnitToAdd();
   const fillActive = { ...active };
-  const plan = buildPlan(record, geico, fillActive);
+  const plan = buildPlan(record, geico, adding ? { ...fillActive, adding } : fillActive);
   const options = {
     overwrite: false, replaceChoices: !!geico.replaceChoices, batch: !!geico.batch, doneSteps: [], advance: null, hold: false, confirmed: null,
     doneActions: [...doneActions], visitedPages: [], stopPages: Object.keys(geico.stopPages ?? {}), stopSteps: STOP_STEPS,
@@ -546,17 +589,24 @@ async function scenario() {
   firstForm = formIdOf('vehicles');
   await leave('Vehicles: vehicle 1');
   await agent.go('Next', 'vehicle-list');
-  await fill('Vehicles: list');
-  await agent.click('[data-testid="addIcon"]', 'Add Vehicle or Trailer');
-  await fill('Vehicles: or trailer');
-  await agent.radio('GiveVehicleOrTrailer', 'Yes');
-  await agent.go('Next', 'vehicle-form');
 
-  // The second vehicle's form while the picker still says vehicle 1: held, nothing typed into it.
+  // The vehicle list, vehicle 2 not on the quote: with "Click Continue when the page is done" on, the
+  // fill adds it (TNI, FL live run 2026-10-21: "click + and add the new vehicle", "click Next after
+  // choosing Vehicle or Trailer"): the panel moves to vehicle 2, the fill clicks the list's "+",
+  // answers Vehicle on the chooser, clicks its Next, and fills the form that opens, for vehicle 2.
+  const added = await fill('Vehicles: vehicle 2');
+  const addedIds = (added.actions ?? []).map((a) => a.id);
+  if (!['addVehicle:1', 'chooseVehicle:1'].every((id) => addedIds.includes(id))) fail(`Vehicles: the fill did not add vehicle 2 itself (clicked: ${addedIds.join(', ') || 'nothing'})`);
+  if ((await mock()).view !== 'vehicle-form') fail(`Vehicles: after the fill on the list the page shows ${(await mock()).view}, not vehicle 2's form`);
+  if (active.vehicles !== 1 || added.unitForm?.list !== 'vehicles' || unitForms.vehicles[added.unitForm.id] !== 1) fail('Vehicles: the form the fill opened was not filled for vehicle 2');
+  await fillAll('Vehicles: vehicle 2');
+
+  // The agent picks vehicle 1 in the panel while vehicle 2's form is up: held, nothing typed into it.
+  pick('vehicles', 0);
   const beforeHeld = await values();
   const held = await fill('Vehicles: vehicle 2 (picker on vehicle 1)');
   const afterHeld = await values();
-  if (held.unitHeld?.list !== 'vehicles') fail('Vehicles: the second vehicle\'s form was not held while the picker still said vehicle 1');
+  if (held.unitHeld?.list !== 'vehicles') fail('Vehicles: the second vehicle\'s form was not held while the picker said vehicle 1');
   if (held.filled.length) fail(`Vehicles: vehicle 1's answers went into the second vehicle's form: ${held.filled.map((x) => x.label).join(', ')}`);
   for (const k of Object.keys(beforeHeld)) if (beforeHeld[k] !== afterHeld[k]) fail(`Vehicles: ${k} changed on the held form (${JSON.stringify(beforeHeld[k])} -> ${JSON.stringify(afterHeld[k])})`);
   if (!held.checks?.some((x) => /vehicle 1\b/.test(x.note ?? '') && !/[A-HJ-NPR-Z0-9]{17}/.test(x.note ?? ''))) fail('Vehicles: the held form has no check naming vehicle 1 by its place');
@@ -583,45 +633,48 @@ async function scenario() {
   await leave('Vehicles: vehicle 2');
   await agent.go('Next', 'vehicle-list');
 
-  // The trailer: Add Vehicle or Trailer -> Trailer. The agent picks its year (2016; the intake has
-  // 2015) as soon as the form opens, before any fill has read it, while the panel's latest form is
-  // still vehicle 2's: the recorder names the trailer form with the change, so it is kept with that
-  // form and trailer 1 (`|f:<id>`, `|tr0`), and the fill, which replaces GEICO's pre-selected
-  // answers, leaves it.
+  // The trailer, with "Click Continue when the page is done" off: the fill on the list clicks nothing;
+  // the agent clicks "+", the fill answers Trailer on the chooser (the next intake unit), and the agent
+  // clicks Next. They pick the trailer's year (2016; the intake has 2015) as soon as the form opens,
+  // before any fill has read it: the recorder names the trailer form with the change, so it is kept
+  // with that form and trailer 1 (`|f:<id>`, `|tr0`), and the fill, which replaces GEICO's
+  // pre-selected answers, leaves it.
+  settings.autoAdvance = false;
+  lines.push('  (agent turned "Click Continue when the page is done" off)');
+  const listOff = await fill('Vehicles: list');
+  if (listOff.actions?.length) fail(`Vehicles: the fill clicked ${listOff.actions.map((a) => a.id).join(', ')} with "Click Continue when the page is done" off`);
   await agent.click('[data-testid="addIcon"]', 'Add Vehicle or Trailer');
-  await agent.radio('GiveVehicleOrTrailer', 'No');
+  const chose = await fill('Vehicles: or trailer');
+  if ((await values()).GiveVehicleOrTrailer !== 'No') fail(`Vehicles: the chooser was not answered Trailer for the trailer (${JSON.stringify((await values()).GiveVehicleOrTrailer)})`);
+  if (chose.actions?.length || (await mock()).view !== 'vehicle-or-trailer') fail('Vehicles: the chooser\'s Next was clicked with "Click Continue when the page is done" off');
   await agent.go('Next', 'trailer-form');
   await agent.choose(page.locator('#salesForm select[id^="Id_GiveYear_"]').first(), '2016');
   await fillAll('Vehicles: trailer 1');
   await corrected('Vehicles: trailer 1', 'ref:GiveYear', 'GiveYear', '2016');
   await leave('Vehicles: trailer 1');
   await agent.go('Next', 'vehicle-list');
-  await fill('Vehicles: list');
+  // Every intake unit on the list: nothing more is added, the setting back on.
+  settings.autoAdvance = true;
+  lines.push('  (agent turned "Click Continue when the page is done" on)');
+  const listFull = await fill('Vehicles: list');
+  if (listFull.actions?.length) fail(`Vehicles: the fill clicked ${listFull.actions.map((a) => a.id).join(', ')} with every intake unit on the list`);
   await agent.go('Looks Good', 'owner-driver');
 
-  // Drivers & Incidents: the owner's form (GEICO adds it: the owner drives), then Add Driver, first
-  // with the picker on driver 1 (the owner, whom GEICO already lists: nothing is filled), then on
-  // driver 2.
+  // Drivers & Incidents: the owner's form (GEICO adds it: the owner drives), then the driver list,
+  // where the fill adds driver 2 itself (the owner, driver 1, GEICO lists): the panel moves to driver
+  // 2, the fill clicks the driver list's "+" (not the incidents') and fills Add Driver for them.
   await fillAll('Drivers & Incidents: owner');
   await leave('Drivers & Incidents: owner');
   await agent.go('Next', 'driver-list');
-  await fill('Drivers & Incidents: list');
-  await agent.click('[data-testid="addIcon"]', 'Add Driver');
-  const ownerAgain = await fill('Drivers & Incidents: driver 2 (picker on the owner)');
-  if (ownerAgain.filled.length) fail(`Drivers & Incidents: the owner's answers went into Add Driver: ${ownerAgain.filled.map((x) => x.label).join(', ')}`);
-  pick('drivers', 1);
-  const second = await fillAll('Drivers & Incidents: driver 2');
-  if (second.unitHeld) {
-    // The fill with the picker on the owner filled nothing, yet bound Add Driver to driver 1
-    // (report.unitForm): with driver 2 picked the form is held, as one filled for driver 1. The agent
-    // gets past it by picking driver 1 and then driver 2 again (which lets the form go).
-    fail(`Drivers & Incidents: Add Driver stays held after the agent picked driver 2 ("${second.checks.find((x) => x.key === 'ref:GiveDriverRelationshipToBusiness')?.note ?? ''}"): the fill with the picker on the owner answered nothing there, yet bound the form to driver 1 (pagekit report.unitForm)`);
-    pick('drivers', 0);
-    pick('drivers', 1);
-    await fillAll('Drivers & Incidents: driver 2');
-  }
+  const addedDriver = await fill('Drivers & Incidents: driver 2');
+  if (!(addedDriver.actions ?? []).some((a) => a.id === 'addDriver:1')) fail(`Drivers & Incidents: the fill did not add driver 2 itself (clicked: ${(addedDriver.actions ?? []).map((a) => a.id).join(', ') || 'nothing'})`);
+  if ((await mock()).view !== 'add-driver') fail(`Drivers & Incidents: after the fill on the list the page shows ${(await mock()).view}, not Add Driver`);
+  if (active.drivers !== 1) fail('Drivers & Incidents: the panel did not move to driver 2');
+  await fillAll('Drivers & Incidents: driver 2');
   await leave('Drivers & Incidents: driver 2');
   await agent.go('Save and Continue', 'driver-list');
+  const driversFull = await fill('Drivers & Incidents: list');
+  if (driversFull.actions?.length) fail(`Drivers & Incidents: the fill clicked ${driversFull.actions.map((a) => a.id).join(', ')} with every intake driver on the list`);
   await agent.go('Looks Good', 'business-info');
 
   // Additional Business Info.
@@ -732,10 +785,16 @@ if (left['Drivers & Incidents: driver 2'] && !filledOn('Drivers & Incidents: dri
 if (left['Vehicles: trailer 1'] && !/trailer/.test(needsSeen.get('Vehicles: trailer 1')?.get('ref:GiveOtherVehicleType') ?? '')) fail('Vehicles: the trailer\'s type was never left for the agent with the trailer\'s note: the agent\'s pick of vehicle 2\'s type kept the fill from it');
 const ownerCheck = left['Vehicles: owner check'];
 if (ownerCheck && (filledOn('Vehicles: owner check', 'ref:GiveLastName') || ownerCheck.GiveLastName === record.drivers[0].last)) fail(`Vehicles: owner check: the owner's last name was typed with the intake's (${JSON.stringify(ownerCheck.GiveLastName)}): the agent's correction on Business & Owner Info didn't reach the step that asks it again`);
-// Clicks the kit made (untrusted): only radios and boxes. Never Recalculate, Next, Save and Continue,
-// Looks Good, Discard, Print, a progress link, an add or edit icon, a link.
+// Clicks the kit made (untrusted): radios and boxes, and for each unit it added (with "Click Continue
+// when the page is done" on), once, its list's "+" and, for a vehicle, the chooser's Next: vehicle 2's
+// and driver 2's, never the trailer's (added with the setting off). Never Recalculate, another Next,
+// Save and Continue, Looks Good, Discard, Print, a progress link, an edit icon, a link.
+const isAdd = (e) => e.type === 'click' && (e.target === 'addIcon' || (e.target === 'button' && e.text === 'Next' && e.view === 'vehicle-or-trailer'));
+const adds = final.log.filter((e) => !e.isTrusted && isAdd(e)).map((e) => `${e.target} on ${e.view}`);
+const wantAdds = ['addIcon on vehicle-list', 'button on vehicle-or-trailer', 'addIcon on driver-list'];
+if (JSON.stringify(adds) !== JSON.stringify(wantAdds)) fail(`the extension's add clicks were [${adds.join(', ')}], expected [${wantAdds.join(', ')}]`);
 const kitClicks = final.log.filter((e) => !e.isTrusted && (e.type === 'click' || e.type === 'disabled'))
-  .filter((e) => !['radio', 'checkbox'].includes(e.target));
+  .filter((e) => !['radio', 'checkbox'].includes(e.target) && !isAdd(e));
 for (const e of kitClicks) fail(`the extension clicked ${e.target}${e.text ? ` "${e.text}"` : ''} on ${e.step}`);
 for (const e of final.stopActions.filter((x) => !x.isTrusted)) fail(`${e.step}: the extension did ${e.type} on ${e.target} (a stop step)`);
 // The Social Security number: never typed, by anyone here.
@@ -750,7 +809,7 @@ const views = final.log.filter((e) => e.type === 'view').map((e) => e.target);
 lines.push(`Filling time: ${(totalMs / 1000).toFixed(1)} s over ${fills.length} fills`);
 lines.push(`Views: ${views.join(' → ')}`);
 lines.push(`Recalculate ×${final.recalcs} (premium ${final.premium ? 'rated' : 'out of date'}) · agent's protected keys: ${[...agentKeys].map(([s, k]) => `${s === PAGE ? 'page' : s.slice(PAGE.length + 1)} ${k.size}`).join(', ')}`);
-lines.push('', failures.length ? `${failures.length} problem(s):` : `All ${answers} answers as expected; every needs-you item left for the agent; nothing clicked or filled that is the agent's.`);
+lines.push('', failures.length ? `${failures.length} problem(s):` : `All ${answers} answers as expected; every needs-you item left for the agent; vehicle 2 and driver 2 added by the extension, once each; nothing clicked or filled that is the agent's.`);
 for (const f of failures) lines.push(`  ${f}`);
 console.log(lines.join('\n'));
 process.exit(failures.length ? 1 : 0);

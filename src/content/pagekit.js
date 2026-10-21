@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 71 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 72 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -1285,7 +1285,18 @@
     return best;
   }
 
+  // The element itself, or the shadow host it is drawn in (a gds-button's inner <button>), inside
+  // `selector`.
+  const insideOf = (el, selector) => {
+    for (let n = el; n; n = n.parentElement ?? n.getRootNode?.()?.host ?? null) if (n.matches?.(selector)) return true;
+    return false;
+  };
+
   // `disabledToo`: also a visible button the page has disabled (a link that must be gone).
+  // `within`: only a button inside an element matching this selector (GEICO's add icon of one
+  // list, not the incidents' below it). `moveOn` with `within`: a Next there opens a form and is no
+  // step's move (GEICO's chooser behind Add Vehicle or Trailer): it may be clicked, and is checked
+  // against NEVER_ADVANCE instead (never Save, Submit, Cancel, Discard…). Nowhere else.
   function findButton(step, { disabledToo = false } = {}) {
     const re = step.text ? new RegExp(step.text, 'i') : null;
     let best = null;
@@ -1295,9 +1306,10 @@
     // Add Driver's +). Never a Continue (findAdvanceButton).
     for (const el of deepQueryAll(document, 'a, button, [role=button], [role=link], input[type=button], input[type=submit], .x-btn, [onclick], [data-testid][tabindex]:not([tabindex="-1"])')) {
       if (!el.getClientRects().length || el.closest(STEP_LINKS)) continue;
+      if (step.within && !insideOf(el, step.within)) continue;
       if (!disabledToo && (el.disabled || el.getAttribute('aria-disabled') === 'true' || el.closest('.x-item-disabled, .x-btn-disabled, [aria-disabled="true"]') || hostDisabled(el))) continue;
       const text = buttonText(el);
-      if (NEVER_CLICK.test(text)) continue;
+      if (step.moveOn && step.within ? NEVER_ADVANCE.test(text) : NEVER_CLICK.test(text)) continue;
       const attrs = [el.id, el.getAttribute('name'), el.getAttribute('href'), el.getAttribute('onclick'),
         ...[...el.attributes].filter((a) => a.name.startsWith('data-')).map((a) => a.value)].join(' ');
       const hit = (re && text.length <= 80 && re.test(text)) || (step.token && attrs.includes(step.token));
@@ -1977,7 +1989,10 @@
       // An answer given one at a time has already waited for the page (above); only a helper
       // click or a batch of answers still needs the wait. (Waiting twice cost Progressive about
       // 0.3 s per answer.)
-      if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: 3000 })) { halt('The page did not settle after the helper.'); break; }
+      // A helper that draws a new view (`loads`: GEICO's add icons and the chooser's Next) is waited
+      // for as long as a step's load.
+      const loads = helperClicked && !!pendingAction?.loads;
+      if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads ? 15000 : 3000 })) { halt('The page did not settle after the helper.'); break; }
       if (!verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
       if (stepChanged()) break;
@@ -2186,7 +2201,7 @@
           return true;
         }
         clicked.add(a.action);
-        report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) });
+        report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
         // What the page shows as the button is clicked (the round's controls are older: answers
         // have landed since): what a `revealed` / `appears` check compares with afterwards.
         pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
@@ -2283,10 +2298,12 @@
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing });
       }
       // Clicked earlier, but what it adds never got in (Add Trailer opened, the trailer page left
-      // without filling it): the agent finishes it before Continue.
+      // without filling it): the agent finishes it before Continue. A helper kept to a container
+      // (`within`: GEICO's add row) says so only where its list is on screen, not on the unit's
+      // own form, which one address draws in its place.
       for (const a of actions) {
         if (!a.unfinished || !a.doneWhen?.length || !clicked.has(a.action) || a.doneWhen.some((id) => clicked.has(id))
-          || !actionHere(a)) continue;
+          || !actionHere(a) || (a.within && !findButton(a))) continue;
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.unfinished });
       }
     }
@@ -2505,6 +2522,26 @@
       const v = word(t);
       return v.length >= 11 && page.includes(` ${v} `);
     });
+  }
+
+  // A one-address application's list of the units on the quote (GEICO's Vehicles and Trailers,
+  // Drivers), by its selector: null when it isn't on screen; else how many units it lists (its
+  // rows but the add row) and which of `items` it shows, as listed() reads them but within the list
+  // only. Only numbers and true/false go back.
+  function unitList(selector, items) {
+    const list = deepQueryAll(document, selector).find((el) => el.getClientRects().length);
+    if (!list) return null;
+    const text = String(list.innerText ?? '').toUpperCase();
+    const flat = ` ${text.replace(/[^A-Z0-9]+/g, ' ')} `;
+    const lines = text.split(/\n+/).map((l) => ` ${l.replace(/[^A-Z0-9]+/g, ' ')} `);
+    const word = (w) => String(w ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const rows = [...list.children].filter((li) => li.tagName === 'LI' && !li.classList.contains('add-state')).length;
+    const shown = (items ?? []).map((t) => {
+      if (Array.isArray(t)) { const words = t.map(word).filter((w) => w.length >= 2); return words.length >= 2 && lines.some((l) => words.every((w) => l.includes(` ${w} `))); }
+      const v = word(t);
+      return v.length >= 11 && flat.includes(` ${v} `);
+    });
+    return { rows, shown };
   }
 
   function markKey(key, label, status, note) {
@@ -2809,5 +2846,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 71, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 72, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

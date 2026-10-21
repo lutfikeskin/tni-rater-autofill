@@ -4360,6 +4360,74 @@ test('discarding a form, ordering reports and signing are never clicked, as a he
   assert.deepEqual(plain(report.actions), []);
 });
 
+// GEICO's add rows and the chooser behind Add Vehicle or Trailer (FL live run, 2026-10-21): a helper
+// kept to a container (`within`) clicks only there, and with `moveOn` a Next there (it opens a form,
+// no step's move) is clicked, never one elsewhere, nor Cancel, Save, Discard in the same container.
+test('a helper kept to a container clicks only there; a Next is clicked only with moveOn inside it', async () => {
+  const h = harness({ pathname: '/quote' });
+  const chooser = new FakeNode('div', { id: 'chooser' });
+  const next = gdsButton('Next');
+  const cancel = gdsButton('Cancel');
+  const save = gdsButton('Save and Continue');
+  chooser.append(next.host, cancel.host, save.host);
+  const stepNext = gdsButton('Next');
+  const drivers = new FakeNode('li', { className: 'add-state', attrs: { 'data-list': 'drivers' } });
+  const incidents = new FakeNode('li', { className: 'add-state', attrs: { 'data-list': 'incidents' } });
+  const driverIcon = new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '0' } });
+  const incidentIcon = new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '0' } });
+  drivers.append(new FakeNode('p', { textContent: 'Add Driver' }), driverIcon);
+  incidents.append(new FakeNode('p', { textContent: 'Add Incident' }), incidentIcon);
+  h.document.body.append(stepNext.host, incidents, chooser, drivers);
+  const clicks = [];
+  for (const [id, el] of [['next', next.button], ['cancel', cancel.button], ['save', save.button], ['stepNext', stepNext.button], ['driver', driverIcon], ['incident', incidentIcon]]) el.onclick = () => clicks.push(id);
+  const plan = (actions) => buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions }).filter((s) => s.kind === 'action');
+  // Without moveOn, or without a container, Next is never a helper.
+  await h.kit.fill(plan([{ id: 'a', text: '^next$', within: '#chooser' }, { id: 'b', text: '^next$', moveOn: true }]), { maxRounds: 4 });
+  assert.deepEqual(clicks, []);
+  // Cancel and Save in the chooser stay off limits with moveOn.
+  await h.kit.fill(plan([{ id: 'c', text: '^cancel$', within: '#chooser', moveOn: true }, { id: 'd', text: '^save', within: '#chooser', moveOn: true }]), { maxRounds: 4 });
+  assert.deepEqual(clicks, []);
+  // The chooser's Next, and the driver list's "+", not the incidents' (first on the page).
+  const report = await h.kit.fill(plan([{ id: 'next', text: '^next$', within: '#chooser', moveOn: true }, { id: 'addDriver', token: 'addIcon', within: 'li.add-state[data-list=drivers]' }]), { maxRounds: 6 });
+  assert.deepEqual(clicks.sort(), ['driver', 'next']);
+  assert.deepEqual(plain(report.actions.map((a) => a.id)).sort(), ['addDriver', 'next']);
+});
+
+test('a one-address unit list: how many units it lists and which of them it shows, within the list only', () => {
+  const h = harness({ pathname: '/quote' });
+  const list = new FakeNode('ul', { id: 'summaryPage-AddCommercialVehicle' });
+  list.append(new FakeNode('li'), new FakeNode('li'), new FakeNode('li', { className: 'add-state' }));
+  list.innerText = 'Delivery Van\n1FTBR3X80MKA12345\n2019 RAM 1500\nBox/Straight Truck\n2021 RAM 2500\nAdd Vehicle or Trailer';
+  h.document.body.append(list);
+  // A VIN elsewhere on the page (the summary panel) isn't the list's.
+  h.document.body.innerText = `${list.innerText}\n1FTBR3X80MKA12399`;
+  assert.deepEqual(plain(h.kit.unitList('#summaryPage-AddCommercialVehicle', ['1FTBR3X80MKA12345', '1FTBR3X80MKA12399', '', ['Casey', 'Example']])),
+    { rows: 2, shown: [true, false, false, false] });
+  assert.equal(h.kit.unitList('#summaryPage-AddDriver', []), null, 'not on screen');
+  list._visible = false;
+  assert.equal(h.kit.unitList('#summaryPage-AddCommercialVehicle', []), null);
+});
+
+test('a unit added but never entered is said on its list, not on the unit\'s own form drawn at the same address', async () => {
+  const unfinished = 'The "+" was clicked for vehicle 2, but no form was filled for it';
+  const actions = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [
+    { id: 'addVehicle', token: 'addIcon', within: 'li.add-state', scope: 'vehicle', doneWhen: (r, a) => [`vehicleEntered:${a.vehicles}`], unfinished },
+  ] }, { vehicles: 1 }).filter((s) => s.kind === 'action');
+  const run = async ({ list, entered = false }) => {
+    const h = harness({ pathname: '/quote' });
+    if (list) {
+      const row = new FakeNode('li', { className: 'add-state' });
+      row.append(new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '0' } }));
+      h.document.body.append(row);
+    }
+    const report = await h.kit.fill(actions, { maxRounds: 3, doneActions: ['addVehicle:1', ...(entered ? ['vehicleEntered:1'] : [])] });
+    return report.noData.map((x) => x.note);
+  };
+  assert.deepEqual(plain(await run({ list: true })), [unfinished]);
+  assert.deepEqual(plain(await run({ list: false })), [], 'the form, not the list');
+  assert.deepEqual(plain(await run({ list: true, entered: true })), []);
+});
+
 test('GEICO spinners keep the page busy while they show', () => {
   for (const id of ['page-load', 'extendedWaiting']) {
     const h = harness({ pathname: '/quote' });
