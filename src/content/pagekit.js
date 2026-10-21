@@ -939,6 +939,8 @@
   // How long the page is quiet before such a helper is clicked.
   const LOAD_QUIET_MS = 1000;
   const LOAD_HALT = 'The page was still loading after a minute: wait for it, then fill again.';
+  // What a `whenClear` helper waits for (its `why`).
+  const NOTHING_LEFT = 'nothing left for you on the page';
 
   const noMatch = (step, options) => ({
     ok: false,
@@ -1632,6 +1634,8 @@
     const immediateAfter = new Set(actions.filter((a) => a.immediate).flatMap((a) => a.after));
     hiddenOk = plan.filter((s) => s.hidden && s.selector).map((s) => s.selector);
     const consumedPaths = () => new Set(actions.filter((a) => clicked.has(a.action)).flatMap((a) => a.after));
+    // Choices whose option isn't offered yet (`whenOffered`), by step id.
+    const unoffered = new Map();
     const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
     // Steps waiting for the page (`waitFor`): since when, by step id.
     const waitingSince = new Map();
@@ -2045,6 +2049,7 @@
             if (!report.invalidatedActions.includes(a.action)) report.invalidatedActions.push(a.action);
           }
           report.filled.push({ ...item, shown: result.shown });
+          unoffered.delete(step.id);
           // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
           handled.set(step.id, step.standard
             ? { status: 'standard', note: `TNI standard answer, not from the intake: ${step.name}` }
@@ -2057,6 +2062,10 @@
           // Batch: carry on with the next answer, except before a helper button that waits on
           // this one (Import Data after the VIN list): it's clicked first thing next round.
           if (!batch || immediateAfter.has(step.path)) break;
+        } else if (step.whenOffered && /^no option matches/.test(result.reason ?? '')) {
+          // Not offered yet: a helper may show it (GEICO's 11 Payments, behind View More Payment
+          // Plans). Tried again each round; never offered by the fill's end, it is the agent's.
+          unoffered.set(step.id, { item: { ...item, ...describe(c) }, control: c, step });
         } else if (/did not keep/.test(result.reason ?? '') && !report.halted && retryOnce(step.id)) {
           // Often a later redraw resets it (a coverage list reloading): try again next round.
           refill.add(step.id);
@@ -2248,6 +2257,15 @@
         && ((step.value != null && agreesWith(step, control)) || (skippedField(control) && hasValue(control))));
     }
 
+    // What this fill has left for the agent so far (`whenClear` helpers wait for none): its needs-you,
+    // failed and check items, an answer kept that differs, and an empty question no rule knows.
+    function leftForAgent(controls, pairs) {
+      const known = new Set(pairs.map((p) => p.control));
+      return report.noData.length + report.failed.length + report.checks.length + report.leftRequired.length
+        + report.kept.filter((x) => x.differs).length
+        + controls.filter((c) => !known.has(c) && !hasValue(c) && !skippedField(c)).length;
+    }
+
     function clickNextAction(controls, immediateOnly = false) {
       const pairs = assign(controls, plan);
       const has = (path) => answered(pairs, path);
@@ -2298,7 +2316,8 @@
         // A page button that the carrier refuses while a required question is empty (Rates' bill
         // plan, SC 2026-10-07: clicked right after UM/UIM were cleared, and nothing opened).
         const openRequired = a.waitRequired ? controls.filter((c) => c.required && !hasValue(c) && !skippedField(c)) : [];
-        const ready = !holds.length && !openRequired.length && (!a.afterAny?.length || a.afterAny.some(has))
+        const leftOpen = a.whenClear ? leftForAgent(controls, pairs) : 0;
+        const ready = !holds.length && !openRequired.length && !leftOpen && (!a.afterAny?.length || a.afterAny.some(has))
           && (!a.needsPremium || premiumReady())
           && (!a.needsRecalculation || ratesStale())
           && a.after.every(has)
@@ -2318,6 +2337,7 @@
             ...(a.afterValue ? [{ path: a.afterValue[0], set: true }] : []),
             ...holds.map((h) => ({ action: h.action, say: `${h.label ?? h.baseAction} resolved` })),
             ...openRequired.slice(0, 3).map((c) => ({ say: `${c.label || 'a required question'} answered` })),
+            ...(leftOpen ? [{ say: NOTHING_LEFT }] : []),
           ];
           const waitingFor = waits.map((w) => w.say ?? (w.any ? `one of ${w.any.join(' / ')}` : w.action ? `${w.action} clicked`
             : w.pages ? `${w.pages.join(' / ')} visited` : `${w.path}${w.set ? ' set' : ''}`));
@@ -2426,6 +2446,16 @@
         report.leftRequired.push({ label: c.label, key: fieldKey(c), q: c.q ?? null, controlKind: c.kind, ...describe(c) });
         mark(c, 'needs', 'required, and not on the intake form');
       }
+    }
+    // A choice never offered (`whenOffered`), unless another rule for the same question answered it
+    // (GEICO's two pay plan groups, one of which lists 11 Payments), or a helper that may show it is
+    // still waiting (View More Payment Plans, for the agent's answers): the agent's.
+    for (const { item, control, step } of unoffered.values()) {
+      if (handled.has(step.id) || report.blocked.some((x) => x.waits?.some((w) => w.say === NOTHING_LEFT)) || report.filled.some((x) => x.path === step.path) || report.kept.some((x) => x.path === step.path)) continue;
+      const note = `The page doesn't offer "${step.value}" here: pick it yourself.`;
+      report.noData.push({ ...item, note });
+      handled.set(step.id, { status: 'needs', note });
+      mark(control, 'needs', note);
     }
     // A helper the agent must otherwise do by hand (the vehicle tile) that couldn't be clicked here,
     // once the helpers it follows have run (an NTL still on the quote after the agent set it to No).

@@ -680,7 +680,12 @@
     const plain = path.find((n) => /^(BUTTON|A|INPUT)$/.test(n.tagName ?? ''));
     if (plain?.matches?.('.expandable-form-cancel-btn')) { record({ type: 'click', target: 'button', text: 'Cancel', isTrusted: e.isTrusted }); return togglePanel(plain.closest('li'), false); }
     if (plain?.closest?.('#action-modal')) { record({ type: 'click', target: 'button', text: oneLine(plain.textContent), isTrusted: e.isTrusted }); return openModal(false); }
-    if (plain?.tagName === 'A') { e.preventDefault(); return record({ type: 'click', target: 'link', text: oneLine(plain.textContent), isTrusted: e.isTrusted }); }
+    if (plain?.tagName === 'A') {
+      e.preventDefault();
+      // View More Payment Plans shows its group's other plans (11 Payments among them).
+      if (/^view more payment plans$/i.test(oneLine(plain.textContent))) $$('gds-radio-button.hide', plain.closest('gds-radio-button-group')).forEach((r) => r.classList.remove('hide'));
+      return record({ type: 'click', target: 'link', text: oneLine(plain.textContent), isTrusted: e.isTrusted });
+    }
     if (plain?.type === 'checkbox') return record({ type: 'click', target: 'checkbox', text: plain.id, isTrusted: e.isTrusted });
     if (STOP_VIEWS.includes(state.view)) record({ type: 'click', target: 'other', text: path[0]?.tagName ?? '', isTrusted: e.isTrusted });
   }, true);

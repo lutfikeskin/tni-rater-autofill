@@ -132,11 +132,19 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   assert.deepEqual([geico.advance.byForm, 'listed' in advanceFor(geico, true)], [true, false]);
   // The page is quiet first: GEICO draws the USDOT record's address check after the number.
   assert.equal(geico.advance.quietMs, 800);
-  // No helper but those adding a unit the panel is adding (below): Recalculate is the agent's, after
-  // their coverage choices (FL live run, 2026-10-21), and Quote & Coverages takes follow-ups only for
-  // questions it draws (FL live run 2: the cargo section's); an answer GEICO takes back there is kept.
-  assert.deepEqual(buildPlan(intake(), geico, {}).filter((s) => s.kind === 'action'), []);
-  for (const a of geico.actions) assert.ok(a.steps.every((s) => [VEH, DRV].includes(s)), a.id);
+  // Helpers: those adding a unit the panel is adding (below), and on Quote & Coverages (TNI, FL live
+  // run 4, 2026-10-21): Motor Truck Cargo opened when the intake asks for cargo (W43-16), then, once
+  // nothing there is left for the agent, Recalculate, View More Payment Plans and Print Quote
+  // Proposal after 11 Payments (W43-18). Quote & Coverages takes follow-ups only for questions it
+  // draws (FL live run 2: the cargo section's); an answer GEICO takes back there is kept.
+  const quoteHelpers = (r) => buildPlan(r, geico, {}).filter((s) => s.kind === 'action').map((s) => [s.action, s.steps, s.whenClear, s.verify]);
+  assert.deepEqual(quoteHelpers(with_({ 'coverage.cargo': null })), [['recalculate', [QC], true, 'premium'], ['morePayPlans', [QC], true, null], ['printProposal', [QC], true, null]]);
+  assert.deepEqual(quoteHelpers(with_({ 'coverage.cargo': true }))[0], ['openCargo', [QC], false, 'revealed']);
+  assert.ok(!quoteHelpers(with_({ 'coverage.cargo': false })).some(([id]) => id === 'openCargo'));
+  const cargo = geico.actions.find((a) => a.id === 'openCargo');
+  assert.deepEqual([cargo.token, cargo.within, cargo.unlessSelector], ['editIcon', 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]', 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"].expanded']);
+  assert.deepEqual(geico.actions.find((a) => a.id === 'printProposal').afterValue, ['geico.qGivePayPlanV2', '^11 Payments']);
+  for (const a of geico.actions) assert.ok(a.steps.every((s) => [VEH, DRV, QC].includes(s)), a.id);
   assert.deepEqual([geico.newQuestionsOnlySteps, geico.keepTakenBack], [[QC], [QC]]);
   assert.ok(!('noFollowUpSteps' in geico));
   // The quote stops at Quote & Coverages: said there, and on the steps after it.
@@ -188,6 +196,9 @@ const STANDARDS = [
   'Medical payments (FL: Not Included, PIP instead)', 'Comprehensive', 'Collision', 'Refrigeration breakdown (Yes with a reefer)',
   'Business description (For Hire Trucking for an expediter or freight hauler)', 'More about the business (Other For-Hire Trucking for an expediter or freight hauler)',
   'Start quote: Commercial Auto/Trucking (TNI: ticked)',
+  // FL live run 4, 2026-10-21 (W43-17, W43-18): GEICO in every state.
+  'Emergency road service (TNI: accepted)', 'Heavy vehicle road service (TNI: accepted)',
+  'Uninsured motorist bodily injury (TNI: $100,000 CSL)', 'Payment plan (TNI: 11 Payments)',
 ];
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
@@ -628,7 +639,7 @@ test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel
 // when the page is done" on (`click`) the fill clicks the list's "+" and the chooser's Next for it.
 test('adding units: the chooser answers the unit the panel adds; its "+" and Next are clicked once per unit, only with the setting on', () => {
   const r = RECORDS()[1];
-  const actions = (active) => buildPlan(r, geico, active).filter((s) => s.kind === 'action');
+  const actions = (active) => buildPlan(r, geico, active).filter((s) => s.kind === 'action' && !s.steps.includes(QC));
   const chooser = (active) => one(plan(r, active), 'Vehicle or trailer to add (the next intake unit not on the quote)', VEH);
   // Nothing to add, or not known: no helper, and the chooser is the agent's, never the AI assistant's.
   for (const active of [{}, { vehicles: 1 }]) {
@@ -669,11 +680,16 @@ test('adding units: the chooser answers the unit the panel adds; its "+" and Nex
   // An owner who drives under a name no driver row matches, or "owner drives" unanswered: GEICO's
   // own driver row may be one of the intake's, so Add Driver is the agent's.
   for (const changes of [{ 'applicant.owner1': 'Jordan Sample' }, { 'applicant.ownerDrives': null }]) {
-    assert.deepEqual(buildPlan(with_(changes, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action'), []);
+    assert.deepEqual(buildPlan(with_(changes, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action' && !s.steps.includes(QC)), []);
   }
-  assert.equal(buildPlan(with_({ 'applicant.ownerDrives': false }, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action').length, 1);
-  // Never a button that leaves a step or commits: only the add icon, and Next inside the chooser.
-  for (const a of geico.actions) assert.ok(a.token === 'addIcon' || (a.text === '^next$' && a.moveOn && /VehicleOrTrailer/.test(a.within)), a.id);
+  assert.equal(buildPlan(with_({ 'applicant.ownerDrives': false }, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action' && !s.steps.includes(QC)).length, 1);
+  // Never a button that leaves a step or commits: on the unit steps only the add icon and Next inside
+  // the chooser; on Quote & Coverages the cargo card's chevron, Recalculate, View More Payment Plans
+  // and Print Quote Proposal (TNI, 2026-10-21), never its Next (MVR & CLUE).
+  for (const a of geico.actions) {
+    assert.ok(a.token === 'addIcon' || (a.text === '^next$' && a.moveOn && /VehicleOrTrailer/.test(a.within))
+      || (a.steps.includes(QC) && (a.token === 'editIcon' || ['^recalculate$', '^view more payment plans$', '^print quote proposal$'].includes(a.text))), a.id);
+  }
 });
 
 test('SR-22: No for everyone; Yes only when GEICO lists one driver', () => {
@@ -769,9 +785,15 @@ test('liability coverage and its limit from the intake; NTL is the agent\'s', ()
   assert.match(liab({ 'notes.text': 'bobtail cover' })[0].note, /Check intake/);
   // Decided No on Check intake: the intake's liability.
   assert.equal(liab({ 'claims.text': 'Client also wants NTL', 'coverage.ntl': false })[0].value, 'Bodily Injury and Property Damage Liability');
-  for (const name of ['Uninsured motorist bodily injury', 'Medical payments (FL: Not Included, PIP instead)', 'Policy term', 'Basic personal injury protection']) agents(one(plan(intake()), name));
-  const pay = plan(intake()).filter((s) => s.name === 'Payment plan');
-  assert.deepEqual(pay.map((s) => [s.each, s.value, s.source]), [[true, null, 'fact'], [true, null, 'fact']]);
+  for (const name of ['Medical payments (FL: Not Included, PIP instead)', 'Policy term', 'Basic personal injury protection']) agents(one(plan(intake()), name));
+  // TNI's (FL live run 4, 2026-10-21, every state): UM/UIM $100,000 CSL (W43-17); 11 Payments,
+  // waited for until View More Payment Plans shows it (W43-18).
+  for (const r of [intake(), blank(), with_({ 'garaging.state': 'TX' })]) {
+    const um = one(plan(r), 'Uninsured motorist bodily injury (TNI: $100,000 CSL)');
+    assert.deepEqual([um.value, um.source, um.standard], ['$100,000 Combined Single Limit', 'standard', true]);
+    const pay = plan(r).filter((s) => s.field === 'GivePayPlanV2');
+    assert.deepEqual(pay.map((s) => [s.each, s.value, s.source, s.whenOffered]), [[true, '11 Payments', 'standard', true], [true, '11 Payments', 'standard', true]]);
+  }
 });
 
 test('Florida: medical payments Not Included, PIP kept as GEICO offers it (TNI)', () => {
