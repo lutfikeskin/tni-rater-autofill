@@ -8,6 +8,7 @@ import { buildPlan, AGENT_SOURCES, SOURCES } from '../src/plan.js';
 import { geico } from '../src/carriers/geico.js';
 import { CARRIERS, carrierForUrl, quoteProgress } from '../src/carriers.js';
 import { knownStep } from '../src/usage.js';
+import { advanceFor } from '../src/units.js';
 
 const STEPS = ['Business Class & USDOT', 'Business & Owner Info', 'Vehicles', 'Drivers & Incidents',
   'Additional Business Info', 'Quote & Coverages', 'Final Quote Details', 'MVR & CLUE', 'Payment Information'];
@@ -116,11 +117,24 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   for (const note of Object.values(geico.stopSteps)) assert.match(note, /yours/);
   assert.deepEqual([geico.vehicleSteps, geico.driverSteps], [[VEH], [DRV]]);
   assert.deepEqual([geico.useGenericRules, geico.replaceChoices], [false, true]);
-  for (const key of ['world', 'batch', 'advance', 'stopPages']) assert.ok(!(key in geico), key);
-  // No Continue, and no helper but those adding a unit the panel is adding (below): Recalculate is
-  // the agent's, after their coverage choices (FL live run, 2026-10-21), and Quote & Coverages takes follow-ups only for questions it draws (FL live
-  //
-  // run 2: the cargo section's); an answer GEICO takes back there is kept.
+  for (const key of ['world', 'batch', 'stopPages']) assert.ok(!(key in geico), key);
+  // Continue (TNI, FL live run 3, 2026-10-21): Next, or Save and Continue on Add Driver, on each
+  // step up to Additional Business Info, never on Quote & Coverages (its Next leads to MVR & CLUE's
+  // paid reports) or after it, never the chooser's Next (the add helpers' own); per form and button.
+  assert.deepEqual(geico.advance.steps, STEPS.slice(0, 5));
+  assert.ok(!geico.advance.steps.includes(QC) && !Object.keys(geico.stopSteps).some((s) => geico.advance.steps.includes(s)));
+  const continues = (text, listed = false) => new RegExp(advanceFor(geico, listed).text, 'i').test(text);
+  assert.deepEqual(['Next', 'Save and Continue', 'Looks Good', 'Recalculate', 'Print Quote Proposal', 'Cancel', 'Discard Changes', 'Next Step'].map((t) => continues(t)),
+    [true, true, false, false, false, false, false, false]);
+  // Looks Good leaves a unit list: only once the panel read it and every intake unit is on it.
+  assert.deepEqual(['Next', 'Looks Good', 'Looks Good to me'].map((t) => continues(t, true)), [true, true, false]);
+  assert.equal(geico.advance.notWithin, '[id^="Id_VehicleOrTrailerCollectAdaptiveActionSet_Container_"]');
+  assert.deepEqual([geico.advance.byForm, 'listed' in advanceFor(geico, true)], [true, false]);
+  // The page is quiet first: GEICO draws the USDOT record's address check after the number.
+  assert.equal(geico.advance.quietMs, 800);
+  // No helper but those adding a unit the panel is adding (below): Recalculate is the agent's, after
+  // their coverage choices (FL live run, 2026-10-21), and Quote & Coverages takes follow-ups only for
+  // questions it draws (FL live run 2: the cargo section's); an answer GEICO takes back there is kept.
   assert.deepEqual(buildPlan(intake(), geico, {}).filter((s) => s.kind === 'action'), []);
   for (const a of geico.actions) assert.ok(a.steps.every((s) => [VEH, DRV].includes(s)), a.id);
   assert.deepEqual([geico.newQuestionsOnlySteps, geico.keepTakenBack], [[QC], [QC]]);

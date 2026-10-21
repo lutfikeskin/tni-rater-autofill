@@ -34,12 +34,14 @@
 // agent makes from a long list with the intake's words quoted (business description, vehicle and
 // trailer type), which the AI assistant may suggest for the agent's approval.
 //
-// The agent clicks Next on every step (and Save and Continue, Looks Good), makes the coverage choices
-// and clicks Recalculate on Quote & Coverages, and prints the quote proposal there. The quote stops at
-// Quote & Coverages: Final Quote Details leads to MVR & CLUE, which orders paid reports (stopSteps:
-// nothing is filled or clicked there). With "Click Continue when the page is done" on, the fill adds
-// each intake vehicle, trailer and driver not on the quote yet (TNI, 2026-10-21): the list's "+", the
-// chooser's Vehicle or Trailer and its Next (`actions`, unitLists). It clicks no other button.
+// The agent makes the coverage choices and clicks Recalculate on Quote & Coverages, and prints the
+// quote proposal there. The quote stops at Quote & Coverages: Final Quote Details leads to MVR & CLUE,
+// which orders paid reports (stopSteps: nothing is filled or clicked there). With "Click Continue when
+// the page is done" on, the fill adds each intake vehicle, trailer and driver not on the quote yet
+// (TNI, 2026-10-21): the list's "+", the chooser's Vehicle or Trailer and its Next (`actions`,
+// unitLists); and once nothing is left for the agent it clicks Next (Save and Continue on Add Driver)
+// on each step up to Additional Business Info, and Looks Good on a unit list once every intake unit
+// is on it (`advance`, TNI, FL live run 3, 2026-10-21). Off, the agent clicks every one of them.
 
 import { owner, ownerDobNote as noOwnerDob } from './progressive.js';
 import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius } from '../normalize.js';
@@ -593,8 +595,8 @@ export const geico = {
   // Trailer"): on the vehicle list the "+" for the next intake vehicle, then trailer, not on the
   // quote, the chooser answered for it (GiveVehicleOrTrailer) and its Next; on the driver list the
   // "+" for the next intake driver (never the owner GEICO lists). The unit's form is then filled
-  // for it (pagekit unit forms). Saving it (Next, Save and Continue), Looks Good and Discard stay
-  // the agent's: no step is left by these.
+  // for it (pagekit unit forms). No step is left by these: saving the unit and Looks Good are the
+  // `advance` below, and Discard is never clicked.
   actions: [
     addUnit('vehicles', VEHICLE_LIST, '+, Vehicle, Next'),
     chooseUnit('vehicles'),
@@ -602,6 +604,25 @@ export const geico = {
     chooseUnit('trailers'),
     addUnit('drivers', DRIVER_LIST, 'the driver list\'s +'),
   ],
+  // Continue, with "Click Continue when the page is done" on, once nothing is left for the agent
+  // (TNI, FL live run 3, 2026-10-21: "with Click Continue when its done on, GEICO's should click
+  // Next"): Next on each step up to Additional Business Info and on a unit's form, Save and Continue
+  // on Add Driver. Never on Quote & Coverages, whose Next leads to MVR & CLUE (paid reports), nor on
+  // a stop step (`steps`), nor the chooser's Next (`notWithin`: the add helpers' own, after their
+  // "+"; on a chooser the agent opened, Next is theirs). Looks Good leaves a unit list: only once the
+  // panel has read the list and every intake unit is on it (`listed`, sidepanel pickUnitToAdd:
+  // `unitsListed`). Continued per form and button (`byForm`): Vehicles is left by a Next on each
+  // unit's form and then by Looks Good. GEICO draws some questions a moment after an answer (the
+  // USDOT record's address check after the USDOT number): the page is quiet first, and a question
+  // drawn meanwhile holds Continue (`quietMs`).
+  advance: {
+    text: '^(next|save and continue)$',
+    listed: '^looks good$',
+    steps: [BUSINESS_CLASS, BUSINESS_OWNER, VEHICLES, DRIVERS, MORE_BUSINESS],
+    notWithin: CHOOSER_BUTTONS,
+    byForm: true,
+    quietMs: 800,
+  },
   // Steps that are the agent's: nothing is filled or clicked there (not even on Fill this page), and
   // the AI assistant isn't asked.
   // The quote stops at Quote & Coverages (TNI, 2026-10-21): going on leads to MVR & CLUE, whose

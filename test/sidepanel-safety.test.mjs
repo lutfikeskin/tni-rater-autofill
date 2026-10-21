@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { assistContextKey, stableJson } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
-import { unitToAdd, unitListSpecs } from '../src/units.js';
+import { unitToAdd, unitListSpecs, advanceFor } from '../src/units.js';
 import { intakeNotes } from '../src/normalize.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
@@ -3308,7 +3308,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
     buildPlan: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
     fillOptions: () => ({}), pendingAi: () => [], ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
     runKit: async (tabId, carrier, func, args) => { seen.options = args[1]; markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
-    fillEvents, knownStep, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
+    fillEvents, knownStep, advanceFor, redactionTerms: () => ['A value'], redactor: (terms) => (text) => terms.reduce((acc, t) => acc.split(t).join('[client]'), String(text)),
     renderReport: (frames, ctx) => { seen.rendered++; seen.reportTabs.push(ctx?.tabId); }, renderSite() {}, renderSteps() {}, runPendingPage() {}, remarkAi: async () => {}, assistAfterFill() {},
     reportKey: (tabId) => `${tabId}|report`, watchFill: () => () => {}, showFinish() {}, reportShown: () => true,
     fillProblem: (ctx, text) => { seen.problems.push({ tabId: ctx.tabId, text }); },
@@ -3603,8 +3603,9 @@ test('a Continue that did not take after its retry pauses automatic filling, tel
 
 test('the fill hint says Continue is clicked for the agent only while that setting is on and the carrier has an advance pattern', () => {
   const body = extractFunction('renderSite');
-  // GEICO (no advance pattern, unit lists): with the setting on, the units it adds are named instead.
-  assert.match(body, /: carrier && \$\('auto-advance'\)\.checked && carrier\.advance \? 'Clicks Continue once nothing is left for you\. Never submits or binds\.'\s+\/\/[^\n]*\n\s+: carrier && \$\('auto-advance'\)\.checked && carrier\.unitLists \? 'Adds the intake\\'s vehicles, trailers and drivers not on the quote yet\. Nothing is submitted: click Next yourself\.'\s+: carrier \? 'Nothing is submitted\. Review, then click Next yourself\.'/);
+  // GEICO (an advance pattern up to Additional Business Info, unit lists): with the setting on, the
+  // units it adds are named too, and where its Next stops (FL live run 3, 2026-10-21).
+  assert.match(body, /: carrier && \$\('auto-advance'\)\.checked && carrier\.advance && carrier\.unitLists \? 'Adds the intake\\'s vehicles, trailers and drivers not on the quote yet, and clicks Next once nothing is left for you, up to Quote & Coverages\. Never submits or binds\.'\s+: carrier && \$\('auto-advance'\)\.checked && carrier\.advance \? 'Clicks Continue once nothing is left for you\. Never submits or binds\.'\s+: carrier \? 'Nothing is submitted\. Review, then click Next yourself\.'/);
   assert.match(extractFunction('wireUsage'), /\$\('auto-advance'\)\.addEventListener\('change', async \(e\) => \{ const saving = usage\.saveSettings\(\{ autoAdvance: e\.target\.checked \}\); renderSite\(\); await saving; logSettings\('changed', 'autoAdvance'\); \}\);/, 'the hint follows the switch');
 });
 
@@ -4960,12 +4961,67 @@ test('a continued GEICO step is remembered per vehicle by the step the kit read,
   assert.deepEqual([...state.doneSteps], ['/quote|v0|Vehicles', '/quote||Business Class & USDOT']);
 });
 
+// FL live run 3, 2026-10-21: with "Click Continue when its done" on, GEICO's Next should be clicked.
+// A step with forms and lists is continued per form and button (the kit's advanceKey): Vehicles is
+// left by each unit's Next, then Looks Good.
+test('a GEICO Continue is remembered per form and button, by the key the kit gave', () => {
+  const state = { active: { vehicles: 1, drivers: 0 }, doneSteps: new Set(), autoPaused: false, tab: { id: 1, carrier: geico }, tabSteps: new Map([[1, 'Vehicles']]) };
+  const context = { state, knownStep, $: () => ({ checked: false }), scheduleAutoFill: () => {}, setTimeout: () => {}, watchNextStep: () => {}, persistDoneActions: () => {} };
+  vm.runInNewContext(['stepScope', 'afterFill'].map(extractFunction).join('\n'), context);
+  context.afterFill([{ advanced: 'Next', signatureBefore: 'before', stepKey: 'Vehicles', advanceKey: 'Vehicles@next@Id_YesNoPreQuoteHaveFullVinActivity_63452' }], { carrier: geico, page: '/quote', active: state.active });
+  context.afterFill([{ advanced: 'Looks Good', signatureBefore: 'before', stepKey: 'Vehicles', advanceKey: 'Vehicles@looks good' }], { carrier: geico, page: '/quote', active: state.active });
+  assert.deepEqual([...state.doneSteps], ['/quote|v1|Vehicles@next@Id_YesNoPreQuoteHaveFullVinActivity_63452', '/quote|v1|Vehicles@looks good']);
+  // They reach the kit as they were given, by their own step and the plan's vehicle.
+  const base = { agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), intake: { record: {} }, tab: { id: 1, url: 'https://sales.geico.com/quote', carrier: geico } };
+  const done = (active) => [...fillOptionsOf({ ...state, ...base, active }, geico, active).doneSteps];
+  assert.deepEqual(done({ vehicles: 1, drivers: 0, trailers: 0 }), ['Vehicles@next@Id_YesNoPreQuoteHaveFullVinActivity_63452', 'Vehicles@looks good']);
+  assert.deepEqual(done({ vehicles: 2, drivers: 0, trailers: 0 }), []);
+});
+
+test('GEICO\'s Continue reaches the kit with the switch on: Looks Good only once every intake unit is on the list', () => {
+  const state = { tab: { id: 1, url: 'https://sales.geico.com/quote', carrier: geico }, active: { vehicles: 0, drivers: 0, trailers: 0 }, agentKeys: new Map(), doneActions: new Set(), visitedPages: new Set(), doneSteps: new Set(), tabSteps: new Map(), intake: { record: {} } };
+  const { listed, ...rest } = geico.advance;
+  assert.equal(fillOptionsOf(state, geico, undefined, { autoAdvance: false }).advance, null);
+  assert.deepEqual(JSON.parse(JSON.stringify(fillOptionsOf(state, geico, undefined, { autoAdvance: true }).advance)), rest);
+  assert.equal(fillOptionsOf(state, geico, undefined, { autoAdvance: true, unitsListed: true }).advance.text, `(?:${rest.text})|(?:${listed})`);
+  // Another carrier's, as it is.
+  assert.equal(fillOptionsOf(state, amwins, undefined, { autoAdvance: true, unitsListed: true }).advance, amwins.advance);
+});
+
+// FL live run 3, 2026-10-21: the agent's Next on vehicle 1's form drew the list, which has no
+// question, and nothing ran until the agent clicked "+" ("you should click + and add the vehicle").
+test('on a GEICO unit list step, a form that went away gets a follow-up fill with the switch on', () => {
+  const { context } = layoutHarness(() => []);
+  const followUps = [];
+  let on = true;
+  Object.assign(context, { samePage: (p) => p, knownStep, pageOf: (url) => new URL(url).pathname, $: (id) => ({ checked: id === 'auto-advance' ? on : true }),
+    scheduleAutoFill: (page) => followUps.push(page) });
+  Object.assign(context.state.tab, { carrier: geico, url: 'https://sales.geico.com/quote' });
+  context.state.tabSteps = new Map([[context.state.tab.id, 'Vehicles']]);
+  vm.runInContext(['tabStep', 'onRecorderMessage'].map(extractFunction).join('\n'), context);
+  const removed = () => context.onRecorderMessage({ ra: 'usage', event: 'removed_fields', page: '/quote', keys: ['ref:GiveYear'] }, { tab: { id: context.state.tab.id } });
+  removed();
+  context.state.tabSteps.set(context.state.tab.id, 'Drivers & Incidents');
+  removed();
+  assert.deepEqual(followUps, ['/quote', '/quote']);
+  // Another step, the switch off, or a carrier without unit lists: only the layout, as before.
+  context.state.tabSteps.set(context.state.tab.id, 'Additional Business Info');
+  removed();
+  context.state.tabSteps.set(context.state.tab.id, 'Vehicles');
+  on = false;
+  removed();
+  on = true;
+  context.state.tab.carrier = { ...amwins };
+  removed();
+  assert.equal(followUps.length, 2);
+});
+
 // The fill options as the panel builds them: the declaration itself, with its scope helpers.
-function fillOptionsOf(state, carrier, active) {
+function fillOptionsOf(state, carrier, active, { autoAdvance = false, unitsListed = false } = {}) {
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  const context = { state, URL, knownStep, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
+  const context = { state, URL, knownStep, advanceFor, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
   vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\nglobalThis.fillOptions = fillOptions;`, context);
-  return context.fillOptions(carrier, {}, false, active);
+  return context.fillOptions(carrier, {}, autoAdvance, active, unitsListed);
 }
 
 // The panel's word on the tab's step lags the page by a message (the recorder's step comes after
@@ -5007,7 +5063,8 @@ test('the kit is told the stop steps by name, and the plan\'s units with the for
   assert.deepEqual(JSON.parse(JSON.stringify([plain.stopSteps, plain.units])), [[], {
     active: { vehicles: 0, drivers: 0, trailers: 0 }, count: { vehicles: 0, drivers: 0, trailers: 0 }, bound: { vehicles: {}, drivers: {}, trailers: {} } }]);
   // Both fills hand over the units their plan was built for.
-  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance, ctx\.active\);/g) ?? []).length, 2);
+  // and whether the unit list on screen holds every intake unit (GEICO's Looks Good: advanceFor).
+  assert.equal((SIDEPANEL.match(/ctx\.settings\.autoAdvance, ctx\.active, ctx\.unitsListed\);/g) ?? []).length, 2);
   const start = SIDEPANEL.indexOf('const fillOptions =');
   assert.match(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start)), /stopSteps: Object\.keys\(carrier\.stopSteps \?\? \{\}\)/);
 });
@@ -5595,7 +5652,7 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
     const ctx = { tabId: 4, intake, revision: 1, settings: { autoAdvance } };
     await context.pickUnitToAdd(geico, ctx);
-    return JSON.parse(JSON.stringify({ adding: ctx.adding, active: { ...state.active }, done: [...state.doneActions].sort(), ...calls }));
+    return JSON.parse(JSON.stringify({ adding: ctx.adding, listed: ctx.unitsListed, active: { ...state.active }, done: [...state.doneActions].sort(), ...calls }));
   };
   const VIN1 = '1FTBR3X80MKA12345';
   const record = {
@@ -5605,7 +5662,7 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
   };
   // The vehicle list after vehicle 1's form (filled on form A): vehicle 2 is next, and the picker moves to it.
   let out = await run({ lists: [{ rows: 1, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0 } }, record });
-  assert.deepEqual(out.adding, { list: 'vehicles', index: 1 });
+  assert.deepEqual([out.adding, out.listed], [{ list: 'vehicles', index: 1 }, false]);
   assert.deepEqual([out.active.vehicles, out.saved, out.rendered], [1, 1, 1]);
   assert.deepEqual(out.done, ['vehicleEntered:0']);
   // Only the VINs, names and the selectors go to the page.
@@ -5619,9 +5676,11 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
   // As many units listed as the intake has (one added by hand, with no fill): nothing is added.
   out = await run({ lists: [{ rows: 3, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0 } }, record });
   assert.equal(out.adding, null);
+  // Every intake unit on the list: its Looks Good may be clicked (FL live run 3, 2026-10-21).
+  assert.equal(out.listed, true);
   // The chooser (no list, no form on screen): the unit from what was recorded, the picker moved.
   out = await run({ lists: [null, null], done: ['vehicleEntered:0'], record });
-  assert.deepEqual([out.adding, out.active.vehicles, out.persisted], [{ list: 'vehicles', index: 1 }, 1, 0]);
+  assert.deepEqual([out.adding, out.active.vehicles, out.persisted, out.listed], [{ list: 'vehicles', index: 1 }, 1, 0, false]);
   // A unit form on screen: the unit is named, the picker left to pickUnitForm.
   out = await run({ lists: [null, null], forms: [{ list: 'vehicles', id: 'B', blank: true }], done: ['vehicleEntered:0'], record });
   assert.deepEqual([out.adding?.index, out.active.vehicles, out.saved], [1, 0, 0]);

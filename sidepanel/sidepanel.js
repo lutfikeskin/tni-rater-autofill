@@ -4,7 +4,7 @@ import { sourcePlace } from '../src/intake-source.js';
 import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
-import { unitListSpecs, unitToAdd } from '../src/units.js';
+import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
 import { carrierForUrl, quoteProgress } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
@@ -1356,7 +1356,15 @@ function onRecorderMessage(msg, sender) {
     } else scheduleAutoFill(page, undefined, true);
     scheduleLayout(layoutPage, 'appeared');
   }
-  if (msg.event === 'removed_fields') scheduleLayout(layoutPage, 'removed');
+  if (msg.event === 'removed_fields') {
+    scheduleLayout(layoutPage, 'removed');
+    // A unit's form went away on a step with a unit list (GEICO's Next on a vehicle form, which
+    // saves it and shows the list): the list draws no question, so no new_fields comes. With "Click
+    // Continue when the page is done" on, a follow-up fill adds the next intake unit (FL live run 3,
+    // 2026-10-21: nothing ran on the list until the agent clicked "+").
+    const step = tabStep(state.tab.carrier);
+    if (state.tab.carrier?.unitLists?.some((s) => s.steps.includes(step)) && $('auto-advance').checked) scheduleAutoFill(pageOf(state.tab.url));
+  }
   // A button the agent clicked themselves (its text, redacted): a helper or a Continue by hand.
   // On a one-address application, the step it was on (a known step name only, as elsewhere).
   if (msg.event === 'agent_click') {
@@ -1521,8 +1529,9 @@ function agentEdited(page, key) {
 }
 
 // `active`: the vehicle, driver and trailer the fill's plan is for (fillContext), which the agent's
-// picker may have left since.
-const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checked, active = state.active) => ({
+// picker may have left since. `unitsListed`: the unit list on screen holds every intake unit
+// (pickUnitToAdd), so its Looks Good may be clicked (advanceFor).
+const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checked, active = state.active, unitsListed = false) => ({
   replaceChoices: !!carrier.replaceChoices,
   // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
   // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only.
@@ -1531,12 +1540,13 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
   batch: !!carrier.batch,
   // Steps of a one-address application already continued from (a step the agent goes back to
   // isn't continued again). Each entry is scoped by its own step, not the one the panel last heard
-  // the tab was on: GEICO's Vehicles is continued per vehicle, its other steps once a quote.
+  // the tab was on: GEICO's Vehicles is continued per vehicle, its other steps once a quote, and
+  // each of its steps per form and button (advance `byForm`: "Vehicles@next@<form>").
   doneSteps: [...state.doneSteps].map((s) => [s, s.slice(s.indexOf('|', String(pageOf(state.tab?.url)).length + 1) + 1)])
-    .filter(([s, raw]) => s === stepScope(pageOf(state.tab?.url), carrier, active, carrier.layoutSteps ? knownStep(carrier, raw) : undefined) + raw).map(([, raw]) => raw),
+    .filter(([s, raw]) => s === stepScope(pageOf(state.tab?.url), carrier, active, carrier.layoutSteps ? knownStep(carrier, raw.split('@')[0]) : undefined) + raw).map(([, raw]) => raw),
   // Click the page's Continue when nothing is left for the agent (setting below), but never
   // while the agent hasn't approved the AI's selections on this page.
-  advance: autoAdvance && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? carrier.advance : null,
+  advance: autoAdvance && carrier.advance && !pendingAi(state.tab?.id, pageOf(state.tab?.url)).length ? advanceFor(carrier, unitsListed) : null,
   // "Check answers before Continue": Continue only for the page as the agent approved it (Looks
   // right passes its receipt as `confirmed`). Kept on this computer, not in the usage log.
   hold: !!$('check-continue')?.checked,
@@ -1733,7 +1743,7 @@ async function autoFill(page) {
     const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!ctx.settings?.autoAdvance } } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
-    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true }, ctx.settings.autoAdvance, ctx.active);
+    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
@@ -2230,9 +2240,10 @@ function renderSite() {
     ? 'Filling works only in the Chrome extension.'
     : stopped ? 'Nothing on this page is filled or clicked.'
     : carrier && state.tab.background ? 'Fills the quote tab in the background. Go back to it to review.'
+    // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd), and Next only up to
+    // Additional Business Info (advance `steps`).
+    : carrier && $('auto-advance').checked && carrier.advance && carrier.unitLists ? 'Adds the intake\'s vehicles, trailers and drivers not on the quote yet, and clicks Next once nothing is left for you, up to Quote & Coverages. Never submits or binds.'
     : carrier && $('auto-advance').checked && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
-    // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd).
-    : carrier && $('auto-advance').checked && carrier.unitLists ? 'Adds the intake\'s vehicles, trailers and drivers not on the quote yet. Nothing is submitted: click Next yourself.'
     : carrier ? 'Nothing is submitted. Review, then click Next yourself.'
       : noAccess
         ? "The extension can't read this page. Allow it on this site (toolbar icon or site access), then reload."
@@ -2625,7 +2636,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
       return;
     }
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
-    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run }, ctx.settings.autoAdvance, ctx.active);
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -2740,6 +2751,7 @@ async function pickUnitForm(carrier, ctx) {
 // is for it.
 async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
+  ctx.unitsListed = false;
   if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   const record = ctx.intake.record ?? {};
   const specs = unitListSpecs(carrier, record);
@@ -2755,6 +2767,8 @@ async function pickUnitToAdd(carrier, ctx) {
   if (!seen || !fillCurrent(ctx)) return;
   const next = unitToAdd(carrier, record, knownStep(carrier, seen.step), seen, { unitForms: state.unitForms, done: state.doneActions });
   if (!next) return;
+  // Every intake unit on the list on screen: its Looks Good may be clicked (advanceFor).
+  ctx.unitsListed = !!next.complete;
   if (next.marks.some((id) => !state.doneActions.has(id))) {
     next.marks.forEach((id) => state.doneActions.add(id));
     persistDoneActions(ctx.tabId, state.doneActions);
@@ -2861,8 +2875,9 @@ function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, i
   const clicked = frames.some((f) => (f.actions ?? []).some((a) => !a.alreadyShown));
   const moved = frames.some((f) => f.navigatedTo || f.advanced || f.halted);
   const advanced = frames.find((f) => f.advanced && f.signatureBefore != null);
-  // Scoped by the step the fill continued from, as the kit read it (the tab's step is noted later).
-  const doneKey = advanced?.stepKey ? stepScope(page, carrier, active, carrier?.layoutSteps ? knownStep(carrier, advanced.stepKey) : undefined) + advanced.stepKey : null;
+  // Scoped by the step the fill continued from, as the kit read it (the tab's step is noted later);
+  // per form and button where the carrier continues a step so (advance `byForm`: advanceKey).
+  const doneKey = advanced?.stepKey ? stepScope(page, carrier, active, carrier?.layoutSteps ? knownStep(carrier, advanced.stepKey) : undefined) + (advanced.advanceKey ?? advanced.stepKey) : null;
   if (doneKey) maps.doneSteps.add(doneKey);
   // Keep the origin's bookkeeping, but never start helpers or Continue work in another tab.
   if (!fillCurrent(ctx)) return false;
@@ -3030,7 +3045,9 @@ function answeredOnPage(page, keys) {
 // Looks right takes the place of Fill again and continue.
 function continueNote({ advanced, left, waiting, page, settled, held, tabId }, carrier = state.tab?.carrier) {
   const holding = left || waiting;
-  const autoAdvance = !!carrier?.advance && $('auto-advance').checked && !carrier.advance.exceptPages?.includes(page);
+  // A step the carrier's Continue is never clicked on (GEICO's Quote & Coverages: advance `steps`).
+  const offSteps = !!carrier?.advance?.steps?.length && !carrier.advance.steps.includes(tabStep(carrier, tabId ?? state.tab?.id));
+  const autoAdvance = !!carrier?.advance && $('auto-advance').checked && !carrier.advance.exceptPages?.includes(page) && !offSteps;
   const check = autoAdvance && !!$('check-continue')?.checked;
   const looksRight = !advanced && !holding && (held || (check && settled))
     ? h('button', { type: 'button', class: 'primary continue-fill looks-right', onclick: function () { this.disabled = true; lookRight(tabId ?? state.tab?.id, page, carrier, this); } }, 'Looks right, continue')
@@ -3045,6 +3062,8 @@ function continueNote({ advanced, left, waiting, page, settled, held, tabId }, c
       ? ['Then check and continue', 'Once nothing above is left, check the answers and click Looks right. Never Bind or Submit.']
     : check && settled && !holding
       ? ['Ready to check', 'Nothing left for you. Check the answers, then click Looks right. Nothing is submitted or bound.']
+    : offSteps
+      ? ['Moving on is yours', 'Nothing on this step is clicked for you. Nothing is submitted or bound.']
     : !autoAdvance
       ? [holding ? 'Then click Continue on the page' : 'Ready for Continue', carrier?.advance && $('auto-advance').checked
         ? 'Click Continue on this page yourself. Nothing is submitted or bound.'

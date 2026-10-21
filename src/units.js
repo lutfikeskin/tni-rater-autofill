@@ -35,7 +35,9 @@ const MARKER = { vehicles: 'vehicleEntered', trailers: 'trailerEntered', drivers
 // (no VIN, a name another driver's holds), while the list has a row no intake unit is known to be
 // on, may be that row (added by hand): it is taken as on the quote, left to the agent, never added
 // twice. `move`: no unit form on screen (the list, the chooser), so the picker may move to that unit.
-// Null off the carrier's unit-list steps.
+// `complete`: the list is on screen, holds exactly as many units as the intake, and shows every
+// intake unit it can be read for (the driver GEICO lists itself included): the list may be left
+// (advanceFor). Null off the carrier's unit-list steps.
 export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = new Set() } = {}) {
   const specs = unitListSpecs(carrier, record);
   const at = specs.findIndex((s) => s.steps.includes(step));
@@ -61,7 +63,18 @@ export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = 
     }
   }
   const entered = (u) => isListed(u) || bound(u.list, u.i) || done.has(mark(u)) || marks.includes(mark(u));
-  if (shown && shown.rows >= units.length) return { marks, adding: null, move: false };
+  const complete = !!shown && shown.rows === units.length && units.every((u) => u.shown || isListed(u) || !readable(u.item));
+  if (shown && shown.rows >= units.length) return { marks, adding: null, move: false, complete };
   const next = units.find((u) => !entered(u));
-  return { marks, adding: next ? { list: next.list, index: next.i } : null, move: Array.isArray(seen.forms) && !seen.forms.length };
+  return { marks, adding: next ? { list: next.list, index: next.i } : null, move: Array.isArray(seen.forms) && !seen.forms.length, complete: false };
+}
+
+// The carrier's Continue for one fill (fill `advance`), or null without one: its `listed` button
+// (GEICO's Looks Good, which leaves a unit list) is among its words only when `unitsListed`, the
+// list on screen holding every intake unit (unitToAdd `complete`).
+export function advanceFor(carrier, unitsListed = false) {
+  const advance = carrier?.advance ?? null;
+  if (!advance?.listed) return advance;
+  const { listed, ...rest } = advance;
+  return unitsListed ? { ...rest, text: `(?:${rest.text})|(?:${listed})` } : rest;
 }
