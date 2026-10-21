@@ -5555,4 +5555,7 @@ test('GEICO Search Products: Commercial Auto ticked, every other product known a
   assert.deepEqual(await run(['auto', 'commercial', 'cycle', 'umbrella']), [[false, true, false, false], []]);
   // More boxes than those (a product added, the window drawn twice): each known, none ticked again.
   assert.deepEqual(await run(['auto', 'commercial', 'cycle', 'umbrella', 'renters', 'commercial']), [[false, true, false, false, false, false], []]);
+  // The window drawn twice with five products: ten boxes, still none unfamiliar.
+  const five = ['auto', 'commercial', 'cycle', 'umbrella', 'renters'];
+  assert.deepEqual(await run([...five, ...five]), [[false, true, false, false, false, false, false, false, false, false], []]);
 });
