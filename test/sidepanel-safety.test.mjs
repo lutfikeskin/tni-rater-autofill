@@ -5662,7 +5662,7 @@ test('GEICO: questions drawn over a gateway page no fill answered anything on ge
 // Trailer". On GEICO's unit lists the panel names the unit the fill adds (ctx.adding), by the intake's
 // order, from what the list shows and the forms fills answered, and moves the picker to it.
 test('GEICO: the next intake unit not on the quote is the one added; never one listed, filled, or past the intake\'s count', async () => {
-  const run = async ({ step = 'Vehicles', forms = [], lists, active = {}, unitForms = {}, done = [], record, autoAdvance = true }) => {
+  const run = async ({ step = 'Vehicles', forms = [], lists, active = {}, unitForms = {}, done = [], record, autoAdvance = true, autoPages = false }) => {
     const intake = { record };
     const state = { tab: { id: 4 }, intake, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0, ...active },
       unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms }, doneActions: new Set(done) };
@@ -5677,7 +5677,7 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
       unitToAdd, unitListSpecs,
     };
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
-    const ctx = { tabId: 4, intake, revision: 1, settings: { autoAdvance } };
+    const ctx = { tabId: 4, intake, revision: 1, settings: { autoAdvance, autoPages } };
     await context.pickUnitToAdd(geico, ctx);
     return JSON.parse(JSON.stringify({ adding: ctx.adding, listed: ctx.unitsListed, active: { ...state.active }, done: [...state.doneActions].sort(), ...calls }));
   };
@@ -5689,17 +5689,22 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
   };
   // The vehicle list after vehicle 1's form (filled on form A): vehicle 2 is next, and the picker moves to it.
   let out = await run({ lists: [{ rows: 1, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0 } }, record });
-  assert.deepEqual([out.adding, out.listed], [{ list: 'vehicles', index: 1 }, false]);
+  assert.deepEqual([out.adding, out.listed], [{ list: 'vehicles', index: 1, click: true }, false]);
   assert.deepEqual([out.active.vehicles, out.saved, out.rendered], [1, 1, 1]);
   assert.deepEqual(out.done, ['vehicleEntered:0']);
   // Only the VINs, names and the selectors go to the page.
   assert.deepEqual(out.asked, [{ selector: '#summaryPage-AddCommercialVehicle', items: [VIN1, '', ''] }, { selector: '#summaryPage-AddDriver', items: [['Sample', 'Driver'], ['Casey', 'Example']] }]);
   // Both vehicles in (vehicle 2 filled on form B): the trailer, Trailer on the chooser.
   out = await run({ lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record });
-  assert.deepEqual(out.adding, { list: 'trailers', index: 0 });
-  // The setting off: the same unit (the plan clicks nothing for it: `click` is the switch as the kit is called).
-  out = await run({ lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record, autoAdvance: false });
-  assert.deepEqual(out.adding, { list: 'trailers', index: 0 });
+  assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: true });
+  // The plan clicks the "+" and the chooser's Next for it (`click`) with "Fill the pages" or "Click
+  // Continue" on (W43-20, TNI, FL live run 5, 2026-10-21); with both off the same unit, and it only
+  // answers the chooser.
+  const both = { lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record };
+  out = await run({ ...both, autoAdvance: false, autoPages: true });
+  assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: true });
+  out = await run({ ...both, autoAdvance: false });
+  assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: false });
   // As many units listed as the intake has (one added by hand, with no fill): nothing is added.
   out = await run({ lists: [{ rows: 3, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0 } }, record });
   assert.equal(out.adding, null);
@@ -5707,13 +5712,13 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
   assert.equal(out.listed, true);
   // The chooser (no list, no form on screen): the unit from what was recorded, the picker moved.
   out = await run({ lists: [null, null], done: ['vehicleEntered:0'], record });
-  assert.deepEqual([out.adding, out.active.vehicles, out.persisted, out.listed], [{ list: 'vehicles', index: 1 }, 1, 0, false]);
+  assert.deepEqual([out.adding, out.active.vehicles, out.persisted, out.listed], [{ list: 'vehicles', index: 1, click: true }, 1, 0, false]);
   // A unit form on screen: the unit is named, the picker left to pickUnitForm.
   out = await run({ lists: [null, null], forms: [{ list: 'vehicles', id: 'B', blank: true }], done: ['vehicleEntered:0'], record });
   assert.deepEqual([out.adding?.index, out.active.vehicles, out.saved], [1, 0, 0]);
   // Drivers: the owner GEICO lists (driver 1) is never added; driver 2 is, until the list shows them.
   out = await run({ step: 'Drivers & Incidents', lists: [null, { rows: 1, shown: [true, false] }], record });
-  assert.deepEqual([out.adding, out.active.drivers], [{ list: 'drivers', index: 1 }, 1]);
+  assert.deepEqual([out.adding, out.active.drivers], [{ list: 'drivers', index: 1, click: true }, 1]);
   out = await run({ step: 'Drivers & Incidents', lists: [null, { rows: 1, shown: [true, true] }], record });
   assert.equal(out.adding, null);
   assert.deepEqual(out.done, ['driverEntered:0', 'driverEntered:1']);
@@ -5726,18 +5731,3 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
   for (const args of [{ step: 'Additional Business Info', lists: [null, null], record }]) assert.equal((await run(args)).adding, null);
 });
 
-// FL live run 5, 2026-10-21 (W43-20, TNI): with "Fill the pages" on and "Click Continue when the
-// page is done" off, GEICO's "+" and the chooser's Next weren't clicked. The fill adds units with
-// either setting on; Next, Save and Continue and Looks Good still need Click Continue (advanceFor).
-test('the fill adds the next unit with "Fill the pages" or "Click Continue" on, and only answers the chooser with both off', () => {
-  // Each plan the panel builds (the fill, its preview, the unit form's) passes the same `adding`.
-  const uses = [...SIDEPANEL.matchAll(/adding: \{ \.\.\.ctx\.adding, click: ([^}]+) \}/g)].map((m) => m[1].trim());
-  assert.equal(uses.length, 3);
-  assert.equal(new Set(uses).size, 1, 'one rule for every plan');
-  const click = (settings) => vm.runInNewContext(uses[0], { ctx: { settings } });
-  assert.deepEqual([
-    click({ autoAdvance: false, autoPages: true }),
-    click({ autoAdvance: true, autoPages: false }),
-    click({ autoAdvance: false, autoPages: false }),
-  ], [true, true, false]);
-});
