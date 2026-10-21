@@ -130,6 +130,8 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   assert.deepEqual(['Next', 'Looks Good', 'Looks Good to me'].map((t) => continues(t, true)), [true, true, false]);
   assert.equal(geico.advance.notWithin, '[id^="Id_VehicleOrTrailerCollectAdaptiveActionSet_Container_"]');
   assert.deepEqual([geico.advance.byForm, 'listed' in advanceFor(geico, true)], [true, false]);
+  // The page is quiet first: GEICO draws the USDOT record's address check after the number.
+  assert.equal(geico.advance.quietMs, 800);
   // No helper but those adding a unit the panel is adding (below): Recalculate is the agent's, after
   // their coverage choices (FL live run, 2026-10-21), and Quote & Coverages takes follow-ups only for
   // questions it draws (FL live run 2: the cargo section's); an answer GEICO takes back there is kept.

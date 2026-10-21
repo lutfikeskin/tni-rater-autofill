@@ -612,13 +612,16 @@ export const geico = {
   // "+"; on a chooser the agent opened, Next is theirs). Looks Good leaves a unit list: only once the
   // panel has read the list and every intake unit is on it (`listed`, sidepanel pickUnitToAdd:
   // `unitsListed`). Continued per form and button (`byForm`): Vehicles is left by a Next on each
-  // unit's form and then by Looks Good.
+  // unit's form and then by Looks Good. GEICO draws some questions a moment after an answer (the
+  // USDOT record's address check after the USDOT number): the page is quiet first, and a question
+  // drawn meanwhile holds Continue (`quietMs`).
   advance: {
     text: '^(next|save and continue)$',
     listed: '^looks good$',
     steps: [BUSINESS_CLASS, BUSINESS_OWNER, VEHICLES, DRIVERS, MORE_BUSINESS],
     notWithin: CHOOSER_BUTTONS,
     byForm: true,
+    quietMs: 800,
   },
   // Steps that are the agent's: nothing is filled or clicked there (not even on Fill this page), and
   // the AI assistant isn't asked.

@@ -1490,14 +1490,15 @@
   // `replaceChoices`: a dropdown/radio/checkbox answer the page pre-selected (not the agent) is
   // replaced when it differs from ours; agent changes are protected by `skip`.
   // `visitedPages`: pages already seen in this quote (for actions that wait on a page).
-  // `advance`: { text, exceptPages, steps, notWithin, byForm } — when the page ends with nothing for
+  // `advance`: { text, exceptPages, steps, notWithin, byForm, quietMs } — when the page ends with nothing for
   // the agent to look at (no unfamiliar required fields, nothing missing, nothing failed), click its
   // Continue button. `steps`: on a one-address application, only on these steps (GEICO's, up to
   // Additional Business Info). `notWithin`: no button inside this. `byForm`: a step that shows
   // several forms and lists in turn (GEICO's Vehicles: each unit's form, then the list) is continued
   // per form and button, not once a step: `report.advanceKey` is the step, the button's words and the
   // unit form on screen ("Vehicles@next@Id_YesNoPreQuoteHaveFullVinActivity_63452"), which
-  // `doneSteps` then holds.
+  // `doneSteps` then holds. `quietMs`: on a page that isn't ExtJS, the page is quiet this long
+  // before Continue, and a question drawn meanwhile without an answer holds it.
   // `batch`: for pages whose answers never wait on a server (AmWINS): every answer the round can
   // see is given in one pass and checked on the spot, with one wait for the page per round
   // instead of one per answer. What an answer reveals or redraws is picked up next round, and
@@ -2426,8 +2427,10 @@
       && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)
       && (!advance.steps?.length || (!!report.stepKey && stepIs(advance.steps, report.stepKey)))) {
       // The last answer may still be redrawing part of the page (a new payment method reloads the
-      // plan list): a Continue clicked meanwhile is lost. Let it finish first.
+      // plan list): a Continue clicked meanwhile is lost. Let it finish first. `quietMs`: a page that
+      // draws a question a moment after an answer (GEICO's USDOT record check) is waited for too.
       if (serverBacked) await settle({ quietMs: 500, maxMs: 6000 });
+      else if (advance.quietMs) await settle({ quietMs: advance.quietMs, maxMs: 6000 });
       // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
       // the report says why. (Reproduced 2026-10-08: halted, and Continue clicked all the same.)
       if (report.halted) {
@@ -2457,7 +2460,11 @@
           mark(control, 'needs', IDENTITY_NOTE);
           report.blockers.push(`needs you: ${called(item)}`);
         }
-        const found = !changed.length && !moved.length && !pageBusy() && currentPage() === startPage && !stepChanged() ? findAdvanceButton(advance.text, advance) : null;
+        // A question drawn during that wait without an answer (`quietMs`) holds Continue: the fill
+        // never read it, and the follow-up fill for it decides.
+        const readKeys = new Set(finalControls.map((c) => fieldKey(c)));
+        const drawn = advance.quietMs ? now.filter((c) => !readKeys.has(fieldKey(c)) && !hasValue(c)) : [];
+        const found = !changed.length && !moved.length && !drawn.length && !pageBusy() && currentPage() === startPage && !stepChanged() ? findAdvanceButton(advance.text, advance) : null;
         // Per form and button (`byForm`): one already continued from is the agent's now.
         const key = found && advance.byForm ? [report.stepKey, squash(buttonText(found)), unitFormsNow()?.[0]?.id ?? ''].filter(Boolean).join('@') : report.stepKey;
         const button = found && !(advance.byForm && doneSteps.includes(key)) ? found : null;

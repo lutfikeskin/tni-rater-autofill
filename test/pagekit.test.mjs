@@ -5272,6 +5272,32 @@ test('a Continue kept to steps, never inside the chooser, and continued per form
   assert.deepEqual(plain([p.clicks, report.advanceKey ?? null]), [['Next'], null]);
 });
 
+// GEICO draws a question a moment after an answer (the USDOT record's address check, after the
+// USDOT number): with `quietMs`, Continue waits for the page to be quiet, and a question drawn
+// meanwhile without an answer holds it (the follow-up fill for that question decides).
+test('a Continue with quietMs waits for the page, and a question drawn meanwhile without an answer holds it', async () => {
+  const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
+  const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
+  const page = (draws) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Business Class & USDOT');
+    const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
+    const clicks = [];
+    const next = gdsButton('Next');
+    next.button.onclick = () => clicks.push('Next');
+    h.document.body.append(dot, next.host);
+    if (draws) dot.addEventListener('change', () => setTimeout(() => h.document.body.append(gdsRadios('GiveExtendUsDotVerifyBusinessAddress', 12, 'Is this the customer\'s business?', [['Yes', 'Yes'], ['No', 'No']]).group), 200));
+    return { h, clicks };
+  };
+  let p = page(true);
+  let report = await p.h.kit.fill(plan, { maxRounds: 6, advance });
+  assert.deepEqual(plain([p.clicks, report.advanced ?? null, report.filled.length]), [[], null, 1]);
+  // Nothing drawn after the answer: Continue.
+  p = page(false);
+  report = await p.h.kit.fill(plan, { maxRounds: 6, advance });
+  assert.deepEqual(plain([p.clicks, report.advanced]), [['Next'], 'Next']);
+});
+
 test('unitFormsNow says whether a unit form is new: its first question unanswered', async () => {
   const h = harness({ pathname: '/quote' });
   geicoBar(h, 'Vehicles');
