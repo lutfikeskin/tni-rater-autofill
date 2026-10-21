@@ -372,8 +372,20 @@
     return out;
   }
 
-  // A several-choice answer's option texts ("a; b": W43-23).
-  const multiValue = (v) => String(v ?? '').split(/;\s*/).map(oneLine).filter(Boolean);
+  // A several-choice answer's option texts ("a; b": W43-23). Parts joined by "; " that make one
+  // offered option's text are that option (its own text has "; " in it).
+  const multiValue = (v, options = []) => {
+    const parts = String(v ?? '').split(/;\s*/).map(oneLine).filter(Boolean);
+    const offered = new Set(options.map((o) => oneLine(o.text).toLowerCase()));
+    const out = [];
+    for (let i = 0; i < parts.length;) {
+      let j = parts.length;
+      while (j > i + 1 && !offered.has(parts.slice(i, j).join('; ').toLowerCase())) j--;
+      out.push(parts.slice(i, j).join('; '));
+      i = j;
+    }
+    return out;
+  };
 
   function optionsOf(c) {
     if (c.options) return c.options;
@@ -1084,12 +1096,14 @@
     // named by their texts joined by "; " (as selectedText reads them back), each of them offered.
     if (c.kind === 'select' && c.el.multiple) {
       const options = optionsOf(c);
-      const wanted = multiValue(step.value);
-      const picks = wanted.map((w) => options.find((o) => o.text.toLowerCase() === w.toLowerCase()));
+      const wanted = multiValue(step.value, options);
+      // A disabled option (a limit reached, or not for this class) isn't offered.
+      const picks = wanted.map((w) => options.find((o) => !o.el.disabled && o.text.toLowerCase() === w.toLowerCase()));
       if (!wanted.length || picks.some((o) => !o)) return noMatch({ ...step, value: wanted.filter((w, i) => !picks[i]).join('; ') || step.value }, options);
       for (const o of options) o.el.selected = picks.includes(o);
       c.el.dispatchEvent(new Event('input', { bubbles: true }));
       c.el.dispatchEvent(new Event('change', { bubbles: true }));
+      if (!options.every((o) => o.el.selected === picks.includes(o))) return { ok: false, reason: 'the page did not keep these picks' };
       return { ok: true, shown: picks.map((o) => o.text).join('; ') };
     }
     if (c.kind === 'text') {
@@ -1275,10 +1289,13 @@
       }
       return oneLine(c.el.value) === oneLine(textFor(step, c));
     }
-    // A list taking several choices: the same options, in any order.
+    // A list taking several choices: the same options, in any order (read from the options picked,
+    // so a text with "; " in it stays one).
     if (c.kind === 'select' && c.el.multiple) {
-      const set = (v) => multiValue(v).map((t) => t.toLowerCase()).sort().join('\n');
-      return set(selectedText(c)) !== '' && set(selectedText(c)) === set(step.value);
+      const options = optionsOf(c);
+      const set = (texts) => texts.map((t) => t.toLowerCase()).sort().join('\n');
+      const picked = set(options.filter((o) => o.el.selected).map((o) => o.text));
+      return picked !== '' && picked === set(multiValue(step.value, options));
     }
     const current = selectedText(c);
     const opt = matchOption(optionsOf(c), step);

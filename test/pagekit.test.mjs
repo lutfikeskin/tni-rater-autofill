@@ -5624,4 +5624,20 @@ test('a list taking several choices gets exactly the answer\'s options, each off
   p = page();
   await p.h.kit.fill(step('Aircraft/Auto/Boats - Automobiles'), { maxRounds: 4 });
   assert.deepEqual(picked(p.list), ['Aircraft/Auto/Boats - Automobiles']);
+  // A disabled option isn't offered: nothing picked.
+  p = page();
+  p.list.options[1].disabled = true;
+  report = await p.h.kit.fill(step('Refrigerated Goods - Dairy; Refrigerated Goods - Frozen Seafood'), { maxRounds: 4 });
+  assert.deepEqual(picked(p.list), []);
+  assert.match(report.failed[0]?.reason ?? '', /no option matches "Refrigerated Goods - Dairy"/);
+  // An option whose own text has "; " in it is one pick, given and read back as one.
+  p = page();
+  const both = new OptionNode('Building Materials; Lumber');
+  p.list.options.push(both);
+  p.list.append(both);
+  report = await p.h.kit.fill(step('Building Materials; Lumber; Refrigerated Goods - Dairy'), { maxRounds: 4 });
+  assert.deepEqual(picked(p.list), ['Refrigerated Goods - Dairy', 'Building Materials; Lumber']);
+  assert.deepEqual([report.filled.length, report.failed.length], [1, 0]);
+  report = await p.h.kit.fill(step('Refrigerated Goods - Dairy; Building Materials; Lumber'), { maxRounds: 4 });
+  assert.deepEqual([report.kept.length, report.filled.length], [1, 0]);
 });

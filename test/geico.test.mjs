@@ -201,7 +201,7 @@ const STANDARDS = [
   'Uninsured motorist bodily injury (TNI: $100,000 CSL)', 'Payment plan (TNI: 11 Payments)',
   // FL live run 5, 2026-10-21 (W43-22, W43-23): GEICO in every state.
   'Fire and theft (TNI: Not Included)', 'Rental reimbursement (TNI: $40 Per Day, $1,200 Max)',
-  'Cargo: mobile homes, business documents or securities (TNI: No)', 'Cargo: live animals (TNI: No)',
+  'Cargo: mobile homes, business documents or securities (TNI: No unless the intake names them)', 'Cargo: live animals (TNI: No unless the intake names them)',
 ];
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
@@ -829,6 +829,9 @@ test('cargo: the intake\'s limit and deductible as one pair; never a default ded
     assert.equal(goodsFor({ 'operations.businessClass': cls, 'operations.whatHaul': haul }).value, 'Consumer Goods - Other Consumer Goods', `${cls} / ${haul}`);
   }
   assert.equal(goodsFor({ 'operations.businessClass': 'Auto Hauler', 'operations.whatHaul': null }).value, 'Aircraft/Auto/Boats - Automobiles');
+  // Auto parts aren't automobiles: with general freight, other consumer goods; alone, the agent's.
+  assert.equal(goodsFor({ 'operations.businessClass': 'Expediter', 'operations.whatHaul': 'General freight, auto parts' }).value, 'Consumer Goods - Other Consumer Goods');
+  agents(goodsFor({ 'operations.businessClass': 'Auto Parts Distributor', 'operations.whatHaul': 'Car parts' }));
   assert.equal(goodsFor({ trailers: [{ ...TRAILER, type: 'Reefer' }] }).value, REEFER_PICKS, 'a reefer listed: the reefer picks, before general freight');
   assert.equal(goodsFor({ 'operations.businessClass': 'Expediter', 'operations.whatHaul': 'Refrigerated produce' }).value, REEFER_PICKS);
   // No match ("cargo" isn't a car): the agent's, quoted, and open to the AI's suggestion (not manualOnly).
@@ -837,9 +840,15 @@ test('cargo: the intake\'s limit and deductible as one pair; never a default ded
   assert.match(other.note, /"Cargo and parcels"/);
   assert.equal(other.manualOnly, false);
   // Mobile homes, documents or securities, and live animals: TNI's No, unless the intake names them.
-  for (const [name, words] of [['Cargo: mobile homes, business documents or securities (TNI: No)', 'Mobile homes'], ['Cargo: live animals (TNI: No)', 'Livestock']]) {
+  for (const [name, words] of [['Cargo: mobile homes, business documents or securities (TNI: No unless the intake names them)', 'Mobile homes'], ['Cargo: live animals (TNI: No unless the intake names them)', 'Livestock']]) {
     assert.deepEqual([one(p, name).value, one(p, name).source], [false, 'standard'], name);
     agents(one(plan(with_({ 'operations.whatHaul': words })), name));
+  }
+  // Whole words only: paint pigments, horsepower parts and modular furniture name none of them.
+  for (const haul of ['Paint and pigments', 'Horsepower parts', 'Modular office furniture']) {
+    for (const name of ['Cargo: mobile homes, business documents or securities (TNI: No unless the intake names them)', 'Cargo: live animals (TNI: No unless the intake names them)']) {
+      assert.equal(one(plan(with_({ 'operations.whatHaul': haul })), name).value, false, `${haul}: ${name}`);
+    }
   }
   // Refrigeration breakdown: the intake's answer; blank is Yes with a reefer (TNI), else No.
   const reefer = (changes) => one(plan(with_(changes)), 'Refrigeration breakdown (Yes with a reefer)');

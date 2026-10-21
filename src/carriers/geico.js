@@ -531,9 +531,9 @@ const isMover = (r) => /^household\s+goods\s+mover$/i.test(String(r.operations.b
 // its business class and what they haul.
 const freightWords = (r) => [r.operations.businessClass, r.operations.whatHaul].filter(Boolean).join(' / ');
 // Mobile homes, business documents or securities, and live animals: TNI's No, unless the intake names
-// them, when they are the agent's.
-const MOBILE_HOMES = /mobile\s*homes?|modular|business\s*documents?|securities/i;
-const LIVE_ANIMALS = /live\s*animals?|livestock|cattle|horses?|hogs?|pigs?|sheep|goats?/i;
+// them (whole words: "pigments" names no pigs), when they are the agent's.
+const MOBILE_HOMES = /\b(?:mobile\s*homes?|modular\s*(?:homes?|buildings?)|business\s*documents?|securities)\b/i;
+const LIVE_ANIMALS = /\b(?:live\s*animals?|livestock|cattle|horses?|hogs?|pigs?|sheep|goats?)\b/i;
 const cargoNo = (words, what) => ({
   source: (r) => (words.test(freightWords(r)) ? 'fact' : 'standard'),
   value: (r) => (words.test(freightWords(r)) ? null : false),
@@ -546,7 +546,8 @@ const cargoNo = (words, what) => ({
 const COMMODITIES = [
   { test: (r) => hasReefer(r) || /reefer|refrigerat/i.test(freightWords(r)),
     picks: ['Consumer Goods - Pharmaceuticals (Over The Counter)', 'Food & Beverage - Other Food & Beverages', 'Refrigerated Goods - Dairy', 'Refrigerated Goods - Frozen Seafood'] },
-  { test: (r) => /\bauto(?:mobile)?s?\b|\bcar\s*haul|\bcars?\b/i.test(freightWords(r)), picks: ['Aircraft/Auto/Boats - Automobiles'] },
+  // Cars themselves, never their parts or accessories ("auto parts" is general freight or the agent's).
+  { test: (r) => /\b(?:auto(?:mobile)?s?|cars?)\b(?!\s*(?:parts?|accessories)\b)|\bcar\s*haul/i.test(freightWords(r)), picks: ['Aircraft/Auto/Boats - Automobiles'] },
   { test: (r) => /general\s*freight|freight\s*haul|consumer\s*goods|dry\s*freight|^\s*general\s*$/i.test(freightWords(r))
       || [r.operations.businessClass, r.operations.whatHaul].some((v) => /^\s*general\s*$/i.test(String(v ?? ''))),
     picks: ['Consumer Goods - Other Consumer Goods'] },
@@ -958,12 +959,12 @@ export const geico = {
       { field: 'GiveMtcEligibleRequireCoverageYesNo', ask: 'Does the customer require Motor Truck Cargo Coverage?', path: 'coverage.cargo', name: 'Motor truck cargo wanted', kind: 'bool', note: cargoNote },
       // TNI's No unless the intake's class or haul names them (W43-23).
       { field: 'GiveMtcRequireCoverageForMobileHomesYesNo', ask: 'Does the customer require coverage for mobile or modular homes or buildings, business documents, or non-negotiable securities?',
-        name: 'Cargo: mobile homes, business documents or securities (TNI: No)', kind: 'bool', ...cargoNo(MOBILE_HOMES, 'mobile or modular homes, business documents or securities') },
+        name: 'Cargo: mobile homes, business documents or securities (TNI: No unless the intake names them)', kind: 'bool', ...cargoNo(MOBILE_HOMES, 'mobile or modular homes, business documents or securities') },
       // A household goods mover hauls household goods: Yes. Anything else is the agent's (No isn't derivable).
       { field: 'GiveMtcRequireCoverageForBusinessDocumentYesNo', ask: 'Will the customer be hauling household goods or cotton that was ginned within 72 hours?', name: 'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover)',
         kind: 'bool', source: (r) => (isMover(r) ? 'derived' : 'fact'), value: (r) => (isMover(r) ? true : null),
         note: (r) => (isMover(r) ? null : 'Whether they haul household goods or cotton ginned within 72 hours isn\'t on the intake: answer it yourself.') },
-      { field: 'GiveMtcDoesTransportLiveAnimalsYesNo', name: 'Cargo: live animals (TNI: No)', kind: 'bool', ...cargoNo(LIVE_ANIMALS, 'live animals') },
+      { field: 'GiveMtcDoesTransportLiveAnimalsYesNo', name: 'Cargo: live animals (TNI: No unless the intake names them)', kind: 'bool', ...cargoNo(LIVE_ANIMALS, 'live animals') },
       { field: 'GiveMtcRequireCoverageForRefrigerationBreakdownYesNo', ask: 'Does the customer require refrigeration breakdown coverage?', path: 'coverage.reeferBreakdown', name: 'Refrigeration breakdown (Yes with a reefer)', kind: 'bool',
         source: reeferSource, value: reeferBreakdown, note: reeferNote },
       // Up to four, from what they haul (TNI, as on Progressive: W43-23); with no match, the AI may
