@@ -1740,7 +1740,7 @@ async function autoFill(page) {
     // Honor the latest switch after preparation, and log the same value used by the kit. The unit the
     // fill adds (pickUnitToAdd) has its "+" and chooser Next clicked only with it on (`click`).
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
-    const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance) } } : ctx.active);
+    const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
@@ -2604,7 +2604,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
-  let plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance) } } : ctx.active);
+  let plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
   // Step 2 shows how far it is and its Stop; step 3 waits for the new report (the last one stays
@@ -2628,7 +2628,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     // Honor the latest switch after preparation, and log the same value used by the kit.
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
     // The add helpers are clicked only with the switch on now.
-    if (ctx.adding) plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance) } } : ctx.active);
+    if (ctx.adding) plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
     if (state.fillingFor?.run === ctx.run && state.fillingFor.stopping) {
       tabMaps(tabId).autoPaused = true;
@@ -2776,7 +2776,7 @@ async function pickUnitToAdd(carrier, ctx) {
     persistDoneActions(ctx.tabId, state.doneActions);
   }
   if (!next.adding) return;
-  ctx.adding = next.adding;
+  ctx.adding = { ...next.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance) };
   const { list, index } = next.adding;
   if (next.move && state.active[list] !== index) {
     state.active[list] = index;
