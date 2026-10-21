@@ -4413,11 +4413,11 @@ test('a unit added but never entered is said on its list, not on the unit\'s own
   const actions = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [
     { id: 'addVehicle', token: 'addIcon', within: 'li.add-state', scope: 'vehicle', doneWhen: (r, a) => [`vehicleEntered:${a.vehicles}`], unfinished },
   ] }, { vehicles: 1 }).filter((s) => s.kind === 'action');
-  const run = async ({ list, entered = false }) => {
+  const run = async ({ list, entered = false, disabled = false }) => {
     const h = harness({ pathname: '/quote' });
     if (list) {
       const row = new FakeNode('li', { className: 'add-state' });
-      row.append(new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '0' } }));
+      row.append(new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '0', ...(disabled ? { 'aria-disabled': 'true' } : {}) } }));
       h.document.body.append(row);
     }
     const report = await h.kit.fill(actions, { maxRounds: 3, doneActions: ['addVehicle:1', ...(entered ? ['vehicleEntered:1'] : [])] });
@@ -4426,6 +4426,8 @@ test('a unit added but never entered is said on its list, not on the unit\'s own
   assert.deepEqual(plain(await run({ list: true })), [unfinished]);
   assert.deepEqual(plain(await run({ list: false })), [], 'the form, not the list');
   assert.deepEqual(plain(await run({ list: true, entered: true })), []);
+  // GEICO greys the "+" out (its unit cap): still the list, still said.
+  assert.deepEqual(plain(await run({ list: true, disabled: true })), [unfinished]);
 });
 
 test('GEICO spinners keep the page busy while they show', () => {

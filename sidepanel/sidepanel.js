@@ -4,6 +4,7 @@ import { sourcePlace } from '../src/intake-source.js';
 import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
+import { unitListSpecs, unitToAdd } from '../src/units.js';
 import { carrierForUrl, quoteProgress } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
@@ -1726,12 +1727,12 @@ async function autoFill(page) {
     if (!fillCurrent(ctx)) return;
     // The list page may have picked the next vehicle or driver: the plan is for that one.
     ctx.active = { ...state.active };
-    // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
-    const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
+    // Honor the latest switch after preparation, and log the same value used by the kit. The unit the
+    // fill adds (pickUnitToAdd) has its "+" and chooser Next clicked only with it on (`click`).
+    ctx.settings.autoAdvance = !!$('auto-advance').checked;
+    const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!ctx.settings?.autoAdvance } } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
-    // Honor the latest switch after preparation, and log the same value used by the kit.
-    ctx.settings.autoAdvance = !!$('auto-advance').checked;
     const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true }, ctx.settings.autoAdvance, ctx.active);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -2592,7 +2593,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
-  const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
+  let plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!ctx.settings?.autoAdvance } } : ctx.active);
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
   // Step 2 shows how far it is and its Stop; step 3 waits for the new report (the last one stays
@@ -2615,6 +2616,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     // have released some), never the tab in front.
     // Honor the latest switch after preparation, and log the same value used by the kit.
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
+    // The add helpers are clicked only with the switch on now.
+    if (ctx.adding) plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!ctx.settings?.autoAdvance } } : ctx.active);
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
     if (state.fillingFor?.run === ctx.run && state.fillingFor.stopping) {
       tabMaps(tabId).autoPaused = true;
@@ -2727,26 +2730,19 @@ async function pickUnitForm(carrier, ctx) {
 }
 
 // Where one address shows the quote's unit lists on a step (carrier.unitLists: GEICO's Vehicles and
-// Trailers, Drivers), the unit the fill adds next (`ctx.adding`: { list, index, click }, for the
-// plan: the chooser's answer and the add helpers), by the intake's order (vehicles, then trailers).
-// A unit is on the quote once a fill answered a form for it (state.unitForms: its form was left to
-// show the list again) or the list shows it (its VIN; a driver's first and last name on one line,
-// not one another driver's name also holds), marked `<unit>Entered:<i>` while the list is on screen,
-// as Progressive's are. The driver GEICO lists itself (listedDriver) is never added. No unit is
-// added while the list holds as many units as the intake lists or more (one the agent added by hand,
-// or GEICO itself). With no unit form on screen (the list, the chooser, the owner's own forms) the
-// picker moves to that unit, so the plan is for it. `click` only with "Click Continue when the page
-// is done" on (the setting when the fill began): off, the chooser is answered and the agent clicks.
+// Trailers, Drivers), the unit the fill adds next (`ctx.adding`: { list, index }, for the plan: the
+// chooser's answer and the add helpers), read from the lists and chosen by src/units.js unitToAdd:
+// the intake's next unit no fill answered a form for and the list doesn't show (marked
+// `<unit>Entered:<i>` while the list is on screen), never the driver GEICO lists itself, none while
+// the list holds as many units as the intake, and none the list can't be read for while it has a
+// row no intake unit is known to be on (it may be that one, added by hand). With no unit form on
+// screen (the list, the chooser, the owner's own forms) the picker moves to that unit, so the plan
+// is for it.
 async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   const record = ctx.intake.record ?? {};
-  const vin = (u) => String(u?.vin ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const words = (d) => [d?.first, d?.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
-  const drivers = (record.drivers ?? []).map(words);
-  const idOf = (list, u, i) => (list !== 'drivers' ? vin(u)
-    : drivers.some((other, j) => j !== i && drivers[i].every((w) => other.includes(w))) ? [] : [u?.first, u?.last].filter(Boolean));
-  const specs = carrier.unitLists.map((s) => ({ ...s, items: s.lists.flatMap((list) => (record[list] ?? []).map((u, i) => idOf(list, u, i))) }));
+  const specs = unitListSpecs(carrier, record);
   let seen = null;
   try {
     const frames = await runKit(ctx.tabId, carrier, (specs) => {
@@ -2757,35 +2753,19 @@ async function pickUnitToAdd(carrier, ctx) {
     seen = frames.map((f) => f?.result).find((x) => x && Array.isArray(x.lists)) ?? null;
   } catch { return; }
   if (!seen || !fillCurrent(ctx)) return;
-  const step = knownStep(carrier, seen.step);
-  const at = specs.findIndex((s) => s.steps.includes(step));
-  if (at < 0) return;
-  const spec = specs[at];
-  const shown = seen.lists[at];
-  const marker = (list) => `${{ vehicles: 'vehicle', trailers: 'trailer', drivers: 'driver' }[list]}Entered`;
-  const listed = spec.lists.includes('drivers') ? carrier.listedDriver?.(record) ?? -1 : -1;
-  const bound = (list, i) => Object.values(state.unitForms?.[list] ?? {}).includes(i);
-  let offset = 0;
-  for (const list of spec.lists) {
-    (record[list] ?? []).forEach((_, i) => {
-      if (shown && (shown.shown[offset + i] || bound(list, i))) state.doneActions.add(`${marker(list)}:${i}`);
-    });
-    offset += record[list]?.length ?? 0;
+  const next = unitToAdd(carrier, record, knownStep(carrier, seen.step), seen, { unitForms: state.unitForms, done: state.doneActions });
+  if (!next) return;
+  if (next.marks.some((id) => !state.doneActions.has(id))) {
+    next.marks.forEach((id) => state.doneActions.add(id));
+    persistDoneActions(ctx.tabId, state.doneActions);
   }
-  if (shown) persistDoneActions(ctx.tabId, state.doneActions);
-  const entered = (list, i) => i === listed || bound(list, i) || state.doneActions.has(`${marker(list)}:${i}`);
-  const total = spec.lists.reduce((n, list) => n + (record[list]?.length ?? 0), 0);
-  if (shown && shown.rows >= total) return;
-  for (const list of spec.lists) {
-    const index = (record[list] ?? []).findIndex((_, i) => !entered(list, i));
-    if (index < 0) continue;
-    ctx.adding = { list, index, click: !!ctx.settings?.autoAdvance };
-    if (Array.isArray(seen.forms) && !seen.forms.length && state.active[list] !== index) {
-      state.active[list] = index;
-      await save();
-      if (fillCurrent(ctx)) renderPickers();
-    }
-    return;
+  if (!next.adding) return;
+  ctx.adding = next.adding;
+  const { list, index } = next.adding;
+  if (next.move && state.active[list] !== index) {
+    state.active[list] = index;
+    await save();
+    if (fillCurrent(ctx)) renderPickers();
   }
 }
 

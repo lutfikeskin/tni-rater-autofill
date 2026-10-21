@@ -541,9 +541,12 @@ const addUnit = (list, listSelector, how) => ({
   doneWhen: (r, a) => [`${UNIT[list][0]}Entered:${a[list] ?? 0}`],
   unfinished: (r, a) => `The "+" was clicked for ${UNIT[list][0]} ${(a[list] ?? 0) + 1} of the intake, but no form was filled for it and it isn't on the list: add it yourself (${how}), then fill.`,
 });
+// The chooser's Next only after the fill's own "+" for that unit: a chooser the agent opened is
+// answered (the agent may change it), and its Next is the agent's.
 const chooseUnit = (list) => ({
   id: `choose${UNIT[list][1]}`, steps: [VEHICLES], text: '^next$', within: CHOOSER_BUTTONS, moveOn: true,
-  loads: true, verify: 'revealed', after: ['geico.qGiveVehicleOrTrailer'], scope: UNIT[list][0], when: adds(list),
+  loads: true, verify: 'revealed', after: ['geico.qGiveVehicleOrTrailer'], afterActions: (r, a) => [`add${UNIT[list][1]}:${a[list] ?? 0}`],
+  scope: UNIT[list][0], when: adds(list),
 });
 
 export const geico = {

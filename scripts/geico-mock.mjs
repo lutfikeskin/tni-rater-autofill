@@ -39,6 +39,7 @@ import { chromium } from 'playwright';
 import { buildPlan } from '../src/plan.js';
 import { geico } from '../src/carriers/geico.js';
 import { knownStep } from '../src/usage.js';
+import { unitListSpecs, unitToAdd } from '../src/units.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
@@ -266,45 +267,23 @@ function skipBy() {
     stepUnits: Object.fromEntries([...geico.vehicleSteps.map((s) => [s, 'vehicles']), ...geico.driverSteps.map((s) => [s, 'drivers'])]),
   };
 }
-// The unit the fill adds (sidepanel.js pickUnitToAdd): on GEICO's unit lists, the intake's next
-// vehicle, then trailer (or driver; never the owner GEICO lists), that no fill answered a form for and
-// the list doesn't show (marked `<unit>Entered:<i>` while the list is on screen), unless the list holds
-// as many units as the intake or more. With no unit form on screen the picker moves to it. `click`
-// with "Click Continue when the page is done" on (settings.autoAdvance).
+// The unit the fill adds (sidepanel.js pickUnitToAdd, chosen by the same src/units.js unitToAdd), with
+// the picker moved to it when no unit form is on screen. `click` with "Click Continue when the page
+// is done" on (settings.autoAdvance, read as the kit is called).
 const settings = { autoAdvance: true };
 async function pickUnitToAdd() {
-  const vin = (u) => String(u?.vin ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const words = (d) => [d?.first, d?.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
-  const drivers = (record.drivers ?? []).map(words);
-  const idOf = (list, u, i) => (list !== 'drivers' ? vin(u)
-    : drivers.some((other, j) => j !== i && drivers[i].every((w) => other.includes(w))) ? [] : [u?.first, u?.last].filter(Boolean));
-  const specs = geico.unitLists.map((s) => ({ ...s, items: s.lists.flatMap((list) => (record[list] ?? []).map((u, i) => idOf(list, u, i))) }));
+  const specs = unitListSpecs(geico, record);
   const seen = await inWorld(`(() => { const kit = globalThis.__raterKit; const specs = ${JSON.stringify(specs.map(({ selector, items }) => ({ selector, items })))};
     return { step: kit.step(), forms: kit.unitFormsNow(), lists: specs.map((s) => kit.unitList(s.selector, s.items)) }; })()`);
-  const at = specs.findIndex((s) => s.steps.includes(knownStep(geico, seen.step)));
-  if (at < 0) return null;
-  const spec = specs[at];
-  const shown = seen.lists[at];
-  const marker = (list) => `${{ vehicles: 'vehicle', trailers: 'trailer', drivers: 'driver' }[list]}Entered`;
-  const listed = spec.lists.includes('drivers') ? geico.listedDriver(record) : -1;
-  const bound = (list, i) => Object.values(unitForms[list] ?? {}).includes(i);
-  let offset = 0;
-  for (const list of spec.lists) {
-    (record[list] ?? []).forEach((_, i) => { if (shown && (shown.shown[offset + i] || bound(list, i))) doneActions.add(`${marker(list)}:${i}`); });
-    offset += record[list]?.length ?? 0;
+  const next = unitToAdd(geico, record, knownStep(geico, seen.step), seen, { unitForms, done: doneActions });
+  next?.marks.forEach((id) => doneActions.add(id));
+  if (!next?.adding) return null;
+  const { list, index } = next.adding;
+  if (next.move && active[list] !== index) {
+    active[list] = index;
+    lines.push(`  (the panel moved to ${list.slice(0, -1)} ${index + 1}: the next to add)`);
   }
-  const entered = (list, i) => i === listed || bound(list, i) || doneActions.has(`${marker(list)}:${i}`);
-  if (shown && shown.rows >= spec.lists.reduce((n, list) => n + (record[list]?.length ?? 0), 0)) return null;
-  for (const list of spec.lists) {
-    const index = (record[list] ?? []).findIndex((_, i) => !entered(list, i));
-    if (index < 0) continue;
-    if (Array.isArray(seen.forms) && !seen.forms.length && active[list] !== index) {
-      active[list] = index;
-      lines.push(`  (the panel moved to ${list.slice(0, -1)} ${index + 1}: the next to add)`);
-    }
-    return { list, index, click: settings.autoAdvance };
-  }
-  return null;
+  return { list, index, click: settings.autoAdvance };
 }
 
 // Picking unit `index` of `list` (renderPickers / releaseUnitForms): only the forms bound to it are let

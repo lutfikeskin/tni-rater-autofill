@@ -6,6 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { assistContextKey, stableJson } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
+import { unitToAdd, unitListSpecs } from '../src/units.js';
 import { intakeNotes } from '../src/normalize.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
@@ -5589,6 +5590,7 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
       persistDoneActions: () => { calls.persisted++; },
       save: async () => { calls.saved++; },
       renderPickers: () => { calls.rendered++; },
+      unitToAdd, unitListSpecs,
     };
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
     const ctx = { tabId: 4, intake, revision: 1, settings: { autoAdvance } };
@@ -5603,32 +5605,37 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
   };
   // The vehicle list after vehicle 1's form (filled on form A): vehicle 2 is next, and the picker moves to it.
   let out = await run({ lists: [{ rows: 1, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0 } }, record });
-  assert.deepEqual(out.adding, { list: 'vehicles', index: 1, click: true });
+  assert.deepEqual(out.adding, { list: 'vehicles', index: 1 });
   assert.deepEqual([out.active.vehicles, out.saved, out.rendered], [1, 1, 1]);
   assert.deepEqual(out.done, ['vehicleEntered:0']);
   // Only the VINs, names and the selectors go to the page.
   assert.deepEqual(out.asked, [{ selector: '#summaryPage-AddCommercialVehicle', items: [VIN1, '', ''] }, { selector: '#summaryPage-AddDriver', items: [['Sample', 'Driver'], ['Casey', 'Example']] }]);
   // Both vehicles in (vehicle 2 filled on form B): the trailer, Trailer on the chooser.
   out = await run({ lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record });
-  assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: true });
-  // The setting off: the same unit, for the chooser's answer only.
+  assert.deepEqual(out.adding, { list: 'trailers', index: 0 });
+  // The setting off: the same unit (the plan clicks nothing for it: `click` is the switch as the kit is called).
   out = await run({ lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record, autoAdvance: false });
-  assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: false });
+  assert.deepEqual(out.adding, { list: 'trailers', index: 0 });
   // As many units listed as the intake has (one added by hand, with no fill): nothing is added.
   out = await run({ lists: [{ rows: 3, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0 } }, record });
   assert.equal(out.adding, null);
   // The chooser (no list, no form on screen): the unit from what was recorded, the picker moved.
   out = await run({ lists: [null, null], done: ['vehicleEntered:0'], record });
-  assert.deepEqual([out.adding, out.active.vehicles, out.persisted], [{ list: 'vehicles', index: 1, click: true }, 1, 0]);
+  assert.deepEqual([out.adding, out.active.vehicles, out.persisted], [{ list: 'vehicles', index: 1 }, 1, 0]);
   // A unit form on screen: the unit is named, the picker left to pickUnitForm.
   out = await run({ lists: [null, null], forms: [{ list: 'vehicles', id: 'B', blank: true }], done: ['vehicleEntered:0'], record });
   assert.deepEqual([out.adding?.index, out.active.vehicles, out.saved], [1, 0, 0]);
   // Drivers: the owner GEICO lists (driver 1) is never added; driver 2 is, until the list shows them.
   out = await run({ step: 'Drivers & Incidents', lists: [null, { rows: 1, shown: [true, false] }], record });
-  assert.deepEqual([out.adding, out.active.drivers], [{ list: 'drivers', index: 1, click: true }, 1]);
+  assert.deepEqual([out.adding, out.active.drivers], [{ list: 'drivers', index: 1 }, 1]);
   out = await run({ step: 'Drivers & Incidents', lists: [null, { rows: 1, shown: [true, true] }], record });
   assert.equal(out.adding, null);
   assert.deepEqual(out.done, ['driverEntered:0', 'driverEntered:1']);
+  // A row the panel can't account for (one added by hand) while the next unit can't be read on the
+  // list (no VIN): it may be that row, so it is left to the agent, never added twice.
+  const noVin = { ...record, trailers: [{ vin: null }, { vin: null }] };
+  out = await run({ lists: [{ rows: 3, shown: [true, false, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record: noVin });
+  assert.deepEqual([out.adding, out.done, out.persisted], [null, ['trailerEntered:0', 'trailerEntered:1', 'vehicleEntered:0', 'vehicleEntered:1'], 1]);
   // Another step, or a carrier without unit lists: nothing.
   for (const args of [{ step: 'Additional Business Info', lists: [null, null], record }]) assert.equal((await run(args)).adding, null);
 });

@@ -605,6 +605,8 @@ test('adding units: the chooser answers the unit the panel adds; its "+" and Nex
   assert.deepEqual(add.doneWhen, ['vehicleEntered:1']);
   assert.match(add.unfinished, /vehicle 2 of the intake.*\+, Vehicle, Next/);
   assert.deepEqual([next.action, next.text, next.moveOn, next.after, next.steps], ['chooseVehicle:1', '^next$', true, ['geico.qGiveVehicleOrTrailer'], [VEH]]);
+  // Only after the fill's own "+" for that unit: a chooser the agent opened is answered, its Next theirs.
+  assert.deepEqual(next.afterActions, ['addVehicle:1']);
   assert.match(next.within, /VehicleOrTrailerCollectAdaptiveActionSet_Container/);
   // The picker isn't on the unit being added (a stale pick): nothing clicked.
   assert.deepEqual(actions({ ...on, vehicles: 0 }), []);

@@ -2303,7 +2303,7 @@
       // own form, which one address draws in its place.
       for (const a of actions) {
         if (!a.unfinished || !a.doneWhen?.length || !clicked.has(a.action) || a.doneWhen.some((id) => clicked.has(id))
-          || !actionHere(a) || (a.within && !findButton(a))) continue;
+          || !actionHere(a) || (a.within && !findButton(a, { disabledToo: true }))) continue;
         report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.unfinished });
       }
     }
