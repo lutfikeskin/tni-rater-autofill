@@ -527,6 +527,32 @@ const cargoNote = (r) => (typeof r.coverage?.cargo !== 'boolean' && r.coverage?.
   ? 'The intake gives a cargo limit but doesn\'t tick cargo coverage: answer it yourself.' : null);
 const isMover = (r) => /^household\s+goods\s+mover$/i.test(String(r.operations.businessClass ?? '').trim());
 
+// Motor truck cargo (TNI, FL live run 5, 2026-10-21, W43-23). What the intake says about the freight:
+// its business class and what they haul.
+const freightWords = (r) => [r.operations.businessClass, r.operations.whatHaul].filter(Boolean).join(' / ');
+// Mobile homes, business documents or securities, and live animals: TNI's No, unless the intake names
+// them, when they are the agent's.
+const MOBILE_HOMES = /mobile\s*homes?|modular|business\s*documents?|securities/i;
+const LIVE_ANIMALS = /live\s*animals?|livestock|cattle|horses?|hogs?|pigs?|sheep|goats?/i;
+const cargoNo = (words, what) => ({
+  source: (r) => (words.test(freightWords(r)) ? 'fact' : 'standard'),
+  value: (r) => (words.test(freightWords(r)) ? null : false),
+  note: (r) => (words.test(freightWords(r)) ? `The intake mentions ${what} (${quote(freightWords(r), 80)}): answer it yourself.` : null),
+});
+// The commodities, GEICO's option texts joined by "; " (a list taking several): a reefer (one
+// listed, or the freight refrigerated) hauls pharmaceuticals, food and beverages, dairy and frozen
+// seafood; an auto hauler automobiles; general freight (General Freight Hauler, Consumer Goods,
+// General Freight, Dry Freight, General) other consumer goods, as on Progressive. No match: null.
+const COMMODITIES = [
+  { test: (r) => hasReefer(r) || /reefer|refrigerat/i.test(freightWords(r)),
+    picks: ['Consumer Goods - Pharmaceuticals (Over The Counter)', 'Food & Beverage - Other Food & Beverages', 'Refrigerated Goods - Dairy', 'Refrigerated Goods - Frozen Seafood'] },
+  { test: (r) => /\bauto(?:mobile)?s?\b|\bcar\s*haul|\bcars?\b/i.test(freightWords(r)), picks: ['Aircraft/Auto/Boats - Automobiles'] },
+  { test: (r) => /general\s*freight|freight\s*haul|consumer\s*goods|dry\s*freight|^\s*general\s*$/i.test(freightWords(r))
+      || [r.operations.businessClass, r.operations.whatHaul].some((v) => /^\s*general\s*$/i.test(String(v ?? ''))),
+    picks: ['Consumer Goods - Other Consumer Goods'] },
+];
+const commodities = (r) => COMMODITIES.find((c) => c.test(r))?.picks.join('; ') ?? null;
+
 // Motor truck general liability: the intake's GL request (coverage.gl, never coverage.hasGl, GL the
 // client already has), and its limit when GEICO lists it. TNI's $1M/$2M default for a request
 // without a limit is recorded for Progressive only.
@@ -542,6 +568,10 @@ const glLimitNote = (r) => (glLimit(r) ? null
 // (emergency, and heavy vehicle on a heavy truck: TNI, FL live run 4, 2026-10-21, W43-17), the rest
 // the agent's.
 const ROAD_SERVICE = 'I accept this coverage';
+// Fire and theft and rental reimbursement on every vehicle (TNI, FL live run 5, 2026-10-21, W43-22):
+// rental needs comprehensive and collision, so it follows them (physicalDamageSource).
+const FIRE_THEFT = 'Not Included';
+const RENTAL = '$40 Per Day, $1,200 Max';
 const ROW_COVERAGES = [['COMP', 'Comprehensive'], ['COLL', 'Collision'], ['FT', 'Fire and theft'], ['Rental', 'Rental reimbursement'],
   ['RRWDT', 'Rental reimbursement with downtime'], ['ERS', 'Emergency road service'], ['HVRS', 'Heavy vehicle road service']];
 
@@ -913,7 +943,11 @@ export const geico = {
         ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, kind: 'choice', source: physicalDamageSource, value: () => DEDUCTIBLE, note: physicalDamageNote(name.toLowerCase()) }
         : ['ERS', 'HVRS'].includes(suffix)
           ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name: `${name} (TNI: accepted)`, kind: 'choice', source: 'standard', value: () => ROAD_SERVICE }
-          : { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })),
+          : suffix === 'FT'
+            ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name: `${name} (TNI: ${FIRE_THEFT})`, kind: 'choice', source: 'standard', value: () => FIRE_THEFT }
+            : suffix === 'Rental'
+              ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name: `${name} (TNI: ${RENTAL})`, kind: 'choice', source: physicalDamageSource, value: () => RENTAL, note: physicalDamageNote(name.toLowerCase()) }
+              : { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, source: 'fact' })),
       // The same customization questions as on the vehicle form, per vehicle. Found by their text:
       // their rows don't name the vehicle, so with several vehicles they are the agent's.
       { q: 'CustomizationValue', ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', scope: 'vehicle', name: 'Customization value (the attached equipment value)',
@@ -922,17 +956,21 @@ export const geico = {
       // Motor truck cargo. The stems name other things than they ask: "…BusinessDocument…" is
       // household goods or ginned cotton, "…MobileHomes…" also business documents and securities.
       { field: 'GiveMtcEligibleRequireCoverageYesNo', ask: 'Does the customer require Motor Truck Cargo Coverage?', path: 'coverage.cargo', name: 'Motor truck cargo wanted', kind: 'bool', note: cargoNote },
-      fact('GiveMtcRequireCoverageForMobileHomesYesNo', 'Cargo: mobile homes, business documents or securities', { ask: 'Does the customer require coverage for mobile or modular homes or buildings, business documents, or non-negotiable securities?' }),
+      // TNI's No unless the intake's class or haul names them (W43-23).
+      { field: 'GiveMtcRequireCoverageForMobileHomesYesNo', ask: 'Does the customer require coverage for mobile or modular homes or buildings, business documents, or non-negotiable securities?',
+        name: 'Cargo: mobile homes, business documents or securities (TNI: No)', kind: 'bool', ...cargoNo(MOBILE_HOMES, 'mobile or modular homes, business documents or securities') },
       // A household goods mover hauls household goods: Yes. Anything else is the agent's (No isn't derivable).
       { field: 'GiveMtcRequireCoverageForBusinessDocumentYesNo', ask: 'Will the customer be hauling household goods or cotton that was ginned within 72 hours?', name: 'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover)',
         kind: 'bool', source: (r) => (isMover(r) ? 'derived' : 'fact'), value: (r) => (isMover(r) ? true : null),
         note: (r) => (isMover(r) ? null : 'Whether they haul household goods or cotton ginned within 72 hours isn\'t on the intake: answer it yourself.') },
-      fact('GiveMtcDoesTransportLiveAnimalsYesNo', 'Cargo: live animals'),
+      { field: 'GiveMtcDoesTransportLiveAnimalsYesNo', name: 'Cargo: live animals (TNI: No)', kind: 'bool', ...cargoNo(LIVE_ANIMALS, 'live animals') },
       { field: 'GiveMtcRequireCoverageForRefrigerationBreakdownYesNo', ask: 'Does the customer require refrigeration breakdown coverage?', path: 'coverage.reeferBreakdown', name: 'Refrigeration breakdown (Yes with a reefer)', kind: 'bool',
         source: reeferSource, value: reeferBreakdown, note: reeferNote },
-      // A list the fill can't set (several picks): the agent's.
-      fact('GiveMtcHaulingCommoditiesCollect', 'Cargo commodities', { ask: 'Select up to four commodities the customer hauls the most',
-        note: (r) => `Pick up to four commodities yourself${r.operations.whatHaul ? `: the intake says they haul ${quote(r.operations.whatHaul)}` : ''}.` }),
+      // Up to four, from what they haul (TNI, as on Progressive: W43-23); with no match, the AI may
+      // suggest one for the agent's approval (not a client fact: no manualOnly).
+      { field: 'GiveMtcHaulingCommoditiesCollect', ask: 'Select up to four commodities the customer hauls the most', name: 'Cargo commodities', kind: 'choice',
+        source: 'derived', value: commodities,
+        note: (r) => (commodities(r) ? null : `Pick up to four commodities yourself${r.operations.whatHaul ? `: the intake says they haul ${quote(r.operations.whatHaul)}` : ''}.`) },
       { q: 'CargoLimit', ask: 'Motor Truck Cargo', control: 'select', name: 'Motor truck cargo limit and deductible', kind: 'choice', source: 'derived', value: cargoChoice, note: cargoLimitNote },
       { field: 'GiveTrailerInterchangeEligibleRequireCoverageYesNo', path: 'trailerInfo.interchange', name: 'Trailer interchange', kind: 'bool' },
       // Hired and non-owned autos: interchange or rented trailers don't make them Yes.

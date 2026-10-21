@@ -4456,16 +4456,16 @@ test("GEICO's premium summary and its stale-rates wording are recognized", async
   assert.equal(notice.bill._clicked, undefined, 'amounts under the recalculate notice are not current');
 });
 
-test('a list taking several choices is never set (the agent picks them), and reads as all its picks', async () => {
+test('a list taking several choices reads as all its picks, and an answer not offered leaves them', async () => {
   const h = harness({ pathname: '/quote' });
   const goods = new SelectNode(['Sand', 'Gravel', 'Steel'], { id: 'Id_GiveMtcHaulingCommoditiesCollect_44444', name: 'Id_GiveMtcHaulingCommoditiesCollect_44444', ariaLabel: 'Select up to four commodities' });
   goods.multiple = true;
-  goods.options[0].picked = goods.options[1].picked = true;
-  Object.defineProperty(goods, 'selectedOptions', { get: () => goods.options.filter((o) => o.picked) });
+  goods.options[0].selected = goods.options[1].selected = true;
+  Object.defineProperty(goods, 'selectedOptions', { get: () => goods.options.filter((o) => o.selected) });
   h.document.body.append(goods);
-  const report = await h.kit.fill([{ id: 'goods', field: 'GiveMtcHaulingCommoditiesCollect', path: 'operations.commodities', name: 'Commodities', kind: 'choice', value: 'Steel' }], { maxRounds: 3, replaceChoices: true });
-  assert.deepEqual(plain(report.failed.map((x) => [x.key, x.reason, x.current])), [['ref:GiveMtcHaulingCommoditiesCollect', 'this list takes several choices: pick these yourself', 'Sand; Gravel']]);
-  assert.deepEqual(goods.options.map((o) => !!o.picked), [true, true, false]);
+  const report = await h.kit.fill([{ id: 'goods', field: 'GiveMtcHaulingCommoditiesCollect', path: 'operations.commodities', name: 'Commodities', kind: 'choice', value: 'Timber' }], { maxRounds: 3, replaceChoices: true });
+  assert.deepEqual(plain(report.failed.map((x) => [x.key, x.reason, x.current])), [['ref:GiveMtcHaulingCommoditiesCollect', 'no option matches "Timber"', 'Sand; Gravel']]);
+  assert.deepEqual(goods.options.map((o) => !!o.selected), [true, true, false]);
   assert.equal(goods.value, '');
 });
 
@@ -5584,4 +5584,44 @@ test('a list whose only option shows twice is still loading: waited for; a full 
   report = await h2.kit.fill([step], { maxRounds: 30 });
   assert.ok(Date.now() - t0 < 2000, 'no wait');
   assert.deepEqual(plain(report.failed.map((x) => x.reason)), ['no option matches "$1,000 deductible"']);
+});
+
+// FL live run 5, 2026-10-21 (W43-23, TNI): GEICO's "Select up to four commodities" is a list taking
+// several choices (a select2 <select multiple>). An answer names its options by their texts joined
+// by "; ": exactly those are picked, each must be offered, and the same picks in any order agree.
+class MultiSelectNode extends SelectNode {
+  constructor(options, props = {}) { super(options, props); this.multiple = true; }
+  get selectedOptions() { return this.options.filter((o) => o.selected); }
+}
+test('a list taking several choices gets exactly the answer\'s options, each offered', async () => {
+  const page = (picked = []) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Quote & Coverages');
+    const list = new MultiSelectNode(['Consumer Goods - Other Consumer Goods', 'Refrigerated Goods - Dairy', 'Refrigerated Goods - Frozen Seafood', 'Aircraft/Auto/Boats - Automobiles'],
+      { id: 'Id_GiveMtcHaulingCommoditiesCollect_30463', ariaLabel: 'Select up to four commodities the customer hauls the most' });
+    for (const o of list.options) o.selected = picked.includes(o.text);
+    let changes = 0;
+    list.addEventListener('change', () => { changes += 1; });
+    h.document.body.append(list);
+    return { h, list, changes: () => changes };
+  };
+  const step = (value) => [{ id: 'commodities', field: 'GiveMtcHaulingCommoditiesCollect', path: 'geico.qGiveMtcHaulingCommoditiesCollect', name: 'Cargo commodities', kind: 'choice', value }];
+  const picked = (list) => list.options.filter((o) => o.selected).map((o) => o.text);
+  let p = page();
+  let report = await p.h.kit.fill(step('Refrigerated Goods - Dairy; Refrigerated Goods - Frozen Seafood'), { maxRounds: 4 });
+  assert.deepEqual(picked(p.list), ['Refrigerated Goods - Dairy', 'Refrigerated Goods - Frozen Seafood']);
+  assert.deepEqual([report.filled.length, report.failed.length, p.changes()], [1, 0, 1]);
+  // One not offered: nothing picked, and the agent is told which.
+  p = page();
+  report = await p.h.kit.fill(step('Refrigerated Goods - Dairy; Consumer Goods - Pharmaceuticals (Over The Counter)'), { maxRounds: 4 });
+  assert.deepEqual(picked(p.list), []);
+  assert.match(report.failed[0]?.reason ?? '', /no option matches "Consumer Goods - Pharmaceuticals \(Over The Counter\)"/);
+  // Already the answer, in another order: kept, nothing fired.
+  p = page(['Refrigerated Goods - Frozen Seafood', 'Refrigerated Goods - Dairy']);
+  report = await p.h.kit.fill(step('Refrigerated Goods - Dairy; Refrigerated Goods - Frozen Seafood'), { maxRounds: 4 });
+  assert.deepEqual([report.kept.length, report.filled.length, p.changes()], [1, 0, 0]);
+  // One option (an AI suggestion the agent approves is one option): that one.
+  p = page();
+  await p.h.kit.fill(step('Aircraft/Auto/Boats - Automobiles'), { maxRounds: 4 });
+  assert.deepEqual(picked(p.list), ['Aircraft/Auto/Boats - Automobiles']);
 });

@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 75 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 77 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -371,6 +371,9 @@
     for (const c of out) c.vehicle = VEHICLE_LABEL.test(c.label ?? '') ? c.text : (c.row && rowVehicle.get(c.row)) || null;
     return out;
   }
+
+  // A several-choice answer's option texts ("a; b": W43-23).
+  const multiValue = (v) => String(v ?? '').split(/;\s*/).map(oneLine).filter(Boolean);
 
   function optionsOf(c) {
     if (c.options) return c.options;
@@ -1077,8 +1080,18 @@
     if (step.kind === 'search-select') return applySearchSelect(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
-    // A list taking several choices (GEICO's commodities): setting one value would drop the others.
-    if (c.kind === 'select' && c.el.multiple) return { ok: false, reason: 'this list takes several choices: pick these yourself' };
+    // A list taking several choices (GEICO's commodities: W43-23): exactly the answer's options,
+    // named by their texts joined by "; " (as selectedText reads them back), each of them offered.
+    if (c.kind === 'select' && c.el.multiple) {
+      const options = optionsOf(c);
+      const wanted = multiValue(step.value);
+      const picks = wanted.map((w) => options.find((o) => o.text.toLowerCase() === w.toLowerCase()));
+      if (!wanted.length || picks.some((o) => !o)) return noMatch({ ...step, value: wanted.filter((w, i) => !picks[i]).join('; ') || step.value }, options);
+      for (const o of options) o.el.selected = picks.includes(o);
+      c.el.dispatchEvent(new Event('input', { bubbles: true }));
+      c.el.dispatchEvent(new Event('change', { bubbles: true }));
+      return { ok: true, shown: picks.map((o) => o.text).join('; ') };
+    }
     if (c.kind === 'text') {
       const text = textFor(step, c);
       if (c.el.maxLength > 0 && text.length > c.el.maxLength) return { ok: false, reason: `value is longer than the field allows (${c.el.maxLength})` };
@@ -1261,6 +1274,11 @@
         return actual != null && wanted != null && actual === wanted;
       }
       return oneLine(c.el.value) === oneLine(textFor(step, c));
+    }
+    // A list taking several choices: the same options, in any order.
+    if (c.kind === 'select' && c.el.multiple) {
+      const set = (v) => multiValue(v).map((t) => t.toLowerCase()).sort().join('\n');
+      return set(selectedText(c)) !== '' && set(selectedText(c)) === set(step.value);
     }
     const current = selectedText(c);
     const opt = matchOption(optionsOf(c), step);
@@ -2971,5 +2989,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 75, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 77, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();
