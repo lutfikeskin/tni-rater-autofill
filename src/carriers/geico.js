@@ -631,9 +631,10 @@ export const geico = {
 
     // Quote & Coverages (TNI, FL live run 4, 2026-10-21). Motor Truck Cargo is a card under
     // "Optional 12 Mo. GEICO Commercial Policy Add-Ons", collapsed until its chevron is opened; its
-    // questions show one at a time after each answer (W43-16). Opened when the intake asks for cargo.
+    // questions show one at a time after each answer (W43-16). Opened when the intake asks for cargo,
+    // clicked once: its chevron toggles, so a second click (a retry of a slow card) would close it.
     { id: 'openCargo', steps: [COVERAGES], token: 'editIcon', within: CARGO_CARD, label: 'Motor Truck Cargo',
-      when: (r) => r.coverage?.cargo === true, unlessSelector: `${CARGO_CARD}.expanded`, verify: 'revealed' },
+      when: (r) => r.coverage?.cargo === true, unlessSelector: `${CARGO_CARD}.expanded` },
     // Then, once nothing on the step is left for the agent (`whenClear`), each once (W43-18):
     // Recalculate while the rates are out of date, View More Payment Plans for TNI's 11 Payments
     // (picked by its rule), and Print Quote Proposal once 11 Payments is chosen. Next stays the
