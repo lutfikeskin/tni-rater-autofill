@@ -689,12 +689,12 @@
     if (street && b.GiveStreet) street.value = b.GiveStreet;
     if (zip && b.GiveZip) { zip.value = b.GiveZip; cityFor(zip, { sync: true }); }
   }
+  ENTER['usdot-ask'] = () => { document.title = 'GEICO USDOT Number'; };
   ENTER['vehicle-form'] = prefillAddress;
   ENTER['trailer-form'] = prefillAddress;
   ENTER['vehicle-list'] = () => drawList(['vehicles', 'trailers']);
   ENTER['driver-list'] = () => drawList(['drivers']);
   ENTER['owner-driver'] = nameSpans;
-  ENTER['usdot-ask'] = () => { document.title = 'GEICO USDOT Number'; };
   ENTER.quote = () => { nameSpans(); vehicleRows(); reprice(); state.premium = oneLine(slot('rated')?.querySelector('p')?.textContent); };
   function summary() {
     const b = state.business;
