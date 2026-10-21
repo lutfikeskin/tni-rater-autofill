@@ -4641,13 +4641,50 @@ test('GEICO\'s Recalculate: answers kept, the fill goes on; never clicked again 
   assert.ok(waiting.blocked.some((x) => x.id === 'recalculate' && /nothing left for you/.test(x.why)));
 });
 
+// Review of #140: GEICO drew its own values 9 to 14 s after the fill's Recalculate (FL run 6), later
+// than the first check. The answers are watched until 15 s after the click before View More Payment
+// Plans; a change then is put back and red, as one at once. And only the changed answer leaves the
+// filled list: another field with its key keeps its entry.
+test('GEICO\'s Recalculate: a redraw seconds later is caught before View More; only the changed answer\'s entry goes (review of #140)', async () => {
+  const late = recalcPage({ redraw: ({ comp }) => { setTimeout(() => { comp.value = '$500 deductible'; }, 9000); } });
+  const report = await late.h.kit.fill(late.plan, { maxRounds: 12 });
+  assert.equal(late.recalcs, 1);
+  assert.equal(late.comp.value, '$1,000 deductible', 'put back');
+  assert.deepEqual(plain(report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
+  assert.match(report.failed[0].reason, /changed this answer when it recalculated, and the fill put it back/);
+  assert.equal(late.more._clicked, undefined, 'View More Payment Plans waits for the agent');
+  assert.deepEqual(plain([...report.filled, ...report.kept].map((x) => x.key)).sort(), ['cov:COLL#1', 'cov:ERS#1']);
+  // Nothing changes: View More Payment Plans once the watch is over, not before.
+  const quietPage = recalcPage();
+  let moreAt = null;
+  quietPage.more.onclick = () => { quietPage.more._clicked = 1; moreAt = clock.Date.now(); };
+  await quietPage.h.kit.fill(quietPage.plan, { maxRounds: 12 });
+  assert.equal(quietPage.more._clicked, 1);
+  assert.ok(moreAt - quietPage.clickedAt >= 15000, `View More clicked ${moreAt - quietPage.clickedAt} ms after Recalculate`);
+  // Two boxes with one field key (ref:GiveFoo), each its own step: GEICO changes the second; the
+  // first stays filled.
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const first = new SelectNode(['A', 'B'], { id: 'Id_GiveFoo_11', value: '' });
+  const second = new SelectNode(['A', 'B'], { id: 'Id_GiveFoo_22', value: '' });
+  h.document.body.append(first, second);
+  h.document.body.innerText = STALE;
+  const recalc = addButton(h, 'Recalculate');
+  recalc.onclick = () => { h.document.body.innerText = RATED; second.value = 'B'; };
+  const rules = [['first', '#Id_GiveFoo_11'], ['second', '#Id_GiveFoo_22']].map(([name, selector]) => ({ q: name, selector, steps: ['Quote & Coverages'], name, kind: 'choice', source: 'standard', value: () => 'A' }));
+  const plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules, actions: geico.actions.filter((a) => a.id === 'recalculate') });
+  const shared = await h.kit.fill(plan, { maxRounds: 12 });
+  assert.deepEqual(plain(shared.filled.map((x) => [x.key, x.name])), [['ref:GiveFoo', 'first']]);
+  assert.deepEqual(plain(shared.failed.map((x) => [x.key, x.name])), [['ref:GiveFoo', 'second'], [null, 'recalculate']]);
+});
+
 // W43-32 (TNI, 2026-10-21): with no 11 Payments among the plans View More Payment Plans shows (TX:
 // Pay In Full, 4 Payments Bi-Monthly Plan, 9 Payments), the plan with the most payments offered,
 // named in the report; Print follows it.
-function payPlanPage({ installments, inFull = true }) {
+function payPlanPage({ installments, inFull = true, checked = null }) {
   const h = harness({ pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
-  const groups = [...(inFull ? [gdsRadios('GivePayPlanV2', 52525, null, [['GEICO_PP_1Pay', 'Pay In Full']], { checked: 0 })] : []), gdsRadios('GivePayPlanV2', 52526, null, installments)];
+  const groups = [...(inFull ? [gdsRadios('GivePayPlanV2', 52525, null, [['GEICO_PP_1Pay', 'Pay In Full']], { checked: checked == null ? 0 : null })] : []), gdsRadios('GivePayPlanV2', 52526, null, installments, { checked })];
   h.document.body.append(...groups.map((g) => g.group));
   h.document.body.innerText = RATED;
   const more = addButton(h, 'View More Payment Plans');
@@ -4677,12 +4714,18 @@ test('GEICO\'s pay plan: 11 Payments, else the plan with the most payments offer
   assert.deepEqual(plain(usual.filled.map((x) => [x.shown, x.said ?? null])), [['11 Payments', null]]);
   assert.equal(fl.print._clicked, true);
   // View More Payment Plans clicked by an earlier fill (GEICO may have drawn the plans again since):
-  // not every plan may be shown, so it stays the agent's, and Print waits.
+  // not every plan may be shown, so it stays the agent's, and Print waits...
   const earlier = payPlanPage({ inFull: false, installments: [['GEICO_PP_1Pay', 'Pay In Full'], ['GEICO_PP_4Pay', '4 Payments Bi-Monthly Plan']] });
-  const left = await earlier.h.kit.fill(earlier.plan, { doneActions: ['morePayPlans'], maxRounds: 8 });
+  const left = await earlier.h.kit.fill(earlier.plan, { doneActions: ['morePayPlans'], replaceChoices: true, maxRounds: 8 });
   assert.deepEqual(plain(left.filled), []);
   assert.match(left.noData[0].note, /doesn't offer "11 Payments"/);
   assert.equal(earlier.print._clicked, undefined);
+  // ...unless the page already shows the plan with the most payments (review of #140: the TX fill
+  // after Print, or Fill this page, the 9 Payments the first fill picked): it agrees, nothing left.
+  const after = payPlanPage({ installments: [['GEICO_PP_4Pay', '4 Payments Bi-Monthly Plan'], ['GEICO_PP_9Pay', '9 Payments']], checked: 1 });
+  const again = await after.h.kit.fill(after.plan, { doneActions: ['morePayPlans', 'printProposal'], replaceChoices: true, maxRounds: 8 });
+  assert.deepEqual(plain([again.noData, again.failed, again.checks, again.actions]), [[], [], [], []]);
+  assert.equal(after.groups[1].hosts[1].hasAttribute('checked'), true, 'still 9 Payments');
 });
 
 test('a list taking several choices reads as all its picks, and an answer not offered leaves them', async () => {

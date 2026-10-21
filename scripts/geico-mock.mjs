@@ -927,6 +927,14 @@ async function noElevenPayments() {
   if (!Object.values(plans).includes('GEICO_PP_9Pay')) fail('Quote & Coverages without 11 Payments: 9 Payments is not the plan picked on the page');
   if (JSON.stringify(clicks) !== '["View More Payment Plans","Print Quote Proposal"]') fail(`Quote & Coverages without 11 Payments: the fill clicked [${clicks.join(', ')}], expected View More Payment Plans, then Print Quote Proposal`);
   for (const k of ['noData', 'failed', 'checks']) if (report[k]?.length) fail(`Quote & Coverages without 11 Payments: ${k} ${report[k].map((x) => x.label).join('; ')}`);
+  // A later fill of the quote (after Print, or Fill this page), with those clicks done: it agrees
+  // with the 9 Payments on the page and leaves nothing, clicking nothing (review of #140).
+  const doneActions = [...new Set(report.actions.map((a) => a.id))];
+  const later = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify({ ...options, skip, doneActions })})`);
+  lines.push(`## Quote & Coverages without 11 Payments, filled again · ${later.rounds} rounds · kept ${later.kept.map((x) => x.label).join(', ') || 'nothing'}`);
+  for (const k of ['noData', 'failed', 'checks']) if (later[k]?.length) fail(`Quote & Coverages without 11 Payments, filled again: ${k} ${later[k].map((x) => x.note ?? x.reason ?? x.label).join('; ')}`);
+  if (later.actions?.length) fail(`Quote & Coverages without 11 Payments, filled again: the fill clicked ${later.actions.map((a) => a.text).join(', ')}`);
+  if (!Object.values(await tx.evaluate(() => window.__geicoMock.values())).includes('GEICO_PP_9Pay')) fail('Quote & Coverages without 11 Payments, filled again: 9 Payments is no longer the plan picked');
   await tx.close();
 }
 try {

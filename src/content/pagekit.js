@@ -957,6 +957,10 @@
   const LOAD_QUIET_MS = 1000;
   const LOAD_HALT = 'The page was still loading after a minute: wait for it, then fill again.';
   // A helper clicked once a quote (`once`: GEICO's Recalculate, W43-31) whose result didn't show.
+  // How long after a helper that redraws answers (`keepAnswers`: GEICO's Recalculate) they are
+  // watched before the fill goes on (View More Payment Plans, Print): GEICO drew its own values 9 to
+  // 14 s after the fill's click (FL run 6, 2026-10-21).
+  const KEPT_WATCH_MS = 15000;
   const ONCE_UNVERIFIED = 'it was clicked, but the page showed no current premium afterwards. Check the page and click Recalculate yourself: the fill clicks it once a quote.';
   // What a `whenClear` helper waits for (its `why`).
   const NOTHING_LEFT = 'nothing left for you on the page';
@@ -2366,8 +2370,9 @@
         report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, reason: ONCE_UNVERIFIED });
         return false;
       }
-      // The answers it may have redrawn (`keepAnswers`), read again once its result shows.
-      if (accepted && a.kept) await answersKept(a);
+      // The answers it may have redrawn (`keepAnswers`), read again once its result shows, and
+      // watched until KEPT_WATCH_MS after the click when they held.
+      if (accepted && a.kept && !await answersKept(a)) await watchKept(a);
       // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
       // screen but disabled is not gone.
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
@@ -2474,13 +2479,17 @@
     // left as it is if it was the agent's. Each is red, and one more item says the premium may not
     // be for the answers shown. The helper isn't clicked again (`once`): the agent recalculates,
     // and Print waits for them (`whenClear`).
-    async function answersKept(a) {
-      const now = new Map(answerPlaces(collectControls()));
-      const changed = a.kept.flatMap((k) => {
+    // Whether any answer had changed.
+    function keptChanged(a, now) {
+      return a.kept.flatMap((k) => {
         const c = now.get(k.at);
         return c && answerShown(c) !== k.shown ? [{ k, c }] : [];
       });
-      if (!changed.length) return;
+    }
+    async function answersKept(a) {
+      const now = new Map(answerPlaces(collectControls()));
+      const changed = keptChanged(a, now);
+      if (!changed.length) return false;
       const pairs = assign([...now.values()], plan);
       const given = new Set();
       for (const { k, c } of changed) {
@@ -2502,8 +2511,14 @@
           : back ? 'the page changed this answer when it recalculated, and the fill put it back: click Recalculate yourself, then check the answer is kept.'
             : `the page changed this answer when it recalculated${was}, and the fill couldn't put it back: answer it yourself, then click Recalculate.`;
         const key = fieldKey(c);
-        report.filled = report.filled.filter((x) => x.key !== key);
-        report.kept = report.kept.filter((x) => x.key !== key);
+        // Only this answer's own entry (its step, key and label): another field with its key (a
+        // sibling, another step's) keeps its own. The agent's answer has none.
+        const own = (list) => {
+          const i = step ? list.findIndex((x) => x.stepId === step.id && x.key === key && x.label === c.label) : -1;
+          return i < 0 ? list : list.filter((_, j) => j !== i);
+        };
+        report.filled = own(report.filled);
+        report.kept = own(report.kept);
         report.failed.push({ stepId: step?.id ?? null, label: c.label, path: step?.path ?? null, name: step?.name ?? c.label, key, q: c.q ?? null, controlKind: c.kind, reason, ...describe(c) });
         mark(c, 'failed', reason);
         if (step) handled.set(step.id, { status: 'failed', note: reason });
@@ -2511,18 +2526,34 @@
       const n = changed.length;
       report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null,
         reason: `the page changed ${n === 1 ? 'an answer' : `${n} answers`} when it recalculated (marked above), so the premium may not be for the answers shown. Check them and click Recalculate yourself: the fill clicks it once a quote.` });
+      return true;
     }
 
-    // A choice never offered once the helper that shows every option was clicked in this fill
-    // (`orMost`: GEICO's pay plans, W43-32: TX offers no 11 Payments): among the options of every
-    // field of its question, the one with the highest count (`count`'s first group; `one`: an option
-    // that counts 1) becomes its answer, given next round and named in the report. No option with a
-    // count, or one of its fields already answered: still the agent's.
+    // A redraw after the first check (GEICO's came 9 to 14 s after the click): the answers are read
+    // again every half second until KEPT_WATCH_MS after the click, and a change is checked as above
+    // once the page is quiet. An agent edit, another page or another step ends the watch.
+    async function watchKept(a) {
+      while (Date.now() - a.clickedAt < KEPT_WATCH_MS && !report.halted && currentPage() === startPage && !stepChanged()) {
+        await sleep(500);
+        if (!keptChanged(a, new Map(answerPlaces(collectControls()))).length) continue;
+        await settle({ quietMs: 1000, maxMs: LOAD_MS });
+        await answersKept(a);
+        return;
+      }
+    }
+
+    // A choice never offered once the helper that shows every option was clicked (`orMost`: GEICO's
+    // pay plans, W43-32: TX offers no 11 Payments): among the options of every field of its
+    // question, the one with the highest count (`count`'s first group; `one`: an option that counts
+    // 1) becomes its answer, given next round and named in the report. Clicked by an earlier fill,
+    // the page may have drawn fewer plans since: only the page's own pick, when it is that one (a
+    // later fill agrees with the 9 Payments the first picked). No option with a count, or one of its
+    // fields already answered: still the agent's.
     function substitute() {
       const byPath = new Map();
       for (const u of unoffered.values()) {
         const m = u.step.orMost;
-        if (!m || !report.actions.some((x) => x.id === m.after)) continue;
+        if (!m || !clicked.has(m.after)) continue;
         byPath.set(u.step.path, [...(byPath.get(u.step.path) ?? []), u]);
       }
       let any = false;
@@ -2534,10 +2565,12 @@
         for (const u of group) {
           for (const text of u.options) {
             const n = counted(oneLine(text));
-            if (Number.isFinite(n) && (!best || n > best.n)) best = { n, text: oneLine(text), id: u.step.id };
+            if (Number.isFinite(n) && (!best || n > best.n)) best = { n, text: oneLine(text), id: u.step.id, control: u.control };
           }
         }
         if (!best) continue;
+        const fresh = report.actions.some((x) => x.id === group[0].step.orMost.after);
+        if (!fresh && oneLine(selectedText(best.control) ?? '') !== best.text) continue;
         const step = plan.find((s) => s.id === best.id);
         substituted.set(step.id, `The page doesn't offer "${step.value}" here: the fill picked "${best.text}", ${name}.`);
         step.value = best.text;
@@ -2683,7 +2716,7 @@
         // have landed since): what a `revealed` / `appears` check compares with afterwards.
         pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
           : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length }
-            : a.keepAnswers ? { ...a, kept: answersNow() } : a;
+            : a.keepAnswers ? { ...a, kept: answersNow(), clickedAt: Date.now() } : a;
         button.click();
         return true;
       }
