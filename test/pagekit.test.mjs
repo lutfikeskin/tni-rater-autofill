@@ -5538,3 +5538,21 @@ test('a list whose only option shows twice is still loading: waited for; a full 
   assert.ok(Date.now() - t0 < 2000, 'no wait');
   assert.deepEqual(plain(report.failed.map((x) => x.reason)), ['no option matches "$1,000 deductible"']);
 });
+
+// FL live run 5, 2026-10-21 (W43-25): on the gateway's Search Products window Commercial
+// Auto/Trucking was ticked, but another product's box was listed as unfamiliar. Each of the other
+// products' boxes is known and left alone, and Commercial Auto is the only one ticked.
+test('GEICO Search Products: Commercial Auto ticked, every other product known and left alone', async () => {
+  const run = async (ids) => {
+    const h = harness({ pathname: '/dashboard' });
+    const boxes = ids.map((id) => makeInput({ type: 'checkbox', id, name: 'lob-selection', value: id }));
+    h.document.body.append(...boxes);
+    const plan = buildPlan({ ...geicoRecord(), garaging: { zip: '33139' } }, geico).filter((s) => !s.steps?.length);
+    const report = await h.kit.fill(plan, { maxRounds: 3 });
+    return plain([boxes.map((b) => b.checked), report.unknown.map((x) => x.key)]);
+  };
+  // The window as saved (NE): four products.
+  assert.deepEqual(await run(['auto', 'commercial', 'cycle', 'umbrella']), [[false, true, false, false], []]);
+  // More boxes than those (a product added, the window drawn twice): each known, none ticked again.
+  assert.deepEqual(await run(['auto', 'commercial', 'cycle', 'umbrella', 'renters', 'commercial']), [[false, true, false, false, false, false], []]);
+});
