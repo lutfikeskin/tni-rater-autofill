@@ -2040,10 +2040,13 @@
         // fill's: changedSinceFilled) is given again only on a page quiet for a second, once a fill,
         // and the page is read again first (FL live run 5, 2026-10-21, W43-21: GEICO cleared the
         // business description when the agent answered the USDOT record, and the answer given again
-        // a second later showed but GEICO's Next refused it).
-        if (isChoice && !resetWaited && !agreesWith(step, c) && (refill.has(step.id) || filledKeys.has(fieldKey(c)))) {
+        // a second later showed but GEICO's Next refused it). An earlier fill's key counts only for a
+        // question asked once a quote: a vehicle's, driver's or trailer's form reuses its keys for the
+        // next unit, where the answer is a first one. A page that doesn't go quiet gets it anyway, as
+        // before.
+        if (isChoice && !resetWaited && !agreesWith(step, c) && (refill.has(step.id) || (!step.scope && filledKeys.has(fieldKey(c))))) {
           resetWaited = true;
-          if (!await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000 })) { halt('The page is still waiting on its server. Review and retry.'); break; }
+          await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000 });
           retry = true;
           break;
         }
