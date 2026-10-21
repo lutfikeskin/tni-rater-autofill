@@ -5544,7 +5544,7 @@ test('a list whose only option shows twice is still loading: waited for; a full 
 // showed For Hire Trucking, but GEICO's Next refused it ("Please make a selection"). An answer an
 // earlier fill gave that the page has since reset is given again only on a page quiet for a second.
 test('an answer the page reset since an earlier fill is given again only once the page has been quiet for a second', async () => {
-  const run = async (filledBefore) => {
+  const run = async (filledBefore, scope = null) => {
     const h = harness({ pathname: '/quote' });
     geicoBar(h, 'Business Class & USDOT');
     const description = new SelectNode([{ text: 'Please select', value: '' }, { text: 'For Hire Trucking', value: 'FHT' }], { id: 'Id_GivePrimaryBusinessDescription_11', ariaLabel: 'Please choose what best describes the customer\'s business.' });
@@ -5560,7 +5560,7 @@ test('an answer the page reset since an earlier fill is given again only once th
     const draw = (n) => { h.document.body.append(new FakeNode('span')); lastDraw = clock.Date.now(); for (const o of observers) o.fn([]); if (n > 1) setTimeout(() => draw(n - 1), 300); };
     setTimeout(() => draw(4), 500);
     description.addEventListener('change', () => { setAt ??= clock.Date.now(); });
-    const plan = [{ id: 'desc', field: 'GivePrimaryBusinessDescription', path: 'geico.qGivePrimaryBusinessDescription', name: 'Business description', kind: 'choice', value: 'For Hire Trucking' }];
+    const plan = [{ id: 'desc', field: 'GivePrimaryBusinessDescription', path: 'geico.qGivePrimaryBusinessDescription', name: 'Business description', kind: 'choice', value: 'For Hire Trucking', scope }];
     await h.kit.fill(plan, { maxRounds: 6, filledBefore });
     return { given: description.value, after: setAt - lastDraw };
   };
@@ -5571,4 +5571,9 @@ test('an answer the page reset since an earlier fill is given again only once th
   const first = await run([]);
   assert.equal(first.given, 'FHT');
   assert.ok(first.after < 1000, `first answer waited ${first.after} ms`);
+  // A vehicle's, driver's or trailer's question: the next unit's form reuses the keys, so an
+  // earlier fill's key is no reset there.
+  const nextUnit = await run(['ref:GivePrimaryBusinessDescription'], 'vehicle');
+  assert.equal(nextUnit.given, 'FHT');
+  assert.ok(nextUnit.after < 1000, `next unit's answer waited ${nextUnit.after} ms`);
 });
