@@ -1,6 +1,6 @@
 {
   "name": "tni-rater-autofill",
-  "version": "0.9.18",
+  "version": "0.9.19",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22" },
