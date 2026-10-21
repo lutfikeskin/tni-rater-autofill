@@ -5304,6 +5304,32 @@ test('GEICO Quote & Coverages: a choice an earlier fill gave that the page took 
   assert.equal(comp.value, '$1,000 deductible');
 });
 
+// FL live run 4, 2026-10-21 (W43-15): with "Replace existing answers" on, every Fill on Quote &
+// Coverages set 9–12 coverages again to the values they already had, once right after Recalculate.
+// Replace replaces a different value; one that already is the answer is kept, and nothing fires.
+test('Replace existing answers keeps a value that already is the answer, and replaces a different one', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const comp = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_20000_COMP`, value: '$1,000 deductible' });
+  const coll = new SelectNode(['Not Included', '$500 deductible', '$1,000 deductible'], { id: `Id_${randomUUID()}_20001_COLL`, value: '$500 deductible' });
+  const name = makeInput({ id: 'name', ariaLabel: 'Name' });
+  name.value = 'Same';
+  h.document.body.append(comp, coll, name);
+  const changes = [];
+  for (const el of [comp, coll, name]) el.addEventListener('change', () => changes.push(el.id));
+  const steps = [
+    { id: 'comp', selector: '[id$="_COMP"]', steps: ['Quote & Coverages'], path: 'geico.qCOMP', name: 'Comprehensive', kind: 'choice', value: '$1,000 deductible' },
+    { id: 'coll', selector: '[id$="_COLL"]', steps: ['Quote & Coverages'], path: 'geico.qCOLL', name: 'Collision', kind: 'choice', value: '$1,000 deductible' },
+    { id: 'name', selector: '#name', path: 'applicant.name', name: 'Name', value: 'Same' },
+  ];
+  const report = await h.kit.fill(steps, { maxRounds: 3, replaceChoices: true, overwrite: true });
+  assert.deepEqual(plain(report.filled.map((x) => x.stepId)), ['coll']);
+  assert.deepEqual(plain(report.kept.map((x) => x.stepId)), ['comp', 'name']);
+  assert.equal(coll.value, '$1,000 deductible');
+  assert.equal(comp.value, '$1,000 deductible');
+  assert.ok(!changes.includes(comp.id) && !changes.includes('name'), `no event on a value that already is the answer: ${changes}`);
+});
+
 // FL live run 3, 2026-10-21: "with Click Continue when its done on, GEICO's should click Next".
 // Only on its steps (never Quote & Coverages, whose Next leads to MVR & CLUE), never the chooser's
 // Next (the add helpers' own), and per form and button: Vehicles is left by each unit's Next, then

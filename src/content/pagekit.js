@@ -1943,7 +1943,12 @@
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason}` });
           continue;
         }
-        if (legacyHold || (!overwrite && answered && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+        // Replace existing answers replaces a different value; one that already is the answer is
+        // kept, so nothing fires on it (FL live run 4, 2026-10-21: every Fill on GEICO's Quote &
+        // Coverages set 9–12 coverages again, once right after Recalculate). An address-suggest
+        // box agrees with any address, so Replace still retypes it.
+        const sameAnswer = overwrite && answered && step.kind !== 'address-suggest' && agreesWith(step, c);
+        if (legacyHold || sameAnswer || (!overwrite && answered && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
