@@ -5449,14 +5449,33 @@ test('the report of a step the kit couldn\'t read doesn\'t say automatic filling
 
 // FL live run, 2026-10-21: each follow-up fill on Quote & Coverages set a coverage again, GEICO
 // requoted and the agent's choices went. The step is filled when it opens and on Fill this page only.
-test('GEICO Quote & Coverages: once filled, no automatic fill runs there again', async () => {
+test('GEICO Quote & Coverages: once filled, an automatic fill runs there only for questions it draws', async () => {
   const t = stopStepHarness('Quote & Coverages');
   vm.runInContext(['reportKey', 'currentReportKey', 'tabStep'].map(extractFunction).join('\n'), t.context);
   t.state.reports.set(t.context.currentReportKey(), { fields: 24 });
+  // After an answer or a redraw (no new question): nothing.
   await t.context.autoFill('/quote');
   await t.context.fillPage({ auto: 'page' });
   await t.context.fillPage({ auto: true });
   assert.deepEqual([t.kits, t.state.filling], [[], false]);
+  // New questions drawn there (FL live run 2: the cargo section's): followed up, once.
+  let ran = 0;
+  t.context.fillContext = () => { ran++; throw new Error('past the gate'); };
+  t.context.scheduleAutoFill('/quote', undefined, true);
+  assert.equal(t.state.autoDrawn, '/quote');
+  await assert.rejects(t.context.autoFill('/quote'), /past the gate/);
+  assert.deepEqual([ran, t.state.autoDrawn], [1, null], 'followed up, the new questions used by that fill');
+  await t.context.autoFill('/quote');
+  assert.equal(ran, 1, 'the next follow-up without new questions: nothing');
+  // New questions whose follow-up never ran (the agent's Fill this page cancelled it): a later
+  // follow-up, after an answer, isn't one for them.
+  t.context.scheduleAutoFill('/quote', undefined, true);
+  vm.runInContext(extractFunction('fillPage'), t.context);
+  await t.context.fillPage().catch(() => {});
+  assert.equal(t.state.autoDrawn, null, 'Fill this page used the drawn questions');
+  t.state.filling = false;
+  await t.context.autoFill('/quote');
+  assert.equal(ran, 1, 'a follow-up after an answer there: nothing');
   // Another step is followed up as before (the kit runs).
   const v = stopStepHarness('Vehicles');
   vm.runInContext(['reportKey', 'currentReportKey', 'tabStep'].map(extractFunction).join('\n'), v.context);
@@ -5508,4 +5527,47 @@ test('a new, blank GEICO unit form is the next intake unit no form was filled fo
     out = await run(args);
     assert.deepEqual([out.active.vehicles, out.saved, out.rendered], [args.active?.vehicles ?? 0, 0, 0]);
   }
+});
+
+// FL live run 2, 2026-10-21: GEICO's Start New Quote window opened over Recent Policies and Quotes, a
+// page already drawn (no fields on arrival), and its ZIP was never filled.
+test('GEICO: questions drawn over a gateway page no fill answered anything on get its first fill; a page filled before, a follow-up', () => {
+  const { context } = layoutHarness(() => []);
+  const fills = [], followUps = [];
+  const GATEWAY_URL = 'https://gateway2.geico.com/recent-policy-and-quotes';
+  Object.assign(context, { samePage: (p) => p, redactor: () => (x) => x, fieldChangeEvent: () => ({ type: 'field_change' }), knownStep, currentReportKey: () => 'report', pageOf: (url) => new URL(url).pathname,
+    $: () => ({ checked: true }), stopNoteFor: () => null, fillPage: (o) => fills.push(o), scheduleAutoFill: (page, ctx, drawn) => followUps.push([page, drawn]), setTimeout: (fn) => fn() });
+  Object.assign(context.state, { filled: new Map(), labels: new Map(), autoPages: new Set(), reports: new Map() });
+  Object.assign(context.state.tab, { carrier: geico, url: GATEWAY_URL });
+  vm.runInContext(extractFunction('onRecorderMessage'), context);
+  const drawn = () => context.onRecorderMessage({ ra: 'usage', event: 'new_fields', page: '/recent-policy-and-quotes', keys: ['zip'] }, { tab: { id: 1 } });
+  drawn();
+  assert.deepEqual([fills.map((o) => o.auto), followUps], [['page'], []]);
+  // That fill answered nothing (a gateway control drawn before the window, ignored): the window's
+  // questions still get a first fill, whether or not follow-ups are on.
+  context.state.autoPages.add('/recent-policy-and-quotes');
+  context.state.reports.set('report', { fields: 3, filled: 0 });
+  drawn();
+  assert.deepEqual([fills.length, followUps], [2, []]);
+  // A fill answered something there: a follow-up, for questions drawn.
+  context.state.reports.set('report', { fields: 3, filled: 1 });
+  drawn();
+  assert.deepEqual([fills.length, followUps], [2, [['/recent-policy-and-quotes', true]]]);
+  // On the quote itself questions are drawn with their step: a follow-up as before.
+  followUps.length = 0;
+  context.state.autoPages.clear();
+  context.state.tab.url = 'https://sales.geico.com/quote';
+  drawn();
+  assert.deepEqual([fills.length, followUps.length], [2, 1]);
+  context.state.tab.url = GATEWAY_URL;
+  // "Fill each new page" off: no first fill.
+  context.state.autoPages.clear();
+  context.$ = () => ({ checked: false });
+  drawn();
+  assert.equal(fills.length, 2);
+  // A carrier whose pages draw with their questions (Progressive): a follow-up as before.
+  context.$ = () => ({ checked: true });
+  context.state.tab.carrier = { id: 'progressive', layoutUrl: /./ };
+  drawn();
+  assert.equal(fills.length, 2);
 });

@@ -5151,3 +5151,77 @@ test('unitFormsNow says whether a unit form is new: its first question unanswere
   a.marker.hosts[0].input.click();
   assert.deepEqual(plain(h.kit.unitFormsNow()), [{ list: 'vehicles', id: a.id, blank: false }]);
 });
+
+// FL live run 2, 2026-10-21: GEICO's VIN decode redrew the vehicle form and cleared the type the
+// fill had just picked (the Cascadia's Tractor, three times). With `waitFor`, the type waits for the
+// decoded year.
+test('a step with waitFor is answered only once that question has its answer; one still waiting when the fill ends is reported', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Vehicles');
+  const year = geicoList('GiveYear', 11, 'Year', ['', '2016']);
+  const type = geicoList('GiveOtherVehicleType', 12, 'Which of the following best describes the customer\'s vehicle?', ['', 'Dump Truck', 'Tractor']);
+  h.document.body.append(year, type);
+  const step = { id: 'type', field: 'GiveOtherVehicleType', path: 'geico.qGiveOtherVehicleType', name: 'Vehicle type', kind: 'choice', value: 'Tractor', waitFor: 'GiveYear' };
+  let typeAtDecode = null;
+  // The decode answers later, redrawing the form: whatever type was picked before it is cleared.
+  setTimeout(() => { typeAtDecode = type.value; year.value = '2016'; type.value = ''; }, 900);
+  let report = await h.kit.fill([step], { maxRounds: 30 });
+  assert.equal(typeAtDecode, '', 'nothing picked before the decode');
+  assert.equal(type.value, 'Tractor');
+  assert.deepEqual([report.filled.length, report.failed.length], [1, 0]);
+
+  // The decode never comes before the fill's rounds run out: the type is unanswered, and said so.
+  const h2 = harness({ pathname: '/quote' });
+  geicoBar(h2, 'Vehicles');
+  const type2 = geicoList('GiveOtherVehicleType', 22, 'Which of the following best describes the customer\'s vehicle?', ['', 'Dump Truck', 'Tractor']);
+  h2.document.body.append(geicoList('GiveYear', 21, 'Year', ['', '2016']), type2);
+  report = await h2.kit.fill([step], { maxRounds: 2 });
+  assert.equal(type2.value, '');
+  assert.deepEqual(plain(report.failed.map((x) => [x.key, x.reason])), [['ref:GiveOtherVehicleType', 'the page was still working on this question; check it']]);
+
+  // A VIN GEICO doesn't decode: the year stays empty. Answered once the wait runs out, and a later
+  // fill of the same form doesn't wait for that year again.
+  const h4 = harness({ pathname: '/quote' });
+  geicoBar(h4, 'Vehicles');
+  const type4 = geicoList('GiveOtherVehicleType', 42, 'Which of the following best describes the customer\'s vehicle?', ['', 'Dump Truck', 'Tractor']);
+  h4.document.body.append(geicoList('GiveYear', 41, 'Year', ['', '2016']), type4);
+  let started = clock.Date.now();
+  report = await h4.kit.fill([step], { maxRounds: 60 });
+  assert.equal(type4.value, 'Tractor');
+  assert.deepEqual([report.failed.length, clock.Date.now() - started >= 8000], [0, true], 'waited out, then answered');
+  type4.value = '';
+  started = clock.Date.now();
+  report = await h4.kit.fill([step], { maxRounds: 60 });
+  assert.equal(type4.value, 'Tractor');
+  assert.ok(clock.Date.now() - started < 2000, `the next fill waited ${clock.Date.now() - started} ms`);
+
+  // No such question on the page (no VIN decode drawn): answered at once.
+  const h3 = harness({ pathname: '/quote' });
+  geicoBar(h3, 'Vehicles');
+  const type3 = geicoList('GiveOtherVehicleType', 32, 'Which of the following best describes the customer\'s vehicle?', ['', 'Dump Truck', 'Tractor']);
+  h3.document.body.append(type3);
+  report = await h3.kit.fill([step], { maxRounds: 3 });
+  assert.equal(type3.value, 'Tractor');
+});
+
+// FL live run 2: a leased vehicle's collision row offers only "Not Included" until its comprehensive
+// is chosen, and the fill gave up on rows 1 and 2 before GEICO drew their deductibles.
+test('a list whose only option shows twice is still loading: waited for; a full list without the answer fails at once', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const coll = geicoList('GiveCollision', 41, 'Collision', [{ text: 'Not Included', value: '' }, { text: 'Not Included', value: 'NI' }]);
+  h.document.body.append(coll);
+  setTimeout(() => { for (const text of ['$500 deductible', '$1,000 deductible']) { const o = new OptionNode(text); coll.options.push(o); coll.append(o); } }, 700);
+  const step = { id: 'coll', field: 'GiveCollision', path: 'geico.qCOLL', name: 'Collision', kind: 'choice', value: '$1,000 deductible' };
+  let report = await h.kit.fill([step], { maxRounds: 30 });
+  assert.equal(coll.value, '$1,000 deductible');
+  assert.deepEqual([report.filled.length, report.failed.length], [1, 0]);
+
+  const h2 = harness({ pathname: '/quote' });
+  geicoBar(h2, 'Quote & Coverages');
+  h2.document.body.append(geicoList('GiveCollision', 51, 'Collision', ['Not Included', '$500 deductible']));
+  const t0 = Date.now();
+  report = await h2.kit.fill([step], { maxRounds: 30 });
+  assert.ok(Date.now() - t0 < 2000, 'no wait');
+  assert.deepEqual(plain(report.failed.map((x) => x.reason)), ['no option matches "$1,000 deductible"']);
+});

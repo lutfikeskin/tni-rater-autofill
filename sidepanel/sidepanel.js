@@ -281,6 +281,8 @@ const state = {
   agentKeysEpochs: new Map(), // Clear/pruning invalidate late writes for that intake only
   filling: false,
   autoTimer: null,
+  // The page whose new questions the pending follow-up fill is for (scheduleAutoFill `drawn`).
+  autoDrawn: null,
   autoPending: false,
   autoPaused: false,
   // An automatic fill that found a step it couldn't read (pagekit stepUnread) is tried once more;
@@ -753,6 +755,7 @@ async function loadFile(file) {
   const same = state.intake && usage.currentSession()?.intakeId === summary.intakeId ? state.intake : null;
   if (state.intake) usage.log({ type: 'intake_closed', reason: 'replaced' });
   clearTimeout(state.autoTimer);
+  state.autoDrawn = null;
   state.autoPending = false;
   state.autoPaused = false;
   state.tabSessions.clear();
@@ -1208,6 +1211,7 @@ async function refreshTab() {
     });
     if (state.intake) renderPickers();
     clearTimeout(state.autoTimer);
+    state.autoDrawn = null;
     state.autoPending = false;
   }
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false } : null;
@@ -1341,7 +1345,14 @@ function onRecorderMessage(msg, sender) {
     }
   }
   if (msg.event === 'new_fields') {
-    scheduleAutoFill(samePage(msg.page));
+    const page = samePage(msg.page);
+    // Questions drawn over a page already open (`fillOnDraw`, the addresses where it happens: GEICO's
+    // Start New Quote window, over any gateway page) on a page no fill has answered anything on yet
+    // (a gateway control drawn before the window is ignored): its first fill, as on arriving at a page.
+    const firstFill = () => !state.autoPages.has(page) || !state.reports.get(currentReportKey())?.filled;
+    if (state.tab.carrier?.fillOnDraw?.test(state.tab.url ?? '') && $('auto-pages').checked && firstFill() && onQuotePage() && !stopNoteFor(state.tab.carrier, page)) {
+      setTimeout(() => { if (pageOf(state.tab?.url) === page) fillPage({ auto: 'page' }); }, 100);
+    } else scheduleAutoFill(page, undefined, true);
     scheduleLayout(layoutPage, 'appeared');
   }
   if (msg.event === 'removed_fields') scheduleLayout(layoutPage, 'removed');
@@ -1668,14 +1679,21 @@ function logFillError(ctx, error) {
     rules: rulesVersion ?? undefined, settings: ctx.settings, auto: ctx.auto, error: fillErrorText(ctx, error), ...ctx.ids });
 }
 
-function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
+// `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
+// follow-ups only for those (`newQuestionsOnlySteps`) waits for.
+function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
   if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page)) return;
+  if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
   state.autoTimer = setTimeout(() => { if (fillCurrent(ctx)) autoFill(page); }, 600);
 }
 
 async function autoFill(page) {
+  // New questions drawn (scheduleAutoFill), used by this fill only: never left for a later one,
+  // which may follow an answer.
+  const drawn = state.autoDrawn === page;
+  state.autoDrawn = null;
   // The client may have been cleared while this fill was waiting to run.
   if (state.autoPaused || state.filling || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   if (stopNoteFor(state.tab.carrier, page)) return;
@@ -1684,9 +1702,10 @@ async function autoFill(page) {
   // step themselves (same address, new questions). It's filled as a new page, with its report.
   if (!state.reports.has(reportKey(tabId, page, carrier))) { fillPage({ auto: 'page' }); return; }
   const stepBefore = state.tabSteps?.get(tabId);
-  // A step the carrier redraws on every answer (GEICO's Quote & Coverages: noFollowUpSteps) is
-  // filled when it opens and on Fill this page, never again by itself.
-  if (carrier.noFollowUpSteps?.includes(stepBefore)) return;
+  // A step the carrier redraws on every answer (GEICO's Quote & Coverages: newQuestionsOnlySteps)
+  // is filled when it opens, on Fill this page, and when it draws new questions (the cargo
+  // section's), never after an answer or a redraw.
+  if (carrier.newQuestionsOnlySteps?.includes(stepBefore) && !drawn) return;
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto: true });
@@ -1694,7 +1713,7 @@ async function autoFill(page) {
   if (staleFill(ctx) || state.tab?.id !== tabId) return;
   // A fill the agent started while the list was read (Fill this page, Looks right) goes first;
   // this one follows it rather than running beside it.
-  if (state.filling) { state.autoPending = true; return; }
+  if (state.filling) { state.autoPending = true; if (drawn) state.autoDrawn = page; return; }
   state.filling = true;
   state.autoPending = false;
   const started = Date.now();
@@ -2083,6 +2102,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
     if (maps === state) {
       state.autoPending = false;
       clearTimeout(state.autoTimer);
+      state.autoDrawn = null;
     }
   }
   if (frames.some((f) => f.fields > 0 && knownStep(carrier, f.stepKey))) maps.unreadRetried = false;
@@ -2422,6 +2442,7 @@ function showStopPage() {
   if (stepNote) { box.replaceChildren(h('div', { class: 'agent-page', role: 'status' }, h('b', {}, step), h('p', {}, stepNote))); return; }
   if (!note) { box.replaceChildren(); return; }
   clearTimeout(state.autoTimer);
+  state.autoDrawn = null;
   state.autoPending = false;
   state.pagePending = null;
   if (!carrier.stopPages?.[page]) {
@@ -2543,8 +2564,9 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
   if (state.filling || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
-  // Back on a step that is filled once (noFollowUpSteps) after its fill: only the agent fills it again.
-  if (auto && state.tab.carrier.noFollowUpSteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
+  // Back on a step that takes follow-ups only for new questions (newQuestionsOnlySteps) after its
+  // fill: only the agent, or new questions, fill it again.
+  if (auto && state.tab.carrier.newQuestionsOnlySteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
   // The carrier's portal pages outside a quote (Progressive's home / quote search) are never
   // filled, and the AI isn't asked about them.
   if (!onQuotePage()) {
@@ -2554,6 +2576,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   if (!auto) state.autoPaused = false;
   state.filling = true;
   clearTimeout(state.autoTimer);
+  state.autoDrawn = null;
   const { id: tabId, carrier } = state.tab;
   const page = pageOf(state.tab.url);
   // Looks right never replaces anything: the page is continued as the agent approved it.

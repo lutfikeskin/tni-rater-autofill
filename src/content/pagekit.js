@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 70 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 71 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -916,6 +916,13 @@
     }
   }
 
+  // Waiting for the page (fill: `waitFor`).
+  const WAIT_MS = 8000;
+  const WAIT_ROUND_MS = 400;
+  // The questions a fill waited the whole WAIT_MS for in this document: the page isn't working on
+  // them (a VIN GEICO doesn't decode leaves its year for the agent), so no later fill waits again.
+  const waitedOut = new WeakSet();
+
   const noMatch = (step, options) => ({
     ok: false,
     reason: `no option matches "${step.value}"`,
@@ -1058,7 +1065,10 @@
     let options = optionsOf(c);
     let opt = matchOption(options, step);
     // A list still waiting for its options (loaded after the page shows): give it a few seconds.
-    for (const start = Date.now(); !opt && c.kind === 'select' && options.filter((o) => oneLine(o.text)).length <= 1 && Date.now() - start < 6000;) {
+    // Counted by distinct text: GEICO's collision row lists "Not Included" twice until its
+    // comprehensive is chosen (FL live run 2, 2026-10-21).
+    const loading = () => new Set(options.map((o) => oneLine(o.text)).filter(Boolean)).size <= 1;
+    for (const start = Date.now(); !opt && c.kind === 'select' && loading() && Date.now() - start < 6000;) {
       await sleep(250);
       options = optionsOf(c);
       opt = matchOption(options, step);
@@ -1488,6 +1498,11 @@
   // `hold` (the panel's "Check answers before Continue"): Continue is clicked only when `confirmed`
   // is the page's `receipt()` as the agent approved it (Looks right) and still is; otherwise the
   // report says `held`: 'check' (not approved yet) or 'changed' (the page changed since).
+  // A step with `waitFor` (a data-model name: GEICO's decoded year on a vehicle with a VIN) isn't
+  // answered while that question is on the page without an answer: the page is still working it out,
+  // and its answer redraws the form (FL live run 2, 2026-10-21: the VIN decode cleared the vehicle
+  // type, distance and personal use the fill had just given). It waits at most WAIT_MS, a round every
+  // WAIT_ROUND_MS, then is answered as before; a question waited out so is not waited for again.
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
   async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null } = {}) {
@@ -1552,6 +1567,12 @@
     hiddenOk = plan.filter((s) => s.hidden && s.selector).map((s) => s.selector);
     const consumedPaths = () => new Set(actions.filter((a) => clicked.has(a.action)).flatMap((a) => a.after));
     const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
+    // Steps waiting for the page (`waitFor`): since when, by step id.
+    const waitingSince = new Map();
+    const mayWait = (id) => {
+      if (!waitingSince.has(id)) waitingSince.set(id, Date.now());
+      return Date.now() - waitingSince.get(id) < WAIT_MS;
+    };
     // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
     let ajaxCount = 0;
     const countAjax = () => { ajaxCount++; };
@@ -1779,6 +1800,8 @@
       let changed = false;
       // A failed answer may still have redrawn the page (new questions): look again next round.
       let retry = false;
+      // A step waited for the page this round (`waitFor`).
+      let waited = false;
       // Another step on screen since the round began (the agent clicked Next): this round's
       // questions are that step's no longer, and nothing more is given or clicked for them.
       let stepMoved = false;
@@ -1815,6 +1838,12 @@
           report.noData.push({ ...item, note: step.note, ...describe(c) });
           handled.set(step.id, { status: 'needs', note: step.note ?? `intake form has no answer for ${step.name}` });
           continue;
+        }
+        // The question it waits for is on the page without an answer yet: the page is still working.
+        const pending = step.waitFor ? shownControl(controls, { field: step.waitFor }) : null;
+        if (pending && !hasValue(pending) && !waitedOut.has(pending.el)) {
+          if (mayWait(step.id)) { retry = true; waited = true; continue; }
+          waitedOut.add(pending.el);
         }
         // A pre-selected "Enter a different …" isn't an answer worth keeping for pick-not steps.
         const presetToReplace = step.kind === 'pick-not' && new RegExp(step.value.not, 'i').test(selectedText(c) ?? '') && !agreesWith(step, c);
@@ -1941,7 +1970,10 @@
       if (!changed && window === window.top) changed = helperClicked = clickNextAction(controls);
       progressed = changed;
       if (!changed && !retry) break;
-      if (!changed) continue;
+      if (!changed) {
+        if (waited) await sleep(WAIT_ROUND_MS);
+        continue;
+      }
       // An answer given one at a time has already waited for the page (above); only a helper
       // click or a batch of answers still needs the wait. (Waiting twice cost Progressive about
       // 0.3 s per answer.)
@@ -2201,9 +2233,11 @@
         handled.set(step.id, { status: 'needs', note: step.emptyNote });
         continue;
       }
-      if (!refill.has(step.id) || handled.has(step.id) || skippedField(control) || agreesWith(step, control)) continue;
-      report.failed.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, reason: 'the page did not keep the answer; check it', ...describe(control) });
-      handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: the page did not keep the answer` });
+      if ((!refill.has(step.id) && !waitingSince.has(step.id)) || handled.has(step.id) || skippedField(control) || agreesWith(step, control)) continue;
+      // One that waited for the page to the end (the fill stopped first) is as unanswered as one the page reset.
+      const reason = refill.has(step.id) ? 'the page did not keep the answer; check it' : 'the page was still working on this question; check it';
+      report.failed.push({ stepId: step.id, label: control.label, path: step.path, name: step.name, key: fieldKey(control), q: control.q ?? null, controlKind: control.kind, reason, ...describe(control) });
+      handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${reason.replace(/; check it$/, '')}` });
     }
     if (progressed && report.rounds === maxRounds && !report.halted) halt('Filling reached its round limit. Check the page before retrying.');
     // The page may have redrawn while filling, so mark the final fields.
@@ -2775,5 +2809,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 70, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 71, build: BUILD, fill, progress, stop, answer, answerEdits, listed, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();
