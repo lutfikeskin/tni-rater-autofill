@@ -91,14 +91,15 @@ const EXPECT = {
     GiveDepartmentOfTransportationNumber: '1234567', GiveAnyVehicleNeedHazardousMaterialPlacardYesNo: 'No',
     // The intake says No; the agent changed it to Yes, and a redraw later it still is.
     TeamDrivingOrSlipSeatingYesNo: 'Yes',
-    GivePrimaryBusinessDescription: '', GiveSecondaryBusinessDescription: '', GiveExtendUsDotVerifyBusinessAddress: '',
+    // An expediter: For Hire Trucking, Other For-Hire Trucking (TNI, 2026-10-21).
+    GivePrimaryBusinessDescription: 'For Hire Trucking', GiveSecondaryBusinessDescription: 'Other For-Hire Trucking', GiveExtendUsDotVerifyBusinessAddress: '',
   },
   'Business & Owner Info': {
     GiveFirstName: 'SAMPLE', GiveDateOfBirth: '01/02/1980', GiveMaritalStatus: 'Married', GiveOwnerActiveDriverStatusYesNo: 'Yes',
     GivePhoneNumber: PHONE, GiveBusinessPhoneNumber: PHONE,
     // The agent's corrections (the intake has DRIVER and client@example.test).
     GiveLastName: 'DRIVERS', GiveEmail: 'owner@example.test',
-    // Typed by the agent: GEICO's address suggestions are theirs.
+    // GEICO's suggestion for the intake's address, picked by the fill.
     GiveStreet: '1 Test Way', GiveUnitNumber: '', GiveUnitType: '', GiveZip: '68102', GiveCity: 'OMAHA',
     GiveBusinessOwnershipType: 'Limited Liability Company', GiveBusinessName: 'SAMPLE FREIGHT LLC',
   },
@@ -154,8 +155,8 @@ const EXPECT = {
 // Social Security number; the per-vehicle coverage rows of both vehicles but comprehensive and
 // collision (TNI's $1,000 deductible), found by each one's year, make and model. [form, note pattern, keys].
 const NEEDS_YOU = [
-  ['Business Class & USDOT', /\S/, ['ref:GivePrimaryBusinessDescription', 'ref:GiveSecondaryBusinessDescription', 'ref:GiveExtendUsDotVerifyBusinessAddress']],
-  ['Business & Owner Info', /\S/, ['ref:GiveStreet', 'ref:GiveEffectiveDate']],
+  ['Business Class & USDOT', /\S/, ['ref:GiveExtendUsDotVerifyBusinessAddress']],
+  ['Business & Owner Info', /\S/, ['ref:GiveEffectiveDate']],
   ['Vehicles: owner check', /never filled/, ['ref:GiveSocialSecurityNumber']],
   ['Vehicles: vehicle 1', /\S/, ['ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
@@ -568,6 +569,7 @@ const formIdOf = (list) => Object.keys(unitForms[list]).find((id) => unitForms[l
 // The agent's run through the quote, step by step. A step that goes wrong stops it: what was
 // seen so far is still checked and reported.
 let firstForm = null;
+const filledOn = (form, key) => fills.some((f) => f.form === form && f.report.filled.some((x) => x.key === key));
 async function scenario() {
   // Business Class & USDOT: filled; the agent changes team driving, the page redraws (new render
   // numbers, as after a validation reload), and the next fill leaves the agent's answer.
@@ -580,12 +582,12 @@ async function scenario() {
   await leave('Business Class & USDOT');
   await agent.go('Next', 'business-owner');
 
-  // Business & Owner Info: the agent types the street (GEICO's suggestions are theirs) and corrects
-  // the email and the owner's last name; a redraw, and a fill again. The last name is kept on this
-  // step, and on the owner check, which asks it again: Add Driver asks each driver's by the same name
-  // (both checked below).
+  // Business & Owner Info: the fill types the intake's address and picks GEICO's suggestion for it
+  // (FL live run 3, 2026-10-21); the agent corrects the email and the owner's last name; a redraw,
+  // and a fill again. The last name is kept on this step, and on the owner check, which asks it
+  // again: Add Driver asks each driver's by the same name (both checked below).
   await fillAll('Business & Owner Info');
-  await agent.text('GiveStreet', '1 Test Way');
+  if (!filledOn('Business & Owner Info', 'ref:GiveStreet')) fail('Business & Owner Info: the street was not filled with GEICO\'s suggestion for the intake\'s address');
   await agent.text('GiveEmail', 'owner@example.test');
   await agent.text('GiveLastName', 'DRIVERS');
   await page.evaluate(() => window.__geicoMock.redraw());
@@ -797,14 +799,14 @@ if (unitForms.trailers[units.trailers[0]?.form] !== 0) fail('Vehicles: the trail
 // Vehicles doesn't type the intake's last name over the agent's correction. (A choice made on a held
 // form, kept with that form once the agent picked its vehicle, and the trailer's year picked before
 // any fill read its form, are checked by corrected().)
-const filledOn = (form, key) => fills.some((f) => f.form === form && f.report.filled.some((x) => x.key === key));
 if (left['Drivers & Incidents: driver 2'] && !filledOn('Drivers & Incidents: driver 2', 'ref:GiveDriverRelationshipToBusiness')) fail('Drivers & Incidents: driver 2\'s relationship (Employee, TNI\'s standard) was never filled');
 for (const key of ['COMP', 'COLL'].flatMap((c) => [`cov:${c}#1`, `cov:${c}#2`])) if (left['Quote & Coverages'] && !filledOn('Quote & Coverages', key)) fail(`Quote & Coverages: ${key} was never filled with TNI's $1,000 deductible`);
 if (left['Drivers & Incidents: driver 2'] && !filledOn('Drivers & Incidents: driver 2', 'ref:GiveLastName')) fail('Drivers & Incidents: driver 2\'s last name was never filled: the agent\'s correction of the owner\'s last name on Business & Owner Info kept the fill from it');
 if (left['Vehicles: trailer 1'] && !/trailer/.test(needsSeen.get('Vehicles: trailer 1')?.get('ref:GiveOtherVehicleType') ?? '')) fail('Vehicles: the trailer\'s type was never left for the agent with the trailer\'s note: the agent\'s pick of vehicle 2\'s type kept the fill from it');
 const ownerCheck = left['Vehicles: owner check'];
 if (ownerCheck && (filledOn('Vehicles: owner check', 'ref:GiveLastName') || ownerCheck.GiveLastName === record.drivers[0].last)) fail(`Vehicles: owner check: the owner's last name was typed with the intake's (${JSON.stringify(ownerCheck.GiveLastName)}): the agent's correction on Business & Owner Info didn't reach the step that asks it again`);
-// Clicks the kit made (untrusted): radios and boxes, and for each unit it added (with "Click Continue
+// Clicks the kit made (untrusted): radios and boxes, GEICO's address suggestion on Business & Owner
+// Info, once, and for each unit it added (with "Click Continue
 // when the page is done" on), once, its list's "+" and, for a vehicle, the chooser's Next: vehicle 2's
 // and driver 2's, never the trailer's (added with the setting off). Its Continues, once each, where
 // nothing was left for the agent: the owner's driver form, Add Driver, both lists with every intake
@@ -818,8 +820,10 @@ const isContinue = (e) => e.type === 'click' && e.target === 'button' && /^(next
 const continues = final.log.filter((e) => !e.isTrusted && isContinue(e)).map((e) => `${e.text} on ${e.view}`);
 const wantContinues = ['Looks Good on vehicle-list', 'Next on owner-driver', 'Save and Continue on add-driver', 'Looks Good on driver-list', 'Next on business-info'];
 if (JSON.stringify(continues) !== JSON.stringify(wantContinues)) fail(`the extension's Continues were [${continues.join(', ')}], expected [${wantContinues.join(', ')}]`);
+const picks = final.log.filter((e) => !e.isTrusted && e.type === 'click' && e.target === 'option').map((e) => e.view);
+if (JSON.stringify(picks) !== '["business-owner"]') fail(`the extension picked address suggestions on [${picks.join(', ')}], expected [business-owner]`);
 const kitClicks = final.log.filter((e) => !e.isTrusted && (e.type === 'click' || e.type === 'disabled'))
-  .filter((e) => !['radio', 'checkbox'].includes(e.target) && !isAdd(e) && !isContinue(e));
+  .filter((e) => !['radio', 'checkbox', 'option'].includes(e.target) && !isAdd(e) && !isContinue(e));
 for (const e of kitClicks) fail(`the extension clicked ${e.target}${e.text ? ` "${e.text}"` : ''} on ${e.step}`);
 for (const e of final.stopActions.filter((x) => !x.isTrusted)) fail(`${e.step}: the extension did ${e.type} on ${e.target} (a stop step)`);
 // The Social Security number: never typed, by anyone here.

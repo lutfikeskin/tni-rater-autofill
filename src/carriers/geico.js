@@ -59,6 +59,8 @@ const FILLED = /^https:\/\/(?:sales\.geico\.com\/quote|gateway2\.geico\.com)(?:[
 const GATEWAY = /^https:\/\/gateway2\.geico\.com(?:[?#/]|$)/i;
 // The quote's own page, where the gateway's rules never apply.
 const GATEWAY_OFF = ['/quote'];
+// The Search Products window's product boxes (Auto, Commercial Auto/Trucking, Motorcycle, Umbrella).
+const PRODUCT = 'input[name="lob-selection"]';
 const STOP_AT_QUOTE = 'TNI stops GEICO quotes at Quote & Coverages: go back there and print the quote proposal.';
 
 // The forms of one step, by a question only that form asks.
@@ -131,6 +133,13 @@ const currentGeicoNote = (r) => (currentGeico(r) != null ? null
 const HAULED = (r) => [r.operations.businessClass && `the business class is ${quote(r.operations.businessClass)}`,
   r.operations.whatHaul && `they haul ${quote(r.operations.whatHaul)}`].filter(Boolean).join(' and ');
 const describeNote = (what) => (r) => `${what} is yours to pick${HAULED(r) ? ` (on the intake ${HAULED(r)})` : ''}.`;
+// An expediter or a general freight hauler (the business class, as Progressive reads it): the
+// classes TNI's GEICO standards were set for (supportedClasses), and For Hire Trucking, then Other
+// For-Hire Trucking, on Business Class & USDOT (TNI, 2026-10-21: "that's the equivalent of
+// Expediter and General Freight Hauler").
+const FOR_HIRE_CLASSES = [/expedit/i, /^(?:general\s+)?freight\s+haul(?:er|ing)$/i];
+const forHire = (r) => FOR_HIRE_CLASSES.some((re) => re.test(String(r.operations.businessClass ?? '').trim()));
+const describeSource = (r) => (forHire(r) ? 'standard' : 'derived');
 
 const teamNote = (r) => (typeof r.operations.teamDriving === 'boolean' ? null
   : 'The intake doesn\'t answer team driving or slip seating (intakes before 2026-10-02 don\'t ask it): answer it yourself.');
@@ -226,11 +235,17 @@ const ownershipWarn = (r) => companyStructureWarn(r.applicant.name);
 const phoneNote = (r) => (r.applicant.phone && !/^\(\d{3}\) \d{3}-\d{4}$/.test(r.applicant.phone) ? 'The intake\'s phone isn\'t a 10-digit number: enter it yourself.' : null);
 const ownerDrivesNote = (r) => (typeof r.applicant.ownerDrives === 'boolean' ? null : 'The intake doesn\'t say whether the owner drives: answer it yourself.');
 
-// The business street: GEICO's box offers its own address suggestions, whose list hasn't been
-// recorded open, so the street is the agent's to enter and pick, with the intake's quoted.
-const streetNote = (r) => (r.garaging?.street
-  ? `Enter the business street yourself and pick GEICO's suggestion: the intake has ${quote([r.garaging.street, r.garaging.unit].filter(Boolean).join(' '))}.`
-  : 'The intake has no street: enter the business address yourself.');
+// The business street: the intake's address typed whole (street, city, state and ZIP; the unit has
+// boxes of its own), and GEICO's suggestion for it picked: one with the intake's house number and
+// ZIP (pagekit address-suggest; FL live run 3, 2026-10-21: the street was the agent's while GEICO's
+// list had never been seen open). No such suggestion: the street alone is left in the box, for the
+// agent to pick from GEICO's list. A street GEICO already shows (from the USDOT record) is kept
+// when it has the intake's house number, and flagged as differing when not (`checkNumber`).
+const streetLine = (r) => {
+  const g = r.garaging ?? {};
+  return g.street ? [g.street, g.city, [g.state, zip5(r) ?? g.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ') : null;
+};
+const streetNote = (r) => (r.garaging?.street ? null : 'The intake has no street: enter the business address yourself.');
 
 // The unit ("Apt 5", "Suite 200", "#12", "Lot 7", "Trlr 3"), as GEICO's Unit Number and Unit Type.
 // A unit without a number, or without a word naming its kind ("#12"), is the agent's; no unit on
@@ -252,7 +267,8 @@ const OWNER_IDENTITY = [
   { field: 'GiveFirstName', ask: 'Business Owner First Name', name: 'Owner first name', source: 'derived', value: ownerFirst, note: (r) => (ownerFirst(r)?.length > MAX_NAME ? nameNote(ownerFirst(r), 'owner\'s first name') : null) },
   { field: 'GiveLastName', ask: 'Business Owner Last Name', name: 'Owner last name', source: 'derived', value: ownerLast, note: (r) => (ownerLast(r)?.length > MAX_NAME ? nameNote(ownerLast(r), 'owner\'s last name') : null) },
   { field: 'GiveDateOfBirth', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', source: 'derived', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
-  { field: 'GiveStreet', name: 'Business street', source: 'fact', note: streetNote },
+  { field: 'GiveStreet', path: 'garaging.street', name: 'Business street (GEICO\'s suggestion for the intake\'s address)', kind: 'address-suggest', source: 'derived',
+    value: streetLine, fallback: (r) => r.garaging?.street ?? null, checkNumber: true, note: streetNote },
   { field: 'GiveUnitNumber', ask: 'Unit Number', path: 'garaging.unit', name: 'Business unit number', source: 'derived', value: (r) => unitParts(r).number, ignore: noUnit, note: unitNumberNote },
   { field: 'GiveUnitType', ask: 'Unit Type', path: 'garaging.unit', name: 'Business unit type', kind: 'choice', source: 'derived', value: (r) => unitParts(r).type, ignore: noUnit, note: unitTypeNote },
   { field: 'GiveZip', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'Business ZIP', source: 'derived', value: zip5, note: zipNote },
@@ -571,7 +587,7 @@ export const geico = {
   useGenericRules: false,
   // TNI's GEICO standards were set on a for-hire freight quote (FL, 2026-10-21): an expediter or a
   // freight hauler, as Progressive's. Any other class fills them in review mode (plan.js).
-  supportedClasses: [/expedit/i, /^(?:general\s+)?freight\s+haul(?:er|ing)$/i],
+  supportedClasses: FOR_HIRE_CLASSES,
   // GEICO pre-selects answers everywhere (No on cargo, hired autos, non-owned and general
   // liability, Yes on the registered state, a value in every coverage list): ours replace them, as
   // on Progressive; anything the agent changed is left alone.
@@ -653,7 +669,19 @@ export const geico = {
     // alerts) are never answered. Never on the quote, whose own ZIP is GiveInitialZipCode.
     { notPages: GATEWAY_OFF, selector: '#start-quote-zip', name: 'Start quote: ZIP (the garaging ZIP)', path: 'garaging.zip', source: 'derived', value: zip5, note: zipNote },
     { notPages: GATEWAY_OFF, selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
-    { notPages: GATEWAY_OFF, selector: 'input[name="header-search-type"], #search-input-id, input[name="lob-selection"], [id^="alerts-pref"]', name: 'Gateway dashboard (not the quote)', q: 'gatewayDashboard', ignore: true },
+    // The Search Products window (TNI, FL live run 3, 2026-10-21: "after Search Products you should
+    // select commercial auto"): Commercial Auto/Trucking ticked, and no other product; its own USDOT
+    // box takes the intake's number.
+    { notPages: GATEWAY_OFF, selector: `${PRODUCT}#commercial, ${PRODUCT}[value="commercial"]`, name: 'Start quote: Commercial Auto/Trucking (TNI: ticked)', q: 'gatewayCommercial',
+      kind: 'bool', source: 'standard', value: () => true },
+    { notPages: GATEWAY_OFF, selector: '#start-quote-usdot', name: 'Start quote: USDOT number (Search Products)', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
+    // The gateway's own controls are never answered: the header search, the other products, the
+    // alerts settings. One rule each, as a selector rule answers its first match only (the header
+    // search took the one that named the products too, and they were left unfamiliar).
+    ...[['input[name="header-search-type"]', 'Gateway: policy or quote search'], ['#search-input-id', 'Gateway: search box'],
+      ...['auto', 'cycle', 'umbrella'].map(() => [`${PRODUCT}:not(#commercial):not([value="commercial"])`, 'Gateway: another product (never ticked)']),
+      ['[id^="alerts-pref"]', 'Gateway: alerts settings']]
+      .map(([selector, name]) => ({ notPages: GATEWAY_OFF, selector, name, q: 'gatewayDashboard', ignore: true })),
     // --- Business Class & USDOT ----------------------------------------------------------------
     ...on(BUSINESS_CLASS, {}, [
       { field: 'GiveInitialZipCode', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'ZIP code (the garaging ZIP)', source: 'derived', value: zip5, note: zipNote },
@@ -661,10 +689,13 @@ export const geico = {
         kind: 'bool', source: 'derived', clientFact: true, value: currentGeico, note: currentGeicoNote },
       { field: 'GiveDepartmentOfTransportationNumber', ask: 'What is the customer\'s USDOT number?', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
       // The business description lists 1,599 kinds of business (too many for the AI assistant), the
-      // more detailed one 26: the agent's picks, never matched by words ("Freight Hauler" isn't
-      // "Freight Forwarder").
-      { field: 'GivePrimaryBusinessDescription', ask: 'Please choose what best describes the customer\'s business.', name: 'Business description (the agent\'s pick)', note: describeNote('What best describes the business') },
-      { field: 'GiveSecondaryBusinessDescription', ask: 'Please give us a little more information about what the customer\'s business does.', name: 'More about the business (the agent\'s pick)', note: describeNote('The more detailed description') },
+      // more detailed one 26. An expediter or a general freight hauler is For Hire Trucking, then
+      // Other For-Hire Trucking (TNI, 2026-10-21: forHire). Any other class is the agent's pick,
+      // never matched by words ("Freight Hauler" isn't "Freight Forwarder").
+      { field: 'GivePrimaryBusinessDescription', ask: 'Please choose what best describes the customer\'s business.', name: 'Business description (For Hire Trucking for an expediter or freight hauler)',
+        kind: 'choice', source: describeSource, value: (r) => (forHire(r) ? 'For Hire Trucking' : null), note: (r) => (forHire(r) ? null : describeNote('What best describes the business')(r)) },
+      { field: 'GiveSecondaryBusinessDescription', ask: 'Please give us a little more information about what the customer\'s business does.', name: 'More about the business (Other For-Hire Trucking for an expediter or freight hauler)',
+        kind: 'choice', source: describeSource, value: (r) => (forHire(r) ? 'Other For-Hire Trucking' : null), note: (r) => (forHire(r) ? null : describeNote('The more detailed description')(r)) },
       // GEICO is the first carrier mapped to ask it. Intakes from before the question are null:
       // unanswered, not No.
       { field: 'TeamDrivingOrSlipSeatingYesNo', ask: 'Do any of your customer\'s vehicles require team driving or slip seating to keep the vehicle continuously moving?', path: 'operations.teamDriving', name: 'Team driving or slip seating', kind: 'bool', note: teamNote },

@@ -282,6 +282,9 @@ function fieldSteps(rules, record, carrier, active) {
       businessNames: rule.businessNames ? rule.businessNames(record, active) : null,
       // What an address box gets when the page offers no suggestion (e.g. just the street).
       fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,
+      // An address the page already shows agrees only with the intake's house number (GEICO fills
+      // the street from its USDOT record).
+      checkNumber: !!rule.checkNumber,
       // Type-ahead lists: what to type (the value is what the chosen result must contain).
       search: typeof rule.search === 'function' ? rule.search(record, active) : rule.search ?? null,
       withOption: typeof rule.withOption === 'function' ? rule.withOption(record, active) : rule.withOption ?? null,

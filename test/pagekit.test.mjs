@@ -7,6 +7,7 @@ import { buildPlan } from '../src/plan.js';
 import { collectItems } from '../src/ai/common.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
+import { geico } from '../src/carriers/geico.js';
 import { fieldChangeEvent, redactor } from '../src/usage.js';
 import { assistContextKey } from '../src/ai/common.js';
 
@@ -4486,6 +4487,97 @@ test('a search box that is an address question is a question; a site search or a
   const filter = makeInput({ type: 'search', className: 'select2-search__field', ariaLabel: 'Search the list', attrs: { 'aria-autocomplete': 'list', 'aria-controls': 'select2-year-results' } });
   h.document.body.append(street, site, filter);
   assert.deepEqual(plain(h.kit.capture(null, []).controls.map((c) => c.ref)), ['GiveStreet']);
+});
+
+// FL live run 3, 2026-10-21 (W43-09): GEICO's street offers its own suggestions, drawn in the address
+// wrapper's shadow root as <gds-dropdown-list-item type="address"> ("listitem", not "option"; GEICO's
+// script), a click on one picking it. The fill types the intake's address and picks the suggestion
+// with its house number and ZIP; none, and the street alone is left for the agent.
+const GEICO_ADDRESS = { ...geicoRecord(), trailers: [], trailerInfo: {}, notes: {},
+  applicant: { name: 'Synthetic Freight LLC' }, garaging: { street: '1 Test Way', unit: null, city: 'Testville', state: 'NE', zip: '68000' } };
+function geicoStreetPage(suggest, { prefilled = '' } = {}) {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Business & Owner Info');
+  const street = geicoBox('GiveStreet', 501, 'Street address', { type: 'search', attrs: { 'aria-autocomplete': 'list', 'aria-controls': 'address-dropdown-list' } });
+  street.value = prefilled;
+  const zip = geicoBox('GiveZip', 502, '5-Digit ZIP Code');
+  const wrapper = new FakeNode('gds-address-auto-complete-wrapper');
+  wrapper.attachShadow({ mode: 'open' });
+  wrapper.append(street);
+  h.document.body.append(wrapper, zip);
+  const typed = [];
+  street.addEventListener('input', () => {
+    typed.push(street.value);
+    setTimeout(() => {
+      const list = new FakeNode('gds-dropdown-list', { id: 'address-dropdown-list', role: 'listbox' });
+      for (const [line, z] of suggest) {
+        const item = new FakeNode('gds-dropdown-list-item', { textContent: line, role: 'listitem', attrs: { type: 'address' } });
+        item.onclick = () => { street.value = line.split(',')[0]; zip.value = z; list.remove(); };
+        list.append(item);
+      }
+      wrapper.shadowRoot.append(list);
+    }, 200);
+  });
+  return { h, street, zip, typed };
+}
+
+test('GEICO\'s street: the intake\'s address typed, the suggestion with its house number and ZIP picked; none, and it is the agent\'s', async () => {
+  const fill = (p) => p.h.kit.fill(buildPlan(GEICO_ADDRESS, geico), { maxRounds: 8, replaceChoices: true });
+  // Another town's first: the one with the intake's ZIP is picked.
+  let p = geicoStreetPage([['1 TEST WAY, OTHERTOWN, NE 68999 US', '68999'], ['1 TEST WAY, TESTVILLE, NE 68000 US', '68000']]);
+  let report = await fill(p);
+  assert.deepEqual(p.typed, ['1 Test Way, Testville, NE 68000']);
+  assert.deepEqual([p.street.value, p.zip.value], ['1 TEST WAY', '68000']);
+  assert.deepEqual(plain(report.filled.filter((x) => x.key === 'ref:GiveStreet').map((x) => x.shown)), ['1 TEST WAY, TESTVILLE, NE 68000 US']);
+  assert.deepEqual(plain([report.failed, report.kept.filter((x) => x.differs)]), [[], []]);
+  // No suggestion with the intake's house number: the street alone, marked for the agent.
+  p = geicoStreetPage([['12 TEST WAY, TESTVILLE, NE 68000 US', '68000']]);
+  report = await fill(p);
+  assert.equal(p.street.value, '1 Test Way');
+  assert.match(report.failed.find((x) => x.key === 'ref:GiveStreet').reason, /none of the page's address suggestions has the intake's house number and ZIP/);
+  assert.equal(p.street.getAttribute('data-rater-autofill'), 'failed');
+  // A later fill: still the agent's while the box holds what the fill left, nothing typed again.
+  const typedBefore = p.typed.length;
+  report = await fill(p);
+  assert.deepEqual([p.typed.length, p.street.value], [typedBefore, '1 Test Way']);
+  assert.match(report.failed.find((x) => x.key === 'ref:GiveStreet').reason, /no address suggestion was picked/);
+  // GEICO's own street (from its USDOT record) with the intake's house number: kept, nothing typed.
+  p = geicoStreetPage([], { prefilled: '1 TEST WAY' });
+  report = await fill(p);
+  assert.deepEqual([p.typed, p.street.value, report.failed.length, report.kept.filter((x) => x.differs).length], [[], '1 TEST WAY', 0, 0]);
+  // Another house number: kept and flagged, never typed over.
+  p = geicoStreetPage([], { prefilled: '99 OTHER RD' });
+  report = await fill(p);
+  assert.deepEqual([p.typed, p.street.value], [[], '99 OTHER RD']);
+  assert.deepEqual(plain(report.kept.filter((x) => x.differs).map((x) => x.key)), ['ref:GiveStreet']);
+});
+
+// FL live run 3, 2026-10-21 (W43-12): Search Products shows the products (`lob-selection` boxes) and a
+// USDOT box of its own. The rule that named the products also named the header search, and a selector
+// rule answers its first match only: both were left unfamiliar.
+test('GEICO\'s gateway: Commercial Auto/Trucking ticked, no other product, the Search Products USDOT box from the intake', async () => {
+  const page = () => {
+    const h = harness({ pathname: '/' });
+    const header = ['Policy', 'Quote'].map((v) => makeInput({ type: 'radio', name: 'header-search-type', id: `header-search-type-${v}`, value: v, ariaLabel: v }));
+    const search = makeInput({ id: 'search-input-id', name: 'search-input', ariaLabel: 'Policy / quote search bar' });
+    const zip = makeInput({ id: 'start-quote-zip', name: 'zip', ariaLabel: 'Zip Code' });
+    const products = ['auto', 'commercial', 'cycle', 'umbrella'].map((v) => makeInput({ type: 'checkbox', name: 'lob-selection', id: v, attrs: { value: v } }));
+    const usdot = makeInput({ id: 'start-quote-usdot', name: 'usdot', ariaLabel: 'USDOT Number' });
+    const dashboard = makeInput({ id: 'dashboard-usdot', name: 'usdot', ariaLabel: 'USDOT number' });
+    h.document.body.append(...header, search, zip, ...products, usdot, dashboard);
+    return { h, products, zip, usdot, dashboard };
+  };
+  const record = { ...GEICO_ADDRESS, applicant: { name: 'Synthetic Freight LLC', dot: '1234567' } };
+  let p = page();
+  let report = await p.h.kit.fill(buildPlan(record, geico), { maxRounds: 4 });
+  assert.deepEqual(p.products.map((b) => b.checked), [false, true, false, false]);
+  assert.deepEqual([p.zip.value, p.usdot.value, p.dashboard.value], ['68000', '1234567', '1234567']);
+  assert.deepEqual(plain([report.unknown, report.failed, report.advanced ?? null]), [[], [], null]);
+  // No USDOT on the intake: its boxes as they are; Commercial Auto/Trucking still ticked.
+  p = page();
+  report = await p.h.kit.fill(buildPlan({ ...record, applicant: { name: 'Synthetic Freight LLC', dot: null } }, geico), { maxRounds: 4 });
+  assert.deepEqual([p.products.map((b) => b.checked), p.usdot.value, p.dashboard.value], [[false, true, false, false], '', '']);
+  assert.deepEqual(plain(report.unknown), []);
 });
 
 test('marks go where the agent looks: a GEICO option on its host, a select2 list on its drawn box', async () => {
