@@ -5816,3 +5816,21 @@ test('an answer given only when the question\'s own text shows the intake\'s wor
     assert.deepEqual(plain(await run(record)), [[false, false], ['Check GEICO\'s USDOT record against the client\'s business, then answer it yourself.']], record);
   }
 });
+
+// FL live run 5, 2026-10-21 (W43-25): on the gateway's Search Products window Commercial
+// Auto/Trucking was ticked, but another product's box was listed as unfamiliar. Each of the other
+// products' boxes is known and left alone, and Commercial Auto is the only one ticked.
+test('GEICO Search Products: Commercial Auto ticked, every other product known and left alone', async () => {
+  const run = async (ids) => {
+    const h = harness({ pathname: '/dashboard' });
+    const boxes = ids.map((id) => makeInput({ type: 'checkbox', id, name: 'lob-selection', value: id }));
+    h.document.body.append(...boxes);
+    const plan = buildPlan({ ...geicoRecord(), garaging: { zip: '33139' } }, geico).filter((s) => !s.steps?.length);
+    const report = await h.kit.fill(plan, { maxRounds: 3 });
+    return plain([boxes.map((b) => b.checked), report.unknown.map((x) => x.key)]);
+  };
+  // The window as saved (NE): four products.
+  assert.deepEqual(await run(['auto', 'commercial', 'cycle', 'umbrella']), [[false, true, false, false], []]);
+  // More boxes than those (a product added, the window drawn twice): each known, none ticked again.
+  assert.deepEqual(await run(['auto', 'commercial', 'cycle', 'umbrella', 'renters', 'commercial']), [[false, true, false, false, false, false], []]);
+});

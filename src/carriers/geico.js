@@ -62,6 +62,8 @@ const GATEWAY = /^https:\/\/gateway2\.geico\.com(?:[?#/]|$)/i;
 const GATEWAY_OFF = ['/quote'];
 // The Search Products window's product boxes (Auto, Commercial Auto/Trucking, Motorcycle, Umbrella).
 const PRODUCT = 'input[name="lob-selection"]';
+// How many product boxes besides Commercial Auto the window may draw (the saved one: three).
+const PRODUCT_BOXES = 8;
 const STOP_AT_QUOTE = 'TNI stops GEICO quotes at Quote & Coverages: go back there and print the quote proposal.';
 
 // The forms of one step, by a question only that form asks.
@@ -747,9 +749,12 @@ export const geico = {
     { notPages: GATEWAY_OFF, selector: '#start-quote-usdot', name: 'Start quote: USDOT number (Search Products)', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
     // The gateway's own controls are never answered: the header search, the other products, the
     // alerts settings. One rule each, as a selector rule answers its first match only (the header
-    // search took the one that named the products too, and they were left unfamiliar).
+    // search took the one that named the products too, and they were left unfamiliar). The product
+    // boxes Commercial Auto's rule didn't take, however many the window draws (FL live run 5,
+    // 2026-10-21, W43-25: one more than the saved window's four was listed as unfamiliar): up to
+    // PRODUCT_BOXES.
     ...[['input[name="header-search-type"]', 'Gateway: policy or quote search'], ['#search-input-id', 'Gateway: search box'],
-      ...['auto', 'cycle', 'umbrella'].map(() => [`${PRODUCT}:not(#commercial):not([value="commercial"])`, 'Gateway: another product (never ticked)']),
+      ...Array.from({ length: PRODUCT_BOXES }, () => [PRODUCT, 'Gateway: another product (never ticked)']),
       ['[id^="alerts-pref"]', 'Gateway: alerts settings']]
       .map(([selector, name]) => ({ notPages: GATEWAY_OFF, selector, name, q: 'gatewayDashboard', ignore: true })),
     // --- Business Class & USDOT ----------------------------------------------------------------
