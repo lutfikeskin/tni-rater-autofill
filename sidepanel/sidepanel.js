@@ -1740,7 +1740,7 @@ async function autoFill(page) {
     // Honor the latest switch after preparation, and log the same value used by the kit. The unit the
     // fill adds (pickUnitToAdd) has its "+" and chooser Next clicked only with it on (`click`).
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
-    const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!ctx.settings?.autoAdvance } } : ctx.active);
+    const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance) } } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
@@ -2604,7 +2604,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
-  let plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!ctx.settings?.autoAdvance } } : ctx.active);
+  let plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance) } } : ctx.active);
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
   // Step 2 shows how far it is and its Stop; step 3 waits for the new report (the last one stays
@@ -2628,7 +2628,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     // Honor the latest switch after preparation, and log the same value used by the kit.
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
     // The add helpers are clicked only with the switch on now.
-    if (ctx.adding) plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!ctx.settings?.autoAdvance } } : ctx.active);
+    if (ctx.adding) plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance) } } : ctx.active);
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
     if (state.fillingFor?.run === ctx.run && state.fillingFor.stopping) {
       tabMaps(tabId).autoPaused = true;
@@ -2748,7 +2748,9 @@ async function pickUnitForm(carrier, ctx) {
 // the list holds as many units as the intake, and none the list can't be read for while it has a
 // row no intake unit is known to be on (it may be that one, added by hand). With no unit form on
 // screen (the list, the chooser, the owner's own forms) the picker moves to that unit, so the plan
-// is for it.
+// is for it. The plan clicks the list's "+" and the chooser's Next for it (`click`) with "Fill the
+// pages" or "Click Continue when the page is done" on (TNI, FL live run 5, 2026-10-21, W43-20);
+// with both off it only answers the chooser.
 async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   ctx.unitsListed = false;

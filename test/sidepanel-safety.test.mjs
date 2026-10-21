@@ -5698,3 +5698,19 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
   // Another step, or a carrier without unit lists: nothing.
   for (const args of [{ step: 'Additional Business Info', lists: [null, null], record }]) assert.equal((await run(args)).adding, null);
 });
+
+// FL live run 5, 2026-10-21 (W43-20, TNI): with "Fill the pages" on and "Click Continue when the
+// page is done" off, GEICO's "+" and the chooser's Next weren't clicked. The fill adds units with
+// either setting on; Next, Save and Continue and Looks Good still need Click Continue (advanceFor).
+test('the fill adds the next unit with "Fill the pages" or "Click Continue" on, and only answers the chooser with both off', () => {
+  // Each plan the panel builds (the fill, its preview, the unit form's) passes the same `adding`.
+  const uses = [...SIDEPANEL.matchAll(/adding: \{ \.\.\.ctx\.adding, click: ([^}]+) \}/g)].map((m) => m[1].trim());
+  assert.equal(uses.length, 3);
+  assert.equal(new Set(uses).size, 1, 'one rule for every plan');
+  const click = (settings) => vm.runInNewContext(uses[0], { ctx: { settings } });
+  assert.deepEqual([
+    click({ autoAdvance: false, autoPages: true }),
+    click({ autoAdvance: true, autoPages: false }),
+    click({ autoAdvance: false, autoPages: false }),
+  ], [true, true, false]);
+});

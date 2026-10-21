@@ -277,9 +277,10 @@ function skipBy() {
   };
 }
 // The unit the fill adds (sidepanel.js pickUnitToAdd, chosen by the same src/units.js unitToAdd), with
-// the picker moved to it when no unit form is on screen. `click` with "Click Continue when the page
-// is done" on (settings.autoAdvance, read as the kit is called).
-const settings = { autoAdvance: true };
+// the picker moved to it when no unit form is on screen. `click` with "Fill the pages" or "Click
+// Continue when the page is done" on (settings.autoPages, settings.autoAdvance, read as the kit is
+// called; W43-20).
+const settings = { autoAdvance: true, autoPages: false };
 // The list on screen holds every intake unit (unitToAdd `complete`): its Looks Good is the fill's
 // Continue (advanceFor).
 let unitsListed = false;
@@ -297,7 +298,7 @@ async function pickUnitToAdd() {
     active[list] = index;
     lines.push(`  (the panel moved to ${list.slice(0, -1)} ${index + 1}: the next to add)`);
   }
-  return { list, index, click: settings.autoAdvance };
+  return { list, index, click: settings.autoPages || settings.autoAdvance };
 }
 
 // Picking unit `index` of `list` (renderPickers / releaseUnitForms): only the forms bound to it are let
@@ -654,7 +655,8 @@ async function scenario() {
   await leave('Vehicles: vehicle 2');
   await agent.go('Next', 'vehicle-list');
 
-  // The trailer, with "Click Continue when the page is done" off: the fill on the list clicks nothing;
+  // The trailer, with "Click Continue when the page is done" off (and "Fill the pages" off): the fill on
+  // the list clicks nothing;
   // the agent clicks "+", the fill answers Trailer on the chooser (the next intake unit), and the agent
   // clicks Next. They pick the trailer's year (2016; the intake has 2015) as soon as the form opens,
   // before any fill has read it: the recorder names the trailer form with the change, so it is kept
