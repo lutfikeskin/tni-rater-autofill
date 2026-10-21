@@ -559,11 +559,12 @@ const addUnit = (list, listSelector, how) => ({
   doneWhen: (r, a) => [`${UNIT[list][0]}Entered:${a[list] ?? 0}`],
   unfinished: (r, a) => `The "+" was clicked for ${UNIT[list][0]} ${(a[list] ?? 0) + 1} of the intake, but no form was filled for it and it isn't on the list: add it yourself (${how}), then fill.`,
 });
-// The chooser's Next only after the fill's own "+" for that unit: a chooser the agent opened is
-// answered (the agent may change it), and its Next is the agent's.
+// The chooser's Next, once its answer is in, whoever clicked "+" (W43-14, TNI 2026-10-21: after the
+// agent's own "+", the fill answered the chooser and held its Next for a "+" of its own that never
+// came). An answer the agent changed there is theirs, and stays (the fill skips their edits).
 const chooseUnit = (list) => ({
   id: `choose${UNIT[list][1]}`, steps: [VEHICLES], text: '^next$', within: CHOOSER_BUTTONS, moveOn: true,
-  loads: true, verify: 'revealed', after: ['geico.qGiveVehicleOrTrailer'], afterActions: (r, a) => [`add${UNIT[list][1]}:${a[list] ?? 0}`],
+  loads: true, verify: 'revealed', after: ['geico.qGiveVehicleOrTrailer'],
   scope: UNIT[list][0], when: adds(list),
 });
 
@@ -661,6 +662,9 @@ export const geico = {
   // question waited for the agent's Fill, and GEICO's own No to cargo stood until then), never after
   // an answer or a redraw.
   newQuestionsOnlySteps: [COVERAGES],
+  // A Continue that hasn't moved the step is never clicked again (the panel's watchNextStep): GEICO
+  // may still be working on it, with or without its spinner (FL live run 4, 2026-10-21, W43-13).
+  continueRetry: false,
   keepTakenBack: [COVERAGES],
   rules: [
     // --- The gateway (gateway2.geico.com) --------------------------------------------------------

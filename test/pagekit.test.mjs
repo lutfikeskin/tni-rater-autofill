@@ -4394,6 +4394,71 @@ test('a helper kept to a container clicks only there; a Next is clicked only wit
   assert.deepEqual(plain(report.actions.map((a) => a.id)).sort(), ['addDriver', 'next']);
 });
 
+// FL live run 4, 2026-10-21 (W43-14): GEICO draws the chooser a moment after "+", with no spinner.
+// The fill waited 250 ms of quiet, saw no chooser, and clicked "+" again, three times in 1.4 s, then
+// left it to the agent; on vehicle 3 the adds it queued kept GEICO's spinner up for a minute. A
+// helper that loads a view is clicked once and its result waited for; one that never shows is the
+// agent's, never clicked again.
+test('a helper that loads a view is clicked once and its result waited for, not clicked again', async () => {
+  const h = harness({ pathname: '/quote' });
+  const row = new FakeNode('li', { className: 'add-state' });
+  const icon = new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '0' } });
+  row.append(new FakeNode('p', { textContent: 'Add Vehicle or Trailer' }), icon);
+  h.document.body.append(row);
+  let clicks = 0;
+  icon.onclick = () => {
+    clicks += 1;
+    setTimeout(() => h.document.body.append(makeInput({ id: 'chooser', ariaLabel: 'What would the customer like to add?' })), 1000);
+  };
+  const actions = [{ id: 'addVehicle', token: 'addIcon', within: 'li.add-state', loads: true, verify: 'revealed', label: 'Add Vehicle or Trailer' }];
+  const plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions }).filter((s) => s.kind === 'action');
+  let report = await h.kit.fill(plan, { maxRounds: 6 });
+  assert.equal(clicks, 1);
+  assert.deepEqual(plain(report.actions.map((a) => a.id)), ['addVehicle']);
+  assert.deepEqual(plain(report.noData), []);
+  // A "+" whose view never comes: clicked once, then the agent's.
+  h.document.body.children.splice(0);
+  const row2 = new FakeNode('li', { className: 'add-state' });
+  const icon2 = new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '0' } });
+  row2.append(icon2);
+  h.document.body.append(row2);
+  clicks = 0;
+  icon2.onclick = () => { clicks += 1; };
+  report = await h.kit.fill(plan, { maxRounds: 6, loadResultMs: 1500 });
+  assert.equal(clicks, 1);
+  assert.deepEqual(plain(report.noData.map((x) => [x.label, x.note])), [['Add Vehicle or Trailer', 'Clicked once, but the page never showed what it opens: check the page, do it yourself if it isn\'t there, then fill again.']]);
+});
+
+// FL live run 4, 2026-10-21 (W43-13): Add Driver was clicked 2 s after the list showed, while GEICO
+// still drew it, and its spinner stayed until the agent reloaded. A helper that loads a view waits
+// for a page quiet for a second.
+test('a helper that loads a view is clicked only once the page has been quiet for a second', async () => {
+  const h = harness({ pathname: '/quote' });
+  const row = new FakeNode('li', { className: 'add-state' });
+  const icon = new FakeNode('span', { attrs: { 'data-testid': 'addIcon', tabindex: '0' } });
+  row.append(icon);
+  h.document.body.append(row);
+  const observers = new Set();
+  h.context.MutationObserver = class {
+    constructor(fn) { this.fn = fn; }
+    observe() { observers.add(this); }
+    disconnect() { observers.delete(this); }
+  };
+  // GEICO still drawing the list: a change every 300 ms for 1.5 s.
+  let lastDraw = clock.Date.now(), clickedAt = null;
+  const draw = (n) => { h.document.body.append(new FakeNode('span')); lastDraw = clock.Date.now(); for (const o of observers) o.fn([]); if (n > 1) setTimeout(() => draw(n - 1), 300); };
+  setTimeout(() => draw(5), 300);
+  icon.onclick = () => {
+    clickedAt = clock.Date.now();
+    setTimeout(() => h.document.body.append(makeInput({ id: 'chooser', ariaLabel: 'What would the customer like to add?' })), 200);
+  };
+  const actions = [{ id: 'addVehicle', token: 'addIcon', within: 'li.add-state', loads: true, verify: 'revealed' }];
+  const plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions }).filter((s) => s.kind === 'action');
+  await h.kit.fill(plan, { maxRounds: 6 });
+  assert.ok(clickedAt != null, 'clicked');
+  assert.ok(clickedAt - lastDraw >= 1000, `clicked ${clickedAt - lastDraw} ms after the page's last change`);
+});
+
 test('a one-address unit list: how many units it lists and which of them it shows, within the list only', () => {
   const h = harness({ pathname: '/quote' });
   const list = new FakeNode('ul', { id: 'summaryPage-AddCommercialVehicle' });
@@ -5388,6 +5453,29 @@ test('a Continue with quietMs waits for the page, and a question drawn meanwhile
   p = page(false);
   report = await p.h.kit.fill(plan, { maxRounds: 6, advance });
   assert.deepEqual(plain([p.clicks, report.advanced]), [['Next'], 'Next']);
+});
+
+// FL live run 4, 2026-10-21 (W43-13): the agent clicked Next while GEICO still worked, and a fill
+// clicked Next on top of it. A button the agent clicks during a fill is that step's move: the fill
+// clicks no Continue and no helper after it.
+test('a button the agent clicks during a fill is the step\'s move: the fill clicks no Continue after it', async () => {
+  const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
+  const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Business Class & USDOT');
+  const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
+  const clicks = [];
+  const next = gdsButton('Next');
+  next.button.onclick = (e) => clicks.push(e?.isTrusted ? 'agent' : 'fill');
+  h.document.body.append(dot, next.host);
+  // The agent's own Next, a moment after the answer (GEICO hasn't moved yet).
+  dot.addEventListener('change', () => setTimeout(() => {
+    const event = { type: 'click', target: next.button, isTrusted: true, composedPath: () => [next.button, next.host] };
+    next.button.dispatchEvent(event);
+    next.button.onclick(event);
+  }, 200));
+  const report = await h.kit.fill(plan, { maxRounds: 6, advance });
+  assert.deepEqual(plain([clicks, report.advanced ?? null, report.agentPressed]), [['agent'], null, true]);
 });
 
 test('unitFormsNow says whether a unit form is new: its first question unanswered', async () => {

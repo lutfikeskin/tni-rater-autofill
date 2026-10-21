@@ -2912,13 +2912,18 @@ function assistAfterFill(frames, ctx, followUp) {
 // loading) is tried once more: Progressive's Change Payment Plan lost one while it redrew.
 // When the second click doesn't take either, automatic filling pauses and the agent is told
 // (audit 2026-10-08, finding 6): until then the lost Continue went unreported.
+// A carrier without the retry (`continueRetry: false`: GEICO, FL live run 4, 2026-10-21, where the
+// retry sent Next again while GEICO still worked on the first) is never clicked again: its page
+// may load for up to a minute, and a quiet page that hasn't moved for about 18 s is the agent's.
 // `doneKey`: the continued step's entry in state.doneSteps (see stepScope); `run`: the fill's.
 async function watchNextStep(carrier, page, before, doneKey = null, run = null, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
   const tabId = ctx.tabId;
   if (!$('auto-followups').checked && !$('auto-pages').checked) return;
   let last = null;
   let unchanged = 0;
-  for (let i = 0; i < 100; i++) {
+  const retries = carrier.continueRetry !== false;
+  const patience = retries ? 20 : 60;
+  for (let i = 0; i < (retries ? 100 : 200); i++) {
     await new Promise((r) => setTimeout(r, 300));
     if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page || !state.intake) return;
     let now = null;
@@ -2934,13 +2939,13 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
       return;
     }
     unchanged = now != null && now === before ? unchanged + 1 : 0;
-    if (unchanged >= 20 && doneKey && !state.filling && !state.advanceRetried.has(doneKey)) {
+    if (retries && unchanged >= patience && doneKey && !state.filling && !state.advanceRetried.has(doneKey)) {
       state.advanceRetried.add(doneKey);
       state.doneSteps.delete(doneKey);
       fillPage({ auto: 'page' });
       return;
     }
-    if (unchanged >= 20 && doneKey && !state.filling && state.advanceRetried.has(doneKey)) {
+    if (unchanged >= patience && doneKey && !state.filling && (!retries || state.advanceRetried.has(doneKey))) {
       state.autoPaused = true;
       fillProblem({ tabId, page, carrier }, 'Continue didn\'t take: click it yourself.');
       if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, ...(run ? { run } : {}), auto: 'page', error: 'continue did not take' });

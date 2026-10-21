@@ -931,6 +931,14 @@
   // Once the question waited for comes in, the page goes on redrawing for a moment (GEICO fills its
   // vehicle type list again after the decoded year): this long without a change before the answer.
   const AFTER_WAIT_QUIET_MS = 800;
+  // A helper that draws a new view (`loads`: GEICO's add icons, the chooser's Next): how long its
+  // page may stay loading, and how long its view may take to show once the page is quiet, before
+  // the click counts as lost. Clicked once either way: a second "+" queues a second add.
+  const LOAD_MS = 60000;
+  const LOAD_RESULT_MS = 20000;
+  // How long the page is quiet before such a helper is clicked.
+  const LOAD_QUIET_MS = 1000;
+  const LOAD_HALT = 'The page was still loading after a minute: wait for it, then fill again.';
 
   const noMatch = (step, options) => ({
     ok: false,
@@ -944,6 +952,8 @@
   // the address needs the agent; the ZIP/city rules then check the rest. GEICO's are
   // <gds-dropdown-list-item type="address">, in its address wrapper's shadow root, read as list items
   // (its script; FL live run 3, 2026-10-21).
+  // What the agent may click to move a page on (`notePress` in fill): a button, a link, an add icon.
+  const AGENT_PRESS = 'button, [role=button], gds-button, a[href], input[type=submit], input[type=button], [data-testid=addIcon]';
   const SUGGESTION_SELECTOR = '[role=option], .x-boundlist-item, .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li, gds-dropdown-list-item[type=address]';
   // An address's house number (its leading number) and ZIP (after a state's two letters).
   const houseNumberOf = (text) => String(text ?? '').match(/^\s*(\d+)\b/)?.[1] ?? null;
@@ -1561,7 +1571,7 @@
   // again.
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -1711,6 +1721,16 @@
       if (!report.protectedKeys.includes(key)) report.protectedKeys.push(key);
       halt(EDIT_HALT);
     });
+    // A button the agent clicks during the fill (Next, "+", Looks Good) moves the page on their
+    // click: this fill clicks no Continue and no helper after it (FL live run 4, 2026-10-21: the
+    // agent's Next, then a fill's, while GEICO still worked on the first).
+    let agentPressed = false;
+    const notePress = (event) => {
+      if (!event.isTrusted) return;
+      const path = event.composedPath?.() ?? [event.target];
+      if (path.some((n) => n?.nodeType === 1 && safeMatches(n, AGENT_PRESS))) agentPressed = true;
+    };
+    document.addEventListener('click', notePress, true);
     // Whether the registered names a USDOT lookup offers (Progressive's Business Name choice) are
     // on the page and none, or several, is the intake's: the identity is then the agent's.
     const IDENTITY_NOTE = 'The DOT lookup business name differs from the intake. Verify the identity before accepting it.';
@@ -2052,7 +2072,17 @@
       if (stepMoved) continue;
       // Nothing left to type or pick: click the next button whose turn it is.
       let helperClicked = false;
-      if (!changed && window === window.top) changed = helperClicked = clickNextAction(controls);
+      if (!changed && window === window.top && !agentPressed) {
+        // A helper that loads a view (GEICO's "+", Add Driver) is clicked on a page quiet for a
+        // second (FL live run 4, 2026-10-21: Add Driver 2 s after the list showed, and GEICO's
+        // spinner stayed until the agent reloaded). A page that changed meanwhile is read again.
+        if (actions.some((a) => a.loads && !clicked.has(a.action) && !exhausted.has(a.action) && actionHere(a))) {
+          const before = signature();
+          if (!await settle({ quietMs: LOAD_QUIET_MS, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
+          if (signature() !== before) continue;
+        }
+        if (!agentPressed) changed = helperClicked = clickNextAction(controls);
+      }
       progressed = changed;
       if (!changed && !retry) {
         // A fill with a step that waits on the page takes one more look once the page has gone quiet:
@@ -2076,7 +2106,18 @@
       // A helper that draws a new view (`loads`: GEICO's add icons and the chooser's Next) is waited
       // for as long as a step's load.
       const loads = helperClicked && !!pendingAction?.loads;
-      if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads ? 15000 : 3000 })) { halt('The page did not settle after the helper.'); break; }
+      if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads ? LOAD_MS : 3000 })) {
+        halt(loads ? LOAD_HALT : 'The page did not settle after the helper.');
+        break;
+      }
+      // Its view comes a moment after the page went quiet (GEICO's chooser after "+", with no
+      // spinner: FL live run 4, 2026-10-21, "+" clicked three times in 1.4 s): waited for, once
+      // the page is quiet again, before the click counts as lost.
+      if (loads && pendingAction?.verify === 'revealed') {
+        const until = Date.now() + loadResultMs;
+        while (!revealedNow(pendingAction) && Date.now() < until) await sleep(200);
+        if (!await settle({ quietMs: 250, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
+      }
       if (!verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
       if (stepChanged()) break;
@@ -2085,6 +2126,13 @@
     if (!stoppedAt) {
       stoppedAt = stopStepOn(stopSteps);
       if (stoppedAt) { report.stopStep = stoppedAt; if (!report.halted) halt(STOP_STEP_HALT); }
+    }
+
+    function revealedNow(a) {
+      const before = a.before ?? new Map();
+      const controls = collectControls();
+      return [...controlSnapshot(controls)].some(([k, v]) => !before.has(k) || before.get(k) !== v)
+        || resultShown(a, assign(controls, plan));
     }
 
     function verifyAction() {
@@ -2122,12 +2170,7 @@
       // import redraws, the registered names a USDOT check offers). A redraw of the same
       // questions with the same answers is no result.
       // A redraw that shows the result again unchanged (it was there before the click) counts too.
-      if (a.verify === 'revealed') {
-        const before = a.before ?? new Map();
-        const controls = collectControls();
-        accepted = [...controlSnapshot(controls)].some(([k, v]) => !before.has(k) || before.get(k) !== v)
-          || resultShown(a, assign(controls, plan));
-      }
+      if (a.verify === 'revealed') accepted = revealedNow(a);
       // `{ appears }`: more of these on the page than before the click (any, when there were none).
       if (a.verify?.appears) accepted = deepQueryAll(document, a.verify.appears).length > (a.before ?? 0);
       if (!accepted) {
@@ -2138,6 +2181,13 @@
         // A click whose result never showed is tried again, twice at most in one fill (the
         // button is due again, being unclicked); then it stays the agent's, and they're told.
         if (a.verify === 'revealed' || a.verify?.appears) {
+          // A helper that loads a view is never clicked again: it was waited for (above).
+          if (a.loads) {
+            exhausted.add(a.action);
+            report.noData.push({ label: a.label ?? a.baseAction ?? a.action, path: a.path, name: a.name, key: null, q: null, controlKind: null,
+              note: 'Clicked once, but the page never showed what it opens: check the page, do it yourself if it isn\'t there, then fill again.' });
+            return true;
+          }
           if (retryOnce(`action:${a.action}`)) return true;
           // Left to the agent for the rest of this fill (not clicked again), and the page's other
           // questions still fill around it.
@@ -2502,7 +2552,8 @@
         // The agent checks the answers first: Continue only for the page as they approved it.
         const approved = !hold || (confirmed != null && confirmed === receipt());
         if (button && !approved) report.held = confirmed == null ? 'check' : 'changed';
-        if (button && approved) {
+        if (button && approved && agentPressed) report.agentPressed = true;
+        else if (button && approved) {
           const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           report.signatureBefore = signature();
@@ -2519,6 +2570,7 @@
       fillUnits = null;
       try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
       releaseEditGuard();
+      document.removeEventListener('click', notePress, true);
       if (running === thisFill) running = null;
     }
   }
@@ -2941,5 +2993,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 73, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 74, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

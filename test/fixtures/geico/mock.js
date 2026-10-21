@@ -9,6 +9,9 @@
 //   document.title ("GEICO <step>") move with the step. A progress link click is recorded, goes nowhere;
 // - Next shows #page-load (inline display:block) and disables the pressed button until the next view is
 //   drawn; Recalculate shows #extendedWaiting;
+// - the list's "+" draws the chooser (Add Driver's form) 1.2 s later with no loader, as the live page
+//   did (FL live run 4, 2026-10-21); a second "+" meanwhile queues a second add (recorded, so the
+//   check "added once each" fails on it);
 // - gds-radio-button: one shadow input per option (so Chromium keeps each in its own radio group), the
 //   host's `checked` and the group's `active-index` reflect the answer, exclusively. A click on the inner
 //   input or its label fires the browser's own input (composed) and change (not composed, it never leaves
@@ -664,7 +667,12 @@
     if (icon) {
       const id = icon.getAttribute('data-testid');
       const li = icon.closest('li[data-mock-unit], li.expandable-form, li');
-      if (id === 'addIcon') { record({ type: 'click', target: 'addIcon', text: '', isTrusted: e.isTrusted }); state.editing = null; return go(state.view === 'vehicle-list' ? 'vehicle-or-trailer' : state.view === 'driver-list' ? 'add-driver' : state.view); }
+      if (id === 'addIcon') {
+        record({ type: 'click', target: 'addIcon', text: '', isTrusted: e.isTrusted });
+        state.editing = null;
+        const to = state.view === 'vehicle-list' ? 'vehicle-or-trailer' : state.view === 'driver-list' ? 'add-driver' : state.view;
+        return later(1200, () => render(to));
+      }
       if (id === 'edit-icon') { record({ type: 'click', target: 'edit-icon', text: '', isTrusted: e.isTrusted }); return reopen(icon.closest('li[data-mock-unit]') ?? li); }
       record({ type: 'click', target: 'editIcon', text: '', isTrusted: e.isTrusted });
       return togglePanel(icon.closest('ul.expandable-form > li') ?? li);
