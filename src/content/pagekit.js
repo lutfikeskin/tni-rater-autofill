@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 80 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 82 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -2244,6 +2244,14 @@
           refill.add(step.id);
           retry = true;
           if (serverBacked) break;
+        } else if (step.keepUnlisted && /^no option matches/.test(result.reason ?? '') && hasValue(c)) {
+          // A list without the answer that already holds the page's own (`keepUnlisted`: GEICO's
+          // cities for the ZIP, TNI, 2026-10-21, W43-35: one city and OTHER in GA, "failed: City"
+          // on two steps, and the agent kept GEICO's): kept, with a check naming the answer.
+          const note = `The page's list has no "${step.value}" (${step.name}): its "${selectedText(c)}" is left as it is. Check it.`;
+          report.kept.push(item);
+          report.checks.push({ ...item, note, ...describe(c) });
+          handled.set(step.id, { status: 'needs', note });
         } else {
           report.failed.push({ ...item, reason: result.reason, ...describe(c) });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
@@ -3245,5 +3253,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 80, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 82, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

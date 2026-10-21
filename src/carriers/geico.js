@@ -288,7 +288,10 @@ const OWNER_IDENTITY = [
   { field: 'GiveUnitNumber', ask: 'Unit Number', path: 'garaging.unit', name: 'Business unit number', source: 'derived', value: (r) => unitParts(r).number, ignore: noUnit, note: unitNumberNote },
   { field: 'GiveUnitType', ask: 'Unit Type', path: 'garaging.unit', name: 'Business unit type', kind: 'choice', source: 'derived', value: (r) => unitParts(r).type, ignore: noUnit, note: unitTypeNote },
   { field: 'GiveZip', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'Business ZIP', source: 'derived', value: zip5, note: zipNote },
-  { field: 'GiveCity', ask: 'City', path: 'garaging.city', name: 'Business city', kind: 'choice' },
+  // GEICO lists the cities it knows for the ZIP and picks one; a city it doesn't list leaves GEICO's,
+  // with a check naming the intake's (`keepUnlisted`; TNI, 2026-10-21, W43-35: GA listed one city and
+  // OTHER, and the agent kept GEICO's).
+  { field: 'GiveCity', ask: 'City', path: 'garaging.city', name: 'Business city', kind: 'choice', keepUnlisted: true },
 ];
 
 // --- Vehicles and trailers ---------------------------------------------------------------------
@@ -387,7 +390,8 @@ const parking = (unit) => [
   { field: 'GiveStreet', q: `GiveStreet.${unit}`, ask: `Where does the customer usually park their ${unit} when not in use?`, name: `Where the ${unit} is parked: street (as GEICO has it)`, ignore: true,
     emptyNote: (r) => `GEICO left where the ${unit} is parked empty: enter it yourself${r.garaging?.street ? ` (the intake's garaging street is ${quote(r.garaging.street)})` : ''}.` },
   { field: 'GiveZip', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: `Where the ${unit} is parked: ZIP`, source: 'derived', value: zip5, note: zipNote },
-  { field: 'GiveCity', ask: 'City', path: 'garaging.city', name: `Where the ${unit} is parked: city`, kind: 'choice' },
+  // A city GEICO doesn't list for the ZIP: GEICO's kept, with a check (W43-35, as on Business & Owner Info).
+  { field: 'GiveCity', ask: 'City', path: 'garaging.city', name: `Where the ${unit} is parked: city`, kind: 'choice', keepUnlisted: true },
 ];
 
 // --- Drivers -----------------------------------------------------------------------------------
@@ -713,6 +717,19 @@ export const geico = {
     byForm: true,
     quietMs: 800,
   },
+  // Screens that are the agent's, without a step of their own (the kit reads none there), by a button
+  // only they show: said in red, nothing filled or clicked there. GEICO's "Add USDOT Number / Skip"
+  // (TNI, 2026-10-21, W43-27: SC and PA, after Business & Owner Info on quotes without a USDOT
+  // number; the panel said nothing, and the agent asked for "a red warning and blocker"). Add or
+  // Skip is the agent's.
+  stopButtons: {
+    'USDOT Number': {
+      button: '^add usdot number$',
+      note: (r) => (r?.applicant?.dot
+        ? `GEICO asks for a USDOT number; the intake's is ${quote(r.applicant.dot)}. Add USDOT Number or Skip is yours.`
+        : 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.'),
+    },
+  },
   // Steps that are the agent's: nothing is filled or clicked there (not even on Fill this page), and
   // the AI assistant isn't asked.
   // The quote stops at Quote & Coverages (TNI, 2026-10-21): going on leads to MVR & CLUE, whose
@@ -747,7 +764,10 @@ export const geico = {
     // The quote starts with the ZIP in the Start New Quote window, over any gateway page (and the
     // USDOT check beside it on the dashboard); the gateway's own controls (search, coverage boxes,
     // alerts) are never answered. Never on the quote, whose own ZIP is GiveInitialZipCode.
-    { notPages: GATEWAY_OFF, selector: '#start-quote-zip', name: 'Start quote: ZIP (the garaging ZIP)', path: 'garaging.zip', source: 'derived', value: zip5, note: zipNote },
+    // A ZIP GEICO carried over from the last quote is replaced with the intake's (`replace`; TNI,
+    // 2026-10-21, W43-28: 4 of 5 quotes opened with another ZIP, kept and flagged, and the agent
+    // typed it); one the agent typed or marked done is theirs (the fill's skip), never replaced.
+    { notPages: GATEWAY_OFF, selector: '#start-quote-zip', name: 'Start quote: ZIP (the garaging ZIP)', path: 'garaging.zip', source: 'derived', value: zip5, note: zipNote, replace: true },
     { notPages: GATEWAY_OFF, selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
     // The Search Products window (TNI, FL live run 3, 2026-10-21: "after Search Products you should
     // select commercial auto"): Commercial Auto/Trucking ticked, and no other product; its own USDOT

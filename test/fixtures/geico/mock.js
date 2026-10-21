@@ -43,6 +43,11 @@
 //   (gds-dropdown-list#address-dropdown-list > gds-dropdown-list-item[type=address], a "listitem"; the
 //   open list was never captured): the typed street with the city, state and ZIP; picking it fills
 //   street, ZIP and City;
+// - with ?usdot=ask, Business & Owner Info's Next draws GEICO's "Add USDOT Number / Skip" screen (SC and
+//   PA, 2026-10-21; never captured, its two buttons only): no question, no step in its title; Skip goes
+//   on, Add USDOT Number is only recorded. With ?gateway=<zip>, the gateway's Start New Quote ZIP box
+//   (#start-quote-zip) is drawn above the quote holding a ZIP carried over from the last quote; a
+//   change to it is logged (target start-quote-zip);
 // - unit forms prefill the parking address from Business & Owner Info, as GEICO did on the FL run;
 // - the unit lists: Next on a vehicle or trailer form (Save and Continue on Add Driver, Next on the
 //   owner's driver form) saves the unit and draws the list, one row per unit; the add icon opens the
@@ -145,6 +150,28 @@
     }
   };
   const clone = (id) => { const t = document.getElementById(id); const f = document.importNode(t.content, true); renumber(f); cards(f); return f; };
+
+  // GEICO's "Add USDOT Number / Skip" screen (W43-27; SC and PA, 2026-10-21: after Business & Owner Info
+  // on quotes without a USDOT number), never captured: only its buttons are known (the layouts' Add
+  // USDOT Number and Skip). Made here from a placeholder view's Next, with no question, the progress
+  // bar still on Business & Owner Info and a title naming no step (the kit read none there). Drawn
+  // after Business & Owner Info's Next with ?usdot=ask.
+  const usdotAsk = params.get('usdot') === 'ask';
+  (() => {
+    const next = [...document.getElementById('view-final-quote-details').content.querySelectorAll('gds-button')].find((b) => /^next$/i.test(oneLine(b.textContent)));
+    const tpl = Object.assign(document.createElement('template'), { id: 'view-usdot-ask' });
+    tpl.dataset.step = 'Business & Owner Info';
+    const note = document.createElement('div');
+    note.dataset.mockInferred = 'GEICO\'s Add USDOT Number screen, never captured: its two buttons only';
+    note.append(Object.assign(document.createElement('h2'), { textContent: 'USDOT Number' }));
+    const button = (text) => {
+      const b = document.importNode(next, true);
+      for (const n of [...b.childNodes]) if (n.nodeType === Node.TEXT_NODE && n.textContent.trim()) n.textContent = text;
+      return b;
+    };
+    tpl.content.append(note, button('Add USDOT Number'), button('Skip'));
+    document.body.append(tpl);
+  })();
 
   // --- Steps and views ----------------------------------------------------------------------------------
   function setStep(step) {
@@ -508,6 +535,8 @@
     record({ type: 'click', target: 'button', text, isTrusted: e.isTrusted });
     if (/^print quote proposal$/i.test(text) || host.hasAttribute('href')) { e.preventDefault(); return; }
     const v = state.view;
+    // The USDOT screen: Skip goes on as Business & Owner Info's Next does; Add USDOT Number is only recorded.
+    if (v === 'usdot-ask') { if (/^skip$/i.test(text)) go(state.options.ssn ? 'owner-verification' : 'vehicle-form', { button: host }); return; }
     if (/^(next|save and continue)$/i.test(text)) {
       if (STOP_VIEWS.includes(v)) { if (FLOW[v]) go(FLOW[v], { button: host }); return; }
       if (v === 'vehicle-or-trailer') {
@@ -515,7 +544,7 @@
         if (pick) go(pick === 'No' ? 'trailer-form' : 'vehicle-form', { button: host });
         return;
       }
-      if (v === 'business-owner') { state.business = snapshotForm(); return go(state.options.ssn ? 'owner-verification' : 'vehicle-form', { button: host }); }
+      if (v === 'business-owner') { state.business = snapshotForm(); return go(usdotAsk ? 'usdot-ask' : state.options.ssn ? 'owner-verification' : 'vehicle-form', { button: host }); }
       if (v === 'vehicle-form') { saveUnit('vehicles'); return go('vehicle-list', { button: host }); }
       if (v === 'trailer-form') { saveUnit('trailers'); return go('vehicle-list', { button: host }); }
       if (v === 'owner-driver' || v === 'add-driver') { saveUnit('drivers'); return go('driver-list', { button: host }); }
@@ -665,6 +694,7 @@
   ENTER['vehicle-list'] = () => drawList(['vehicles', 'trailers']);
   ENTER['driver-list'] = () => drawList(['drivers']);
   ENTER['owner-driver'] = nameSpans;
+  ENTER['usdot-ask'] = () => { document.title = 'GEICO USDOT Number'; };
   ENTER.quote = () => { nameSpans(); vehicleRows(); reprice(); state.premium = oneLine(slot('rated')?.querySelector('p')?.textContent); };
   function summary() {
     const b = state.business;
@@ -784,6 +814,7 @@
   const shown = (el) => (stemOf(el) === 'GiveSocialSecurityNumber' ? `(${el.value.length} characters)` : el.tagName === 'SELECT' ? optionText(el) : el.type === 'checkbox' ? String(el.checked) : el.value);
   document.addEventListener('change', (e) => {
     const el = e.composedPath()[0];
+    if (el?.id === 'start-quote-zip') return record({ type: 'change', target: 'start-quote-zip', text: el.value, isTrusted: e.isTrusted });
     if (!el?.matches?.('input, select, textarea') || !form.contains(el)) return;
     record({ type: 'change', target: keyOf(el), text: shown(el), isTrusted: e.isTrusted });
     react(el);
@@ -803,6 +834,21 @@
     const stem = stemOf(el);
     if ((stem === 'GiveZip' && el.value.length === 5) || (stem === 'GiveVinPreQuote' && el.value.length === 17)) react(el);
   }, true);
+
+  // The agents' gateway's Start New Quote window (gateway2.geico.com, W43-28), never part of the quote:
+  // its ZIP box as captured (#start-quote-zip, name zip, "Zip Code"), drawn above the quote with
+  // ?gateway=<zip>, holding the ZIP GEICO carried over from the last quote ('' for none).
+  const carried = params.get('gateway');
+  if (carried !== null) {
+    const box = document.createElement('div');
+    box.dataset.mockInferred = 'the gateway\'s Start New Quote window: its ZIP box only';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-label', 'Start New Quote');
+    const zip = Object.assign(document.createElement('input'), { id: 'start-quote-zip', name: 'zip', type: 'text', value: carried });
+    zip.setAttribute('aria-label', 'Zip Code');
+    box.append(zip);
+    document.body.prepend(box);
+  }
 
   const start = params.get('view');
   render(start && document.getElementById(`view-${start}`) ? start : 'business-class');

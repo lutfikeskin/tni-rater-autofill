@@ -4676,6 +4676,65 @@ test('GEICO\'s gateway: Commercial Auto/Trucking ticked, no other product, the S
   assert.deepEqual(plain(report.unknown), []);
 });
 
+// W43-28 (TNI, 2026-10-21): GEICO's Start New Quote window opened with the last quote's ZIP on 4 of 5
+// quotes; the fill kept it and flagged "differs: Zip Code", and the agent typed the intake's. A ZIP
+// the page carried over is replaced; one the agent typed (the panel's skip) never is.
+test('GEICO\'s gateway: a Start New Quote ZIP the page carried over is replaced with the intake\'s, one the agent typed is kept (W43-28)', async () => {
+  const page = (value) => {
+    const h = harness({ pathname: '/' });
+    const zip = makeInput({ id: 'start-quote-zip', name: 'zip', ariaLabel: 'Zip Code', value });
+    h.document.body.append(zip);
+    return { h, zip };
+  };
+  const plan = buildPlan(GEICO_ADDRESS, geico);
+  let p = page('30012');
+  let report = await p.h.kit.fill(plan, { maxRounds: 4 });
+  assert.equal(p.zip.value, '68000');
+  const key = report.filled.find((x) => x.path === 'garaging.zip')?.key;
+  assert.ok(key, 'the ZIP is filled');
+  assert.deepEqual(plain([report.kept, report.checks, report.failed]), [[], [], []]);
+  // Already the intake's: nothing typed again.
+  p = page('68000');
+  report = await p.h.kit.fill(plan, { maxRounds: 4 });
+  assert.deepEqual([p.zip.value, report.filled.length, report.kept.length], ['68000', 0, 1]);
+  // The agent's own ZIP (typed, or its flag marked done): left as it is, not flagged.
+  p = page('68005');
+  report = await p.h.kit.fill(plan, { maxRounds: 4, skip: [key] });
+  assert.equal(p.zip.value, '68005');
+  assert.deepEqual(plain([report.filled, report.checks, report.kept.filter((x) => x.differs)]), [[], [], []]);
+});
+
+// W43-35 (TNI, 2026-10-21): GEICO lists the cities it knows for the ZIP (GA: one city and OTHER) and
+// picks one. The intake's city not among them failed ("failed: City" on Business & Owner Info and
+// Vehicles), and the agent kept GEICO's: now GEICO's is kept, with a check naming the intake's.
+test('GEICO\'s City: one the list doesn\'t have leaves GEICO\'s, with a check naming the intake\'s; one it has is picked (W43-35)', async () => {
+  const run = async (step, options, value) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, step);
+    // On Vehicles, a vehicle's form (its VIN question) holds the parking address.
+    if (step === 'Vehicles') h.document.body.append(gdsRadios('YesNoPreQuoteHaveFullVinActivity', 41205, 'Do you have the VIN handy?', [['Yes', 'Yes'], ['No', 'No']]).group);
+    const city = geicoList('GiveCity', 41207, 'City', options, { value });
+    h.document.body.append(city);
+    const report = await h.kit.fill(buildPlan(GEICO_ADDRESS, geico), { maxRounds: 4, replaceChoices: !!geico.replaceChoices });
+    const mine = (list) => plain(list.filter((x) => x.key === 'ref:GiveCity'));
+    return { city: city.value, report, checks: mine(report.checks), failed: mine(report.failed), kept: mine(report.kept), filled: mine(report.filled) };
+  };
+  for (const step of ['Business & Owner Info', 'Vehicles']) {
+    const r = await run(step, ['', 'CONYERS', 'OTHER'], 'CONYERS');
+    assert.equal(r.city, 'CONYERS', step);
+    assert.deepEqual([r.failed, r.filled, r.kept.length], [[], [], 1], step);
+    assert.equal(r.checks.length, 1, step);
+    assert.match(r.checks[0].note, /no "Testville".*"CONYERS" is left as it is\. Check it\./, step);
+  }
+  // The intake's city listed: picked over GEICO's.
+  let r = await run('Business & Owner Info', ['', 'CONYERS', 'TESTVILLE', 'OTHER'], 'CONYERS');
+  assert.deepEqual([r.city, r.filled.length, r.checks, r.failed], ['TESTVILLE', 1, [], []]);
+  // No city of GEICO's to keep: still a failure, the agent's to pick.
+  r = await run('Business & Owner Info', ['', 'CONYERS', 'OTHER'], '');
+  assert.deepEqual([r.city, r.checks, r.failed.length], ['', [], 1]);
+  assert.match(r.failed[0].reason, /no option matches "Testville"/);
+});
+
 test('marks go where the agent looks: a GEICO option on its host, a select2 list on its drawn box', async () => {
   const h = harness({ pathname: '/quote' });
   const kind = gdsRadios('GiveVehicleOrTrailer', 36353, 'What would the customer like to add?', [['Yes', 'Vehicle'], ['No', 'Trailer']]);
