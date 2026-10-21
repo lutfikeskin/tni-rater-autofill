@@ -4,6 +4,7 @@ import { sourcePlace } from '../src/intake-source.js';
 import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
+import { unitListSpecs, unitToAdd } from '../src/units.js';
 import { carrierForUrl, quoteProgress } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
@@ -1726,11 +1727,12 @@ async function autoFill(page) {
     if (!fillCurrent(ctx)) return;
     // The list page may have picked the next vehicle or driver: the plan is for that one.
     ctx.active = { ...state.active };
-    const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
+    // Honor the latest switch after preparation, and log the same value used by the kit. The unit the
+    // fill adds (pickUnitToAdd) has its "+" and chooser Next clicked only with it on (`click`).
+    ctx.settings.autoAdvance = !!$('auto-advance').checked;
+    const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!ctx.settings?.autoAdvance } } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
-    // Honor the latest switch after preparation, and log the same value used by the kit.
-    ctx.settings.autoAdvance = !!$('auto-advance').checked;
     const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true }, ctx.settings.autoAdvance, ctx.active);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -2229,6 +2231,8 @@ function renderSite() {
     : stopped ? 'Nothing on this page is filled or clicked.'
     : carrier && state.tab.background ? 'Fills the quote tab in the background. Go back to it to review.'
     : carrier && $('auto-advance').checked && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
+    // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd).
+    : carrier && $('auto-advance').checked && carrier.unitLists ? 'Adds the intake\'s vehicles, trailers and drivers not on the quote yet. Nothing is submitted: click Next yourself.'
     : carrier ? 'Nothing is submitted. Review, then click Next yourself.'
       : noAccess
         ? "The extension can't read this page. Allow it on this site (toolbar icon or site access), then reload."
@@ -2588,7 +2592,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); return; }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
   ctx.active = { ...state.active };
-  const plan = buildPlan(ctx.intake.record, carrier, ctx.active);
+  // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
+  let plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!ctx.settings?.autoAdvance } } : ctx.active);
   $('fill').disabled = true;
   $('fill').textContent = 'Filling…';
   // Step 2 shows how far it is and its Stop; step 3 waits for the new report (the last one stays
@@ -2611,6 +2616,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     // have released some), never the tab in front.
     // Honor the latest switch after preparation, and log the same value used by the kit.
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
+    // The add helpers are clicked only with the switch on now.
+    if (ctx.adding) plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: { ...ctx.adding, click: !!ctx.settings?.autoAdvance } } : ctx.active);
     // Stopped while the panel prepared: the kit isn't asked to fill at all.
     if (state.fillingFor?.run === ctx.run && state.fillingFor.stopping) {
       tabMaps(tabId).autoPaused = true;
@@ -2665,6 +2672,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
 async function pickListItem(carrier, page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
   await pickUnitForm(carrier, ctx);
   if (!fillCurrent(ctx)) return;
+  await pickUnitToAdd(carrier, ctx);
+  if (!fillCurrent(ctx)) return;
   await verifyListed(carrier, page, ctx);
   // Another tab came to the front while the list was read: its own fill picks for it.
   if (!fillCurrent(ctx)) return;
@@ -2718,6 +2727,46 @@ async function pickUnitForm(carrier, ctx) {
   if (!picked) return;
   await save();
   if (fillCurrent(ctx)) renderPickers();
+}
+
+// Where one address shows the quote's unit lists on a step (carrier.unitLists: GEICO's Vehicles and
+// Trailers, Drivers), the unit the fill adds next (`ctx.adding`: { list, index }, for the plan: the
+// chooser's answer and the add helpers), read from the lists and chosen by src/units.js unitToAdd:
+// the intake's next unit no fill answered a form for and the list doesn't show (marked
+// `<unit>Entered:<i>` while the list is on screen), never the driver GEICO lists itself, none while
+// the list holds as many units as the intake, and none the list can't be read for while it has a
+// row no intake unit is known to be on (it may be that one, added by hand). With no unit form on
+// screen (the list, the chooser, the owner's own forms) the picker moves to that unit, so the plan
+// is for it.
+async function pickUnitToAdd(carrier, ctx) {
+  ctx.adding = null;
+  if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
+  const record = ctx.intake.record ?? {};
+  const specs = unitListSpecs(carrier, record);
+  let seen = null;
+  try {
+    const frames = await runKit(ctx.tabId, carrier, (specs) => {
+      const kit = globalThis.__raterKit;
+      if (!kit?.unitList) return null;
+      return { step: kit.step?.() ?? '', forms: kit.unitFormsNow?.() ?? null, lists: specs.map((s) => kit.unitList(s.selector, s.items)) };
+    }, [specs.map(({ selector, items }) => ({ selector, items }))]);
+    seen = frames.map((f) => f?.result).find((x) => x && Array.isArray(x.lists)) ?? null;
+  } catch { return; }
+  if (!seen || !fillCurrent(ctx)) return;
+  const next = unitToAdd(carrier, record, knownStep(carrier, seen.step), seen, { unitForms: state.unitForms, done: state.doneActions });
+  if (!next) return;
+  if (next.marks.some((id) => !state.doneActions.has(id))) {
+    next.marks.forEach((id) => state.doneActions.add(id));
+    persistDoneActions(ctx.tabId, state.doneActions);
+  }
+  if (!next.adding) return;
+  ctx.adding = next.adding;
+  const { list, index } = next.adding;
+  if (next.move && state.active[list] !== index) {
+    state.active[list] = index;
+    await save();
+    if (fillCurrent(ctx)) renderPickers();
+  }
 }
 
 // On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each

@@ -116,11 +116,13 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   for (const note of Object.values(geico.stopSteps)) assert.match(note, /yours/);
   assert.deepEqual([geico.vehicleSteps, geico.driverSteps], [[VEH], [DRV]]);
   assert.deepEqual([geico.useGenericRules, geico.replaceChoices], [false, true]);
-  for (const key of ['world', 'batch', 'advance', 'stopPages', 'actions']) assert.ok(!(key in geico), key);
-  // The fill clicks no button: Recalculate is the agent's, after their coverage choices (FL live
-  // run, 2026-10-21), and Quote & Coverages takes follow-ups only for questions it draws (FL live
+  for (const key of ['world', 'batch', 'advance', 'stopPages']) assert.ok(!(key in geico), key);
+  // No Continue, and no helper but those adding a unit the panel is adding (below): Recalculate is
+  // the agent's, after their coverage choices (FL live run, 2026-10-21), and Quote & Coverages takes follow-ups only for questions it draws (FL live
+  //
   // run 2: the cargo section's); an answer GEICO takes back there is kept.
   assert.deepEqual(buildPlan(intake(), geico, {}).filter((s) => s.kind === 'action'), []);
+  for (const a of geico.actions) assert.ok(a.steps.every((s) => [VEH, DRV].includes(s)), a.id);
   assert.deepEqual([geico.newQuestionsOnlySteps, geico.keepTakenBack], [[QC], [QC]]);
   assert.ok(!('noFollowUpSteps' in geico));
   // The quote stops at Quote & Coverages: said there, and on the steps after it.
@@ -576,6 +578,56 @@ test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel
   // An excluded driver: filled, flagged.
   assert.match(one(plan(with_({ 'drivers.1.excluded': true }, r), { drivers: 1 }), 'Driver first name').warn, /excluded/);
   assert.equal(one(p, 'Driver first name').warn, null);
+});
+
+// FL live run, 2026-10-21: "click + and add the new vehicle", "click Next after choosing Vehicle or
+// Trailer". The panel names the unit it adds (`adding`, sidepanel pickUnitToAdd); with "Click Continue
+// when the page is done" on (`click`) the fill clicks the list's "+" and the chooser's Next for it.
+test('adding units: the chooser answers the unit the panel adds; its "+" and Next are clicked once per unit, only with the setting on', () => {
+  const r = RECORDS()[1];
+  const actions = (active) => buildPlan(r, geico, active).filter((s) => s.kind === 'action');
+  const chooser = (active) => one(plan(r, active), 'Vehicle or trailer to add (the next intake unit not on the quote)', VEH);
+  // Nothing to add, or not known: no helper, and the chooser is the agent's, never the AI assistant's.
+  for (const active of [{}, { vehicles: 1 }]) {
+    assert.deepEqual(actions(active), []);
+    agents(chooser(active));
+    assert.deepEqual([chooser(active).source, chooser(active).manualOnly], ['fact', true]);
+  }
+  // Vehicle 2, the setting off: Vehicle on the chooser, nothing clicked.
+  const off = { vehicles: 1, drivers: 0, trailers: 0, adding: { list: 'vehicles', index: 1, click: false } };
+  assert.deepEqual([chooser(off).value, chooser(off).source], ['Vehicle', 'derived']);
+  assert.deepEqual(actions(off), []);
+  // On: the "+" in the vehicle list's add row, then the chooser's Next once it shows Vehicle, both
+  // vehicle 2's (ids per unit: clicked once a quote), on Vehicles only.
+  const on = { ...off, adding: { ...off.adding, click: true } };
+  const [add, next] = actions(on);
+  assert.deepEqual([add.action, add.token, add.within, add.steps, add.verify, add.loads, add.moveOn], ['addVehicle:1', 'addIcon', '#summaryPage-AddCommercialVehicle > li.add-state', [VEH], 'revealed', true, false]);
+  assert.deepEqual(add.doneWhen, ['vehicleEntered:1']);
+  assert.match(add.unfinished, /vehicle 2 of the intake.*\+, Vehicle, Next/);
+  assert.deepEqual([next.action, next.text, next.moveOn, next.after, next.steps], ['chooseVehicle:1', '^next$', true, ['geico.qGiveVehicleOrTrailer'], [VEH]]);
+  // Only after the fill's own "+" for that unit: a chooser the agent opened is answered, its Next theirs.
+  assert.deepEqual(next.afterActions, ['addVehicle:1']);
+  assert.match(next.within, /VehicleOrTrailerCollectAdaptiveActionSet_Container/);
+  // The picker isn't on the unit being added (a stale pick): nothing clicked.
+  assert.deepEqual(actions({ ...on, vehicles: 0 }), []);
+  // The trailer: Trailer on the chooser, its own helpers.
+  const trailer = { vehicles: 1, drivers: 0, trailers: 0, adding: { list: 'trailers', index: 0, click: true } };
+  assert.equal(chooser(trailer).value, 'Trailer');
+  assert.deepEqual(actions(trailer).map((a) => a.action), ['addTrailer:0', 'chooseTrailer:0']);
+  // Driver 2 (the owner, GEICO lists, is driver 1): the "+" of the driver list's add row, never the
+  // incidents' below it. No chooser there.
+  const driver = { vehicles: 1, drivers: 1, trailers: 0, adding: { list: 'drivers', index: 1, click: true } };
+  const [addDriver, ...rest] = actions(driver);
+  assert.deepEqual([addDriver.action, addDriver.within, addDriver.steps, rest], ['addDriver:1', '#summaryPage-AddDriver > li.add-state', [DRV], []]);
+  agents(chooser(driver));
+  // An owner who drives under a name no driver row matches, or "owner drives" unanswered: GEICO's
+  // own driver row may be one of the intake's, so Add Driver is the agent's.
+  for (const changes of [{ 'applicant.owner1': 'Jordan Sample' }, { 'applicant.ownerDrives': null }]) {
+    assert.deepEqual(buildPlan(with_(changes, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action'), []);
+  }
+  assert.equal(buildPlan(with_({ 'applicant.ownerDrives': false }, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action').length, 1);
+  // Never a button that leaves a step or commits: only the add icon, and Next inside the chooser.
+  for (const a of geico.actions) assert.ok(a.token === 'addIcon' || (a.text === '^next$' && a.moveOn && /VehicleOrTrailer/.test(a.within)), a.id);
 });
 
 test('SR-22: No for everyone; Yes only when GEICO lists one driver', () => {
