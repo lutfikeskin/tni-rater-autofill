@@ -152,6 +152,10 @@ const EXPECT = {
     'cov:Uninsured Motorist Bodily Injury (includes Underinsured)': '$100,000 Combined Single Limit',
     // The installments group (the second): 11 Payments is one of its plans View More shows.
     'cov:ERS#1': 'I accept this coverage', 'cov:ERS#2': 'I accept this coverage', 'GivePayPlanV2#2': 'GEICO_PP_11Pay',
+    // TNI's (FL live run 5, 2026-10-21: W43-22, W43-23): fire and theft Not Included, rental $40 a day,
+    // and the commodities from what they haul (the intake's general freight: other consumer goods).
+    'cov:FT#1': 'Not Included', 'cov:FT#2': 'Not Included', 'cov:Rental#1': '$40 Per Day, $1,200 Max', 'cov:Rental#2': '$40 Per Day, $1,200 Max',
+    GiveMtcHaulingCommoditiesCollect: ['Consumer Goods - Other Consumer Goods'],
   },
 };
 // Questions the fill must leave to the agent, each with its note (report.noData), by field key:
@@ -165,9 +169,7 @@ const NEEDS_YOU = [
   ['Vehicles: vehicle 1', /\S/, ['ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: trailer 1', /trailer/, ['ref:GiveOtherVehicleType']],
-  ['Quote & Coverages', /\S/, ['cov:medical payments med',
-    ...['FT', 'Rental'].flatMap((c) => [`cov:${c}#1`, `cov:${c}#2`]),
-    'ref:GiveMtcRequireCoverageForMobileHomesYesNo', 'ref:GiveMtcRequireCoverageForBusinessDocumentYesNo', 'ref:GiveMtcHaulingCommoditiesCollect']],
+  ['Quote & Coverages', /\S/, ['cov:medical payments med', 'ref:GiveMtcRequireCoverageForBusinessDocumentYesNo']],
 ];
 const STOP_STEPS = Object.keys(geico.stopSteps ?? {});
 
@@ -717,8 +719,9 @@ async function scenario() {
   // (geico.newQuestionsOnlySteps: fillDrawn), never after an answer alone. It opens Motor Truck Cargo
   // (a collapsed card; the intake asks for cargo: W43-16), and each cargo question that draws the next
   // gets the panel's follow-up. Collision's deductibles show a moment after comprehensive is chosen
-  // (FL live run 2, 2026-10-21), and the fill waits for them. The agent changes the liability limit,
-  // answers the cargo questions the intake doesn't and marks the rest done; nothing clicked meanwhile
+  // (FL live run 2, 2026-10-21), and the fill waits for them. The fill answers mobile homes No and picks
+  // the commodities (W43-23); the agent changes the liability limit, answers household goods and marks
+  // the rest done; nothing clicked meanwhile
   // (`whenClear`). Then Fill this page: Recalculate, View More Payment Plans, 11 Payments, Print Quote
   // Proposal, once each (TNI, FL live run 4, 2026-10-21: W43-18), and the agent's limit kept.
   const CARGO = 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]';
@@ -726,14 +729,7 @@ async function scenario() {
   if (!doneActions.has('openCargo')) fail('Quote & Coverages: the fill did not open Motor Truck Cargo');
   await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
   await agent.open(CARGO, 'Motor Truck Cargo');
-  await agent.radio('GiveMtcRequireCoverageForMobileHomesYesNo', 'No');
-  await fillDrawn('Quote & Coverages');
-  await agent.open(CARGO, 'Motor Truck Cargo');
   await agent.radio('GiveMtcRequireCoverageForBusinessDocumentYesNo', 'No');
-  await fillDrawn('Quote & Coverages');
-  // The commodities (required: Recalculate waits for them).
-  await agent.open(CARGO, 'Motor Truck Cargo');
-  await agent.pickList('GiveMtcHaulingCommoditiesCollect', ['Miscellaneous Goods - Containerized Freight']);
   await fillDrawn('Quote & Coverages');
   const early = fills.filter((x) => x.form === 'Quote & Coverages').flatMap((f) => f.report.actions ?? []).filter((a) => a.id !== 'openCargo');
   if (early.length) fail(`Quote & Coverages: a fill clicked ${early.map((a) => a.text).join(', ')} with questions left for the agent`);

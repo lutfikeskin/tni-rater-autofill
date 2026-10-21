@@ -199,6 +199,9 @@ const STANDARDS = [
   // FL live run 4, 2026-10-21 (W43-17, W43-18): GEICO in every state.
   'Emergency road service (TNI: accepted)', 'Heavy vehicle road service (TNI: accepted)',
   'Uninsured motorist bodily injury (TNI: $100,000 CSL)', 'Payment plan (TNI: 11 Payments)',
+  // FL live run 5, 2026-10-21 (W43-22, W43-23): GEICO in every state.
+  'Fire and theft (TNI: Not Included)', 'Rental reimbursement (TNI: $40 Per Day, $1,200 Max)',
+  'Cargo: mobile homes, business documents or securities (TNI: No)', 'Cargo: live animals (TNI: No)',
 ];
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
@@ -820,8 +823,27 @@ test('cargo: the intake\'s limit and deductible as one pair; never a default ded
   const goods = (cls) => one(plan(with_({ 'operations.businessClass': cls })), 'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover)');
   assert.deepEqual([goods('Household Goods Mover').value, goods('Household Goods Mover').source], [true, 'derived']);
   assert.deepEqual([goods('Expediter').value, goods('Expediter').source], [null, 'fact']);
-  agents(one(p, 'Cargo commodities'));
-  assert.match(one(p, 'Cargo commodities').note, /"General freight"/);
+  // Commodities from the business class and what they haul (TNI, FL live run 5, 2026-10-21, W43-23):
+  // general freight other consumer goods, an auto hauler automobiles, a reefer four picks.
+  const goodsFor = (changes) => one(plan(with_(changes)), 'Cargo commodities');
+  const REEFER_PICKS = 'Consumer Goods - Pharmaceuticals (Over The Counter); Food & Beverage - Other Food & Beverages; Refrigerated Goods - Dairy; Refrigerated Goods - Frozen Seafood';
+  assert.deepEqual([goodsFor({}).value, goodsFor({}).source], ['Consumer Goods - Other Consumer Goods', 'derived']);
+  for (const [cls, haul] of [['General Freight Hauler', null], ['Expediter', 'Dry Freight'], ['Expediter', 'Consumer goods'], ['Expediter', 'General']]) {
+    assert.equal(goodsFor({ 'operations.businessClass': cls, 'operations.whatHaul': haul }).value, 'Consumer Goods - Other Consumer Goods', `${cls} / ${haul}`);
+  }
+  assert.equal(goodsFor({ 'operations.businessClass': 'Auto Hauler', 'operations.whatHaul': null }).value, 'Aircraft/Auto/Boats - Automobiles');
+  assert.equal(goodsFor({ trailers: [{ ...TRAILER, type: 'Reefer' }] }).value, REEFER_PICKS, 'a reefer listed: the reefer picks, before general freight');
+  assert.equal(goodsFor({ 'operations.businessClass': 'Expediter', 'operations.whatHaul': 'Refrigerated produce' }).value, REEFER_PICKS);
+  // No match ("cargo" isn't a car): the agent's, quoted, and open to the AI's suggestion (not manualOnly).
+  const other = goodsFor({ 'operations.businessClass': 'Expediter', 'operations.whatHaul': 'Cargo and parcels' });
+  agents(other);
+  assert.match(other.note, /"Cargo and parcels"/);
+  assert.equal(other.manualOnly, false);
+  // Mobile homes, documents or securities, and live animals: TNI's No, unless the intake names them.
+  for (const [name, words] of [['Cargo: mobile homes, business documents or securities (TNI: No)', 'Mobile homes'], ['Cargo: live animals (TNI: No)', 'Livestock']]) {
+    assert.deepEqual([one(p, name).value, one(p, name).source], [false, 'standard'], name);
+    agents(one(plan(with_({ 'operations.whatHaul': words })), name));
+  }
   // Refrigeration breakdown: the intake's answer; blank is Yes with a reefer (TNI), else No.
   const reefer = (changes) => one(plan(with_(changes)), 'Refrigeration breakdown (Yes with a reefer)');
   const REEFER = { ...TRAILER, type: 'Reefer' };
@@ -853,7 +875,13 @@ test('a vehicle\'s coverage rows: by the coverage their id ends in, one step per
   assert.deepEqual(comp.map((s) => s.vehicleHint), [['2021', 'ford', 'f 650'], ['2019', 'ram', 'promaster']]);
   // Comprehensive and collision are TNI's $1,000 deductibles; the other rows the agent's.
   for (const s of comp) assert.deepEqual([s.value, s.standard], ['$1,000 deductible', true]);
-  for (const name of ['Fire and theft', 'Rental reimbursement', 'Emergency road service', 'Heavy vehicle road service']) for (const s of p.filter((x) => x.name === name)) agents(s);
+  for (const s of p.filter((x) => x.name === 'Rental reimbursement with downtime')) agents(s);
+  // Fire and theft Not Included, rental $40 a day, on every vehicle (TNI, FL live run 5, 2026-10-21, W43-22).
+  assert.deepEqual(p.filter((x) => /^Fire and theft/.test(x.name)).map((s) => [s.value, s.source]), [['Not Included', 'standard'], ['Not Included', 'standard']]);
+  assert.deepEqual(p.filter((x) => /^Rental reimbursement \(/.test(x.name)).map((s) => [s.value, s.source]), [['$40 Per Day, $1,200 Max', 'standard'], ['$40 Per Day, $1,200 Max', 'standard']]);
+  // Rental needs comprehensive and collision: with the notes declining them, the agent's.
+  agents(one(plan(with_({ 'notes.text': 'liability only' })), 'Rental reimbursement (TNI: $40 Per Day, $1,200 Max)'));
+  assert.equal(one(plan(with_({ 'notes.text': 'liability only' })), 'Fire and theft (TNI: Not Included)').value, 'Not Included');
   // The customization boxes there name no vehicle: the value only with one vehicle.
   const values = p.filter((s) => s.name === 'Vehicle value without customizations' && s.steps.includes(QC));
   assert.deepEqual(values.map((s) => [s.path, s.value]), [['vehicles[0].value', 45000], ['vehicles[1].value', 30000]]);
