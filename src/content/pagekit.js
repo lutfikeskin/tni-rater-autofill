@@ -941,6 +941,8 @@
   const LOAD_HALT = 'The page was still loading after a minute: wait for it, then fill again.';
   // What a `whenClear` helper waits for (its `why`).
   const NOTHING_LEFT = 'nothing left for you on the page';
+  // What holds Continue after the agent's own button during a fill (`notePress`).
+  const AGENT_PRESSED = 'you clicked a button during the fill: Continue is yours';
 
   const noMatch = (step, options) => ({
     ok: false,
@@ -954,8 +956,9 @@
   // the address needs the agent; the ZIP/city rules then check the rest. GEICO's are
   // <gds-dropdown-list-item type="address">, in its address wrapper's shadow root, read as list items
   // (its script; FL live run 3, 2026-10-21).
-  // What the agent may click to move a page on (`notePress` in fill): a button, a link, an add icon.
-  const AGENT_PRESS = 'button, [role=button], gds-button, a[href], input[type=submit], input[type=button], [data-testid=addIcon]';
+  // What the agent may click to move a page on (`notePress` in fill): a button or an add icon. A
+  // toggle (aria-expanded: GEICO's section headings, a menu) or a link moves nothing.
+  const AGENT_PRESS = 'button, gds-button, input[type=submit], input[type=button], [data-testid=addIcon]';
   const SUGGESTION_SELECTOR = '[role=option], .x-boundlist-item, .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li, gds-dropdown-list-item[type=address]';
   // An address's house number (its leading number) and ZIP (after a state's two letters).
   const houseNumberOf = (text) => String(text ?? '').match(/^\s*(\d+)\b/)?.[1] ?? null;
@@ -1680,6 +1683,10 @@
     }
     const serverBacked = !!ext();
     let pendingAction = null;
+    // A helper that loads a view, due but not clicked until the page has been quiet (`loadDue`), and
+    // the page it was quiet on (`quiet`: its action and signature).
+    let loadDue = null;
+    let quiet = null;
     let progressed = false; // did the last round fill or click anything?
     // The questions the last round read (in document order): where the items are on the page
     // when a helper has opened the next page by the end of the fill.
@@ -1732,7 +1739,7 @@
     const notePress = (event) => {
       if (!event.isTrusted) return;
       const path = event.composedPath?.() ?? [event.target];
-      if (path.some((n) => n?.nodeType === 1 && safeMatches(n, AGENT_PRESS))) agentPressed = true;
+      if (path.some((n) => n?.nodeType === 1 && safeMatches(n, AGENT_PRESS) && !n.hasAttribute('aria-expanded'))) agentPressed = true;
     };
     document.addEventListener('click', notePress, true);
     // Whether the registered names a USDOT lookup offers (Progressive's Business Name choice) are
@@ -2087,15 +2094,18 @@
       // Nothing left to type or pick: click the next button whose turn it is.
       let helperClicked = false;
       if (!changed && window === window.top && !agentPressed) {
+        loadDue = null;
+        changed = helperClicked = clickNextAction(controls);
         // A helper that loads a view (GEICO's "+", Add Driver) is clicked on a page quiet for a
         // second (FL live run 4, 2026-10-21: Add Driver 2 s after the list showed, and GEICO's
-        // spinner stayed until the agent reloaded). A page that changed meanwhile is read again.
-        if (actions.some((a) => a.loads && !clicked.has(a.action) && !exhausted.has(a.action) && actionHere(a))) {
+        // spinner stayed until the agent reloaded): once it is due, the page is waited for, and
+        // clicked next round if nothing changed meanwhile (a page that changed is read again).
+        if (loadDue) {
           const before = signature();
           if (!await settle({ quietMs: LOAD_QUIET_MS, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
-          if (signature() !== before) continue;
+          quiet = !agentPressed && signature() === before ? { action: loadDue, sig: before } : null;
+          continue;
         }
-        if (!agentPressed) changed = helperClicked = clickNextAction(controls);
       }
       progressed = changed;
       if (!changed && !retry) {
@@ -2129,7 +2139,18 @@
       // the page is quiet again, before the click counts as lost.
       if (loads && pendingAction?.verify === 'revealed') {
         const until = Date.now() + loadResultMs;
-        while (!revealedNow(pendingAction) && Date.now() < until) await sleep(200);
+        let dirty = true;
+        const mo = new MutationObserver(() => { dirty = true; });
+        mo.observe(document.body, { subtree: true, childList: true });
+        try {
+          for (let tick = 0; Date.now() < until; tick++) {
+            if ((dirty || tick % 5 === 0) && revealedNow(pendingAction)) break;
+            dirty = false;
+            await sleep(200);
+          }
+        } finally {
+          mo.disconnect();
+        }
         if (!await settle({ quietMs: 250, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
       }
       if (!verifyAction()) break;
@@ -2359,6 +2380,8 @@
           opener.click();
           return true;
         }
+        if (a.loads && !(quiet?.action === a.action && quiet.sig === signature())) { loadDue = a.action; return false; }
+        quiet = null;
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
         // What the page shows as the button is clicked (the round's controls are older: answers
@@ -2531,7 +2554,10 @@
       ...report.checks.filter((x) => !x.otherStep).map((x) => `check: ${called(x)}`),
       ...report.blocked.map((x) => `button: ${x.id}${x.why?.startsWith('waiting for ') ? ` (${x.why})` : ''}`),
       ...(report.halted ? [report.reason] : []),
+      // The agent's own button during the fill (Next, "+", Looks Good): that step's move is theirs.
+      ...(agentPressed ? [AGENT_PRESSED] : []),
     ];
+    if (agentPressed) report.agentPressed = true;
     // The step this fill was on: the one it started on when the agent moved to another meanwhile
     // (its items are that step's).
     report.stepKey = stepChanged() ? startStep : stepKey();
@@ -2587,8 +2613,11 @@
         // The agent checks the answers first: Continue only for the page as they approved it.
         const approved = !hold || (confirmed != null && confirmed === receipt());
         if (button && !approved) report.held = confirmed == null ? 'check' : 'changed';
-        if (button && approved && agentPressed) report.agentPressed = true;
-        else if (button && approved) {
+        // Pressed during the wait before Continue: held as above.
+        if (button && approved && agentPressed) {
+          report.agentPressed = true;
+          report.blockers.push(AGENT_PRESSED);
+        } else if (button && approved) {
           const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           report.signatureBefore = signature();
