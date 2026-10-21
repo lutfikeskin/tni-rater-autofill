@@ -4,8 +4,8 @@
 // behaviour played by test/fixtures/geico/mock.js, filled step by step by the real fill engine and
 // GEICO rules the way the side panel does it, and the agent's part played with real (trusted)
 // clicks and keys: Next on each step that leaves them something, the answers the intake doesn't give,
-// a few corrections, and the trailer's Add Vehicle or Trailer and Next with "Click Continue when the
-// page is done" off. With it on, the extension adds vehicle 2 and driver 2 itself (the list's "+", the
+// a few corrections, Recalculate on Quote & Coverages, and the trailer's Add Vehicle or Trailer and
+// Next with "Click Continue when the page is done" off. With it on, the extension adds vehicle 2 and driver 2 itself (the list's "+", the
 // chooser's Vehicle and Next), and continues where nothing is left for the agent (geico.advance): Next
 // or Save and Continue on a step or unit form up to Additional Business Info, Looks Good on a list that
 // holds every intake unit, never on Quote & Coverages. Then every answer is checked against what TNI
@@ -285,12 +285,12 @@ function skipBy() {
 // The unit the fill adds (sidepanel.js pickUnitToAdd, chosen by the same src/units.js unitToAdd), with
 // the picker moved to it when no unit form is on screen. `click` with "Fill the pages" or "Click
 // Continue when the page is done" on (settings.autoPages, settings.autoAdvance, read as the kit is
-// called; W43-20).
+// called; W43-20), or on the agent's Fill this page (`asked`; FL live run 6, 2026-10-21).
 const settings = { autoAdvance: true, autoPages: false };
 // The list on screen holds every intake unit (unitToAdd `complete`): its Looks Good is the fill's
 // Continue (advanceFor).
 let unitsListed = false;
-async function pickUnitToAdd() {
+async function pickUnitToAdd(asked = false) {
   unitsListed = false;
   const specs = unitListSpecs(geico, record);
   const seen = await inWorld(`(() => { const kit = globalThis.__raterKit; const specs = ${JSON.stringify(specs.map(({ selector, items }) => ({ selector, items })))};
@@ -304,7 +304,7 @@ async function pickUnitToAdd() {
     active[list] = index;
     lines.push(`  (the panel moved to ${list.slice(0, -1)} ${index + 1}: the next to add)`);
   }
-  return { list, index, click: settings.autoPages || settings.autoAdvance };
+  return { list, index, click: settings.autoPages || settings.autoAdvance || asked };
 }
 
 // Picking unit `index` of `list` (renderPickers / releaseUnitForms): only the forms bound to it are let
@@ -352,13 +352,15 @@ let totalMs = 0;
 
 // One fill of the page as the panel starts it (fillPage): the recorder paused, the plan for the
 // picker's units, the options of sidepanel.js fillOptions for GEICO, then rememberFill's bookkeeping.
-async function fill(form) {
+// `asked`: the agent's own Fill this page (fillContext), which gives back an answer GEICO took back (no
+// takenBack) and adds a unit with both switches off; the others are the panel's automatic fills.
+async function fill(form, { asked = false } = {}) {
   await poll();
   const step = await inWorld('__raterKit.step()');
   const shown = (await mock()).step;
   if (step !== shown) fail(`${form}: the kit reads the step as ${JSON.stringify(step)} while the page is on ${shown}`);
   // The list may have moved the picker to the unit the fill adds.
-  const adding = await pickUnitToAdd();
+  const adding = await pickUnitToAdd(asked);
   const fillActive = { ...active };
   const plan = buildPlan(record, geico, adding ? { ...fillActive, adding } : fillActive);
   const options = {
@@ -371,7 +373,7 @@ async function fill(form) {
       bound: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...unitForms[list] }])),
     },
     skip: keysOf(PAGE), skipBy: skipBy(), run: ++run,
-    takenBack: geico.keepTakenBack?.length ? { steps: geico.keepTakenBack, keys: Object.fromEntries([...filledKeys].map((key) => [key, true])) } : null,
+    takenBack: !asked && geico.keepTakenBack?.length ? { steps: geico.keepTakenBack, keys: Object.fromEntries([...filledKeys].map((key) => [key, true])) } : null,
   };
   await tellRecorder('pause');
   const t0 = Date.now();
@@ -661,8 +663,8 @@ async function scenario() {
   await leave('Vehicles: vehicle 2');
   await agent.go('Next', 'vehicle-list');
 
-  // The trailer, with "Click Continue when the page is done" off (and "Fill the pages" off): the fill on
-  // the list clicks nothing;
+  // The trailer, with "Click Continue when the page is done" off (and "Fill the pages" off): an
+  // automatic fill on the list clicks nothing (the agent's own Fill this page would click "+");
   // the agent clicks "+", the fill answers Trailer on the chooser (the next intake unit), and the agent
   // clicks Next. They pick the trailer's year (2016; the intake has 2015) as soon as the form opens,
   // before any fill has read it: the recorder names the trailer form with the change, so it is kept
@@ -722,8 +724,11 @@ async function scenario() {
   // (FL live run 2, 2026-10-21), and the fill waits for them. The fill answers mobile homes No and picks
   // the commodities (W43-23); the agent changes the liability limit, answers household goods and marks
   // the rest done; nothing clicked meanwhile
-  // (`whenClear`). Then Fill this page: Recalculate, View More Payment Plans, 11 Payments, Print Quote
-  // Proposal, once each (TNI, FL live run 4, 2026-10-21: W43-18), and the agent's limit kept.
+  // (`whenClear`). Then Fill this page: nothing clicked while the premium is out of date, as
+  // Recalculate is the agent's (FL live run 6, 2026-10-21: GEICO put its own coverage choices back
+  // after each one the fill clicked). The agent clicks Recalculate, and the follow-up fill picks 11
+  // Payments under View More Payment Plans and clicks Print Quote Proposal, once each (TNI, FL live
+  // run 4, 2026-10-21: W43-18); the agent's limit is kept.
   const CARGO = 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]';
   await fillDrawn('Quote & Coverages');
   if (!doneActions.has('openCargo')) fail('Quote & Coverages: the fill did not open Motor Truck Cargo');
@@ -738,16 +743,23 @@ async function scenario() {
   const leftKeys = [...(needsSeen.get('Quote & Coverages')?.keys() ?? [])];
   for (const key of leftKeys) keysIn(`${PAGE}|s:Quote & Coverages`).add(key);
   lines.push(`  (agent marked ${leftKeys.length} item(s) done)`);
+  const asked = await fill('Quote & Coverages', { asked: true });
+  if (asked.actions?.length || (await mock()).recalcs) fail(`Quote & Coverages: Fill this page clicked ${(asked.actions ?? []).map((a) => a.id).join(', ') || 'Recalculate'} before the agent's Recalculate`);
+  // TNI's pay plan isn't offered until View More Payment Plans, which GEICO shows once rated: not the agent's.
+  if ([...needsSeen.get('Quote & Coverages')?.keys() ?? []].some((k) => /PayPlan/.test(k))) fail('Quote & Coverages: the pay plan was left for the agent before Recalculate');
+  await agent.press('Recalculate');
+  await page.waitForFunction(() => window.__geicoMock.premium, null, { timeout: 15000 });
+  await settled();
+  await poll();
   const done = await fill('Quote & Coverages');
   await page.waitForTimeout(700);
   await settled();
   await poll();
-  // Recalculate leaves the report's actions once a later answer (the pay plan) re-arms it; the page's
-  // own count says it ran, once (the click checks below say by whom).
+  // The page's own count says Recalculate ran once (the click checks below say by whom: the agent).
   const clickedIds = done.actions?.map((a) => a.id) ?? [];
-  if (JSON.stringify(clickedIds) !== JSON.stringify(['morePayPlans', 'printProposal'])) fail(`Quote & Coverages: the fill clicked [${clickedIds.join(', ')}], expected [morePayPlans, printProposal] after Recalculate`);
+  if (JSON.stringify(clickedIds) !== JSON.stringify(['morePayPlans', 'printProposal'])) fail(`Quote & Coverages: the fill clicked [${clickedIds.join(', ')}], expected [morePayPlans, printProposal] after the agent's Recalculate`);
   if ((await mock()).recalcs !== 1) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s), expected once`);
-  if (!(await mock()).premium) fail('Quote & Coverages: the fill\'s Recalculate left the premium out of date');
+  if (!(await mock()).premium) fail('Quote & Coverages: the premium is out of date after the agent\'s Recalculate and the pay plan');
   if ((await values())['GivePayPlanV2#2'] !== 'GEICO_PP_11Pay') fail(`Quote & Coverages: the pay plan is ${JSON.stringify((await values())['GivePayPlanV2#2'])}, not 11 Payments`);
   const after = await fill('Quote & Coverages');
   await corrected('Quote & Coverages', 'cov:bodily injury or combined single limit liability', 'cov:Bodily Injury or Combined Single Limit Liability', '$750,000 Combined Single Limit');
@@ -825,9 +837,10 @@ if (ownerCheck && (filledOn('Vehicles: owner check', 'ref:GiveLastName') || owne
 // when the page is done" on), once, its list's "+" and, for a vehicle, the chooser's Next: vehicle 2's
 // and driver 2's, never the trailer's (added with the setting off). Its Continues, once each, where
 // nothing was left for the agent: the owner's driver form, Add Driver, both lists with every intake
-// unit, Additional Business Info. On Quote & Coverages, once each: Motor Truck Cargo's chevron,
-// Recalculate, View More Payment Plans and Print Quote Proposal (TNI, 2026-10-21). Never another Next,
-// Save and Continue or Looks Good, Discard, a progress link, another edit icon or link.
+// unit, Additional Business Info. On Quote & Coverages, once each: Motor Truck Cargo's chevron, View
+// More Payment Plans and Print Quote Proposal (TNI, 2026-10-21); Recalculate only the agent's (FL live
+// run 6, 2026-10-21). Never another Next, Save and Continue or Looks Good, Discard, a progress link,
+// another edit icon or link.
 const isAdd = (e) => e.type === 'click' && (e.target === 'addIcon' || (e.target === 'button' && e.text === 'Next' && e.view === 'vehicle-or-trailer'));
 const adds = final.log.filter((e) => !e.isTrusted && isAdd(e)).map((e) => `${e.target} on ${e.view}`);
 const wantAdds = ['addIcon on vehicle-list', 'button on vehicle-or-trailer', 'addIcon on driver-list'];
@@ -841,8 +854,10 @@ if (JSON.stringify(picks) !== '["business-owner"]') fail(`the extension picked a
 const isQuoteHelper = (e) => e.type === 'click' && e.view === 'quote' && (e.target === 'editIcon' || (e.target === 'button' && /^(recalculate|print quote proposal)$/i.test(e.text ?? ''))
   || (e.target === 'link' && /^view more payment plans$/i.test(e.text ?? '')));
 const helperClicks = final.log.filter((e) => !e.isTrusted && isQuoteHelper(e)).map((e) => `${e.target}${e.text ? ` ${e.text}` : ''}`);
-const wantHelpers = ['editIcon', 'button Recalculate', 'link View More Payment Plans', 'button Print Quote Proposal'];
+const wantHelpers = ['editIcon', 'link View More Payment Plans', 'button Print Quote Proposal'];
 if (JSON.stringify(helperClicks) !== JSON.stringify(wantHelpers)) fail(`the extension's Quote & Coverages clicks were [${helperClicks.join(', ')}], expected [${wantHelpers.join(', ')}]`);
+const agentRecalcs = final.log.filter((e) => e.isTrusted && e.type === 'click' && e.target === 'button' && /^recalculate$/i.test(e.text ?? '')).length;
+if (agentRecalcs !== 1) fail(`the agent's Recalculate clicks were ${agentRecalcs}, expected 1`);
 const kitClicks = final.log.filter((e) => !e.isTrusted && (e.type === 'click' || e.type === 'disabled'))
   .filter((e) => !['radio', 'checkbox', 'option'].includes(e.target) && !isAdd(e) && !isContinue(e) && !isQuoteHelper(e));
 for (const e of kitClicks) fail(`the extension clicked ${e.target}${e.text ? ` "${e.text}"` : ''} on ${e.step}`);

@@ -34,15 +34,17 @@
 // agent makes from a long list with the intake's words quoted (business description, vehicle and
 // trailer type), which the AI assistant may suggest for the agent's approval.
 //
-// On Quote & Coverages the fill opens Motor Truck Cargo when the intake asks for it, and once
-// nothing there is left for the agent clicks Recalculate, picks 11 Payments under View More Payment
-// Plans and prints the quote proposal (TNI, FL live run 4, 2026-10-21). The quote stops at Quote & Coverages: Final Quote Details leads to MVR & CLUE,
-// which orders paid reports (stopSteps: nothing is filled or clicked there). With "Click Continue when
-// the page is done" on, the fill adds each intake vehicle, trailer and driver not on the quote yet
-// (TNI, 2026-10-21): the list's "+", the chooser's Vehicle or Trailer and its Next (`actions`,
-// unitLists); and once nothing is left for the agent it clicks Next (Save and Continue on Add Driver)
-// on each step up to Additional Business Info, and Looks Good on a unit list once every intake unit
-// is on it (`advance`, TNI, FL live run 3, 2026-10-21). Off, the agent clicks every one of them.
+// On Quote & Coverages the fill opens Motor Truck Cargo when the intake asks for it; Recalculate is
+// the agent's, and once the premium is current and nothing there is left for the agent the fill
+// picks 11 Payments under View More Payment Plans and prints the quote proposal (TNI, FL live runs 4
+// and 6, 2026-10-21). The quote stops at Quote & Coverages: Final Quote Details leads to MVR & CLUE,
+// which orders paid reports (stopSteps: nothing is filled or clicked there). With "Fill the pages" or
+// "Click Continue when the page is done" on, or on the agent's Fill this page, the fill adds each
+// intake vehicle, trailer and driver not on the quote yet (TNI, 2026-10-21): the list's "+", the
+// chooser's Vehicle or Trailer and its Next (`actions`, unitLists). With "Click Continue when the
+// page is done" on, once nothing is left for the agent it clicks Next (Save and Continue on Add
+// Driver) on each step up to Additional Business Info, and Looks Good on a unit list once every
+// intake unit is on it (`advance`, TNI, FL live run 3, 2026-10-21); off, the agent clicks them.
 
 import { owner, ownerDobNote as noOwnerDob } from './progressive.js';
 import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius } from '../normalize.js';
@@ -681,11 +683,14 @@ export const geico = {
     // clicked once: its chevron toggles, so a second click (a retry of a slow card) would close it.
     { id: 'openCargo', steps: [COVERAGES], token: 'editIcon', within: CARGO_CARD, label: 'Motor Truck Cargo',
       when: (r) => r.coverage?.cargo === true, unlessSelector: `${CARGO_CARD}.expanded` },
-    // Then, once nothing on the step is left for the agent (`whenClear`), each once (W43-18):
-    // Recalculate while the rates are out of date, View More Payment Plans for TNI's 11 Payments
-    // (picked by its rule), and Print Quote Proposal once 11 Payments is chosen. Next stays the
-    // agent's: it leads to MVR & CLUE, whose reports cost the agency.
-    { id: 'recalculate', steps: [COVERAGES], text: '^recalculate$', waitRequired: true, needsRecalculation: true, verify: 'premium', whenClear: true },
+    // Then, once nothing on the step is left for the agent (`whenClear`) and the premium is current,
+    // each once (W43-18): View More Payment Plans for TNI's 11 Payments (picked by its rule), and
+    // Print Quote Proposal once 11 Payments is chosen. Recalculate is the agent's: after each one
+    // the fill clicked, GEICO drew the coverages again with its own choices wherever one wasn't
+    // saved yet (liability and UM back to $750,000, road service declined, cargo $5k), the fill's
+    // and the agent's alike;
+    // after each the agent clicked, here and in the runs before, it kept what the page showed (FL live
+    // run 6, 2026-10-21). Next stays the agent's: it leads to MVR & CLUE, whose reports cost the agency.
     { id: 'morePayPlans', steps: [COVERAGES], text: '^view more payment plans$', needsPremium: true, whenClear: true },
     { id: 'printProposal', steps: [COVERAGES], text: '^print quote proposal$', needsPremium: true, whenClear: true, afterValue: ['geico.qGivePayPlanV2', `^${PAY_PLAN}`] },
   ],
@@ -719,14 +724,16 @@ export const geico = {
   },
   // What the panel says on a step the fill still answers.
   stepNotes: {
-    [COVERAGES]: 'Answer what is left for you here (or mark it done) and click Fill this page: with nothing left, the fill clicks Recalculate, picks 11 Payments under View More Payment Plans and clicks Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',
+    [COVERAGES]: 'Answer what is left for you here (or mark it done) and click Fill this page, which also puts back any of its answers GEICO changed back. Then click Recalculate yourself: once the premium is current, the fill picks 11 Payments under View More Payment Plans and clicks Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',
   },
   // GEICO requotes when a coverage changes, and puts back its own choices when the agent backs out
   // (FL live run, 2026-10-21: every follow-up fill set the liability limit again, and GEICO redrew the
   // quote each time, losing the agent's choices). On Quote & Coverages: no follow-up fill (only the
-  // step's first fill and Fill this page), Recalculate and the rest only once nothing is left for the
-  // agent (`whenClear`, W43-18), and an answer
-  // the fill gave that the page shows otherwise since is kept, flagged (pagekit `takenBack`).
+  // step's first fill and Fill this page), the pay plan and Print only once nothing is left for the
+  // agent (`whenClear`, W43-18), and an answer the fill gave that the page shows otherwise since is
+  // kept and flagged by an automatic fill (pagekit `takenBack`), and given again by the agent's Fill
+  // this page (the maintainer, FL live run 6, 2026-10-21: GEICO's own choices put back over the
+  // fill's, and the agent picked each one again by hand).
   // Its follow-up fills run only for questions it draws (FL live run 2, 2026-10-21: each cargo
   // question waited for the agent's Fill, and GEICO's own No to cargo stood until then), never after
   // an answer or a redraw.

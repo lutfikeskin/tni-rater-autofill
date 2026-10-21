@@ -1365,6 +1365,15 @@ function onRecorderMessage(msg, sender) {
     const step = tabStep(state.tab.carrier);
     if (state.tab.carrier?.unitLists?.some((s) => s.steps.includes(step)) && $('auto-advance').checked) scheduleAutoFill(pageOf(state.tab.url));
   }
+  // A unit list drawn, or its rows changed (the recorder's list_shown): GEICO draws the list 5–7 s
+  // after the Next that saved a unit's form, after the follow-up above ran (FL live run 6,
+  // 2026-10-21: nothing ran on the vehicle list until the agent clicked "+"). With "Fill the pages"
+  // or "Click Continue when the page is done" on, as the "+" is clicked (pickUnitToAdd), a
+  // follow-up fill adds the next intake unit.
+  if (msg.event === 'list_shown') {
+    const step = knownStep(state.tab.carrier, msg.step) ?? tabStep(state.tab.carrier);
+    if (state.tab.carrier?.unitLists?.some((s) => s.steps.includes(step)) && ($('auto-advance').checked || $('auto-pages').checked)) scheduleAutoFill(pageOf(state.tab.url));
+  }
   // A button the agent clicked themselves (its text, redacted): a helper or a Continue by hand.
   // On a one-address application, the step it was on (a known step name only, as elsewhere).
   if (msg.event === 'agent_click') {
@@ -1534,7 +1543,8 @@ function agentEdited(page, key) {
 const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checked, active = state.active, unitsListed = false) => ({
   replaceChoices: !!carrier.replaceChoices,
   // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
-  // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only.
+  // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only. The
+  // agent's Fill this page passes none (fillPage): it gives the answer again.
   takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: Object.fromEntries([...(state.filled?.keys() ?? [])].map((key) => [key, true])) } : null,
   // The field keys this tab's fills answered: one the page has reset since is given again only on a
   // quiet page (W43-21). Keys only.
@@ -1591,11 +1601,12 @@ if (inExtension) {
 // the panel's current state (staleFill), and its bookkeeping goes to this tab (rememberFill).
 // `ids`: the quote (usage session) and intake the fill began in, which its events keep when they're
 // logged after another intake was loaded. `settings.overwrite` is the overwrite the fill used
-// (never for an automatic fill), not the checkbox.
-function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = false }) {
+// (never for an automatic fill), not the checkbox. `asked`: the agent's own Fill this page (not an
+// automatic fill, nor Looks right, which continues the page as approved).
+function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = false, asked = false }) {
   const session = usage.currentSession();
   return {
-    run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite,
+    run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite, asked,
     intake: state.intake, revision: state.intakeRevision, ids: { session: session?.id ?? null, intakeId: session?.intakeId ?? null },
     view: viewOf(tabId, page, carrier), scope: editScope(page, carrier, tabStep(carrier, tabId)), active: { ...state.active },
     settings: { autoAdvance: !!$('auto-advance').checked, autoFollowUps: !!$('auto-followups').checked, autoPages: !!$('auto-pages').checked, overwrite: !!overwrite },
@@ -1740,6 +1751,10 @@ async function autoFill(page) {
     if (!fillCurrent(ctx)) return;
     // The list page may have picked the next vehicle or driver: the plan is for that one.
     ctx.active = { ...state.active };
+    // A unit no fill has a report for yet (the one the list added, or the next one's form): its
+    // report is shown, as a new step's is (FL live run 6, 2026-10-21: vehicles 2 and 3 were filled by
+    // follow-ups while the panel still showed the answers of the vehicle before).
+    const unseen = !state.reports.has(reportKey(tabId, page, carrier, ctx.active, stepBefore));
     // Honor the latest switch after preparation, and log the same value used by the kit. The unit the
     // fill adds (pickUnitToAdd) has its "+" and chooser Next clicked only with it on (`click`).
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
@@ -1766,9 +1781,9 @@ async function autoFill(page) {
     const step = carrier.layoutSteps ? stepOfResults(carrier, results) : null;
     const newStep = !!step && step !== stepBefore && !state.reports.has(reportKey(tabId, page, carrier, ctx.active, step));
     // The fill whose helper this follows up held Luna back for it.
-    const rendered = current && (newStep || held || state.autoPaused || hasWarnings || state.assistPage === page);
+    const rendered = current && (newStep || unseen || held || state.autoPaused || hasWarnings || state.assistPage === page);
     if (rendered) { renderReport(frames, { ...ctx, plan }); assistFrames = frames; }
-    if (current && (newStep || held)) showFinish({ auto: true });
+    if (current && (newStep || unseen || held)) showFinish({ auto: true });
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
     const added = frames.flatMap((f) => f.filled).filter((x) => !x.otherStep);
     const n = added.length + frames.reduce((k, f) => k + (f.actions?.length ?? 0), 0);
@@ -2601,7 +2616,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   const overwrite = auto || confirmed ? false : $('overwrite').checked;
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
-  const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite });
+  const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
   await pickListItem(carrier, page, ctx);
   if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); return; }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
@@ -2639,7 +2654,10 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
       return;
     }
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
-    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    // The agent's Fill this page gives back an answer the page took back (keepTakenBack): GEICO's
+    // own coverage choice put back over the fill's, on a question the agent didn't answer
+    // themselves (their answers are in `skip`). An automatic fill keeps and flags it.
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), ...(ctx.asked ? { takenBack: null } : {}), run: ctx.run }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -2752,8 +2770,10 @@ async function pickUnitForm(carrier, ctx) {
 // row no intake unit is known to be on (it may be that one, added by hand). With no unit form on
 // screen (the list, the chooser, the owner's own forms) the picker moves to that unit, so the plan
 // is for it. The plan clicks the list's "+" and the chooser's Next for it (`click`) with "Fill the
-// pages" or "Click Continue when the page is done" on (TNI, FL live run 5, 2026-10-21, W43-20);
-// with both off it only answers the chooser.
+// pages" or "Click Continue when the page is done" on (TNI, FL live run 5, 2026-10-21, W43-20), and
+// on the agent's own Fill this page with both off (FL live run 6, 2026-10-21: Fill this page on the
+// vehicle list did nothing, and the agent clicked "+"); an automatic fill with both off only answers
+// the chooser.
 async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   ctx.unitsListed = false;
@@ -2779,7 +2799,7 @@ async function pickUnitToAdd(carrier, ctx) {
     persistDoneActions(ctx.tabId, state.doneActions);
   }
   if (!next.adding) return;
-  ctx.adding = { ...next.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance) };
+  ctx.adding = { ...next.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance || ctx.asked) };
   const { list, index } = next.adding;
   if (next.move && state.active[list] !== index) {
     state.active[list] = index;
@@ -4572,7 +4592,7 @@ async function openPdfInTab() {
 // move from another step, or a new document on it) is logged as a fill run that stopped, as a stop
 // page is, with the step's name only, once the tab is shown to be this intake's quote.
 function noteStep(msg, sender) {
-  if (msg?.ra !== 'usage' || !['field_changes', 'new_fields', 'page_view', 'step_shown'].includes(msg.event) || !state.intake || sender.tab?.id !== state.tab?.id) return;
+  if (msg?.ra !== 'usage' || !['field_changes', 'new_fields', 'page_view', 'step_shown', 'list_shown'].includes(msg.event) || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier;
   const step = knownStep(carrier, msg.step);
   if (!step) return;

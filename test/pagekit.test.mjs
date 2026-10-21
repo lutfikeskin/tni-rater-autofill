@@ -4487,6 +4487,24 @@ test('a one-address unit list: how many units it lists and which of them it show
   assert.equal(h.kit.unitList('#summaryPage-AddCommercialVehicle', []), null);
 });
 
+// FL live run 6, 2026-10-21: GEICO drew the vehicle list, which has no question, seconds after the
+// Next that saved a vehicle, and nothing told the panel. The lists the panel read here, on screen
+// now with their rows, for the recorder's every poll: selectors and counts only.
+test('the unit lists on screen now: those the panel read here, with their rows', () => {
+  const h = harness({ pathname: '/quote' });
+  const list = new FakeNode('ul', { id: 'summaryPage-AddCommercialVehicle' });
+  list.append(new FakeNode('li'), new FakeNode('li', { className: 'add-state' }));
+  h.document.body.append(list);
+  assert.equal(h.kit.unitListsNow(), '', 'none read yet');
+  h.kit.unitList('#summaryPage-AddCommercialVehicle', []);
+  h.kit.unitList('#summaryPage-AddDriver', []);
+  assert.equal(h.kit.unitListsNow(), '#summaryPage-AddCommercialVehicle:1');
+  list.append(new FakeNode('li'));
+  assert.equal(h.kit.unitListsNow(), '#summaryPage-AddCommercialVehicle:2', 'a row more');
+  list._visible = false;
+  assert.equal(h.kit.unitListsNow(), '', 'gone');
+});
+
 test('a unit added but never entered is said on its list, not on the unit\'s own form drawn at the same address', async () => {
   const unfinished = 'The "+" was clicked for vehicle 2, but no form was filled for it';
   const actions = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [
@@ -5528,8 +5546,8 @@ test('a button the agent clicks during a fill is the step\'s move: the fill clic
 });
 
 // FL live run 4, 2026-10-21 (W43-18, TNI): GEICO's pay plan is 11 Payments, one of the plans "View
-// More Payment Plans" shows; the fill clicks Recalculate, View More, picks 11 Payments and prints,
-// only once nothing on the page is left for the agent. `whenOffered`: a choice whose option isn't
+// More Payment Plans" shows; the fill clicks View More, picks 11 Payments and prints, only once
+// nothing on the page is left for the agent (Recalculate before it is the agent's: FL live run 6). `whenOffered`: a choice whose option isn't
 // shown yet waits (a helper may show it) instead of failing; `whenClear`: a helper waits until the
 // fill has left nothing for the agent.
 test('a choice waits for its option to be offered, and a helper waits until nothing is left for the agent', async () => {
@@ -5572,6 +5590,14 @@ test('a choice waits for its option to be offered, and a helper waits until noth
   p.h.document.body.children.splice(p.h.document.body.children.indexOf(p.h.document.body.children.find((n) => n.tagName === 'A')), 1);
   report = await p.h.kit.fill(plan(), { maxRounds: 8, replaceChoices: true });
   assert.deepEqual(plain(report.noData.map((x) => [x.key, x.note])), [['ref:GivePayPlanV2', 'The page doesn\'t offer "11 Payments" here: pick it yourself.']]);
+  // GEICO hides View More Payment Plans while the premium is out of date, and Recalculate is the
+  // agent's (FL live run 6, 2026-10-21): the plan waits for it, not left for the agent.
+  const premiumPlan = () => buildPlan(geicoRecord(), { id: 'geico', useGenericRules: false, rules, actions: actions.map((a) => ({ ...a, needsPremium: true })) });
+  p = page({ leftOpen: false });
+  p.h.document.body.children.splice(p.h.document.body.children.indexOf(p.h.document.body.children.find((n) => n.tagName === 'A')), 1);
+  p.h.document.body.innerText = 'Please Recalculate Due To Coverage Change';
+  report = await p.h.kit.fill(premiumPlan(), { maxRounds: 8, replaceChoices: true });
+  assert.deepEqual(plain([p.clicks, report.noData.map((x) => x.key), report.failed]), [[], [], []]);
 });
 
 test('unitFormsNow says whether a unit form is new: its first question unanswered', async () => {
@@ -5857,4 +5883,106 @@ test('GEICO Search Products: Commercial Auto ticked, every other product known a
   // The window drawn twice with five products: ten boxes, still none unfamiliar.
   const five = ['auto', 'commercial', 'cycle', 'umbrella', 'renters'];
   assert.deepEqual(await run([...five, ...five]), [[false, true, false, false, false, false, false, false, false, false], []]);
+});
+
+// FL live run 6, 2026-10-21: GEICO's select2 lists take a pick only from select2's own events
+// (select2:select, select2:unselect), never from a change of the hidden <select>: the commodity set
+// on it showed, but GEICO never asked for the cargo limit, and the business description set so was
+// refused at Next. A select2 list is picked as the agent picks: opened, the option's text typed in
+// its search box, and the one result reading exactly that clicked. `took` is what GEICO received;
+// `unlisted` options the list never shows (GEICO filtering them out).
+function geicoSelect2(h, select, { unlisted = [] } = {}) {
+  select.className = 'select2-hidden-accessible';
+  const took = [];
+  const typed = [];
+  const container = new FakeNode('span', { className: 'select2 select2-container' });
+  const selection = new FakeNode('span', { className: `select2-selection select2-selection--${select.multiple ? 'multiple' : 'single'}` });
+  const rendered = new FakeNode('ul', { className: 'select2-selection__rendered' });
+  const inline = select.multiple ? makeInput({ type: 'search', className: 'select2-search__field' }) : null;
+  selection.append(rendered);
+  container.append(selection);
+  h.document.body.append(select, container);
+  let dropdown = null;
+  const chips = () => {
+    rendered.children = [];
+    for (const o of select.options.filter((x) => (select.multiple ? x.selected : x.value === select.value))) {
+      const chip = new FakeNode('li', { className: 'select2-selection__choice', attrs: { title: o.text }, textContent: o.text });
+      const remove = new FakeNode('span', { className: 'select2-selection__choice__remove', textContent: '×' });
+      remove.addEventListener('click', () => { o.selected = false; took.push(`-${o.text}`); chips(); });
+      chip.append(remove);
+      rendered.append(chip);
+    }
+    if (inline) rendered.append(inline);
+  };
+  const close = () => { dropdown?.remove(); dropdown = null; container.className = 'select2 select2-container'; if (inline) inline.value = ''; };
+  const show = (term) => {
+    const list = dropdown.querySelector(`#select2-${select.id}-results`);
+    list.children = [];
+    for (const o of select.options) {
+      if (!o.value || unlisted.includes(o.text) || !o.text.toLowerCase().includes(term.toLowerCase())) continue;
+      const li = new FakeNode('li', { className: 'select2-results__option', textContent: o.text, attrs: { 'aria-selected': String(select.multiple ? !!o.selected : o.value === select.value) } });
+      li.addEventListener('mouseup', () => {
+        if (select.multiple) o.selected = true; else select.value = o.value;
+        took.push(o.text);
+        chips();
+        close();
+      });
+      list.append(li);
+    }
+  };
+  const open = () => {
+    if (dropdown) return;
+    container.className = 'select2 select2-container select2-container--open';
+    dropdown = new FakeNode('span', { className: 'select2-container select2-container--open' });
+    const box = select.multiple ? null : makeInput({ type: 'search', className: 'select2-search__field' });
+    if (box) { dropdown.append(box); box.addEventListener('input', () => { typed.push(box.value); show(box.value); }); }
+    dropdown.append(new FakeNode('ul', { id: `select2-${select.id}-results`, className: 'select2-results__options' }));
+    h.document.body.append(dropdown);
+    show('');
+  };
+  if (inline) inline.addEventListener('input', () => { typed.push(inline.value); open(); show(inline.value); });
+  selection.addEventListener(select.multiple ? 'click' : 'mousedown', open);
+  chips();
+  return { took, typed };
+}
+
+test('GEICO select2 lists: the option typed in its search box and its one result clicked, never set on the hidden list', async () => {
+  // A list of one choice (the business description): only "For Hire Trucking" is clicked, though
+  // a longer description holds those words too.
+  let h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Business Class & USDOT');
+  const description = geicoList('GivePrimaryBusinessDescription', 64504, 'Please choose what best describes the customer\'s business.',
+    [{ text: 'Please Select', value: '' }, { text: 'Food Truck', value: '311' }, { text: 'For Hire Trucking', value: '412' }, { text: 'For Hire Trucking (Local Moving)', value: '413' }]);
+  let geicoSide = geicoSelect2(h, description);
+  const describe = [{ id: 'desc', field: 'GivePrimaryBusinessDescription', path: 'geico.qGivePrimaryBusinessDescription', name: 'Business description', kind: 'choice', value: 'For Hire Trucking' }];
+  let report = await h.kit.fill(describe, { maxRounds: 3 });
+  assert.deepEqual(plain([geicoSide.typed, geicoSide.took, description.value, report.filled.length, report.failed]), [['For Hire Trucking'], ['For Hire Trucking'], '412', 1, []]);
+  // Already the answer: nothing typed or clicked.
+  report = await h.kit.fill(describe, { maxRounds: 3 });
+  assert.deepEqual(plain([geicoSide.took, report.kept.length]), [['For Hire Trucking'], 1]);
+
+  // A list taking several choices (the commodities): each typed and clicked; one already picked
+  // that the answer doesn't name is taken off by its × first.
+  const commodityList = (id) => new MultiSelectNode(['Consumer Goods - Other Consumer Goods', 'Consumer Goods - Pharmaceuticals (Over The Counter)', 'Refrigerated Goods - Dairy', 'Aircraft/Auto/Boats - Automobiles'],
+    { id, ariaLabel: 'Select up to four commodities the customer hauls the most' });
+  const step = (value) => [{ id: 'commodities', field: 'GiveMtcHaulingCommoditiesCollect', path: 'geico.qGiveMtcHaulingCommoditiesCollect', name: 'Cargo commodities', kind: 'choice', value }];
+  const picked = (list) => list.options.filter((o) => o.selected).map((o) => o.text);
+  h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  let commodities = commodityList('Id_GiveMtcHaulingCommoditiesCollect_76286');
+  commodities.options[3].selected = true;
+  geicoSide = geicoSelect2(h, commodities);
+  report = await h.kit.fill(step('Consumer Goods - Other Consumer Goods; Refrigerated Goods - Dairy'), { maxRounds: 4, overwrite: true });
+  assert.deepEqual(plain([geicoSide.typed, geicoSide.took]), [['Consumer Goods - Other Consumer Goods', 'Refrigerated Goods - Dairy'],
+    ['-Aircraft/Auto/Boats - Automobiles', 'Consumer Goods - Other Consumer Goods', 'Refrigerated Goods - Dairy']]);
+  assert.deepEqual(plain([picked(commodities), report.filled.length, report.failed]), [['Consumer Goods - Other Consumer Goods', 'Refrigerated Goods - Dairy'], 1, []]);
+
+  // An option the list doesn't show when typed: nothing clicked, and the agent is told.
+  h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  commodities = commodityList('Id_GiveMtcHaulingCommoditiesCollect_30463');
+  geicoSide = geicoSelect2(h, commodities, { unlisted: ['Consumer Goods - Other Consumer Goods'] });
+  report = await h.kit.fill(step('Consumer Goods - Other Consumer Goods'), { maxRounds: 3 });
+  assert.deepEqual(plain([geicoSide.took, picked(commodities)]), [[], []]);
+  assert.match(report.failed[0]?.reason ?? '', /didn't show "Consumer Goods - Other Consumer Goods" when it was typed/);
 });

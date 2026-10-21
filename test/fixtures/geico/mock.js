@@ -30,7 +30,8 @@
 //   limit (…withGL). Assumed, not seen: customizations Yes (vehicle) or comp/collision Yes (trailer) shows
 //   the customization value, the cost without equipment and the stated amount (FL 027 shows it for a
 //   tractor's comp/collision). Anything else keeps the visibility it was saved with;
-// - select2 boxes: the rendered text follows the hidden select. Year resets Make and Model, Make reloads
+// - select2 boxes: the rendered text (a list taking several: its chips) follows the hidden select; the
+//   box opens a list to type in and pick from (select2's own markup), a × takes a pick off. Year resets Make and Model, Make reloads
 //   Model (a moment later); the model list exists only for the saved make (data-mock-make), others get
 //   VEHICLE NOT LISTED. The vehicle type list is drawn once the vehicle is known (model or VIN decode;
 //   FL list), the trailer type list once the year is (synthetic, never captured);
@@ -163,6 +164,7 @@
   const ENTER = {};
   function render(id, { keep = null, step = null } = {}) {
     const tpl = document.getElementById(`view-${id}`);
+    closeList();
     form.replaceChildren(clone(`view-${id}`));
     state.view = id;
     state.step = step ?? tpl.dataset.step;
@@ -265,13 +267,75 @@
 
   // --- select2 ------------------------------------------------------------------------------------------
   function paintSelect2(sel) {
+    if (sel.multiple) return paintChips(sel);
     const shown = $(`#select2-${CSS.escape(sel.id)}-container`, form) ?? sel.parentElement?.querySelector('.select2-selection__rendered');
-    if (!shown || sel.multiple) return;
+    if (!shown) return;
     const text = optionText(sel);
     if (text) { shown.textContent = text; shown.title = text; } else { shown.replaceChildren(Object.assign(document.createElement('span'), { className: 'select2-selection__placeholder', textContent: 'Please Select' })); shown.removeAttribute('title'); }
     const box = sel.parentElement?.querySelector('.select2-container');
     box?.classList.toggle('select2-container--disabled', sel.disabled);
     box?.querySelector('.select2-selection')?.setAttribute('aria-disabled', String(sel.disabled));
+  }
+  // A list taking several picks shows each as a chip with its ×, before its own search box.
+  function paintChips(sel) {
+    const rendered = sel.parentElement?.querySelector('.select2-selection--multiple .select2-selection__rendered');
+    if (!rendered) return;
+    rendered.querySelectorAll('.select2-selection__choice').forEach((li) => li.remove());
+    const inline = rendered.querySelector('.select2-search--inline');
+    for (const o of sel.selectedOptions) {
+      const li = Object.assign(document.createElement('li'), { className: 'select2-selection__choice', title: oneLine(o.textContent) });
+      li.append(Object.assign(document.createElement('span'), { className: 'select2-selection__choice__remove', textContent: '×' }), oneLine(o.textContent));
+      rendered.insertBefore(li, inline);
+    }
+  }
+  // The open list (never captured; select2 v4's own markup, as GEICO's page loads it): a left-button
+  // mousedown on a list's box opens it (a click on one taking several picks, or typing in its own
+  // box), drawn at the end of the page with a search box (one taking several types in its own),
+  // its results named after the <select> and narrowed to what is typed. A mouseup on a result picks
+  // it (on a list taking several, one picked already is taken off) and closes the list, and the
+  // <select> changes (the page reads only select2's own pick: FL live run 6, 2026-10-21; a change
+  // set on the <select> by script is taken here too, as the agent's pickList does). A × takes its
+  // pick off; a mousedown elsewhere or Escape closes the list.
+  let dropdown = null;
+  const ownList = (n) => {
+    const sel = n?.closest?.('.select2-container')?.previousElementSibling;
+    return sel?.matches?.('select.select2-hidden-accessible') && form.contains(sel) ? sel : null;
+  };
+  function closeList() {
+    if (!dropdown) return;
+    dropdown.select.parentElement?.querySelector('.select2-container')?.classList.remove('select2-container--open');
+    dropdown.el.remove();
+    dropdown = null;
+  }
+  function openList(sel) {
+    closeList();
+    if (sel.disabled) return;
+    const el = document.createElement('span');
+    el.className = 'select2-container select2-container--default select2-container--open';
+    el.innerHTML = `<span class="select2-dropdown select2-dropdown--below">${sel.multiple ? '' : '<span class="select2-search select2-search--dropdown"><input class="select2-search__field" type="search" autocomplete="off"></span>'}<span class="select2-results"><ul class="select2-results__options" role="listbox"></ul></span></span>`;
+    $('ul', el).id = `select2-${sel.id}-results`;
+    document.body.append(el);
+    sel.parentElement?.querySelector('.select2-container')?.classList.add('select2-container--open');
+    dropdown = { el, select: sel };
+    listResults('');
+  }
+  function listResults(typed) {
+    const want = oneLine(typed).toLowerCase();
+    const items = [...dropdown.select.options].filter((o) => oneLine(o.textContent) && !/^please select$/i.test(oneLine(o.textContent)) && oneLine(o.textContent).toLowerCase().includes(want))
+      .map((o) => {
+        const li = Object.assign(document.createElement('li'), { className: 'select2-results__option', textContent: oneLine(o.textContent) });
+        li.setAttribute('role', 'option');
+        li.setAttribute('aria-selected', String(o.selected));
+        li.mockOption = o;
+        return li;
+      });
+    $('ul', dropdown.el).replaceChildren(...items);
+  }
+  function pickResult(li) {
+    const sel = dropdown.select;
+    if (sel.multiple) li.mockOption.selected = !li.mockOption.selected; else sel.value = li.mockOption.value;
+    closeList();
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
   }
   const byStem = (stem) => $$('select, input', form).find((el) => stemOf(el) === stem);
   const SAVED_MODELS = new WeakMap();
@@ -648,6 +712,33 @@
   }
 
   // --- Events -------------------------------------------------------------------------------------------
+  // select2 (above): its box opens on a left-button mousedown (toggles), a result is picked on mouseup.
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return;
+    const path = e.composedPath();
+    if (dropdown && path.includes(dropdown.el)) return;
+    const single = path.find((n) => n.classList?.contains('select2-selection--single'));
+    const sel = ownList(single);
+    if (sel && dropdown?.select === sel) return closeList();
+    if (sel) return openList(sel);
+    if (!path.some((n) => n.classList?.contains('select2-selection--multiple'))) closeList();
+  }, true);
+  document.addEventListener('mouseup', (e) => {
+    if (e.button !== 0 || !dropdown) return;
+    const li = e.composedPath().find((n) => n.classList?.contains('select2-results__option'));
+    if (li && dropdown.el.contains(li)) pickResult(li);
+  }, true);
+  document.addEventListener('click', (e) => {
+    const path = e.composedPath();
+    const remove = path.find((n) => n.classList?.contains('select2-selection__choice__remove'));
+    const sel = ownList(remove ?? path.find((n) => n.classList?.contains('select2-selection--multiple')));
+    if (!sel) return;
+    if (remove) {
+      const o = [...sel.options].find((x) => oneLine(x.textContent) === remove.parentElement.title);
+      if (o) { o.selected = false; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+    } else if (dropdown?.select !== sel) openList(sel);
+  }, true);
+  document.addEventListener('keydown', (e) => { if (dropdown && e.key === 'Escape') closeList(); }, true);
   document.addEventListener('click', (e) => {
     const path = e.composedPath();
     const progress = path.find((n) => n.tagName === 'A' && n.closest?.('#progressIndicator'));
@@ -699,6 +790,13 @@
   }, true);
   document.addEventListener('input', (e) => {
     const el = e.composedPath()[0];
+    // Typed in a select2 search box: its results (a list taking several opens as it's typed in).
+    if (el?.classList?.contains('select2-search__field')) {
+      const own = ownList(el);
+      if (own && dropdown?.select !== own) openList(own);
+      if (dropdown) listResults(el.value);
+      return;
+    }
     if (!el?.matches?.('input, textarea') || !form.contains(el) || el.closest?.('gds-radio-button')) return;
     if (STOP_VIEWS.includes(state.view)) record({ type: 'input', target: keyOf(el), text: shown(el), isTrusted: e.isTrusted });
     if (el.type === 'search' && el.getAttribute('aria-autocomplete') === 'list') later(200, () => suggestions(el));

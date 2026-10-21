@@ -859,6 +859,37 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   assert.equal(assisted[0].filling, false);
 });
 
+// FL live run 6, 2026-10-21: follow-up fills answered vehicles 2 and 3 on GEICO while the panel kept
+// showing the vehicle before's answers. A unit with no report yet gets its report shown; a follow-up
+// on one that has a report adds a line to it, as before.
+test('an automatic fill shows the report of a unit that has none yet', async () => {
+  const frames = [{ fields: 3, filled: [{ key: 'ref:GiveVinPreQuote', label: 'VIN' }], actions: [], unknown: [], halted: false }];
+  const rendered = [];
+  const state = { tab: { id: 1, url: '/quote', carrier: { id: 'geico' } }, intake: { record: {} }, active: { vehicles: 0 }, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set(),
+    reports: new Map([['v0', {}]]), reportFor: {} };
+  let next = 1;
+  const context = {
+    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {}, querySelector: () => null }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
+    runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
+    renderReport: (result) => rendered.push(result), recordLayout: () => {}, renderSteps: () => {}, announce: () => {}, h: () => ({}),
+    fillEvents: () => [], knownStep, fillSkip: () => [], fillSkipBy: () => null, tabMaps: () => ({ agentKeys: new Map() }), showFinish: () => {},
+    redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
+    runAssist: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {}, fillProblem() {}, reportShown: () => true,
+    // The list moved the picker to the vehicle it adds (pickUnitToAdd).
+    pickListItem: async () => { state.active.vehicles = next; },
+    reportKey: (tabId, page, carrier, active = state.active) => `v${active.vehicles}`,
+  };
+  vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
+  await context.autoFill('/quote');
+  assert.equal(rendered.length, 1, 'vehicle 2 has no report yet: shown');
+  state.reports.set('v1', {});
+  await context.autoFill('/quote');
+  assert.equal(rendered.length, 1, 'a follow-up on vehicle 2: a line on its report');
+  next = 2;
+  await context.autoFill('/quote');
+  assert.equal(rendered.length, 2, 'vehicle 3: shown');
+});
+
 test('during a quote, switching to a non-rater tab keeps the panel on the quote tab (background)', async () => {
   const h = harness();
   h.state.intake = { record: {} };
@@ -3355,6 +3386,24 @@ test('a fill whose intake changed while the carrier worked is dropped: the new i
   assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value|clientA/, 'no client data in the error');
 });
 
+// FL live run 6, 2026-10-21 (the maintainer: "give back, then Recalculate"): GEICO put its own
+// coverage choices back over the fill's, and the agent picked each one again by hand. The agent's
+// Fill this page gives such an answer again (no `takenBack`); an automatic fill and Looks right keep
+// what the page shows (the carrier's `takenBack`, as fillOptions builds it).
+test('only the agent\'s Fill this page gives back an answer the page took back', async () => {
+  const runs = [];
+  for (const args of [[], [{ auto: 'page' }], [{ confirmed: 'receipt' }]]) {
+    const t = fillHarness();
+    t.context.fillOptions = (carrier, extra) => ({ takenBack: { steps: ['Quote & Coverages'], keys: {} }, ...extra });
+    const run = t.context.fillPage(...args);
+    await t.started;
+    t.release(t.results);
+    await run;
+    runs.push(t.seen.options.takenBack);
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(runs)), [null, { steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }]);
+});
+
 test('an intake correction during a fill makes its results stale too, for automatic fills as well', async () => {
   const t = fillHarness();
   const run = t.context.autoFill('/quote-A');
@@ -5043,6 +5092,36 @@ test('on a GEICO unit list step, a form that went away gets a follow-up fill wit
   assert.equal(followUps.length, 2);
 });
 
+// FL live run 6, 2026-10-21: GEICO drew the vehicle list 5–7 s after the agent's Next on a vehicle
+// form, after the follow-up for the form that went away had run, and nothing ran on the list. The
+// recorder says when a unit list is drawn (list_shown), by the step it read with it.
+test('a GEICO unit list drawn gets a follow-up fill with either switch on', () => {
+  const { context } = layoutHarness(() => []);
+  const followUps = [];
+  const on = { 'auto-advance': false, 'auto-pages': true };
+  Object.assign(context, { samePage: (p) => p, knownStep, pageOf: (url) => new URL(url).pathname, $: (id) => ({ checked: on[id] ?? true }),
+    scheduleAutoFill: (page) => followUps.push(page) });
+  Object.assign(context.state.tab, { carrier: geico, url: 'https://sales.geico.com/quote' });
+  context.state.tabSteps = new Map([[context.state.tab.id, 'Additional Business Info']]);
+  vm.runInContext(['tabStep', 'onRecorderMessage'].map(extractFunction).join('\n'), context);
+  const drawn = (step) => context.onRecorderMessage({ ra: 'usage', event: 'list_shown', page: '/quote', step }, { tab: { id: context.state.tab.id } });
+  // The step it came with counts, though the panel's word on the tab's step lags.
+  drawn('Vehicles');
+  on['auto-pages'] = false;
+  on['auto-advance'] = true;
+  drawn('Drivers & Incidents');
+  assert.deepEqual(followUps, ['/quote', '/quote']);
+  // Both off (the agent's Fill this page adds it then), a step without a list, or a carrier without
+  // unit lists: nothing.
+  on['auto-advance'] = false;
+  drawn('Vehicles');
+  on['auto-advance'] = true;
+  drawn('Quote & Coverages');
+  context.state.tab.carrier = { ...amwins };
+  drawn('Vehicles');
+  assert.equal(followUps.length, 2);
+});
+
 // The fill options as the panel builds them: the declaration itself, with its scope helpers.
 function fillOptionsOf(state, carrier, active, { autoAdvance = false, unitsListed = false } = {}) {
   const start = SIDEPANEL.indexOf('const fillOptions =');
@@ -5662,7 +5741,7 @@ test('GEICO: questions drawn over a gateway page no fill answered anything on ge
 // Trailer". On GEICO's unit lists the panel names the unit the fill adds (ctx.adding), by the intake's
 // order, from what the list shows and the forms fills answered, and moves the picker to it.
 test('GEICO: the next intake unit not on the quote is the one added; never one listed, filled, or past the intake\'s count', async () => {
-  const run = async ({ step = 'Vehicles', forms = [], lists, active = {}, unitForms = {}, done = [], record, autoAdvance = true, autoPages = false }) => {
+  const run = async ({ step = 'Vehicles', forms = [], lists, active = {}, unitForms = {}, done = [], record, autoAdvance = true, autoPages = false, asked = false }) => {
     const intake = { record };
     const state = { tab: { id: 4 }, intake, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0, ...active },
       unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms }, doneActions: new Set(done) };
@@ -5677,7 +5756,7 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
       unitToAdd, unitListSpecs,
     };
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
-    const ctx = { tabId: 4, intake, revision: 1, settings: { autoAdvance, autoPages } };
+    const ctx = { tabId: 4, intake, revision: 1, asked, settings: { autoAdvance, autoPages } };
     await context.pickUnitToAdd(geico, ctx);
     return JSON.parse(JSON.stringify({ adding: ctx.adding, listed: ctx.unitsListed, active: { ...state.active }, done: [...state.doneActions].sort(), ...calls }));
   };
@@ -5698,13 +5777,16 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
   out = await run({ lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record });
   assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: true });
   // The plan clicks the "+" and the chooser's Next for it (`click`) with "Fill the pages" or "Click
-  // Continue" on (W43-20, TNI, FL live run 5, 2026-10-21); with both off the same unit, and it only
-  // answers the chooser.
+  // Continue" on (W43-20, TNI, FL live run 5, 2026-10-21), and on the agent's own Fill this page with
+  // both off (FL live run 6, 2026-10-21: Fill this page on the vehicle list did nothing); an automatic
+  // fill with both off has the same unit, and only answers the chooser.
   const both = { lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record };
   out = await run({ ...both, autoAdvance: false, autoPages: true });
   assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: true });
   out = await run({ ...both, autoAdvance: false });
   assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: false });
+  out = await run({ ...both, autoAdvance: false, asked: true });
+  assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: true });
   // As many units listed as the intake has (one added by hand, with no fill): nothing is added.
   out = await run({ lists: [{ rows: 3, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0 } }, record });
   assert.equal(out.adding, null);

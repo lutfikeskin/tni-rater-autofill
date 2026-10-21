@@ -14,7 +14,7 @@
 // at the shadow host it reaches the window as.
 
 (() => {
-  const VERSION = 10;
+  const VERSION = 11;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
@@ -397,10 +397,20 @@
     try { return globalThis.__raterKit?.unitFormsNow?.() ?? null; } catch { return null; }
   };
 
+  // The unit lists on screen as the kit reads them (pagekit unitListsNow), with their rows: GEICO
+  // draws a vehicle or driver list with no question on it, seconds after the form it saves went
+  // away. '' when none is, or the kit isn't in this world. Selectors and counts only.
+  const unitLists = () => {
+    try { return globalThis.__raterKit?.unitListsNow?.() ?? ''; } catch { return ''; }
+  };
+
   let paused = false;
   let page = pageKey();
   let prev = snapshot();
   let prevMessages = messages();
+  // The unit lists last seen. Not taken again on rebaseline: a list a fill's own Next drew while
+  // the recorder was paused is news to the panel, which adds the next unit to it.
+  let shownLists = unitLists();
   // The step headings last seen, so a move to another step is sent even when no answer changes and
   // no question appears with it (a step whose questions are still loading or in a closed section).
   let shownStep = isTop ? stepKey() : undefined;
@@ -487,6 +497,12 @@
     // page's layout again, so both sides of a follow-up question are seen.
     if (removed.length) send({ event: 'removed_fields', page, keys: removed });
     if (newMessages) send({ event: 'new_messages', page });
+    // A unit list drawn, or its rows changed: the panel may add the next intake unit to it.
+    const lists = unitLists();
+    if (lists !== shownLists) {
+      shownLists = lists;
+      if (lists) send({ event: 'list_shown', page, step: stepKey() });
+    }
     // The agent moved to another step of a one-address application (AmWINS' Drivers and Vehicles
     // tabs): the panel shows that step's report (live run 2026-10-19).
     if (isTop) {

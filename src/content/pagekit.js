@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 79 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 80 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -1061,46 +1061,140 @@
     return e;
   }
 
-  // Type-ahead dropdowns (select2: a hidden <select> with a search box the page fills from its
-  // server). Open it, type `step.search`, and pick the one result containing `step.value`; no
-  // such result (or several) means no confident match, and the agent picks.
-  async function applySearchSelect(step, c) {
-    const select = c.el;
-    const container = [select.nextElementSibling, ...(select.parentElement?.children ?? [])]
-      .find((n) => n && n !== select && /\bselect2\b/.test(String(n.className))) ?? null;
+  // Type-ahead dropdowns (select2: a hidden <select> with the box select2 draws after it, and a
+  // search box that lists what matches the typed text). select2 opens on a left-button mousedown
+  // (it checks the event's button), so a plain Event isn't enough.
+  const Mouse = () => (typeof MouseEvent === 'function' ? MouseEvent : Event);
+  const press = (el) => { for (const type of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new (Mouse())(type, { bubbles: true, cancelable: true, button: 0 })); };
+  const select2Box = (select) => [select.nextElementSibling, ...(select.parentElement?.children ?? [])]
+    .find((n) => n && n !== select && /\bselect2\b/.test(String(n.className))) ?? null;
+  // A list select2 draws (its own <select> hidden by select2), not one it only searches for.
+  const isSelect2 = (c) => c.kind === 'select' && !c.cmp && !!c.el.classList?.contains('select2-hidden-accessible') && !!select2Box(c.el);
+
+  // Opens a select2 list and types `text` in its search box: { box, results } as the list then
+  // shows them, or { reason } when it can't. A list taking several choices types in its own box,
+  // drawn in the list's box; another in the box its open dropdown draws (none on a short list:
+  // its results are read as listed). The results are the list's own (select2 names them after the
+  // <select>: select2-<id>-results), else those on screen.
+  async function select2Search(select, text) {
+    const container = select2Box(select);
     const opener = container?.querySelectorAll?.('.select2-selection')?.[0] ?? container;
-    if (!opener) return { ok: false, reason: 'the search box for this list was not found; pick it yourself' };
-    // select2 opens on a left-button mousedown (it checks the event's button), so a plain Event
-    // isn't enough.
-    const Mouse = typeof MouseEvent === 'function' ? MouseEvent : Event;
-    const press = (el) => { for (const type of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new Mouse(type, { bubbles: true, cancelable: true, button: 0 })); };
-    press(opener);
+    if (!opener) return { reason: 'the search box for this list was not found; pick it yourself' };
+    if (!/\bselect2-container--open\b/.test(String(container.className))) press(opener);
+    const inline = () => (select.multiple ? container.querySelectorAll?.('.select2-search__field')?.[0] ?? null : null);
+    // Never another list's own box (a list taking several choices always shows its box).
+    const dropdownBox = () => deepQueryAll(document, '.select2-search__field').find((n) => n.getClientRects().length && !n.closest?.('.select2-selection')) ?? null;
+    const own = () => (select.id ? document.getElementById?.(`select2-${select.id}-results`) : null);
+    const listed = () => (own() ? [...own().querySelectorAll('.select2-results__option')] : deepQueryAll(document, '.select2-results__option'))
+      .filter((n) => n.getClientRects().length && !/loading|message/.test(String(n.className)));
     let box = null;
     for (const start = Date.now(); !box && Date.now() - start < 3000;) {
       await sleep(100);
-      box = deepQueryAll(document, '.select2-search__field').find((n) => n.getClientRects().length) ?? null;
+      box = inline() ?? dropdownBox();
+      if (!box && !select.multiple && own() && listed().length && Date.now() - start >= 1000) break;
     }
-    if (!box) return { ok: false, reason: "the list's search box didn't open; pick it yourself" };
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, String(step.search ?? step.value));
-    for (const type of ['input', 'keyup']) box.dispatchEvent(new Event(type, { bubbles: true }));
-    const want = squash(step.value);
-    let hits = [];
+    if (!box && !(own() && listed().length)) return { reason: "the list's search box didn't open; pick it yourself" };
+    if (box) {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, String(text));
+      for (const type of ['input', 'keyup']) box.dispatchEvent(new Event(type, { bubbles: true }));
+    }
+    let results = [];
     for (const start = Date.now(); Date.now() - start < 6000;) {
       await sleep(200);
-      const results = deepQueryAll(document, '.select2-results__option').filter((n) => n.getClientRects().length && !/loading|message/.test(String(n.className)));
-      // The result that is exactly the wanted text wins over others that only contain it.
-      const exact = results.filter((n) => squash(n.textContent) === want);
-      hits = exact.length ? exact : results.filter((n) => squash(n.textContent).includes(want));
+      results = listed();
       if (results.length) break;
     }
+    return { box, results };
+  }
+
+  // Closes an open select2 list without a pick (its box takes a key, the page a click elsewhere).
+  function closeSelect2(box) {
+    box?.dispatchEvent(new Event('keydown', { bubbles: true }));
+    document.body.dispatchEvent(new (Mouse())('mousedown', { bubbles: true, button: 0 }));
+  }
+
+  // Type-ahead dropdowns the page fills from its server (AmWINS' classification): type
+  // `step.search`, and pick the one result containing `step.value`; no such result (or several)
+  // means no confident match, and the agent picks.
+  async function applySearchSelect(step, c) {
+    const found = await select2Search(c.el, step.search ?? step.value);
+    if (found.reason) return { ok: false, reason: found.reason };
+    const want = squash(step.value);
+    // The result that is exactly the wanted text wins over others that only contain it.
+    const exact = found.results.filter((n) => squash(n.textContent) === want);
+    const hits = exact.length ? exact : found.results.filter((n) => squash(n.textContent).includes(want));
     if (hits.length !== 1) {
-      box.dispatchEvent(new Event('keydown', { bubbles: true }));
-      document.body.dispatchEvent(new Mouse('mousedown', { bubbles: true, button: 0 }));
+      closeSelect2(found.box);
       return { ok: false, reason: hits.length ? `${hits.length} results match "${step.value}"; pick the right one` : `no confident match for "${step.value}"; pick it yourself` };
     }
     press(hits[0]);
     await settle({ quietMs: 250, maxMs: 4000 });
     return squash(selectedText(c) ?? '').includes(want) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
+  }
+
+  // One option of a select2 list picked as the agent picks it: its text typed in the list's search
+  // box, and the one result reading exactly that clicked (one not picked yet, on a list taking
+  // several: clicking a picked one takes it off).
+  async function pickSelect2(select, text) {
+    const found = await select2Search(select, text);
+    if (found.reason) return { ok: false, reason: found.reason };
+    const want = oneLine(text).toLowerCase();
+    const hits = found.results.filter((n) => oneLine(n.textContent).toLowerCase() === want && n.getAttribute?.('aria-selected') !== 'true');
+    if (hits.length !== 1) {
+      closeSelect2(found.box);
+      return { ok: false, reason: hits.length ? `the list showed "${text}" ${hits.length} times; pick it yourself` : `the list didn't show "${text}" when it was typed; pick it yourself` };
+    }
+    press(hits[0]);
+    await settle({ quietMs: 250, maxMs: 4000 });
+    return { ok: true };
+  }
+
+  // A pick taken off a select2 list taking several choices: its own × in the list's box.
+  async function unpickSelect2(select, text) {
+    const want = oneLine(text).toLowerCase();
+    const chip = [...(select2Box(select)?.querySelectorAll?.('.select2-selection__choice') ?? [])]
+      .find((n) => oneLine(n.getAttribute?.('title') ?? n.textContent.replace(/^×/, '')).toLowerCase() === want);
+    const remove = chip?.querySelectorAll?.('.select2-selection__choice__remove')?.[0] ?? null;
+    if (!remove) return { ok: false, reason: `"${text}" is picked but has no × to take it off; take it off yourself` };
+    press(remove);
+    await settle({ quietMs: 250, maxMs: 4000 });
+    return { ok: true };
+  }
+
+  // GEICO's select2 lists (business description, cargo commodities, a driver's suffix, a vehicle's
+  // year, make and model) take a pick only from select2 itself: the page reads its select2:select
+  // and select2:unselect, never a change of the hidden <select> (FL live run 6, 2026-10-21: the
+  // commodity set on the <select> showed, but GEICO took none and never asked for the cargo limit;
+  // the business description set so was refused at Next). Each pick is made in the list (typed,
+  // then clicked: pickSelect2), and on a list taking several a pick the answer doesn't name is
+  // taken off first (GEICO takes at most four).
+  async function applySelect2(step, c) {
+    let options = optionsOf(c);
+    if (c.el.multiple) {
+      const wanted = multiValue(step.value, options);
+      const picks = wanted.map((w) => options.find((o) => !o.el.disabled && o.text.toLowerCase() === w.toLowerCase()));
+      if (!wanted.length || picks.some((o) => !o)) return noMatch({ ...step, value: wanted.filter((w, i) => !picks[i]).join('; ') || step.value }, options);
+      for (const o of options.filter((x) => x.el.selected && !picks.includes(x))) {
+        const off = await unpickSelect2(c.el, o.text);
+        if (!off.ok) return off;
+      }
+      for (const o of picks.filter((x) => !x.el.selected)) {
+        const on = await pickSelect2(c.el, o.text);
+        if (!on.ok) return on;
+      }
+      if (!options.every((o) => !!o.el.selected === picks.includes(o))) return { ok: false, reason: 'the page did not keep these picks' };
+      return { ok: true, shown: picks.map((o) => o.text).join('; ') };
+    }
+    let opt = matchOption(options, step);
+    for (const start = Date.now(); !opt && new Set(options.map((o) => oneLine(o.text)).filter(Boolean)).size <= 1 && Date.now() - start < 6000;) {
+      await sleep(250);
+      options = optionsOf(c);
+      opt = matchOption(options, step);
+    }
+    if (!opt) return noMatch(step, options);
+    const on = await pickSelect2(c.el, opt.text);
+    if (!on.ok) return on;
+    return selectedText(c) === opt.text ? { ok: true, shown: opt.text } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
   }
 
   // Returns { ok: true, shown } or { ok: false, reason, options? }.
@@ -1109,6 +1203,7 @@
     if (step.kind === 'search-select') return applySearchSelect(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
+    if (isSelect2(c)) return applySelect2(step, c);
     // A list taking several choices (GEICO's commodities: W43-23): exactly the answer's options,
     // named by their texts joined by "; " (as selectedText reads them back), each of them offered.
     if (c.kind === 'select' && c.el.multiple) {
@@ -1440,6 +1535,9 @@
   // the last fill in this document whose plan had any: unitFormsNow reads the forms on screen by
   // them between fills. Null until a fill gives some.
   let knownUnitMarkers = null;
+  // The unit lists the panel read in this document (unitList's selectors): unitListsNow tells the
+  // recorder when one is drawn.
+  const knownUnitLists = [];
 
   // The fill running in this frame (its report and how to halt it): the side panel reads how many
   // answers are in so far, and its Stop halts it the way an agent edit does (no Continue after).
@@ -2540,9 +2638,12 @@
     }
     // A choice never offered (`whenOffered`), unless another rule for the same question answered it
     // (GEICO's two pay plan groups, one of which lists 11 Payments), or a helper that may show it is
-    // still waiting (View More Payment Plans, for the agent's answers): the agent's.
+    // still waiting (View More Payment Plans, for the agent's answers, or for the agent's Recalculate:
+    // GEICO hides the link while the premium is out of date): the agent's.
+    const offerPending = report.blocked.some((x) => !clicked.has(x.id) && x.waits?.some((w) => w.say === NOTHING_LEFT))
+      || (unoffered.size > 0 && actions.some((a) => a.needsPremium && !clicked.has(a.action) && actionHere(a)) && !premiumReady());
     for (const { item, control, step } of unoffered.values()) {
-      if (handled.has(step.id) || report.blocked.some((x) => !clicked.has(x.id) && x.waits?.some((w) => w.say === NOTHING_LEFT)) || report.filled.some((x) => x.path === step.path) || report.kept.some((x) => x.path === step.path)) continue;
+      if (handled.has(step.id) || offerPending || report.filled.some((x) => x.path === step.path) || report.kept.some((x) => x.path === step.path)) continue;
       const note = `The page doesn't offer "${step.value}" here: pick it yourself.`;
       report.noData.push({ ...item, note });
       handled.set(step.id, { status: 'needs', note });
@@ -2808,6 +2909,7 @@
   // rows but the add row) and which of `items` it shows, as listed() reads them but within the list
   // only. Only numbers and true/false go back.
   function unitList(selector, items) {
+    if (!knownUnitLists.includes(selector)) knownUnitLists.push(selector);
     const list = deepQueryAll(document, selector).find((el) => el.getClientRects().length);
     if (!list) return null;
     const text = String(list.innerText ?? '').toUpperCase();
@@ -2821,6 +2923,24 @@
       return v.length >= 11 && flat.includes(` ${v} `);
     });
     return { rows, shown };
+  }
+
+  // The unit lists unitList read here that are on screen now, each with its rows but the add row:
+  // '' when none is. The recorder reads it on every poll and tells the panel when it changes: GEICO
+  // draws a vehicle or driver list with no question on it, 5–7 s after the Next that saved a unit's
+  // form, so neither new_fields nor removed_fields comes with it (FL live run 6, 2026-10-21: the
+  // follow-up for the form that went away ran before the list was there, and nothing ran after).
+  // Light DOM and no text, as it runs every poll; GEICO's lists are in the light DOM. Selectors and
+  // counts only.
+  function unitListsNow() {
+    try {
+      return knownUnitLists.map((selector) => {
+        const list = [...document.querySelectorAll(selector)].find((el) => el.getClientRects().length);
+        return list ? `${selector}:${[...list.children].filter((li) => li.tagName === 'LI' && !li.classList.contains('add-state')).length}` : '';
+      }).filter(Boolean).join('|');
+    } catch {
+      return '';
+    }
   }
 
   function markKey(key, label, status, note) {
@@ -3125,5 +3245,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 79, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 80, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();
