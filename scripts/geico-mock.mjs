@@ -26,8 +26,8 @@
 // driver and trailer), the fill options as sidepanel.js fillOptions builds them for GEICO
 // (replaceChoices, stopSteps, units with the forms each unit was filled on, dropped for a unit picked
 // again, fillSkip, fillSkipBy, takenBack with the keys filled so far), rememberFill's bookkeeping,
-// and the follow-up fills when new questions show (none on Quote & Coverages once it was filled:
-// geico.noFollowUpSteps; the agent's own Fill there). Every request off the computer is refused.
+// and the follow-up fills when new questions show (on Quote & Coverages only those, never after an
+// answer: geico.newQuestionsOnlySteps). Every request off the computer is refused.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -392,6 +392,19 @@ async function fillAll(form, max = 5) {
   return report;
 }
 
+// The panel's follow-ups on a step that takes them only for questions it draws (Quote & Coverages:
+// newQuestionsOnlySteps): filled again while the page shows new questions, never for an answer alone.
+async function fillDrawn(form, max = 5) {
+  let report;
+  for (let i = 0; i < max; i++) {
+    report = await fill(form);
+    await page.waitForTimeout(700);
+    const { appeared } = await poll();
+    if (!appeared) break;
+  }
+  return report;
+}
+
 // --- The agent ---------------------------------------------------------------------------------------
 // Real clicks and keys (trusted events), as the agent's own: GEICO's buttons, radios, add icons.
 const visible = (sel) => page.locator(sel).filter({ visible: true }).first();
@@ -616,27 +629,29 @@ async function scenario() {
   await leave('Additional Business Info');
   await agent.go('Next', 'quote');
 
-  // Quote & Coverages: the fill runs once on its own (no follow-ups there: geico.noFollowUpSteps);
-  // the agent changes the liability limit, opens Motor Truck Cargo and answers its questions the intake
-  // doesn't, pressing the panel's Fill after each (fill()). The fills never click Recalculate (FL live
-  // run, 2026-10-21: each fill's Recalculate redrew the step and took back the agent's choices); the
-  // agent does, and the fill after its redraw (new ids for every coverage list) keeps the agent's
-  // limit and changes nothing, so the premium stays rated.
-  await fill('Quote & Coverages');
+  // Quote & Coverages: the fill runs when the step opens and again only for questions it draws
+  // (geico.newQuestionsOnlySteps: fillDrawn), never after an answer alone. The agent changes the
+  // liability limit, opens Motor Truck Cargo and answers its questions the intake doesn't; each
+  // question that draws the next gets the panel's follow-up. Collision's deductibles show a moment
+  // after comprehensive is chosen (FL live run 2, 2026-10-21), and the fill waits for them. The
+  // fills never click Recalculate (FL live run, 2026-10-21: each fill's Recalculate redrew the step
+  // and took back the agent's choices); the agent does, and the fill after its redraw (new ids for
+  // every coverage list) keeps the agent's limit and changes nothing, so the premium stays rated.
+  await fillDrawn('Quote & Coverages');
   await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
   const CARGO = 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]';
   await agent.open(CARGO, 'Motor Truck Cargo');
-  await fill('Quote & Coverages');
+  await fillDrawn('Quote & Coverages');
   await agent.open(CARGO, 'Motor Truck Cargo');
   await agent.radio('GiveMtcRequireCoverageForMobileHomesYesNo', 'No');
-  await fill('Quote & Coverages');
+  await fillDrawn('Quote & Coverages');
   await agent.open(CARGO, 'Motor Truck Cargo');
   await agent.radio('GiveMtcRequireCoverageForBusinessDocumentYesNo', 'No');
-  await fill('Quote & Coverages');
+  await fillDrawn('Quote & Coverages');
   // The commodities (required: Recalculate waits for them).
   await agent.open(CARGO, 'Motor Truck Cargo');
   await agent.pickList('GiveMtcHaulingCommoditiesCollect', ['Miscellaneous Goods - Containerized Freight']);
-  await fill('Quote & Coverages');
+  await fillDrawn('Quote & Coverages');
   for (const f of fills.filter((x) => x.form === 'Quote & Coverages' && x.report.actions?.length)) fail(`Quote & Coverages: a fill clicked ${f.report.actions.map((a) => a.text).join(', ')}`);
   const recalcs = (await mock()).recalcs;
   if (recalcs) fail(`Quote & Coverages: Recalculate was clicked ${recalcs} time(s) before the agent's`);

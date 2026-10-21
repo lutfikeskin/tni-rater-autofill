@@ -31,7 +31,9 @@
 //   Model (a moment later); the model list exists only for the saved make (data-mock-make), others get
 //   VEHICLE NOT LISTED. The vehicle type list is drawn once the vehicle is known (model or VIN decode;
 //   FL list), the trailer type list once the year is (synthetic, never captured);
-// - a VIN in __geicoMock.decodes decodes a moment later: Year, Make, Model set, Make and Model disabled;
+// - a VIN in __geicoMock.decodes decodes a moment later: Year, Make, Model set, Make and Model disabled,
+//   and the vehicle type and distance chosen before it cleared (GEICO redraws the form: FL live run 2,
+//   2026-10-21);
 // - a 5-digit ZIP draws its City list and picks the city (__geicoMock.cities, else SAMPLE CITY);
 // - the address box offers suggestions (li[role=option] under #address-dropdown-list: markup assumed,
 //   the open list was never captured); picking one fills street, ZIP and City;
@@ -296,6 +298,7 @@
     if (!d) return;
     const apply = () => {
       if (byStem('GiveVinPreQuote')?.value !== vin) return;
+      for (const stem of ['GiveOtherVehicleType', 'GiveFarthestOneWayDistance']) if (byStem(stem)) setSelect(byStem(stem), '');
       setSelect(byStem('GiveYear'), d.year);
       const make = byStem('GiveMake');
       setSelect(make, d.make);
@@ -374,7 +377,9 @@
       if (total) total.value = String(n(CUSTOMIZATION[0]) + n(CUSTOMIZATION[1]) || '');
     }
     if (state.view === 'quote' && isCoverage(el)) {
-      if (suffixOf(el) === 'COMP') lengthen(el);
+      // A collision, rental or road service row's options follow its comprehensive a moment later
+      // (FL live run 2: the fill tried collision before GEICO drew its deductibles).
+      if (suffixOf(el) === 'COMP') { if (sync) lengthen(el); else later(delay, () => lengthen(el)); }
       if (!sync) makeStale();
     } else if (state.view === 'quote' && el.closest('ul.expandable-form') && !sync) makeStale();
   }

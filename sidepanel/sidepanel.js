@@ -281,6 +281,8 @@ const state = {
   agentKeysEpochs: new Map(), // Clear/pruning invalidate late writes for that intake only
   filling: false,
   autoTimer: null,
+  // The page whose new questions the pending follow-up fill is for (scheduleAutoFill `drawn`).
+  autoDrawn: null,
   autoPending: false,
   autoPaused: false,
   // An automatic fill that found a step it couldn't read (pagekit stepUnread) is tried once more;
@@ -1341,7 +1343,12 @@ function onRecorderMessage(msg, sender) {
     }
   }
   if (msg.event === 'new_fields') {
-    scheduleAutoFill(samePage(msg.page));
+    const page = samePage(msg.page);
+    // Questions drawn over a page already open (`fillOnDraw`: GEICO's Start New Quote window, over
+    // any gateway page) on a page never filled: its first fill, as on arriving at a page.
+    if (state.tab.carrier?.fillOnDraw && $('auto-pages').checked && !state.autoPages.has(page) && onQuotePage() && !stopNoteFor(state.tab.carrier, page)) {
+      setTimeout(() => { if (pageOf(state.tab?.url) === page) fillPage({ auto: 'page' }); }, 100);
+    } else scheduleAutoFill(page, undefined, true);
     scheduleLayout(layoutPage, 'appeared');
   }
   if (msg.event === 'removed_fields') scheduleLayout(layoutPage, 'removed');
@@ -1668,8 +1675,11 @@ function logFillError(ctx, error) {
     rules: rulesVersion ?? undefined, settings: ctx.settings, auto: ctx.auto, error: fillErrorText(ctx, error), ...ctx.ids });
 }
 
-function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
+// `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
+// follow-ups only for those (`newQuestionsOnlySteps`) waits for.
+function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
   if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page)) return;
+  if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
   state.autoTimer = setTimeout(() => { if (fillCurrent(ctx)) autoFill(page); }, 600);
@@ -1684,9 +1694,12 @@ async function autoFill(page) {
   // step themselves (same address, new questions). It's filled as a new page, with its report.
   if (!state.reports.has(reportKey(tabId, page, carrier))) { fillPage({ auto: 'page' }); return; }
   const stepBefore = state.tabSteps?.get(tabId);
-  // A step the carrier redraws on every answer (GEICO's Quote & Coverages: noFollowUpSteps) is
-  // filled when it opens and on Fill this page, never again by itself.
-  if (carrier.noFollowUpSteps?.includes(stepBefore)) return;
+  // A step the carrier redraws on every answer (GEICO's Quote & Coverages: newQuestionsOnlySteps)
+  // is filled when it opens, on Fill this page, and when it draws new questions (the cargo
+  // section's), never after an answer or a redraw.
+  const drawn = state.autoDrawn === page;
+  state.autoDrawn = null;
+  if (carrier.newQuestionsOnlySteps?.includes(stepBefore) && !drawn) return;
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto: true });
@@ -2543,8 +2556,9 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
   if (state.filling || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
-  // Back on a step that is filled once (noFollowUpSteps) after its fill: only the agent fills it again.
-  if (auto && state.tab.carrier.noFollowUpSteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
+  // Back on a step that takes follow-ups only for new questions (newQuestionsOnlySteps) after its
+  // fill: only the agent, or new questions, fill it again.
+  if (auto && state.tab.carrier.newQuestionsOnlySteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
   // The carrier's portal pages outside a quote (Progressive's home / quote search) are never
   // filled, and the AI isn't asked about them.
   if (!onQuotePage()) {

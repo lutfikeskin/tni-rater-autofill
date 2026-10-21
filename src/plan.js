@@ -229,6 +229,9 @@ function fieldSteps(rules, record, carrier, active) {
       notPages: rule.notPages ? [].concat(rule.notPages) : null,
       // the first one after this question when its text repeats on the page,
       askAfter: rule.askAfter ?? null,
+      // Not answered while this question (a data-model name) is on the page unanswered: the page is
+      // still working it out (GEICO's VIN decode, which redraws the vehicle form).
+      waitFor: (typeof rule.waitFor === 'function' ? rule.waitFor(record, active) : rule.waitFor) ?? null,
       // one field each for steps of a question repeated in several groups.
       each: !!rule.each,
       // Never "needs you" when empty (middle initial, suffix, DBA).

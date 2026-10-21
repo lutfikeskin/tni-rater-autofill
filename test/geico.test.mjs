@@ -75,7 +75,7 @@ const agents = (s) => { assert.equal(s.value, null, `${s.name}: not filled`); as
 
 // --- The carrier --------------------------------------------------------------------------------
 
-test('GEICO is registered: the quote and the gateway\'s start page are filled, never the dashboard', () => {
+test('GEICO is registered: the quote and the gateway are filled', () => {
   assert.ok(CARRIERS.includes(geico));
   assert.equal(carrierForUrl('https://sales.geico.com/quote').id, 'geico');
   assert.equal(carrierForUrl('https://gateway2.geico.com/').id, 'geico', 'the gateway is GEICO\'s');
@@ -83,12 +83,16 @@ test('GEICO is registered: the quote and the gateway\'s start page are filled, n
     assert.ok(geico.autoFillUrl.test(url), url);
     assert.ok(geico.layoutUrl.test(url), url);
   }
-  // TNI 2026-10-21: the quote starts on the gateway with its ZIP. Its layouts aren't taken.
-  for (const url of ['https://gateway2.geico.com/', 'https://gateway2.geico.com', 'https://gateway2.geico.com/#home']) {
+  // TNI 2026-10-21: the quote starts on the gateway with its ZIP, in the Start New Quote window
+  // drawn over any gateway page (FL live run 2: over Recent Policies and Quotes). Its layouts aren't
+  // taken; its first fill runs when the window is drawn.
+  for (const url of ['https://gateway2.geico.com/', 'https://gateway2.geico.com', 'https://gateway2.geico.com/#home',
+    'https://gateway2.geico.com/recent-policy-and-quotes', 'https://gateway2.geico.com/dashboard']) {
     assert.ok(geico.autoFillUrl.test(url), url);
     assert.ok(!geico.layoutUrl.test(url), url);
   }
-  for (const url of ['https://gateway2.geico.com/quote', 'https://sales.geico.com/dashboard', 'https://sales.geico.com/quotes', 'http://sales.geico.com/quote', 'https://gateway2.geico.com.example.test/']) {
+  assert.equal(geico.fillOnDraw, true);
+  for (const url of ['https://sales.geico.com/dashboard', 'https://sales.geico.com/quotes', 'http://sales.geico.com/quote', 'https://gateway2.geico.com.example.test/']) {
     assert.ok(!geico.autoFillUrl.test(url), url);
     assert.ok(!geico.layoutUrl.test(url), url);
   }
@@ -112,23 +116,25 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   assert.deepEqual([geico.useGenericRules, geico.replaceChoices], [false, true]);
   for (const key of ['world', 'batch', 'advance', 'stopPages', 'actions']) assert.ok(!(key in geico), key);
   // The fill clicks no button: Recalculate is the agent's, after their coverage choices (FL live
-  // run, 2026-10-21), and Quote & Coverages is filled once, never followed up; an answer GEICO
-  // takes back there is kept.
+  // run, 2026-10-21), and Quote & Coverages takes follow-ups only for questions it draws (FL live
+  // run 2: the cargo section's); an answer GEICO takes back there is kept.
   assert.deepEqual(buildPlan(intake(), geico, {}).filter((s) => s.kind === 'action'), []);
-  assert.deepEqual([geico.noFollowUpSteps, geico.keepTakenBack], [[QC], [QC]]);
+  assert.deepEqual([geico.newQuestionsOnlySteps, geico.keepTakenBack], [[QC], [QC]]);
+  assert.ok(!('noFollowUpSteps' in geico));
   // The quote stops at Quote & Coverages: said there, and on the steps after it.
   assert.deepEqual(Object.keys(geico.stepNotes), [QC]);
   assert.match(geico.stepNotes[QC], /Recalculate.*Print Quote Proposal.*MVR & CLUE/);
   for (const step of ['Final Quote Details', 'MVR & CLUE']) assert.match(geico.stopSteps[step], /stops GEICO quotes at Quote & Coverages/);
 });
 
-// The gateway's start page: its own rules, by selector on its page, before any step.
-const GATEWAY = (rule) => rule.page === '/';
+// The gateway: its own rules, by selector on any gateway page (never the quote), before any step.
+const GATEWAY = (rule) => !!rule.notPages?.includes('/quote') && !rule.steps;
 
 test('every rule names its steps (never one that is the agent\'s), how it is found, and a stable name', () => {
   const gateway = geico.rules.filter(GATEWAY);
-  assert.deepEqual(gateway.map((r) => [r.selector, r.steps ?? null]), [['#start-quote-zip', null], ['#dashboard-usdot', null],
-    ['input[name="header-search-type"], #search-input-id, input[name="lob-selection"], [id^="alerts-pref"]', null]]);
+  assert.deepEqual(gateway.map((r) => [r.selector, r.notPages, r.steps ?? null]), [['#start-quote-zip', ['/quote'], null], ['#dashboard-usdot', ['/quote'], null],
+    ['input[name="header-search-type"], #search-input-id, input[name="lob-selection"], [id^="alerts-pref"]', ['/quote'], null]]);
+  assert.equal(gateway[2].ignore, true, 'the gateway\'s own controls are never answered');
   for (const rule of geico.rules.filter((r) => !GATEWAY(r))) {
     const where = rule.name ?? rule.field ?? rule.ask;
     assert.ok(Array.isArray(rule.steps) && rule.steps.length, `${where}: steps`);
@@ -170,7 +176,7 @@ test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules 
         if (s.standard) assert.ok(STANDARDS.includes(s.name), s.name);
         assert.ok(s.source === null || SOURCES.includes(s.source), s.name);
         assert.ok(s.path.startsWith('geico.q') || !/^geico\./.test(s.path), s.path);
-        if (!s.pages?.includes('/')) assert.ok(Array.isArray(s.steps) && s.steps.length, `${s.name}: steps`);
+        if (!s.notPages?.includes('/quote')) assert.ok(Array.isArray(s.steps) && s.steps.length, `${s.name}: steps`);
       }
     }
   }
@@ -744,4 +750,21 @@ test('notes are short and plain', () => {
       }
     }
   }
+});
+
+// FL live run 2, 2026-10-21: GEICO's VIN decode redrew the vehicle form and cleared the type (the
+// Cascadia's Tractor, three times), distance and personal use given before it.
+test('with a VIN, the vehicle form\'s answers wait for GEICO\'s decoded year; without one, nothing waits', () => {
+  const WAITING = ['Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
+    'Customization value (the attached equipment value)', 'Vehicle value without customizations', 'Comprehensive or collision wanted (TNI: Yes)',
+    'Farthest one-way distance (from the radius)', 'Personal use'];
+  const withVin = plan(intake());
+  for (const name of WAITING) assert.equal(one(withVin, name, VEH).waitFor, 'GiveYear', name);
+  for (const s of withVin.filter((x) => !(WAITING.includes(x.name) && x.steps?.includes(VEH)))) assert.equal(s.waitFor, null, s.name);
+  const noVin = plan(with_({ 'vehicles.0.vin': null }));
+  for (const name of WAITING) assert.equal(one(noVin, name, VEH).waitFor, null, name);
+  // Per vehicle: the second one has its own VIN.
+  const two = with_({ vehicles: [{ ...intake().vehicles[0], vin: null }, SECOND_VEHICLE] });
+  assert.equal(one(plan(two, { vehicles: 0 }), WAITING[0], VEH).waitFor, null);
+  assert.equal(one(plan(two, { vehicles: 1 }), WAITING[0], VEH).waitFor, 'GiveYear');
 });

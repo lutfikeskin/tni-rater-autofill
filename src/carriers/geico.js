@@ -1,5 +1,5 @@
 // GEICO commercial auto (sales.geico.com/quote), opened from the agents' gateway
-// (gateway2.geico.com), where only the start box (ZIP, USDOT number) is filled.
+// (gateway2.geico.com), where only the Start New Quote window (ZIP) and the USDOT check are filled.
 //
 // A single-page application on one address. Its steps (Business Class & USDOT … Payment
 // Information) are told apart by the progress bar at the top: the one part between 0 and 100,
@@ -49,8 +49,11 @@ const [BUSINESS_CLASS, BUSINESS_OWNER, VEHICLES, DRIVERS, MORE_BUSINESS, COVERAG
 
 // The quote itself, never the agents' dashboard (sales.geico.com/dashboard).
 const QUOTE = /^https:\/\/sales\.geico\.com\/quote(?:[?#/]|$)/i;
-// Filled: the quote, and the gateway's start page, where a quote starts with its ZIP.
-const FILLED = /^https:\/\/(?:sales\.geico\.com\/quote(?:[?#/]|$)|gateway2\.geico\.com\/?(?:[?#]|$))/i;
+// Filled: the quote, and the gateway's pages, where a quote starts with its ZIP in the Start New
+// Quote window (drawn over any gateway page: FL live run, 2026-10-21, over Recent Policies and Quotes).
+const FILLED = /^https:\/\/(?:sales\.geico\.com\/quote|gateway2\.geico\.com)(?:[?#/]|$)/i;
+// The quote's own page, where the gateway's rules never apply.
+const GATEWAY_OFF = ['/quote'];
 const STOP_AT_QUOTE = 'TNI stops GEICO quotes at Quote & Coverages: go back there and print the quote proposal.';
 
 // The forms of one step, by a question only that form asks.
@@ -249,6 +252,10 @@ const trailerOf = (r, a) => r.trailers?.[a.trailers ?? 0] ?? null;
 // With a VIN the decode sets year, make and model (and disables make and model): they are checked
 // against the intake, never typed (a decode that differs is flagged). Without one they are typed.
 const hasVin = (r, a) => !!vehicleOf(r, a)?.vin;
+// GEICO's VIN decode redraws the vehicle form, clearing the type, distance and personal use given
+// before it (FL live run 2, 2026-10-21: the Cascadia's Tractor was cleared three times). With a VIN,
+// the form's answers wait for the decoded year (pagekit waitFor).
+const afterDecode = (r, a) => (hasVin(r, a) ? 'GiveYear' : null);
 
 const typeNote = (unit, of) => (r, a) => {
   const type = of(r, a)?.type;
@@ -497,10 +504,13 @@ export const geico = {
   id: 'geico',
   name: 'GEICO',
   hosts: [/(^|\.)geico\.com$/],
-  // Fills on the quote and on the gateway's start page, where the quote starts with the ZIP (TNI,
-  // 2026-10-21); never the dashboard. Page layouts as the agent works: the quote only.
+  // Fills on the quote and on the gateway, where the quote starts with the ZIP (TNI, 2026-10-21);
+  // nothing else of the gateway. Page layouts as the agent works: the quote only.
   autoFillUrl: FILLED,
   layoutUrl: QUOTE,
+  // The Start New Quote window opens over a gateway page already drawn: its first fill runs when
+  // its questions show (the recorder's new_fields), as on arriving at a page.
+  fillOnDraw: true,
   // One address for every step: the step is read from the progress bar (pagekit stepKey) and named
   // in layouts, fill and field-change events only when it is one of these (src/usage.js knownStep).
   layoutSteps: STEPS,
@@ -540,15 +550,19 @@ export const geico = {
   // quote each time, losing the agent's choices). On Quote & Coverages: no follow-up fill (only the
   // step's first fill and Fill this page), no button clicked (the agent's Recalculate), and an answer
   // the fill gave that the page shows otherwise since is kept, flagged (pagekit `takenBack`).
-  noFollowUpSteps: [COVERAGES],
+  // Its follow-up fills run only for questions it draws (FL live run 2, 2026-10-21: each cargo
+  // question waited for the agent's Fill, and GEICO's own No to cargo stood until then), never after
+  // an answer or a redraw.
+  newQuestionsOnlySteps: [COVERAGES],
   keepTakenBack: [COVERAGES],
   rules: [
-    // --- The gateway's start page (gateway2.geico.com) ------------------------------------------
-    // The quote starts with the ZIP (and the USDOT check beside it); the rest of the page is
-    // GEICO's dashboard, never answered.
-    { page: '/', selector: '#start-quote-zip', name: 'Start quote: ZIP (the garaging ZIP)', path: 'garaging.zip', source: 'derived', value: zip5, note: zipNote },
-    { page: '/', selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
-    { page: '/', selector: 'input[name="header-search-type"], #search-input-id, input[name="lob-selection"], [id^="alerts-pref"]', name: 'Gateway dashboard (not the quote)', q: 'gatewayDashboard', ignore: true },
+    // --- The gateway (gateway2.geico.com) --------------------------------------------------------
+    // The quote starts with the ZIP in the Start New Quote window, over any gateway page (and the
+    // USDOT check beside it on the dashboard); the gateway's own controls (search, coverage boxes,
+    // alerts) are never answered. Never on the quote, whose own ZIP is GiveInitialZipCode.
+    { notPages: GATEWAY_OFF, selector: '#start-quote-zip', name: 'Start quote: ZIP (the garaging ZIP)', path: 'garaging.zip', source: 'derived', value: zip5, note: zipNote },
+    { notPages: GATEWAY_OFF, selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
+    { notPages: GATEWAY_OFF, selector: 'input[name="header-search-type"], #search-input-id, input[name="lob-selection"], [id^="alerts-pref"]', name: 'Gateway dashboard (not the quote)', q: 'gatewayDashboard', ignore: true },
     // --- Business Class & USDOT ----------------------------------------------------------------
     ...on(BUSINESS_CLASS, {}, [
       { field: 'GiveInitialZipCode', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'ZIP code (the garaging ZIP)', source: 'derived', value: zip5, note: zipNote },
@@ -625,25 +639,25 @@ export const geico = {
       { field: 'GiveMake', path: 'vehicles[].make', name: 'Vehicle make', kind: 'choice', verifyOnly: hasVin },
       { field: 'GiveModel', path: 'vehicles[].model', name: 'Vehicle model', kind: 'choice', verifyOnly: hasVin },
       // 40 kinds of vehicle: "Van" alone is five of them.
-      { field: 'GiveOtherVehicleType', ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', kind: 'choice',
+      { field: 'GiveOtherVehicleType', waitFor: afterDecode, ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', kind: 'choice',
         source: (r, a) => (vehicleType(r, a) ? 'standard' : null), value: vehicleType, note: (r, a) => (vehicleType(r, a) ? null : typeNote('vehicle', vehicleOf)(r, a)) },
-      { field: 'GiveAnyVehicleCustomizationYesNo', ask: 'Does the customer have any customizations?', path: 'operations.equipVehicle', name: 'Customizations (from the attached equipment value)',
+      { field: 'GiveAnyVehicleCustomizationYesNo', waitFor: afterDecode, ask: 'Does the customer have any customizations?', path: 'operations.equipVehicle', name: 'Customizations (from the attached equipment value)',
         kind: 'bool', source: (r) => (noEquipValue(r) ? 'standard' : 'derived'), clientFact: true, value: customization, note: customizationNote },
-      { field: 'GiveTotalCustomizationValue', ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', name: 'Customization value (the attached equipment value)',
+      { field: 'GiveTotalCustomizationValue', waitFor: afterDecode, ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', name: 'Customization value (the attached equipment value)',
         kind: 'money', source: 'derived', value: customizationValue, note: customizationValueNote },
       // Its value without the customizations: the intake's vehicle value (today's, never cost new).
-      { field: 'GiveCostExcludingPermanentlyAttachedEquipment', path: 'vehicles[].value', name: 'Vehicle value without customizations', kind: 'money', note: valueNote('vehicle', vehicleOf) },
+      { field: 'GiveCostExcludingPermanentlyAttachedEquipment', waitFor: afterDecode, path: 'vehicles[].value', name: 'Vehicle value without customizations', kind: 'money', note: valueNote('vehicle', vehicleOf) },
       fact('GiveDetailedCostNew', 'Cost new', { note: 'What the vehicle cost new isn\'t on the intake (its value there is today\'s): answer it yourself.' }),
       // Also sets GEICO's lowest liability limit: never worked out from the type or model. TNI
       // (2026-10-21): GEICO's own band, from the VIN, is kept.
       { field: 'GiveGrossVehicleWeight', ask: 'What is the Gross Vehicle Weight (GVW)?', name: 'Gross vehicle weight (as GEICO has it)', ignore: true,
         emptyNote: 'GEICO left the gross vehicle weight empty, and it isn\'t on the intake: answer it from the registration.' },
-      { field: 'GiveCommercialVehicleCompCollision', ask: 'Would the customer like to add comprehensive or collision coverage?', name: 'Comprehensive or collision wanted (TNI: Yes)',
+      { field: 'GiveCommercialVehicleCompCollision', waitFor: afterDecode, ask: 'Would the customer like to add comprehensive or collision coverage?', name: 'Comprehensive or collision wanted (TNI: Yes)',
         kind: 'bool', source: physicalDamageSource, value: () => true, note: physicalDamageNote('whether to add comprehensive or collision') },
       ...parking('vehicle'),
-      { field: 'GiveFarthestOneWayDistance', ask: 'What is the farthest one-way distance (in miles) this vehicle travels for work?', name: 'Farthest one-way distance (from the radius)',
+      { field: 'GiveFarthestOneWayDistance', waitFor: afterDecode, ask: 'What is the farthest one-way distance (in miles) this vehicle travels for work?', name: 'Farthest one-way distance (from the radius)',
         kind: 'choice', source: 'derived', value: distanceBand, note: distanceNote },
-      { field: 'GiveCommercialVehicleForPersonalUse', ask: 'Is this vehicle ever used for personal use?', path: 'operations.personalUse', name: 'Personal use',
+      { field: 'GiveCommercialVehicleForPersonalUse', waitFor: afterDecode, ask: 'Is this vehicle ever used for personal use?', path: 'operations.personalUse', name: 'Personal use',
         kind: 'bool', source: 'derived', value: personalUse, note: personalUseNote },
       fact('GiveRegisteredStateYesNo', 'Registered in the garaging state'),
       // Shown for other uses (hidden on the captured quotes): a commercial quote doesn't make them Yes.
