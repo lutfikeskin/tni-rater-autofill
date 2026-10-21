@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 77 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 78 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -1950,6 +1950,17 @@
           handled.set(step.id, { status: 'needs', note: IDENTITY_NOTE });
           continue;
         }
+        // Answered only when the question's own text shows each of these intake words (`labelHas`:
+        // GEICO's USDOT record, Yes when it shows the intake's street and ZIP: W43-24); otherwise
+        // the agent's, with `labelNote`.
+        if (step.labelHas?.length && step.value != null && !step.note) {
+          const text = ` ${squash(`${c.label ?? ''} ${c.text ?? ''}`)} `;
+          if (!step.labelHas.every((w) => squash(w) && text.includes(` ${squash(w)} `))) {
+            report.noData.push({ ...item, note: step.labelNote, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note: step.labelNote });
+            continue;
+          }
+        }
         if (step.note || step.value == null) {
           if (step.optional) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note, ...describe(c) });
@@ -3092,5 +3103,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 77, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 78, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

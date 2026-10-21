@@ -444,8 +444,19 @@ test('USDOT: the number and whether there is one, from the intake', () => {
     assert.equal(s.manualOnly, true);
   }
   agents(one(plan(with_({ 'applicant.dot': 'US 12345' })), 'USDOT #'));
-  const verify = one(p, 'USDOT record is the client\'s business');
-  assert.deepEqual([verify.source, verify.steps], ['attestation', [BCU, ABI]]);
+  // GEICO's USDOT record: Yes when it shows the intake's house number, street name and ZIP (TNI, FL
+  // live run 5, 2026-10-21, W43-24); the page's text is checked by the kit (`labelHas`).
+  const RECORD = 'USDOT record is the client\'s business (Yes when it shows the intake\'s street and ZIP)';
+  const verify = one(p, RECORD);
+  assert.deepEqual([verify.source, verify.value, verify.labelHas, verify.steps], ['derived', true, ['1', 'Test', '68000'], [BCU, ABI]]);
+  assert.match(verify.labelNote, /Check GEICO's USDOT record/);
+  assert.deepEqual(one(plan(with_({ 'garaging.street': '4521 N. Ocean Blvd' })), RECORD).labelHas, ['4521', 'Ocean', '68000'], 'a direction and a street type are no name');
+  // Without a house number, a street name or a ZIP: the agent's attestation, never the AI's.
+  for (const changes of [{ 'garaging.street': 'Test Way' }, { 'garaging.street': null }, { 'garaging.zip': null }, { 'garaging.street': '12 N St' }]) {
+    const s = one(plan(with_(changes)), RECORD);
+    agents(s);
+    assert.deepEqual([s.source, s.manualOnly], ['attestation', true], JSON.stringify(changes));
+  }
 });
 
 test('a current GEICO commercial auto policy: only one on the intake, current', () => {

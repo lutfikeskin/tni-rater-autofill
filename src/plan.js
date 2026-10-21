@@ -286,6 +286,10 @@ function fieldSteps(rules, record, carrier, active) {
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
       activeVehicle,
       businessNames: rule.businessNames ? rule.businessNames(record, active) : null,
+      // Words the question's own text must show for the answer to be given (GEICO's USDOT record:
+      // the intake's house number, street and ZIP, W43-24), and the note when it doesn't.
+      labelHas: rule.labelHas ? rule.labelHas(record, active) : null,
+      labelNote: rule.labelNote ?? null,
       // What an address box gets when the page offers no suggestion (e.g. just the street).
       fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,
       // An address the page already shows agrees only with the intake's house number (GEICO fills

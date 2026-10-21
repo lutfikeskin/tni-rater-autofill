@@ -5796,3 +5796,23 @@ test('a list taking several choices gets exactly the answer\'s options, each off
   await p.h.kit.fill(step('Aircraft/Auto/Boats - Automobiles'), { maxRounds: 4 });
   assert.deepEqual(picked(p.list), ['Aircraft/Auto/Boats - Automobiles']);
 });
+
+// FL live run 5, 2026-10-21 (W43-24, TNI): "Is this the customer's business?" under GEICO's USDOT
+// record is Yes when the record shows the intake's house number, street and ZIP (`labelHas`).
+test('an answer given only when the question\'s own text shows the intake\'s words', async () => {
+  const run = async (record) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Business Class & USDOT');
+    const verify = gdsRadios('GiveExtendUsDotVerifyBusinessAddress', 12, `ACME FREIGHT LLC ${record} Is this the customer's business?`, [['Yes', 'Yes'], ['No', 'No']]);
+    h.document.body.append(verify.group);
+    const plan = [{ id: 'verify', field: 'GiveExtendUsDotVerifyBusinessAddress', path: 'geico.qGiveExtendUsDotVerifyBusinessAddress', name: 'USDOT record is the client\'s business', kind: 'bool', value: true,
+      labelHas: ['4521', 'Ocean', '33139'], labelNote: 'Check GEICO\'s USDOT record against the client\'s business, then answer it yourself.' }];
+    const report = await h.kit.fill(plan, { maxRounds: 3 });
+    return [verify.hosts.map((x) => x.input.checked), report.noData.map((x) => x.note)];
+  };
+  assert.deepEqual(plain(await run('4521 OCEAN BLVD, MIAMI BEACH, FL 33139')), [[true, false], []]);
+  // Another house number, street or ZIP: the agent's.
+  for (const record of ['4523 OCEAN BLVD, MIAMI BEACH, FL 33139', '4521 COLLINS AVE, MIAMI BEACH, FL 33139', '4521 OCEAN BLVD, MIAMI, FL 33140', '14521 OCEAN BLVD, FL 33139']) {
+    assert.deepEqual(plain(await run(record)), [[false, false], ['Check GEICO\'s USDOT record against the client\'s business, then answer it yourself.']], record);
+  }
+});
