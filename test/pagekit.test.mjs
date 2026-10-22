@@ -6105,6 +6105,43 @@ test('an answer given only when the question\'s own text shows the intake\'s wor
   }
 });
 
+// W43-46 (TNI, 2026-10-22): live GEICO draws the record one element per line with nothing between
+// them, so the legend's text ran the business name into the house number ("ACME FREIGHT LLC4521
+// OCEAN BLVD") and the record was never recognised (7 of 7 quotes). The lines are read apart.
+test('GEICO USDOT record drawn line by line is matched with its lines apart', async () => {
+  const run = async (lines, { textNodes = false } = {}) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Business Class & USDOT');
+    const verify = gdsRadios('GiveExtendUsDotVerifyBusinessAddress', 12, null, [['Yes', 'Yes'], ['No', 'No']]);
+    const legend = new FakeNode('span', { attrs: { slot: 'legend' } });
+    const record = new FakeNode('span');
+    if (textNodes) {
+      // <span>ACME FREIGHT LLC<br>4521 OCEAN BLVD<br>…</span>: text nodes split by <br>, glued in textContent.
+      record.textContent = lines.join('');
+      record.childNodes = lines.flatMap((line, i) => [...(i ? [new FakeNode('br')] : []), { nodeType: 3, nodeValue: line }]);
+    } else {
+      for (const line of lines) record.append(new FakeNode('span', { textContent: line }));
+    }
+    legend.append(new FakeNode('span', { textContent: 'USDOT Information' }), record);
+    verify.group.append(legend);
+    h.document.body.append(verify.group);
+    const plan = [{ id: 'verify', field: 'GiveExtendUsDotVerifyBusinessAddress', path: 'geico.qGiveExtendUsDotVerifyBusinessAddress', name: 'USDOT record is the client\'s business', kind: 'bool', value: true,
+      labelHas: ['4521', 'Ocean', '33139'], labelNote: 'Check GEICO\'s USDOT record against the client\'s business, then answer it yourself.' }];
+    const report = await h.kit.fill(plan, { maxRounds: 3 });
+    return plain([verify.hosts.map((x) => x.input.checked), report.noData.length]);
+  };
+  const lines = ['ACME FREIGHT LLC', '4521 OCEAN BLVD, STE 2', 'MIAMI BEACH, FL, 33139'];
+  assert.deepEqual(await run(lines), [[true, false], 0]);
+  assert.deepEqual(await run(lines, { textNodes: true }), [[true, false], 0]);
+  // Another house number, street or ZIP on the record stays the agent's, read either way.
+  for (const other of [['ACME FREIGHT LLC', '4523 OCEAN BLVD', 'MIAMI BEACH, FL, 33139'], ['ACME FREIGHT LLC', '4521 COLLINS AVE', 'MIAMI BEACH, FL, 33139'], ['ACME FREIGHT LLC', '4521 OCEAN BLVD', 'MIAMI, FL, 33140']]) {
+    assert.deepEqual(await run(other), [[false, false], 1], other.join(' / '));
+    assert.deepEqual(await run(other, { textNodes: true }), [[false, false], 1], other.join(' / '));
+  }
+  // A house number really glued to other words on one line is still not the intake's number.
+  assert.deepEqual(await run(['ACME FREIGHT LLC14521 OCEAN BLVD', 'MIAMI BEACH, FL, 33139']), [[false, false], 1]);
+});
+
 // FL live run 5, 2026-10-21 (W43-25): on the gateway's Search Products window Commercial
 // Auto/Trucking was ticked, but another product's box was listed as unfamiliar. Each of the other
 // products' boxes is known and left alone, and Commercial Auto is the only one ticked.
