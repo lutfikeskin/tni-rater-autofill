@@ -6,6 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
 import { chromium } from 'playwright';
+import { STORAGE_VERSION } from '../src/storage-version.js';
 
 const root = path.resolve(import.meta.dirname, '..');
 const out = path.resolve(process.argv[2] || path.join(os.tmpdir(), `luna-mock-${Date.now()}`));
@@ -239,16 +240,47 @@ try {
     // them for Playwright's native select actions while keeping the real page structure intact.
     await mock.evaluate(() => document.querySelectorAll('#priorCarrierPanel > .app-rp-section .card-body').forEach((body) => { body.style.display = ''; }));
   };
+  // The brain button opens Settings at the assistant; Done closes it.
   const openAgent = async () => {
     await panel.locator('#agent-btn').click();
-    await panel.locator('#agent-popover').waitFor({ state: 'visible' });
+    await panel.locator('#settings').waitFor({ state: 'visible' });
+  };
+  const closeAgent = () => panel.locator('#settings-done').click();
+  // The dock's Fill: its button, or its "Fill this page again" while questions remain. Found again
+  // after 5 s: a panel opened again shows Fill this page, then a moment later the report it kept for
+  // the page, whose dock may hide that button (W43-39). A click on the panel behind the mock's tab
+  // can take seconds.
+  const clickFill = async () => {
+    const button = panel.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first();
+    for (const end = Date.now() + 45000; ;) {
+      try {
+        return await button.click({ timeout: 5000 });
+      } catch (error) {
+        if (Date.now() > end) throw error;
+      }
+    }
+  };
+  // No fill running on the tab. On a timeout it says what the dock and the list showed.
+  const dockIdle = () => panel.waitForFunction(() => document.querySelector('#dock').dataset.phase !== 'filling', null, { timeout: 30000 })
+    .catch(async (error) => {
+      const said = await panel.evaluate(() => ['#dock', '#issues', '#feed'].map((id) => document.querySelector(id)?.innerText.replace(/\s+/g, ' ').slice(0, 200)).join(' / ')).catch(() => null);
+      throw new Error(`The fill did not finish: ${said}; panel errors: ${errors.join(' | ') || 'none'}`, { cause: error });
+    });
+  // A question's row in the page's list, opened (its suggestion, choices and buttons are inside).
+  const openRow = async (label) => {
+    const row = panel.locator('#report .row.need', { hasText: label }).first();
+    await row.waitFor({ timeout: 30000 });
+    if (!await row.evaluate((n) => n.classList.contains('open'))) await row.locator('.row-head').click();
+    return row;
   };
   const savedSettings = () => panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings);
+  // The fill started (the dock shows its progress and Stop in place of the button), then ended. Not
+  // a new report in front: on the mock, the step the fill read and the one the recorder read
+  // afterwards can differ for a moment, and the report is filed under the fill's (1 run in 3).
   const fillAndWait = async () => {
-    await panel.locator('#fill').click();
-    // While it fills, step 2 shows its progress and Stop in place of the button.
+    await clickFill();
     await panel.locator('#fill-progress').waitFor({ state: 'visible' });
-    await panel.locator('#fill:not(:disabled)').waitFor({ state: 'visible' });
+    await dockIdle();
   };
   const waitSetting = (key, value) => panel.waitForFunction(([k, v]) => chrome.storage.local.get('settings').then(({ settings }) => settings?.[k] === v), [key, value]);
   const installSnapshotVariation = async ({ firstReversed = false } = {}) => {
@@ -283,6 +315,8 @@ try {
   await mock.bringToFront();
   const legacyTabId = await panel.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id);
   const legacyScope = await panel.evaluate(async () => (await chrome.storage.session.get('session')).session.intakeId);
+  // A profile from before versioned storage (src/storage-version.js) has no version.
+  await panel.evaluate(() => chrome.storage.local.remove('storageVersion'));
   await panel.evaluate(({ scope, tabId }) => chrome.storage.local.set({
     settings: { aiOn: true, aiAuto: true, jevKey: 'legacy-typesafe-key', aiKey: 'legacy-openai-key', jevModel: 'jev-1.13.0',
       autoFollowUps: false, autoPages: false, autoAdvance: true, serverUrl: '', serverToken: '' },
@@ -292,21 +326,21 @@ try {
       approved: false, rejected: false, manual: false, confirmed: false, snapshotHash: null, confidence: null }],
   }), { scope: legacyScope, tabId: legacyTabId });
   await panel.reload();
-  await panel.locator('#fill').click();
-  await panel.locator('.ai-approve').waitFor({ timeout: 30000 });
-  verify('retired automatic decision requires explicit review', await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true }).count(), 1);
+  await clickFill();
+  await panel.locator('#ai-approve').waitFor({ timeout: 30000 });
+  verify('retired automatic decision requires explicit review', await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true, includeHidden: true }).count(), 1);
   verify('legacy automatic decision remains a review hold after reload', await mock.evaluate(() => window.__amwinsMock.saves), 0);
   verify('legacy profile makes no Luna or Jev request', requests + claimsRequests + namesRequests, 0);
   verify('legacy profile does not contact the Jev host', unexpectedProviderHosts.size, 0);
   const migratedSettings = await panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings ?? {});
   verify('legacy OpenAI/TypeSafe fields do not become a Luna key', migratedSettings.lunaKey ?? '', '');
   verify('legacy settings are purged after migration', ['aiKey', 'jevKey', 'jevModel'].every(key => !Object.hasOwn(migratedSettings, key)), true);
+  verify('legacy profile is brought to the latest storage version', await panel.evaluate(async () => (await chrome.storage.local.get('storageVersion')).storageVersion), STORAGE_VERSION);
   await keyboardSelect(mock.locator('#mockLunaChoice'), 'Yes');
   await panel.waitForFunction(async () => (await chrome.storage.local.get('aiPendingDecisions')).aiPendingDecisions?.some(x => x.key === 'mockLunaChoice' && x.manual) === true);
   await panel.reload();
-  await panel.locator('#fill').click();
-  await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
-  verify('manual upgrade correction releases the retired hold', await panel.locator('.ai-approve').count(), 0);
+  await fillAndWait();
+  verify('manual upgrade correction releases the retired hold', await panel.locator('#ai-approve').isVisible(), false);
 
   // Continue the normal Luna workflow with its dedicated key after the upgrade check.
   await panel.evaluate(() => chrome.storage.local.set({ settings: { aiProvider: 'luna', aiOn: true, aiAuto: true, lunaAuto: false,
@@ -318,18 +352,20 @@ try {
   await openMock();
   await loadPdf();
   phase = 'missing-key';
-  await panel.locator('#fill').click();
+  await clickFill();
   await panel.getByText(/GPT-6 Luna needs an OpenAI API key/).waitFor();
   verify('Luna never reuses legacy or TypeSafe keys', requests + claimsRequests + namesRequests, 0);
-  await panel.locator('#quote-notices').getByRole('button', { name: 'Add key', exact: true }).click();
+  await panel.locator('#report').getByRole('button', { name: 'Add the key', exact: true }).click();
   await panel.locator('#ai-openai-key').waitFor({ state: 'visible' });
+  await panel.waitForFunction(() => document.activeElement?.id === 'ai-openai-key', null, { timeout: 5000 }).catch(() => {});
   verify('missing OpenAI key focuses its dedicated field', await panel.evaluate(() => document.activeElement.id), 'ai-openai-key');
   verify('automatic selection is visible for Luna', await panel.locator('#ai-auto-option').isVisible(), true);
   verify('Luna defaults automatic selection off despite legacy aiAuto', await panel.locator('#ai-auto').isChecked(), false);
   verify('Luna automatic selection is enabled when assistance is on', await panel.locator('#ai-auto').isDisabled(), false);
-  verify('Luna model remains fixed', await panel.locator('#ai-model').isDisabled(), true);
+  verify('Luna model is not offered for editing', await panel.locator('#ai-model').count(), 0);
   await panel.locator('#ai-openai-key').fill('synthetic-openai');
-  await panel.locator('#ai-openai-key').press('Tab');
+  // Saved with Save or Enter, never while typed.
+  await panel.locator('#ai-openai-key').press('Enter');
   await panel.waitForFunction(async () => (await chrome.storage.local.get('settings')).settings.lunaKey === 'synthetic-openai');
   // The key arrived with this intake open: its claims box is read now, once.
   await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake?.notesReview, null, { timeout: 15000 });
@@ -338,16 +374,16 @@ try {
   verify('adding the key checks the open intake\'s driver first names', namesRequests, 1);
   verify('OpenAI key save stays in the dedicated Luna field', await panel.evaluate(async () =>
     (await chrome.storage.local.get('settings')).settings.lunaKey === 'synthetic-openai'), true);
-  await panel.locator('#agent-btn').click();
-  await panel.locator('#agent-popover').waitFor({ state: 'visible' });
+  await openAgent();
   await panel.screenshot({ path: path.join(out, 'luna-settings.png'), fullPage: true, animations: 'disabled' });
   await panel.setViewportSize({ width: 320, height: 600 });
   verify('Luna settings fit a narrow side panel', await panel.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await panel.screenshot({ path: path.join(out, 'luna-settings-narrow.png'), fullPage: true, animations: 'disabled' });
   await panel.setViewportSize({ width: 420, height: 900 });
   // With Luna's independent toggle still off, keep the normal suggestion workflow available.
-  await panel.locator('#close-agent').click();
-  await panel.locator('#fill').click();
+  await closeAgent();
+  await clickFill();
+  await openRow('Mock Luna choice');
   const manual = panel.getByRole('button', { name: 'Use this answer', exact: true });
   await manual.waitFor({ timeout: 30000 });
   verify('Luna stays suggestion-only while lunaAuto is off', await mock.locator('#mockLunaChoice').inputValue(), '');
@@ -361,33 +397,34 @@ try {
   await panel.locator('#ai-auto').check();
   await waitSetting('lunaAuto', true);
   verify('Luna auto setting is stored independently', (await savedSettings()).lunaAuto, true);
-  await panel.locator('#close-agent').click();
+  await closeAgent();
   await openMock(); await loadPdf({ missingClaims: true });
   phase = 'automatic-approval';
   verify('follow-up automation stays off for the explicit approval flow', await panel.locator('#auto-followups').isChecked(), false);
   verify('fixture has no follow-up save before explicit Fill', await mock.evaluate(() => window.__amwinsMock.saves), 0);
   await installSnapshotVariation();
-  await panel.locator('#fill').click();
-  const approve = panel.getByRole('button', { name: 'Approve and continue', exact: true });
+  await clickFill();
+  // The dock's Approve (its label says whether Continue follows).
+  const approve = panel.locator('#ai-approve');
   await approve.waitFor({ timeout: 30000 });
   verify('Luna automatic selection applies only after the evidence check', await mock.locator('#mockLunaChoice').inputValue(), 'No');
   verify('auto path exercised alternating snapshot metadata order', await panel.evaluate(() =>
     (globalThis.__lunaMockSnapshotInterceptions?.() ?? 0) >= 2), true);
   verify('automatic selection holds Continue for approval', await mock.evaluate(() => window.__amwinsMock.saves), 0);
-  const aiText = await panel.locator('.ai-holder').first().innerText();
+  const aiText = `${await (await openRow('Mock Luna choice')).innerText()} ${await panel.locator('#dock').innerText()}`;
   verify('Luna automatic review has no confidence percentage', !aiText.includes('%') && !aiText.includes('confidence'), true);
   // Facts the intake doesn't give are the agent's since 2026-10-09 (plan.js `source: 'fact'` and
   // unanswered `clientFact` rules) and hold Continue too. Answering them on the page would change
   // the snapshot the automatic pick was checked against, so the agent marks them done here (Mark
   // done: nothing is filled or clicked): only the Luna approval holds Continue below.
   verify('missing claims does not become a prior-loss answer', await mock.locator('input[name=anyPriorLoss]:checked').count(), 0);
-  verify('missing claims has a visible agent review item', await panel.locator('.need', { hasText: 'any prior loss' }).count(), 1);
+  verify('missing claims has a visible agent review item', await panel.locator('#report .row.need', { hasText: 'any prior loss' }).count(), 1);
   const leftBefore = await panel.locator('#finish-summary').innerText();
   for (const label of ['any prior loss', 'how long with current carrier', 'has additional interest', 'can provide claim free loss run', 'valued loss runs']) {
-    const need = panel.locator('#report > .need', { hasText: label });
-    if (!await need.count()) continue;
+    if (!await panel.locator('#report .row.need', { hasText: label }).count()) continue;
+    const need = await openRow(label);
     await need.locator('.mark-done').click();
-    await panel.locator('#report > .need.resolved', { hasText: label }).waitFor({ timeout: 30000 });
+    await panel.locator('#report .row.need.resolved', { hasText: label }).waitFor({ timeout: 30000 });
   }
   verify('Mark done lowers "left for you" without a refill', await panel.locator('#finish-summary').innerText() !== leftBefore, true);
   verify('Mark done keeps the Luna approval card', await approve.isVisible(), true);
@@ -398,7 +435,7 @@ try {
   await installSnapshotVariation({ firstReversed: true });
   // Re-scan the unchanged page so the restored pending record gets its approval card rendered;
   // aiSettledOnPage prevents a second provider request for the restored choice.
-  await panel.locator('#fill').click();
+  await clickFill();
   await approve.waitFor({ timeout: 30000 });
   verify('automatic approval survives a panel reload', await mock.locator('#mockLunaChoice').inputValue(), 'No');
   await approve.click();
@@ -406,7 +443,7 @@ try {
   verify('reloaded approval exercised reordered snapshot metadata', await panel.evaluate(() =>
     (globalThis.__lunaMockSnapshotInterceptions?.() ?? 0) >= 1), true);
   await panel.evaluate(() => globalThis.__lunaMockRestoreSnapshot?.());
-  await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
+  await dockIdle();
   verify('approval releases Continue', await mock.evaluate(() => window.__amwinsMock.saves > 0), true);
   verify('approval does not submit the application', await mock.evaluate(() => window.__amwinsMock.submitted), false);
   verify('Luna uses both suggestion and evidence checks', requests >= 2, true);
@@ -414,12 +451,12 @@ try {
   // A rejected automatic pick remains blocked until the agent changes the page value.
   mode = 'normal';
   await openMock(); await loadPdf();
-  await panel.locator('#fill').click();
+  await clickFill();
   await approve.waitFor({ timeout: 30000 });
-  await panel.getByRole('button', { name: 'Reject', exact: true }).click();
+  await (await openRow('Mock Luna choice')).getByRole('button', { name: 'Reject', exact: true }).click();
   await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true }).waitFor();
   verify('rejected Luna pick keeps Continue held', await mock.evaluate(() => window.__amwinsMock.saves), 0);
-  await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
+  await dockIdle();
   // selectOption changes the synthetic control; trusted Tab supplies the recorder's user gesture.
   await mock.locator('#mockLunaChoice').selectOption('Yes');
   await mock.locator('#mockLunaChoice').focus();
@@ -434,10 +471,9 @@ try {
   }
   verify('manual correction clears the durable rejected hold', corrected, true);
   await panel.reload();
-  await panel.locator('#fill').click();
-  await panel.waitForFunction(() => !document.querySelector('#fill').disabled);
+  await fillAndWait();
   verify('manual correction survives a panel reload', await mock.locator('#mockLunaChoice').inputValue(), 'Yes');
-  verify('rejected hold stays cleared after reload', await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true }).count(), 0);
+  verify('rejected hold stays cleared after reload', await panel.getByRole('button', { name: 'Confirm the current page answer', exact: true, includeHidden: true }).count(), 0);
   verify('rejected pick does not submit the application', await mock.evaluate(() => window.__amwinsMock.submitted), false);
 
   // Missing years plus three prior rows exercises the recorder's stable anonymous keys. A
@@ -448,7 +484,7 @@ try {
   await openAgent();
   await panel.locator('#ai-auto').uncheck();
   await waitSetting('lunaAuto', false);
-  await panel.locator('#close-agent').click();
+  await closeAgent();
   await panel.evaluate(async () => {
     const { settings } = await chrome.storage.local.get('settings');
     await chrome.storage.local.set({ settings: { ...settings, autoAdvance: false } });
@@ -521,9 +557,9 @@ try {
   verify('the name check sends first names only', loaded.record.drivers.every((d) => !d.last || !sent.includes(d.last))
     && Object.values(namesSent.at(-1)).every((n) => loaded.record.drivers.some((d) => String(d.first ?? '').startsWith(n))), true);
   verify('the fixture has no GL ticked', loaded.record.coverage.gl === true, false);
-  if (await panel.locator('#check-body').isHidden()) await panel.locator('#check-head').click();
-  const glCard = panel.locator('#warnings .warn-card', { hasText: 'mention general liability' });
-  const genderCard = panel.locator('#warnings .warn-card', { hasText: 'is more often a woman\'s name' });
+  if (await panel.locator('#check-view').isHidden()) await panel.locator('#step-check').click();
+  const glCard = panel.locator('#warnings .check', { hasText: 'mention general liability' });
+  const genderCard = panel.locator('#warnings .check', { hasText: 'is more often a woman\'s name' });
   await glCard.waitFor({ timeout: 15000 });
   const quoted = (await glCard.innerText()).match(/general liability: "(.+?)"\./)?.[1] ?? '';
   verify('the GL item quotes a line of the claims box', quoted.length > 0 && loaded.record.claims.text.replace(/\s+/g, ' ').includes(quoted.replace(/…$/, '')), true);
@@ -540,40 +576,41 @@ try {
   const edited = await savedIntake();
   verify('the buttons are the agent\'s edits', ['coverage.hasGl', 'drivers[0].gender'].every((p) => edited.agentEdited.includes(p)), true);
   verify('Client has GL asks for no GL quote', edited.record.coverage.gl === true, false);
-  verify('both items are checked', await panel.locator('#warnings .warn-card', { hasText: /general liability|woman's name/ }).count(), 0);
+  verify('both items are checked', await panel.locator('#warnings .check', { hasText: /general liability|woman's name/ }).count(), 0);
   await panel.waitForTimeout(500);
   verify('confirming GL does not read the claims box again', claimsRequests, claimsBeforeChoice);
 
   mode = 'conflict';
   await openMock(); await loadPdf();
-  await panel.locator('#fill').click();
+  await clickFill();
+  await openRow('Mock Luna choice');
   await panel.getByText('Conflicting intake facts require clarification.', { exact: false }).waitFor();
   verify('conflicting evidence leaves the field unanswered', await mock.locator('#mockLunaChoice').inputValue(), '');
-  verify('conflicting evidence offers no approval button', await approve.count(), 0);
+  verify('conflicting evidence offers no approval button', await approve.isVisible(), false);
 
   mode = 'slow';
   await openMock(); await loadPdf();
   const requestStarted = new Promise(resolve => { started = resolve; });
-  await panel.locator('#fill').click();
+  await clickFill();
   await requestStarted;
   await openAgent();
   await panel.locator('#ai-on').uncheck();
   await waitSetting('aiOn', false);
   release();
   await panel.waitForTimeout(1000);
-  verify('turning assistance off discards an in-flight Luna response', await approve.count(), 0);
+  verify('turning assistance off discards an in-flight Luna response', await panel.locator('#report .row.pending').count(), 0);
   verify('stale provider response never fills the page', await mock.locator('#mockLunaChoice').inputValue(), '');
   // With assistance off a new intake gets neither check: nothing sent, GL and gender untouched.
   phase = 'intake-checks-off';
   const offBefore = claimsRequests + namesRequests;
   flagIntake = true;
-  await panel.locator('#close-agent').click();
+  await closeAgent();
   await openMock(); await loadPdf();
   await panel.waitForTimeout(1000);
   flagIntake = false;
   const offIntake = await savedIntake();
   verify('assistance off: no claims or name check is sent', claimsRequests + namesRequests, offBefore);
-  verify('assistance off: no GL or gender item', await panel.locator('#warnings .warn-card', { hasText: /general liability|woman's name/ }).count(), 0);
+  verify('assistance off: no GL or gender item', await panel.locator('#warnings .check', { hasText: /general liability|woman's name/ }).count(), 0);
   verify('assistance off: GL and gender stay as the intake has them', offIntake.record.coverage.gl !== true && offIntake.record.coverage.hasGl !== true && offIntake.record.drivers.every((d) => d.gender == null), true);
   verify('no unrecognized provider host was contacted', unexpectedProviderHosts.size, 0);
   verify('nothing was submitted', await mock.evaluate(() => window.__amwinsMock.submitted), false);

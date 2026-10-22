@@ -190,7 +190,7 @@ function automaticChoiceAllowed(x) {
 
 export async function callModel({ apiKey, body, fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
-  if (!apiKey) throw new AssistError('Luna needs an OpenAI API key. Add it in Agent options.');
+  if (!apiKey) throw new AssistError('Luna needs an OpenAI API key. Add it in Settings, under Assistant.');
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), timeoutMs);
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
@@ -205,7 +205,7 @@ export async function callModel({ apiKey, body, fetchImpl = globalThis.fetch, ti
         continue;
       }
       // Provider errors can echo inputs and credentials. Never expose their bodies.
-      if (!res.ok) throw new AssistError(({ 401: 'The OpenAI API key was refused. Check it in Agent options.',
+      if (!res.ok) throw new AssistError(({ 401: 'The OpenAI API key was refused. Check it in Settings, under Assistant.',
         403: 'This OpenAI key cannot use Luna.', 400: 'Luna could not review this page context. Answer it manually.',
         404: 'GPT-6 Luna is unavailable for this OpenAI project.', 429: 'Luna is rate-limited. Try again shortly.' })[res.status]
         ?? `Luna returned HTTP ${res.status}. Try again shortly.`);

@@ -131,6 +131,8 @@ class FakeNode {
     return this._textContent + this.children.map((c) => c.textContent).join('');
   }
 
+  get localName() { return this.tagName.toLowerCase(); }
+
   set textContent(value) { this._textContent = String(value ?? ''); }
 
   get attributes() {
@@ -192,7 +194,7 @@ class FakeNode {
     const out = [];
     const visit = (node) => {
       for (const child of node.children) {
-        if (matchesSelector(child, selector)) out.push(child);
+        if (child.matches(selector)) out.push(child);
         visit(child);
       }
     };
@@ -232,7 +234,7 @@ class FakeNode {
     event.target ??= this;
     for (const fn of this._listeners.get(event.type) ?? []) fn.call(this, event);
     this.ownerDocument?._dispatch(event);
-    return true;
+    return !event.defaultPrevented;
   }
 
   click() {
@@ -880,7 +882,7 @@ test('a TNI standard gets its own mark, an intake answer the filled green, and a
 test('the side panel key shows the page marks in the page kit colors', () => {
   const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
   const colors = [...PAGEKIT.match(/const COLORS = \{([^}]*)\}/)[1].matchAll(/(\w+): '(#[0-9a-f]{6})'/gi)];
-  assert.deepEqual(colors.map(([, status]) => status).sort(), ['ai', 'failed', 'filled', 'needs', 'standard']);
+  assert.deepEqual(colors.map(([, status]) => status).sort(), ['agent', 'ai', 'failed', 'filled', 'needs', 'standard']);
   for (const [, status, hex] of colors) {
     assert.equal(css.match(new RegExp(`--mark-${status}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1].toLowerCase(), hex.toLowerCase(), status);
     assert.match(css, new RegExp(`\\.mark\\.${status} \\{[^}]*var\\(--mark-${status}\\)`), status);
@@ -2432,6 +2434,47 @@ test('Stop halts a running fill after the answer going in; progress counts what 
   assert.match(report.reason, /You stopped the fill/);
   assert.ok(!next._clicked, 'Continue is not clicked');
   assert.equal(h.kit.progress(), null, 'the fill is over');
+});
+
+// Bitwarden comparison (2026-10-22): the page the panel asked to fill is checked as the fill starts.
+// Another one in the top frame is left alone: nothing filled, and the marks of an earlier fill stay.
+test('a fill meant for another page than the top frame shows fills nothing and names the page found', async () => {
+  const h = harness({ search: '?pageName=Drivers' });
+  const a = makeInput({ id: 'a', ariaLabel: 'First' });
+  h.document.body.append(a);
+  const step = { id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'one' };
+  const same = await h.kit.fill([step], { maxRounds: 3, expectPage: 'Drivers' });
+  assert.deepEqual([same.pageMoved, same.filled.length, a.value], [undefined, 1, 'one']);
+  const marked = a.getAttribute('data-rater-autofill');
+  assert.ok(marked);
+  a.value = 'changed';
+  const moved = await h.kit.fill([step], { maxRounds: 3, expectPage: 'Vehicles' });
+  assert.deepEqual([moved.pageMoved, moved.filled.length, moved.halted, a.value, a.getAttribute('data-rater-autofill')], ['Drivers', 0, false, 'changed', marked]);
+});
+
+// Review 2026-10-22: every half second each frame sent its whole list. It sends the rows after those
+// the panel has from that list (by its id), and a list the panel has no count for whole.
+test('progress sends only the rows the panel has not seen from its list', async () => {
+  const h = harness();
+  const inputs = ['a', 'b', 'c'].map((id) => makeInput({ id, ariaLabel: id.toUpperCase() }));
+  h.document.body.append(...inputs);
+  const seen = [];
+  inputs[1].addEventListener('change', () => {
+    const first = h.kit.progress();
+    const again = h.kit.progress({ [first.list]: first.rows.length });
+    const ahead = h.kit.progress({ [first.list]: 9 });
+    const other = h.kit.progress({ 'another:1': 1 });
+    // Read in the page's realm: compared as plain data.
+    seen.push(...[first, again, ahead, other].map((x) => JSON.parse(JSON.stringify(x))));
+  });
+  const steps = inputs.map((el) => ({ id: el.id, selector: `#${el.id}`, path: `x.${el.id}`, kind: 'text', value: el.id }));
+  await h.kit.fill(steps, { maxRounds: 3 });
+  const [first, again, ahead, other] = seen;
+  assert.match(first.list, /^\w+:\d+$/);
+  assert.deepEqual([first.filled, first.since, first.rows.map((r) => r.label)], [1, 0, ['A']]);
+  assert.deepEqual([again.list, again.filled, again.since, again.rows], [first.list, 1, 1, []], 'nothing new');
+  assert.deepEqual([ahead.since, ahead.rows.length], [0, 1], 'more than the list holds: the list whole');
+  assert.deepEqual([other.since, other.rows.length], [0, 1], 'a count for another list: this list whole');
 });
 
 test('batch mode answers every visible question in one round and still checks each answer', async () => {
@@ -4597,7 +4640,7 @@ test('GEICO\'s Recalculate: once nothing is left, on a page quiet for 2 s, then 
   // The fill's comprehensive put back, the agent's road service left as GEICO drew it; both red.
   assert.deepEqual([p.comp.value, p.coll.value, p.ers.value], ['$1,000 deductible', '$1,000 deductible', 'I decline this coverage']);
   assert.deepEqual(plain(report.failed.map((x) => x.key)), ['cov:COMP#1', 'cov:ERS#1', null]);
-  assert.match(report.failed[0].reason, /changed this answer when it recalculated, and the fill put it back: click Recalculate yourself/);
+  assert.match(report.failed[0].reason, /changed this answer when it recalculated \(to "\$500 deductible"\), and the fill put it back: click Recalculate yourself/);
   assert.match(report.failed[1].reason, /changed your answer when it recalculated \(it was "I accept this coverage"\)/);
   assert.match(report.failed[2].reason, /changed 2 answers when it recalculated .* the fill clicks it once a quote/);
   // Clicked once, kept clicked (the panel's done helpers); View More Payment Plans waits for the agent.
@@ -4651,7 +4694,7 @@ test('GEICO\'s Recalculate: a redraw seconds later is caught before View More; o
   assert.equal(late.recalcs, 1);
   assert.equal(late.comp.value, '$1,000 deductible', 'put back');
   assert.deepEqual(plain(report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
-  assert.match(report.failed[0].reason, /changed this answer when it recalculated, and the fill put it back/);
+  assert.match(report.failed[0].reason, /changed this answer when it recalculated \(to "\$500 deductible"\), and the fill put it back/);
   assert.equal(late.more._clicked, undefined, 'View More Payment Plans waits for the agent');
   assert.deepEqual(plain([...report.filled, ...report.kept].map((x) => x.key)).sort(), ['cov:COLL#1', 'cov:ERS#1']);
   // Nothing changes: View More Payment Plans once the watch is over, not before.
@@ -4676,6 +4719,244 @@ test('GEICO\'s Recalculate: a redraw seconds later is caught before View More; o
   const shared = await h.kit.fill(plan, { maxRounds: 12 });
   assert.deepEqual(plain(shared.filled.map((x) => [x.key, x.name])), [['ref:GiveFoo', 'first']]);
   assert.deepEqual(plain(shared.failed.map((x) => [x.key, x.name])), [['ref:GiveFoo', 'second'], [null, 'recalculate']]);
+});
+
+// 2026-10-22, 5 automatic fills of 5: GEICO rated the fill's Recalculate 13 to 19 s after the click,
+// its loader up only 3 s in, and drew its own liability, UM, road service and cargo. The fill had
+// already failed the click as unrated, so nothing was put back. Its premium is waited for, and the
+// redraw is checked.
+test('GEICO\'s Recalculate rated 18 s after the click, nothing busy for 3 s: its premium is waited for, and what GEICO changed is put back (2026-10-22)', async () => {
+  const slow = recalcPage({ redraw: ({ h, comp }) => {
+    h.document.body.innerText = STALE;
+    const loader = new FakeNode('div', { id: 'page-load', className: 'loader-container' });
+    setTimeout(() => h.document.body.append(loader), 3000);
+    setTimeout(() => { loader._visible = false; h.document.body.innerText = RATED; comp.value = '$500 deductible'; }, 18000);
+  } });
+  const report = await slow.h.kit.fill(slow.plan, { maxRounds: 12 });
+  assert.equal(slow.recalcs, 1);
+  assert.equal(slow.comp.value, '$1,000 deductible', 'put back');
+  assert.deepEqual(plain(report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
+  assert.match(report.failed[0].reason, /changed this answer when it recalculated \(to "\$500 deductible"\), and the fill put it back/);
+  assert.match(report.failed[1].reason, /changed an answer when it recalculated/);
+  assert.equal(slow.more._clicked, undefined, 'View More Payment Plans waits for the agent');
+});
+
+// W43-41 (FL, 2026-10-22): after the fill's Recalculate, the liability limit, UM, road service and
+// cargo were marked red as changed by GEICO and put back, while the agent saw the right values the
+// whole time. The answers were read 250 ms after the premium showed. GEICO's own requests could
+// still be running, and a value drawn a moment later by itself counted as a change.
+test('GEICO\'s Recalculate: a value the page draws back by itself, once its requests are done, isn\'t a change (W43-41)', async () => {
+  const run = async ({ backAfter, request = null }) => {
+    const p = recalcPage({ redraw: ({ comp }) => {
+      comp.value = '$500 deductible';
+      setTimeout(() => { comp.value = '$1,000 deductible'; }, backAfter);
+    } });
+    const t0 = clock.Date.now();
+    let observer = null;
+    p.h.context.performance = { now: () => clock.Date.now() - t0 };
+    p.h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+    const applied = [];
+    p.comp.addEventListener('change', () => applied.push(p.comp.value));
+    // GEICO's request for the value, finishing just before it is drawn.
+    if (request != null) p.recalc.onclick = ((click) => () => { click(); setTimeout(() => observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/lookup/coverage', responseEnd: clock.Date.now() - t0 }] }), request); })(p.recalc.onclick);
+    const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+    return { failed: plain(report.failed.map((x) => x.key)), applied, comp: p.comp.value, more: p.more._clicked ?? 0, recalcs: p.recalcs };
+  };
+  // Drawn back 1.5 s after the premium showed: no red, nothing put back, View More Payment Plans next.
+  assert.deepEqual(await run({ backAfter: 1500 }), { failed: [], applied: [], comp: '$1,000 deductible', more: 1, recalcs: 1 });
+  // Drawn back 3 s in, just after GEICO's request finished: the same.
+  assert.deepEqual(await run({ backAfter: 3000, request: 2900 }), { failed: [], applied: [], comp: '$1,000 deductible', more: 1, recalcs: 1 });
+  // Still GEICO's value once the page is quiet: a change, put back and red, as before.
+  const kept = await run({ backAfter: 60000 });
+  assert.deepEqual(kept.failed, ['cov:COMP#1', null]);
+  assert.deepEqual(kept.applied, ['$1,000 deductible']);
+});
+
+// The same runs: GEICO sends each coverage change to its server half a second after it is picked,
+// and draws nothing meanwhile. The agent's own Recalculates were rated in about 2 s and kept every
+// answer. Recalculate waits until none of the page's own requests has finished for 2 s, for 30 s at most.
+test('GEICO\'s Recalculate waits until the page\'s own requests stop finishing, for 30 s at most (2026-10-22)', async () => {
+  const run = async ({ own = 0, every = 1000, other = false, stopAfter = null }) => {
+    const p = recalcPage();
+    let observer = null;
+    const t0 = clock.Date.now();
+    p.h.context.performance = { now: () => clock.Date.now() - t0 };
+    p.h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+    const finished = (name) => observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name, responseEnd: clock.Date.now() - t0 }] });
+    let lastOwn = null;
+    let done = false;
+    const tick = (n) => {
+      if (p.recalcs || done) return;
+      if (n < own) { finished('https://synthetic.example/api/lookup/coverage'); lastOwn = clock.Date.now(); }
+      if (other) finished('https://analytics.example/collect');
+      if (n < own || other) setTimeout(() => tick(n + 1), every);
+    };
+    setTimeout(() => tick(0), 100);
+    if (stopAfter) setTimeout(() => p.h.kit.stop(), stopAfter);
+    const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+    done = true;
+    return { recalcs: p.recalcs, sinceLast: lastOwn == null ? null : p.clickedAt - lastOwn, sinceStart: p.clickedAt - t0, ended: clock.Date.now() - t0, halted: report.halted };
+  };
+  // GEICO's server working through ten changes, one a second: clicked 2 s after the last.
+  const queued = await run({ own: 10 });
+  assert.equal(queued.recalcs, 1);
+  assert.ok(queued.sinceLast >= 2000 && queued.sinceLast < 3000, `clicked ${queued.sinceLast} ms after the last request finished`);
+  // Another site's requests (analytics) hold nothing.
+  const others = await run({ other: true, every: 500 });
+  assert.ok(others.sinceStart < 5000, `clicked ${others.sinceStart} ms in`);
+  // The page's own, never ending: clicked once the wait has lasted 30 s.
+  const endless = await run({ own: Infinity });
+  assert.equal(endless.recalcs, 1);
+  assert.ok(endless.sinceStart >= 30000 && endless.sinceStart < 35000, `clicked ${endless.sinceStart} ms in`);
+  // Stopped during the wait: nothing clicked, and the fill ends at once.
+  const stopped = await run({ own: Infinity, stopAfter: 5000 });
+  assert.deepEqual([stopped.recalcs, stopped.halted], [0, true]);
+  assert.ok(stopped.ended < 6000, `ended ${stopped.ended} ms in`);
+});
+
+// W43-44 (TNI, 2026-10-22; W43-41 again on the build with its fix): after the fill's Recalculate,
+// GEICO drew its own liability, UM, heavy-vehicle road service and cargo, though the request carried
+// the fill's values; the agent's own Recalculate kept them. GEICO's button sets its own part of the
+// request after an await, which its React applies in time only while an event is still being
+// dispatched: the fill's, a script's click, went out without it (171 entries, the agent's 172). The
+// kit asks the page's own world to press the buttons it presses (src/content/page-press.js takes a
+// `rater-press`), and clicks itself only where nothing takes it. What the page did after the
+// Recalculate is kept for the usage log (`recalcTrace`), with how it was pressed.
+const PressEvent = class {
+  constructor(type, init = {}) { Object.assign(this, { type, bubbles: !!init.bubbles, composed: !!init.composed, cancelable: !!init.cancelable, defaultPrevented: false, isTrusted: false }); }
+  preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
+};
+// The page's world for `els`: `taker` 'page' clicks 5 ms after a press and says so, 'late' clicks after
+// its 1 s wait and says it was late, null takes nothing. Each click is noted with who made it.
+function pressTaker(h, els, taker) {
+  h.context.CustomEvent = PressEvent;
+  const clicks = [];
+  let byPage = false;
+  for (const [name, el] of Object.entries(els)) {
+    const click = el.click.bind(el);
+    el.click = () => { clicks.push(`${name} by ${byPage ? 'page' : 'kit'}`); click(); };
+    el.addEventListener('rater-press', (e) => {
+      if (!taker) return;
+      e.preventDefault();
+      setTimeout(() => {
+        byPage = true;
+        try { el.click(); } finally { byPage = false; }
+        el.dispatchEvent({ type: taker === 'late' ? 'rater-pressed-late' : 'rater-pressed', target: el });
+      }, taker === 'late' ? 1000 : 5);
+    });
+  }
+  return clicks;
+}
+test('GEICO\'s buttons are pressed from the page\'s own world where it takes the press, and its Recalculate is traced (W43-44)', async () => {
+  const run = async ({ taker = 'page', redraw } = {}) => {
+    const p = recalcPage({ redraw });
+    p.comp.value = '';
+    let observer = null;
+    const t0 = clock.Date.now();
+    p.h.context.performance = { now: () => clock.Date.now() - t0 };
+    p.h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+    // One of the page's own requests, finished as the fill starts.
+    setTimeout(() => observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/lookup/coverage', startTime: 0, responseEnd: clock.Date.now() - t0 }] }), 100);
+    const clicks = pressTaker(p.h, { recalc: p.recalc, more: p.more }, taker);
+    const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+    return { p, report, clicks, trace: plain(report.recalcTrace) };
+  };
+  // Taken: the page's world clicks Recalculate and View More Payment Plans, the kit neither.
+  const page = await run();
+  assert.equal(page.p.recalcs, 1);
+  assert.deepEqual(page.clicks, ['recalc by page', 'more by page']);
+  assert.deepEqual(plain(page.report.actions.map((x) => x.id)), ['recalculate', 'morePayPlans']);
+  assert.equal(page.trace.press, 'page');
+  assert.ok(page.trace.requests.some(([start, end]) => start < 0 && end < 0), 'the page\'s request, before the click');
+  // Its wait for the browser's event ran out: clicked there, and the trace says it was late.
+  const late = await run({ taker: 'late' });
+  assert.deepEqual([late.p.recalcs, late.clicks[0], late.trace.press], [1, 'recalc by page', 'late']);
+  // Nothing takes it (no page script: another carrier, or a page the side panel didn't reach): the
+  // kit clicks, once, as before.
+  const kit = await run({ taker: null });
+  assert.deepEqual([kit.p.recalcs, kit.clicks[0], kit.trace.press], [1, 'recalc by kit', 'kit']);
+  // GEICO's own value drawn after the click: put back and red, as before; the trace says when the
+  // premium showed and what the page showed.
+  const drawn = await run({ redraw: ({ comp }) => { comp.value = '$500 deductible'; } });
+  assert.deepEqual(plain(drawn.report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
+  const t = drawn.trace;
+  assert.equal(t.action, 'recalculate');
+  assert.ok(t.premiumMs >= 0 && t.ms >= t.premiumMs);
+  const comp = t.answers.find((x) => x.key === 'cov:COMP#1');
+  assert.deepEqual([comp.shown, comp.seen.map(([, v]) => v), comp.putBack, comp.agents], ['$1,000 deductible', ['$500 deductible', '$1,000 deductible'], true, false]);
+  assert.ok(comp.seen[0][0] >= 0 && comp.seen[0][0] <= t.premiumMs + 600, `first seen ${comp.seen[0][0]} ms after the click`);
+  // Nothing changed: every answer traced with no value after the click, nothing put back.
+  assert.deepEqual(plain(page.report.failed), []);
+  assert.ok(page.trace.answers.every((x) => !x.seen.length && !x.putBack));
+});
+
+// Continue too: pressed by the page's world where it takes the press.
+test('Continue is pressed from the page\'s own world where it takes the press (W43-44)', async () => {
+  for (const taker of ['page', null]) {
+    const h = harness();
+    const next = addButton(h, 'Continue');
+    const clicks = pressTaker(h, { next }, taker);
+    const report = await h.kit.fill([], { maxRounds: 4, advance: { text: '^Continue$' } });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(report.advanced, 'Continue');
+    assert.deepEqual(clicks, [`next by ${taker ?? 'kit'}`]);
+  }
+});
+
+// The page's own world (src/content/page-press.js): a `rater-press` is taken, and the button is
+// clicked inside the volume change the browser dispatches for an audio element never added to the
+// page (an event in progress as the button's await resumes, as with a mouse click); once, however
+// often the script is injected (a copy injected again replaces the one before); after a second
+// anyway when that event never comes, said late.
+test('the page\'s own world presses a button inside an event the browser dispatches, once (W43-44)', async () => {
+  const source = fs.readFileSync(new URL('../src/content/page-press.js', import.meta.url), 'utf8');
+  const setup = ({ volumeEvent = true } = {}) => {
+    const document = new EventTarget();
+    let dispatching = null;
+    document.createElement = (tag) => {
+      const media = new EventTarget();
+      media.tag = tag;
+      let volume = 1;
+      Object.defineProperty(media, 'volume', {
+        get: () => volume,
+        set: (v) => {
+          if (v === volume) return;
+          volume = v;
+          // The browser queues it: dispatched later, from no script of the page's.
+          if (volumeEvent) setTimeout(() => { dispatching = 'volumechange'; try { media.dispatchEvent(new Event('volumechange')); } finally { dispatching = null; } }, 0);
+        },
+      });
+      return media;
+    };
+    const context = { document, CustomEvent, Event, EventTarget, setTimeout, clearTimeout };
+    context.window = context;
+    vm.runInNewContext(source, context);
+    vm.runInNewContext(source, context);
+    const button = new EventTarget();
+    const clicks = [];
+    const said = [];
+    button.click = () => clicks.push(dispatching);
+    for (const type of ['rater-pressed', 'rater-pressed-late']) button.addEventListener(type, () => said.push(type));
+    // The kit's ask, dispatched on the button (here the document hears it as the page's would).
+    const press = () => {
+      const e = new CustomEvent('rater-press', { bubbles: true, composed: true, cancelable: true });
+      document.dispatchEvent(Object.defineProperty(e, 'composedPath', { value: () => [button, document] }));
+      return e.defaultPrevented;
+    };
+    return { press, clicks, said };
+  };
+  const live = setup();
+  assert.equal(live.press(), true, 'taken');
+  assert.deepEqual(live.clicks, [], 'not clicked during the kit\'s own dispatch');
+  await new Promise((r) => setTimeout(r, 1100));
+  assert.deepEqual(live.clicks, ['volumechange'], 'once, inside the browser\'s event, though injected twice');
+  assert.deepEqual(live.said, ['rater-pressed']);
+  // No volume change from the browser: clicked after a second anyway, and said late.
+  const silent = setup({ volumeEvent: false });
+  assert.equal(silent.press(), true);
+  await new Promise((r) => setTimeout(r, 1100));
+  assert.deepEqual(silent.clicks, [null]);
+  assert.deepEqual(silent.said, ['rater-pressed-late']);
 });
 
 // W43-32 (TNI, 2026-10-21): with no 11 Payments among the plans View More Payment Plans shows (TX:
@@ -5786,6 +6067,185 @@ test('a button the agent clicks during a fill is the step\'s move: the fill clic
   for (const press of ['heading', 'toggle']) assert.deepEqual(await run(press), [['fill'], 'Next', null, 0], press);
 });
 
+// Where each element is drawn, as a browser lays the page out (the fake DOM has none): a 100×40
+// box per element down the page, one marked `_below` under the fold until it is scrolled to, and
+// `over.set(el, node)` puts `node` (a dialog, a chat window) over that element.
+function drawnPage(h, els) {
+  h.context.innerWidth = 1200;
+  h.context.innerHeight = 800;
+  const over = new Map();
+  const scrolled = [];
+  els.forEach((el, i) => {
+    el.getBoundingClientRect = () => ({ left: 10, top: (el._below && !scrolled.includes(el) ? 2000 : 10) + i * 50, width: 100, height: 40 });
+    el.scrollIntoView = (options) => { assert.equal(options?.behavior, 'instant', 'at once: no smooth scroll between the looks'); scrolled.push(el); };
+  });
+  h.document.elementFromPoint = (x, y) => {
+    const el = els.find((e) => {
+      const r = e.getBoundingClientRect();
+      return x >= r.left && x < r.left + r.width && y >= r.top && y < r.top + r.height;
+    });
+    return over.get(el) ?? el ?? h.document.body;
+  };
+  return { over, scrolled };
+}
+
+const vinPlan = [
+  { id: 'vin-step', selector: '#vin', path: 'vehicles[0].vin', kind: 'text', value: '1FTBR3X87MKA12345' },
+  { id: 'lookup', kind: 'action', action: 'lookupVin:0', text: '^lookup vin$', pages: [], after: ['vehicles[0].vin'], afterActions: [], afterPages: [], unless: [], immediate: true },
+];
+
+// From comparing the extension with MetaMask's and browser-harness's checks before a click
+// (2026-10-22): a script's click reaches a button under a dialog, a message or a chat window, where
+// the agent's wouldn't, and the page may not expect it.
+test('Continue with something open over it is not clicked, and the report says so', async () => {
+  const run = async ({ open = false, below = false } = {}) => {
+    const h = harness({ search: '?pageName=AddVehicle' });
+    const vin = makeInput({ id: 'vin', ariaLabel: 'VIN' });
+    h.document.body.append(vin);
+    const next = addButton(h, 'Continue');
+    next.onclick = () => { next._clicked = true; };
+    next._below = below;
+    const { over, scrolled } = drawnPage(h, [vin, next]);
+    if (open) over.set(next, h.document.body.append(new FakeNode('div', { className: 'chat-window' })));
+    const report = await h.kit.fill(vinPlan.slice(0, 1), { maxRounds: 3, advance: { text: '^continue$' } });
+    return plain([!!next._clicked, report.advanced ?? null, report.covered ?? null, report.blockers.filter((b) => /open over Continue/.test(b)).length, scrolled.length]);
+  };
+  // Under it: looked at again in the middle of the screen, still under it, not clicked.
+  assert.deepEqual(await run({ open: true }), [false, null, true, 1, 1]);
+  // Nothing over it: clicked as before, nothing scrolled.
+  assert.deepEqual(await run(), [true, 'Continue', null, 0, 0]);
+  // Below the fold: scrolled to the middle, then clicked.
+  assert.deepEqual(await run({ below: true }), [true, 'Continue', null, 0, 1]);
+});
+
+test('a helper with something open over it waits, holding Continue, and is clicked once it is closed', async () => {
+  const h = harness({ search: '?pageName=AddVehicle' });
+  const vin = makeInput({ id: 'vin', ariaLabel: 'VIN' });
+  h.document.body.append(vin);
+  const lookup = addButton(h, 'Lookup VIN');
+  lookup.onclick = () => { lookup._clicked = (lookup._clicked ?? 0) + 1; };
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const { over } = drawnPage(h, [vin, lookup, next]);
+  over.set(lookup, h.document.body.append(new FakeNode('div', { className: 'chat-window' })));
+  let report = await h.kit.fill(vinPlan, { maxRounds: 6, advance: { text: '^continue$' } });
+  assert.equal(lookup._clicked, undefined, 'not clicked through it');
+  assert.deepEqual(plain(report.blocked.map((b) => [b.id, b.why])), [['lookupVin:0', 'something on the page is open over it']]);
+  assert.deepEqual(plain(report.coveredHelpers), ['Lookup VIN'], 'named for the panel');
+  assert.equal(next._clicked, undefined, 'Continue waits for it');
+  // The agent closed it: the next fill clicks the helper, then Continue.
+  over.clear();
+  report = await h.kit.fill(vinPlan, { maxRounds: 6, advance: { text: '^continue$' } });
+  assert.deepEqual(plain([lookup._clicked, report.blocked.length, !!next._clicked, report.coveredHelpers ?? null]), [1, 0, true, null]);
+});
+
+// A GEICO button draws its words through a slot: what is at its centre is its own text, in the
+// page, or its host. Neither is over it.
+test('a button drawn in a shadow root is not covered by its own host or the words its slot shows', async () => {
+  for (const at of ['host', 'words']) {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Business Class & USDOT');
+    const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
+    const next = gdsButton('');
+    const words = new FakeNode('span', { textContent: 'Next' });
+    next.host.append(words);
+    words.assignedSlot = next.button.children[1].children[0];
+    h.document.body.append(dot, next.host);
+    const { over } = drawnPage(h, [dot, next.button]);
+    over.set(next.button, at === 'host' ? next.host : words);
+    const clicks = [];
+    next.button.onclick = () => clicks.push('Next');
+    const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
+    const report = await h.kit.fill(plan, { maxRounds: 6, advance: { text: '^next$', steps: ['Business Class & USDOT'], byForm: true } });
+    assert.deepEqual(plain([clicks, report.covered ?? null]), [['Next'], null], at);
+  }
+});
+
+// A custom element as a browser has it before the page defines it (`:not(:defined)`, which the fake
+// DOM doesn't match), until `defined()` says it is.
+function notDefinedYet(node, defined = () => false) {
+  node.matches = (selector) => (selector === ':not(:defined)' ? !defined() : FakeNode.prototype.matches.call(node, selector));
+  return node;
+}
+
+// GEICO draws its questions with its own components (gds-*, the carrier's `components`): until the
+// page's script defines one, nothing of it is drawn, and defining it draws it with no change the kit
+// is told of. Each is waited for up to 3 s from when a wait first saw it, so one the page never
+// defines holds nothing longer; one that isn't the carrier's (another extension's) isn't waited for.
+test('a quiet page is one whose components are all defined, each waited for up to 3 s', async () => {
+  const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
+  const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
+  const run = async ({ definedAfter = null, tags = ['gds-chat', 'gds-survey'] } = {}) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Business Class & USDOT');
+    const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
+    const clicks = [];
+    const next = gdsButton('Next');
+    next.button.onclick = () => clicks.push('Next');
+    // The address check's component, not defined yet, and widgets the page never defines.
+    let defined = false;
+    const pending = notDefinedYet(new FakeNode('gds-address-check'), () => defined);
+    const widgets = tags.map((tag) => notDefinedYet(new FakeNode(tag)));
+    h.document.body.append(dot, next.host, ...(definedAfter != null ? [pending] : []), ...widgets);
+    if (definedAfter != null) {
+      setTimeout(() => {
+        defined = true;
+        pending.remove();
+        h.document.body.append(gdsRadios('GiveExtendUsDotVerifyBusinessAddress', 12, 'Is this the customer\'s business?', [['Yes', 'Yes'], ['No', 'No']]).group);
+      }, definedAfter);
+    }
+    const start = clock.Date.now();
+    const report = await h.kit.fill(plan, { maxRounds: 6, advance, components: 'gds-' });
+    return { clicks: plain(clicks), advanced: report.advanced ?? null, halted: report.halted, took: clock.Date.now() - start };
+  };
+  // Defined after 2.5 s, drawing a question without an answer: waited for, and it holds Next.
+  const late = await run({ definedAfter: 2500 });
+  assert.deepEqual([late.clicks, late.advanced], [[], null]);
+  // Never defined: waited for 3 s, all together, then Next as usual.
+  const never = await run();
+  assert.deepEqual([never.clicks, never.advanced], [['Next'], 'Next']);
+  assert.ok(never.took >= 3000 && never.took < 6000, `took ${never.took} ms`);
+  // Another extension's elements: not the carrier's, not waited for.
+  const other = await run({ tags: ['grammarly-extension', 'grammarly-popups'] });
+  assert.deepEqual([other.clicks, other.halted], [['Next'], false]);
+  assert.ok(other.took < 3000, `took ${other.took} ms`);
+});
+
+// A wait with a limit of 3 s (after a helper click, after an answer) and a component that appears
+// with it and is never defined: the wait for it ends at the limit, and the page counts as settled.
+test('a component never defined doesn\'t make a short wait fail', async () => {
+  const h = harness({ pathname: '/quote' });
+  const vin = makeInput({ id: 'vin', ariaLabel: 'VIN' });
+  h.document.body.append(vin);
+  const lookup = addButton(h, 'Lookup VIN');
+  lookup.onclick = () => { lookup._clicked = true; h.document.body.append(notDefinedYet(new FakeNode('gds-vin-result'))); };
+  // Clicked in its round (not right after the VIN), so the page is waited for after it, 3 s at most.
+  const report = await h.kit.fill([vinPlan[0], { ...vinPlan[1], immediate: false }], { maxRounds: 6, components: 'gds-' });
+  assert.deepEqual([lookup._clicked, report.halted, report.reason ?? null], [true, false, null]);
+});
+
+// A frame inside the page reads the top's address when it may (the same origin): a fill meant for a
+// page the top has left fills nothing there either. One that can't (another origin's) fills.
+test('a frame inside the page fills nothing once the top frame shows another page', async () => {
+  const plan = [{ id: 'zip-step', selector: '#zip', path: 'garaging.zip', kind: 'text', value: '17101' }];
+  const frame = (top) => {
+    const h = harness({ search: '?pageName=AddVehicle' });
+    h.context.top = top;
+    const zip = makeInput({ id: 'zip', ariaLabel: 'Zip code' });
+    h.document.body.append(zip);
+    return { h, zip };
+  };
+  const moved = frame({ location: { search: '?pageName=Drivers', pathname: '/rater', hash: '' } });
+  let report = await moved.h.kit.fill(plan, { maxRounds: 2, expectPage: 'AddVehicle' });
+  assert.deepEqual([report.pageMoved, moved.zip.value], ['Drivers', '']);
+  const same = frame({ location: { search: '?pageName=AddVehicle', pathname: '/rater', hash: '' } });
+  report = await same.h.kit.fill(plan, { maxRounds: 2, expectPage: 'AddVehicle' });
+  assert.deepEqual([report.pageMoved ?? null, same.zip.value], [null, '17101']);
+  const other = frame({ get location() { throw new Error('cross-origin'); } });
+  report = await other.h.kit.fill(plan, { maxRounds: 2, expectPage: 'AddVehicle' });
+  assert.deepEqual([report.pageMoved ?? null, other.zip.value], [null, '17101'], 'another origin: unknown, filled');
+});
+
 // FL live run 4, 2026-10-21 (W43-18, TNI): GEICO's pay plan is 11 Payments, one of the plans "View
 // More Payment Plans" shows; the fill clicks View More, picks 11 Payments and prints, only once
 // nothing on the page is left for the agent (Recalculate before it is the agent's: FL live run 6). `whenOffered`: a choice whose option isn't
@@ -6263,4 +6723,130 @@ test('GEICO select2 lists: the option typed in its search box and its one result
   report = await h.kit.fill(step('Consumer Goods - Other Consumer Goods'), { maxRounds: 3 });
   assert.deepEqual(plain([geicoSide.took, picked(commodities)]), [[], []]);
   assert.match(report.failed[0]?.reason ?? '', /didn't show "Consumer Goods - Other Consumer Goods" when it was typed/);
+});
+
+// W43-37, Progressive Add Driver (FL, 2026-10-22): the form for the driver Progressive already had
+// ("Questions about <first driver>") got the second driver's license state, CDL and number, the one
+// the panel still had selected from another quote tab.
+test('a driver form that names its driver is filled only for that driver', async () => {
+  const unitName = (active) => ({ list: 'drivers', text: '^questions about (.+)$', names: [['JORDAN', 'SAMPLE'], ['CASEY', 'EXAMPLE']], active, label: ['Jordan Sample', 'Casey Example'][active] });
+  const page = (heading) => {
+    const h = harness();
+    const license = makeInput({ id: 'license', ariaLabel: 'License number' });
+    h.document.body.append(license);
+    if (heading != null) h.document.body.innerText = `Driver\n${heading}\nLicense number`;
+    return { h, license };
+  };
+  const plan = (i) => [{ id: 'license-step', selector: '#license', path: `drivers[${i}].license`, kind: 'text', value: `D${i}` }];
+
+  let { h, license } = page('Questions about Jordan A. Sample');
+  let report = await h.kit.fill(plan(1), { formUnit: unitName(1), maxRounds: 3 });
+  assert.equal(report.halted, true);
+  assert.equal(report.unitMismatch, true);
+  assert.match(report.reason, /This form is for Jordan A\. Sample, not Casey Example: nothing was filled\. Pick Jordan A\. Sample in the panel/);
+  assert.equal(license.value, '', 'nothing filled');
+  assert.deepEqual(plain(report.unitNamed), { list: 'drivers', index: 0 });
+
+  ({ h, license } = page('Questions about Jordan A. Sample'));
+  report = await h.kit.fill(plan(0), { formUnit: unitName(0), maxRounds: 3 });
+  assert.equal(report.halted, false);
+  assert.equal(license.value, 'D0');
+  assert.deepEqual(plain(report.unitNamed), { list: 'drivers', index: 0 }, 'the driver the form named, for the entered mark');
+
+  ({ h, license } = page('Questions about Morgan Placeholder'));
+  report = await h.kit.fill(plan(0), { formUnit: unitName(0), maxRounds: 3 });
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /The intake has no driver by that name: fill the form yourself\./);
+  assert.equal(license.value, '');
+  assert.deepEqual(plain(report.unitNamed), { list: 'drivers', index: null });
+
+  // A new driver's blank form names no one.
+  ({ h, license } = page(null));
+  report = await h.kit.fill(plan(1), { formUnit: unitName(1), maxRounds: 3 });
+  assert.equal(report.halted, false);
+  assert.equal(license.value, 'D1');
+  assert.equal(report.unitNamed, undefined);
+});
+
+// W43-38, Progressive Add Driver (2026-10-22): the second driver's form still showed the first
+// driver's name and date of birth, which the fill had given; they were kept as differing.
+test('an answer the fill gave for another unit is replaced with this unit\'s, never the agent\'s or the page\'s', async () => {
+  const h = harness();
+  const first = makeInput({ id: 'first', ariaLabel: 'First name', value: 'Jordan' });
+  const birth = makeInput({ id: 'birth', ariaLabel: 'Date of birth', value: '01/02/1970' });
+  const city = makeInput({ id: 'city', ariaLabel: 'City', value: 'Springfield' });
+  const last = makeInput({ id: 'last', ariaLabel: 'Last name', value: 'Sample' });
+  h.document.body.append(first, birth, city, last);
+  const report = await h.kit.fill([
+    { id: 'first-step', selector: '#first', path: 'drivers[1].first', kind: 'text', value: 'Casey' },
+    { id: 'birth-step', selector: '#birth', path: 'drivers[1].dob', kind: 'text', value: '03/04/1980' },
+    { id: 'city-step', selector: '#city', path: 'drivers[1].city', kind: 'text', value: 'Shelbyville' },
+    { id: 'last-step', selector: '#last', path: 'drivers[1].last', kind: 'text', value: 'Example' },
+  ], {
+    maxRounds: 3,
+    skip: ['last'],
+    // A form that names its unit (`unitNames`), here a new driver's not named yet: elsewhere the
+    // answer is kept and flagged.
+    formUnit: { list: 'drivers', text: '^questions about (.+)$', names: [], active: 1, label: 'Casey Example' },
+    givenBefore: {
+      first: { path: 'drivers[0].first', shown: 'Jordan' },
+      // The agent changed it after the fill gave it.
+      birth: { path: 'drivers[0].dob', shown: '05/06/1975' },
+      // Another list's answer.
+      city: { path: 'vehicles[0].city', shown: 'Springfield' },
+      // The agent's edit on this page.
+      last: { path: 'drivers[0].last', shown: 'Sample' },
+    },
+  });
+  assert.equal(first.value, 'Casey', 'the first driver\'s answer, as the fill gave it, is replaced');
+  assert.equal(birth.value, '01/02/1970', 'not what the fill gave: kept');
+  assert.equal(city.value, 'Springfield', 'another list: kept');
+  assert.equal(last.value, 'Sample', 'the agent\'s: kept');
+  assert.ok(report.filled.some((x) => x.path === 'drivers[1].first'));
+  assert.ok(!report.filled.some((x) => x.path !== 'drivers[1].first'));
+});
+
+
+
+
+// W43-40, Progressive Vehicle Summary (2026-10-22, every vehicle added): the fill clicked nothing,
+// held nothing, and said nothing; the agent clicked Continue.
+test('a page with nothing left but no Continue to click says Continue is due; the next fill clicks the one drawn since', async () => {
+  const addVehicle = { id: 'action:addVehicle:0', kind: 'action', action: 'addVehicle:2', baseAction: 'addVehicle', path: 'action.addVehicle', name: 'Click addVehicle', pages: ['VehicleSummary'], text: '^add vehicle$' };
+  const h = harness({ ext: true, search: '?pageName=VehicleSummary' });
+  let report = await h.kit.fill([addVehicle], { maxRounds: 2, advance: { text: '^continue$' }, doneActions: ['addVehicle:2'] });
+  assert.equal(report.advanced, undefined);
+  assert.equal(report.advanceDue, 'none');
+  assert.equal(report.notDrawn, undefined, 'a page only a helper is for has no questions to wait for');
+  assert.equal(report.blockers.length, 0);
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  report = await h.kit.fill([addVehicle], { maxRounds: 2, advance: { text: '^continue$' }, doneActions: ['addVehicle:2'] });
+  assert.equal(report.advanced, 'Continue');
+  assert.equal(report.advanceDue, undefined);
+  // Held for the agent's check (Let me look before Continue): found, not due.
+  const held = harness({ ext: true, search: '?pageName=VehicleSummary' });
+  addButton(held, 'Continue');
+  report = await held.kit.fill([], { maxRounds: 2, advance: { text: '^continue$' }, hold: true });
+  assert.equal(report.held, 'check');
+  assert.equal(report.advanceDue, undefined);
+  // Held by something left for the agent: not due.
+  const left = harness({ ext: true, search: '?pageName=VehicleSummary' });
+  left.document.body.append(new SelectNode([{ text: '', value: '' }, { text: 'Yes', value: 'y' }], { id: 'odd', ariaLabel: 'Some new question', required: true }));
+  report = await left.kit.fill([], { maxRounds: 2, advance: { text: '^continue$' } });
+  assert.ok(report.blockers.length);
+  assert.equal(report.advanceDue, undefined);
+});
+
+// W43-42, Progressive Business Owner Info (2026-10-22): the arrival fill ran before the page drew
+// its questions and the panel said "No questions found on this page."
+test('a page the plan has questions for that shows none yet is reported not drawn, and never continued', async () => {
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const report = await h.kit.fill([{ id: 'name', path: 'applicant.name', kind: 'text', value: 'Sample Freight', pages: ['BusinessOwnerInfo'], label: '^business name$' }], { maxRounds: 2, advance: { text: '^continue$' } });
+  assert.equal(report.fields, 0);
+  assert.equal(report.notDrawn, true);
+  assert.equal(!!next._clicked, false);
+  assert.equal(report.advanceDue, undefined);
 });
