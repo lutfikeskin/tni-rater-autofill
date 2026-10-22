@@ -1990,6 +1990,8 @@ async function autoFill(page) {
     // Continue or a helper not clicked for something open over it on the page (pagekit `covered`,
     // `coveredHelpers`): said in the report, which a quiet follow-up wouldn't show.
     const covered = frames.some((f) => f.covered || f.coveredHelpers?.length);
+    // Stopped by the agent: said as a stop, not as an error (as fillPage does).
+    const stopped = state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted);
     const current = fillCurrent(ctx);
     // The page showed another step than the panel knew (the recorder's step came late): a new
     // step, with a report of its own, as above.
@@ -1997,7 +1999,7 @@ async function autoFill(page) {
     const newStep = !!step && step !== stepBefore && !state.reports.has(reportKey(tabId, page, carrier, ctx.active, step));
     // The fill whose helper this follows up held Luna back for it.
     const rendered = current && (newStep || unseen || held || covered || state.autoPaused || hasWarnings || state.assistPage === page);
-    if (rendered) { renderReport(frames, { ...ctx, plan, retrying }); assistFrames = frames; }
+    if (rendered) { renderReport(frames, { ...ctx, plan, retrying, stopped }); assistFrames = frames; }
     if (current && (newStep || unseen || held || covered)) showFinish({ auto: true });
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
     const added = frames.flatMap((f) => f.filled).filter((x) => !x.otherStep);
@@ -2020,7 +2022,7 @@ async function autoFill(page) {
         announce(`Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically.`);
       }
       if (current) recordLayout(page);
-    }
+    } else if (ctx.listNote || frames.some((f) => f.advanceDue || f.held)) logFill(ctx, frames, results, started);
   } catch (e) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
@@ -2032,6 +2034,7 @@ async function autoFill(page) {
     if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
     await tellRecorder('resume', tabId);
     state.filling = false;
+    renderSteps();
     if (fillCurrent(ctx) && state.autoPending) scheduleAutoFill(page);
     // The page in front, which this fill wasn't for: its stop card, or its own fill.
     if (moved && fillCurrent(ctx)) {
@@ -2398,7 +2401,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   const where = `${page}|${knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey) ?? ''}`;
   const due = !frames.some((f) => f.halted || f.advanced) && frames.some((f) => f.notDrawn || f.advanceDue);
   let retrying = false;
-  if (due && maps.triedAgain !== where) {
+  if (due && maps.triedAgain !== where && $('auto-followups').checked && !maps.autoPaused) {
     maps.triedAgain = where;
     retrying = true;
     setTimeout(() => {
@@ -2650,7 +2653,8 @@ function renderSteps() {
   const stopped = !!stopNoteFor(carrier, page);
   const report = showReport();
   // The fill running on this tab: its answers in so far, in place of the report.
-  const filling = state.filling && !!state.fillingFor && state.fillingFor.tabId === state.tab?.id;
+  // A quiet automatic fill (no rows yet) leaves the report in place, as the live list and the dock do.
+  const filling = state.filling && !!state.fillingFor && state.fillingFor.tabId === state.tab?.id && (!state.fillingFor.auto || !!state.fillingFor.rows?.length);
   const filled = !filling && !!report?.fields;
   // Why the last fill didn't finish, or what it found instead of questions (a portal page).
   const error = filling ? null : report?.error ?? null;
@@ -3700,7 +3704,8 @@ function renderReport(frames, ctx = {}) {
     putReport({ key, tabId, page, at: Date.now(), ...(halted
       ? { error: `${halted.stepUnread ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
       : frames.some((f) => f.notDrawn) ? { notice: 'No questions found on this page.' }
-        : { notice: 'Nothing to fill on this page.', empty: true }) }, []);
+        : { notice: 'Nothing to fill on this page.', empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null,
+          held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
     renderSteps();
     return;
   }

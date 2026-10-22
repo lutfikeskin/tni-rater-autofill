@@ -827,6 +827,7 @@ test('an automatic follow-up on a step without a report fills it as a new page, 
     fillContext: () => { throw new Error('no follow-up fill'); }, stateIssue: () => null };
   // autoFill alone: its helpers (fillContext and the rest) are the stubs above; its stop check is
   // the panel's own (no stop here).
+  context.renderSteps ??= () => {};
   vm.runInNewContext(`${extractFunction('autoFill').split('\nfunction ')[0]}\n${extractFunction('stopNoteFor')}`, context);
   await context.autoFill('Quote');
   assert.deepEqual(JSON.parse(JSON.stringify(fills)), [{ auto: 'page' }]);
@@ -1035,6 +1036,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     runPendingPage: () => {}, fillProblem() {}, reportShown: () => true,
   };
   context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
+  context.renderSteps ??= () => {};
   vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
   await context.autoFill('Rates');
   assert.equal(state.autoPaused, false);
@@ -1072,6 +1074,7 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
     pickListItem: async () => { state.active.vehicles = next; },
     reportKey: (tabId, page, carrier, active = state.active) => `v${active.vehicles}`,
   };
+  context.renderSteps ??= () => {};
   vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
   await context.autoFill('/quote');
   assert.equal(rendered.length, 1, 'vehicle 2 has no report yet: shown');
@@ -2147,6 +2150,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
       afterFill: () => followUp, runPendingPage: () => {}, viewOf: () => 't1',
     };
     context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
+  context.renderSteps ??= () => {};
   vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
     await context.autoFill('Rates');
     return { rendered: rendered.length, assisted, assistPage: state.assistPage };
@@ -3036,6 +3040,7 @@ test('an automatic fill readies its tab for layouts only when it went through', 
       $: () => ({ checked: false, append() {} }), h: () => ({}), viewOf: () => 't1', fillProblem() {}, reportShown: () => true,
     };
     context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
+  context.renderSteps ??= () => {};
   vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
     await context.autoFill('Rates');
     return state.layoutReadyTabs.has(1);
