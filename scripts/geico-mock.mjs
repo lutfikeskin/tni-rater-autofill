@@ -63,7 +63,8 @@ const RECORDER = source('recorder.js');
 const record = {
   applicant: { name: 'SAMPLE FREIGHT LLC', dot: '1234567', mc: null, mcDotWithin60Days: null, fein: null, yearEstablished: 2019, yearsInBusiness: 7,
     phone: '(402) 555-0100', email: 'client@example.test', owner1: 'SAMPLE DRIVER', owner2: null, ownerDrives: true, yearsExperience: 10, applicationDate: '10/20/2026' },
-  garaging: { street: '1 Test Way', unit: null, city: 'Omaha', state: 'NE', zip: '68102' },
+  // A unit whose number is a letter, as on GA's quote (W43-36): A and Apartment in GEICO's boxes.
+  garaging: { street: '1 Test Way', unit: 'Apt A', city: 'Omaha', state: 'NE', zip: '68102' },
   operations: { businessClass: 'Expediter', whatHaul: 'General freight', radius: '150 miles', radiusMiles: 150, vehicleOwnership: 'Owned', personalUse: false,
     usesEld: false, eldBrand: null, needSr22: false, filingsRequired: false, filingsWhich: null, hazmat: false, hazPlacard: false, movingState: false,
     teamDriving: false, canadaLoads: false, licensePlate: null, equipVehicle: 0 },
@@ -101,8 +102,9 @@ const EXPECT = {
     GivePhoneNumber: PHONE, GiveBusinessPhoneNumber: PHONE,
     // The agent's corrections (the intake has DRIVER and client@example.test).
     GiveLastName: 'DRIVERS', GiveEmail: 'owner@example.test',
-    // GEICO's suggestion for the intake's address, picked by the fill.
-    GiveStreet: '1 Test Way', GiveUnitNumber: '', GiveUnitType: '', GiveZip: '68102', GiveCity: 'OMAHA',
+    // GEICO's suggestion for the intake's address (typed without the unit), picked by the fill; the
+    // unit in its own boxes (W43-36).
+    GiveStreet: '1 Test Way', GiveUnitNumber: 'A', GiveUnitType: 'Apartment', GiveZip: '68102', GiveCity: 'OMAHA',
     GiveBusinessOwnershipType: 'Limited Liability Company', GiveBusinessName: 'SAMPLE FREIGHT LLC',
   },
   // The owner's identity again, with the Social Security number, which is never filled. The last name
@@ -110,7 +112,7 @@ const EXPECT = {
   // Owner Info, which this form asks again.
   'Vehicles: owner check': {
     GiveBusinessName: 'SAMPLE FREIGHT LLC', GiveFirstName: 'SAMPLE', GiveLastName: '', GiveDateOfBirth: '01/02/1980', GiveZip: '68102', GiveCity: 'OMAHA',
-    GiveUnitNumber: '', GiveSocialSecurityNumber: '',
+    GiveUnitNumber: 'A', GiveSocialSecurityNumber: '',
   },
   // Year, make and model by the VIN's decode (checked against the intake, never typed).
   'Vehicles: vehicle 1': {
