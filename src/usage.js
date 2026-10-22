@@ -57,7 +57,9 @@ const ID_PARTS = /\S*@\S*|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d(?:[\s()./-]{0,2}\d)
 // whose first part is 15 or more, so a date isn't one); a word; & + -.
 const MONEY = String.raw`\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$?\d{1,6}000|\$?\d{1,4}(?:\.\d+)?[km]?`;
 const LIMIT_PART = String.raw`(?:1[5-9]|[2-9]\d|[1-9]\d{2})(?:\/\d{1,3}){1,2}|(?:${MONEY})(?:\s*\/\s*(?:${MONEY}))?|[a-z]+\.?|[&+-]`;
-export const LIMIT = new RegExp(String.raw`^(?:${LIMIT_PART})(?:\s+(?:${LIMIT_PART}))*$`, 'i');
+// Two numbers with only a space, &, + or - between them aren't a limit (an SSN or a phone written
+// with spaces: 123 45 6789).
+export const LIMIT = new RegExp(String.raw`^(?![\s\S]*\d[\s&+-]+\$?\d)(?:${LIMIT_PART})(?:\s+(?:${LIMIT_PART}))*$`, 'i');
 export const PROFILE_UNITS = 50;
 const MAX_DOLLARS = 99_999_999;
 const yesNo = (v) => (typeof v === 'boolean' ? v : null);
