@@ -6139,7 +6139,7 @@ test('GEICO USDOT record drawn line by line is matched with its lines apart', as
     assert.deepEqual(await run(other, { textNodes: true }), [[false, false], 1], other.join(' / '));
   }
   // A house number really glued to other words on one line is still not the intake's number.
-  assert.deepEqual(await run(['ACME FREIGHT LLC14521 OCEAN BLVD', 'MIAMI BEACH, FL, 33139']), [[false, false], 1]);
+  assert.deepEqual(await run(['ACME FREIGHT LLC4521 OCEAN BLVD', 'MIAMI BEACH, FL, 33139']), [[false, false], 1]);
 });
 
 // FL live run 5, 2026-10-21 (W43-25): on the gateway's Search Products window Commercial
