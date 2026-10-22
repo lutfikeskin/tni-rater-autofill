@@ -104,7 +104,7 @@ function extractFunction(name) {
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards and row heads (issueCard, setRowHead) come along as they are.
-        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved']) {
+        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -299,6 +299,73 @@ test('switching tabs stores and restores agent keys and the persistent pause', a
   assert.notEqual(h.state.agentKeys, secondTabKeys);
   assert.deepEqual([...h.state.agentKeys.get('BusinessOwnerInfo')], ['agent-key']);
   assert.equal(h.state.agentKeys.has('AddVehicle'), false);
+});
+
+// W43-37 (FL, 2026-10-22): a Progressive quote opened after a GEICO quote on its second driver
+// filled Progressive's first driver form with the second driver's answers.
+test('a quote tab the panel has no record for starts on vehicle 1 and driver 1; the reopened panel keeps its tab\'s', async () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1), carrier: { id: 'progressive' } };
+  h.state.active = { drivers: 1, vehicles: 2, trailers: 0 };
+  h.setActiveTab(quoteTab(2, 'AddDriver'));
+  await h.refreshTab();
+  assert.deepEqual({ ...h.state.active }, { drivers: 0, vehicles: 0, trailers: 0 });
+  h.state.active.drivers = 1;
+  h.setActiveTab(quoteTab(1));
+  await h.refreshTab();
+  assert.deepEqual({ ...h.state.active }, { drivers: 1, vehicles: 2, trailers: 0 }, 'its own tab keeps its selection');
+
+  // The panel opened again: the selection saved is that tab's, and only that tab's.
+  for (const [saved, front, drivers] of [[5, 5, 1], [4, 5, 0], [null, 5, 0]]) {
+    const r = harness();
+    r.state.active = { drivers: 1, vehicles: 0, trailers: 0 };
+    r.state.activeTab = saved;
+    r.setActiveTab(quoteTab(front, 'AddDriver'));
+    await r.refreshTab();
+    assert.equal(r.state.active.drivers, drivers, `saved for tab ${saved}`);
+  }
+});
+
+test('the driver a form named is the one entered once the list comes back; a form for no intake driver marks none', () => {
+  const progressive = { driverPage: 'AddDriver', driverList: 'DriverSummary' };
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'AddDriver'), carrier: progressive };
+  h.state.active = { drivers: 1, vehicles: 0, trailers: 0 };
+  h.rememberFill([{ filled: [], halted: true, reason: 'This form is for Jordan Sample, not Casey Example', unitNamed: { list: 'drivers', index: 0 } }], { page: 'AddDriver' });
+  assert.deepEqual({ ...h.state.unitNamed }, { list: 'drivers', index: 0, page: 'AddDriver' });
+
+  const context = { state: h.state, persistDoneActions: () => {} };
+  vm.runInNewContext(extractFunction('unitArrival'), context);
+  context.unitArrival(progressive, 'AddDriver', 'DriverSummary');
+  assert.deepEqual([...h.state.doneActions], ['driverEntered:0'], 'the named driver, not the selected one');
+  assert.equal(h.state.unitNamed, null);
+
+  h.state.unitNamed = { list: 'drivers', index: null, page: 'AddDriver' };
+  context.unitArrival(progressive, 'AddDriver', 'DriverSummary');
+  assert.deepEqual([...h.state.doneActions], ['driverEntered:0'], 'no intake driver: none marked');
+  // A blank form named no one: the selected driver, as before.
+  context.unitArrival(progressive, 'AddDriver', 'DriverSummary');
+  assert.deepEqual([...h.state.doneActions].sort(), ['driverEntered:0', 'driverEntered:1']);
+});
+
+test('the fill hands the kit the named-form check and what this tab\'s fills gave', () => {
+  const context = {};
+  vm.runInNewContext(`${extractFunction('unitNameFor')}\nglobalThis.unitNameFor = unitNameFor;`, context);
+  const record = { drivers: [{ first: 'Jordan', last: 'Sample-Smith' }, { first: 'Casey', last: 'Example' }, { first: null, last: null }] };
+  const spec = { unitNames: [{ page: 'AddDriver', list: 'drivers', text: '^questions about (.+)$' }] };
+  assert.deepEqual(JSON.parse(JSON.stringify(context.unitNameFor(spec, 'AddDriver', { drivers: 1 }, record))), {
+    list: 'drivers', text: '^questions about (.+)$', names: [['JORDAN', 'SAMPLE', 'SMITH'], ['CASEY', 'EXAMPLE'], []], active: 1, label: 'Casey Example',
+  });
+  assert.equal(context.unitNameFor(spec, 'BusinessOwnerInfo', { drivers: 1 }, record), null, 'another page');
+  assert.equal(context.unitNameFor({}, 'AddDriver', { drivers: 1 }, record), null, 'a carrier whose forms name no one');
+  assert.equal(context.unitNameFor(spec, 'AddDriver', { drivers: 2 }, record).label, 'the selected driver');
+  assert.equal(progressive.unitNames[0].page, progressive.driverPage);
+  assert.ok(new RegExp(progressive.unitNames[0].text, 'i').test('Questions about Jordan Sample'));
+
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
+  assert.match(body, /formUnit: unitNameFor\(carrier, extra\.expectPage \?\? pageOf\(state\.tab\?\.url\), active, state\.intake\?\.record\)/);
+  assert.match(body, /givenBefore: Object\.fromEntries\(\[\.\.\.\(state\.filled \?\? \[\]\)\]\.map\(\(\[key, x\]\) => \[key, \{ path: x\.path \?\? null, shown: x\.shown \?\? null \}\]\)\)/);
 });
 
 
@@ -4381,7 +4448,7 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
   for (const auto of [false, true]) for (const waitAt of ['pickListItem', 'retireAiOrigins']) for (const enabled of [false, true]) {
     const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/, layoutSteps: amwins.layoutSteps } });
     const start = SIDEPANEL.indexOf('const fillOptions =');
-    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
     t.ui['auto-advance'].checked = !enabled;
     t.context[waitAt] = async () => { await Promise.resolve(); t.ui['auto-advance'].checked = enabled; };
     const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
@@ -4393,7 +4460,7 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
   }
   const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
   t.context.pendingAi = () => [{ approved: false }];
   const run = t.context.fillPage();
   await t.started;
@@ -4409,7 +4476,7 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
 test('Check answers before Continue reaches the kit as hold and is never logged', async () => {
   const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
   t.ui['check-continue'] = { checked: true };
   t.ui.overwrite.checked = true;
   let run = t.context.fillPage();
@@ -4541,7 +4608,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   // The kit found another page as it began (pagekit `pageMoved`): nothing is remembered from it.
   const u = fillHarness();
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', u.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, u.context);
   u.context.chrome = { tabs: { get: async (id) => ({ id, url: 'https://carrier.test/quote-A' }) } };
   const run = u.context.fillPage();
   await u.started;
@@ -4585,7 +4652,7 @@ test('Stop pressed before the kit is asked to fill means no fill at all', async 
   // The fill's run id goes to the kit, so a Stop that reaches a frame first still counts.
   const u = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', u.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, u.context);
   const run = u.context.fillPage();
   await u.started;
   assert.match(u.seen.options.run, /^[0-9a-f-]{36}$/);
@@ -5891,7 +5958,7 @@ test('a GEICO unit list drawn gets a follow-up fill with either switch on', () =
 function fillOptionsOf(state, carrier, active, { autoAdvance = false, unitsListed = false } = {}) {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const context = { state, URL, knownStep, advanceFor, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
-  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\nglobalThis.fillOptions = fillOptions;`, context);
+  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, context);
   return context.fillOptions(carrier, {}, autoAdvance, active, unitsListed);
 }
 
