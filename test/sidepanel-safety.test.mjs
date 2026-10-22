@@ -110,6 +110,11 @@ function extractFunction(name) {
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
         // the harness gives one.
         if (name !== 'stateIssue' && /\bstateIssue\(/.test(source) && !/function stateIssue\(/.test(source)) source += '\nvar stateIssue = globalThis.stateIssue ?? (() => null);';
+        // Reports kept for a reopened panel (keepReport, forgetKeptReports) have their own tests:
+        // elsewhere nothing is kept, unless the harness gives a store.
+        for (const kept of ['keepReport', 'forgetKeptReports']) {
+          if (name !== kept && new RegExp(`\\b${kept}\\(`).test(source) && !new RegExp(`function ${kept}\\(`).test(source)) source += `\nvar ${kept} = globalThis.${kept} ?? (() => {});`;
+        }
         return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
       }
     }
@@ -159,7 +164,7 @@ function harness() {
     },
     clearTimeout: (handle) => cleared.push(handle),
     renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {}, save: () => {},
-    ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {}, restoreDoneActions: async () => {}, persistDoneActions: async () => {},
+    ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {}, restoreDoneActions: async () => {}, persistDoneActions: async () => {}, restoreReports: async () => {},
     seedQuoteState: () => {}, noteQuoteState: () => {}, knownStep, popped: false,
     dropReports() {}, clientNote() {}, fillProblem() {}, answeredOnPage() {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
@@ -2014,6 +2019,145 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   const back = make();
   await back.restoreDoneActions(7);
   assert.deepEqual([...back.state.doneActions].sort(), ['lookupVin:0', 'trailerEntered:0'], 'tab 7 kept');
+});
+
+// W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
+// Each tab's reports are kept in storage.session (the panel's `store`) as the fill results they were
+// made from, and made again from them on reopen. `memory`: the store's contents.
+function keptReportsHarness(memory, { session = { intakeId: 'intake-a' }, state = {} } = {}) {
+  const rendered = [];
+  const context = {
+    state: { tab: { id: 7, carrier: { id: 'progressive' } }, intake: { record: {} }, reports: new Map(), ...state },
+    usage: { currentSession: () => session },
+    store: { get: async (k) => structuredClone(memory[k]), set: async (k, v) => { memory[k] = structuredClone(v); }, remove: async (k) => { delete memory[k]; }, keys: async () => Object.keys(memory) },
+    firstUnits: () => ({ vehicles: 0, drivers: 0, trailers: 0 }),
+    buildPlan: (record, carrier, active) => [{ drivers: active.drivers }],
+    renderReport: (frames, ctx) => rendered.push({ frames, ctx }), refreshAnswers: () => rendered.push('refreshAnswers'),
+  };
+  const block = SIDEPANEL.slice(SIDEPANEL.indexOf("const REPORTS_PREFIX = 'reports:';"), SIDEPANEL.indexOf('let reportsQueue = Promise.resolve();'));
+  vm.runInNewContext(`${block}\nvar reportsQueue = Promise.resolve();\n${['keepReport', 'forgetKeptReports', 'restoreReports'].map(extractFunction).join('\n')}\nglobalThis.kept = () => reportsQueue;`, context);
+  return { context, rendered };
+}
+
+test('each quote tab keeps its last reports for the intake, as the fill results they were made from (W43-39)', async () => {
+  const memory = {};
+  const session = { intakeId: 'intake-a' };
+  const { context } = keptReportsHarness(memory, { session });
+  const frame = { fields: 2, filled: [{ label: 'First name', shown: 'A' }], kept: [], stepKey: 'Drivers', layout: { fields: [] }, progress: 3 };
+  context.keepReport(7, { key: '7|AddDriver|d1', page: 'AddDriver', active: { drivers: 1 }, at: 100, stopped: false, frames: [frame] });
+  await context.kept();
+  assert.deepEqual(memory['reports:7'], { scope: 'intake-a', entries: [{ key: '7|AddDriver|d1', page: 'AddDriver', active: { drivers: 1 }, at: 100, stopped: false,
+    frames: [{ fields: 2, filled: [{ label: 'First name', shown: 'A' }], kept: [], stepKey: 'Drivers' }] }] }, 'only the parts a report is made from');
+  // A page filled again replaces its report, now the newest; the last 30 are kept.
+  for (let i = 0; i < 31; i++) context.keepReport(7, { key: `7|Page${i}`, page: `Page${i}`, active: {}, at: 200 + i, stopped: false, frames: [{ fields: 1 }] });
+  context.keepReport(7, { key: '7|Page30', page: 'Page30', active: {}, at: 300, stopped: true, frames: [{ fields: 1 }] });
+  await context.kept();
+  const entries = memory['reports:7'].entries;
+  assert.equal(entries.length, 30);
+  assert.deepEqual([entries[0].key, entries.at(-2).key, entries.at(-1).key, entries.at(-1).at, entries.at(-1).stopped], ['7|Page1', '7|Page29', '7|Page30', 300, true]);
+  // Another tab keeps its own; another intake's start over; no intake or no tab keeps nothing.
+  context.keepReport(8, { key: '8|Drivers', page: 'Drivers', active: {}, at: 400, stopped: false, frames: [{ fields: 1 }] });
+  await context.kept();
+  assert.equal(memory['reports:7'].entries.length, 30);
+  assert.deepEqual(memory['reports:8'].entries.map((e) => e.key), ['8|Drivers']);
+  session.intakeId = 'intake-b';
+  context.keepReport(7, { key: '7|Drivers', page: 'Drivers', active: {}, at: 500, stopped: false, frames: [{ fields: 1 }] });
+  await context.kept();
+  assert.deepEqual([memory['reports:7'].scope, memory['reports:7'].entries.map((e) => e.key)], ['intake-b', ['7|Drivers']]);
+  session.intakeId = null;
+  context.keepReport(7, { key: '7|Other', page: 'Other', active: {}, at: 600, stopped: false, frames: [{ fields: 1 }] });
+  session.intakeId = 'intake-b';
+  context.keepReport(undefined, { key: 'x', page: 'Other', active: {}, at: 600, stopped: false, frames: [{ fields: 1 }] });
+  await context.kept();
+  assert.deepEqual(Object.keys(memory).sort(), ['reports:7', 'reports:8']);
+  assert.equal(memory['reports:7'].entries.length, 1);
+  // Within about 512 KB a tab (the store also holds the intake and its PDF): the oldest go first.
+  const big = (i) => ({ key: `7|Big${i}`, page: `Big${i}`, active: {}, at: 700 + i, stopped: false, frames: [{ fields: 1, filled: [{ label: 'Note', shown: 'x'.repeat(200 * 1024) }] }] });
+  for (let i = 0; i < 4; i++) context.keepReport(7, big(i));
+  await context.kept();
+  assert.deepEqual(memory['reports:7'].entries.map((e) => e.key), ['7|Big2', '7|Big3']);
+  context.keepReport(7, { ...big(4), frames: [{ fields: 1, filled: [{ label: 'Note', shown: 'x'.repeat(600 * 1024) }] }] });
+  await context.kept();
+  assert.deepEqual(memory['reports:7'].entries.map((e) => e.key), ['7|Big4'], 'the newest stays');
+});
+
+test('the panel opened again makes the tab\'s kept reports again, as of their fill, then checks the one in front against the page (W43-39)', async () => {
+  const memory = { 'reports:7': { scope: 'intake-a', entries: [
+    { key: '7|Drivers', page: 'Drivers', active: { drivers: 0 }, at: 100, stopped: false, frames: [{ fields: 1 }] },
+    { key: '7|AddDriver|d1', page: 'AddDriver', active: { drivers: 1 }, at: 200, stopped: true, frames: [{ fields: 2 }] },
+    { key: '7|Shown', page: 'Shown', at: 300, frames: [{ fields: 1 }] },
+    { key: '8|Elsewhere', page: 'Elsewhere', at: 400, frames: [{ fields: 1 }] },
+  ] } };
+  const { context, rendered } = keptReportsHarness(memory, { state: { reports: new Map([['7|Shown', { key: '7|Shown' }]]) } });
+  await context.restoreReports(7);
+  const said = () => rendered.map((r) => (r === 'refreshAnswers' ? r : [r.ctx.keptKey, r.ctx.page, r.ctx.restoredAt, r.ctx.stopped, r.ctx.active.drivers, r.ctx.active.vehicles, r.ctx.plan[0].drivers, r.frames[0].fields]));
+  assert.deepEqual(said(), [
+    ['7|Drivers', 'Drivers', 100, false, 0, 0, 0, 1],
+    ['7|AddDriver|d1', 'AddDriver', 200, true, 1, 0, 1, 2],
+    'refreshAnswers',
+  ], 'a report made since the panel opened is newer, and another tab\'s is never this one\'s');
+  await context.restoreReports(7);
+  assert.equal(rendered.length, 3, 'made again once: a later visit keeps what the panel has');
+  // Another intake's, or a tab no longer in front: nothing.
+  const other = keptReportsHarness(memory, { session: { intakeId: 'intake-b' } });
+  await other.context.restoreReports(7);
+  const moved = keptReportsHarness(memory, { state: { tab: { id: 9, carrier: { id: 'progressive' } } } });
+  await moved.context.restoreReports(7);
+  const none = keptReportsHarness({});
+  await none.context.restoreReports(7);
+  assert.deepEqual([other.rendered.length, moved.rendered.length, none.rendered.length], [0, 0, 0]);
+  // A tab first shown off the rater gets them once it shows the rater.
+  const later = keptReportsHarness(memory, { state: { tab: { id: 7, carrier: null } } });
+  await later.context.restoreReports(7);
+  assert.equal(later.rendered.length, 0);
+  later.context.state.tab.carrier = { id: 'progressive' };
+  await later.context.restoreReports(7);
+  assert.equal(later.rendered.length, 4, 'all three reports, then the check against the page');
+  // The panel's tab switch makes them again after the tab's other records.
+  assert.match(extractFunction('refreshTab'), /await restoreDoneActions\(state\.tab\?\.id\);\n\s+await restoreReports\(state\.tab\?\.id\);/);
+});
+
+test('kept reports go with the shown ones: a closed tab\'s, a cleared page\'s, all for a new or cleared client (W43-39)', async () => {
+  const memory = { intake: { kept: true },
+    'reports:7': { scope: 'intake-a', entries: [{ key: '7|A', page: 'A' }, { key: '7|B', page: 'B' }] },
+    'reports:8': { scope: 'intake-a', entries: [{ key: '8|A', page: 'A' }] } };
+  const { context } = keptReportsHarness(memory);
+  context.forgetKeptReports((e) => e.tabId === 8);
+  await context.kept();
+  assert.deepEqual(Object.keys(memory).sort(), ['intake', 'reports:7']);
+  context.forgetKeptReports((e) => e.key === '7|A');
+  await context.kept();
+  assert.deepEqual(memory['reports:7'].entries.map((e) => e.key), ['7|B']);
+  context.forgetKeptReports(() => true);
+  await context.kept();
+  assert.deepEqual(Object.keys(memory), ['intake'], 'the intake itself stays');
+  assert.match(extractFunction('dropReports'), /forgetKeptReports\(drop\);/);
+});
+
+test('a fill\'s report is kept for the panel opened again; one made again from it keeps its key and time and moves no step (W43-39)', () => {
+  const kept = [];
+  const state = { tab: { id: 7, url: 'AddDriver' }, active: { drivers: 1 }, tabSteps: new Map() };
+  const { context } = reportHarness(state, { keepReport: (tabId, saved) => kept.push({ tabId, saved }), knownStep: (carrier, key) => key ?? null });
+  const frame = { fields: 1, filled: [{ label: 'Zip Code', shown: '21000' }], kept: [], failed: [], noData: [], leftRequired: [], actions: [] };
+  context.renderReport([frame], { tabId: 7, page: 'AddDriver' });
+  assert.equal(kept.length, 1);
+  assert.deepEqual([kept[0].tabId, kept[0].saved.key, kept[0].saved.page, kept[0].saved.active.drivers, kept[0].saved.stopped], [7, '7|AddDriver', 'AddDriver', 1, false]);
+  assert.equal(kept[0].saved.frames[0], frame);
+  assert.ok(!state.reportFor.restored);
+  // Answers filled while Continue is tried again in a moment: kept too. The silent one isn't.
+  context.renderReport([frame], { tabId: 7, page: 'AddDriver', retrying: true });
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], notDrawn: true }], { tabId: 7, page: 'AddDriver', retrying: true });
+  assert.equal(kept.length, 2);
+  context.renderReport([{ ...frame, stepKey: 'Drivers' }], { tabId: 7, page: 'AddDriver', keptKey: '7|AddDriver|Drivers', restoredAt: 1234 });
+  assert.equal(kept.length, 2, 'one made again from what was kept isn\'t kept again');
+  assert.deepEqual([state.reportFor.key, state.reportFor.at, state.reportFor.restored], ['7|AddDriver|Drivers', 1234, true]);
+  assert.equal(state.tabSteps.size, 0, 'an earlier step\'s report leaves the tab\'s step');
+  // A panel opened again doesn't keep the pause, so a stop made again doesn't say it.
+  const halted = { fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], halted: true, reason: 'The page changed.' };
+  context.renderReport([halted], { tabId: 7, page: 'AddDriver' });
+  assert.equal(state.reportFor.error, 'Automatic filling and helpers paused. The page changed.');
+  context.renderReport([halted], { tabId: 7, page: 'AddDriver', keptKey: '7|AddDriver', restoredAt: 1234 });
+  assert.equal(state.reportFor.error, 'The page changed.');
 });
 
 test('a Luna request waiting for a follow-up fill belongs to its tab', async () => {
@@ -4709,7 +4853,8 @@ test('Continue\'s word asks for Looks right while Continue waits for the agent\'
   const settled = said({ settled: true });
   assert.deepEqual([settled.phase, settled.button, settled.label], ['check', 'look-right', 'Looks right, continue']);
   const advanced = said({ advanced: 'Continue', held: null });
-  assert.deepEqual([advanced.phase, advanced.title, advanced.button, advanced.alt], ['done', 'Continue clicked', null, null]);
+  // A page gone back to, or a report made again in a panel opened again, can be filled again (W43-39).
+  assert.deepEqual([advanced.phase, advanced.title, advanced.button, advanced.alt, advanced.altLabel], ['done', 'Continue clicked', null, 'fill-again', 'Fill this page again']);
   assert.match(advanced.sub, /^Clicked “Continue” for you\. Nothing is submitted or bound\.$/);
   // Switch off: Fill again and continue, as before.
   ui['check-continue'].checked = false;

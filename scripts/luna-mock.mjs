@@ -246,8 +246,20 @@ try {
     await panel.locator('#settings').waitFor({ state: 'visible' });
   };
   const closeAgent = () => panel.locator('#settings-done').click();
-  // The dock's Fill: its button, or its "Fill this page again" while questions remain.
-  const clickFill = () => panel.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first().click();
+  // The dock's Fill: its button, or its "Fill this page again" while questions remain. Found again
+  // after 5 s: a panel opened again shows Fill this page, then a moment later the report it kept for
+  // the page, whose dock may hide that button (W43-39). A click on the panel behind the mock's tab
+  // can take seconds.
+  const clickFill = async () => {
+    const button = panel.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first();
+    for (const end = Date.now() + 45000; ;) {
+      try {
+        return await button.click({ timeout: 5000 });
+      } catch (error) {
+        if (Date.now() > end) throw error;
+      }
+    }
+  };
   // No fill running on the tab. On a timeout it says what the dock and the list showed.
   const dockIdle = () => panel.waitForFunction(() => document.querySelector('#dock').dataset.phase !== 'filling', null, { timeout: 30000 })
     .catch(async (error) => {

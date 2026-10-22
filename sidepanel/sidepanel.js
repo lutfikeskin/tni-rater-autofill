@@ -31,8 +31,9 @@ const store = inExtension
       get: async (k) => (await chrome.storage.session.get(k))[k],
       set: (k, v) => chrome.storage.session.set({ [k]: v }),
       remove: (k) => chrome.storage.session.remove(k),
+      keys: () => storedKeys(chrome.storage.session),
     }
-  : { get: async (k) => memory[k], set: async (k, v) => { memory[k] = v; }, remove: async (k) => { delete memory[k]; } };
+  : { get: async (k) => memory[k], set: async (k, v) => { memory[k] = v; }, remove: async (k) => { delete memory[k]; }, keys: async () => Object.keys(memory) };
 
 // Automatic AI decisions must still be awaiting approval after the panel document reloads. Keep
 // only opaque fingerprints plus the small page-level decision needed to show and approve them;
@@ -635,6 +636,65 @@ function persistUnitForms(tabId = state.tab?.id, unitForms = state.unitForms) {
 // panel's own set, which may have dropped a button to run again (Print / Send on a return). The
 // tab's unit forms come back with them; a form the panel has bound since keeps its own unit.
 const doneRestored = new Set();
+// The reports of a quote tab's pages, kept for the browser session (`store`, storage.session: gone
+// when the browser closes), so the panel opened again shows what it showed (W43-39, 2026-10-22:
+// opened again three times on one quote, it came back empty each time). Each is kept as the fill
+// results it was made from (`REPORT_PARTS` of each frame), the last REPORTS_KEPT per tab and intake
+// within about REPORTS_BYTES (the store's 10 MB also holds the intake and its PDF), and made again from them when the panel opens on that tab, marked as from its fill's time
+// (`restoredAt`). The answers of the one in front are read back from the page (refreshAnswers).
+const REPORTS_PREFIX = 'reports:';
+const REPORTS_KEPT = 30;
+const REPORTS_BYTES = 512 * 1024;
+const REPORT_PARTS = ['fields', 'filled', 'kept', 'failed', 'noData', 'leftRequired', 'unknown', 'checks', 'actions', 'blocked', 'skipped',
+  'halted', 'reason', 'stepUnread', 'stepKey', 'notDrawn', 'advanced', 'held', 'covered', 'coveredHelpers', 'renamed', 'pageChanged'];
+const reportsRestored = new Set();
+let reportsQueue = Promise.resolve();
+function keepReport(tabId, saved) {
+  const scope = usage.currentSession()?.intakeId;
+  if (!scope || !Number.isInteger(tabId)) return;
+  const frames = saved.frames.map((f) => Object.fromEntries(REPORT_PARTS.filter((k) => f[k] !== undefined).map((k) => [k, f[k]])));
+  reportsQueue = reportsQueue.then(async () => {
+    const was = await store.get(`${REPORTS_PREFIX}${tabId}`);
+    const entries = [...(was?.scope === scope && Array.isArray(was.entries) ? was.entries : []).filter((e) => e.key !== saved.key), { ...saved, frames }].slice(-REPORTS_KEPT);
+    // The oldest go first; the newest stays.
+    let size = entries.reduce((n, e) => n + JSON.stringify(e).length, 0);
+    while (entries.length > 1 && size > REPORTS_BYTES) size -= JSON.stringify(entries.shift()).length;
+    await store.set(`${REPORTS_PREFIX}${tabId}`, { scope, entries });
+  }).catch(() => {});
+}
+// Forgets kept reports as dropReports forgets shown ones (`drop` gets each with its tabId): a new
+// or cleared client, a closed tab, one page's.
+function forgetKeptReports(drop) {
+  reportsQueue = reportsQueue.then(async () => {
+    for (const k of (await store.keys()).filter((key) => key.startsWith(REPORTS_PREFIX))) {
+      const was = await store.get(k);
+      const tabId = Number(k.slice(REPORTS_PREFIX.length));
+      const entries = (Array.isArray(was?.entries) ? was.entries : []).filter((e) => !drop({ ...e, tabId }));
+      await (entries.length ? store.set(k, { ...was, entries }) : store.remove(k));
+    }
+  }).catch(() => {});
+}
+async function restoreReports(tabId) {
+  const scope = usage.currentSession()?.intakeId;
+  const done = `${scope}|${tabId}`;
+  if (!scope || !Number.isInteger(tabId) || reportsRestored.has(done)) return;
+  const was = await store.get(`${REPORTS_PREFIX}${tabId}`).catch(() => null);
+  const carrier = state.tab?.carrier;
+  // Once, and only once the tab shows a rater for this intake: one opened elsewhere first gets its
+  // reports when it comes to the rater.
+  if (reportsRestored.has(done) || state.tab?.id !== tabId || !carrier || !state.intake || usage.currentSession()?.intakeId !== scope) return;
+  reportsRestored.add(done);
+  if (was?.scope !== scope || !Array.isArray(was.entries)) return;
+  // A report a fill made since the panel opened is newer: kept. Each keeps its key, which holds
+  // its step on a one-address application (GEICO, AmWINS): the tab's step may not be known yet.
+  for (const e of was.entries) {
+    if (!e?.key || !String(e.key).startsWith(`${tabId}|`) || state.reports.has(e.key) || !Array.isArray(e.frames)) continue;
+    const active = { ...firstUnits(), ...(e.active ?? {}) };
+    renderReport(e.frames, { tabId, page: e.page, carrier, active, plan: buildPlan(state.intake.record, carrier, active), stopped: !!e.stopped, keptKey: e.key, restoredAt: e.at ?? Date.now(), filledBefore: e.filledBefore });
+  }
+  refreshAnswers();
+}
+
 async function restoreDoneActions(tabId) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId) || doneRestored.has(`${scope}|${tabId}`)) return;
@@ -1306,6 +1366,7 @@ async function refreshTab() {
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false, windowId: tab.windowId } : null;
   await restoreAgentKeys(state.tab?.id);
   await restoreDoneActions(state.tab?.id);
+  await restoreReports(state.tab?.id);
   if (state.tab?.carrier && !state.filling) await retireAiOrigins({ tabId: state.tab.id, tabUrl: state.tab.url, intake: state.intake, carrier: state.tab.carrier });
   renderSite();
   ensureRecorder();
@@ -2590,6 +2651,7 @@ function putReport(entry, nodes) {
 // Forgets the reports `drop` picks (all: a new or cleared client; a closed tab's; one page's).
 function dropReports(drop = () => true) {
   for (const [key, entry] of state.reports) if (drop(entry)) state.reports.delete(key);
+  forgetKeptReports(drop);
   if (state.reportFor && state.reports.get(state.reportFor.key) !== state.reportFor) {
     state.reportFor = null;
     $('report').replaceChildren();
@@ -2754,7 +2816,9 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
   const check = autoAdvance && !!$('check-continue')?.checked;
   const looks = { button: 'look-right', label: 'Looks right, continue' };
   const again = { alt: 'fill-again', altLabel: 'Fill this page again' };
-  if (advanced) return { phase: 'done', tone: 'good', eyebrow: 'Continued', title: 'Continue clicked', sub: `Clicked “${advanced}” for you. Nothing is submitted or bound.` };
+  // Seen again once the agent went back to the page, or in a panel opened again (W43-39): it can be
+  // filled again.
+  if (advanced) return { phase: 'done', tone: 'good', eyebrow: 'Continued', title: 'Continue clicked', sub: `Clicked “${advanced}” for you. Nothing is submitted or bound.`, ...again };
   if (holding) {
     const then = check ? 'Then check the answers and click Looks right. Never Bind or Submit.'
       : offSteps ? 'Then moving on is yours: nothing on this step is clicked for you.'
@@ -3690,8 +3754,14 @@ function renderReport(frames, ctx = {}) {
   const maps = tabMaps(tabId);
   // The one-address application's step this fill was on, for the page strip and the report's key.
   const step = knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey);
-  if (step) state.tabSteps.set(tabId, step);
-  const key = reportKey(tabId, page, carrier, ctx.active ?? state.active);
+  // A report made again on reopen (restoreReports) is an earlier step's: the tab's step stays.
+  if (step && !ctx.restoredAt) state.tabSteps.set(tabId, step);
+  const key = ctx.keptKey ?? reportKey(tabId, page, carrier, ctx.active ?? state.active);
+  // Kept for the panel opened again (keepReport); one made again from what was kept isn't, nor
+  // one that says nothing while its page is filled again.
+  const keep = () => { if (!ctx.restoredAt) keepReport(tabId, { key, page, active: { ...(ctx.active ?? state.active) }, at: Date.now(), stopped: !!ctx.stopped,
+    // What earlier passes on this page filled, for the report shown again (restoreReports).
+    filledBefore: Object.fromEntries(frames.flatMap((fr) => fr.kept ?? []).filter((x) => maps.filled?.get?.(x.key)).map((x) => [x.key, maps.filled.get(x.key)])), frames }); };
   // A page of tiles only (Most Common Vehicles) has no fields but may still need the agent.
   if (!fields && !all('actions').length && !all('noData').length) {
     // A step the kit couldn't read pauses nothing (rememberFill): its reason alone.
@@ -3699,16 +3769,19 @@ function renderReport(frames, ctx = {}) {
     // Still drawing, or Continue not there yet: filled again in a moment (rememberFill), nothing
     // said until then (W43-40, W43-42).
     if (!halted && ctx.retrying) { renderSteps(); return; }
+    keep();
     // A page with no question for the fill (a unit list, every unit on it) is done: its dock offers
     // Continue (`empty`, W43-40). One that should have some (notDrawn) still has none.
-    putReport({ key, tabId, page, at: Date.now(), ...(halted
-      ? { error: `${halted.stepUnread ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
+    putReport({ key, tabId, page, at: ctx.restoredAt ?? Date.now(), ...(ctx.restoredAt ? { restored: true } : {}), ...(halted
+      // A panel opened again doesn't keep the pause: a report made again doesn't say it.
+      ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
       : frames.some((f) => f.notDrawn) ? { notice: 'No questions found on this page.' }
         : { notice: 'Nothing to fill on this page.', empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null,
           held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
     renderSteps();
     return;
   }
+  keep();
   const unknownKeys = new Set(all('unknown').map((x) => x.key));
   // Each item with its frame's place among the page's frames (pagekit's `order` counts within one).
   // A field of another step (pagekit otherStep: AmWINS' prior carriers, filled again while hidden)
@@ -3737,14 +3810,15 @@ function renderReport(frames, ctx = {}) {
   const agentPage = typeof pageNote === 'function' ? pageNote(state.intake?.record ?? {}) : pageNote;
   // Answers an earlier pass on this page filled (a follow-up pass, after the VIN lookup or a
   // redraw, finds them already there): still ours, shown as filled.
-  const earlier = kept.filter((x) => !x.differs && maps.filled?.get?.(x.key));
+  const before = ctx.filledBefore ? new Map(Object.entries(ctx.filledBefore)) : maps.filled;
+  const earlier = kept.filter((x) => !x.differs && before?.get?.(x.key));
   const { fromOf, groupOf, ticks, editedBy } = answerSources(ctx.plan);
   const doneRows = groupRows([
     // `key`/`field`: the field and its label on the page, for checking the answer is still there
     // (checkAnswers) and changing it (changeAnswer); `kind`: what it is when it's no answer of ours.
     ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order })),
     ...earlier.map((x) => {
-      const was = maps.filled.get(x.key);
+      const was = before.get(x.key);
       return { label: x.label || x.name, value: was.shown || 'filled', standard: !!(x.standard || was.standard), path: was.path, from: fromOf.get(x.stepId), edited: editedBy(was.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: was.shown ? x.key : null, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order };
     }),
     ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
@@ -3763,7 +3837,8 @@ function renderReport(frames, ctx = {}) {
   // Held for the agent's check (Let me look before Continue): the top frame's word.
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
-  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: Date.now(), auto: !!ctx.auto, stopped };
+  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
+    ...(ctx.restoredAt ? { restored: true } : {}) };
   // The answers and the items in one list, by their place on the page: an item without a field on
   // the page (a helper, a unit without its row) after them, then answers without one (a click).
   const listed = [...doneRows.map((row) => ({ row, at: row })), ...needs.map((x) => ({ x, at: x }))];
@@ -3796,7 +3871,7 @@ function renderReport(frames, ctx = {}) {
   if (key === currentReportKey()) state.filter = 'all';
   putReport(entry, nodes);
   renderSteps();
-  if (state.reportFor !== entry) return;
+  if (state.reportFor !== entry || ctx.restoredAt) return;
   announce(`Filled ${count} answer${count === 1 ? '' : 's'}. ${needs.length ? `${needs.length} left for you.` : held ? 'Check the answers, then click Looks right.' : 'Nothing is left for you.'}`);
   if (held) refreshAnswers();
 }
@@ -5401,6 +5476,8 @@ function noteStep(msg, sender) {
   const screenOver = !!state.stopScreens?.has(sender.tab.id) && (moved || msg.event === 'page_view');
   if (screenOver) state.stopScreens.delete(sender.tab.id);
   if (moved || screenOver) renderSite();
+  // A report shown again for this step is read back from the page (read only).
+  if (moved && state.reportFor?.restored) refreshAnswers();
 }
 
 // What the agent did on this intake, for the file menu's question and the same-file note:
