@@ -2480,6 +2480,8 @@
       if (rates && !serverBacked) {
         const until = Date.now() + LOAD_MS;
         while (Date.now() < until && !premiumReady() && !report.halted && currentPage() === startPage && !stepChanged()) await sleep(500);
+        // Stopped, or the agent edited, while it rated: nothing more is done here.
+        if (report.halted) break;
         if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted })) { halt(LOAD_HALT); break; }
       }
       if (!await verifyAction()) break;
@@ -2638,6 +2640,7 @@
       // by itself isn't a change (W43-41, FL, 2026-10-22: four answers marked as changed and put
       // back, which the agent saw right the whole time).
       await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
+      if (report.halted) return false;
       const now = new Map(answerPlaces(collectControls()));
       const changed = keptChanged(a, now);
       if (!changed.length) return false;
