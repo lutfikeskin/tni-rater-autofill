@@ -1738,7 +1738,7 @@
   // again.
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [] } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -1822,9 +1822,18 @@
     try { ext()?.Ajax?.on?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
     const visited = new Set(visitedPages);
     const startPage = currentPage();
-    if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
     const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], reworded: [], renamed: [], halted: false, rounds: 0, unitForm: null, unitHeld: null, stepUnread: false };
+    // The page the panel asked to fill (`expectPage`, as it reads the tab's address): the top frame
+    // shows another one now (the agent or the carrier moved on while the panel prepared), so nothing
+    // is filled, marked or clicked here (`pageMoved`, the page found). A frame inside the page can't
+    // read the top's address: the panel checked it just before.
+    if (expectPage != null && window === window.top && startPage !== expectPage) {
+      try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
+      report.pageMoved = startPage;
+      return report;
+    }
+    if (!keepMarks) clear();
     stopSteps = [].concat(stopSteps ?? []);
     if (stopSteps.length) knownStopSteps = [...new Set([...knownStopSteps, ...stopSteps])];
     // Its unit forms' markers, by which unitFormsNow tells the forms on screen between fills.

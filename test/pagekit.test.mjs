@@ -2434,6 +2434,22 @@ test('Stop halts a running fill after the answer going in; progress counts what 
   assert.equal(h.kit.progress(), null, 'the fill is over');
 });
 
+// Bitwarden comparison (2026-10-22): the page the panel asked to fill is checked as the fill starts.
+// Another one in the top frame is left alone: nothing filled, and the marks of an earlier fill stay.
+test('a fill meant for another page than the top frame shows fills nothing and names the page found', async () => {
+  const h = harness({ search: '?pageName=Drivers' });
+  const a = makeInput({ id: 'a', ariaLabel: 'First' });
+  h.document.body.append(a);
+  const step = { id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'one' };
+  const same = await h.kit.fill([step], { maxRounds: 3, expectPage: 'Drivers' });
+  assert.deepEqual([same.pageMoved, same.filled.length, a.value], [undefined, 1, 'one']);
+  const marked = a.getAttribute('data-rater-autofill');
+  assert.ok(marked);
+  a.value = 'changed';
+  const moved = await h.kit.fill([step], { maxRounds: 3, expectPage: 'Vehicles' });
+  assert.deepEqual([moved.pageMoved, moved.filled.length, moved.halted, a.value, a.getAttribute('data-rater-autofill')], ['Drivers', 0, false, 'changed', marked]);
+});
+
 // Review 2026-10-22: every half second each frame sent its whole list. It sends the rows after those
 // the panel has from that list (by its id), and a list the panel has no count for whole.
 test('progress sends only the rows the panel has not seen from its list', async () => {

@@ -1686,6 +1686,22 @@ function noteStaleFill(ctx) {
   fillProblem(ctx, 'The intake changed during the fill: the page may hold earlier answers. Check it, then fill again.');
 }
 
+// Whether the fill's tab shows another page than the one it was asked for, as Chrome has the tab's
+// address now (the panel's own word on it can lag a message). Unknown counts as not moved: the kit
+// checks again as it starts.
+async function pageMoved(ctx) {
+  let url;
+  try { ({ url } = await chrome.tabs.get(ctx.tabId)); } catch { return false; }
+  const now = pageOf(url);
+  return now != null && now !== ctx.page;
+}
+// A fill whose page moved on before it began: nothing was filled or clicked. The page in front now is
+// filled as a new page when the agent fills each new page; a fill the agent asked for says so.
+function notePageMoved(ctx) {
+  logFillError(ctx, 'page moved before the fill began');
+  if (!ctx.auto) fillProblem(ctx, 'The page changed before the fill began. Nothing was filled or clicked; fill the page in front.', 'notice');
+}
+
 // A fill's error in words the agent can act on, with the browser's own message (redacted with the
 // intake: it may quote the page) after it for a problem report.
 function fillErrorMessage(ctx, e) {
@@ -1703,23 +1719,35 @@ function fillErrorMessage(ctx, e) {
 // While a fill runs: the answers in so far, read from the page every half second (pagekit
 // progress), listed as they go in (renderLive) and counted in step 2 and the dock. Each frame sends
 // only the rows after those the panel has from its list (`seen`, by the frame's list); a reading
-// still under way skips the next. Returns what stops the reading.
+// still under way skips the next. One the page hasn't answered for UNANSWERED_MS (a message box
+// open on it holds its scripts, or a frame is stuck) is said in the dock and the list
+// (`unanswered`); nothing is done to the page, and the fill goes on once it answers. Returns what
+// stops the reading.
+const UNANSWERED_MS = 5000;
 function watchFill(ctx) {
   if (!inExtension) return () => {};
   const lists = new Map();
-  let reading = false;
+  let reading = null;
   const timer = setInterval(async () => {
     if (state.fillingFor?.run !== ctx.run) { clearInterval(timer); return; }
-    if (reading) return;
-    reading = true;
+    if (reading != null) {
+      if (Date.now() - reading >= UNANSWERED_MS && !state.fillingFor.unanswered) {
+        state.fillingFor.unanswered = true;
+        renderSteps();
+      }
+      return;
+    }
+    reading = Date.now();
     let frames;
     try {
       const seen = Object.fromEntries([...lists].map(([list, rows]) => [list, rows.length]));
       frames = await chrome.scripting.executeScript({ target: { tabId: ctx.tabId, allFrames: true }, world: worldFor(ctx.carrier),
         func: (s) => globalThis.__raterKit?.progress?.(s) ?? null, args: [seen] });
-    } catch { return; /* the page is navigating */ } finally { reading = false; }
+    } catch { return; /* the page is navigating */ } finally { reading = null; }
     const f = state.fillingFor;
     if (f?.run !== ctx.run) return;
+    const answered = !!f.unanswered;
+    f.unanswered = false;
     for (const { result } of frames) {
       if (!result?.list) continue;
       // A list the frame has rewritten (an answer given again) comes whole (`since` 0), as a new one.
@@ -1729,7 +1757,7 @@ function watchFill(ctx) {
     }
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
     const rows = [...lists.values()].flat().filter((x) => !x.otherStep);
-    if (rows.length === f.filled && rows.every((x, i) => f.rows[i] === x)) return;
+    if (!answered && rows.length === f.filled && rows.every((x, i) => f.rows[i] === x)) return;
     f.filled = rows.length;
     f.rows = rows;
     renderSteps();
@@ -1747,7 +1775,7 @@ function renderLive() {
   live.hidden = !on;
   if (!on) { live.replaceChildren(); delete live.dataset.count; live.drawn = []; return; }
   const rows = f.rows ?? [];
-  const count = `${rows.length}${f.stopping ? 's' : ''}`;
+  const count = `${rows.length}${f.stopping ? 's' : ''}${f.unanswered ? 'u' : ''}`;
   if (live.dataset.count === count && live.drawn === rows) return;
   live.dataset.count = count;
   // The new answers join those listed already; a list the page rewrote is listed anew.
@@ -1767,7 +1795,8 @@ function renderLive() {
   if (!f.stopping) {
     live.append(h('div', { class: 'row typing' }, h('div', { class: 'row-head' },
       h('span', { class: 'row-icon', 'aria-hidden': 'true' }, h('span', { class: 'spinner' })),
-      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, rows.length ? 'Next answer' : 'Reading the page'), h('span', { class: 'row-value' }, 'Working…')))));
+      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, f.unanswered ? 'Waiting for the page' : rows.length ? 'Next answer' : 'Reading the page'),
+        h('span', { class: 'row-value' }, f.unanswered ? 'It isn’t answering' : 'Working…')))));
   }
   live.lastElementChild?.scrollIntoView?.({ block: 'nearest' });
 }
@@ -1881,9 +1910,12 @@ async function autoFill(page) {
     const plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
-    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    // The tab moved on to another page meanwhile: that one gets its own fill (fillPage).
+    if (await pageMoved(ctx)) { notePageMoved(ctx); return; }
+    const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
+    if (results.some((r) => r.result?.pageMoved)) { notePageMoved(ctx); return; }
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
@@ -2672,6 +2704,12 @@ function dockFor() {
   const f = state.fillingFor;
   if (state.filling && f?.tabId === state.tab.id) {
     const last = f.rows?.at(-1);
+    // The page hasn't answered for a while (watchFill): a message box open on it waits for the agent.
+    if (f.unanswered) {
+      return { phase: 'filling', tone: 'warn', progress: true, eyebrow: f.stopping ? 'Stopping' : `Filling · ${f.filled ?? 0} in`,
+        title: 'The page isn’t answering', sub: 'If it shows a message box, answer it there. The fill goes on after.',
+        button: 'fill-stop', label: f.stopping ? 'Stopping…' : 'Stop', disabled: !!f.stopping };
+    }
     return { phase: 'filling', tone: 'blue', progress: true, eyebrow: f.stopping ? 'Stopping' : `Filling · ${f.filled ?? 0} in`,
       title: f.stopping ? 'Stopping after the answer going in now…' : last ? `Just filled: ${last.label || 'an answer'}` : 'Reading the page…',
       sub: 'Keep this tab open.', button: 'fill-stop', label: f.stopping ? 'Stopping…' : 'Stop', disabled: !!f.stopping };
@@ -3012,14 +3050,18 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
       fillProblem(ctx, 'You stopped the fill. Nothing was filled or clicked.', 'notice');
       return;
     }
+    // The tab moved on to another page while the panel prepared: that one isn't filled with this
+    // page's plan (the kit checks again as it starts: `expectPage`).
+    if (await pageMoved(ctx)) { notePageMoved(ctx); return; }
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // The agent's Fill this page gives back an answer the page took back (keepTakenBack): GEICO's
     // own coverage choice put back over the fill's, on a question the agent didn't answer
     // themselves (their answers are in `skip`). An automatic fill keeps and flags it.
-    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), ...(ctx.asked ? { takenBack: null } : {}), run: ctx.run }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), ...(ctx.asked ? { takenBack: null } : {}), run: ctx.run, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
+    if (results.some((r) => r.result?.pageMoved)) { notePageMoved(ctx); return; }
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
