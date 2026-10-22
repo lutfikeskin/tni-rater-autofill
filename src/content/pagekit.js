@@ -2619,12 +2619,17 @@
       if (!line) return null;
       const name = (re.exec(line)?.[1] ?? '').trim();
       const words = ` ${name.toUpperCase().replace(/[^A-Z0-9]+/g, ' ')} `;
-      const named = (formUnit.names ?? []).flatMap((n, i) => (n.length && n.every((w) => words.includes(` ${w} `)) ? [i] : []));
+      const all = (formUnit.names ?? []).flatMap((n, i) => (n.length && n.every((w) => words.includes(` ${w} `)) ? [i] : []));
+      // A driver whose name words another named driver's also holds (Ann Lee beside Mary Ann Lee) is not the one named.
+      const most = Math.max(0, ...all.map((i) => formUnit.names[i].length));
+      const named = all.filter((i) => formUnit.names[i].length === most);
       return { name, index: named.includes(formUnit.active) ? formUnit.active : named.length === 1 ? named[0] : null };
     }
     // Whether the field shows just what an earlier fill gave for another unit of the plan step's
     // list (`givenBefore`: field key -> { path, shown }, the panel's record of this tab's answers).
     function givenForOtherUnit(step, c) {
+      // Only on a form that names its unit (`unitNames`), where a form naming another unit halts.
+      if (!formUnit) return false;
       const given = givenBefore?.[fieldKey(c)];
       const unit = (path) => String(path ?? '').match(/^(vehicles|drivers|trailers)\[(\d+)\]/);
       const mine = unit(step.path);

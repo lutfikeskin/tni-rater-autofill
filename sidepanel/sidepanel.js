@@ -825,9 +825,11 @@ async function loadFile(file) {
   clientNote(same ? `Same intake${work ? `: you ${work}, and that stays` : ''}.` : null);
   await keepPdf(bytes);
   state.active = firstUnits();
+  state.activeTab = null;
   state.filled = new Map();
   state.doneActions = new Set();
   state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
+  state.unitNamed = null;
   state.unitShown = null;
   state.unreadRetried = false;
   doneRestored.clear(); // every tab set was reset; retained helpers must rehydrate for this intake
@@ -1286,11 +1288,11 @@ async function refreshTab() {
     // was on before (W43-37, 2026-10-22: Progressive's first driver form got the second driver's
     // details, the one last picked on GEICO). The panel's first tab after it opens keeps the
     // selection saved for that tab.
-    const restored = !state.tab && !state.tabSessions.size && state.activeTab === tab?.id;
+    const restored = !previous && state.activeTab === tab?.id;
     Object.assign(state, previous ?? {
       filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false,
       agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null,
-      unitNamed: null, active: restored ? { ...state.active } : firstUnits(),
+      unitNamed: null, active: restored ? { ...(state.savedActive ?? state.active) } : firstUnits(),
     });
     if (state.intake) renderPickers();
     clearTimeout(state.autoTimer);
@@ -2330,7 +2332,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   }
   // The intake unit the form named (pagekit unitNamed), for the mark once its list comes back.
   const named = frames.find((f) => f.unitNamed)?.unitNamed;
-  if (named) maps.unitNamed = { ...named, page };
+  maps.unitNamed = named ? { ...named, page } : null;
   const unitOk = (u) => ['vehicles', 'drivers', 'trailers'].includes(u?.list) && typeof u.id === 'string' && u.id;
   // Where one address holds every step and unit form (formScoped: GEICO): the form the page shows
   // now, held (pagekit unitHeld, the one the agent has to look at) or else filled (unitForm), with
@@ -5640,6 +5642,8 @@ async function init() {
   state.intake = (await store.get('intake')) ?? null;
   if (state.intake) state.view = firstView(state.intake);
   state.active = (await store.get('active')) ?? state.active;
+  // The selection saved for that tab, kept should the panel reach another tab first.
+  state.savedActive = state.active;
   state.activeTab = (await store.get('activeTab')) ?? null;
   usage.restoreSession((await store.get('session')) ?? null);
   const views = await store.get('views');

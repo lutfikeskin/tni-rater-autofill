@@ -6603,6 +6603,9 @@ test('an answer the fill gave for another unit is replaced with this unit\'s, ne
   ], {
     maxRounds: 3,
     skip: ['last'],
+    // A form that names its unit (`unitNames`), here a new driver's not named yet: elsewhere the
+    // answer is kept and flagged.
+    formUnit: { list: 'drivers', text: '^questions about (.+)$', names: [], active: 1, label: 'Casey Example' },
     givenBefore: {
       first: { path: 'drivers[0].first', shown: 'Jordan' },
       // The agent changed it after the fill gave it.
