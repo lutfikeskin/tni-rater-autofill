@@ -39,6 +39,10 @@ stay out of the pilot's usage data. The upload token can only add events, which 
 them back needs the admin token, kept in Railway, in the repository secret `RATER_ADMIN_TOKEN`,
 and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
 
+A proposal to copy this log into a private Postgres database on Railway for business analysis,
+with a richer intake profile and optional quoted premiums, is in
+[quoting history database](quoting-history-database.md). Nothing of it is deployed.
+
 Redeploy after a server change: `railway up --service usage-server` from the repository root
 (`.railwayignore` keeps the upload to what the image needs).
 
