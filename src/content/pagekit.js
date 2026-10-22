@@ -2472,11 +2472,14 @@
       // busy at first: GEICO's loader shows only 3 s into a load. GEICO rated the fill's click 13 to
       // 19 s after it (2026-10-22). The wait above had ended by then, so the click was failed as
       // unrated, and GEICO's redraw with its own values was never checked. Its premium is waited for
-      // as long as a step's load.
+      // as long as a step's load. Then the page and its own requests are waited for, quiet for the
+      // helper's own time, before the answers are read (W43-41, FL, 2026-10-22). Read 250 ms after the
+      // premium showed, four answers the agent saw right the whole time were marked as changed by
+      // GEICO.
       if (rates && !serverBacked) {
         const until = Date.now() + LOAD_MS;
         while (Date.now() < until && !premiumReady() && !report.halted && currentPage() === startPage && !stepChanged()) await sleep(500);
-        if (!await settle({ quietMs: 250, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
+        if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted })) { halt(LOAD_HALT); break; }
       }
       if (!await verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
@@ -2628,11 +2631,19 @@
       });
     }
     async function answersKept(a) {
+      if (!keptChanged(a, new Map(answerPlaces(collectControls()))).length) return false;
+      // A change counts only if it is still there once the page and its own requests have been
+      // quiet again. A request still running can't be seen, and a value the page then draws back
+      // by itself isn't a change (W43-41, FL, 2026-10-22: four answers marked as changed and put
+      // back, which the agent saw right the whole time).
+      await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
       const now = new Map(answerPlaces(collectControls()));
       const changed = keptChanged(a, now);
       if (!changed.length) return false;
       const pairs = assign([...now.values()], plan);
       const given = new Set();
+      // What the page showed instead, before anything is put back.
+      const seen = new Map(changed.map(({ k, c }) => [k.at, answerShown(c)]));
       for (const { k, c } of changed) {
         const step = k.stepId != null ? pairs.find((p) => p.control === c && p.step.id === k.stepId)?.step : null;
         if (!step) continue;
@@ -2649,7 +2660,7 @@
         const was = c.kind === 'text' ? '' : ` (it was "${k.shown}")`;
         const back = !!step && given.has(k.at) && after.has(k.at) && agreesWith(step, c);
         const reason = !step ? `the page changed your answer when it recalculated${was}: answer it again, then click Recalculate yourself.`
-          : back ? 'the page changed this answer when it recalculated, and the fill put it back: click Recalculate yourself, then check the answer is kept.'
+          : back ? `the page changed this answer when it recalculated${c.kind === 'text' ? '' : ` (to "${seen.get(k.at)}")`}, and the fill put it back: click Recalculate yourself, then check the answer is kept.`
             : `the page changed this answer when it recalculated${was}, and the fill couldn't put it back: answer it yourself, then click Recalculate.`;
         const key = fieldKey(c);
         // Only this answer's own entry (its step, key and label): another field with its key (a
@@ -2677,7 +2688,7 @@
       while (Date.now() - a.clickedAt < KEPT_WATCH_MS && !report.halted && currentPage() === startPage && !stepChanged()) {
         await sleep(500);
         if (!keptChanged(a, new Map(answerPlaces(collectControls()))).length) continue;
-        await settle({ quietMs: 1000, maxMs: LOAD_MS });
+        await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
         await answersKept(a);
         return;
       }

@@ -4640,7 +4640,7 @@ test('GEICO\'s Recalculate: once nothing is left, on a page quiet for 2 s, then 
   // The fill's comprehensive put back, the agent's road service left as GEICO drew it; both red.
   assert.deepEqual([p.comp.value, p.coll.value, p.ers.value], ['$1,000 deductible', '$1,000 deductible', 'I decline this coverage']);
   assert.deepEqual(plain(report.failed.map((x) => x.key)), ['cov:COMP#1', 'cov:ERS#1', null]);
-  assert.match(report.failed[0].reason, /changed this answer when it recalculated, and the fill put it back: click Recalculate yourself/);
+  assert.match(report.failed[0].reason, /changed this answer when it recalculated \(to "\$500 deductible"\), and the fill put it back: click Recalculate yourself/);
   assert.match(report.failed[1].reason, /changed your answer when it recalculated \(it was "I accept this coverage"\)/);
   assert.match(report.failed[2].reason, /changed 2 answers when it recalculated .* the fill clicks it once a quote/);
   // Clicked once, kept clicked (the panel's done helpers); View More Payment Plans waits for the agent.
@@ -4694,7 +4694,7 @@ test('GEICO\'s Recalculate: a redraw seconds later is caught before View More; o
   assert.equal(late.recalcs, 1);
   assert.equal(late.comp.value, '$1,000 deductible', 'put back');
   assert.deepEqual(plain(report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
-  assert.match(report.failed[0].reason, /changed this answer when it recalculated, and the fill put it back/);
+  assert.match(report.failed[0].reason, /changed this answer when it recalculated \(to "\$500 deductible"\), and the fill put it back/);
   assert.equal(late.more._clicked, undefined, 'View More Payment Plans waits for the agent');
   assert.deepEqual(plain([...report.filled, ...report.kept].map((x) => x.key)).sort(), ['cov:COLL#1', 'cov:ERS#1']);
   // Nothing changes: View More Payment Plans once the watch is over, not before.
@@ -4736,9 +4736,40 @@ test('GEICO\'s Recalculate rated 18 s after the click, nothing busy for 3 s: its
   assert.equal(slow.recalcs, 1);
   assert.equal(slow.comp.value, '$1,000 deductible', 'put back');
   assert.deepEqual(plain(report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
-  assert.match(report.failed[0].reason, /changed this answer when it recalculated, and the fill put it back/);
+  assert.match(report.failed[0].reason, /changed this answer when it recalculated \(to "\$500 deductible"\), and the fill put it back/);
   assert.match(report.failed[1].reason, /changed an answer when it recalculated/);
   assert.equal(slow.more._clicked, undefined, 'View More Payment Plans waits for the agent');
+});
+
+// W43-41 (FL, 2026-10-22): after the fill's Recalculate, the liability limit, UM, road service and
+// cargo were marked red as changed by GEICO and put back, while the agent saw the right values the
+// whole time. The answers were read 250 ms after the premium showed. GEICO's own requests could
+// still be running, and a value drawn a moment later by itself counted as a change.
+test('GEICO\'s Recalculate: a value the page draws back by itself, once its requests are done, isn\'t a change (W43-41)', async () => {
+  const run = async ({ backAfter, request = null }) => {
+    const p = recalcPage({ redraw: ({ comp }) => {
+      comp.value = '$500 deductible';
+      setTimeout(() => { comp.value = '$1,000 deductible'; }, backAfter);
+    } });
+    const t0 = clock.Date.now();
+    let observer = null;
+    p.h.context.performance = { now: () => clock.Date.now() - t0 };
+    p.h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+    const applied = [];
+    p.comp.addEventListener('change', () => applied.push(p.comp.value));
+    // GEICO's request for the value, finishing just before it is drawn.
+    if (request != null) p.recalc.onclick = ((click) => () => { click(); setTimeout(() => observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/lookup/coverage', responseEnd: clock.Date.now() - t0 }] }), request); })(p.recalc.onclick);
+    const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+    return { failed: plain(report.failed.map((x) => x.key)), applied, comp: p.comp.value, more: p.more._clicked ?? 0, recalcs: p.recalcs };
+  };
+  // Drawn back 1.5 s after the premium showed: no red, nothing put back, View More Payment Plans next.
+  assert.deepEqual(await run({ backAfter: 1500 }), { failed: [], applied: [], comp: '$1,000 deductible', more: 1, recalcs: 1 });
+  // Drawn back 3 s in, just after GEICO's request finished: the same.
+  assert.deepEqual(await run({ backAfter: 3000, request: 2900 }), { failed: [], applied: [], comp: '$1,000 deductible', more: 1, recalcs: 1 });
+  // Still GEICO's value once the page is quiet: a change, put back and red, as before.
+  const kept = await run({ backAfter: 60000 });
+  assert.deepEqual(kept.failed, ['cov:COMP#1', null]);
+  assert.deepEqual(kept.applied, ['$1,000 deductible']);
 });
 
 // The same runs: GEICO sends each coverage change to its server half a second after it is picked,
