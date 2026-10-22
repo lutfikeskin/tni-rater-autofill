@@ -409,6 +409,10 @@ try {
   await onAmwins(popup);
   // Native clicks need the panel's surface in front on Windows; the quote's window stays the last used.
   await popup.bringToFront();
+  // The new copy makes the reports kept in session storage again (W43-39): the earlier steps are in
+  // its page menu before it fills anything.
+  const restoredOk = await within(5000, async () => (await popup.locator('#page-menu option').allTextContents()).includes('Insured Info'));
+  console.log('Restored pages:', (await popup.locator('#page-menu option').allTextContents()).join(', '));
   const before = await popup.locator('#dock').getAttribute('data-report');
   await popup.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first().click({ timeout: 10000 });
   await popup.waitForFunction((old) => {
@@ -423,7 +427,7 @@ try {
     await popup.setViewportSize({ width: 420, height: 860 });
     await popup.screenshot({ path: path.join(process.argv[2], 'popped.png'), animations: 'disabled' });
   }
-  poppedOk = panelPages().length === 1 && panelPages()[0] === popup && !after.submitted && !after.declared && buttons.dock && !buttons.popOut;
+  poppedOk = restoredOk && panelPages().length === 1 && panelPages()[0] === popup && !after.submitted && !after.declared && buttons.dock && !buttons.popOut;
   const docked = popup.waitForEvent('close', { timeout: 10000 });
   docked.catch(() => {});
   await popup.click('#dock-back');
@@ -440,7 +444,7 @@ try {
 } catch (error) {
   console.log('POP OUT:', error.message);
 }
-if (!poppedOk) console.log('POP OUT: the panel in its own window did not replace the open one, follow the quote tab and fill it, go back to the side panel, or give way to a new window, or something was declared or submitted.');
+if (!poppedOk) console.log('POP OUT: the panel in its own window did not replace the open one, show the earlier steps’ reports, follow the quote tab and fill it, go back to the side panel, or give way to a new window, or something was declared or submitted.');
 await ctx.close();
 await new Promise((resolve) => usageServer.close(resolve));
 const received = eventsIn();
@@ -452,5 +456,5 @@ const usageOk = !outside.length && received.includes('intake_loaded');
 console.log(`Errors: ${errors.length}${errors.length ? ` (${errors.join('; ')})` : ''}`);
 const result = JSON.parse(await Promise.resolve(lastMock));
 const ok = usageOk && !errors.length && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
+console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone with the earlier steps’ reports, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
 process.exit(ok ? 0 : 1);

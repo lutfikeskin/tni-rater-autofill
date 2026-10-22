@@ -4835,7 +4835,8 @@ test('Continue\'s word asks for Looks right while Continue waits for the agent\'
   const settled = said({ settled: true });
   assert.deepEqual([settled.phase, settled.button, settled.label], ['check', 'look-right', 'Looks right, continue']);
   const advanced = said({ advanced: 'Continue', held: null });
-  assert.deepEqual([advanced.phase, advanced.title, advanced.button, advanced.alt], ['done', 'Continue clicked', null, null]);
+  // A page gone back to, or a report made again in a panel opened again, can be filled again (W43-39).
+  assert.deepEqual([advanced.phase, advanced.title, advanced.button, advanced.alt, advanced.altLabel], ['done', 'Continue clicked', null, 'fill-again', 'Fill this page again']);
   assert.match(advanced.sub, /^Clicked “Continue” for you\. Nothing is submitted or bound\.$/);
   // Switch off: Fill again and continue, as before.
   ui['check-continue'].checked = false;

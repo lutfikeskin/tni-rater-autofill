@@ -2806,7 +2806,9 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, page, settl
   const check = autoAdvance && !!$('check-continue')?.checked;
   const looks = { button: 'look-right', label: 'Looks right, continue' };
   const again = { alt: 'fill-again', altLabel: 'Fill this page again' };
-  if (advanced) return { phase: 'done', tone: 'good', eyebrow: 'Continued', title: 'Continue clicked', sub: `Clicked “${advanced}” for you. Nothing is submitted or bound.` };
+  // Seen again once the agent went back to the page, or in a panel opened again (W43-39): it can be
+  // filled again.
+  if (advanced) return { phase: 'done', tone: 'good', eyebrow: 'Continued', title: 'Continue clicked', sub: `Clicked “${advanced}” for you. Nothing is submitted or bound.`, ...again };
   if (holding) {
     const then = check ? 'Then check the answers and click Looks right. Never Bind or Submit.'
       : offSteps ? 'Then moving on is yours: nothing on this step is clicked for you.'
