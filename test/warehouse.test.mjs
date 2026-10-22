@@ -170,6 +170,40 @@ test('writeWarehouse builds a DuckDB file whose tables, views and comments follo
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
+// The ```sql blocks in a section of docs/quoting-history-database.md.
+const docSql = (heading) => {
+  const doc = fs.readFileSync(path.join(root, 'docs', 'quoting-history-database.md'), 'utf8');
+  const section = doc.split(/^## /m).find((s) => s.startsWith(`${heading}\n`));
+  assert.ok(section, `no "## ${heading}" section`);
+  return [...section.matchAll(/```sql\n([\s\S]*?)```/g)].map((m) => m[1]);
+};
+
+test("every query in the document's Example SQL runs on the warehouse, and the coverage map's proposed tables fit it", async () => {
+  const dir = tmp();
+  const file = path.join(dir, 'w.duckdb');
+  const events = history();
+  await writeWarehouse(file, { events: eventRows(events), ...warehouseRows(events, { testIntakes: [LISTED] }), build_info: [] });
+  const examples = docSql('Example SQL');
+  assert.ok(examples.length >= 10, `${examples.length} examples`);
+  for (const sql of examples) {
+    await assert.doesNotReject(query(file, sql), sql);
+  }
+  // Test runs are left out.
+  const months = await query(file, examples[0]);
+  assert.deepEqual(months.map((r) => [r.state, Number(r.quotes)]), [['TX', 1]]);
+
+  // The coverage map isn't built: its proposed table and views must still fit the tables they read.
+  const proposed = docSql('Design');
+  assert.equal(proposed.length, 1);
+  const instance = await DuckDBInstance.create(file);
+  const db = await instance.connect();
+  try {
+    await db.run(proposed[0]);
+    assert.equal((await db.runAndReadAll('SELECT count(*) FROM unmapped_coverage_questions')).getRows().length, 1);
+  } finally { db.closeSync(); instance.closeSync(); }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('npm run warehouse builds the file from a log folder and replaces it on the next run', () => {
   const dir = tmp();
   const data = path.join(dir, 'server-data');
