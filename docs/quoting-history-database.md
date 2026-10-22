@@ -565,8 +565,8 @@ The profile goes first: the database can load all history whenever it arrives, b
 
 ## Related code
 
-- [server/index.mjs](../server/index.mjs): what the server keeps (`COMMON`, `EVENT_FIELDS`, `RUN_FIELDS`).
-- [usage.js](../src/usage.js): `intakeSummary`, `fillEvents`, `fieldChangeEvent`, `redactor`, `LOOKS_TYPED`.
+- [server/index.mjs](../server/index.mjs): what the server keeps (`COMMON`, `EVENT_FIELDS`, `RUN_FIELDS`; `PROFILE` in #148).
+- [usage.js](../src/usage.js): `intakeSummary`, `fillEvents`, `fieldChangeEvent`, `redactor`; `intakeProfile` and `ID_LIKE` (#149).
 - [schema.js](../src/schema.js), [normalize.js](../src/normalize.js): the client record the profile reads.
 - [events.mjs](../scripts/lib/events.mjs), [signals.mjs](../scripts/lib/signals.mjs), [learn.mjs](../scripts/lib/learn.mjs): quotes, test runs, outcomes and final answers.
 - [pagekit.js](../src/content/pagekit.js): `premiumReady`, `ratesStale`.
