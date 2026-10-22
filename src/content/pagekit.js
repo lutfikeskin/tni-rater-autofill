@@ -3112,6 +3112,8 @@
     // drawing (Business Owner Info right after the state is picked, OK 2026-10-07): Continue there
     // only gets "fields are empty" errors. (A tile page that was clicked continues.)
     const notDrawn = !report.fields && !report.actions.length && plan.some((s) => s.pages?.includes(startPage));
+    // The panel tries such a page again in a moment, and says nothing of it yet (W43-42).
+    if (notDrawn && !report.halted) report.notDrawn = true;
     if (advance && window === window.top && !report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
       && !(advance.exceptPages ?? []).includes(currentPage()) && !doneSteps.includes(report.stepKey)
       && (!advance.steps?.length || (!!report.stepKey && stepIs(advance.steps, report.stepKey)))) {
@@ -3157,6 +3159,12 @@
         // Per form and button (`byForm`): one already continued from is the agent's now.
         const key = found && advance.byForm ? [report.stepKey, squash(buttonText(found)), unitFormsNow()?.[0]?.id ?? ''].filter(Boolean).join('@') : report.stepKey;
         const button = found && !(advance.byForm && doneSteps.includes(key)) ? found : null;
+        // Nothing held Continue, but none could be clicked: the page still busy after the wait
+        // ('busy') or showing no Continue (`none`: not drawn yet, disabled, or a list's Looks Good
+        // left out). The panel tries an automatic fill once more, and logs which (`advanceDue`,
+        // W43-40: Progressive's Vehicle Summary, every vehicle added, not continued on 2026-10-22
+        // with nothing said why; continued 3 of 3 times on earlier builds with the switch on).
+        if (!found && !changed.length && !moved.length && !drawn.length && !report.halted && !agentPressed) report.advanceDue = pageBusy() ? 'busy' : 'none';
         // The agent checks the answers first: Continue only for the page as they approved it.
         const approved = !hold || (confirmed != null && confirmed === receipt());
         if (button && !approved) report.held = confirmed == null ? 'check' : 'changed';
