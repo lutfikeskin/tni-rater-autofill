@@ -80,7 +80,9 @@ A blank DOT box is not "no DOT number". Read with `dotWithin60Days`, the three c
 | `vehicles[]` | `vehicles[]` | Per vehicle: `type`, `year`, `make`, `model` (redacted, at most 40 characters each), `value` in dollars. No VIN. |
 | `trailers[]` | `trailers[]` | The same per trailer. |
 | `trailerInfo` | `trailerInfo.*` | `ownership`, `hitch`, `interchange` (yes/no/null), `interchangeLimit`, `equipTrailer`. |
-| `drivers[]` | `drivers[]` | Per driver: `age` in whole years on the day loaded (from the date of birth, which is not sent), `licenseState`, `cdl` (yes/no/null), `cdlYear`, `excluded`. No name or license number. |
+| `drivers[]` | `drivers[]` | Per driver: `age` in whole years on the day loaded (from the date of birth, which is not sent), `licenseState`, `cdl` (yes/no/null), `cdlYear`, `excluded`, `maritalStatus` (the intake's choice, or null), `gender` (`MALE` or `FEMALE` as set in the panel, or null). No name or license number. |
+
+Gender is not on the intake form (`NOT_ON_INTAKE` in [schema.js](../src/schema.js)). The record's gender stays null until the agent sets it in the panel, sometimes after Luna flags a first name as more often a woman's, and a driver left unset goes to the carriers as Male, TNI's standard. The profile keeps what the panel holds. A null means "sent as Male by TNI's standard", not that the client said so, and a count of men is mostly a count of that assumption. Marital status is the intake's answer, null when the intake left it blank.
 
 ### Coverage, prior insurance, claims
 
@@ -92,7 +94,7 @@ A blank DOT box is not "no DOT number". Read with `dotWithin60Days`, the three c
 
 ### Left out on purpose
 
-Company and owner names, phone, email, street, city, ZIP, USDOT, MC and FEIN numbers, license numbers, dates of birth, VINs, the license plate, the claims box and Additional Notes text. Driver gender and marital status are left out too: they are personal, and no business question above needs them. Adding any of these is a decision for the maintainer, not a default.
+Company and owner names, phone, email, street, city, ZIP, USDOT, MC and FEIN numbers, license numbers, dates of birth, VINs, the license plate, the claims box and Additional Notes text. Adding any of these is a decision for the maintainer, not a default.
 
 ### When it is sent, and how the server checks it
 
@@ -229,6 +231,8 @@ CREATE TABLE quote_drivers (
   cdl            boolean,
   cdl_year       int,
   excluded       boolean,
+  marital_status text,                      -- the intake's answer
+  gender         text,                      -- MALE, FEMALE as set in the panel; null: not set, sent as Male (TNI's standard)
   PRIMARY KEY (session, n)
 );
 
@@ -414,7 +418,7 @@ HAVING count(*) >= 3
 ORDER BY 1, 4 DESC;
 ```
 
-Drivers: age bands and CDLs by state.
+Drivers: age bands, CDLs, marital status and gender by state. The gender columns keep "set" and "not set" apart, since a driver not set went to the carriers as Male by TNI's standard.
 
 ```sql
 SELECT q.state,
@@ -422,7 +426,12 @@ SELECT q.state,
             WHEN d.age < 55 THEN '35-54' WHEN d.age IS NOT NULL THEN '55+' ELSE 'unknown' END AS age_band,
        count(*) AS drivers,
        count(*) FILTER (WHERE d.cdl) AS with_cdl,
-       count(*) FILTER (WHERE d.excluded) AS excluded
+       count(*) FILTER (WHERE d.excluded) AS excluded,
+       count(*) FILTER (WHERE lower(d.marital_status) LIKE 'married%') AS married,
+       count(*) FILTER (WHERE d.marital_status IS NULL) AS marital_blank,
+       count(*) FILTER (WHERE d.gender = 'FEMALE') AS set_female,
+       count(*) FILTER (WHERE d.gender = 'MALE') AS set_male,
+       count(*) FILTER (WHERE d.gender IS NULL) AS gender_not_set
 FROM quote_drivers d
 JOIN v_quotes q USING (session)
 GROUP BY 1, 2
@@ -530,12 +539,13 @@ The maintainer decides these before anyone writes the event:
 - **GEICO is not verified live.** Its step names, coverage keys and the premium wording come from saved pages and the first live runs (2026-10-21). Treat GEICO's numbers as provisional until its coverage map is checked against real quotes.
 - **History is uneven.** Older builds sent fewer fields: no `step`, `run` or `source`, no `view` before 0.9.9. Questions asked of early events get blanks, and `dropped` on an event names fields an older server threw away.
 - **Final answers are inferred.** `finalAnswers` takes the last fill, agent change, or the page's pick when the agent left the page. A change the recorder didn't see, or one made after the last layout, is missed. The weekly review shares the same caveat.
+- **Gender is mostly an assumption.** The intake doesn't ask it. Unless the agent set it, the carriers got Male by TNI's standard, and the profile says not set.
 - **Times are the agent's clock.** `t` comes from the agent's computer; `received_at` is the server's.
 
 ## Decisions for the maintainer
 
-1. **Purpose and disclosure.** The [privacy policy](../server/privacy.html) says usage information is kept "to maintain the extension" and that client names, numbers and addresses are not included. The Chrome Web Store's data-usage answers ([store release](chrome-web-store.md)) describe the usage log the same way. Business analysis is a new purpose, and the profile sends intake details the server never had: fleet, drivers' ages, prior insurer, limits. TNI's compliance owner should update the policy and the store answers before the profile ships, or confirm in writing that they already cover it.
-2. **The profile's fields.** The tables above are a starting list. Confirm it, and decide the open ones: `whatHaul` as redacted text, the prior insurer's name, drivers' exact age or a band, expiration by month. Gender, marital status and every identifier stay out unless TNI decides otherwise.
+1. **Purpose and disclosure.** The [privacy policy](../server/privacy.html) says usage information is kept "to maintain the extension" and that client names, numbers and addresses are not included. The Chrome Web Store's data-usage answers ([store release](chrome-web-store.md)) describe the usage log the same way. Business analysis is a new purpose, and the profile sends intake details the server never had: fleet, drivers' ages, marital status and gender, prior insurer, limits. Gender and marital status are personal attributes; the policy should name them. TNI's compliance owner should update the policy and the store answers before the profile ships, or confirm in writing that they already cover it.
+2. **The profile's fields.** The tables above are a starting list. Confirm it, and decide the open ones: `whatHaul` as redacted text, the prior insurer's name, drivers' exact age or a band, expiration by month. Every identifier stays out unless TNI decides otherwise.
 3. **Where the loader runs:** A, B or C. The proposal recommends A.
 4. **Which tool reads the database:** `psql` on the maintainer's computer, or a reporting tool. A reporting tool inside the Railway project lets the database stay off the internet (option C).
 5. **Agents' initials.** Whether `tni_analyst` sees them, or only totals across agents.
