@@ -71,6 +71,20 @@ the stored event (`dropped`: field names only, at most 20, `droppedMore` counts 
 `/v1/health` names its version (`server`, a hash of its `server/index.mjs`). `node scripts/server-check.mjs` compares that with this checkout, without
 sending any event: after a deploy it should say `same`.
 
+The server accepts `intake_profile`, a profile of the client's business (`PROFILE` in
+`server/index.mjs`): its groups `business`, `operations`, `vehicles`, `trailers`, `trailerInfo`,
+`drivers`, `coverage`, `priorInsurance` and `hasClaims`, each value in its exact shape. A yes/no is
+true, false or null; a dollar amount, a year, an age or a count of years is a whole number in a
+plausible range; USDOT, MC and FEIN are only `given` or `blank`; a state is two capital letters, a
+driver's gender `MALE`, `FEMALE` or null, a policy's expiry a month (`YYYY-MM`) or `none`; a list
+holds at most 50 units. Text is bounded and refused when it looks like it could identify the client
+(`ID_LIKE`: a date, an `@`, five digits in a row, or a word of eight or more letters and digits
+mixed, as in a VIN or policy number). A value out of its shape, or a key the profile has no shape
+for (a VIN, a date of birth), is left out and its group named in `dropped`; a group that isn't the
+right kind of object or list is dropped whole. The privacy policy must name the profile before
+this server is deployed: the server change and the policy go live together, and the extension that
+sends the profile is released after both.
+
 ## Logs on your computer
 
 ```bash
