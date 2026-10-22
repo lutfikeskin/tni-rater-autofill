@@ -27,7 +27,10 @@
 // `vehicleSteps` / `driverSteps`: one-address steps that show one vehicle's (or trailer's) form, or
 // one driver's, at a time: the agent's edits there are kept per unit. `stopSteps`: steps that are
 // the agent's, by name, with what the panel says there: nothing is filled or clicked on them. An
-// action's `steps`: the only steps it is clicked on.
+// action's `steps`: the only steps it is clicked on. `stopButtons`: screens that are the agent's
+// without a step of their own, by name, each known by a button only it shows (`button`, a pattern on
+// the button's words) with what the panel says there (`note`, or a function of the client record):
+// nothing is filled or clicked on them either (stopScreen below).
 //
 // `world: 'MAIN'` runs the page script in the page's own JavaScript world, needed when the
 // carrier's widgets (e.g. ExtJS) are only reachable through the page's own objects.
@@ -77,4 +80,11 @@ export function quoteProgress(carrier, page, step) {
   const steps = carrier?.quoteSteps ?? [];
   const index = steps.findIndex((s) => (step && s.step === step) || (page && s.pages?.includes(page)));
   return index < 0 ? null : { name: steps[index].name, index, count: steps.length };
+}
+
+// The carrier's screen that is the agent's (`stopButtons`) a page shows, by the words of its buttons
+// (a page layout's `buttons`): its name, or null.
+export function stopScreen(carrier, buttons) {
+  const words = (buttons ?? []).map((b) => String(b ?? '').replace(/\s+/g, ' ').trim());
+  return Object.entries(carrier?.stopButtons ?? {}).find(([, s]) => words.some((w) => new RegExp(s.button, 'i').test(w)))?.[0] ?? null;
 }

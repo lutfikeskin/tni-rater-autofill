@@ -430,7 +430,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 10);
+  assert.equal(h.context.__raterRecorder.version, 11);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -498,7 +498,7 @@ test('an older recorder is replaced, so changes carry what the current one repor
   h.context.__raterRecorder = { version: 7, rebaseline() {}, dispose() { disposed.push(7); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
   assert.deepEqual(disposed, [7]);
-  assert.equal(h.context.__raterRecorder.version, 10);
+  assert.equal(h.context.__raterRecorder.version, 11);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {
@@ -1018,4 +1018,37 @@ test('field changes carry the unit forms on screen as the kit reads them, else n
   forms = [{ list: 'drivers', id: 'Id_GiveDriverRelationshipToBusiness_34002' }];
   h.message({ ra: 'recorder', cmd: 'resume' });
   assert.deepEqual([Array.from(last().changes, (c) => [c.after, c.agent]), last().forms], [[['1', true]], forms]);
+});
+
+// FL live run 6, 2026-10-21: GEICO drew the vehicle list, which has no question, 5–7 s after the
+// Next that saved a vehicle's form, so nothing told the panel. The recorder says when a unit list the
+// kit knows is drawn or its rows change (pagekit unitListsNow), also one drawn during a fill.
+test('a unit list drawn or changed is sent once, by the step on screen', () => {
+  const h = harness();
+  const shown = () => h.sent.filter((m) => m.event === 'list_shown');
+  let lists = '';
+  h.context.__raterKit = { unitListsNow: () => lists };
+  h.tick();
+  assert.equal(shown().length, 0, 'no list');
+  lists = '#summaryPage-AddCommercialVehicle:1';
+  h.tick();
+  h.tick();
+  assert.equal(shown().length, 1, 'drawn: once');
+  assert.ok('step' in shown()[0] && shown()[0].page, 'with the page and the step on screen');
+  // Gone (the next unit's form) and drawn again with another row, during a fill: sent after it.
+  lists = '';
+  h.tick();
+  h.message({ ra: 'recorder', cmd: 'pause' });
+  lists = '#summaryPage-AddCommercialVehicle:2';
+  h.tick();
+  assert.equal(shown().length, 1, 'nothing while paused');
+  h.message({ ra: 'recorder', cmd: 'resume' });
+  h.tick();
+  assert.equal(shown().length, 2);
+  // A kit without it (another build), or one that fails: nothing.
+  h.context.__raterKit = {};
+  h.tick();
+  h.context.__raterKit = { unitListsNow: () => { throw new Error('unreadable'); } };
+  h.tick();
+  assert.equal(shown().length, 2);
 });

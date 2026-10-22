@@ -4,12 +4,13 @@
 // behaviour played by test/fixtures/geico/mock.js, filled step by step by the real fill engine and
 // GEICO rules the way the side panel does it, and the agent's part played with real (trusted)
 // clicks and keys: Next on each step that leaves them something, the answers the intake doesn't give,
-// a few corrections, and the trailer's Add Vehicle or Trailer and Next with "Click Continue when the
-// page is done" off. With it on, the extension adds vehicle 2 and driver 2 itself (the list's "+", the
+// a few corrections, Recalculate on Quote & Coverages, and the trailer's Add Vehicle or Trailer and
+// Next with "Click Continue when the page is done" off. With it on, the extension adds vehicle 2 and driver 2 itself (the list's "+", the
 // chooser's Vehicle and Next), and continues where nothing is left for the agent (geico.advance): Next
 // or Save and Continue on a step or unit form up to Additional Business Info, Looks Good on a list that
 // holds every intake unit, never on Quote & Coverages. Then every answer is checked against what TNI
-// expects.
+// expects. Two quote pages of their own follow: GEICO's "Add USDOT Number / Skip" screen (W43-27) and
+// the gateway's Start New Quote ZIP carried over from the last quote (W43-28).
 //
 //   npm run mock:geico             # exits 1 on a wrong answer, a missing needs-you item, an agent
 //                                  # correction the next fill overwrote (one made on a form no fill
@@ -46,6 +47,7 @@ import { buildPlan } from '../src/plan.js';
 import { geico } from '../src/carriers/geico.js';
 import { knownStep } from '../src/usage.js';
 import { advanceFor, unitListSpecs, unitToAdd } from '../src/units.js';
+import { stopScreen } from '../src/carriers.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
@@ -61,7 +63,8 @@ const RECORDER = source('recorder.js');
 const record = {
   applicant: { name: 'SAMPLE FREIGHT LLC', dot: '1234567', mc: null, mcDotWithin60Days: null, fein: null, yearEstablished: 2019, yearsInBusiness: 7,
     phone: '(402) 555-0100', email: 'client@example.test', owner1: 'SAMPLE DRIVER', owner2: null, ownerDrives: true, yearsExperience: 10, applicationDate: '10/20/2026' },
-  garaging: { street: '1 Test Way', unit: null, city: 'Omaha', state: 'NE', zip: '68102' },
+  // A unit whose number is a letter, as on GA's quote (W43-36): A and Apartment in GEICO's boxes.
+  garaging: { street: '1 Test Way', unit: 'Apt A', city: 'Omaha', state: 'NE', zip: '68102' },
   operations: { businessClass: 'Expediter', whatHaul: 'General freight', radius: '150 miles', radiusMiles: 150, vehicleOwnership: 'Owned', personalUse: false,
     usesEld: false, eldBrand: null, needSr22: false, filingsRequired: false, filingsWhich: null, hazmat: false, hazPlacard: false, movingState: false,
     teamDriving: false, canadaLoads: false, licensePlate: null, equipVehicle: 0 },
@@ -99,8 +102,9 @@ const EXPECT = {
     GivePhoneNumber: PHONE, GiveBusinessPhoneNumber: PHONE,
     // The agent's corrections (the intake has DRIVER and client@example.test).
     GiveLastName: 'DRIVERS', GiveEmail: 'owner@example.test',
-    // GEICO's suggestion for the intake's address, picked by the fill.
-    GiveStreet: '1 Test Way', GiveUnitNumber: '', GiveUnitType: '', GiveZip: '68102', GiveCity: 'OMAHA',
+    // GEICO's suggestion for the intake's address (typed without the unit), picked by the fill; the
+    // unit in its own boxes (W43-36).
+    GiveStreet: '1 Test Way', GiveUnitNumber: 'A', GiveUnitType: 'Apartment', GiveZip: '68102', GiveCity: 'OMAHA',
     GiveBusinessOwnershipType: 'Limited Liability Company', GiveBusinessName: 'SAMPLE FREIGHT LLC',
   },
   // The owner's identity again, with the Social Security number, which is never filled. The last name
@@ -108,7 +112,7 @@ const EXPECT = {
   // Owner Info, which this form asks again.
   'Vehicles: owner check': {
     GiveBusinessName: 'SAMPLE FREIGHT LLC', GiveFirstName: 'SAMPLE', GiveLastName: '', GiveDateOfBirth: '01/02/1980', GiveZip: '68102', GiveCity: 'OMAHA',
-    GiveUnitNumber: '', GiveSocialSecurityNumber: '',
+    GiveUnitNumber: 'A', GiveSocialSecurityNumber: '',
   },
   // Year, make and model by the VIN's decode (checked against the intake, never typed).
   'Vehicles: vehicle 1': {
@@ -148,6 +152,14 @@ const EXPECT = {
     'cov:Bodily Injury or Combined Single Limit Liability': '$750,000 Combined Single Limit',
     GiveMtcEligibleRequireCoverageYesNo: 'Yes', GiveMtcRequireCoverageForMobileHomesYesNo: 'No', GiveMtcRequireCoverageForBusinessDocumentYesNo: 'No',
     'cov:Motor Truck Cargo': '$100k/$1000 deductible', GiveMotorTruckGeneralLiabilityCoverageRequired: 'No',
+    // TNI's (FL live run 4, 2026-10-21): UM/UIM $100,000 CSL, road service accepted, 11 Payments.
+    'cov:Uninsured Motorist Bodily Injury (includes Underinsured)': '$100,000 Combined Single Limit',
+    // The installments group (the second): 11 Payments is one of its plans View More shows.
+    'cov:ERS#1': 'I accept this coverage', 'cov:ERS#2': 'I accept this coverage', 'GivePayPlanV2#2': 'GEICO_PP_11Pay',
+    // TNI's (FL live run 5, 2026-10-21: W43-22, W43-23): fire and theft Not Included, rental $40 a day,
+    // and the commodities from what they haul (the intake's general freight: other consumer goods).
+    'cov:FT#1': 'Not Included', 'cov:FT#2': 'Not Included', 'cov:Rental#1': '$40 Per Day, $1,200 Max', 'cov:Rental#2': '$40 Per Day, $1,200 Max',
+    GiveMtcHaulingCommoditiesCollect: ['Consumer Goods - Other Consumer Goods'],
   },
 };
 // Questions the fill must leave to the agent, each with its note (report.noData), by field key:
@@ -161,9 +173,7 @@ const NEEDS_YOU = [
   ['Vehicles: vehicle 1', /\S/, ['ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: trailer 1', /trailer/, ['ref:GiveOtherVehicleType']],
-  ['Quote & Coverages', /\S/, ['ref:GivePayPlanV2', 'cov:uninsured motorist bodily injury includes underinsured', 'cov:medical payments med',
-    ...['FT', 'Rental', 'ERS'].flatMap((c) => [`cov:${c}#1`, `cov:${c}#2`]),
-    'ref:GiveMtcRequireCoverageForMobileHomesYesNo', 'ref:GiveMtcRequireCoverageForBusinessDocumentYesNo', 'ref:GiveMtcHaulingCommoditiesCollect']],
+  ['Quote & Coverages', /\S/, ['cov:medical payments med']],
 ];
 const STOP_STEPS = Object.keys(geico.stopSteps ?? {});
 
@@ -277,13 +287,14 @@ function skipBy() {
   };
 }
 // The unit the fill adds (sidepanel.js pickUnitToAdd, chosen by the same src/units.js unitToAdd), with
-// the picker moved to it when no unit form is on screen. `click` with "Click Continue when the page
-// is done" on (settings.autoAdvance, read as the kit is called).
-const settings = { autoAdvance: true };
+// the picker moved to it when no unit form is on screen. `click` with "Fill the pages" or "Click
+// Continue when the page is done" on (settings.autoPages, settings.autoAdvance, read as the kit is
+// called; W43-20), or on the agent's Fill this page (`asked`; FL live run 6, 2026-10-21).
+const settings = { autoAdvance: true, autoPages: false };
 // The list on screen holds every intake unit (unitToAdd `complete`): its Looks Good is the fill's
 // Continue (advanceFor).
 let unitsListed = false;
-async function pickUnitToAdd() {
+async function pickUnitToAdd(asked = false) {
   unitsListed = false;
   const specs = unitListSpecs(geico, record);
   const seen = await inWorld(`(() => { const kit = globalThis.__raterKit; const specs = ${JSON.stringify(specs.map(({ selector, items }) => ({ selector, items })))};
@@ -297,7 +308,7 @@ async function pickUnitToAdd() {
     active[list] = index;
     lines.push(`  (the panel moved to ${list.slice(0, -1)} ${index + 1}: the next to add)`);
   }
-  return { list, index, click: settings.autoAdvance };
+  return { list, index, click: settings.autoPages || settings.autoAdvance || asked };
 }
 
 // Picking unit `index` of `list` (renderPickers / releaseUnitForms): only the forms bound to it are let
@@ -345,13 +356,17 @@ let totalMs = 0;
 
 // One fill of the page as the panel starts it (fillPage): the recorder paused, the plan for the
 // picker's units, the options of sidepanel.js fillOptions for GEICO, then rememberFill's bookkeeping.
-async function fill(form) {
+// `asked`: the agent's own Fill this page (fillContext), which gives back an answer GEICO took back (no
+// takenBack) and adds a unit with both switches off; the others are the panel's automatic fills.
+// `expectFailed`: patterns for the keys of the red items this fill must leave (the answers GEICO
+// changed when the fill's Recalculate redrew the step; `null` for the item without a field).
+async function fill(form, { asked = false, expectFailed = [] } = {}) {
   await poll();
   const step = await inWorld('__raterKit.step()');
   const shown = (await mock()).step;
   if (step !== shown) fail(`${form}: the kit reads the step as ${JSON.stringify(step)} while the page is on ${shown}`);
   // The list may have moved the picker to the unit the fill adds.
-  const adding = await pickUnitToAdd();
+  const adding = await pickUnitToAdd(asked);
   const fillActive = { ...active };
   const plan = buildPlan(record, geico, adding ? { ...fillActive, adding } : fillActive);
   const options = {
@@ -364,7 +379,7 @@ async function fill(form) {
       bound: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...unitForms[list] }])),
     },
     skip: keysOf(PAGE), skipBy: skipBy(), run: ++run,
-    takenBack: geico.keepTakenBack?.length ? { steps: geico.keepTakenBack, keys: Object.fromEntries([...filledKeys].map((key) => [key, true])) } : null,
+    takenBack: !asked && geico.keepTakenBack?.length ? { steps: geico.keepTakenBack, keys: Object.fromEntries([...filledKeys].map((key) => [key, true])) } : null,
   };
   await tellRecorder('pause');
   const t0 = Date.now();
@@ -422,7 +437,7 @@ async function fill(form) {
   if (report.advanced) lines.push(`  → ${report.advanced}`);
   if (report.halted) lines.push(`  halted: ${report.reason}`);
   for (const x of report.unknown ?? []) fail(`${form}: unfamiliar question "${x.label}" (${x.key}): left for the agent and offered to the AI assistant`);
-  for (const x of report.failed ?? []) fail(`${form}: failed "${x.label}" (${x.key}): ${x.reason}`);
+  for (const x of report.failed ?? []) if (!expectFailed.some((re) => re.test(String(x.key)))) fail(`${form}: failed "${x.label}" (${x.key}): ${x.reason}`);
   return report;
 }
 
@@ -565,6 +580,94 @@ async function corrected(form, key, name, want, scope = null) {
 }
 const formIdOf = (list) => Object.keys(unitForms[list]).find((id) => unitForms[list][id] === active[list]) ?? null;
 
+// --- Screens the main run doesn't reach ------------------------------------------------------------------
+// A quote page of its own (`query`: the mock's start options) with the extension's world, the kit and
+// the recorder, as on the main run: `run` evaluates there, `heard` takes what the recorder said since.
+async function sidePage(query, name) {
+  const tab = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+  tab.on('pageerror', (e) => errors.push(String(e.message)));
+  await tab.route(/^(https?|wss?):/i, (r) => { refused.push(r.request().url()); return r.abort(); });
+  await tab.goto(`${pathToFileURL(path.join(root, 'test/fixtures/geico/quote.html')).href}?${query}`);
+  await tab.waitForFunction(() => !!window.__geicoMock?.view);
+  const session = await tab.context().newCDPSession(tab);
+  const { frameTree: tree } = await session.send('Page.getFrameTree');
+  const { executionContextId } = await session.send('Page.createIsolatedWorld', { frameId: tree.frame.id, worldName: `TNI Rater Autofill (mock, ${name})` });
+  const run = async (expression) => {
+    const r = await session.send('Runtime.evaluate', { expression, contextId: executionContextId, awaitPromise: true, returnByValue: true });
+    if (r.exceptionDetails) throw new Error(`in the extension's world: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+    return r.result.value;
+  };
+  await run(`globalThis.chrome = { runtime: { id: 'geico-mock', sent: [],
+    sendMessage(msg) { this.sent.push(msg); return Promise.resolve(); },
+    onMessage: { listeners: new Set(), addListener(f) { this.listeners.add(f); }, removeListener(f) { this.listeners.delete(f); } } } }; true`);
+  await run(KIT);
+  await run(RECORDER);
+  const heard = async () => { await run('globalThis.__raterRecorder.poll(); true'); return run('chrome.runtime.sent.splice(0)'); };
+  const recorder = (cmd) => run(`for (const f of chrome.runtime.onMessage.listeners) f({ ra: 'recorder', cmd: ${JSON.stringify(cmd)} }); true`);
+  return { tab, run, heard, recorder };
+}
+
+// W43-27 (TNI, 2026-10-21): GEICO's "Add USDOT Number / Skip" screen after Business & Owner Info
+// (?usdot=ask). Its layout names the screen (stopScreen, as the panel reads it), which the panel says
+// in red, filling nothing there; a fill there all the same reads no step and fills or clicks nothing,
+// Continue on. The agent's Skip goes on to a page that is no such screen.
+async function usdotScreen() {
+  const { tab, run } = await sidePage('view=business-owner&usdot=ask', 'USDOT screen');
+  const press = (text) => tab.locator('gds-button').filter({ hasText: new RegExp(`^\\s*${text}\\s*$`, 'i') }).filter({ visible: true }).first().click();
+  await press('Next');
+  await tab.waitForFunction(() => window.__geicoMock.view === 'usdot-ask', null, { timeout: 15000 });
+  const layout = await run('__raterKit.capture(null, [])');
+  const screen = stopScreen(geico, layout.buttons);
+  lines.push(`## USDOT screen · buttons ${layout.buttons.join(', ')} · ${screen ? `stop: ${screen}` : 'no stop'}`);
+  if (screen !== 'USDOT Number') fail(`USDOT screen: its buttons [${layout.buttons.join(', ')}] are not read as GEICO's USDOT Number screen`);
+  if (layout.step) fail(`USDOT screen: the kit read the step ${JSON.stringify(layout.step)} there`);
+  const options = { replaceChoices: !!geico.replaceChoices, stopSteps: STOP_STEPS, maxRounds: 6, advance: advanceFor(geico, true) };
+  const report = await run(`__raterKit.fill(${JSON.stringify(buildPlan(record, geico, {}))}, ${JSON.stringify(options)})`);
+  const done = (await tab.evaluate(() => window.__geicoMock.log)).filter((e) => !e.isTrusted && ['click', 'change', 'input'].includes(e.type));
+  if (report.filled.length || report.actions?.length || report.advanced || done.length) {
+    fail(`USDOT screen: a fill there filled ${report.filled.length}, clicked ${[...(report.actions ?? []).map((a) => a.text), report.advanced].filter(Boolean).join(', ') || 'nothing'} (${done.length} page events)`);
+  }
+  await press('Skip');
+  await tab.waitForFunction(() => window.__geicoMock.view !== 'usdot-ask', null, { timeout: 15000 });
+  const after = await run('__raterKit.capture(null, [])');
+  if (stopScreen(geico, after.buttons)) fail('USDOT screen: still read as that screen after Skip');
+  lines.push(`  (agent pressed Skip: ${await tab.evaluate(() => window.__geicoMock.view)})`);
+  await tab.close();
+}
+
+// W43-28 (TNI, 2026-10-21): the gateway's Start New Quote window opens with the last quote's ZIP
+// (?gateway=30301): the fill replaces it with the intake's. The agent then types another: the recorder
+// says it is theirs, and the next fill (its key in the skip, as the panel gives it) leaves it, unflagged.
+async function gatewayZip() {
+  const { tab, run, heard, recorder } = await sidePage('view=business-class&gateway=30301', 'gateway');
+  const plan = buildPlan(record, { ...geico, rules: geico.rules.filter((r) => r.selector === '#start-quote-zip'), actions: [] }, {});
+  const zip = () => tab.evaluate(() => document.getElementById('start-quote-zip').value);
+  const fillZip = async (skip) => {
+    await recorder('pause');
+    const report = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify({ replaceChoices: !!geico.replaceChoices, stopSteps: STOP_STEPS, maxRounds: 4, skip })})`);
+    await recorder('resume');
+    return report;
+  };
+  let report = await fillZip([]);
+  const key = report.filled.find((x) => x.path === 'garaging.zip')?.key;
+  lines.push(`## Gateway Start New Quote · carried over 30301 · filled ${await zip()}`);
+  if ((await zip()) !== record.garaging.zip || !key) fail(`gateway: the ZIP GEICO carried over is ${await zip()} after the fill, not the intake's`);
+  if (report.kept.length || report.checks.length || report.failed.length) fail('gateway: the carried-over ZIP was kept or flagged');
+  await heard();
+  const box = tab.locator('#start-quote-zip');
+  await box.fill('68105');
+  await box.press('Tab');
+  const theirs = (await heard()).filter((m) => m.event === 'field_changes').flatMap((m) => m.changes).filter((c) => c.agent).map((c) => c.key);
+  if (!theirs.includes(key)) fail(`gateway: the recorder did not report the agent's ZIP as theirs (${key}; heard ${theirs.join(', ') || 'nothing'})`);
+  report = await fillZip(theirs);
+  lines.push(`  (agent typed another ZIP: ${await zip()} after the next fill)`);
+  if ((await zip()) !== '68105') fail(`gateway: the agent's ZIP was replaced with ${await zip()}`);
+  if (report.filled.length || report.checks.length || report.kept.some((x) => x.differs)) fail('gateway: the agent\'s ZIP was filled over or flagged');
+  const changes = (await tab.evaluate(() => window.__geicoMock.log)).filter((e) => e.target === 'start-quote-zip').map((e) => `${e.isTrusted ? 'agent' : 'extension'} ${e.text}`);
+  if (JSON.stringify(changes) !== JSON.stringify([`extension ${record.garaging.zip}`, 'agent 68105'])) fail(`gateway: the ZIP box changed [${changes.join(', ')}]`);
+  await tab.close();
+}
+
 // --- The quote -----------------------------------------------------------------------------------------
 // The agent's run through the quote, step by step. A step that goes wrong stops it: what was
 // seen so far is still checked and reported.
@@ -654,7 +757,8 @@ async function scenario() {
   await leave('Vehicles: vehicle 2');
   await agent.go('Next', 'vehicle-list');
 
-  // The trailer, with "Click Continue when the page is done" off: the fill on the list clicks nothing;
+  // The trailer, with "Click Continue when the page is done" off (and "Fill the pages" off): an
+  // automatic fill on the list clicks nothing (the agent's own Fill this page would click "+");
   // the agent clicks "+", the fill answers Trailer on the chooser (the next intake unit), and the agent
   // clicks Next. They pick the trailer's year (2016; the intake has 2015) as soon as the form opens,
   // before any fill has read it: the recorder names the trailer form with the change, so it is kept
@@ -665,6 +769,10 @@ async function scenario() {
   const listOff = await fill('Vehicles: list');
   if (listOff.actions?.length) fail(`Vehicles: the fill clicked ${listOff.actions.map((a) => a.id).join(', ')} with "Click Continue when the page is done" off`);
   await agent.click('[data-testid="addIcon"]', 'Add Vehicle or Trailer');
+  // GEICO draws the chooser a moment after "+" (FL live run 4): the agent waits for it.
+  await page.waitForFunction(() => window.__geicoMock.view === 'vehicle-or-trailer', null, { timeout: 15000 });
+  await settled();
+  await poll();
   const chose = await fill('Vehicles: or trailer');
   if ((await values()).GiveVehicleOrTrailer !== 'No') fail(`Vehicles: the chooser was not answered Trailer for the trailer (${JSON.stringify((await values()).GiveVehicleOrTrailer)})`);
   if (chose.actions?.length || (await mock()).view !== 'vehicle-or-trailer') fail('Vehicles: the chooser\'s Next was clicked with "Click Continue when the page is done" off');
@@ -704,40 +812,72 @@ async function scenario() {
   await continued('Additional Business Info', 'Next', 'quote');
 
   // Quote & Coverages: the fill runs when the step opens and again only for questions it draws
-  // (geico.newQuestionsOnlySteps: fillDrawn), never after an answer alone. The agent changes the
-  // liability limit, opens Motor Truck Cargo and answers its questions the intake doesn't; each
-  // question that draws the next gets the panel's follow-up. Collision's deductibles show a moment
-  // after comprehensive is chosen (FL live run 2, 2026-10-21), and the fill waits for them. The
-  // fills never click Recalculate (FL live run, 2026-10-21: each fill's Recalculate redrew the step
-  // and took back the agent's choices); the agent does, and the fill after its redraw (new ids for
-  // every coverage list) keeps the agent's limit and changes nothing, so the premium stays rated.
-  await fillDrawn('Quote & Coverages');
-  await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
+  // (geico.newQuestionsOnlySteps: fillDrawn), never after an answer alone. It opens Motor Truck Cargo
+  // (a collapsed card; the intake asks for cargo: W43-16), and each cargo question that draws the next
+  // gets the panel's follow-up. Collision's deductibles show a moment after comprehensive is chosen
+  // (FL live run 2, 2026-10-21), and the fill waits for them. The fill answers mobile homes No and picks
+  // the commodities (W43-23); the agent changes the liability limit, answers household goods and marks
+  // the rest done; nothing clicked meanwhile
+  // (`whenClear`). Then Fill this page: with nothing left, Recalculate once the page has been quiet for
+  // 2 s (W43-31). GEICO draws its own choices back for UM/UIM (the fill's) and the liability limit (the
+  // agent's), as on FL live run 6: the fill puts UM/UIM back, leaves the agent's limit, marks both red
+  // with one more red item, and clicks nothing more. The agent picks the limit again and clicks
+  // Recalculate, and the follow-up fill picks 11 Payments under View More Payment Plans and clicks
+  // Print Quote Proposal, once each (TNI, FL live run 4, 2026-10-21: W43-18), never Recalculate
+  // again; the agent's limit is kept.
   const CARGO = 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]';
-  await agent.open(CARGO, 'Motor Truck Cargo');
   await fillDrawn('Quote & Coverages');
-  await agent.open(CARGO, 'Motor Truck Cargo');
-  await agent.radio('GiveMtcRequireCoverageForMobileHomesYesNo', 'No');
-  await fillDrawn('Quote & Coverages');
+  if (!doneActions.has('openCargo')) fail('Quote & Coverages: the fill did not open Motor Truck Cargo');
+  await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
   await agent.open(CARGO, 'Motor Truck Cargo');
   await agent.radio('GiveMtcRequireCoverageForBusinessDocumentYesNo', 'No');
   await fillDrawn('Quote & Coverages');
-  // The commodities (required: Recalculate waits for them).
-  await agent.open(CARGO, 'Motor Truck Cargo');
-  await agent.pickList('GiveMtcHaulingCommoditiesCollect', ['Miscellaneous Goods - Containerized Freight']);
-  await fillDrawn('Quote & Coverages');
-  for (const f of fills.filter((x) => x.form === 'Quote & Coverages' && x.report.actions?.length)) fail(`Quote & Coverages: a fill clicked ${f.report.actions.map((a) => a.text).join(', ')}`);
-  const recalcs = (await mock()).recalcs;
-  if (recalcs) fail(`Quote & Coverages: Recalculate was clicked ${recalcs} time(s) before the agent's`);
-  await agent.press('Recalculate');
-  await page.waitForFunction((n) => window.__geicoMock.recalcs > n, recalcs, { timeout: 15000 });
+  const early = fills.filter((x) => x.form === 'Quote & Coverages').flatMap((f) => f.report.actions ?? []).filter((a) => a.id !== 'openCargo');
+  if (early.length) fail(`Quote & Coverages: a fill clicked ${early.map((a) => a.text).join(', ')} with questions left for the agent`);
+  if ((await mock()).recalcs) fail('Quote & Coverages: Recalculate was clicked with questions left for the agent');
+  // What is left and stays as GEICO has it: marked done (sidepanel markDone: the step's agent keys).
+  const leftKeys = [...(needsSeen.get('Quote & Coverages')?.keys() ?? [])];
+  for (const key of leftKeys) keysIn(`${PAGE}|s:Quote & Coverages`).add(key);
+  lines.push(`  (agent marked ${leftKeys.length} item(s) done)`);
+  const UM = 'cov:Uninsured Motorist Bodily Injury (includes Underinsured)';
+  const LIMIT = 'cov:Bodily Injury or Combined Single Limit Liability';
+  await page.evaluate(([um, limit]) => { window.__geicoMock.recalcResets = { [um]: '$750,000 Combined Single Limit', [limit]: '$1,000,000 Combined Single Limit' }; }, [UM, LIMIT]);
+  const asked = await fill('Quote & Coverages', { asked: true, expectFailed: [/^cov:uninsured motorist bodily injury/, /^cov:bodily injury or combined single limit/, /^null$/] });
   await settled();
   await poll();
-  if (!(await mock()).premium) fail('Quote & Coverages: the agent\'s Recalculate left the premium out of date');
+  const askedIds = asked.actions?.map((a) => a.id) ?? [];
+  if (JSON.stringify(askedIds) !== '["recalculate"]') fail(`Quote & Coverages: Fill this page clicked [${askedIds.join(', ')}], expected [recalculate] (GEICO then changed answers)`);
+  if ((await mock()).recalcs !== 1) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s) after Fill this page, expected once`);
+  // In page order: the agent's limit (left, "your answer"), UM/UIM (put back), then the one without a field.
+  const red = (asked.failed ?? []).map((x) => [x.key ?? null, /your answer/.test(x.reason) ? 'agent' : /put it back/.test(x.reason) ? 'back' : 'say']);
+  if (JSON.stringify(red) !== JSON.stringify([['cov:bodily injury or combined single limit liability', 'agent'], ['cov:uninsured motorist bodily injury includes underinsured', 'back'], [null, 'say']])) {
+    fail(`Quote & Coverages: the red items after Recalculate were ${JSON.stringify(red)}, expected the agent's limit left, UM/UIM put back and one without a field`);
+  }
+  const redrawn = await values();
+  if (redrawn[UM] !== '$100,000 Combined Single Limit') fail(`Quote & Coverages: UM/UIM is ${JSON.stringify(redrawn[UM])} after Recalculate, not put back to $100,000 CSL`);
+  if (redrawn[LIMIT] !== '$1,000,000 Combined Single Limit') fail(`Quote & Coverages: the agent's limit is ${JSON.stringify(redrawn[LIMIT])} after Recalculate: the fill changed it`);
+  // TNI's pay plan isn't offered until View More Payment Plans, which GEICO shows once rated: not the agent's.
+  if ([...needsSeen.get('Quote & Coverages')?.keys() ?? []].some((k) => /PayPlan/.test(k))) fail('Quote & Coverages: the pay plan was left for the agent before Recalculate');
+  await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
+  await agent.press('Recalculate');
+  await page.waitForFunction(() => window.__geicoMock.premium, null, { timeout: 15000 });
+  await settled();
+  await poll();
+  const done = await fill('Quote & Coverages');
+  await page.waitForTimeout(700);
+  await settled();
+  await poll();
+  // The page's own count says Recalculate ran twice (the click checks below say by whom: the fill once,
+  // the agent once).
+  const clickedIds = done.actions?.map((a) => a.id) ?? [];
+  if (JSON.stringify(clickedIds) !== JSON.stringify(['morePayPlans', 'printProposal'])) fail(`Quote & Coverages: the fill clicked [${clickedIds.join(', ')}], expected [morePayPlans, printProposal] after the agent's Recalculate`);
+  if ((await mock()).recalcs !== 2) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s), expected twice (the fill's, then the agent's)`);
+  if (!(await mock()).premium) fail('Quote & Coverages: the premium is out of date after the agent\'s Recalculate and the pay plan');
+  if ((await values())['GivePayPlanV2#2'] !== 'GEICO_PP_11Pay') fail(`Quote & Coverages: the pay plan is ${JSON.stringify((await values())['GivePayPlanV2#2'])}, not 11 Payments`);
   const after = await fill('Quote & Coverages');
   await corrected('Quote & Coverages', 'cov:bodily injury or combined single limit liability', 'cov:Bodily Injury or Combined Single Limit Liability', '$750,000 Combined Single Limit');
-  if (after.filled.length) fail(`Quote & Coverages: the fill after the agent's Recalculate changed ${after.filled.map((x) => x.label).join('; ')}`);
-  if (!(await mock()).premium) fail('Quote & Coverages: the fill after the agent\'s Recalculate put the premium out of date');
+  if (after.filled.length || after.actions?.length) fail(`Quote & Coverages: the fill after Print changed ${after.filled.map((x) => x.label).join('; ')} / clicked ${(after.actions ?? []).map((a) => a.text).join(', ')}`);
+  if (!(await mock()).premium) fail('Quote & Coverages: the fill after Print put the premium out of date');
   await leave('Quote & Coverages');
   await agent.go('Next', 'final-quote-details');
 
@@ -758,6 +898,13 @@ try {
   await scenario();
 } catch (e) {
   fail(`the run stopped: ${String(e.message).split('\n')[0]}`);
+}
+for (const [phase, name] of [[usdotScreen, 'USDOT screen'], [gatewayZip, 'gateway ZIP']]) {
+  try {
+    await phase();
+  } catch (e) {
+    fail(`the ${name} run stopped: ${String(e.message).split('\n')[0]}`);
+  }
 }
 
 // --- Checks --------------------------------------------------------------------------------------------
@@ -810,8 +957,10 @@ if (ownerCheck && (filledOn('Vehicles: owner check', 'ref:GiveLastName') || owne
 // when the page is done" on), once, its list's "+" and, for a vehicle, the chooser's Next: vehicle 2's
 // and driver 2's, never the trailer's (added with the setting off). Its Continues, once each, where
 // nothing was left for the agent: the owner's driver form, Add Driver, both lists with every intake
-// unit, Additional Business Info. Never Recalculate, another Next, Save and Continue or Looks Good,
-// Discard, Print, a progress link, an edit icon, a link.
+// unit, Additional Business Info. On Quote & Coverages, once each: Motor Truck Cargo's chevron,
+// Recalculate (W43-31: once a quote; the agent's after that), View More Payment Plans and Print Quote
+// Proposal (TNI, 2026-10-21). Never another Next, Save and Continue or Looks Good, Discard, a progress
+// link, another edit icon or link.
 const isAdd = (e) => e.type === 'click' && (e.target === 'addIcon' || (e.target === 'button' && e.text === 'Next' && e.view === 'vehicle-or-trailer'));
 const adds = final.log.filter((e) => !e.isTrusted && isAdd(e)).map((e) => `${e.target} on ${e.view}`);
 const wantAdds = ['addIcon on vehicle-list', 'button on vehicle-or-trailer', 'addIcon on driver-list'];
@@ -822,13 +971,77 @@ const wantContinues = ['Looks Good on vehicle-list', 'Next on owner-driver', 'Sa
 if (JSON.stringify(continues) !== JSON.stringify(wantContinues)) fail(`the extension's Continues were [${continues.join(', ')}], expected [${wantContinues.join(', ')}]`);
 const picks = final.log.filter((e) => !e.isTrusted && e.type === 'click' && e.target === 'option').map((e) => e.view);
 if (JSON.stringify(picks) !== '["business-owner"]') fail(`the extension picked address suggestions on [${picks.join(', ')}], expected [business-owner]`);
+const isQuoteHelper = (e) => e.type === 'click' && e.view === 'quote' && (e.target === 'editIcon' || (e.target === 'button' && /^(recalculate|print quote proposal)$/i.test(e.text ?? ''))
+  || (e.target === 'link' && /^view more payment plans$/i.test(e.text ?? '')));
+const helperClicks = final.log.filter((e) => !e.isTrusted && isQuoteHelper(e)).map((e) => `${e.target}${e.text ? ` ${e.text}` : ''}`);
+const wantHelpers = ['editIcon', 'button Recalculate', 'link View More Payment Plans', 'button Print Quote Proposal'];
+if (JSON.stringify(helperClicks) !== JSON.stringify(wantHelpers)) fail(`the extension's Quote & Coverages clicks were [${helperClicks.join(', ')}], expected [${wantHelpers.join(', ')}]`);
+const agentRecalcs = final.log.filter((e) => e.isTrusted && e.type === 'click' && e.target === 'button' && /^recalculate$/i.test(e.text ?? '')).length;
+if (agentRecalcs !== 1) fail(`the agent's Recalculate clicks were ${agentRecalcs}, expected 1`);
 const kitClicks = final.log.filter((e) => !e.isTrusted && (e.type === 'click' || e.type === 'disabled'))
-  .filter((e) => !['radio', 'checkbox', 'option'].includes(e.target) && !isAdd(e) && !isContinue(e));
+  .filter((e) => !['radio', 'checkbox', 'option'].includes(e.target) && !isAdd(e) && !isContinue(e) && !isQuoteHelper(e));
 for (const e of kitClicks) fail(`the extension clicked ${e.target}${e.text ? ` "${e.text}"` : ''} on ${e.step}`);
 for (const e of final.stopActions.filter((x) => !x.isTrusted)) fail(`${e.step}: the extension did ${e.type} on ${e.target} (a stop step)`);
 // The Social Security number: never typed, by anyone here.
 for (const e of final.log.filter((x) => x.target === 'GiveSocialSecurityNumber' && x.type !== 'view')) fail(`the Social Security number was ${e.type === 'change' ? 'changed' : e.type} (${e.isTrusted ? 'agent' : 'extension'})`);
 for (const f of fills) for (const x of f.report.filled) if (x.key === 'ref:GiveSocialSecurityNumber') fail(`${f.form}: the Social Security number was filled`);
+// W43-32: a quote whose plans have no 11 Payments (TX, 2026-10-21: Pay In Full, 4 Payments Bi-Monthly
+// Plan, 9 Payments): after View More Payment Plans the fill picks the plan with the most payments
+// offered, names it in its report, and prints. A fresh quote view (?view=quote&plans=no11), filled with
+// the pay plan's rules and those two helpers only: no unit is saved there for the coverage rows.
+async function noElevenPayments() {
+  const tx = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+  tx.on('pageerror', (e) => errors.push(String(e.message)));
+  await tx.route(/^(https?|wss?):/i, (r) => { refused.push(r.request().url()); return r.abort(); });
+  await tx.goto(`${pathToFileURL(path.join(root, 'test/fixtures/geico/quote.html')).href}?view=quote&plans=no11`);
+  await tx.waitForFunction(() => window.__geicoMock?.view === 'quote');
+  const txCdp = await tx.context().newCDPSession(tx);
+  const { frameTree: txFrames } = await txCdp.send('Page.getFrameTree');
+  const { executionContextId: txWorld } = await txCdp.send('Page.createIsolatedWorld', { frameId: txFrames.frame.id, worldName: 'TNI Rater Autofill (mock, no 11 Payments)' });
+  const run = async (expression) => {
+    const r = await txCdp.send('Runtime.evaluate', { expression, contextId: txWorld, awaitPromise: true, returnByValue: true });
+    if (r.exceptionDetails) throw new Error(`in the extension's world: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+    return r.result.value;
+  };
+  await run(`globalThis.chrome = { runtime: { id: 'geico-mock', sendMessage() { return Promise.resolve(); }, onMessage: { addListener() {}, removeListener() {} } } }; true`);
+  await run(KIT);
+  const carrier = { ...geico, rules: geico.rules.filter((r) => r.field === 'GivePayPlanV2'), actions: geico.actions.filter((a) => ['morePayPlans', 'printProposal'].includes(a.id)) };
+  const plan = buildPlan(record, carrier, {});
+  const options = { replaceChoices: !!geico.replaceChoices, stopSteps: STOP_STEPS, maxRounds: 20 };
+  // The step's other questions (no rule for them here) are left as the page has them: the agent
+  // marks them done, and the fill after that is the one checked.
+  const first = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify(options)})`);
+  if (first.actions?.length) fail(`Quote & Coverages without 11 Payments: the fill clicked ${first.actions.map((a) => a.text).join(', ')} with questions left for the agent`);
+  const skip = (first.unknown ?? []).map((x) => x.key);
+  const report = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify({ ...options, skip })})`);
+  const plans = await tx.evaluate(() => window.__geicoMock.values());
+  const clicks = (await tx.evaluate(() => window.__geicoMock.log)).filter((e) => !e.isTrusted && e.type === 'click' && ['link', 'button'].includes(e.target)).map((e) => e.text);
+  lines.push(`## Quote & Coverages without 11 Payments · ${report.rounds} rounds · filled ${report.filled.map((x) => x.shown).join(', ') || 'nothing'}`);
+  for (const x of report.filled) if (x.said) lines.push(`  said: ${x.said}`);
+  if (report.actions?.length) lines.push(`  clicked: ${report.actions.map((a) => a.text).join(' · ')}`);
+  const said = report.filled.find((x) => x.said)?.said ?? '';
+  if (JSON.stringify(report.filled.map((x) => x.shown)) !== '["9 Payments"]' || !/doesn't offer "11 Payments".*picked "9 Payments", the plan with the most payments GEICO offers/.test(said)) {
+    fail(`Quote & Coverages without 11 Payments: filled [${report.filled.map((x) => x.shown).join(', ')}] saying ${JSON.stringify(said)}, expected 9 Payments, named`);
+  }
+  if (!Object.values(plans).includes('GEICO_PP_9Pay')) fail('Quote & Coverages without 11 Payments: 9 Payments is not the plan picked on the page');
+  if (JSON.stringify(clicks) !== '["View More Payment Plans","Print Quote Proposal"]') fail(`Quote & Coverages without 11 Payments: the fill clicked [${clicks.join(', ')}], expected View More Payment Plans, then Print Quote Proposal`);
+  for (const k of ['noData', 'failed', 'checks']) if (report[k]?.length) fail(`Quote & Coverages without 11 Payments: ${k} ${report[k].map((x) => x.label).join('; ')}`);
+  // A later fill of the quote (after Print, or Fill this page), with those clicks done: it agrees
+  // with the 9 Payments on the page and leaves nothing, clicking nothing (review of #140).
+  const doneActions = [...new Set(report.actions.map((a) => a.id))];
+  const later = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify({ ...options, skip, doneActions })})`);
+  lines.push(`## Quote & Coverages without 11 Payments, filled again · ${later.rounds} rounds · kept ${later.kept.map((x) => x.label).join(', ') || 'nothing'}`);
+  for (const k of ['noData', 'failed', 'checks']) if (later[k]?.length) fail(`Quote & Coverages without 11 Payments, filled again: ${k} ${later[k].map((x) => x.note ?? x.reason ?? x.label).join('; ')}`);
+  if (later.actions?.length) fail(`Quote & Coverages without 11 Payments, filled again: the fill clicked ${later.actions.map((a) => a.text).join(', ')}`);
+  if (!Object.values(await tx.evaluate(() => window.__geicoMock.values())).includes('GEICO_PP_9Pay')) fail('Quote & Coverages without 11 Payments, filled again: 9 Payments is no longer the plan picked');
+  await tx.close();
+}
+try {
+  await noElevenPayments();
+} catch (e) {
+  fail(`the no-11-Payments run stopped: ${String(e.message).split('\n')[0]}`);
+}
+
 if (errors.length) fail(`page errors: ${errors.join(' | ')}`);
 if (refused.length) lines.push(`Requests refused: ${refused.length}`);
 

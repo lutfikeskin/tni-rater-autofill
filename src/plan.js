@@ -114,6 +114,16 @@ function actionSteps(carrier, record, active) {
       doneWhen: resolve(a.doneWhen) ?? [],
       // Waits while a required question on the page is empty (the carrier would refuse the click).
       waitRequired: !!a.waitRequired,
+      // Waits until the fill has left nothing on the page for the agent (GEICO's Recalculate, View
+      // More Payment Plans and Print Quote Proposal: TNI, 2026-10-21).
+      whenClear: !!a.whenClear,
+      // How long the page is quiet before the click (GEICO's Recalculate: W43-31).
+      quietMs: resolve(a.quietMs) ?? null,
+      // Clicked once a quote, never due again after a later answer (GEICO's Recalculate: W43-31).
+      once: !!a.once,
+      // The answers on the page are read as it is clicked and checked once its result shows: one
+      // the fill gave that changed is given back once, and every change is the agent's (W43-31).
+      keepAnswers: !!a.keepAnswers,
       unfinished: resolve(a.unfinished) ?? null,
       unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (/:driver$/.test(id) || (a.scope === 'driver' && !/:/.test(id))
         ? `${id.replace(/:driver$/, '')}:${active.drivers ?? 0}`
@@ -256,6 +266,8 @@ function fieldSteps(rules, record, carrier, active) {
       notWithin: rule.notWithin ?? null,
       note,
       ignore,
+      // An ignored selector rule that takes every match it finds, not only its first.
+      every: !!rule.every,
       // Checked against the intake, never typed (a VIN decode's year): may depend on the unit.
       verifyOnly: typeof rule.verifyOnly === 'function' ? !!rule.verifyOnly(record, active) : !!rule.verifyOnly,
       // Our answer replaces what the page put there (e.g. a lookup's body type).
@@ -264,6 +276,15 @@ function fieldSteps(rules, record, carrier, active) {
       trustPage: !!rule.trustPage,
       // A differing choice already on the page is kept and flagged, never replaced (`replaceChoices`).
       keepChoice: !!rule.keepChoice,
+      // A list without the answer keeps the page's own choice, with a check (GEICO's cities for the ZIP).
+      keepUnlisted: !!rule.keepUnlisted,
+      // A choice whose option a helper shows (GEICO's 11 Payments, behind View More Payment Plans):
+      // not offered yet, it waits instead of failing; never offered, it is the agent's.
+      whenOffered: !!rule.whenOffered,
+      // Never offered once a helper has shown every option (`after`: its id), the option with the
+      // highest count instead (`count`: a pattern whose first group is the count; `one`: an option
+      // that counts 1), named in the report as `name` (GEICO's pay plan: W43-32).
+      orMost: rule.orMost ? { count: rule.orMost.count, one: rule.orMost.one ?? null, after: rule.orMost.after, name: rule.orMost.name } : null,
       // May fill its field while it isn't on screen (an earlier step's question added later).
       hidden: !!rule.hidden,
       // One question asked as several boxes (AmWINS' auto symbols 1 to 9): the panel lists it once,
@@ -280,6 +301,10 @@ function fieldSteps(rules, record, carrier, active) {
       vehicleHint: vehicleHint?.length ? vehicleHint : null,
       activeVehicle,
       businessNames: rule.businessNames ? rule.businessNames(record, active) : null,
+      // Words the question's own text must show for the answer to be given (GEICO's USDOT record:
+      // the intake's house number, street and ZIP, W43-24), and the note when it doesn't.
+      labelHas: rule.labelHas ? rule.labelHas(record, active) : null,
+      labelNote: rule.labelNote ?? null,
       // What an address box gets when the page offers no suggestion (e.g. just the street).
       fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,
       // An address the page already shows agrees only with the intake's house number (GEICO fills
