@@ -27,6 +27,13 @@ test('the panel script parses', () => {
   assert.equal(r.status, 0, r.stderr);
 });
 
+// $(id) finds the first: an icon named like its button once took the button's clicks.
+test('every id in the panel\'s page is used once', () => {
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids.filter((id, i) => ids.indexOf(id) !== i), []);
+});
+
 test('AI accept refuses a suggestion for a previous driver, vehicle or intake', async () => {
   const record = { vehicles: [{ value: 34000 }, { value: 36000 }] };
   const active = { drivers: 0, vehicles: 0 };
@@ -113,7 +120,7 @@ function extractFunction(name) {
 const HELPERS_START = SIDEPANEL.indexOf('const samePage =');
 const HELPERS_END = SIDEPANEL.indexOf('\n\n// Watch the rater tab', HELPERS_START);
 const PAGE_HELPERS = SIDEPANEL.slice(HELPERS_START, HELPERS_END);
-const FUNCTIONS = ['rememberFill', 'scheduleAutoFill', 'refreshTab'].map(extractFunction).join('\n') + LAYOUT_STUB;
+const FUNCTIONS = ['rememberFill', 'scheduleAutoFill', 'tabInView', 'refreshTab'].map(extractFunction).join('\n') + LAYOUT_STUB;
 
 function harness() {
   const state = {
@@ -153,7 +160,7 @@ function harness() {
     clearTimeout: (handle) => cleared.push(handle),
     renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {}, save: () => {},
     ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {}, restoreDoneActions: async () => {}, persistDoneActions: async () => {},
-    seedQuoteState: () => {}, noteQuoteState: () => {}, knownStep,
+    seedQuoteState: () => {}, noteQuoteState: () => {}, knownStep, popped: false,
     dropReports() {}, clientNote() {}, fillProblem() {}, answeredOnPage() {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
@@ -2930,7 +2937,7 @@ test('Luna\'s picks ask for a layout only while their tab is still the one follo
 });
 
 test('an intake restored when the panel opens holds layouts like a newly loaded one', () => {
-  assert.match(extractFunction('init'), /wire\(\);[\s\S]{0,300}holdLayouts\(\);[\s\S]{0,80}state\.intake = \(await store\.get\('intake'\)\)/);
+  assert.match(extractFunction('init'), /wire\(\);[\s\S]{0,500}holdLayouts\(\);[\s\S]{0,80}state\.intake = \(await store\.get\('intake'\)\)/);
 });
 
 test('an intake opens on its checks while one is open, else on the page, loaded or restored', () => {
@@ -3017,6 +3024,176 @@ test('client details open in a drawer that takes focus and gives it back', () =>
   assert.match(extractFunction('jumpTo'), /openDetails\(\);/, 'Show in client details opens it at the field');
   assert.match(extractFunction('wire'), /e\.key === 'Escape' && state\.detailsOpen[^\n]*closeDetails\(\)/);
   assert.match(extractFunction('wire'), /state\.detailsOpen && !\$\('details-view'\)\.hidden \? \$\('details-view'\)/, 'Tab stays inside it');
+});
+
+// The panel in a window of its own (TNI, 2026-10-22: keep it on another monitor while the quote
+// tab has the screen): it follows the browser window the agent last used, and Dock puts it back.
+test('the panel follows the active tab of its own browser window, or popped out, of the window the agent last used', async () => {
+  const queries = [];
+  let focused = { id: 7 };
+  const chrome = {
+    tabs: { query: async (q) => { queries.push({ ...q }); return [{ id: 10 + (q.windowId ?? 1), windowId: q.windowId ?? 1 }]; } },
+    windows: { getLastFocused: async (o) => { assert.deepEqual([...o.windowTypes], ['normal'], 'never the panel\'s own window'); return focused; } },
+  };
+  const context = { chrome, popped: false };
+  vm.runInNewContext(extractFunction('tabInView'), context);
+  assert.equal((await context.tabInView()).id, 11);
+  assert.deepEqual(queries.pop(), { active: true, currentWindow: true });
+  context.popped = true;
+  assert.equal((await context.tabInView()).id, 17);
+  assert.deepEqual(queries.pop(), { active: true, windowId: 7 });
+  focused = null;
+  assert.equal(await context.tabInView(), undefined, 'no browser window open: no tab');
+  assert.match(extractFunction('refreshTab'), /const tab = await tabInView\(\);/);
+  assert.match(extractFunction('refreshTab'), /background: true, windowId: quote\.windowId/, 'a quote filled in the background: its own window');
+});
+
+test('Pop out opens the panel in a window of its own where the agent last left it, never while a fill runs', async () => {
+  const created = [];
+  const said = [];
+  let saved;
+  let fail = 0;
+  const chrome = {
+    runtime: { getURL: (path) => `chrome-extension://x/${path}` },
+    storage: { local: { get: async (key) => ({ [key]: saved }) } },
+    windows: { create: async (o) => { created.push({ ...o }); if (fail-- > 0) throw new Error('off every screen'); return { id: 9 }; } },
+  };
+  const context = { chrome, inExtension: true, popped: false, state: { filling: false }, windowProblem: (m) => { if (m) said.push(m); } };
+  vm.runInNewContext(extractFunction('popOut'), context);
+  const popup = { url: 'chrome-extension://x/sidepanel/sidepanel.html?window=popup', type: 'popup', focused: true };
+  await context.popOut();
+  assert.deepEqual(created.pop(), { ...popup, width: 420, height: 860 }, 'the first time: Chrome places it');
+  saved = { left: 1930, top: 40, width: 380, height: 700 };
+  await context.popOut();
+  assert.deepEqual(created.pop(), { ...popup, ...saved }, 'where the agent left it');
+  saved = { left: 1930, top: 40, width: 100, height: 90 };
+  await context.popOut();
+  assert.deepEqual(created.pop(), { ...popup, left: 1930, top: 40, width: 420, height: 860 }, 'never too small to use');
+  fail = 1;
+  await context.popOut();
+  assert.deepEqual(created.splice(0), [{ ...popup, left: 1930, top: 40, width: 420, height: 860 }, { ...popup, width: 420, height: 860 }], 'a place no screen shows: Chrome places it');
+  fail = 2;
+  await context.popOut();
+  assert.equal(created.splice(0).length, 2);
+  assert.deepEqual(said, ['The panel couldn’t open in its own window.']);
+  for (const [key, value] of [['inExtension', false], ['popped', true]]) {
+    context[key] = value;
+    await context.popOut();
+    context[key] = !value;
+  }
+  context.state.filling = true;
+  await context.popOut();
+  assert.equal(created.length, 0, 'not while a fill runs, already popped out, or outside the extension');
+  assert.match(extractFunction('wire'), /\$\('pop-out'\)\.addEventListener\('click', popOut\);/);
+  assert.match(extractFunction('renderSteps'), /\$\('pop-out'\)\.hidden = !inExtension \|\| popped;\s+\$\('dock-back'\)\.hidden = !popped;\s+\$\('pop-out'\)\.disabled = \$\('dock-back'\)\.disabled = !!state\.filling;/);
+  assert.match(extractFunction('init'), /if \(inExtension && popped\) keepPlace\(\);/, 'its place is kept for the next time');
+});
+
+test('Dock opens Chrome\'s side panel in the quote\'s window within the click, then the panel\'s window closes', async () => {
+  const opened = [];
+  const said = [];
+  let closed = 0;
+  let refuse = false;
+  const chrome = { sidePanel: { open: (o) => { opened.push({ ...o }); return refuse ? Promise.reject(new Error('no gesture')) : Promise.resolve(); } } };
+  const context = { chrome, popped: true, state: { filling: false, tab: { id: 4, windowId: 2 }, browserWindow: 3 },
+    closeSelf: () => { closed++; }, windowProblem: (m) => said.push(m) };
+  vm.runInNewContext(extractFunction('dock'), context);
+  context.dock();
+  assert.deepEqual(opened.splice(0), [{ windowId: 2 }], 'opened before anything is awaited: the click\'s gesture');
+  await new Promise(setImmediate);
+  assert.equal(closed, 1);
+  context.state.tab = null;
+  context.dock();
+  assert.deepEqual(opened.splice(0), [{ windowId: 3 }], 'no tab in view: the browser window last used');
+  await new Promise(setImmediate);
+  refuse = true;
+  context.dock();
+  await new Promise(setImmediate);
+  assert.equal(closed, 2, 'the side panel did not open: the window stays');
+  assert.match(said.pop(), /extension’s icon in the toolbar/);
+  opened.length = 0;
+  context.state.filling = true;
+  context.dock();
+  context.state.filling = false;
+  context.popped = false;
+  context.dock();
+  context.popped = true;
+  context.state.browserWindow = null;
+  context.dock();
+  assert.equal(opened.length, 0, 'not while a fill runs, as a side panel, or with no browser window');
+  assert.doesNotMatch(extractFunction('dock'), /await/);
+  assert.match(extractFunction('wire'), /\$\('dock-back'\)\.addEventListener\('click', dock\);/);
+});
+
+test('with the panel in its own window only the newest copy stays, and one filling stops before it closes', async () => {
+  const sent = [];
+  const steps = [];
+  const context = {
+    inExtension: true, popped: false, panelCopy: { id: 'b', at: 100 }, state: { closing: false, fillingFor: null },
+    chrome: { runtime: { sendMessage: (m) => { sent.push({ ...m }); return Promise.resolve(); } } },
+    stopFill: async () => { steps.push('stop'); context.state.fillingFor.stopping = true; },
+    closeSelf: () => steps.push('close'),
+  };
+  vm.runInNewContext(['announceCopy', 'onPanelMessage', 'giveWay'].map(extractFunction).join('\n'), context);
+  context.announceCopy();
+  assert.deepEqual(sent.splice(0), [{ ra: 'panel', event: 'opened', id: 'b', at: 100, popped: false }]);
+  context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'c', at: 200, popped: false });
+  assert.deepEqual([sent.length, steps.length], [0, 0], 'side panels of two browser windows each stay, as before');
+  context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'b', at: 100, popped: true });
+  context.onPanelMessage({ ra: 'usage', event: 'opened', id: 'c', at: 200, popped: true });
+  assert.deepEqual([sent.length, steps.length], [0, 0], 'its own message, and others, are not about copies');
+  context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'a', at: 50, popped: true });
+  assert.deepEqual([sent.length, steps.length], [1, 0], 'an older copy hears from this one again, and this one stays');
+  sent.length = 0;
+  context.state.fillingFor = { stopping: false };
+  context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'c', at: 200, popped: true });
+  context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'd', at: 300, popped: true });
+  await new Promise(setImmediate);
+  assert.deepEqual(steps.splice(0), ['stop', 'close'], 'a newer copy in its own window: the fill stops, then this copy closes, once');
+  Object.assign(context, { popped: true });
+  Object.assign(context.state, { closing: false, fillingFor: null });
+  context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'a', at: 100, popped: false });
+  context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'c', at: 100, popped: false });
+  await new Promise(setImmediate);
+  assert.deepEqual(steps, ['close'], 'popped out: a side panel opened since (the toolbar icon, Dock) takes over; the same moment, by id');
+  assert.match(extractFunction('wire'), /chrome\.runtime\.onMessage\.addListener\(onPanelMessage\);/);
+  assert.match(extractFunction('init'), /wire\(\);[\s\S]{0,200}announceCopy\(\);/, 'it says so once it listens');
+});
+
+test('a copy that gives way closes its own window, its tab, or Chrome\'s side panel', async () => {
+  const closed = [];
+  let tab = null;
+  let sidePanelClose = (o) => { closed.push(['side panel', o.windowId]); return Promise.resolve(); };
+  const chrome = {
+    windows: { getCurrent: async () => ({ id: 5 }), remove: async (id) => { closed.push(['window', id]); } },
+    tabs: { getCurrent: async () => tab, remove: async (id) => { closed.push(['tab', id]); } },
+    get sidePanel() { return { close: sidePanelClose }; },
+  };
+  const context = { chrome, popped: true, window: { close: () => closed.push(['page']) } };
+  vm.runInNewContext(extractFunction('closeSelf'), context);
+  const close = async () => { await context.closeSelf(); await new Promise(setImmediate); return closed.splice(0).map((c) => [...c]); };
+  assert.deepEqual(await close(), [['window', 5]]);
+  context.popped = false;
+  tab = { id: 8 };
+  assert.deepEqual(await close(), [['tab', 8]], 'a harness opened it as a page');
+  tab = undefined;
+  assert.deepEqual(await close(), [['side panel', 5]]);
+  sidePanelClose = () => Promise.reject(new Error('no side panel open'));
+  assert.deepEqual(await close(), [['page']]);
+  sidePanelClose = undefined;
+  assert.deepEqual(await close(), [['page']], 'before Chrome 141 the side panel closes itself');
+});
+
+test('popped out, the capture shortcut captures from the panel\'s only copy, wherever focus is', async () => {
+  let captured = 0;
+  const context = { popped: true, capturePage: () => { captured++; },
+    chrome: { windows: { getCurrent: async () => ({ id: 1 }), getLastFocused: async () => ({ id: 2 }) } } };
+  vm.runInNewContext(extractFunction('captureFromShortcut'), context);
+  await context.captureFromShortcut();
+  assert.equal(captured, 1);
+  context.popped = false;
+  await context.captureFromShortcut();
+  assert.equal(captured, 1, 'a side panel in another window than the focused one leaves it to that one');
 });
 
 test('a capture overtaken by a later change does not report its failure, and hands its reasons on', async () => {

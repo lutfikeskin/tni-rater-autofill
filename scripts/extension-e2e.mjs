@@ -321,6 +321,66 @@ if (!earlierOk) console.log('EARLIER PAGES: the page menu did not show Insured I
 // The events the panel uploaded (it sends right after the intake loads, then every minute).
 await panel.evaluate(() => document.getElementById('upload-usage')?.click()).catch(() => {});
 await panel.waitForTimeout(1500);
+// Pop out: the panel in a window of its own follows the quote's tab (the browser window the agent
+// last used) and fills it, and the copy that was open gives way, so one copy fills at a time.
+// Back to the side panel opens Chrome's side panel and closes the window; a window popped out
+// again closes that side panel. Nothing is declared or submitted.
+let poppedOk = false;
+const panelPages = () => ctx.pages().filter((p) => p.url().includes('/sidepanel/sidepanel.html'));
+// Chrome's side panel isn't a page Playwright shows: the extension's own count of them.
+const sidePanels = () => sw.evaluate(async () => (await chrome.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] })).length);
+const within = async (ms, check) => {
+  for (const end = Date.now() + ms; Date.now() < end; await mock.waitForTimeout(200)) if (await check()) return true;
+  return false;
+};
+try {
+  await panel.bringToFront();
+  const opened = ctx.waitForEvent('page', { timeout: 10000 });
+  const gaveWay = panel.waitForEvent('close', { timeout: 10000 });
+  // Either can fail while the other is awaited: the catch below reports it.
+  opened.catch(() => {});
+  gaveWay.catch(() => {});
+  await panel.click('#pop-out');
+  const popup = await opened;
+  popup.on('pageerror', (e) => console.log('POPUP ERROR', e.message));
+  await popup.waitForURL(/sidepanel\.html\?window=popup$/, { timeout: 10000 });
+  await gaveWay;
+  await mock.bringToFront();
+  await popup.waitForFunction(() => /^AmWINS/.test(document.querySelector('#site')?.textContent ?? ''), null, { timeout: 10000 });
+  // Native clicks need the panel's surface in front on Windows; the quote's window stays the last used.
+  await popup.bringToFront();
+  const before = await popup.locator('#dock').getAttribute('data-report');
+  await popup.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first().click({ timeout: 10000 });
+  await popup.waitForFunction((old) => {
+    const dock = document.querySelector('#dock');
+    return dock.dataset.phase !== 'filling' && !!dock.dataset.report && dock.dataset.report !== old;
+  }, before, { timeout: 30000, polling: 100 });
+  await mock.waitForTimeout(1500);
+  const after = await mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), submitted: window.__amwinsMock.submitted, declared: document.querySelector('#accept')?.checked }));
+  const buttons = { dock: await popup.locator('#dock-back').isVisible(), popOut: await popup.locator('#pop-out').isVisible() };
+  console.log('Popped out:', JSON.stringify({ panels: panelPages().length, ...after, ...buttons }), (await popup.textContent('#report')).replace(/\s+/g, ' ').slice(0, 300));
+  if (process.argv[2]) {
+    await popup.setViewportSize({ width: 420, height: 860 });
+    await popup.screenshot({ path: path.join(process.argv[2], 'popped.png'), animations: 'disabled' });
+  }
+  poppedOk = panelPages().length === 1 && panelPages()[0] === popup && !after.submitted && !after.declared && buttons.dock && !buttons.popOut;
+  const docked = popup.waitForEvent('close', { timeout: 10000 });
+  docked.catch(() => {});
+  await popup.click('#dock-back');
+  await docked;
+  const dockedOk = await within(5000, async () => await sidePanels() === 1);
+  const reopened = ctx.waitForEvent('page', { timeout: 10000 });
+  reopened.catch(() => {});
+  await sw.evaluate(() => chrome.windows.create({ url: chrome.runtime.getURL('sidepanel/sidepanel.html?window=popup'), type: 'popup' }));
+  await reopened;
+  const gaveWayOk = await within(5000, async () => await sidePanels() === 0);
+  const still = await mock.evaluate(() => ({ submitted: window.__amwinsMock.submitted, declared: document.querySelector('#accept')?.checked }));
+  console.log('Back to the side panel:', JSON.stringify({ dockedOk, gaveWayOk, ...still }));
+  poppedOk &&= dockedOk && gaveWayOk && !still.submitted && !still.declared;
+} catch (error) {
+  console.log('POP OUT:', error.message);
+}
+if (!poppedOk) console.log('POP OUT: the panel in its own window did not replace the open one, follow the quote tab and fill it, go back to the side panel, or give way to a new window, or something was declared or submitted.');
 await ctx.close();
 await new Promise((resolve) => usageServer.close(resolve));
 const received = fs.readdirSync(path.join(usageDir, 'events')).flatMap((f) => fs.readFileSync(path.join(usageDir, 'events', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).type));
@@ -329,6 +389,6 @@ console.log(`Usage: ${received.length} events to the local server (${[...new Set
 if (toProduction.length) console.log('TO PRODUCTION:', toProduction.join('; '));
 const usageOk = !toProduction.length && received.includes('intake_loaded');
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = usageOk && earlierOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, declaration and Submit stayed untouched, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one.' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, or the earlier step was not shown read-only.');
+const ok = usageOk && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone, filled and went back to the side panel, declaration and Submit stayed untouched, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one.' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
 process.exit(ok ? 0 : 1);

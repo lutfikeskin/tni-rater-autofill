@@ -19,6 +19,11 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', impor
 // Outside the extension (e.g. opening this page directly to check the layout) there is no
 // chrome.* API: keep data in memory and disable filling.
 const inExtension = !!globalThis.chrome?.scripting;
+// The panel opened in a window of its own (Pop out, popOut) rather than as Chrome's side panel: it
+// follows the browser window the agent last used (tabInView) and offers Dock instead.
+const popped = new URLSearchParams(globalThis.location?.search ?? '').get('window') === 'popup';
+// This copy of the panel: with one in its own window, only the newest stays (onPanelMessage).
+const panelCopy = { id: globalThis.crypto?.randomUUID?.() ?? String(Math.random()), at: Date.now() };
 const memory = {};
 const store = inExtension
   ? {
@@ -368,6 +373,10 @@ const state = {
   // All client details, in a drawer over the panel, and where focus was when it opened.
   detailsOpen: false,
   detailsReturn: null,
+  // The browser window of the tab in view, for Dock (popped out), and whether this copy of the
+  // panel is giving way to a newer one (giveWay).
+  browserWindow: null,
+  closing: false,
 };
 
 // Crashes nothing in the panel caught (an exception, a promise nobody awaited) go in the usage log,
@@ -1225,9 +1234,18 @@ function onTabUpdated(id, change, tab) {
   if ((id === state.tab?.id || tab?.active) && (change.url || change.status === 'complete')) refreshTab();
 }
 
+// The tab the panel looks at: as a side panel, the active tab of its own browser window; popped
+// out, of the browser window the agent last used (the panel's own window has no quote tab).
+async function tabInView() {
+  if (!popped) return (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+  const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null);
+  return win ? (await chrome.tabs.query({ active: true, windowId: win.id }))[0] : undefined;
+}
+
 async function refreshTab() {
   if (!inExtension) { state.tab = null; return renderSite(); }
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await tabInView();
+  if (Number.isInteger(tab?.windowId)) state.browserWindow = tab.windowId;
   // During a quote the agent may look at another site (email, the intake PDF): the panel stays
   // on the tab of the quote and keeps filling it in the background. Another rater tab is followed.
   const activeIsRater = !!(tab?.url && carrierForUrl(tab.url));
@@ -1235,7 +1253,7 @@ async function refreshTab() {
     const quote = await chrome.tabs.get(state.tab.id).catch(() => null);
     const carrier = quote?.url ? carrierForUrl(quote.url) : null;
     if (carrier) {
-      state.tab = { id: quote.id, url: quote.url, carrier, background: true };
+      state.tab = { id: quote.id, url: quote.url, carrier, background: true, windowId: quote.windowId };
       renderSite();
       ensureRecorder();
       scheduleLayout(pageOf(state.tab.url), 'arrived');
@@ -1257,7 +1275,7 @@ async function refreshTab() {
     state.autoDrawn = null;
     state.autoPending = false;
   }
-  state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false } : null;
+  state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false, windowId: tab.windowId } : null;
   await restoreAgentKeys(state.tab?.id);
   await restoreDoneActions(state.tab?.id);
   if (state.tab?.carrier && !state.filling) await retireAiOrigins({ tabId: state.tab.id, tabUrl: state.tab.url, intake: state.intake, carrier: state.tab.carrier });
@@ -2465,6 +2483,10 @@ function announce(text) {
 // their filters) and the dock. Steps 2 and 3 show the last fill of the page in front.
 function renderSteps() {
   renderLive();
+  // Pop out or Dock: never while a fill runs.
+  $('pop-out').hidden = !inExtension || popped;
+  $('dock-back').hidden = !popped;
+  $('pop-out').disabled = $('dock-back').disabled = !!state.filling;
   if (!state.intake) { renderDock(); return; }
   // The unit pickers follow the page or step in front (unitListsHere).
   renderPickers();
@@ -3897,9 +3919,12 @@ async function nextCaptureNumber(scenario) {
 }
 
 // Alt+Shift+C reaches the side panel of every window: only the one in the focused window captures.
+// Popped out, the panel is the only copy and captures the tab it follows, wherever focus is.
 async function captureFromShortcut() {
-  const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
-  if (mine && focused && mine.id !== focused.id) return;
+  if (!popped) {
+    const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
+    if (mine && focused && mine.id !== focused.id) return;
+  }
   capturePage();
 }
 
@@ -5188,6 +5213,88 @@ async function clearClient() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Its own window (Pop out) and back to the side panel (Dock)
+
+// Pop out: the panel in a window of its own, which the agent can move anywhere (another monitor),
+// where they last left it (panelWindow); this copy then gives way to it (onPanelMessage). Not while
+// a fill runs: its report would have no panel to come back to. A place no screen shows now (a
+// monitor unplugged) is left to Chrome.
+async function popOut() {
+  if (!inExtension || popped || state.filling) return;
+  windowProblem(null);
+  const { panelWindow: was = {} } = await chrome.storage.local.get('panelWindow').catch(() => ({}));
+  const size = (k, min, fallback) => (Number.isInteger(was[k]) && was[k] >= min ? was[k] : fallback);
+  const opts = { url: chrome.runtime.getURL('sidepanel/sidepanel.html?window=popup'), type: 'popup', focused: true, width: size('width', 320, 420), height: size('height', 480, 860) };
+  const place = Number.isInteger(was.left) && Number.isInteger(was.top) ? { left: was.left, top: was.top } : null;
+  try {
+    await chrome.windows.create(place ? { ...opts, ...place } : opts);
+  } catch {
+    try { await chrome.windows.create(opts); } catch { windowProblem('The panel couldn’t open in its own window.'); }
+  }
+}
+
+// Dock: back to Chrome's side panel, in the browser window of the quote, and this window closes.
+// sidePanel.open needs the click's own gesture: it is called before anything is awaited.
+function dock() {
+  const windowId = state.tab?.windowId ?? state.browserWindow;
+  if (!popped || state.filling || !Number.isInteger(windowId)) return;
+  windowProblem(null);
+  chrome.sidePanel.open({ windowId }).then(() => closeSelf(), () => windowProblem('The side panel couldn’t open here. Use the extension’s icon in the toolbar.'));
+}
+
+// A Pop out or Dock that didn't work, said at the top of the panel (and to screen readers); the
+// next try clears it.
+function windowProblem(text) {
+  $('window-note').replaceChildren(...(text ? [issueCard({ tone: 'warn', role: 'alert', title: text })] : []));
+  $('window-note').hidden = !text;
+}
+
+// The panel in its own window is the only copy, so no page is filled from two: it follows the tab
+// a side panel shows. Each copy says when it opens, and where one of the two is in its own window,
+// the older gives way. Side panels of two browser windows each follow their own tab, as before. A
+// copy that hears from an older one says so again, for one that opened before it listened.
+function announceCopy() {
+  if (inExtension) chrome.runtime.sendMessage({ ra: 'panel', event: 'opened', ...panelCopy, popped }).catch(() => {});
+}
+function onPanelMessage(msg) {
+  if (msg?.ra !== 'panel' || msg.event !== 'opened' || msg.id === panelCopy.id || !(popped || msg.popped)) return;
+  const newer = msg.at > panelCopy.at || (msg.at === panelCopy.at && msg.id > panelCopy.id);
+  if (newer) giveWay(); else announceCopy();
+}
+
+// This copy gives way to a newer one: a fill it runs is stopped first (the answer going in
+// finishes; nothing more is filled or clicked), then it closes.
+async function giveWay() {
+  if (state.closing) return;
+  state.closing = true;
+  if (state.fillingFor && !state.fillingFor.stopping) await stopFill();
+  closeSelf();
+}
+
+// Closes this copy of the panel: its own window, the tab it was opened in (a harness opens it as a
+// page), or Chrome's side panel (sidePanel.close from Chrome 141; before it, the page closes itself).
+async function closeSelf() {
+  const mine = await chrome.windows.getCurrent().catch(() => null);
+  if (popped) {
+    if (mine) chrome.windows.remove(mine.id).catch(() => {});
+    return;
+  }
+  const tab = await chrome.tabs.getCurrent().catch(() => null);
+  if (tab?.id) chrome.tabs.remove(tab.id).catch(() => {});
+  else if (mine && chrome.sidePanel?.close) chrome.sidePanel.close({ windowId: mine.id }).catch(() => window.close());
+  else window.close();
+}
+
+// Popped out: where the agent leaves the window and its size, for the next Pop out.
+async function keepPlace() {
+  const mine = await chrome.windows.getCurrent().catch(() => null);
+  if (!mine) return;
+  chrome.windows.onBoundsChanged?.addListener((win) => {
+    if (win.id === mine.id) chrome.storage.local.set({ panelWindow: { left: win.left, top: win.top, width: win.width, height: win.height } }).catch(() => {});
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
 // Wiring
 
 function wire() {
@@ -5195,6 +5302,8 @@ function wire() {
   $('choose').addEventListener('click', (e) => { e.stopPropagation(); $('file').click(); });
   drop.addEventListener('click', () => $('file').click());
   $('settings-btn').addEventListener('click', () => { if (state.settingsOpen) { state.settingsOpen = false; showScreen(); } else openSettings(); });
+  $('pop-out').addEventListener('click', popOut);
+  $('dock-back').addEventListener('click', dock);
   $('settings-done').addEventListener('click', () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); });
   // The brain button: the assistant's settings, at its key when it is on without one.
   $('agent-btn').addEventListener('click', async () => { const cfg = await aiSettings(); openSettings(cfg.on && !cfg.apiKey ? 'ai-openai-key' : 'ai-on'); });
@@ -5293,6 +5402,7 @@ function wire() {
     // The step first: a field change or new question is scoped by the step it came with.
     chrome.runtime.onMessage.addListener(noteStep);
     chrome.runtime.onMessage.addListener(onRecorderMessage);
+    chrome.runtime.onMessage.addListener(onPanelMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
@@ -5303,6 +5413,9 @@ function wire() {
 
 async function init() {
   wire();
+  // With the panel in its own window, the newest copy is the one that stays (onPanelMessage).
+  announceCopy();
+  if (inExtension && popped) keepPlace();
   // An intake saved by an earlier panel: while the panel was closed the tabs may have moved to
   // another client's quote, so their layouts wait as after loading one (holdLayouts).
   holdLayouts();
