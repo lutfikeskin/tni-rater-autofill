@@ -8,6 +8,7 @@
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
     "test": "node --test \"test/*.test.mjs\"",
+    "lint": "oxlint",
     "server": "node server/index.mjs",
     "learn": "node scripts/learn-rules.mjs server-data",
     "layouts": "node scripts/build-layouts.mjs server-data",
@@ -38,6 +39,7 @@
   },
   "devDependencies": {
     "fflate": "0.8.3",
+    "oxlint": "1.89.0",
     "pdfjs-dist": "^4.10.38",
     "playwright": "^1.63.0"
   }

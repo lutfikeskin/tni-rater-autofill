@@ -58,6 +58,7 @@ function virtualClock() {
 }
 const clock = virtualClock();
 // This module's own timers run on the clock too (shadows the globals for the whole file).
+// oxlint-disable-next-line no-unused-vars -- shadowed so no test reaches the real timer
 const { setTimeout, clearTimeout } = clock;
 
 function attrSelector(node, selector) {
@@ -3426,6 +3427,7 @@ test('verify revealed: a decoded vehicle that is not this VIN\'s, or not decoded
   let h = harness();
   let els = decodedPage(h, { vin: '' });
   let button = addButton(h, 'Lookup VIN');
+  // oxlint-disable-next-line no-self-assign -- deliberate: the lookup writes the year back
   button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; els.year.value = els.year.value; };
   let report = await h.kit.fill(shownPlan(VINS[0]), { maxRounds: 8 });
   assert.equal(els.vin.value, VINS[0]);
@@ -5477,7 +5479,7 @@ test('GEICO skipBy on a unit step: a vehicle form gets the active vehicle\'s edi
     h.document.body.append(geicoList('GiveOtherVehicleType', 85494, `Which of the following best describes the customer's ${kind}?`, ['Box Truck', 'Flatbed']));
     const year = geicoList('GiveYear', 85495, 'Year', ['2019', '2022']);
     h.document.body.append(year);
-    const report = await h.kit.fill(plan, { maxRounds: 6, units: geicoUnits(1, {}), skipBy });
+    await h.kit.fill(plan, { maxRounds: 6, units: geicoUnits(1, {}), skipBy });
     return year.value;
   };
   // The agent corrected vehicle 2's year (its form, no VIN): the trailer form's year still fills.
