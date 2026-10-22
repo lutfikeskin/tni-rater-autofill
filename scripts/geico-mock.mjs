@@ -989,7 +989,7 @@ if (agentRecalcs !== 1) fail(`the agent's Recalculate clicks were ${agentRecalcs
 const kitPresses = final.log.filter((e) => !e.isTrusted && e.type === 'click' && e.target === 'button');
 for (const e of kitPresses.filter((x) => x.ownEntry !== true)) fail(`${e.step}: the extension's ${e.text} went out without the button's own part (${e.ownEvent ?? 'no event'} in progress: W43-44)`);
 for (const e of final.log.filter((x) => x.isTrusted && x.type === 'click' && x.target === 'button' && x.ownEntry !== true)) fail(`${e.step}: the agent's ${e.text} went out without the button's own part (the mock's reading is off)`);
-for (const e of final.log.filter((x) => x.type === 'recalculate' && x.ownEntry !== true)) fail(`a Recalculate was rated without the button's own part (W43-44)`);
+if (final.log.some((x) => x.type === 'recalculate' && x.ownEntry !== true)) fail(`a Recalculate was rated without the button's own part (W43-44)`);
 lines.push(`Buttons the extension pressed with the button's own part: ${kitPresses.length - kitPresses.filter((x) => x.ownEntry !== true).length} of ${kitPresses.length}`);
 const kitClicks = final.log.filter((e) => !e.isTrusted && (e.type === 'click' || e.type === 'disabled'))
   .filter((e) => !['radio', 'checkbox', 'option'].includes(e.target) && !isAdd(e) && !isContinue(e) && !isQuoteHelper(e));
