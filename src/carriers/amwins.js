@@ -64,7 +64,6 @@ const entityTypeWarn = (r) => companyStructureWarn(r.applicant.name);
 // Facts the intake doesn't supply are the agent's (plan.js: `source: 'fact'` is never filled).
 // `clientFact` marks a client fact the intake may answer: when it doesn't, the agent's too (the AI
 // assistant leaves it).
-const fact = (name, note) => ({ name, source: 'fact', note });
 
 // Permanently attached equipment: any value on the intake is the agent's (AmWINS asks Yes / No and
 // details); none given is No, TNI's standard (as Progressive's "no equipment"), and an explicit $0

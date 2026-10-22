@@ -151,7 +151,11 @@
       for (const c of [...bar.children]) if (c.tagName !== 'TEMPLATE') c.remove();
       const label = document.createElement(j < at ? 'a' : 'span');
       label.textContent = STEPS[j];
-      if (j < at) Object.assign(label, { href: '#', tabIndex: 0 }), label.setAttribute('role', 'button'), label.className = '';
+      if (j < at) {
+        Object.assign(label, { href: '#', tabIndex: 0 });
+        label.setAttribute('role', 'button');
+        label.className = '';
+      }
       bar.append(label);
     });
   }
