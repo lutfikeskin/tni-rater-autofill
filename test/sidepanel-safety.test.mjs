@@ -104,7 +104,7 @@ function extractFunction(name) {
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards and row heads (issueCard, setRowHead) come along as they are.
-        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead']) {
+        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -868,20 +868,39 @@ test('"left for you" follows what the agent settles, without a refill', () => {
   const context = { state, $: () => report, renderSteps() {}, announce: (t) => said.push(t), pageOf: (u) => u, h: (tag, props, ...children) => ({ tag, props, children }),
     settleNeed: (item, how, undo, shown) => { settledWith.push([item.dataset.key, how, shown]); item.classList.add('resolved'); context.recount(); } };
   vm.runInNewContext(['recount', 'answeredOnPage'].map(extractFunction).join('\n'), context);
-  context.answeredOnPage('Rates', ['a', 'zzz'], new Map([['a', 'Yes']]));
+  context.answeredOnPage('Rates', [{ key: 'a', label: 'A', after: 'Yes' }, { key: 'zzz' }]);
   assert.deepEqual([entry.left, entry.settled, said], [1, false, ['1 left for you on this page.']]);
   assert.deepEqual(settledWith, [['a', 'answered', 'Yes']], 'with what the page holds now');
-  context.answeredOnPage('OtherPage', ['b']);
+  context.answeredOnPage('OtherPage', [{ key: 'b' }]);
   assert.equal(entry.left, 1, 'an edit on another page settles nothing here');
-  context.answeredOnPage('Rates', ['b', 'c'], new Map([['c', 'New']]));
+  context.answeredOnPage('Rates', [{ key: 'b' }, { key: 'c', label: 'Something else', after: 'New' }]);
   assert.deepEqual([entry.left, entry.settled], [0, true]);
   assert.equal(said.at(-1), 'Nothing is left for you on this page.');
   assert.deepEqual([done.dataset.value, done.classList.removed, parts['.row-value'].textContent], ['New', 'changed', 'New']);
   assert.deepEqual(JSON.parse(JSON.stringify(head.tag)), { tag: 'span', props: { class: 'tag you', title: 'You changed it on the page: no fill puts it back' }, children: ['You'] }, 'tagged the agent\'s');
   // An answer changed without a value read: left as it was.
   parts['.row-value'].textContent = 'Kept';
-  context.answeredOnPage('Rates', ['c']);
+  context.answeredOnPage('Rates', [{ key: 'c' }]);
   assert.equal(parts['.row-value'].textContent, 'Kept');
+});
+
+// Review 2026-10-22: rows of one repeated question share its key (one per driver). The agent's change
+// to one of them retags that row only, by its label; one that doesn't say which leaves them all.
+test('an answer the agent changes on the page retags only its own row where rows share a key', () => {
+  const row = (field) => {
+    const parts = { '.row-icon': { textContent: '✓' }, '.row-value': { textContent: 'Old' }, '.tag': { remove() {} } };
+    const head = { querySelector: (sel) => parts[sel] ?? null, append(node) { head.tag = node; } };
+    return { parts, head, dataset: { key: 'k', field, value: 'Old' }, classList: { remove() {} }, querySelector: (sel) => (sel === '.row-head' ? head : null) };
+  };
+  const rows = [row('Driver 1'), row('Driver 2')];
+  const report = { querySelectorAll: (sel) => (sel === '.row:not(.need)[data-key]' ? rows : []) };
+  const state = { tab: { id: 1, url: 'Drivers' }, reportFor: { key: 'k', fields: 2, left: 0 } };
+  const context = { state, $: () => report, pageOf: (u) => u, h: (tag, props, ...children) => ({ tag, props, children }), settleNeed() {} };
+  vm.runInNewContext(extractFunction('answeredOnPage'), context);
+  context.answeredOnPage('Drivers', [{ key: 'k', label: 'Driver 2', after: 'No' }]);
+  assert.deepEqual(rows.map((r) => [r.dataset.value, r.parts['.row-value'].textContent, !!r.head.tag]), [['Old', 'Old', false], ['No', 'No', true]]);
+  context.answeredOnPage('Drivers', [{ key: 'k', label: 'Driver', after: 'Yes' }]);
+  assert.deepEqual(rows.map((r) => r.dataset.value), ['Old', 'No'], 'a change that names neither row leaves both');
 });
 
 test('a file loaded again keeps the agent\'s corrections and checks, and says what stayed', () => {
@@ -1391,7 +1410,7 @@ function makeAiActionHarness({ rejected = false, via = 'row' } = {}) {
   const signature = '1\n/quote\nsynthetic-model\nsynthetic-policy\ncontext\nitem';
   const state = {
     filling: false, tab, intake, active: { drivers: 0, vehicles: 0 },
-    aiCache: new Map([[signature, x]]), agentKeys: new Map(), aiRun: 0,
+    aiCache: new Map([[signature, x]]), agentKeys: new Map(), aiRun: 0, aiDocks: new Map(),
   };
   const ctx = {
     tabId: 1, tabUrl: tab.url, page: '/quote', intake, contextKey: 'context',
@@ -1444,13 +1463,13 @@ function makeAiActionHarness({ rejected = false, via = 'row' } = {}) {
   };
   context.renderAi(holder, [x], ctx);
   // The pick has no row here: its card is above the list, with its own button; the dock's Approve
-  // (state.aiDock.go) acts on every pick waiting on the page.
+  // (state.aiDocks, by tab and page) acts on every pick waiting on the page.
   const phrase = rejected ? 'Confirm the current page answer' : 'Approve';
   const own = () => aiActionButtons(holder.children)
     .find(candidate => aiActionTreeText(candidate.children) === phrase);
   assert.ok(own(), 'real renderAi ' + (rejected ? 'Confirm' : 'Approve') + ' button rendered');
-  assert.deepEqual([state.aiDock.tabId, state.aiDock.page, state.aiDock.canContinue], [1, '/quote', true], 'the dock approves the picks of this page');
-  const dockGo = state.aiDock.go;
+  assert.deepEqual([[...state.aiDocks.keys()], state.aiDocks.get('1|/quote').canContinue], [['1|/quote'], true], 'the dock approves the picks of this page');
+  const dockGo = state.aiDocks.get('1|/quote').go;
   const button = () => (via === 'dock' ? { props: { onclick: dockGo } } : own());
   return {
     state, ctx, x, frame, holder, calls, fillCalls: () => fillCalls, button,
@@ -2999,7 +3018,7 @@ test('the page menu lists the other pages filled on this tab, by name, and shows
   const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
   const start = css.indexOf('.past .change');
   const rule = css.slice(start, css.indexOf('}', start) + 1);
-  for (const cls of ['change', 'mark-done', 'show-on-page', 'opts', 'opt-select', 'change-slot', 'ai-slot']) assert.ok(rule.includes(`.past .${cls}`), cls);
+  for (const cls of ['change', 'mark-done', 'show-on-page', 'opts', 'opt-select', 'change-slot', 'ai-slot', 'ai-holder', 'ai-orphan']) assert.ok(rule.includes(`.past .${cls}`), cls);
   assert.match(rule, /\{ display: none; \}$/);
 });
 
@@ -3084,6 +3103,7 @@ test('Pop out opens the panel in a window of its own where the agent last left i
   context.state.filling = true;
   await context.popOut();
   assert.equal(created.length, 0, 'not while a fill runs, already popped out, or outside the extension');
+  assert.equal(said.at(-1), 'Wait for the answers going in to finish, then try again.', 'an answer going in: said, not a silent no');
   assert.match(extractFunction('wire'), /\$\('pop-out'\)\.addEventListener\('click', popOut\);/);
   assert.match(extractFunction('renderSteps'), /\$\('pop-out'\)\.hidden = !inExtension \|\| popped;\s+\$\('dock-back'\)\.hidden = !popped;\s+\$\('pop-out'\)\.disabled = \$\('dock-back'\)\.disabled = !!state\.filling;/);
   assert.match(extractFunction('init'), /if \(inExtension && popped\) keepPlace\(\);/, 'its place is kept for the next time');
@@ -3095,8 +3115,8 @@ test('Dock opens Chrome\'s side panel in the quote\'s window within the click, t
   let closed = 0;
   let refuse = false;
   const chrome = { sidePanel: { open: (o) => { opened.push({ ...o }); return refuse ? Promise.reject(new Error('no gesture')) : Promise.resolve(); } } };
-  const context = { chrome, popped: true, state: { filling: false, tab: { id: 4, windowId: 2 }, browserWindow: 3 },
-    closeSelf: () => { closed++; }, windowProblem: (m) => said.push(m) };
+  const context = { chrome, popped: true, state: { filling: false, closing: false, tab: { id: 4, windowId: 2 }, browserWindow: 3 },
+    closeSelf: () => { closed++; }, windowProblem: (m) => said.push(m), setTimeout: (fn) => fn() };
   vm.runInNewContext(extractFunction('dock'), context);
   context.dock();
   assert.deepEqual(opened.splice(0), [{ windowId: 2 }], 'opened before anything is awaited: the click\'s gesture');
@@ -3121,6 +3141,14 @@ test('Dock opens Chrome\'s side panel in the quote\'s window within the click, t
   context.state.browserWindow = null;
   context.dock();
   assert.equal(opened.length, 0, 'not while a fill runs, as a side panel, or with no browser window');
+  assert.deepEqual(said.slice(-2), ['Wait for the answers going in to finish, then try again.', 'Click into the quote’s Chrome window, then try again.'], 'said why');
+  // The side panel took over meanwhile (giveWay closes this window): not closed twice.
+  refuse = false;
+  context.state.browserWindow = 3;
+  context.state.closing = true;
+  context.dock();
+  await new Promise(setImmediate);
+  assert.deepEqual([opened.length, closed], [1, 2]);
   assert.doesNotMatch(extractFunction('dock'), /await/);
   assert.match(extractFunction('wire'), /\$\('dock-back'\)\.addEventListener\('click', dock\);/);
 });
@@ -3128,13 +3156,16 @@ test('Dock opens Chrome\'s side panel in the quote\'s window within the click, t
 test('with the panel in its own window only the newest copy stays, and one filling stops before it closes', async () => {
   const sent = [];
   const steps = [];
+  let rendered = 0;
   const context = {
-    inExtension: true, popped: false, panelCopy: { id: 'b', at: 100 }, state: { closing: false, fillingFor: null },
+    inExtension: true, popped: false, panelCopy: { id: 'b', at: 100 },
+    state: { closing: false, fillingFor: null, tabSteps: new Map([[4, 'Vehicles']]), stopScreens: new Map([[4, { name: 'USDOT', page: '/q' }]]), quoteStates: new Map(), layoutReadyTabs: new Set([4]) },
     chrome: { runtime: { sendMessage: (m) => { sent.push({ ...m }); return Promise.resolve(); } } },
+    usage: { currentSession: () => ({ intakeId: 'i1' }) }, renderSite: () => { rendered++; }, setTimeout: (fn) => fn(),
     stopFill: async () => { steps.push('stop'); context.state.fillingFor.stopping = true; },
     closeSelf: () => steps.push('close'),
   };
-  vm.runInNewContext(['announceCopy', 'onPanelMessage', 'giveWay'].map(extractFunction).join('\n'), context);
+  vm.runInNewContext(['announceCopy', 'onPanelMessage', 'giveWay', 'handOver', 'takeOver'].map(extractFunction).join('\n'), context);
   context.announceCopy();
   assert.deepEqual(sent.splice(0), [{ ra: 'panel', event: 'opened', id: 'b', at: 100, popped: false }]);
   context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'c', at: 200, popped: false });
@@ -3150,14 +3181,53 @@ test('with the panel in its own window only the newest copy stays, and one filli
   context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'd', at: 300, popped: true });
   await new Promise(setImmediate);
   assert.deepEqual(steps.splice(0), ['stop', 'close'], 'a newer copy in its own window: the fill stops, then this copy closes, once');
+  // Before it closes, it hands over what only its memory holds about the tabs.
+  const handoff = JSON.parse(JSON.stringify(sent.find((m) => m.event === 'handoff')));
+  assert.deepEqual(handoff, { ra: 'panel', event: 'handoff', id: 'b', to: 'c', intakeId: 'i1', tabSteps: [[4, 'Vehicles']],
+    stopScreens: [[4, { name: 'USDOT', page: '/q' }]], quoteStates: [], layoutReadyTabs: [4] });
+  // The copy taking over keeps what it learned itself, and takes the rest for its own intake only.
+  Object.assign(context.state, { tabSteps: new Map([[4, 'Drivers']]), stopScreens: new Map(), layoutReadyTabs: new Set(), tab: { id: 4 } });
+  context.onPanelMessage({ ...handoff, id: 'c', to: 'x' });
+  context.onPanelMessage({ ...handoff, id: 'c', to: 'b', intakeId: 'another' });
+  assert.deepEqual([context.state.stopScreens.size, rendered], [0, 0], 'not for this copy, or another intake\'s');
+  context.onPanelMessage({ ...handoff, id: 'c', to: 'b' });
+  assert.deepEqual([[...context.state.tabSteps], [...context.state.stopScreens.keys()], [...context.state.layoutReadyTabs], rendered],
+    [[[4, 'Drivers']], [4], [4], 1]);
   Object.assign(context, { popped: true });
   Object.assign(context.state, { closing: false, fillingFor: null });
   context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'a', at: 100, popped: false });
   context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'c', at: 100, popped: false });
   await new Promise(setImmediate);
   assert.deepEqual(steps, ['close'], 'popped out: a side panel opened since (the toolbar icon, Dock) takes over; the same moment, by id');
+  // An answer still going in (a pick from a row) finishes first, then the copy closes.
+  steps.length = 0;
+  Object.assign(context.state, { closing: false, filling: true });
+  let waits = 0;
+  context.setTimeout = (fn) => { if (++waits === 3) context.state.filling = false; fn(); };
+  context.onPanelMessage({ ra: 'panel', event: 'opened', id: 'e', at: 400, popped: false });
+  await new Promise(setImmediate);
+  assert.deepEqual([waits, steps], [3, ['close']]);
+  for (const name of ['fillPage', 'autoFill', 'agentAnswer', 'applyAi']) assert.match(extractFunction(name), /state\.closing/, `${name}: nothing new starts while it closes`);
   assert.match(extractFunction('wire'), /chrome\.runtime\.onMessage\.addListener\(onPanelMessage\);/);
-  assert.match(extractFunction('init'), /wire\(\);[\s\S]{0,200}announceCopy\(\);/, 'it says so once it listens');
+  assert.match(extractFunction('init'), /wire\(\);[\s\S]*usage\.restoreSession\([\s\S]{0,400}announceCopy\(\);/, 'it says so once it listens and its intake is known');
+});
+
+// Review 2026-10-22: a maximized window's bounds became the next Pop out's size.
+test('popped out, only a normal window\'s place and size are kept', async () => {
+  const kept = [];
+  let onBounds = null;
+  const chrome = {
+    windows: { getCurrent: async () => ({ id: 7 }), onBoundsChanged: { addListener: (fn) => { onBounds = fn; } } },
+    storage: { local: { set: async (v) => { kept.push(JSON.parse(JSON.stringify(v))); } } },
+  };
+  const context = { chrome };
+  vm.runInNewContext(extractFunction('keepPlace'), context);
+  await context.keepPlace();
+  const bounds = { left: 10, top: 20, width: 400, height: 800 };
+  onBounds({ id: 7, state: 'normal', ...bounds });
+  for (const state of ['maximized', 'minimized', 'fullscreen']) onBounds({ id: 7, state, left: 0, top: 0, width: 1920, height: 1040 });
+  onBounds({ id: 8, state: 'normal', ...bounds, width: 999 });
+  assert.deepEqual(kept, [{ panelWindow: bounds }]);
 });
 
 test('a copy that gives way closes its own window, its tab, or Chrome\'s side panel', async () => {
@@ -4337,6 +4407,74 @@ test('Check answers before Continue reaches the kit as hold and is never logged'
   assert.equal(t.seen.options.confirmed, 'r1-seen');
   assert.equal(t.seen.options.overwrite, false, 'Looks right replaces nothing');
   assert.equal(t.seen.options.hold, true);
+});
+
+// Review 2026-10-22: Stop pressed after the kit was done (Continue clicked) still called the page
+// stopped, and the dock offered to fill the rest. Only a frame that halted makes it stopped.
+test('a Stop that comes after the kit was done does not mark the page stopped', async () => {
+  for (const [halted, want] of [[false, false], [true, true]]) {
+    const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
+    const stopped = [];
+    t.context.renderReport = (frames, ctx) => stopped.push(ctx.stopped);
+    const run = t.context.fillPage();
+    await t.started;
+    t.state.fillingFor.stopping = true;
+    t.release([{ frameId: 0, result: { ...t.results[0].result, halted } }]);
+    await run;
+    assert.deepEqual(stopped, [want], halted ? 'halted by the Stop' : 'done before the Stop reached it');
+  }
+});
+
+// Review 2026-10-22: each half second every frame sent its whole list, and the live list was drawn
+// again whole. The panel asks each frame for the rows after those it has, by list, and keeps those.
+test('while a fill runs the panel asks each frame only for new rows and keeps those it has', async () => {
+  let tick = null;
+  let reply = [];
+  let renders = 0;
+  const asked = [];
+  const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
+  const context = {
+    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; },
+    setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+    chrome: { scripting: { executeScript: async (o) => { asked.push(JSON.parse(JSON.stringify(o.args[0]))); return reply; } } },
+  };
+  vm.runInNewContext(extractFunction('watchFill'), context);
+  context.watchFill({ run: 'r1', tabId: 3, carrier: {} });
+  const row = (label, extra = {}) => ({ label, shown: 'x', ...extra });
+  const labels = () => Array.from(state.fillingFor.rows, (x) => x.label);
+  reply = [{ result: { frame: 'f', list: 'f:1', since: 0, rows: [row('A'), row('B')] } }, { result: null }];
+  await tick();
+  const [a, b] = state.fillingFor.rows;
+  reply = [{ result: { frame: 'f', list: 'f:1', since: 2, rows: [row('C'), row('Hidden', { otherStep: true })] } }];
+  await tick();
+  assert.deepEqual(asked, [{}, { 'f:1': 2 }]);
+  assert.deepEqual(labels(), ['A', 'B', 'C'], 'another step\'s field filled again is not this step\'s');
+  assert.ok(state.fillingFor.rows[0] === a && state.fillingFor.rows[1] === b, 'the rows it had stay as they were');
+  // The frame rewrote its list (an answer given again): taken whole, in place of the old one.
+  reply = [{ result: { frame: 'f', list: 'f:2', since: 0, rows: [row('A2')] } }];
+  await tick();
+  assert.deepEqual(asked.at(-1), { 'f:1': 4 });
+  assert.deepEqual([labels(), state.fillingFor.filled, renders], [['A2'], 1, 3]);
+  // Nothing new: nothing drawn again.
+  reply = [{ result: { frame: 'f', list: 'f:2', since: 1, rows: [] } }];
+  await tick();
+  assert.equal(renders, 3);
+});
+
+// Review 2026-10-22: rows a follow-up fill added had no source or group, so a worked-out answer or
+// one from the agent's correction showed as the intake's, and grouped boxes as one row each.
+test('a follow-up fill lists its answers with their sources and groups, as the report does', () => {
+  const context = { state: { intake: { agentEdited: ['owner.first'] } } };
+  vm.runInNewContext(['answerSources', 'groupRows'].map(extractFunction).join('\n'), context);
+  const plan = [{ id: 's1', from: ['owner.first', 'owner.last'] }, { id: 'g1', group: 'Symbols', value: true }, { id: 'g2', group: 'Symbols', value: false }, { id: 'p1' }];
+  const { fromOf, groupOf, ticks, editedBy } = context.answerSources(plan);
+  assert.deepEqual([[...fromOf.keys()], [...groupOf.keys()], [...ticks]], [['s1'], ['g1', 'g2'], ['g1']]);
+  assert.deepEqual([editedBy('x.y', fromOf.get('s1')), editedBy('x.y'), editedBy('owner.first')], [true, false, true]);
+  const rows = context.groupRows([{ label: 'Name', answer: true }, { label: '1', group: 'Symbols', stepId: 'g1', answer: true, standard: true }, { label: '2', group: 'Symbols', stepId: 'g2', answer: false, standard: true }], ticks);
+  assert.deepEqual(JSON.parse(JSON.stringify(rows)), [{ label: 'Name', answer: true },
+    { label: 'Symbols', grouped: 'Symbols', ticked: ['1'], standard: true, answer: true, value: '1' }]);
+  assert.match(extractFunction('autoFill'), /answerSources\(plan\)[\s\S]{0,600}groupRows\(added\.map[\s\S]{0,600}answerRow\(\{ \.\.\.row, fresh: true \}/);
+  assert.match(extractFunction('renderReport'), /answerSources\(ctx\.plan\)[\s\S]{0,40}const doneRows = groupRows\(\[/);
 });
 
 // Audit 2026-10-10: Stop while the panel still prepared (recorder, AI retirement) was lost and the
@@ -6405,14 +6543,15 @@ function agentAnswerHarness({ carrier = { id: 'progressive', stopSteps: { 'Payme
     answer: (items) => [{ frameId: 0, result: [{ key: items[0].key, ok: true, shown: items[0].value }] }],
   };
   const state = { tab: { id: 1, url: 'Quote', carrier }, intake: { record: {} }, intakeRevision: 0, filling: false, agentKeys: new Map(), aiCache: new Map(),
-    active: {}, tabSteps: new Map(), filled: new Map(), labels: new Map(), choices: new Map() };
+    active: {}, tabSteps: new Map(), filled: new Map(), labels: new Map(), choices: new Map(), tabSessions: new Map() };
   const note = { hidden: true, classList: { add() {}, remove() {} }, replaceChildren(...c) { t.said = c.join(''); } };
   t.item = { classList: { contains: (c) => c === 'need' }, querySelector: (sel) => (sel === '.need-note' ? note : null), querySelectorAll: () => [] };
   t.x = { key: 'k1', label: 'Hauls hazardous materials', controlKind: 'radio', options: ['Yes', 'No'], q: 'q-hazmat' };
   const context = {
     state, crypto, neverReason, knownStep, pageOf: (u) => u,
     usage: { currentSession: () => ({ intakeId: 'intake-1', keySalt: 'salt' }), log: (e) => t.logged.push(e) },
-    tellRecorder: async () => {}, persistAgentKeys: async () => {}, scheduleLayout() {}, scheduleAutoFill: (p) => t.scheduled.push(p),
+    tellRecorder: async () => {}, scheduleLayout() {}, scheduleAutoFill: (p) => t.scheduled.push(p),
+    agentKeysQueue: Promise.resolve(), agentKeysStore: { get: async () => t.stored ?? [], set: async (v) => { t.stored = JSON.parse(JSON.stringify(v)); } },
     redactor: () => (s) => s, redactionTerms: () => [], viewOf: () => 't1', fieldChangeEvent: (c) => ({ type: 'field_change', ...c }),
     settleNeed: (item, how, undo, shown) => t.settled.push([how, shown]),
     runKit: async (tabId, c, fn, args = [], frameIds) => {
@@ -6499,6 +6638,24 @@ test('the agent\'s pick goes in as theirs: by the agent, never on a stop step, l
   await practice.pick('No');
   assert.deepEqual(practice.kit.find((k) => k[0] === 'answer')[1][2], { stopSteps: [], by: 'agent' });
   assert.deepEqual([practice.keys(), practice.logged], [['k1'], []]);
+  assert.deepEqual(t.stored, [{ scope: 'intake-1', tabId: 1, page: 'Quote', keys: ['k1'] }], 'kept for the panel opened again');
+});
+
+// Review 2026-10-22: the agent moved to another tab while their pick went in. The page holds it, so
+// it is theirs where it went in (no fill puts the intake value back) and logged; their row there
+// isn't touched from the other tab.
+test('the agent\'s pick stays theirs when they move to another tab before it is in', async () => {
+  const t = agentAnswerHarness();
+  const theirs = t.state.agentKeys;
+  const answerIn = t.answer;
+  t.answer = (items) => { Object.assign(t.state, { tab: { id: 2, url: 'Drivers', carrier: t.carrier }, agentKeys: new Map() }); return answerIn(items); };
+  await t.pick('No');
+  assert.deepEqual([...(theirs.get('Quote') ?? [])], ['k1'], 'the quote tab\'s keys');
+  assert.deepEqual(t.keys(), [], 'not the tab in front\'s');
+  assert.deepEqual(t.stored, [{ scope: 'intake-1', tabId: 1, page: 'Quote', keys: ['k1'] }]);
+  assert.deepEqual(t.logged.map((e) => [e.type, e.key, e.after, e.agent]), [['field_change', 'k1', 'No', true]]);
+  assert.deepEqual([t.settled, t.scheduled, t.said], [[], [], null]);
+  assert.equal(t.state.filling, false);
 });
 
 // The tab's quote is for another state than the intake's: nothing is filled, on request or

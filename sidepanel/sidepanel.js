@@ -365,9 +365,9 @@ const state = {
   // The screen that is the agent's (carrier `stopButtons`: GEICO's "Add USDOT Number / Skip") a tab
   // shows, as `{ name, page }` (noteStopScreen).
   stopScreens: new Map(),
-  // The AI picks waiting for approval on a tab's page, for the dock's Approve (renderAi):
-  // { tabId, page, canContinue, go }.
-  aiDock: null,
+  // The AI picks waiting for approval, for the dock's Approve (renderAi), by tab and page
+  // (`${tabId}|${page}`): { canContinue, go }.
+  aiDocks: new Map(),
   // Where focus was when the intake PDF opened, for Back.
   pdfReturn: null,
   // All client details, in a drawer over the panel, and where focus was when it opened.
@@ -802,7 +802,7 @@ async function loadFile(file) {
   if (same) keepWork(state.intake, same);
   state.view = firstView(state.intake);
   state.filter = 'all';
-  state.aiDock = null;
+  state.aiDocks = new Map();
   state.pastKey = null;
   state.detailsOpen = false;
   state.settingsOpen = false;
@@ -914,7 +914,7 @@ function render() {
     record.trailers.length ? n('trailers', 'trailer') : null].filter(Boolean).join(' · ');
   $('test-run').checked = !!state.intake.test;
   $('details-count').textContent = `${stats.filled} answers`;
-  $('open-pdf').hidden = !state.pdfBytes && !state.intake.pdfKept;
+  $('open-pdf').hidden = !pdfAvailable();
   $('file-menu').hidden = !state.fileMenuOpen;
   $('file-menu-btn').setAttribute('aria-expanded', String(state.fileMenuOpen));
   $('file-menu-items').hidden = !!state.fileConfirm;
@@ -1003,7 +1003,7 @@ function renderWarnings() {
   // "See intake" only where the PDF shows the item (an answer only the agent gives: none).
   const pdfLink = (w, label) => {
     const place = sourcePlace(w.path, state.intake);
-    return place && (state.pdfBytes || state.intake.pdfKept)
+    return place && pdfAvailable()
       ? h('button', { type: 'button', class: 'link small', onclick: () => openPdf({ path: w.path, label, kind: 'check' }) }, `See intake${pdfPageSaid(place.page, ', page ')}`)
       : null;
   };
@@ -1152,7 +1152,7 @@ function jumpTo(path) {
   const section = $('sections').querySelector(`.section[data-id="${sectionId}"]`);
   if (!section) return;
   const row = $('sections').querySelector(`.field[data-path="${CSS.escape(path)}"]`) ?? section;
-  row.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  row.scrollIntoView({ block: 'start', behavior: scrollBehavior() });
   if (row.classList.contains('field')) {
     row.classList.add('pulse');
     row.querySelector('input, select, textarea')?.focus({ preventScroll: true });
@@ -1398,8 +1398,7 @@ function onRecorderMessage(msg, sender) {
       persistAgentKeys();
       // What the agent answered is no longer left for them in step 3 (an answer cleared still is),
       // and an answer the fill put in that they changed is theirs.
-      const answered = byAgent.filter((c) => c.after !== '');
-      answeredOnPage(page, answered.map((c) => c.key), new Map(answered.map((c) => [c.key, c.after])));
+      answeredOnPage(page, byAgent.filter((c) => c.after !== ''));
       settleRejectedAi(page, byAgent, sender).then((released) => {
         if (released && state.tab?.id === sender.tab?.id && pageOf(state.tab?.url) === page) {
           syncAiBanner({ tabId: state.tab.id, page, carrier: state.tab.carrier });
@@ -1702,22 +1701,35 @@ function fillErrorMessage(ctx, e) {
 }
 
 // While a fill runs: the answers in so far, read from the page every half second (pagekit
-// progress), listed as they go in (renderLive) and counted in step 2 and the dock. Returns what
-// stops the reading.
+// progress), listed as they go in (renderLive) and counted in step 2 and the dock. Each frame sends
+// only the rows after those the panel has from its list (`seen`, by the frame's list); a reading
+// still under way skips the next. Returns what stops the reading.
 function watchFill(ctx) {
   if (!inExtension) return () => {};
+  const lists = new Map();
+  let reading = false;
   const timer = setInterval(async () => {
     if (state.fillingFor?.run !== ctx.run) { clearInterval(timer); return; }
+    if (reading) return;
+    reading = true;
     let frames;
     try {
+      const seen = Object.fromEntries([...lists].map(([list, rows]) => [list, rows.length]));
       frames = await chrome.scripting.executeScript({ target: { tabId: ctx.tabId, allFrames: true }, world: worldFor(ctx.carrier),
-        func: () => globalThis.__raterKit?.progress?.() ?? null });
-    } catch { return; /* the page is navigating */ }
+        func: (s) => globalThis.__raterKit?.progress?.(s) ?? null, args: [seen] });
+    } catch { return; /* the page is navigating */ } finally { reading = false; }
     const f = state.fillingFor;
     if (f?.run !== ctx.run) return;
+    for (const { result } of frames) {
+      if (!result?.list) continue;
+      // A list the frame has rewritten (an answer given again) comes whole (`since` 0), as a new one.
+      const had = result.since ? lists.get(result.list) ?? [] : [];
+      if (!result.since) for (const list of lists.keys()) if (list.startsWith(`${result.frame}:`)) lists.delete(list);
+      lists.set(result.list, [...had.slice(0, result.since), ...result.rows]);
+    }
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
-    const rows = frames.flatMap((frame) => frame.result?.rows ?? []).filter((x) => !x.otherStep);
-    if (rows.length === f.filled) return;
+    const rows = [...lists.values()].flat().filter((x) => !x.otherStep);
+    if (rows.length === f.filled && rows.every((x, i) => f.rows[i] === x)) return;
     f.filled = rows.length;
     f.rows = rows;
     renderSteps();
@@ -1733,19 +1745,30 @@ function renderLive() {
   const live = $('live');
   const on = !!f && state.filling && f.tabId === state.tab?.id;
   live.hidden = !on;
-  if (!on) { live.replaceChildren(); delete live.dataset.count; return; }
+  if (!on) { live.replaceChildren(); delete live.dataset.count; live.drawn = []; return; }
   const rows = f.rows ?? [];
   const count = `${rows.length}${f.stopping ? 's' : ''}`;
-  if (live.dataset.count === count) return;
+  if (live.dataset.count === count && live.drawn === rows) return;
   live.dataset.count = count;
-  live.replaceChildren(...rows.map((x, i) => h('div', { class: `row${i === rows.length - 1 ? ' fresh' : ''}` },
+  // The new answers join those listed already; a list the page rewrote is listed anew.
+  const drawn = live.drawn ?? [];
+  const more = drawn.length <= rows.length && drawn.every((x, i) => rows[i] === x);
+  if (more) {
+    live.querySelector(':scope > .typing')?.remove();
+    live.querySelector(':scope > .fresh')?.classList.remove('fresh');
+  } else live.replaceChildren();
+  live.append(...rows.slice(more ? drawn.length : 0).map((x) => h('div', { class: 'row' },
     h('div', { class: 'row-head' },
       h('span', { class: 'row-icon', 'aria-hidden': 'true' }, '✓'),
       h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, x.label || 'Answer'), h('span', { class: 'row-value' }, x.shown || 'filled')),
-      x.standard ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'TNI standard') : null))),
-  f.stopping ? null : h('div', { class: 'row typing' }, h('div', { class: 'row-head' },
-    h('span', { class: 'row-icon', 'aria-hidden': 'true' }, h('span', { class: 'spinner' })),
-    h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, rows.length ? 'Next answer' : 'Reading the page'), h('span', { class: 'row-value' }, 'Working…')))));
+      x.standard ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'TNI standard') : null))));
+  live.drawn = rows;
+  if (rows.length) live.lastElementChild?.classList.add('fresh');
+  if (!f.stopping) {
+    live.append(h('div', { class: 'row typing' }, h('div', { class: 'row-head' },
+      h('span', { class: 'row-icon', 'aria-hidden': 'true' }, h('span', { class: 'spinner' })),
+      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, rows.length ? 'Next answer' : 'Reading the page'), h('span', { class: 'row-value' }, 'Working…')))));
+  }
   live.lastElementChild?.scrollIntoView?.({ block: 'nearest' });
 }
 
@@ -1764,6 +1787,11 @@ async function stopFill() {
   } catch { /* the page is navigating: the fill ends anyway */ }
 }
 
+// Scrolling into view: at once for an agent who asked the system for less motion.
+function scrollBehavior() {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+}
+
 // After a fill: the page's answers come into view (steps 2 and 3). An automatic fill doesn't pull
 // the agent out of step 1 while they're working in it.
 function showFinish({ auto = false } = {}) {
@@ -1771,7 +1799,7 @@ function showFinish({ auto = false } = {}) {
   state.view = 'page';
   showScreen();
   renderSteps();
-  $('page-view').scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  $('page-view').scrollIntoView({ block: 'start', behavior: scrollBehavior() });
 }
 // The step a one-address application (AmWINS) showed to the fill: the top frame's headings, sent
 // only as one of the carrier's step names (knownStep).
@@ -1812,7 +1840,7 @@ async function autoFill(page) {
   const drawn = state.autoDrawn === page;
   state.autoDrawn = null;
   // The client may have been cleared while this fill was waiting to run.
-  if (state.autoPaused || state.filling || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
+  if (state.autoPaused || state.filling || state.closing || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   if (stopNoteFor(state.tab.carrier, page) || stateIssue()) return;
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
@@ -1883,13 +1911,16 @@ async function autoFill(page) {
       logFill(ctx, frames, results, started);
       if (n && current && !rendered && reportShown()) {
         // Listed with the page's answers, marked new, and counted in step 2.
+        // With their sources and groups as the report has them (answerSources, groupRows).
         const rctx = { tabId, page, carrier };
-        const rows = [...added.map((x) => answerRow({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null, fresh: true }, rctx)),
+        const { fromOf, groupOf, ticks, editedBy } = answerSources(plan);
+        const answers = groupRows(added.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null })), ticks);
+        const rows = [...answers.map((row) => answerRow({ ...row, fresh: true }, rctx)),
           ...frames.flatMap((f) => f.actions ?? []).map((a) => answerRow({ label: 'Clicked', value: a.text || a.id, kind: 'clicked', fresh: true }, rctx))];
         let list = $('report').querySelector(':scope > .rows');
         if (!list) { list = h('div', { class: 'rows' }); $('report').append(list); }
         list.append(...rows);
-        state.reportFor.filled = (state.reportFor.filled ?? 0) + added.length;
+        state.reportFor.filled = (state.reportFor.filled ?? 0) + answers.filter((row) => row.answer).length;
         renderSteps();
         announce(`Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically.`);
       }
@@ -2670,14 +2701,15 @@ function dockFor() {
   if (report?.fields) {
     if (report.stopped) return { phase: 'stopped-fill', tone: 'warn', eyebrow: 'Stopped', title: `${report.filled} filled before you stopped`, sub: 'What went in stays. Fill again to finish the rest; your changes are kept.', button: 'fill', label: 'Fill this page again' };
     // AI picks waiting for approval hold Continue: approved (or confirmed) from here or their rows.
-    const ai = state.aiDock?.tabId === state.tab.id && state.aiDock.page === page ? pendingAi(state.tab.id, page) : [];
+    const aiDock = state.aiDocks.get(`${state.tab.id}|${page}`);
+    const ai = aiDock ? pendingAi(state.tab.id, page) : [];
     if (ai.length) {
       const waiting = ai.filter((x) => !x.rejected).length;
-      const continues = state.aiDock.canContinue && (report.left ?? 0) <= ai.length;
+      const continues = aiDock.canContinue && (report.left ?? 0) <= ai.length;
       return { phase: 'ai', tone: 'ai', eyebrow: `AI picked ${ai.length} answer${ai.length === 1 ? '' : 's'}`,
         title: waiting ? 'Check the purple answers, then approve' : 'Confirm the page answer, or change it',
         sub: waiting < ai.length ? 'Continue waits until you confirm the page answer or change it.'
-          : state.aiDock.canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.',
+          : aiDock.canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.',
         button: 'ai-approve', label: waiting ? (continues ? 'Approve and continue' : `Approve ${waiting === 1 ? 'the AI pick' : `${waiting} AI picks`}`)
           : continues ? 'Confirm and continue' : 'Confirm the page answer' };
     }
@@ -2846,7 +2878,7 @@ function showStateNote() {
   const g = state.intake.record.garaging ?? {};
   const address = [g.street, g.city, [g.state, g.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const place = sourcePlace('garaging.state', state.intake);
-  const pdf = place && (state.pdfBytes || state.intake.pdfKept);
+  const pdf = place && pdfAvailable();
   box.replaceChildren(issueCard({ role: 'alert', title: `This ${name} quote is for ${picked}. The intake says ${intake}.`,
     text: `${before ? `The quote was started in ${picked} before this intake was loaded. ` : ''}A ${picked} quote won’t take ${intake} ZIP codes or rules. Start the quote in ${intake}, or check the intake.`,
     compare: [['Rater', picked], [`Intake${place ? pdfPageSaid(place.page, ' page ') : ''}`, address || intake]],
@@ -2926,7 +2958,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
-  if (state.filling || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
+  if (state.filling || state.closing || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
   // Back on a step that takes follow-ups only for new questions (newQuestionsOnlySteps) after its
   // fill: only the agent, or new questions, fill it again.
   if (auto && state.tab.carrier.newQuestionsOnlySteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
@@ -2996,8 +3028,9 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     followUp = afterFill(frames, ctx);
     logFill(ctx, frames, results, started);
     // The report is its own tab's: kept for it when the agent has moved to another tab meanwhile.
-    // Stopped by the agent: said so, and the dock offers to fill the rest.
-    renderReport(frames, { ...ctx, plan, stopped: state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping });
+    // Stopped by the agent before the kit was done (a frame halted): said so, and the dock offers to
+    // fill the rest.
+    renderReport(frames, { ...ctx, plan, stopped: state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted) });
     if (!fillCurrent(ctx)) return;
     recordLayout(page);
     assistFrames = frames;
@@ -3402,17 +3435,23 @@ function setRowHead(item, { icon, value = null, tag = null }) {
   if (tag) head.append(h('span', { class: `tag ${tag.kind}`, title: tag.title ?? '' }, tag.text));
 }
 
-// The agent changed questions on the page (the recorder's field_changes): their items in the page's
-// list are settled, and an answer the fill put in that they changed is theirs now, when the report
-// shown is this page's. `shown`: what each now holds (field key -> the value).
-function answeredOnPage(page, keys, shown = new Map()) {
-  if (!keys.length || pageOf(state.tab?.url) !== page || !state.reportFor?.fields) return;
+// The agent changed questions on the page (the recorder's field_changes: { key, label, after }, `after`
+// what it holds now): their items in the page's list are settled, and an answer the fill put in that
+// they changed is theirs now, when the report shown is this page's. Rows of one repeated question
+// share its key (one per vehicle or driver): one of those is matched by its label too, and left as
+// it is when the change doesn't say which.
+function answeredOnPage(page, changes) {
+  if (!changes.length || pageOf(state.tab?.url) !== page || !state.reportFor?.fields) return;
   for (const item of $('report').querySelectorAll('.row.need')) {
-    if (keys.includes(item.dataset.key) && item.dataset.settled !== 'answered') settleNeed(item, 'answered', null, shown.get(item.dataset.key) || null);
+    const change = changes.findLast((c) => c.key === item.dataset.key);
+    if (change && item.dataset.settled !== 'answered') settleNeed(item, 'answered', null, change.after || null);
   }
-  for (const row of $('report').querySelectorAll('.row:not(.need)[data-key]')) {
-    if (!keys.includes(row.dataset.key) || !shown.get(row.dataset.key)) continue;
-    row.dataset.value = shown.get(row.dataset.key);
+  const rows = [...$('report').querySelectorAll('.row:not(.need)[data-key]')];
+  for (const row of rows) {
+    const shared = rows.some((r) => r !== row && r.dataset.key === row.dataset.key);
+    const change = changes.findLast((c) => c.key === row.dataset.key && (!shared || c.label === row.dataset.field));
+    if (!change?.after) continue;
+    row.dataset.value = change.after;
     row.classList.remove('changed');
     setRowHead(row, { icon: '✓', value: row.dataset.value, tag: { kind: 'you', text: 'You', title: 'You changed it on the page: no fill puts it back' } });
   }
@@ -3532,14 +3571,8 @@ function renderReport(frames, ctx = {}) {
   // Answers an earlier pass on this page filled (a follow-up pass, after the VIN lookup or a
   // redraw, finds them already there): still ours, shown as filled.
   const earlier = kept.filter((x) => !x.differs && maps.filled?.get?.(x.key));
-  // What a derived answer was worked out from (plan.js `from`), by its step.
-  const fromOf = new Map((ctx.plan ?? []).filter((s) => s.from).map((s) => [s.id, s.from]));
-  const groupOf = new Map((ctx.plan ?? []).filter((s) => s.group).map((s) => [s.id, s.group]));
-  const ticks = new Set((ctx.plan ?? []).filter((s) => s.group && s.value === true).map((s) => s.id));
-  // An answer filled from a field the agent set or corrected in the panel (client details, a Check
-  // intake button such as Use Female): the agent's, not the client's (also openPdf's `edited`).
-  const editedBy = (path, from) => [path, ...(from ?? [])].some((p) => p && state.intake?.agentEdited?.includes(p));
-  const doneRows = [
+  const { fromOf, groupOf, ticks, editedBy } = answerSources(ctx.plan);
+  const doneRows = groupRows([
     // `key`/`field`: the field and its label on the page, for checking the answer is still there
     // (checkAnswers) and changing it (changeAnswer); `kind`: what it is when it's no answer of ours.
     ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order })),
@@ -3550,19 +3583,7 @@ function renderReport(frames, ctx = {}) {
     ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
     ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: !!x.standard, group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page', frame: x.frame, order: x.order })),
     ...all('skipped').map((x) => ({ label: x.label, value: 'yours, not filled', kind: 'yours' })),
-  ].reduce((rows, row) => {
-    // One question asked as several boxes (plan.js `group`: AmWINS' auto symbols): one row, the
-    // question and the boxes ticked, where the first box was (live run 2026-10-09: nine rows).
-    if (!row.group) return [...rows, row];
-    const g = rows.find((r) => r.grouped === row.group)
-      ?? (rows.push({ label: row.group, grouped: row.group, ticked: [], standard: true, answer: false, frame: row.frame, order: row.order }), rows.at(-1));
-    // Ticked by our answer (filled now, earlier, or already so on the page).
-    if (ticks.has(row.stepId)) g.ticked.push(row.label);
-    g.answer ||= !!row.answer;
-    g.standard &&= row.standard;
-    g.value = g.ticked.join(', ') || 'none ticked';
-    return rows;
-  }, []);
+  ], ticks);
   const count = doneRows.filter((row) => row.answer).length;
   // The carrier probably changed this page (pagekit: a known field renamed, or most questions
   // unfamiliar). The rest still filled; Continue waits for the agent.
@@ -3609,6 +3630,37 @@ function renderReport(frames, ctx = {}) {
   if (held) refreshAnswers();
 }
 
+// Where a fill's answers came from, by their plan step (plan.js): `fromOf`, the intake answers a
+// derived one was worked out from; `groupOf`, the question several boxes answer together; `ticks`,
+// the boxes our answer ticks. `editedBy`: an answer filled from a field the agent set or corrected
+// in the panel (client details, a Check intake button such as Use Female) is the agent's, not the
+// client's (also openPdf's `edited`).
+function answerSources(plan) {
+  const steps = plan ?? [];
+  return {
+    fromOf: new Map(steps.filter((s) => s.from).map((s) => [s.id, s.from])),
+    groupOf: new Map(steps.filter((s) => s.group).map((s) => [s.id, s.group])),
+    ticks: new Set(steps.filter((s) => s.group && s.value === true).map((s) => s.id)),
+    editedBy: (path, from) => [path, ...(from ?? [])].some((p) => p && state.intake?.agentEdited?.includes(p)),
+  };
+}
+
+// One question asked as several boxes (plan.js `group`: AmWINS' auto symbols): one row, the
+// question and the boxes ticked, where the first box was (live run 2026-10-09: nine rows).
+function groupRows(rows, ticks) {
+  return rows.reduce((out, row) => {
+    if (!row.group) return [...out, row];
+    const g = out.find((r) => r.grouped === row.group)
+      ?? (out.push({ label: row.group, grouped: row.group, ticked: [], standard: true, answer: false, frame: row.frame, order: row.order }), out.at(-1));
+    // Ticked by our answer (filled now, earlier, or already so on the page).
+    if (ticks.has(row.stepId)) g.ticked.push(row.label);
+    g.answer ||= !!row.answer;
+    g.standard &&= row.standard;
+    g.value = g.ticked.join(', ') || 'none ticked';
+    return out;
+  }, []);
+}
+
 // One answer in the page's list (renderReport): what went in and where it came from, opening to its
 // source with Change answer and See in intake. `row.kind`: 'clicked', 'page' (left as the page had
 // it) or 'yours' (the agent's own answer, not filled); otherwise an answer, by its source.
@@ -3616,7 +3668,7 @@ function answerRow(row, { tabId, page, carrier }) {
   const kind = row.kind ?? (row.edited ? 'edited' : row.standard ? 'standard' : row.from ? 'derived' : 'intake');
   // Where it is on the intake PDF: the field an answer came from, or those a derived one was worked
   // out from. A TNI standard is no intake fact; no link while the PDF isn't kept.
-  const pdfHere = !!(state.pdfBytes || state.intake?.pdfKept);
+  const pdfHere = pdfAvailable();
   const paths = [].concat(row.from ?? row.path ?? []);
   const place = ['intake', 'derived', 'edited'].includes(kind) && pdfHere && state.intake && paths.length ? sourcePlace(paths, state.intake) : null;
   const tag = {
@@ -3667,7 +3719,7 @@ function answerRow(row, { tabId, page, carrier }) {
 function needRow(x, { tabId, page, carrier }, open = false) {
   const label = x.label || x.name;
   const pickable = agentPickable(x, carrier, page);
-  const options = x.controlKind === 'checkbox' ? ['checked', 'unchecked'] : [...new Set(x.options ?? [])];
+  const options = [...new Set(choicesOf(x.controlKind, x.options))];
   const kind = x.mark === 'failed' ? 'failed' : pickable ? 'need' : 'yours';
   const icon = { failed: '!', need: '?', yours: '•' }[kind];
   const wait = { failed: 'Couldn’t fill', need: 'Needs your answer', yours: 'Left for you' }[kind];
@@ -3703,8 +3755,13 @@ function needRow(x, { tabId, page, carrier }, open = false) {
 // stop page, step or screen.
 function agentPickable(x, carrier = state.tab?.carrier, page = pageOf(state.tab?.url)) {
   if (!x?.key || !['radio', 'select', 'checkbox'].includes(x.controlKind)) return false;
-  const options = x.controlKind === 'checkbox' ? ['checked', 'unchecked'] : x.options ?? [];
+  const options = choicesOf(x.controlKind, x.options);
   return options.length > 0 && !x.reviewOnly && !neverReason(x) && !stopNoteFor(carrier, page);
+}
+
+// The choices a question offers the agent: a checkbox's two states, or the options the page lists.
+function choicesOf(kind, options) {
+  return kind === 'checkbox' ? ['checked', 'unchecked'] : options ?? [];
 }
 
 // A choice as the agent reads it (a checkbox's two states named).
@@ -3750,7 +3807,7 @@ function showNextNeed() {
   const now = $('report').querySelector('.row.open');
   const next = (now && open.find((n) => n !== now && (now.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING))) || open.find((n) => n !== now) || open[0];
   toggleRow(next, true);
-  next.scrollIntoView({ block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  next.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
   next.querySelector('.row-head')?.focus({ preventScroll: true });
 }
 
@@ -3767,7 +3824,7 @@ async function changeAnswer(item, row, { tabId, page, carrier }) {
   const matches = aiSnapshotFieldMatches(frames, { key: row.key, label: row.field });
   const field = matches.length === 1 ? matches[0].field : null;
   const x = field ? { key: field.key, label: field.label, section: field.section, controlKind: field.kind, q: row.q ?? null, current: field.current,
-    options: field.kind === 'checkbox' ? ['checked', 'unchecked'] : field.options ?? [] } : null;
+    options: choicesOf(field.kind, field.options) } : null;
   if (!x || !agentPickable(x, carrier, page)) {
     const note = item.querySelector('.need-note');
     note.hidden = false;
@@ -3787,7 +3844,7 @@ async function changeAnswer(item, row, { tabId, page, carrier }) {
 // stop step. The field then joins the agent's on this page, as their own edit there does: no fill
 // changes it and Continue no longer waits on it. Logged as the agent's field change.
 async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = null) {
-  if (state.filling || !state.intake || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || !agentPickable(x, carrier, page)) return;
+  if (state.filling || state.closing || !state.intake || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || !agentPickable(x, carrier, page)) return;
   const note = item.querySelector('.need-note');
   const say = (text) => { note.hidden = false; note.classList.add('bad'); note.replaceChildren(text); };
   const intake = state.intake;
@@ -3814,7 +3871,7 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
     if (matches.length !== 1) { say('The page changed: answer it on the page.'); return; }
     const [{ frame }] = matches;
     field = matches[0].field;
-    const options = field.kind === 'checkbox' ? ['checked', 'unchecked'] : field.options ?? [];
+    const options = choicesOf(field.kind, field.options);
     if (!options.includes(choice) || !agentPickable({ ...x, controlKind: field.kind, section: field.section, options }, carrier, page)) {
       say('The page doesn’t offer that answer now: answer it on the page.');
       return;
@@ -3840,23 +3897,23 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
     // The recorder was paused: the questions the answer revealed or hid are read here.
     if (field && state.tab?.id === tabId) scheduleLayout(page, 'changed');
   }
-  if (!current() || !field) return;
+  if (!field) return;
   if (!result?.ok) {
-    say(result?.reason ? `The page didn’t take it (${result.reason}). Answer it on the page.` : 'Couldn’t reach the page. Answer it on the page.');
+    if (current()) say(result?.reason ? `The page didn’t take it (${result.reason}). Answer it on the page.` : 'Couldn’t reach the page. Answer it on the page.');
     return;
   }
   const shown = result.shown || choice;
-  const editIn = editScope(page, carrier);
-  const keys = state.agentKeys.get(editIn) ?? new Set();
-  keys.add(x.key);
-  state.agentKeys.set(editIn, keys);
-  await persistAgentKeys();
-  if (!carrier.practice) {
-    const ctx = { record: state.intake.record, filled: state.filled, labels: state.labels, choices: state.choices,
-      redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt, step: knownStep(carrier, tabStep(carrier)) };
+  // In on the page, so the agent's from now on where it went in (no fill changes it) and logged with
+  // the quote it went into, also when they moved to another tab, page or intake meanwhile.
+  await persistGuardedEdits(editOrigin, [x.key]);
+  if (!carrier.practice && usage.currentSession()?.intakeId === scope) {
+    const maps = tabMaps(tabId);
+    const ctx = { record: intake.record, filled: maps.filled, labels: maps.labels, choices: maps.choices,
+      redact: redactor(redactionTerms(intake.record)), keySalt: usage.currentSession()?.keySalt, step: knownStep(carrier, tabStep(carrier, tabId)) };
     usage.log({ carrier: carrier.id, page, view: viewOf(tabId, page, carrier),
       ...fieldChangeEvent({ key: field.key, q: x.q ?? null, label: field.label, kind: field.kind, before: field.current ?? '', after: shown, agent: true }, ctx) });
   }
+  if (!current()) return;
   // The AI's word on it, if any: a suggestion the agent answered otherwise is dismissed (logged);
   // a pick it put in that waits for approval is the agent's answer now, as after an edit there.
   const sugg = item.aiSuggestion;
@@ -4343,7 +4400,7 @@ async function syncAiBanner(ctx) {
 // Puts AI answers into the page through the fill engine, which checks the page kept each one.
 // decision: 'accepted' (the agent clicked Accept) or 'auto' (the auto-select setting).
 async function applyAi(list, ctx, decision) {
-  if (state.filling) return false;
+  if (state.filling || state.closing) return false;
   if (state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return false;
   if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return false;
   if (ctx.run !== undefined && ctx.run !== state.aiRun) return false;
@@ -4703,8 +4760,8 @@ function renderAi(holder, suggestions, ctx) {
     ...orphans,
   ].filter(Boolean));
   // The dock's Approve (dockFor): every pick waiting on this page, or the rejected ones confirmed.
-  if (pending.length) state.aiDock = { tabId: ctx.tabId, page: ctx.page, canContinue, go: () => (awaiting.length ? decide(awaiting, 'approved') : confirmRejected(rejectedPending)) };
-  else if (state.aiDock?.tabId === ctx.tabId && state.aiDock.page === ctx.page) state.aiDock = null;
+  if (pending.length) state.aiDocks.set(`${ctx.tabId}|${ctx.page}`, { canContinue, go: () => (awaiting.length ? decide(awaiting, 'approved') : confirmRejected(rejectedPending)) });
+  else state.aiDocks.delete(`${ctx.tabId}|${ctx.page}`);
   recount();
   renderSteps();
 }
@@ -4899,6 +4956,11 @@ const PDF_ZOOMS = [1, 1.5, 2, 3, 4];
 const PDF_OPEN_ZOOM = 2;
 // An item opens at 200%: 300% showed too little around it (2026-10-10).
 const PDF_FOCUS_ZOOM = 2;
+
+// Whether the intake PDF can be shown (this panel read it, or it is kept for the session).
+function pdfAvailable() {
+  return !!(state.pdfBytes || state.intake?.pdfKept);
+}
 
 // "page 2" for an intake of several pages; nothing for a one-page intake (TNI's is one page).
 function pdfPageSaid(page, before) {
@@ -5197,7 +5259,7 @@ async function clearClient() {
   state.fileConfirm = null;
   state.view = 'check';
   state.filter = 'all';
-  state.aiDock = null;
+  state.aiDocks = new Map();
   state.pastKey = null;
   state.detailsOpen = false;
   dropReports();
@@ -5220,7 +5282,10 @@ async function clearClient() {
 // a fill runs: its report would have no panel to come back to. A place no screen shows now (a
 // monitor unplugged) is left to Chrome.
 async function popOut() {
-  if (!inExtension || popped || state.filling) return;
+  if (!inExtension || popped) return;
+  // An answer going in (a fill, a pick from a row, an AI answer) may not have rendered the button
+  // disabled: said rather than nothing done.
+  if (state.filling) { windowProblem('Wait for the answers going in to finish, then try again.'); return; }
   windowProblem(null);
   const { panelWindow: was = {} } = await chrome.storage.local.get('panelWindow').catch(() => ({}));
   const size = (k, min, fallback) => (Number.isInteger(was[k]) && was[k] >= min ? was[k] : fallback);
@@ -5234,12 +5299,17 @@ async function popOut() {
 }
 
 // Dock: back to Chrome's side panel, in the browser window of the quote, and this window closes.
-// sidePanel.open needs the click's own gesture: it is called before anything is awaited.
+// sidePanel.open needs the click's own gesture: it is called before anything is awaited. The side
+// panel says it opened and this window gives way to it, handing over (giveWay); closed here if
+// that hasn't happened in 5 s.
 function dock() {
+  if (!popped) return;
   const windowId = state.tab?.windowId ?? state.browserWindow;
-  if (!popped || state.filling || !Number.isInteger(windowId)) return;
+  if (state.filling) { windowProblem('Wait for the answers going in to finish, then try again.'); return; }
+  if (!Number.isInteger(windowId)) { windowProblem('Click into the quote’s Chrome window, then try again.'); return; }
   windowProblem(null);
-  chrome.sidePanel.open({ windowId }).then(() => closeSelf(), () => windowProblem('The side panel couldn’t open here. Use the extension’s icon in the toolbar.'));
+  chrome.sidePanel.open({ windowId }).then(() => setTimeout(() => { if (!state.closing) closeSelf(); }, 5000),
+    () => windowProblem('The side panel couldn’t open here. Use the extension’s icon in the toolbar.'));
 }
 
 // A Pop out or Dock that didn't work, said at the top of the panel (and to screen readers); the
@@ -5257,18 +5327,42 @@ function announceCopy() {
   if (inExtension) chrome.runtime.sendMessage({ ra: 'panel', event: 'opened', ...panelCopy, popped }).catch(() => {});
 }
 function onPanelMessage(msg) {
-  if (msg?.ra !== 'panel' || msg.event !== 'opened' || msg.id === panelCopy.id || !(popped || msg.popped)) return;
+  if (msg?.ra !== 'panel' || msg.id === panelCopy.id) return;
+  if (msg.event === 'handoff') { if (msg.to === panelCopy.id) takeOver(msg); return; }
+  if (msg.event !== 'opened' || !(popped || msg.popped)) return;
   const newer = msg.at > panelCopy.at || (msg.at === panelCopy.at && msg.id > panelCopy.id);
-  if (newer) giveWay(); else announceCopy();
+  if (newer) giveWay(msg.id); else announceCopy();
 }
 
-// This copy gives way to a newer one: a fill it runs is stopped first (the answer going in
-// finishes; nothing more is filled or clicked), then it closes.
-async function giveWay() {
+// This copy gives way to a newer one (`to`): a fill it runs is stopped first (the answer going in
+// finishes; nothing more is filled or clicked), and what is underway (that fill's end, an answer
+// the agent picked, an AI answer) finishes, for up to 15 s, nothing new starting (state.closing).
+// It then hands over what it knows of the tabs and closes.
+async function giveWay(to) {
   if (state.closing) return;
   state.closing = true;
   if (state.fillingFor && !state.fillingFor.stopping) await stopFill();
+  for (const end = Date.now() + 15000; state.filling && Date.now() < end;) await new Promise((r) => setTimeout(r, 100));
+  await handOver(to);
   closeSelf();
+}
+
+// What this copy knows of the quote's tabs that only its memory holds, for the copy taking over:
+// each tab's step, a stop screen read there (GEICO's USDOT screen), its quote's state, and that
+// its layouts may be taken. The new copy keeps what it learned itself, for the same intake only.
+function handOver(to) {
+  if (!inExtension) return Promise.resolve();
+  return chrome.runtime.sendMessage({ ra: 'panel', event: 'handoff', id: panelCopy.id, to, intakeId: usage.currentSession()?.intakeId ?? null,
+    tabSteps: [...state.tabSteps], stopScreens: [...state.stopScreens], quoteStates: [...state.quoteStates], layoutReadyTabs: [...state.layoutReadyTabs] }).catch(() => {});
+}
+function takeOver(msg) {
+  const intakeId = usage.currentSession()?.intakeId;
+  if (!intakeId || msg.intakeId !== intakeId) return;
+  for (const name of ['tabSteps', 'stopScreens', 'quoteStates']) {
+    for (const [tabId, value] of msg[name] ?? []) if (!state[name].has(tabId)) state[name].set(tabId, value);
+  }
+  for (const tabId of msg.layoutReadyTabs ?? []) state.layoutReadyTabs.add(tabId);
+  if (state.tab) renderSite();
 }
 
 // Closes this copy of the panel: its own window, the tab it was opened in (a harness opens it as a
@@ -5285,12 +5379,13 @@ async function closeSelf() {
   else window.close();
 }
 
-// Popped out: where the agent leaves the window and its size, for the next Pop out.
+// Popped out: where the agent leaves the window and its size, for the next Pop out. Maximized,
+// minimized or full screen, it isn't kept: the next one opens as the window was before.
 async function keepPlace() {
   const mine = await chrome.windows.getCurrent().catch(() => null);
   if (!mine) return;
   chrome.windows.onBoundsChanged?.addListener((win) => {
-    if (win.id === mine.id) chrome.storage.local.set({ panelWindow: { left: win.left, top: win.top, width: win.width, height: win.height } }).catch(() => {});
+    if (win.id === mine.id && (win.state ?? 'normal') === 'normal') chrome.storage.local.set({ panelWindow: { left: win.left, top: win.top, width: win.width, height: win.height } }).catch(() => {});
   });
 }
 
@@ -5387,7 +5482,7 @@ function wire() {
   $('fill-stop').addEventListener('click', stopFill);
   $('dock-next').addEventListener('click', showNextNeed);
   $('look-right').addEventListener('click', function () { this.disabled = true; lookRight(state.tab?.id, pageOf(state.tab?.url), state.tab?.carrier, this); });
-  $('ai-approve').addEventListener('click', () => state.aiDock?.go());
+  $('ai-approve').addEventListener('click', () => state.aiDocks.get(`${state.tab?.id}|${pageOf(state.tab?.url)}`)?.go());
   $('dock-alt').addEventListener('click', () => {
     if ($('dock-alt').dataset.go === 'fill-anyway') dismissState();
     fillPage();
@@ -5413,8 +5508,6 @@ function wire() {
 
 async function init() {
   wire();
-  // With the panel in its own window, the newest copy is the one that stays (onPanelMessage).
-  announceCopy();
   if (inExtension && popped) keepPlace();
   // An intake saved by an earlier panel: while the panel was closed the tabs may have moved to
   // another client's quote, so their layouts wait as after loading one (holdLayouts).
@@ -5425,6 +5518,9 @@ async function init() {
   usage.restoreSession((await store.get('session')) ?? null);
   const views = await store.get('views');
   if (views?.session && views.session === usage.currentSession()?.id) state.viewTabs = new Map(views.tabs);
+  // With the panel in its own window, the newest copy is the one that stays (onPanelMessage); said
+  // once its intake is known, for the copy giving way to hand over to (takeOver).
+  announceCopy();
   await restoreAiPending();
   const saved = await usage.migrateAssistantSettings();
   $('auto-followups').checked = saved.autoFollowUps ?? true;

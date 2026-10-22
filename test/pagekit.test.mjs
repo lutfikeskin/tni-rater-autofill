@@ -880,7 +880,7 @@ test('a TNI standard gets its own mark, an intake answer the filled green, and a
 test('the side panel key shows the page marks in the page kit colors', () => {
   const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
   const colors = [...PAGEKIT.match(/const COLORS = \{([^}]*)\}/)[1].matchAll(/(\w+): '(#[0-9a-f]{6})'/gi)];
-  assert.deepEqual(colors.map(([, status]) => status).sort(), ['ai', 'failed', 'filled', 'needs', 'standard']);
+  assert.deepEqual(colors.map(([, status]) => status).sort(), ['agent', 'ai', 'failed', 'filled', 'needs', 'standard']);
   for (const [, status, hex] of colors) {
     assert.equal(css.match(new RegExp(`--mark-${status}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1].toLowerCase(), hex.toLowerCase(), status);
     assert.match(css, new RegExp(`\\.mark\\.${status} \\{[^}]*var\\(--mark-${status}\\)`), status);
@@ -2432,6 +2432,31 @@ test('Stop halts a running fill after the answer going in; progress counts what 
   assert.match(report.reason, /You stopped the fill/);
   assert.ok(!next._clicked, 'Continue is not clicked');
   assert.equal(h.kit.progress(), null, 'the fill is over');
+});
+
+// Review 2026-10-22: every half second each frame sent its whole list. It sends the rows after those
+// the panel has from that list (by its id), and a list the panel has no count for whole.
+test('progress sends only the rows the panel has not seen from its list', async () => {
+  const h = harness();
+  const inputs = ['a', 'b', 'c'].map((id) => makeInput({ id, ariaLabel: id.toUpperCase() }));
+  h.document.body.append(...inputs);
+  const seen = [];
+  inputs[1].addEventListener('change', () => {
+    const first = h.kit.progress();
+    const again = h.kit.progress({ [first.list]: first.rows.length });
+    const ahead = h.kit.progress({ [first.list]: 9 });
+    const other = h.kit.progress({ 'another:1': 1 });
+    // Read in the page's realm: compared as plain data.
+    seen.push(...[first, again, ahead, other].map((x) => JSON.parse(JSON.stringify(x))));
+  });
+  const steps = inputs.map((el) => ({ id: el.id, selector: `#${el.id}`, path: `x.${el.id}`, kind: 'text', value: el.id }));
+  await h.kit.fill(steps, { maxRounds: 3 });
+  const [first, again, ahead, other] = seen;
+  assert.match(first.list, /^\w+:\d+$/);
+  assert.deepEqual([first.filled, first.since, first.rows.map((r) => r.label)], [1, 0, ['A']]);
+  assert.deepEqual([again.list, again.filled, again.since, again.rows], [first.list, 1, 1, []], 'nothing new');
+  assert.deepEqual([ahead.since, ahead.rows.length], [0, 1], 'more than the list holds: the list whole');
+  assert.deepEqual([other.since, other.rows.length], [0, 1], 'a count for another list: this list whole');
 });
 
 test('batch mode answers every visible question in one round and still checks each answer', async () => {
