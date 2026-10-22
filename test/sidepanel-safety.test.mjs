@@ -2103,6 +2103,13 @@ test('the panel opened again makes the tab\'s kept reports again, as of their fi
   const none = keptReportsHarness({});
   await none.context.restoreReports(7);
   assert.deepEqual([other.rendered.length, moved.rendered.length, none.rendered.length], [0, 0, 0]);
+  // A tab first shown off the rater gets them once it shows the rater.
+  const later = keptReportsHarness(memory, { state: { tab: { id: 7, carrier: null } } });
+  await later.context.restoreReports(7);
+  assert.equal(later.rendered.length, 0);
+  later.context.state.tab.carrier = { id: 'progressive' };
+  await later.context.restoreReports(7);
+  assert.equal(later.rendered.length, 4, 'all three reports, then the check against the page');
   // The panel's tab switch makes them again after the tab's other records.
   assert.match(extractFunction('refreshTab'), /await restoreDoneActions\(state\.tab\?\.id\);\n\s+await restoreReports\(state\.tab\?\.id\);/);
 });
@@ -2142,6 +2149,12 @@ test('a fill\'s report is kept for the panel opened again; one made again from i
   assert.equal(kept.length, 2, 'one made again from what was kept isn\'t kept again');
   assert.deepEqual([state.reportFor.key, state.reportFor.at, state.reportFor.restored], ['7|AddDriver|Drivers', 1234, true]);
   assert.equal(state.tabSteps.size, 0, 'an earlier step\'s report leaves the tab\'s step');
+  // A panel opened again doesn't keep the pause, so a stop made again doesn't say it.
+  const halted = { fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], halted: true, reason: 'The page changed.' };
+  context.renderReport([halted], { tabId: 7, page: 'AddDriver' });
+  assert.equal(state.reportFor.error, 'Automatic filling and helpers paused. The page changed.');
+  context.renderReport([halted], { tabId: 7, page: 'AddDriver', keptKey: '7|AddDriver', restoredAt: 1234 });
+  assert.equal(state.reportFor.error, 'The page changed.');
 });
 
 test('a Luna request waiting for a follow-up fill belongs to its tab', async () => {

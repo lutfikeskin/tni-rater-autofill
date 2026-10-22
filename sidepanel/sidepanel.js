@@ -676,11 +676,15 @@ function forgetKeptReports(drop) {
 }
 async function restoreReports(tabId) {
   const scope = usage.currentSession()?.intakeId;
-  if (!scope || !Number.isInteger(tabId) || reportsRestored.has(`${scope}|${tabId}`)) return;
-  reportsRestored.add(`${scope}|${tabId}`);
+  const done = `${scope}|${tabId}`;
+  if (!scope || !Number.isInteger(tabId) || reportsRestored.has(done)) return;
   const was = await store.get(`${REPORTS_PREFIX}${tabId}`).catch(() => null);
   const carrier = state.tab?.carrier;
-  if (was?.scope !== scope || !Array.isArray(was.entries) || state.tab?.id !== tabId || !carrier || !state.intake || usage.currentSession()?.intakeId !== scope) return;
+  // Once, and only once the tab shows a rater for this intake: one opened elsewhere first gets its
+  // reports when it comes to the rater.
+  if (reportsRestored.has(done) || state.tab?.id !== tabId || !carrier || !state.intake || usage.currentSession()?.intakeId !== scope) return;
+  reportsRestored.add(done);
+  if (was?.scope !== scope || !Array.isArray(was.entries)) return;
   // A report a fill made since the panel opened is newer: kept. Each keeps its key, which holds
   // its step on a one-address application (GEICO, AmWINS): the tab's step may not be known yet.
   for (const e of was.entries) {
@@ -3759,7 +3763,8 @@ function renderReport(frames, ctx = {}) {
     // A page with no question for the fill (a unit list, every unit on it) is done: its dock offers
     // Continue (`empty`, W43-40). One that should have some (notDrawn) still has none.
     putReport({ key, tabId, page, at: ctx.restoredAt ?? Date.now(), ...(ctx.restoredAt ? { restored: true } : {}), ...(halted
-      ? { error: `${halted.stepUnread ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
+      // A panel opened again doesn't keep the pause: a report made again doesn't say it.
+      ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
       : frames.some((f) => f.notDrawn) ? { notice: 'No questions found on this page.' }
         : { notice: 'Nothing to fill on this page.', empty: true }) }, []);
     renderSteps();
