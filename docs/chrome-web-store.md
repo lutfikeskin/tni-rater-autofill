@@ -43,8 +43,9 @@ the store refuses a version it already has.
      geico.com: the carrier quote pages it fills. api.openai.com: Luna suggestions for unresolved
      choice questions, a review of the application's claims box, and a check of drivers' first
      names (for the gender TNI assumes), with the agent's own OpenAI key.
-     usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, and a
-     profile of each client's business without names, numbers or addresses).
+     usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, a
+     profile of each client's business without names, numbers or addresses, and what an agent types
+     into a problem report).
      localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
      page, sent to OpenAI when the AI assistant is on, with client names and numbers redacted).
@@ -106,7 +107,7 @@ What it does
 • Optional AI tips (with your own OpenAI key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
 
 Privacy
-The application stays on your computer for the session. With the AI assistant on, parts of it go to OpenAI with your key: client names and numbers are replaced, except drivers' first names, which are sent alone for the gender check. To improve the extension, a usage log (which fields were filled, what you changed afterwards, problems you report) is sent to TNI's server; client names, numbers and what you type into the quote are not included. A problem report is sent as you type it, with values from the loaded application, if one is loaded, replaced only where they appear exactly as written there, so don't type client details into it.
+The application stays on your computer for the session. With the AI assistant on, parts of it go to OpenAI with your key: client names and numbers are replaced, except drivers' first names, which are sent alone for the gender check. To improve the extension and analyse TNI's own quoting, a usage log (which fields were filled, what you changed afterwards, problems you report) and a profile of each client's business (state, operations, vehicles, drivers' ages, coverages; no names, numbers or addresses) are sent to TNI's server; client names, numbers and what you type into the quote are not included. A problem report is sent as you type it, with values from the loaded application, if one is loaded, replaced only where they appear exactly as written there, so don't type client details into it.
 
 For TNI agents only.
 ```
