@@ -9,7 +9,8 @@
 // chooser's Vehicle and Next), and continues where nothing is left for the agent (geico.advance): Next
 // or Save and Continue on a step or unit form up to Additional Business Info, Looks Good on a list that
 // holds every intake unit, never on Quote & Coverages. Then every answer is checked against what TNI
-// expects.
+// expects. Two quote pages of their own follow: GEICO's "Add USDOT Number / Skip" screen (W43-27) and
+// the gateway's Start New Quote ZIP carried over from the last quote (W43-28).
 //
 //   npm run mock:geico             # exits 1 on a wrong answer, a missing needs-you item, an agent
 //                                  # correction the next fill overwrote (one made on a form no fill
@@ -46,6 +47,7 @@ import { buildPlan } from '../src/plan.js';
 import { geico } from '../src/carriers/geico.js';
 import { knownStep } from '../src/usage.js';
 import { advanceFor, unitListSpecs, unitToAdd } from '../src/units.js';
+import { stopScreen } from '../src/carriers.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
@@ -576,6 +578,94 @@ async function corrected(form, key, name, want, scope = null) {
 }
 const formIdOf = (list) => Object.keys(unitForms[list]).find((id) => unitForms[list][id] === active[list]) ?? null;
 
+// --- Screens the main run doesn't reach ------------------------------------------------------------------
+// A quote page of its own (`query`: the mock's start options) with the extension's world, the kit and
+// the recorder, as on the main run: `run` evaluates there, `heard` takes what the recorder said since.
+async function sidePage(query, name) {
+  const tab = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+  tab.on('pageerror', (e) => errors.push(String(e.message)));
+  await tab.route(/^(https?|wss?):/i, (r) => { refused.push(r.request().url()); return r.abort(); });
+  await tab.goto(`${pathToFileURL(path.join(root, 'test/fixtures/geico/quote.html')).href}?${query}`);
+  await tab.waitForFunction(() => !!window.__geicoMock?.view);
+  const session = await tab.context().newCDPSession(tab);
+  const { frameTree: tree } = await session.send('Page.getFrameTree');
+  const { executionContextId } = await session.send('Page.createIsolatedWorld', { frameId: tree.frame.id, worldName: `TNI Rater Autofill (mock, ${name})` });
+  const run = async (expression) => {
+    const r = await session.send('Runtime.evaluate', { expression, contextId: executionContextId, awaitPromise: true, returnByValue: true });
+    if (r.exceptionDetails) throw new Error(`in the extension's world: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+    return r.result.value;
+  };
+  await run(`globalThis.chrome = { runtime: { id: 'geico-mock', sent: [],
+    sendMessage(msg) { this.sent.push(msg); return Promise.resolve(); },
+    onMessage: { listeners: new Set(), addListener(f) { this.listeners.add(f); }, removeListener(f) { this.listeners.delete(f); } } } }; true`);
+  await run(KIT);
+  await run(RECORDER);
+  const heard = async () => { await run('globalThis.__raterRecorder.poll(); true'); return run('chrome.runtime.sent.splice(0)'); };
+  const recorder = (cmd) => run(`for (const f of chrome.runtime.onMessage.listeners) f({ ra: 'recorder', cmd: ${JSON.stringify(cmd)} }); true`);
+  return { tab, run, heard, recorder };
+}
+
+// W43-27 (TNI, 2026-10-21): GEICO's "Add USDOT Number / Skip" screen after Business & Owner Info
+// (?usdot=ask). Its layout names the screen (stopScreen, as the panel reads it), which the panel says
+// in red, filling nothing there; a fill there all the same reads no step and fills or clicks nothing,
+// Continue on. The agent's Skip goes on to a page that is no such screen.
+async function usdotScreen() {
+  const { tab, run } = await sidePage('view=business-owner&usdot=ask', 'USDOT screen');
+  const press = (text) => tab.locator('gds-button').filter({ hasText: new RegExp(`^\\s*${text}\\s*$`, 'i') }).filter({ visible: true }).first().click();
+  await press('Next');
+  await tab.waitForFunction(() => window.__geicoMock.view === 'usdot-ask', null, { timeout: 15000 });
+  const layout = await run('__raterKit.capture(null, [])');
+  const screen = stopScreen(geico, layout.buttons);
+  lines.push(`## USDOT screen · buttons ${layout.buttons.join(', ')} · ${screen ? `stop: ${screen}` : 'no stop'}`);
+  if (screen !== 'USDOT Number') fail(`USDOT screen: its buttons [${layout.buttons.join(', ')}] are not read as GEICO's USDOT Number screen`);
+  if (layout.step) fail(`USDOT screen: the kit read the step ${JSON.stringify(layout.step)} there`);
+  const options = { replaceChoices: !!geico.replaceChoices, stopSteps: STOP_STEPS, maxRounds: 6, advance: advanceFor(geico, true) };
+  const report = await run(`__raterKit.fill(${JSON.stringify(buildPlan(record, geico, {}))}, ${JSON.stringify(options)})`);
+  const done = (await tab.evaluate(() => window.__geicoMock.log)).filter((e) => !e.isTrusted && ['click', 'change', 'input'].includes(e.type));
+  if (report.filled.length || report.actions?.length || report.advanced || done.length) {
+    fail(`USDOT screen: a fill there filled ${report.filled.length}, clicked ${[...(report.actions ?? []).map((a) => a.text), report.advanced].filter(Boolean).join(', ') || 'nothing'} (${done.length} page events)`);
+  }
+  await press('Skip');
+  await tab.waitForFunction(() => window.__geicoMock.view !== 'usdot-ask', null, { timeout: 15000 });
+  const after = await run('__raterKit.capture(null, [])');
+  if (stopScreen(geico, after.buttons)) fail('USDOT screen: still read as that screen after Skip');
+  lines.push(`  (agent pressed Skip: ${await tab.evaluate(() => window.__geicoMock.view)})`);
+  await tab.close();
+}
+
+// W43-28 (TNI, 2026-10-21): the gateway's Start New Quote window opens with the last quote's ZIP
+// (?gateway=30301): the fill replaces it with the intake's. The agent then types another: the recorder
+// says it is theirs, and the next fill (its key in the skip, as the panel gives it) leaves it, unflagged.
+async function gatewayZip() {
+  const { tab, run, heard, recorder } = await sidePage('view=business-class&gateway=30301', 'gateway');
+  const plan = buildPlan(record, { ...geico, rules: geico.rules.filter((r) => r.selector === '#start-quote-zip'), actions: [] }, {});
+  const zip = () => tab.evaluate(() => document.getElementById('start-quote-zip').value);
+  const fillZip = async (skip) => {
+    await recorder('pause');
+    const report = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify({ replaceChoices: !!geico.replaceChoices, stopSteps: STOP_STEPS, maxRounds: 4, skip })})`);
+    await recorder('resume');
+    return report;
+  };
+  let report = await fillZip([]);
+  const key = report.filled.find((x) => x.path === 'garaging.zip')?.key;
+  lines.push(`## Gateway Start New Quote · carried over 30301 · filled ${await zip()}`);
+  if ((await zip()) !== record.garaging.zip || !key) fail(`gateway: the ZIP GEICO carried over is ${await zip()} after the fill, not the intake's`);
+  if (report.kept.length || report.checks.length || report.failed.length) fail('gateway: the carried-over ZIP was kept or flagged');
+  await heard();
+  const box = tab.locator('#start-quote-zip');
+  await box.fill('68105');
+  await box.press('Tab');
+  const theirs = (await heard()).filter((m) => m.event === 'field_changes').flatMap((m) => m.changes).filter((c) => c.agent).map((c) => c.key);
+  if (!theirs.includes(key)) fail(`gateway: the recorder did not report the agent's ZIP as theirs (${key}; heard ${theirs.join(', ') || 'nothing'})`);
+  report = await fillZip(theirs);
+  lines.push(`  (agent typed another ZIP: ${await zip()} after the next fill)`);
+  if ((await zip()) !== '68105') fail(`gateway: the agent's ZIP was replaced with ${await zip()}`);
+  if (report.filled.length || report.checks.length || report.kept.some((x) => x.differs)) fail('gateway: the agent\'s ZIP was filled over or flagged');
+  const changes = (await tab.evaluate(() => window.__geicoMock.log)).filter((e) => e.target === 'start-quote-zip').map((e) => `${e.isTrusted ? 'agent' : 'extension'} ${e.text}`);
+  if (JSON.stringify(changes) !== JSON.stringify([`extension ${record.garaging.zip}`, 'agent 68105'])) fail(`gateway: the ZIP box changed [${changes.join(', ')}]`);
+  await tab.close();
+}
+
 // --- The quote -----------------------------------------------------------------------------------------
 // The agent's run through the quote, step by step. A step that goes wrong stops it: what was
 // seen so far is still checked and reported.
@@ -806,6 +896,13 @@ try {
   await scenario();
 } catch (e) {
   fail(`the run stopped: ${String(e.message).split('\n')[0]}`);
+}
+for (const [phase, name] of [[usdotScreen, 'USDOT screen'], [gatewayZip, 'gateway ZIP']]) {
+  try {
+    await phase();
+  } catch (e) {
+    fail(`the ${name} run stopped: ${String(e.message).split('\n')[0]}`);
+  }
 }
 
 // --- Checks --------------------------------------------------------------------------------------------

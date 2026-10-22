@@ -10,7 +10,7 @@ import { unitToAdd, unitListSpecs, advanceFor } from '../src/units.js';
 import { intakeNotes } from '../src/normalize.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
-import { quoteProgress } from '../src/carriers.js';
+import { quoteProgress, stopScreen } from '../src/carriers.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
@@ -2308,7 +2308,8 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
   const record = { garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], trailers: [], drivers: [{}], coverage: {} };
   const context = {
     state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0, layoutGeneration: 0, layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), layoutLatest: null, viewTabs: new Map(),
-      lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set() },
+      lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set(), stopScreens: new Map() },
+    stopScreen, fillEvents, renderSite: () => { context.rendered = (context.rendered ?? 0) + 1; },
     // These carriers declare no quote-state control (the state warning has its own test).
     quoteStatePick: () => undefined, showStateNote: () => {},
     sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
@@ -2321,14 +2322,14 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
         return [{ result: context.busy }];
       }
       // The page as the page itself names it (pagekit's capture), normally the tab's.
-      return [{ result: { controls: controls(), buttons: ['Continue'], isTopFrame: true, page: context.domPage ?? context.state.tab.url, step: context.domStep ?? '', messages: context.messages ?? [] } }];
+      return [{ result: { controls: controls(), buttons: context.buttons ?? ['Continue'], isTopFrame: true, page: context.domPage ?? context.state.tab.url, step: context.domStep ?? '', messages: context.messages ?? [] } }];
     },
     sessionId: session,
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     store: { saved: {}, set(k, v) { this.saved[k] = v; return Promise.resolve(); } },
     LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; }, knownStep,
   };
-  vm.runInNewContext(['viewOf', 'saveViews', 'resetViews', 'stepScope', 'recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
+  vm.runInNewContext(['viewOf', 'saveViews', 'resetViews', 'stepScope', 'recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'noteStopScreen', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);
   return { context, logged };
 }
@@ -4896,6 +4897,95 @@ test('each arrival at a stop step is logged once as a fill_run blocker, with the
   before.show('Payment Information');
   assert.deepEqual(before.stops(), []);
   assert.equal(before.ui['stop-note'].hidden, false);
+});
+
+// W43-27 (TNI, 2026-10-21): after Business & Owner Info GEICO showed a screen with only Add USDOT
+// Number and Skip (SC, PA; the kit reads no step there), and the panel said nothing. Its layout
+// names it (`stopButtons`): a red stop, logged as a fill run that stopped; nothing filled, clicked or
+// asked; Add or Skip is the agent's; the next step ends it.
+test('GEICO\'s Add USDOT Number screen: read from its layout\'s buttons, logged once as a stop, ended by a layout without it', async () => {
+  const { context, logged } = layoutHarness(() => []);
+  context.state.tab = { id: 1, url: '/quote', carrier: { ...geico, layoutUrl: /./ } };
+  context.knownStep = knownStep;
+  context.buttons = ['Menu', 'Add USDOT Number', 'Skip'];
+  await context.recordLayout('/quote', 'arrived+removed');
+  assert.deepEqual({ ...context.state.stopScreens.get(1) }, { name: 'USDOT Number', page: '/quote' });
+  const stops = () => JSON.parse(JSON.stringify(logged.filter((e) => e.type === 'fill_run')));
+  assert.deepEqual(stops().map((e) => [e.blockerList, e.auto, e.page, e.fields]), [[['stop: USDOT Number'], 'stop', '/quote', 0]]);
+  // The page's layout is logged as before, with the button the next review looks for.
+  assert.ok(logged.some((e) => e.type === 'page_layout' && e.buttons.includes('Add USDOT Number')));
+  assert.equal(context.rendered, 1);
+  // Read again on the same screen: logged once.
+  await context.recordLayout('/quote', 'changed');
+  assert.equal(stops().length, 1);
+  // Another page's layout without the button (Skip led on): over.
+  context.buttons = ['Menu', 'Next'];
+  await context.recordLayout('/quote', 'arrived');
+  assert.equal(context.state.stopScreens.has(1), false);
+  assert.equal(stops().length, 1);
+  // No such screen for a carrier without stopButtons.
+  const other = layoutHarness(() => []);
+  other.context.buttons = ['Add USDOT Number'];
+  await other.context.recordLayout('Vehicles', 'arrived');
+  assert.equal(other.context.state.stopScreens.size, 0);
+  assert.equal(stopScreen(geico, ['  Add   USDOT Number ']), 'USDOT Number');
+  assert.equal(stopScreen(geico, ['Add USDOT Number later', 'Skip']), null);
+});
+
+test('on GEICO\'s Add USDOT Number screen the panel says so in red, and nothing is filled, clicked, scheduled or asked until the next step', async () => {
+  const t = stopStepHarness('Business & Owner Info');
+  t.state.stopScreens = new Map([[4, { name: 'USDOT Number', page: '/quote' }]]);
+  await t.context.fillPage({ auto: 'page' });
+  await t.context.fillPage();
+  t.context.scheduleAutoFill('/quote');
+  await t.context.autoFill('/quote');
+  assert.deepEqual([t.kits, t.timers, t.state.filling], [[], [], false]);
+  const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: '/quote' };
+  assert.equal(t.context.aiActionCurrent(ctx, []), false);
+  t.context.showStopPage();
+  let text = JSON.stringify(t.ui['stop-note'].children);
+  assert.equal(t.ui['stop-note'].hidden, false);
+  assert.match(text, /USDOT Number: yours/);
+  assert.match(text, /GEICO asks for a USDOT number, and the intake has none\. Add USDOT Number or Skip is yours\./);
+  assert.match(text, /Nothing on this screen is filled or clicked/);
+  assert.match(text, /"role":"alert"/);
+  assert.doesNotMatch(text, /Business & Owner Info: yours/);
+  // An intake with a USDOT number: the note names it.
+  t.state.intake = { record: { applicant: { name: 'Synthetic Client LLC', dot: '1234567' } } };
+  t.context.showStopPage();
+  assert.match(JSON.stringify(t.ui['stop-note'].children), /the intake's is \\"1234567\\"/);
+  // Another page of the tab (the gateway): not that screen.
+  assert.equal(t.context.stopNoteFor(geico, '/'), null);
+  // Skip led to Vehicles: over, and the step is filled again.
+  t.show('Vehicles');
+  assert.equal(t.state.stopScreens.has(4), false);
+  text = JSON.stringify(t.ui['stop-note'].children);
+  assert.doesNotMatch(text, /USDOT/);
+  t.context.scheduleAutoFill('/quote');
+  assert.equal(t.timers.length, 1);
+  // A question or list GEICO draws while the screen shows doesn't end it (review of #141); a new
+  // document does.
+  const again = stopStepHarness('Business & Owner Info');
+  again.state.stopScreens = new Map([[4, { name: 'USDOT Number', page: '/quote' }]]);
+  for (const event of ['new_fields', 'list_shown', 'field_changes', 'step_shown']) {
+    again.show('Business & Owner Info', event);
+    assert.equal(again.state.stopScreens.has(4), true, event);
+  }
+  again.context.scheduleAutoFill('/quote');
+  assert.equal(again.timers.length, 0);
+  again.show('Business & Owner Info', 'page_view');
+  assert.equal(again.state.stopScreens.has(4), false);
+  // Two GEICO quote tabs (review of #141): the screen is the tab's that shows it. Tab 7 shows it,
+  // tab 4 is filled: tab 4's fills and follow-ups go on, tab 7's are refused.
+  const two = stopStepHarness('Business & Owner Info');
+  two.state.stopScreens = new Map([[7, { name: 'USDOT Number', page: '/quote' }]]);
+  assert.equal(two.context.stopNoteFor(geico, '/quote'), null);
+  assert.match(two.context.stopNoteFor(geico, '/quote', undefined, 7), /Add USDOT Number or Skip is yours/);
+  two.context.scheduleAutoFill('/quote', { tabId: 7, intake: two.state.intake, revision: two.state.intakeRevision });
+  assert.equal(two.timers.length, 0, 'tab 7: refused');
+  two.context.scheduleAutoFill('/quote');
+  assert.equal(two.timers.length, 1, 'tab 4: scheduled');
+  assert.equal(two.context.aiActionCurrent({ intake: two.state.intake, tabId: 4, tabUrl: two.state.tab.url, page: '/quote' }, []), true);
 });
 
 // The site strip and Fill button as renderSite draws them, for a tab on `step`.

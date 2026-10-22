@@ -200,6 +200,20 @@ test('every rule names its steps (never one that is the agent\'s), how it is fou
   }
 });
 
+// W43-28, W43-35 (TNI, 2026-10-21): the Start New Quote ZIP GEICO carried over is replaced (the
+// agent's own stays: the fill's skip); a city GEICO doesn't list for the ZIP leaves GEICO's, checked.
+// W43-27: GEICO's "Add USDOT Number / Skip" screen is the agent's, known by its button.
+test('the gateway ZIP replaces a carried-over one; a city GEICO doesn\'t list keeps GEICO\'s; the USDOT screen is a stop', () => {
+  const zip = geico.rules.find((r) => r.selector === '#start-quote-zip');
+  assert.deepEqual([zip.replace, zip.path, zip.source], [true, 'garaging.zip', 'derived']);
+  assert.ok(geico.rules.filter((r) => r.selector !== '#start-quote-zip').every((r) => !r.replace), 'no other GEICO rule replaces');
+  const cities = geico.rules.filter((r) => r.field === 'GiveCity');
+  assert.ok(cities.length >= 2 && cities.every((r) => r.keepUnlisted && r.kind === 'choice' && r.path === 'garaging.city'));
+  const p = plan(intake());
+  assert.ok(p.filter((s) => s.path === 'garaging.city').every((s) => s.keepUnlisted && s.value === 'Testville'));
+  assert.equal(p.find((s) => s.name === 'Start quote: ZIP (the garaging ZIP)').replace, true);
+});
+
 // TNI's GEICO standards (FL live run, 2026-10-21): only these rules may be one.
 const STANDARDS = [
   'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',

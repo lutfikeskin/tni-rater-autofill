@@ -5,7 +5,7 @@ import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, inta
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
-import { carrierForUrl, quoteProgress } from '../src/carriers.js';
+import { carrierForUrl, quoteProgress, stopScreen } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
@@ -241,7 +241,7 @@ function aiAnswerOrigin(frames, x, answerFrame) {
 
 function aiActionCurrent(ctx, list) {
   return !!ctx.intake && state.intake === ctx.intake && state.tab?.id === ctx.tabId
-    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page && !stopNoteFor(state.tab?.carrier, ctx.page)
+    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page && !stopNoteFor(state.tab?.carrier, ctx.page, undefined, ctx.tabId)
     && list.every(x => [...state.aiCache.values()].includes(x));
 }
 
@@ -349,6 +349,9 @@ const state = {
   fillingFor: null,
   // The step a one-address application's tab is on (AmWINS), for the page strip (noteStep).
   tabSteps: new Map(),
+  // The screen that is the agent's (carrier `stopButtons`: GEICO's "Add USDOT Number / Skip") a tab
+  // shows, as `{ name, page }` (noteStopScreen).
+  stopScreens: new Map(),
   // The Luna controls are available from the brain button even while the Settings screen is
   // hidden. Keep the opening trigger so Escape and the close button return focus
   // to the control the agent used.
@@ -1272,6 +1275,8 @@ function onRecorderMessage(msg, sender) {
     // already open and only now gets a recorder may still show the previous client's quote.
     if (msg.from ? samePage(msg.from) !== samePage(msg.page) : state.layoutNewTabs.has(sender.tab.id)) state.layoutReadyTabs.add(sender.tab.id);
     log({ type: 'page_view', carrier, page: msg.page, view: viewOf(sender.tab.id, samePage(msg.page)), from: msg.from, fields: msg.fields });
+    // A new document: a stop screen (noteStopScreen) is read again from its arrival's layout.
+    state.stopScreens?.delete(sender.tab.id);
     // Arriving at a carrier stop page (a new document, a reload, or a move from another page; not
     // its "-Reload" re-render): logged as a fill run that stopped, with the page name only, and
     // only once the tab is shown to be this intake's quote. A step that is the agent's (stopSteps)
@@ -1707,7 +1712,7 @@ function logFillError(ctx, error) {
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page)) return;
+  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId)) return;
   if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
@@ -1914,6 +1919,7 @@ async function captureLayout(job, reason) {
     const stopTitle = Object.keys(carrier.stopSteps ?? {}).some((n) => String(top.title ?? '').toLowerCase().includes(n.toLowerCase()));
     if ((step && carrier.stopSteps?.[step]) || stopTitle) return;
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
+    noteStopScreen(job, step, buttons);
     // What the page said about the answers (validation, errors, help), as pagekit's capture reads
     // and redacts it: the carrier's own wording of a refusal, which no other event carries.
     const messages = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.messages ?? []))].slice(0, 40);
@@ -1965,6 +1971,21 @@ async function captureLayout(job, reason) {
     // on instead of reporting a failure for a page that is being captured anyway.
     if (jobCurrent(job) && !superseded(job)) layoutFailed(job, why(), layoutErrorKind(e));
   }
+}
+
+// A screen that is the agent's (carrier `stopButtons`: GEICO's "Add USDOT Number / Skip", W43-27),
+// known by a button only it shows, as a layout reads the page: said in red above the steps while the
+// tab shows it (showStopPage), its arrival logged as a fill run that stopped, as a stop step's is,
+// and nothing filled, clicked or asked of the AI there (stopNoteFor). A layout read without it, a
+// move to a step or a new document (noteStep, the page_view arrival) ends it; a question or list
+// GEICO draws while the screen is up doesn't (review of #141).
+function noteStopScreen({ tabId, carrier, page }, step, buttons) {
+  const name = stopScreen(carrier, buttons);
+  const was = state.stopScreens.get(tabId);
+  if (name === (was?.name ?? null) && (!name || was.page === page)) return;
+  if (name) state.stopScreens.set(tabId, { name, page }); else state.stopScreens.delete(tabId);
+  if (name) usage.log(...fillEvents([{ fields: 0, blockers: [`stop: ${name}`] }], { carrier: carrier.id, page, view: viewOf(tabId, page, carrier), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text, step }));
+  if (tabId === state.tab?.id) renderSite();
 }
 
 function waitForFill(job) {
@@ -2034,6 +2055,8 @@ function holdLayouts() {
   // Nor is the previous client's last fill: a problem report must not name it.
   state.lastRuns = new Map();
   state.layoutErrorsLogged = new Set();
+  // Nor a stop screen read for the previous client (its note names their USDOT number).
+  state.stopScreens = new Map();
 }
 
 async function layoutWhenQuiet(job, tries = 0) {
@@ -2479,9 +2502,11 @@ function showStopPage() {
   state.autoPending = false;
   state.pagePending = null;
   if (!carrier.stopPages?.[page]) {
+    // A stop step's, or a stop screen's (`stopButtons`) on a step that is no stop.
+    const screen = step && carrier.stopSteps?.[step] ? null : state.stopScreens?.get(state.tab?.id)?.name;
     box.replaceChildren(h('div', { class: 'agent-page stop-page', role: 'alert' },
-      h('b', {}, `${step}: yours`), h('p', {}, note),
-      h('p', { class: 'small' }, 'Nothing on this step is filled or clicked.')));
+      h('b', {}, `${screen ?? step}: yours`), h('p', {}, note),
+      h('p', { class: 'small' }, `Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.`)));
     return;
   }
   const ours = stopPageIsOurs();
@@ -2562,9 +2587,15 @@ function showStateNote() {
 
 // What the carrier's stop says on this page, or on the step this tab is on (`step`, its name):
 // null where filling and clicking are allowed. Every check of a stop goes through it, so a stop
-// step is refused wherever a stop page is (fill, follow-ups, Luna, the panel's buttons).
-function stopNoteFor(carrier, page, step = tabStep(carrier)) {
-  return carrier?.stopPages?.[page] ?? (step ? carrier?.stopSteps?.[step] : null) ?? null;
+// step is refused wherever a stop page is (fill, follow-ups, Luna, the panel's buttons). `tabId`:
+// the tab being filled or asked about (a follow-up's, the AI's), the shown one by default.
+function stopNoteFor(carrier, page, step, tabId = state.tab?.id) {
+  if (step === undefined) step = tabStep(carrier, tabId);
+  // A screen that is the agent's (`stopButtons`), while that tab shows it on this page (noteStopScreen).
+  const screen = state.stopScreens?.get(tabId);
+  const said = screen?.page === page ? carrier?.stopButtons?.[screen.name]?.note : null;
+  return carrier?.stopPages?.[page] ?? (step ? carrier?.stopSteps?.[step] : null)
+    ?? (typeof said === 'function' ? said(state.intake?.record ?? null) : said) ?? null;
 }
 
 // A tab may still show the previous client's quote after an intake is loaded (or the panel
@@ -4605,7 +4636,11 @@ function noteStep(msg, sender) {
     const page = samePage(msg.page) || pageOf(state.tab.url);
     usage.log(...fillEvents([{ fields: 0, blockers: [`stop: ${step}`] }], { carrier: carrier.id, page, view: viewOf(sender.tab.id, page), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text, step }));
   }
-  if (moved) renderSite();
+  // A stop screen (noteStopScreen) ends with a move to a step or a new document: a question or list
+  // drawn while it shows doesn't end it (a layout read without its button does).
+  const screenOver = !!state.stopScreens?.has(sender.tab.id) && (moved || msg.event === 'page_view');
+  if (screenOver) state.stopScreens.delete(sender.tab.id);
+  if (moved || screenOver) renderSite();
 }
 
 // What the agent did on this intake, for the file menu's question and the same-file note:
@@ -4723,7 +4758,7 @@ function wire() {
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
-    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); dropReports((entry) => entry.tabId === tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); dropReports((entry) => entry.tabId === tabId); });
     chrome.windows.onFocusChanged.addListener(refreshTab);
   }
 }
