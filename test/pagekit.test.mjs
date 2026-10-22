@@ -4487,6 +4487,24 @@ test('a one-address unit list: how many units it lists and which of them it show
   assert.equal(h.kit.unitList('#summaryPage-AddCommercialVehicle', []), null);
 });
 
+// FL live run 6, 2026-10-21: GEICO drew the vehicle list, which has no question, seconds after the
+// Next that saved a vehicle, and nothing told the panel. The lists the panel read here, on screen
+// now with their rows, for the recorder's every poll: selectors and counts only.
+test('the unit lists on screen now: those the panel read here, with their rows', () => {
+  const h = harness({ pathname: '/quote' });
+  const list = new FakeNode('ul', { id: 'summaryPage-AddCommercialVehicle' });
+  list.append(new FakeNode('li'), new FakeNode('li', { className: 'add-state' }));
+  h.document.body.append(list);
+  assert.equal(h.kit.unitListsNow(), '', 'none read yet');
+  h.kit.unitList('#summaryPage-AddCommercialVehicle', []);
+  h.kit.unitList('#summaryPage-AddDriver', []);
+  assert.equal(h.kit.unitListsNow(), '#summaryPage-AddCommercialVehicle:1');
+  list.append(new FakeNode('li'));
+  assert.equal(h.kit.unitListsNow(), '#summaryPage-AddCommercialVehicle:2', 'a row more');
+  list._visible = false;
+  assert.equal(h.kit.unitListsNow(), '', 'gone');
+});
+
 test('a unit added but never entered is said on its list, not on the unit\'s own form drawn at the same address', async () => {
   const unfinished = 'The "+" was clicked for vehicle 2, but no form was filled for it';
   const actions = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules: [], actions: [
@@ -4532,6 +4550,182 @@ test("GEICO's premium summary and its stale-rates wording are recognized", async
   await notice.h.kit.fill(coverageActionPlan(), { maxRounds: 4 });
   assert.equal(notice.recalc._clicked, true);
   assert.equal(notice.bill._clicked, undefined, 'amounts under the recalculate notice are not current');
+});
+
+// W43-31 (TNI, 2026-10-21): GEICO's Recalculate is the fill's again, after FL live run 6, where GEICO
+// drew its own coverage choices back after each Recalculate the fill clicked at once. It is clicked
+// once a quote, on a page quiet for 2 s; after the redraw every answer is checked: the fill's put
+// back once, the agent's left, each red, and Print waits for the agent's own Recalculate.
+const RATED = 'Quote\n$1,000.00\nDue Today\n$1,000.00\nTotal';
+const STALE = 'Please Recalculate Due To Coverage Change\nQuote\n$ --.--\nDue Today\n$ --.--\nTotal';
+function recalcPage({ redraw = () => {}, rows = [] } = {}) {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const row = (suffix, options, value) => new SelectNode(options, { id: `Id_${randomUUID()}_${suffix === 'COMP' ? 11111 : suffix === 'COLL' ? 11112 : 11113}_${suffix}`, value });
+  const comp = row('COMP', ['$500 deductible', '$1,000 deductible'], '$1,000 deductible');
+  const coll = row('COLL', ['$500 deductible', '$1,000 deductible'], '$1,000 deductible');
+  const ers = row('ERS', ['I decline this coverage', 'I accept this coverage'], 'I accept this coverage');
+  h.document.body.append(comp, coll, ers);
+  h.document.body.innerText = STALE;
+  const recalc = addButton(h, 'Recalculate');
+  const more = addButton(h, 'View More Payment Plans');
+  const page = { h, comp, coll, ers, recalc, more, recalcs: 0, clickedAt: null };
+  recalc.onclick = () => { page.recalcs++; page.clickedAt = clock.Date.now(); h.document.body.innerText = RATED; redraw(page); };
+  more.onclick = () => { more._clicked = (more._clicked ?? 0) + 1; };
+  const rules = ['COMP', 'COLL', 'ERS', ...rows].map((suffix) => ({ q: suffix, selector: `[id$="_${suffix}"]`, steps: ['Quote & Coverages'], name: suffix, kind: 'choice', source: 'standard',
+    value: () => (suffix === 'ERS' ? 'I accept this coverage' : suffix === 'FT' ? 'Not Included' : '$1,000 deductible') }));
+  page.plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules, actions: geico.actions.filter((a) => ['recalculate', 'morePayPlans'].includes(a.id)) });
+  return page;
+}
+
+test('GEICO\'s Recalculate: once nothing is left, on a page quiet for 2 s, then every answer is checked (W43-31)', async () => {
+  // GEICO puts back its own choice for the fill's comprehensive and the agent's road service.
+  const p = recalcPage({ redraw: ({ comp, ers }) => { comp.value = '$500 deductible'; ers.value = 'I decline this coverage'; } });
+  const observers = new Set();
+  p.h.context.MutationObserver = class {
+    constructor(fn) { this.fn = fn; }
+    observe() { observers.add(this); }
+    disconnect() { observers.delete(this); }
+  };
+  // GEICO still saving the last answers: a change every 300 ms for 1.5 s.
+  let lastDraw = clock.Date.now();
+  const draw = (n) => { p.h.document.body.append(new FakeNode('span')); lastDraw = clock.Date.now(); for (const o of observers) o.fn([]); if (n > 1) setTimeout(() => draw(n - 1), 300); };
+  setTimeout(() => draw(5), 300);
+  const report = await p.h.kit.fill(p.plan, { skip: ['cov:ERS#1'], maxRounds: 12 });
+  assert.equal(p.recalcs, 1);
+  assert.ok(p.clickedAt - lastDraw >= 2000, `clicked ${p.clickedAt - lastDraw} ms after the page's last change`);
+  // The fill's comprehensive put back, the agent's road service left as GEICO drew it; both red.
+  assert.deepEqual([p.comp.value, p.coll.value, p.ers.value], ['$1,000 deductible', '$1,000 deductible', 'I decline this coverage']);
+  assert.deepEqual(plain(report.failed.map((x) => x.key)), ['cov:COMP#1', 'cov:ERS#1', null]);
+  assert.match(report.failed[0].reason, /changed this answer when it recalculated, and the fill put it back: click Recalculate yourself/);
+  assert.match(report.failed[1].reason, /changed your answer when it recalculated \(it was "I accept this coverage"\)/);
+  assert.match(report.failed[2].reason, /changed 2 answers when it recalculated .* the fill clicks it once a quote/);
+  // Clicked once, kept clicked (the panel's done helpers); View More Payment Plans waits for the agent.
+  assert.deepEqual(plain(report.actions.map((x) => x.id)), ['recalculate']);
+  assert.ok(!report.invalidatedActions.includes('recalculate'));
+  assert.equal(p.more._clicked, undefined);
+  // The next fill, the premium out of date again: never clicked again.
+  p.h.document.body.innerText = STALE;
+  const again = await p.h.kit.fill(p.plan, { skip: ['cov:ERS#1'], doneActions: ['recalculate'], maxRounds: 6 });
+  assert.equal(p.recalcs, 1);
+  assert.deepEqual(plain(again.actions.map((x) => x.id)), []);
+});
+
+test('GEICO\'s Recalculate: answers kept, the fill goes on; never clicked again after a later answer; its premium not shown, the agent\'s (W43-31)', async () => {
+  const kept = recalcPage();
+  const report = await kept.h.kit.fill(kept.plan, { maxRounds: 12 });
+  assert.deepEqual([kept.recalcs, kept.more._clicked], [1, 1]);
+  assert.deepEqual(plain(report.failed), []);
+  assert.deepEqual(plain(report.actions.map((x) => x.id)), ['recalculate', 'morePayPlans']);
+  // An answer after it (a fire and theft row drawn as View More Payment Plans opens, the premium out
+  // of date again): answered, and Recalculate not due again in this fill.
+  const later = recalcPage({ rows: ['FT'] });
+  const ft = new SelectNode(['', 'Not Included', '$500 deductible'], { id: `Id_${randomUUID()}_11114_FT`, value: '' });
+  later.more.onclick = () => { later.more._clicked = 1; later.h.document.body.append(ft); later.h.document.body.innerText = STALE; };
+  const after = await later.h.kit.fill(later.plan, { maxRounds: 12 });
+  assert.deepEqual(plain(after.filled.map((x) => x.key)), ['cov:FT#1']);
+  assert.equal(later.recalcs, 1);
+  assert.ok(!after.invalidatedActions.includes('recalculate'));
+  // GEICO never shows a current premium: one red item, and not clicked again.
+  const unrated = recalcPage({ redraw: ({ h }) => { h.document.body.innerText = STALE; } });
+  const stale = await unrated.h.kit.fill(unrated.plan, { maxRounds: 12 });
+  assert.equal(unrated.recalcs, 1);
+  assert.deepEqual(plain(stale.failed.map((x) => [x.key, x.label])), [[null, 'Recalculate']]);
+  assert.match(stale.failed[0].reason, /no current premium/);
+  assert.deepEqual(plain(stale.actions.map((x) => x.id)), ['recalculate']);
+  // Something left for the agent: not clicked at all.
+  const open = recalcPage();
+  open.comp.value = '';
+  const waiting = await open.h.kit.fill(open.plan.map((s) => (s.q === 'COMP' ? { ...s, value: null, note: 'Pick it yourself.' } : s)), { maxRounds: 6 });
+  assert.equal(open.recalcs, 0);
+  assert.ok(waiting.blocked.some((x) => x.id === 'recalculate' && /nothing left for you/.test(x.why)));
+});
+
+// Review of #140: GEICO drew its own values 9 to 14 s after the fill's Recalculate (FL run 6), later
+// than the first check. The answers are watched until 15 s after the click before View More Payment
+// Plans; a change then is put back and red, as one at once. And only the changed answer leaves the
+// filled list: another field with its key keeps its entry.
+test('GEICO\'s Recalculate: a redraw seconds later is caught before View More; only the changed answer\'s entry goes (review of #140)', async () => {
+  const late = recalcPage({ redraw: ({ comp }) => { setTimeout(() => { comp.value = '$500 deductible'; }, 9000); } });
+  const report = await late.h.kit.fill(late.plan, { maxRounds: 12 });
+  assert.equal(late.recalcs, 1);
+  assert.equal(late.comp.value, '$1,000 deductible', 'put back');
+  assert.deepEqual(plain(report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
+  assert.match(report.failed[0].reason, /changed this answer when it recalculated, and the fill put it back/);
+  assert.equal(late.more._clicked, undefined, 'View More Payment Plans waits for the agent');
+  assert.deepEqual(plain([...report.filled, ...report.kept].map((x) => x.key)).sort(), ['cov:COLL#1', 'cov:ERS#1']);
+  // Nothing changes: View More Payment Plans once the watch is over, not before.
+  const quietPage = recalcPage();
+  let moreAt = null;
+  quietPage.more.onclick = () => { quietPage.more._clicked = 1; moreAt = clock.Date.now(); };
+  await quietPage.h.kit.fill(quietPage.plan, { maxRounds: 12 });
+  assert.equal(quietPage.more._clicked, 1);
+  assert.ok(moreAt - quietPage.clickedAt >= 15000, `View More clicked ${moreAt - quietPage.clickedAt} ms after Recalculate`);
+  // Two boxes with one field key (ref:GiveFoo), each its own step: GEICO changes the second; the
+  // first stays filled.
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const first = new SelectNode(['A', 'B'], { id: 'Id_GiveFoo_11', value: '' });
+  const second = new SelectNode(['A', 'B'], { id: 'Id_GiveFoo_22', value: '' });
+  h.document.body.append(first, second);
+  h.document.body.innerText = STALE;
+  const recalc = addButton(h, 'Recalculate');
+  recalc.onclick = () => { h.document.body.innerText = RATED; second.value = 'B'; };
+  const rules = [['first', '#Id_GiveFoo_11'], ['second', '#Id_GiveFoo_22']].map(([name, selector]) => ({ q: name, selector, steps: ['Quote & Coverages'], name, kind: 'choice', source: 'standard', value: () => 'A' }));
+  const plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules, actions: geico.actions.filter((a) => a.id === 'recalculate') });
+  const shared = await h.kit.fill(plan, { maxRounds: 12 });
+  assert.deepEqual(plain(shared.filled.map((x) => [x.key, x.name])), [['ref:GiveFoo', 'first']]);
+  assert.deepEqual(plain(shared.failed.map((x) => [x.key, x.name])), [['ref:GiveFoo', 'second'], [null, 'recalculate']]);
+});
+
+// W43-32 (TNI, 2026-10-21): with no 11 Payments among the plans View More Payment Plans shows (TX:
+// Pay In Full, 4 Payments Bi-Monthly Plan, 9 Payments), the plan with the most payments offered,
+// named in the report; Print follows it.
+function payPlanPage({ installments, inFull = true, checked = null }) {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  const groups = [...(inFull ? [gdsRadios('GivePayPlanV2', 52525, null, [['GEICO_PP_1Pay', 'Pay In Full']], { checked: checked == null ? 0 : null })] : []), gdsRadios('GivePayPlanV2', 52526, null, installments, { checked })];
+  h.document.body.append(...groups.map((g) => g.group));
+  h.document.body.innerText = RATED;
+  const more = addButton(h, 'View More Payment Plans');
+  const print = addButton(h, 'Print Quote Proposal');
+  more.onclick = () => { more._clicked = true; };
+  print.onclick = () => { print._clicked = true; };
+  const carrier = { ...geico, rules: geico.rules.filter((r) => r.field === 'GivePayPlanV2'), actions: geico.actions.filter((a) => ['morePayPlans', 'printProposal'].includes(a.id)) };
+  return { h, groups, more, print, plan: buildPlan({ ...geicoRecord(), operations: { businessClass: 'Expediter' } }, carrier, {}) };
+}
+
+test('GEICO\'s pay plan: 11 Payments, else the plan with the most payments offered, named; Print follows (W43-32)', async () => {
+  const tx = payPlanPage({ installments: [['GEICO_PP_4Pay', '4 Payments Bi-Monthly Plan'], ['GEICO_PP_9Pay', '9 Payments']] });
+  const report = await tx.h.kit.fill(tx.plan, { maxRounds: 12 });
+  assert.equal(tx.groups[1].hosts[1].hasAttribute('checked'), true, '9 Payments picked');
+  assert.deepEqual(plain(report.filled.map((x) => [x.key, x.shown, x.said])), [['ref:GivePayPlanV2', '9 Payments',
+    'The page doesn\'t offer "11 Payments" here: the fill picked "9 Payments", the plan with the most payments GEICO offers.']]);
+  assert.deepEqual(plain(report.noData), []);
+  assert.deepEqual([tx.more._clicked, tx.print._clicked], [true, true]);
+  // All three in one list, as the TX run read them: the same pick.
+  const one = payPlanPage({ inFull: false, installments: [['GEICO_PP_1Pay', 'Pay In Full'], ['GEICO_PP_4Pay', '4 Payments Bi-Monthly Plan'], ['GEICO_PP_9Pay', '9 Payments']] });
+  const single = await one.h.kit.fill(one.plan, { maxRounds: 12 });
+  assert.deepEqual(plain(single.filled.map((x) => x.shown)), ['9 Payments']);
+  assert.equal(one.print._clicked, true);
+  // 11 Payments offered: that one, nothing said.
+  const fl = payPlanPage({ installments: [['GEICO_PP_9Pay', '9 Payments'], ['GEICO_PP_11Pay', '11 Payments']] });
+  const usual = await fl.h.kit.fill(fl.plan, { maxRounds: 12 });
+  assert.deepEqual(plain(usual.filled.map((x) => [x.shown, x.said ?? null])), [['11 Payments', null]]);
+  assert.equal(fl.print._clicked, true);
+  // View More Payment Plans clicked by an earlier fill (GEICO may have drawn the plans again since):
+  // not every plan may be shown, so it stays the agent's, and Print waits...
+  const earlier = payPlanPage({ inFull: false, installments: [['GEICO_PP_1Pay', 'Pay In Full'], ['GEICO_PP_4Pay', '4 Payments Bi-Monthly Plan']] });
+  const left = await earlier.h.kit.fill(earlier.plan, { doneActions: ['morePayPlans'], replaceChoices: true, maxRounds: 8 });
+  assert.deepEqual(plain(left.filled), []);
+  assert.match(left.noData[0].note, /doesn't offer "11 Payments"/);
+  assert.equal(earlier.print._clicked, undefined);
+  // ...unless the page already shows the plan with the most payments (review of #140: the TX fill
+  // after Print, or Fill this page, the 9 Payments the first fill picked): it agrees, nothing left.
+  const after = payPlanPage({ installments: [['GEICO_PP_4Pay', '4 Payments Bi-Monthly Plan'], ['GEICO_PP_9Pay', '9 Payments']], checked: 1 });
+  const again = await after.h.kit.fill(after.plan, { doneActions: ['morePayPlans', 'printProposal'], replaceChoices: true, maxRounds: 8 });
+  assert.deepEqual(plain([again.noData, again.failed, again.checks, again.actions]), [[], [], [], []]);
+  assert.equal(after.groups[1].hosts[1].hasAttribute('checked'), true, 'still 9 Payments');
 });
 
 test('a list taking several choices reads as all its picks, and an answer not offered leaves them', async () => {
@@ -4656,6 +4850,71 @@ test('GEICO\'s gateway: Commercial Auto/Trucking ticked, no other product, the S
   report = await p.h.kit.fill(buildPlan({ ...record, applicant: { name: 'Synthetic Freight LLC', dot: null } }, geico), { maxRounds: 4 });
   assert.deepEqual([p.products.map((b) => b.checked), p.usdot.value, p.dashboard.value], [[false, true, false, false], '', '']);
   assert.deepEqual(plain(report.unknown), []);
+});
+
+// W43-28 (TNI, 2026-10-21): GEICO's Start New Quote window opened with the last quote's ZIP on 4 of 5
+// quotes; the fill kept it and flagged "differs: Zip Code", and the agent typed the intake's. A ZIP
+// the page carried over is replaced; one the agent typed (the panel's skip) never is.
+test('GEICO\'s gateway: a Start New Quote ZIP the page carried over is replaced with the intake\'s, one the agent typed is kept (W43-28)', async () => {
+  const page = (value) => {
+    const h = harness({ pathname: '/' });
+    const zip = makeInput({ id: 'start-quote-zip', name: 'zip', ariaLabel: 'Zip Code', value });
+    h.document.body.append(zip);
+    return { h, zip };
+  };
+  const plan = buildPlan(GEICO_ADDRESS, geico);
+  let p = page('30012');
+  let report = await p.h.kit.fill(plan, { maxRounds: 4 });
+  assert.equal(p.zip.value, '68000');
+  const key = report.filled.find((x) => x.path === 'garaging.zip')?.key;
+  assert.ok(key, 'the ZIP is filled');
+  assert.deepEqual(plain([report.kept, report.checks, report.failed]), [[], [], []]);
+  // Already the intake's: nothing typed again.
+  p = page('68000');
+  report = await p.h.kit.fill(plan, { maxRounds: 4 });
+  assert.deepEqual([p.zip.value, report.filled.length, report.kept.length], ['68000', 0, 1]);
+  // The agent's own ZIP (typed, or its flag marked done): left as it is, not flagged.
+  p = page('68005');
+  report = await p.h.kit.fill(plan, { maxRounds: 4, skip: [key] });
+  assert.equal(p.zip.value, '68005');
+  assert.deepEqual(plain([report.filled, report.checks, report.kept.filter((x) => x.differs)]), [[], [], []]);
+});
+
+// W43-35 (TNI, 2026-10-21): GEICO lists the cities it knows for the ZIP (GA: one city and OTHER) and
+// picks one. The intake's city not among them failed ("failed: City" on Business & Owner Info and
+// Vehicles), and the agent kept GEICO's: now GEICO's is kept, with a check naming the intake's.
+test('GEICO\'s City: one the list doesn\'t have leaves GEICO\'s, with a check naming the intake\'s; one it has is picked (W43-35)', async () => {
+  const run = async (step, options, value) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, step);
+    // On Vehicles, a vehicle's form (its VIN question) holds the parking address.
+    if (step === 'Vehicles') h.document.body.append(gdsRadios('YesNoPreQuoteHaveFullVinActivity', 41205, 'Do you have the VIN handy?', [['Yes', 'Yes'], ['No', 'No']]).group);
+    const city = geicoList('GiveCity', 41207, 'City', options, { value });
+    h.document.body.append(city);
+    const report = await h.kit.fill(buildPlan(GEICO_ADDRESS, geico), { maxRounds: 4, replaceChoices: !!geico.replaceChoices });
+    const mine = (list) => plain(list.filter((x) => x.key === 'ref:GiveCity'));
+    return { city: city.value, report, checks: mine(report.checks), failed: mine(report.failed), kept: mine(report.kept), filled: mine(report.filled) };
+  };
+  for (const step of ['Business & Owner Info', 'Vehicles']) {
+    const r = await run(step, ['', 'CONYERS', 'OTHER'], 'CONYERS');
+    assert.equal(r.city, 'CONYERS', step);
+    assert.deepEqual([r.failed, r.filled, r.kept.length], [[], [], 1], step);
+    assert.equal(r.checks.length, 1, step);
+    assert.match(r.checks[0].note, /no "Testville".*"CONYERS" is left as it is\. Check it\./, step);
+  }
+  // The intake's city listed: picked over GEICO's.
+  let r = await run('Business & Owner Info', ['', 'CONYERS', 'TESTVILLE', 'OTHER'], 'CONYERS');
+  assert.deepEqual([r.city, r.filled.length, r.checks, r.failed], ['TESTVILLE', 1, [], []]);
+  // No city of GEICO's to keep: still a failure, the agent's to pick.
+  r = await run('Business & Owner Info', ['', 'CONYERS', 'OTHER'], '');
+  assert.deepEqual([r.city, r.checks, r.failed.length], ['', [], 1]);
+  assert.match(r.failed[0].reason, /no option matches "Testville"/);
+  // GEICO's OTHER is no city (review of #141): not kept, still a failure.
+  for (const other of ['OTHER', 'Other city']) {
+    r = await run('Business & Owner Info', ['', 'CONYERS', other], other);
+    assert.deepEqual([r.city, r.checks, r.kept, r.failed.length], [other, [], [], 1], other);
+    assert.match(r.failed[0].reason, /no option matches "Testville"/);
+  }
 });
 
 test('marks go where the agent looks: a GEICO option on its host, a select2 list on its drawn box', async () => {
@@ -5528,8 +5787,8 @@ test('a button the agent clicks during a fill is the step\'s move: the fill clic
 });
 
 // FL live run 4, 2026-10-21 (W43-18, TNI): GEICO's pay plan is 11 Payments, one of the plans "View
-// More Payment Plans" shows; the fill clicks Recalculate, View More, picks 11 Payments and prints,
-// only once nothing on the page is left for the agent. `whenOffered`: a choice whose option isn't
+// More Payment Plans" shows; the fill clicks View More, picks 11 Payments and prints, only once
+// nothing on the page is left for the agent (Recalculate before it is the agent's: FL live run 6). `whenOffered`: a choice whose option isn't
 // shown yet waits (a helper may show it) instead of failing; `whenClear`: a helper waits until the
 // fill has left nothing for the agent.
 test('a choice waits for its option to be offered, and a helper waits until nothing is left for the agent', async () => {
@@ -5572,6 +5831,14 @@ test('a choice waits for its option to be offered, and a helper waits until noth
   p.h.document.body.children.splice(p.h.document.body.children.indexOf(p.h.document.body.children.find((n) => n.tagName === 'A')), 1);
   report = await p.h.kit.fill(plan(), { maxRounds: 8, replaceChoices: true });
   assert.deepEqual(plain(report.noData.map((x) => [x.key, x.note])), [['ref:GivePayPlanV2', 'The page doesn\'t offer "11 Payments" here: pick it yourself.']]);
+  // GEICO hides View More Payment Plans while the premium is out of date, and Recalculate is the
+  // agent's (FL live run 6, 2026-10-21): the plan waits for it, not left for the agent.
+  const premiumPlan = () => buildPlan(geicoRecord(), { id: 'geico', useGenericRules: false, rules, actions: actions.map((a) => ({ ...a, needsPremium: true })) });
+  p = page({ leftOpen: false });
+  p.h.document.body.children.splice(p.h.document.body.children.indexOf(p.h.document.body.children.find((n) => n.tagName === 'A')), 1);
+  p.h.document.body.innerText = 'Please Recalculate Due To Coverage Change';
+  report = await p.h.kit.fill(premiumPlan(), { maxRounds: 8, replaceChoices: true });
+  assert.deepEqual(plain([p.clicks, report.noData.map((x) => x.key), report.failed]), [[], [], []]);
 });
 
 test('unitFormsNow says whether a unit form is new: its first question unanswered', async () => {
@@ -5857,4 +6124,106 @@ test('GEICO Search Products: Commercial Auto ticked, every other product known a
   // The window drawn twice with five products: ten boxes, still none unfamiliar.
   const five = ['auto', 'commercial', 'cycle', 'umbrella', 'renters'];
   assert.deepEqual(await run([...five, ...five]), [[false, true, false, false, false, false, false, false, false, false], []]);
+});
+
+// FL live run 6, 2026-10-21: GEICO's select2 lists take a pick only from select2's own events
+// (select2:select, select2:unselect), never from a change of the hidden <select>: the commodity set
+// on it showed, but GEICO never asked for the cargo limit, and the business description set so was
+// refused at Next. A select2 list is picked as the agent picks: opened, the option's text typed in
+// its search box, and the one result reading exactly that clicked. `took` is what GEICO received;
+// `unlisted` options the list never shows (GEICO filtering them out).
+function geicoSelect2(h, select, { unlisted = [] } = {}) {
+  select.className = 'select2-hidden-accessible';
+  const took = [];
+  const typed = [];
+  const container = new FakeNode('span', { className: 'select2 select2-container' });
+  const selection = new FakeNode('span', { className: `select2-selection select2-selection--${select.multiple ? 'multiple' : 'single'}` });
+  const rendered = new FakeNode('ul', { className: 'select2-selection__rendered' });
+  const inline = select.multiple ? makeInput({ type: 'search', className: 'select2-search__field' }) : null;
+  selection.append(rendered);
+  container.append(selection);
+  h.document.body.append(select, container);
+  let dropdown = null;
+  const chips = () => {
+    rendered.children = [];
+    for (const o of select.options.filter((x) => (select.multiple ? x.selected : x.value === select.value))) {
+      const chip = new FakeNode('li', { className: 'select2-selection__choice', attrs: { title: o.text }, textContent: o.text });
+      const remove = new FakeNode('span', { className: 'select2-selection__choice__remove', textContent: '×' });
+      remove.addEventListener('click', () => { o.selected = false; took.push(`-${o.text}`); chips(); });
+      chip.append(remove);
+      rendered.append(chip);
+    }
+    if (inline) rendered.append(inline);
+  };
+  const close = () => { dropdown?.remove(); dropdown = null; container.className = 'select2 select2-container'; if (inline) inline.value = ''; };
+  const show = (term) => {
+    const list = dropdown.querySelector(`#select2-${select.id}-results`);
+    list.children = [];
+    for (const o of select.options) {
+      if (!o.value || unlisted.includes(o.text) || !o.text.toLowerCase().includes(term.toLowerCase())) continue;
+      const li = new FakeNode('li', { className: 'select2-results__option', textContent: o.text, attrs: { 'aria-selected': String(select.multiple ? !!o.selected : o.value === select.value) } });
+      li.addEventListener('mouseup', () => {
+        if (select.multiple) o.selected = true; else select.value = o.value;
+        took.push(o.text);
+        chips();
+        close();
+      });
+      list.append(li);
+    }
+  };
+  const open = () => {
+    if (dropdown) return;
+    container.className = 'select2 select2-container select2-container--open';
+    dropdown = new FakeNode('span', { className: 'select2-container select2-container--open' });
+    const box = select.multiple ? null : makeInput({ type: 'search', className: 'select2-search__field' });
+    if (box) { dropdown.append(box); box.addEventListener('input', () => { typed.push(box.value); show(box.value); }); }
+    dropdown.append(new FakeNode('ul', { id: `select2-${select.id}-results`, className: 'select2-results__options' }));
+    h.document.body.append(dropdown);
+    show('');
+  };
+  if (inline) inline.addEventListener('input', () => { typed.push(inline.value); open(); show(inline.value); });
+  selection.addEventListener(select.multiple ? 'click' : 'mousedown', open);
+  chips();
+  return { took, typed };
+}
+
+test('GEICO select2 lists: the option typed in its search box and its one result clicked, never set on the hidden list', async () => {
+  // A list of one choice (the business description): only "For Hire Trucking" is clicked, though
+  // a longer description holds those words too.
+  let h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Business Class & USDOT');
+  const description = geicoList('GivePrimaryBusinessDescription', 64504, 'Please choose what best describes the customer\'s business.',
+    [{ text: 'Please Select', value: '' }, { text: 'Food Truck', value: '311' }, { text: 'For Hire Trucking', value: '412' }, { text: 'For Hire Trucking (Local Moving)', value: '413' }]);
+  let geicoSide = geicoSelect2(h, description);
+  const describe = [{ id: 'desc', field: 'GivePrimaryBusinessDescription', path: 'geico.qGivePrimaryBusinessDescription', name: 'Business description', kind: 'choice', value: 'For Hire Trucking' }];
+  let report = await h.kit.fill(describe, { maxRounds: 3 });
+  assert.deepEqual(plain([geicoSide.typed, geicoSide.took, description.value, report.filled.length, report.failed]), [['For Hire Trucking'], ['For Hire Trucking'], '412', 1, []]);
+  // Already the answer: nothing typed or clicked.
+  report = await h.kit.fill(describe, { maxRounds: 3 });
+  assert.deepEqual(plain([geicoSide.took, report.kept.length]), [['For Hire Trucking'], 1]);
+
+  // A list taking several choices (the commodities): each typed and clicked; one already picked
+  // that the answer doesn't name is taken off by its × first.
+  const commodityList = (id) => new MultiSelectNode(['Consumer Goods - Other Consumer Goods', 'Consumer Goods - Pharmaceuticals (Over The Counter)', 'Refrigerated Goods - Dairy', 'Aircraft/Auto/Boats - Automobiles'],
+    { id, ariaLabel: 'Select up to four commodities the customer hauls the most' });
+  const step = (value) => [{ id: 'commodities', field: 'GiveMtcHaulingCommoditiesCollect', path: 'geico.qGiveMtcHaulingCommoditiesCollect', name: 'Cargo commodities', kind: 'choice', value }];
+  const picked = (list) => list.options.filter((o) => o.selected).map((o) => o.text);
+  h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  let commodities = commodityList('Id_GiveMtcHaulingCommoditiesCollect_76286');
+  commodities.options[3].selected = true;
+  geicoSide = geicoSelect2(h, commodities);
+  report = await h.kit.fill(step('Consumer Goods - Other Consumer Goods; Refrigerated Goods - Dairy'), { maxRounds: 4, overwrite: true });
+  assert.deepEqual(plain([geicoSide.typed, geicoSide.took]), [['Consumer Goods - Other Consumer Goods', 'Refrigerated Goods - Dairy'],
+    ['-Aircraft/Auto/Boats - Automobiles', 'Consumer Goods - Other Consumer Goods', 'Refrigerated Goods - Dairy']]);
+  assert.deepEqual(plain([picked(commodities), report.filled.length, report.failed]), [['Consumer Goods - Other Consumer Goods', 'Refrigerated Goods - Dairy'], 1, []]);
+
+  // An option the list doesn't show when typed: nothing clicked, and the agent is told.
+  h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  commodities = commodityList('Id_GiveMtcHaulingCommoditiesCollect_30463');
+  geicoSide = geicoSelect2(h, commodities, { unlisted: ['Consumer Goods - Other Consumer Goods'] });
+  report = await h.kit.fill(step('Consumer Goods - Other Consumer Goods'), { maxRounds: 3 });
+  assert.deepEqual(plain([geicoSide.took, picked(commodities)]), [[], []]);
+  assert.match(report.failed[0]?.reason ?? '', /didn't show "Consumer Goods - Other Consumer Goods" when it was typed/);
 });

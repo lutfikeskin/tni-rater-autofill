@@ -134,16 +134,29 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   assert.equal(geico.advance.quietMs, 800);
   // Helpers: those adding a unit the panel is adding (below), and on Quote & Coverages (TNI, FL live
   // run 4, 2026-10-21): Motor Truck Cargo opened when the intake asks for cargo (W43-16), then, once
-  // nothing there is left for the agent, Recalculate, View More Payment Plans and Print Quote
-  // Proposal after 11 Payments (W43-18). Quote & Coverages takes follow-ups only for questions it
-  // draws (FL live run 2: the cargo section's); an answer GEICO takes back there is kept.
+  // nothing there is left for the agent: Recalculate, once a quote, on a page quiet for 2 s, every
+  // answer checked after GEICO's redraw (W43-31, after FL live run 6, 2026-10-21: GEICO put its own
+  // coverage choices back after each one the fill clicked at once); with the premium current, View
+  // More Payment Plans and Print Quote Proposal once a plan is picked (W43-18, W43-32). Quote & Coverages takes
+  // follow-ups only for questions it draws (FL live run 2: the cargo section's); an answer GEICO takes
+  // back there is kept by an automatic fill (the agent's Fill this page gives it again: sidepanel).
   const quoteHelpers = (r) => buildPlan(r, geico, {}).filter((s) => s.kind === 'action').map((s) => [s.action, s.steps, s.whenClear, s.verify]);
   assert.deepEqual(quoteHelpers(with_({ 'coverage.cargo': null })), [['recalculate', [QC], true, 'premium'], ['morePayPlans', [QC], true, null], ['printProposal', [QC], true, null]]);
+  const recalc = buildPlan(intake(), geico, {}).find((s) => s.action === 'recalculate');
+  assert.deepEqual([recalc.needsRecalculation, recalc.waitRequired, recalc.quietMs, recalc.once, recalc.keepAnswers], [true, true, 2000, true, true]);
   assert.deepEqual(quoteHelpers(with_({ 'coverage.cargo': true }))[0], ['openCargo', [QC], false, null]);
   assert.ok(!quoteHelpers(with_({ 'coverage.cargo': false })).some(([id]) => id === 'openCargo'));
   const cargo = geico.actions.find((a) => a.id === 'openCargo');
   assert.deepEqual([cargo.token, cargo.within, cargo.unlessSelector], ['editIcon', 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]', 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"].expanded']);
-  assert.deepEqual(geico.actions.find((a) => a.id === 'printProposal').afterValue, ['geico.qGivePayPlanV2', '^11 Payments']);
+  // Print once a pay plan is picked: 11 Payments, or the plan the fill picked in its place.
+  assert.deepEqual(geico.actions.find((a) => a.id === 'printProposal').after, ['geico.qGivePayPlanV2']);
+  // 11 Payments not offered once View More Payment Plans was clicked: the plan with the most
+  // payments offered, Pay In Full counting one (W43-32; the page kit picks it).
+  const ORMOST = { count: '^(\\d+)\\s+payments?\\b', one: '^pay\\s+in\\s+full\\b', after: 'morePayPlans', name: 'the plan with the most payments GEICO offers' };
+  assert.deepEqual(buildPlan(intake(), geico, {}).filter((s) => s.field === 'GivePayPlanV2').map((s) => [s.value, s.whenOffered, s.orMost]), [['11 Payments', true, ORMOST], ['11 Payments', true, ORMOST]]);
+  const most = (texts) => texts.map((t) => (new RegExp(ORMOST.one, 'i').test(t) ? 1 : Number(new RegExp(ORMOST.count, 'i').exec(t)?.[1] ?? NaN)));
+  assert.deepEqual(most(['Pay In Full', '4 Payments Bi-Monthly Plan', '9 Payments', '11 Payments', 'Paperless discount']), [1, 4, 9, 11, NaN]);
+  assert.ok(geico.actions.filter((a) => a.steps.includes(QC) && !['openCargo', 'recalculate'].includes(a.id)).every((a) => a.needsPremium), 'each waits for a current premium');
   for (const a of geico.actions) assert.ok(a.steps.every((s) => [VEH, DRV, QC].includes(s)), a.id);
   assert.deepEqual([geico.newQuestionsOnlySteps, geico.keepTakenBack], [[QC], [QC]]);
   assert.ok(!('noFollowUpSteps' in geico));
@@ -187,6 +200,20 @@ test('every rule names its steps (never one that is the agent\'s), how it is fou
   }
 });
 
+// W43-28, W43-35 (TNI, 2026-10-21): the Start New Quote ZIP GEICO carried over is replaced (the
+// agent's own stays: the fill's skip); a city GEICO doesn't list for the ZIP leaves GEICO's, checked.
+// W43-27: GEICO's "Add USDOT Number / Skip" screen is the agent's, known by its button.
+test('the gateway ZIP replaces a carried-over one; a city GEICO doesn\'t list keeps GEICO\'s; the USDOT screen is a stop', () => {
+  const zip = geico.rules.find((r) => r.selector === '#start-quote-zip');
+  assert.deepEqual([zip.replace, zip.path, zip.source], [true, 'garaging.zip', 'derived']);
+  assert.ok(geico.rules.filter((r) => r.selector !== '#start-quote-zip').every((r) => !r.replace), 'no other GEICO rule replaces');
+  const cities = geico.rules.filter((r) => r.field === 'GiveCity');
+  assert.ok(cities.length >= 2 && cities.every((r) => r.keepUnlisted && r.kind === 'choice' && r.path === 'garaging.city'));
+  const p = plan(intake());
+  assert.ok(p.filter((s) => s.path === 'garaging.city').every((s) => s.keepUnlisted && s.value === 'Testville'));
+  assert.equal(p.find((s) => s.name === 'Start quote: ZIP (the garaging ZIP)').replace, true);
+});
+
 // TNI's GEICO standards (FL live run, 2026-10-21): only these rules may be one.
 const STANDARDS = [
   'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
@@ -199,10 +226,18 @@ const STANDARDS = [
   'Start quote: Commercial Auto/Trucking (TNI: ticked)',
   // FL live run 4, 2026-10-21 (W43-17, W43-18): GEICO in every state.
   'Emergency road service (TNI: accepted)', 'Heavy vehicle road service (TNI: accepted)',
-  'Uninsured motorist bodily injury (TNI: $100,000 CSL)', 'Payment plan (TNI: 11 Payments)',
+  'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)', 'Payment plan (TNI: 11 Payments)',
   // FL live run 5, 2026-10-21 (W43-22, W43-23): GEICO in every state.
   'Fire and theft (TNI: Not Included)', 'Rental reimbursement (TNI: $40 Per Day, $1,200 Max)',
   'Cargo: mobile homes, business documents or securities (TNI: No unless the intake names them)', 'Cargo: live animals (TNI: No unless the intake names them)',
+  // The 2026-10-21 live runs' review (W43-30, W43-33, W43-34): GEICO in every state.
+  'Customization value (the attached equipment value, else TNI: 0)', 'Trailer customization value (the trailer equipment value, else TNI: 0)',
+  'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)',
+  'Rental reimbursement with downtime (TNI: Not Included)',
+  'Uninsured motorist bodily injury, UMBI (TNI: $100,000 CSL)', 'Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)',
+  'SR-22 (the owner; TNI: No unless the intake says otherwise)', 'SR-22 (this driver; TNI: No unless the intake says otherwise)',
+  'Hazardous material placard (TNI: No unless the intake says otherwise)', 'Team driving or slip seating (TNI: No unless the intake says otherwise)',
+  'Filings required (TNI: No unless the intake says otherwise)',
 ];
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
@@ -257,6 +292,13 @@ test('a blank intake answers nothing but TNI\'s standards', () => {
   assert.deepEqual(['Customizations (from the attached equipment value)', 'Comprehensive or collision wanted (TNI: Yes)', 'Liability insurance the business has (None unless the notes say)',
     'Named additional insured or waiver of subrogation (TNI: No)', 'Refrigeration breakdown (Yes with a reefer)'].map((n) => one(p, n).value), [false, true, 'None', false, false]);
   for (const name of ['Number of employees (the drivers besides the owner)', 'Years with the current auto insurer (1-3 with a current policy)', 'Driver\'s relationship to the business (Owner, else Employee)']) agents(one(p, name));
+  // The 2026-10-21 review's (W43-30, W43-34): No, 0 and Not Included where the intake says nothing.
+  assert.deepEqual(['Team driving or slip seating (TNI: No unless the intake says otherwise)', 'Hazardous material placard (TNI: No unless the intake says otherwise)',
+    'Filings required (TNI: No unless the intake says otherwise)', 'SR-22 (the owner; TNI: No unless the intake says otherwise)',
+    'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)',
+    'Customization value (the attached equipment value, else TNI: 0)'].map((n) => one(p, n, n.startsWith('Customization') ? VEH : undefined).value), [false, false, false, false, false, 0]);
+  // ELD and the owner question have no standard.
+  for (const name of ['Electronic logging device (ELD)', 'Owner is a driver']) agents(one(p, name));
 });
 
 test('the plan is plain data: steps and form conditions included', () => {
@@ -339,12 +381,12 @@ test('with a VIN the year, make and model are checked, never typed; without one 
 });
 
 test('customizations come from the attached equipment value; the amount only with one unit', () => {
-  assert.deepEqual([value(intake(), 'Customizations (from the attached equipment value)'), value(intake(), 'Customization value (the attached equipment value)', VEH)], [false, 0]);
+  assert.deepEqual([value(intake(), 'Customizations (from the attached equipment value)'), value(intake(), 'Customization value (the attached equipment value, else TNI: 0)', VEH)], [false, 0]);
   const one5k = with_({ 'operations.equipVehicle': 5000 });
-  assert.deepEqual([value(one5k, 'Customizations (from the attached equipment value)'), value(one5k, 'Customization value (the attached equipment value)', VEH)], [true, 5000]);
+  assert.deepEqual([value(one5k, 'Customizations (from the attached equipment value)'), value(one5k, 'Customization value (the attached equipment value, else TNI: 0)', VEH)], [true, 5000]);
   // Two vehicles: which one carries it isn't on the intake.
   const two = with_({ 'operations.equipVehicle': 5000, vehicles: [intake().vehicles[0], SECOND_VEHICLE] });
-  const s = one(plan(two), 'Customization value (the attached equipment value)', VEH);
+  const s = one(plan(two), 'Customization value (the attached equipment value, else TNI: 0)', VEH);
   agents(s);
   assert.match(s.note, /2 vehicles/);
   // Nor whether this vehicle has customizations at all; $0 is still No for each.
@@ -361,9 +403,45 @@ test('customizations come from the attached equipment value; the amount only wit
   }
   assert.equal(one(plan(intake()), 'Customizations (from the attached equipment value)').source, 'derived', '$0 on the intake');
   // A trailer's: its own equipment value, with one trailer.
-  assert.equal(value(with_({ trailers: [TRAILER], 'trailerInfo.equipTrailer': 2000 }), 'Trailer customization value (the trailer equipment value)'), 2000);
-  agents(one(plan(with_({ trailers: [TRAILER, TRAILER], 'trailerInfo.equipTrailer': 2000 })), 'Trailer customization value (the trailer equipment value)'));
-  agents(one(plan(with_({ trailers: [TRAILER] })), 'Trailer customization value (the trailer equipment value)'));
+  assert.equal(value(with_({ trailers: [TRAILER], 'trailerInfo.equipTrailer': 2000 }), 'Trailer customization value (the trailer equipment value, else TNI: 0)'), 2000);
+  agents(one(plan(with_({ trailers: [TRAILER, TRAILER], 'trailerInfo.equipTrailer': 2000 })), 'Trailer customization value (the trailer equipment value, else TNI: 0)'));
+  // No value on the intake: TNI's 0 (W43-30), with one unit or several, unless a line of the notes
+  // mentions customizations or equipment: then the agent's, quoted. A customer isn't a customization.
+  const VALUE = 'Customization value (the attached equipment value, else TNI: 0)';
+  const TRAILER_VALUE = 'Trailer customization value (the trailer equipment value, else TNI: 0)';
+  for (const r of [with_({ 'operations.equipVehicle': null }), with_({ 'operations.equipVehicle': null, vehicles: [intake().vehicles[0], SECOND_VEHICLE] }),
+    with_({ 'operations.equipVehicle': null, 'notes.text': 'Customer wants a quote by Friday' })]) {
+    const steps = plan(r).filter((s) => s.name === VALUE);
+    assert.deepEqual(steps.map((s) => s.steps[0]), [VEH, ...r.vehicles.map(() => QC)]);
+    for (const s of steps) assert.deepEqual([s.value, s.source, s.standard, s.manualOnly], [0, 'standard', true, false]);
+  }
+  const zero = one(plan(with_({ trailers: [TRAILER] })), TRAILER_VALUE);
+  assert.deepEqual([zero.value, zero.source, zero.standard], [0, 'standard', true]);
+  for (const [box, text] of [['notes.text', 'Liftgate and custom-built bed added 2024'], ['claims.notes', 'Truck has aftermarket upfit']]) {
+    const mentioned = with_({ 'operations.equipVehicle': null, trailers: [TRAILER], [box]: text });
+    for (const s of [one(plan(mentioned), VALUE, VEH), one(plan(mentioned), VALUE, QC), one(plan(mentioned), TRAILER_VALUE)]) {
+      agents(s);
+      assert.equal(s.source, 'fact', s.name);
+      assert.ok(s.note.includes(text), s.note);
+    }
+  }
+  // The intake's own value is never overridden by a mention.
+  assert.equal(value(with_({ 'operations.equipVehicle': 5000, 'notes.text': 'Aftermarket upfit' }), VALUE, VEH), 5000);
+  // The Yes/No follows the same notes (review of #139): none on the intake with a notes line about
+  // customizations is the agent's, quoted, not the standard No.
+  const YES_NO = 'Customizations (from the attached equipment value)';
+  for (const text of ['Liftgate and custom-built bed added 2024', 'Ladder rack is permanently attached', 'Modifications to the truck: crane']) {
+    const s = one(plan(with_({ 'operations.equipVehicle': null, 'notes.text': text })), YES_NO);
+    agents(s);
+    assert.equal(s.source, 'fact', text);
+    assert.ok(s.note.includes(text), s.note);
+  }
+  // Ordinary freight wording isn't a customization: the standard No and 0 stay.
+  for (const text of ['Hauls construction equipment', 'Equipment rental deliveries', 'Modified schedule in winter']) {
+    const r = with_({ 'operations.equipVehicle': null, 'notes.text': text });
+    const [yesNo, amount] = [one(plan(r), YES_NO), one(plan(r), VALUE, VEH)];
+    assert.deepEqual([yesNo.value, yesNo.source, amount.value, amount.source], [false, 'standard', 0, 'standard'], text);
+  }
 });
 
 test('distance, personal use and where the unit is parked', () => {
@@ -537,6 +615,22 @@ test('the business address: unit from the intake, street by GEICO\'s suggestion,
   assert.equal(hashNumber.value, '12');
   agents(hashType);
   for (const s of unit('Rear')) agents(s);
+  // W43-36 (TNI, 2026-10-21): GA's unit was "Apt A", a letter: both boxes were left to the agent, who
+  // typed A, picked Apartment and took the unit off the street. A letter after the kind is its number.
+  assert.deepEqual(unit('Apt A').map((s) => s.value), ['A', 'Apartment']);
+  for (const [u, want] of [['Apt. B', ['B', 'Apartment']], ['Apartment C', ['C', 'Apartment']], ['Unit 4B', ['4B', 'Unit']], ['Ste. 200', ['200', 'Suite']], ['Suite #3', ['3', 'Suite']], ['Apt5', ['5', 'Apartment']]]) {
+    assert.deepEqual(unit(u).map((s) => s.value), want, u);
+  }
+  const [letterNumber, letterType] = unit('#A');
+  assert.equal(letterNumber.value, 'A');
+  agents(letterType);
+  // A kind GEICO's Unit Type doesn't list: its number filled, the type the agent's, named.
+  const [hangarNumber, hangarType] = unit('Hngr 3');
+  assert.equal(hangarNumber.value, '3');
+  agents(hangarType);
+  assert.match(hangarType.note, /GEICO's Unit Type has no "Hngr"/);
+  // A kind without a number is no number: "Suite" alone stays the agent's.
+  for (const s of unit('Suite')) agents(s);
   // No unit: both boxes as the page has them.
   assert.deepEqual(unit(null).map((s) => s.ignore), [true, true]);
   const p = plan(intake());
@@ -547,6 +641,25 @@ test('the business address: unit from the intake, street by GEICO\'s suggestion,
     ['address-suggest', 'derived', '1 Test Way, Testville, NE 68000', '1 Test Way', true, null]);
   // The unit has boxes of its own; a ZIP+4 is cut to its ZIP.
   assert.equal(one(plan(with_({ 'garaging.unit': 'Suite 200', 'garaging.zip': '68000-1234' })), street.name, BOI).value, '1 Test Way, Testville, NE 68000');
+  // W43-36: a street still ending in its unit (one the intake's address split didn't take off) gives
+  // it to the unit boxes, and is typed, and left when GEICO suggests nothing, without it: GEICO's
+  // suggestion still matches. The intake's own unit wins; a street name that only reads like a unit
+  // stays the street's.
+  const split = (s, u = null) => {
+    const q = plan(with_({ 'garaging.street': s, 'garaging.unit': u }));
+    const [st, number, kind] = [street.name, 'Business unit number', 'Business unit type'].map((name) => one(q, name, BOI));
+    return [st.value, st.fallback, number.value, kind.value];
+  };
+  const typed = '1 Test Way, Testville, NE 68000';
+  assert.deepEqual(split('1 Test Way Apt A'), [typed, '1 Test Way', 'A', 'Apartment']);
+  assert.deepEqual(split('1 Test Way, Suite 200'), [typed, '1 Test Way', '200', 'Suite']);
+  assert.deepEqual(split('1 Test Way Ste. B'), [typed, '1 Test Way', 'B', 'Suite']);
+  assert.deepEqual(split('1 Test Way Apartment 12'), [typed, '1 Test Way', '12', 'Apartment']);
+  assert.deepEqual(split('1 Test Way Unit 4B'), [typed, '1 Test Way', '4B', 'Unit']);
+  assert.deepEqual(split('1 Test Way #12').slice(0, 3), [typed, '1 Test Way', '12']);
+  assert.deepEqual(split('1 Test Way', 'Unit 4'), [typed, '1 Test Way', '4', 'Unit']);
+  assert.deepEqual(split('1 Test Way Apt A', 'Suite 9'), ['1 Test Way Apt A, Testville, NE 68000', '1 Test Way Apt A', '9', 'Suite']);
+  for (const s of ['1 Unit Rd', '100 Avenue A', '1 Test Way Apt', '12 Suite Ln']) assert.deepEqual(split(s), [`${s}, Testville, NE 68000`, s, null, null], s);
   agents(one(plan(with_({ 'garaging.street': null })), street.name, BOI));
   assert.deepEqual([one(p, 'Owner phone (the intake\'s phone)').value, one(p, 'Business phone').value, one(p, 'Customer email').value], ['(555) 010-0100', '(555) 010-0100', 'client@example.test']);
   const raw = plan(with_({ 'applicant.phone': '555-0100' }));
@@ -575,13 +688,30 @@ test('business class: For Hire Trucking for an expediter or freight hauler (TNI)
       if (businessClass) assert.match(s.note, new RegExp(`"${businessClass}"`));
     }
   }
+  const TEAM = 'Team driving or slip seating (TNI: No unless the intake says otherwise)';
+  const PLACARD = 'Hazardous material placard (TNI: No unless the intake says otherwise)';
   const p = plan(intake());
-  assert.deepEqual([one(p, 'Team driving or slip seating').value, one(p, 'Hazardous material placard').value], [false, false]);
-  assert.equal(value(with_({ 'operations.teamDriving': true }), 'Team driving or slip seating'), true);
-  agents(one(plan(with_({ 'operations.teamDriving': null })), 'Team driving or slip seating'));
-  const placard = one(plan(with_({ 'operations.hazPlacard': null, 'operations.hazmat': true })), 'Hazardous material placard');
-  agents(placard);
-  assert.match(placard.note, /hazardous material/);
+  assert.deepEqual([one(p, TEAM).value, one(p, PLACARD).value], [false, false]);
+  assert.deepEqual([one(p, TEAM).source, one(p, PLACARD).source], ['intake', 'intake']);
+  assert.equal(value(with_({ 'operations.teamDriving': true }), TEAM), true);
+  assert.equal(value(with_({ 'operations.hazPlacard': true }), PLACARD), true);
+  // Blank: TNI's No (W43-34)…
+  const silent = plan(with_({ 'operations.teamDriving': null, 'operations.hazPlacard': null }));
+  for (const name of [TEAM, PLACARD]) assert.deepEqual([one(silent, name).value, one(silent, name).source, one(silent, name).standard], [false, 'standard', true], name);
+  // …unless the intake points the other way: then the agent's, what it says quoted.
+  const team = one(plan(with_({ 'operations.teamDriving': null, 'notes.text': 'Husband and wife team on the 2021' })), TEAM);
+  agents(team);
+  assert.equal(team.source, 'fact');
+  assert.match(team.note, /"Husband and wife team on the 2021"/);
+  assert.equal(value(with_({ 'operations.teamDriving': null, 'notes.text': 'Teamsters member; no co-signer' }), TEAM), false, 'no team or co-driver named');
+  for (const [changes, says] of [[{ 'operations.hazmat': true }, /hazardous material/], [{ 'operations.whatHaul': 'Propane tanks' }, /"Propane tanks"/],
+    [{ 'claims.notes': 'Occasional fuel loads' }, /"Occasional fuel loads"/]]) {
+    const placard = one(plan(with_({ 'operations.hazPlacard': null, ...changes })), PLACARD);
+    agents(placard);
+    assert.equal(placard.source, 'fact');
+    assert.match(placard.note, says);
+  }
+  for (const whatHaul of ['Non-hazardous freight', 'No hazmat, dry goods']) assert.equal(value(with_({ 'operations.hazPlacard': null, 'operations.whatHaul': whatHaul }), PLACARD), false, whatHaul);
 });
 
 test('filings: the kind and the boxes from which filings the intake names', () => {
@@ -613,9 +743,24 @@ test('filings: the kind and the boxes from which filings the intake names', () =
   assert.match(one(plan(with_({ 'operations.filingsWhich': 'Federal BMC-34' })), 'State or federal filing').note, /cargo filing/);
   assert.deepEqual(boxes({ 'operations.filingsRequired': false }), [[null, true], [null, true]]);
   assert.equal(one(plan(intake()), 'MCS-90 filing (as the page has it)').ignore, true);
-  assert.equal(value(intake(), 'Filings required'), true);
-  agents(one(plan(with_({ 'operations.filingsWhich': 'SR-22' })), 'Filings required'));
-  agents(one(plan(with_({ 'operations.filingsRequired': null })), 'Filings required'));
+  const FILINGS = 'Filings required (TNI: No unless the intake says otherwise)';
+  assert.equal(value(intake(), FILINGS), true);
+  assert.equal(value(with_({ 'operations.filingsRequired': false, 'operations.filingsWhich': null }), FILINGS), false);
+  agents(one(plan(with_({ 'operations.filingsWhich': 'SR-22' })), FILINGS));
+  // Blank: TNI's No (W43-34), unless the intake names filings or its notes mention one. An SR-22 or
+  // FR-44 isn't one: GEICO's question excludes them (review of #139).
+  for (const changes of [{}, { 'operations.needSr22': true }, { 'operations.filingsWhich': 'SR-22' }, { 'operations.filingsWhich': 'SR-22 / FR-44' },
+    { 'notes.text': 'Owner needs an SR-22 filing' }, { 'claims.notes': 'FR-44 on file' }]) {
+    const silent = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': null, ...changes })), FILINGS);
+    assert.deepEqual([silent.value, silent.source, silent.standard], [false, 'standard', true], JSON.stringify(changes));
+  }
+  for (const [changes, says] of [[{ 'operations.filingsWhich': 'BMC-91' }, /names filings \("BMC-91"\)/], [{ 'notes.text': 'SR-22 and BMC-91 filings' }, /"SR-22 and BMC-91 filings"/],
+    [{ 'notes.text': 'Needs MCS-90 for the broker' }, /"Needs MCS-90 for the broker"/], [{ 'claims.notes': 'State filing pending' }, /"State filing pending"/]]) {
+    const s = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': null, ...changes })), FILINGS);
+    agents(s);
+    assert.equal(s.source, 'fact');
+    assert.match(s.note, says);
+  }
 });
 
 // --- Drivers ------------------------------------------------------------------------------------
@@ -650,6 +795,27 @@ test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel
   // An excluded driver: filled, flagged.
   assert.match(one(plan(with_({ 'drivers.1.excluded': true }, r), { drivers: 1 }), 'Driver first name').warn, /excluded/);
   assert.equal(one(p, 'Driver first name').warn, null);
+  // Add Driver for a driver who is the owner asks again whether the owner drives, and the owner's
+  // mobile phone (PA live run, 2026-10-21, W43-29): the intake's answer and its phone.
+  const ownerForm = plan(with_({ 'applicant.ownerDrives': false, 'applicant.owner2': 'Casey Example' }, two()), { drivers: 1 });
+  const drives = one(ownerForm, 'Owner is a driver (Add Driver)');
+  assert.deepEqual([drives.value, drives.field, drives.ask, drives.steps], [false, 'GiveOwnerActiveDriverStatusYesNo', ['Is the owner a driver on the policy?'], [DRV]]);
+  const mobile = one(ownerForm, 'Owner\'s mobile phone (the intake\'s phone)');
+  assert.deepEqual([mobile.value, mobile.field, mobile.steps], ['(555) 010-0100', 'GiveMobilePhoneNumber', [DRV]]);
+  // Not on the intake, or a phone that isn't 10 digits: the agent's.
+  agents(one(plan(with_({ 'applicant.ownerDrives': null }, two()), { drivers: 1 }), 'Owner is a driver (Add Driver)'));
+  agents(one(plan(with_({ 'applicant.phone': '555-0100' }, two()), { drivers: 1 }), 'Owner\'s mobile phone (the intake\'s phone)'));
+  // Business & Owner Info's own question stays the intake's answer there.
+  assert.deepEqual(plan(two(), { drivers: 1 }).filter((s) => s.field === 'GiveOwnerActiveDriverStatusYesNo').map((s) => [s.name, s.steps, s.value]),
+    [['Owner is a driver', [BOI], true], ['Owner is a driver (Add Driver)', [DRV], true]]);
+});
+
+test('ELD: the intake\'s answer; blank is the agent\'s (W43-29)', () => {
+  const eld = (changes) => one(plan(with_(changes)), 'Electronic logging device (ELD)');
+  assert.deepEqual([eld({}).value, eld({}).field, eld({}).ask, eld({}).steps, eld({}).source], [false, 'GiveElectronicLoggingDevice',
+    ['Does the customer have an electronic logging device (ELD) in their vehicle(s)?'], [BCU], 'intake']);
+  assert.equal(eld({ 'operations.usesEld': true }).value, true);
+  agents(eld({ 'operations.usesEld': null }));
 });
 
 // FL live run, 2026-10-21: "click + and add the new vehicle", "click Next after choosing Vehicle or
@@ -702,8 +868,8 @@ test('adding units: the chooser answers the unit the panel adds; its "+" and Nex
   }
   assert.equal(buildPlan(with_({ 'applicant.ownerDrives': false }, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action' && !s.steps.includes(QC)).length, 1);
   // Never a button that leaves a step or commits: on the unit steps only the add icon and Next inside
-  // the chooser; on Quote & Coverages the cargo card's chevron, Recalculate, View More Payment Plans
-  // and Print Quote Proposal (TNI, 2026-10-21), never its Next (MVR & CLUE).
+  // the chooser; on Quote & Coverages the cargo card's chevron, View More Payment Plans and Print
+  // Quote Proposal (TNI, 2026-10-21), Recalculate once a quote (W43-31), never its Next (MVR & CLUE).
   for (const a of geico.actions) {
     assert.ok(a.token === 'addIcon' || (a.text === '^next$' && a.moveOn && /VehicleOrTrailer/.test(a.within))
       || (a.steps.includes(QC) && (a.token === 'editIcon' || ['^recalculate$', '^view more payment plans$', '^print quote proposal$'].includes(a.text))), a.id);
@@ -711,23 +877,38 @@ test('adding units: the chooser answers the unit the panel adds; its "+" and Nex
 });
 
 test('SR-22: No for everyone; Yes only when GEICO lists one driver', () => {
-  assert.deepEqual([value(intake(), 'SR-22 (the owner)'), value(intake(), 'SR-22 (this driver)', DRV, { drivers: 0 })], [false, null]);
-  assert.equal(value(with_({ 'operations.needSr22': true }), 'SR-22 (the owner)'), true);
+  assert.deepEqual([value(intake(), 'SR-22 (the owner; TNI: No unless the intake says otherwise)'), value(intake(), 'SR-22 (this driver; TNI: No unless the intake says otherwise)', DRV, { drivers: 0 })], [false, null]);
+  assert.equal(value(with_({ 'operations.needSr22': true }), 'SR-22 (the owner; TNI: No unless the intake says otherwise)'), true);
   const two = with_({ 'operations.needSr22': true, drivers: [intake().drivers[0], CASEY] });
-  agents(one(plan(two), 'SR-22 (the owner)'));
-  agents(one(plan(two, { drivers: 1 }), 'SR-22 (this driver)'));
-  assert.equal(value(with_({ drivers: [intake().drivers[0], CASEY] }), 'SR-22 (this driver)', DRV, { drivers: 1 }), false);
+  agents(one(plan(two), 'SR-22 (the owner; TNI: No unless the intake says otherwise)'));
+  agents(one(plan(two, { drivers: 1 }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)'));
+  assert.equal(value(with_({ drivers: [intake().drivers[0], CASEY] }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)', DRV, { drivers: 1 }), false);
   // The owner listed besides the intake's only driver: GEICO has two, so neither is answered.
   const other = with_({ 'operations.needSr22': true, 'applicant.owner1': 'Jordan Sample' });
-  agents(one(plan(other), 'SR-22 (the owner)'));
-  agents(one(plan(other, { drivers: 0 }), 'SR-22 (this driver)'));
-  assert.match(one(plan(other), 'SR-22 (the owner)').note, /drivers GEICO lists/);
+  agents(one(plan(other), 'SR-22 (the owner; TNI: No unless the intake says otherwise)'));
+  agents(one(plan(other, { drivers: 0 }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)'));
+  assert.match(one(plan(other), 'SR-22 (the owner; TNI: No unless the intake says otherwise)').note, /drivers GEICO lists/);
   // The owner doesn't drive: the intake's only driver is GEICO's only one.
-  assert.equal(value(with_({ 'operations.needSr22': true, 'applicant.ownerDrives': false, 'applicant.owner1': 'Jordan Sample' }), 'SR-22 (this driver)', DRV, { drivers: 0 }), true);
+  assert.equal(value(with_({ 'operations.needSr22': true, 'applicant.ownerDrives': false, 'applicant.owner1': 'Jordan Sample' }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)', DRV, { drivers: 0 }), true);
   // Whether the owner drives isn't on the intake: Add Driver's is the agent's.
-  agents(one(plan(with_({ 'operations.needSr22': true, 'applicant.ownerDrives': null, 'applicant.owner1': 'Jordan Sample' }), { drivers: 0 }), 'SR-22 (this driver)'));
+  agents(one(plan(with_({ 'operations.needSr22': true, 'applicant.ownerDrives': null, 'applicant.owner1': 'Jordan Sample' }), { drivers: 0 }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)'));
   // The owner's own form: the owner isn't matched to a driver.
   agents(one(plan(with_({ 'applicant.owner1': 'Jordan Sample' })), 'Owner\'s license state'));
+  // Blank: TNI's No for every driver (W43-34), unless the filings or the notes name an SR-22, an FR-44
+  // or financial responsibility: then the agent's, quoted.
+  const silent = with_({ 'operations.needSr22': null, drivers: [intake().drivers[0], CASEY] });
+  for (const s of [one(plan(silent), 'SR-22 (the owner; TNI: No unless the intake says otherwise)'), one(plan(silent, { drivers: 1 }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)', DRV)]) {
+    assert.deepEqual([s.value, s.source, s.standard], [false, 'standard', true], s.name);
+  }
+  for (const [changes, says] of [[{ 'operations.filingsWhich': 'SR-22 for the owner' }, /"SR-22 for the owner"/], [{ 'notes.text': 'Driver 2 needs an FR44' }, /"Driver 2 needs an FR44"/],
+    [{ 'claims.notes': 'Financial responsibility filing in GA' }, /"Financial responsibility filing in GA"/]]) {
+    const mentioned = with_({ 'operations.needSr22': null, 'applicant.ownerDrives': false, 'applicant.owner1': 'Jordan Sample', ...changes });
+    for (const s of [one(plan(mentioned), 'SR-22 (the owner; TNI: No unless the intake says otherwise)'), one(plan(mentioned, { drivers: 0 }), 'SR-22 (this driver; TNI: No unless the intake says otherwise)', DRV)]) {
+      agents(s);
+      assert.equal(s.source, 'fact', s.name);
+      assert.match(s.note, says);
+    }
+  }
 });
 
 // --- Additional business info -------------------------------------------------------------------
@@ -806,11 +987,28 @@ test('liability coverage and its limit from the intake; NTL is the agent\'s', ()
   for (const name of ['Medical payments (FL: Not Included, PIP instead)', 'Policy term', 'Basic personal injury protection']) agents(one(plan(intake()), name));
   // TNI's (FL live run 4, 2026-10-21, every state): UM/UIM $100,000 CSL (W43-17); 11 Payments,
   // waited for until View More Payment Plans shows it (W43-18).
-  for (const r of [intake(), blank(), with_({ 'garaging.state': 'TX' })]) {
-    const um = one(plan(r), 'Uninsured motorist bodily injury (TNI: $100,000 CSL)');
-    assert.deepEqual([um.value, um.source, um.standard], ['$100,000 Combined Single Limit', 'standard', true]);
+  // Texas lists only split limits: $100,000/$300,000 there (W43-33). GA and SC caption it "(UMBI)",
+  // SC asks underinsured apart ("(UIMBI)"): $100,000 CSL each.
+  const UM = 'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)';
+  for (const [r, limit] of [[intake(), '$100,000 Combined Single Limit'], [blank(), '$100,000 Combined Single Limit'], [with_({ 'garaging.state': 'TX' }), '$100,000/$300,000'],
+    [with_({ 'garaging.state': ' tx ' }), '$100,000/$300,000'], [with_({ 'garaging.state': 'FL' }), '$100,000 Combined Single Limit']]) {
+    const um = one(plan(r), UM);
+    assert.deepEqual([um.value, um.source, um.standard, um.ask], [limit, 'standard', true, ['Uninsured Motorist Bodily Injury (includes Underinsured)']]);
+    for (const [name, ask] of [['Uninsured motorist bodily injury, UMBI (TNI: $100,000 CSL)', 'Uninsured Motorist Bodily Injury (UMBI)'],
+      ['Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)', 'Underinsured Motorist Bodily Injury (UIMBI)']]) {
+      const s = one(plan(r), name);
+      assert.deepEqual([s.value, s.source, s.standard, s.ask, s.control], ['$100,000 Combined Single Limit', 'standard', true, [ask], 'select']);
+    }
     const pay = plan(r).filter((s) => s.field === 'GivePayPlanV2');
     assert.deepEqual(pay.map((s) => [s.each, s.value, s.source, s.whenOffered]), [[true, '11 Payments', 'standard', true], [true, '11 Payments', 'standard', true]]);
+  }
+  // The rest of the uninsured motorist and property damage lists stay the agent's (W43-33).
+  for (const name of ['Uninsured motorist deductible', 'UM/UIM type', 'Property damage liability', 'Uninsured motorist property damage']) {
+    for (const r of [intake(), with_({ 'garaging.state': 'TX' })]) {
+      const s = one(plan(r), name);
+      agents(s);
+      assert.deepEqual([s.source, s.manualOnly], ['fact', true], name);
+    }
   }
 });
 
@@ -834,10 +1032,25 @@ test('cargo: the intake\'s limit and deductible as one pair; never a default ded
   agents(one(plan(with_({ 'coverage.cargoDeductible': null })), 'Motor truck cargo limit and deductible'));
   agents(one(plan(with_({ 'coverage.cargo': false })), 'Motor truck cargo limit and deductible'));
   agents(one(plan(with_({ 'coverage.cargo': null })), 'Motor truck cargo wanted'));
-  // Household goods: Yes for a household goods mover; otherwise the agent's, never No.
-  const goods = (cls) => one(plan(with_({ 'operations.businessClass': cls })), 'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover)');
-  assert.deepEqual([goods('Household Goods Mover').value, goods('Household Goods Mover').source], [true, 'derived']);
-  assert.deepEqual([goods('Expediter').value, goods('Expediter').source], [null, 'fact']);
+  // Household goods: Yes for a household goods mover; otherwise TNI's No (W43-30), unless the class,
+  // what they haul or the notes mention household goods, household moving or cotton: then the agent's, quoted.
+  const GOODS = 'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)';
+  const goods = (changes) => one(plan(with_(changes)), GOODS);
+  const mover = goods({ 'operations.businessClass': 'Household Goods Mover' });
+  assert.deepEqual([mover.value, mover.source, mover.note], [true, 'derived', null]);
+  for (const changes of [{}, { 'operations.businessClass': 'Expediter', 'operations.whatHaul': null }, { 'operations.whatHaul': 'Removals of office furniture' },
+    { 'notes.text': 'Keeps loads moving 24/7' }, { 'operations.whatHaul': 'Prime movers and parts' }, { 'notes.text': 'Relocating the yard to Omaha in May' }]) {
+    const s = goods(changes);
+    assert.deepEqual([s.value, s.source, s.standard, s.note], [false, 'standard', true, null], JSON.stringify(changes));
+  }
+  for (const [changes, says] of [[{ 'operations.whatHaul': 'Household goods, local moves' }, /"Expediter \/ Household goods, local moves"/],
+    [{ 'operations.businessClass': 'Moving company' }, /"Moving company \/ General freight"/], [{ 'operations.whatHaul': 'Ginned cotton bales' }, /cotton bales/],
+    [{ 'notes.text': 'Some residential relocation work' }, /"Some residential relocation work"/], [{ 'notes.text': 'Also does home moves on weekends' }, /home moves/]]) {
+    const s = goods(changes);
+    agents(s);
+    assert.equal(s.source, 'fact');
+    assert.match(s.note, says);
+  }
   // Commodities from the business class and what they haul (TNI, FL live run 5, 2026-10-21, W43-23):
   // general freight other consumer goods, an auto hauler automobiles, a reefer four picks.
   const goodsFor = (changes) => one(plan(with_(changes)), 'Cargo commodities');
@@ -899,7 +1112,16 @@ test('a vehicle\'s coverage rows: by the coverage their id ends in, one step per
   assert.deepEqual(comp.map((s) => s.vehicleHint), [['2021', 'ford', 'f 650'], ['2019', 'ram', 'promaster']]);
   // Comprehensive and collision are TNI's $1,000 deductibles; the other rows the agent's.
   for (const s of comp) assert.deepEqual([s.value, s.standard], ['$1,000 deductible', true]);
-  for (const s of p.filter((x) => x.name === 'Rental reimbursement with downtime')) agents(s);
+  // Rental reimbursement with downtime: TNI's Not Included on every vehicle (W43-30), unless a line of
+  // the notes mentions downtime or rental: then the agent's, quoted.
+  const DOWNTIME = 'Rental reimbursement with downtime (TNI: Not Included)';
+  assert.deepEqual(p.filter((x) => x.name === DOWNTIME).map((s) => [s.value, s.source, s.selector]), [['Not Included', 'standard', '[id$="_RRWDT"]'], ['Not Included', 'standard', '[id$="_RRWDT"]']]);
+  for (const [box, text] of [['notes.text', 'Wants downtime coverage if offered'], ['claims.notes', 'Asked about rental while in the shop']]) {
+    const s = one(plan(with_({ [box]: text })), DOWNTIME);
+    agents(s);
+    assert.equal(s.source, 'fact');
+    assert.ok(s.note.includes(text), s.note);
+  }
   // Fire and theft Not Included, rental $40 a day, on every vehicle (TNI, FL live run 5, 2026-10-21, W43-22).
   assert.deepEqual(p.filter((x) => /^Fire and theft/.test(x.name)).map((s) => [s.value, s.source]), [['Not Included', 'standard'], ['Not Included', 'standard']]);
   assert.deepEqual(p.filter((x) => /^Rental reimbursement \(/.test(x.name)).map((s) => [s.value, s.source]), [['$40 Per Day, $1,200 Max', 'standard'], ['$40 Per Day, $1,200 Max', 'standard']]);
@@ -930,7 +1152,7 @@ test('notes are short and plain', () => {
 // Cascadia's Tractor, three times), distance and personal use given before it.
 test('with a VIN, the vehicle form\'s answers wait for GEICO\'s decoded year; without one, nothing waits', () => {
   const WAITING = ['Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
-    'Customization value (the attached equipment value)', 'Vehicle value without customizations', 'Comprehensive or collision wanted (TNI: Yes)',
+    'Customization value (the attached equipment value, else TNI: 0)', 'Vehicle value without customizations', 'Comprehensive or collision wanted (TNI: Yes)',
     'Farthest one-way distance (from the radius)', 'Personal use'];
   const withVin = plan(intake());
   for (const name of WAITING) assert.equal(one(withVin, name, VEH).waitFor, 'GiveYear', name);

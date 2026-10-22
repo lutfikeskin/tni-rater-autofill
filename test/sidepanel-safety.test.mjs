@@ -10,7 +10,7 @@ import { unitToAdd, unitListSpecs, advanceFor } from '../src/units.js';
 import { intakeNotes } from '../src/normalize.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
-import { quoteProgress } from '../src/carriers.js';
+import { quoteProgress, stopScreen } from '../src/carriers.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
@@ -307,6 +307,18 @@ test('fill report omits absent sections without rendering null text', () => {
   context.renderReport([{ fields: 1, filled: [{ label: 'Zip Code', shown: '21000' }], kept: [], failed: [], noData: [], leftRequired: [], actions: [] }]);
   assert.ok(box.children.length > 0);
   assert.ok(box.children.every((child) => child != null && child !== false), 'DOM replaceChildren must receive only actual report nodes');
+});
+
+// W43-32 (TNI, 2026-10-21): GEICO without 11 Payments; the fill picked the plan with the most payments
+// offered (pagekit `orMost`). Said above the items, and nothing is left for the agent by it.
+test('fill report names an answer picked in place of one the page does not offer', () => {
+  const { context, box } = reportHarness({ tab: { id: 1, url: '/quote' } }, { pageOf: () => '/quote' });
+  const said = 'The page doesn\'t offer "11 Payments" here: the fill picked "9 Payments", the plan with the most payments GEICO offers.';
+  context.renderReport([{ fields: 2, filled: [{ label: 'give pay plan v2', shown: '9 Payments', standard: true, said }, { label: 'Liability Coverage', shown: 'Bodily Injury and Property Damage Liability' }],
+    kept: [], failed: [], noData: [], leftRequired: [], actions: [{ id: 'printProposal', text: 'Print Quote Proposal' }] }]);
+  const lines = box.children.filter((n) => n?.props?.class === 'card quiet said');
+  assert.deepEqual(lines.map((n) => n.children[0]), [said]);
+  assert.equal(context.state.reportFor.left, 0);
 });
 
 // FL live run, 2026-10-07: "See what was filled always shows 0". A follow-up pass finds the
@@ -857,6 +869,37 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   assert.deepEqual(assisted[0].result, frames);
   assert.equal(assisted[0].ctx.page, 'Rates');
   assert.equal(assisted[0].filling, false);
+});
+
+// FL live run 6, 2026-10-21: follow-up fills answered vehicles 2 and 3 on GEICO while the panel kept
+// showing the vehicle before's answers. A unit with no report yet gets its report shown; a follow-up
+// on one that has a report adds a line to it, as before.
+test('an automatic fill shows the report of a unit that has none yet', async () => {
+  const frames = [{ fields: 3, filled: [{ key: 'ref:GiveVinPreQuote', label: 'VIN' }], actions: [], unknown: [], halted: false }];
+  const rendered = [];
+  const state = { tab: { id: 1, url: '/quote', carrier: { id: 'geico' } }, intake: { record: {} }, active: { vehicles: 0 }, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set(),
+    reports: new Map([['v0', {}]]), reportFor: {} };
+  let next = 1;
+  const context = {
+    state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {}, querySelector: () => null }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
+    runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
+    renderReport: (result) => rendered.push(result), recordLayout: () => {}, renderSteps: () => {}, announce: () => {}, h: () => ({}),
+    fillEvents: () => [], knownStep, fillSkip: () => [], fillSkipBy: () => null, tabMaps: () => ({ agentKeys: new Map() }), showFinish: () => {},
+    redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
+    runAssist: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {}, fillProblem() {}, reportShown: () => true,
+    // The list moved the picker to the vehicle it adds (pickUnitToAdd).
+    pickListItem: async () => { state.active.vehicles = next; },
+    reportKey: (tabId, page, carrier, active = state.active) => `v${active.vehicles}`,
+  };
+  vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
+  await context.autoFill('/quote');
+  assert.equal(rendered.length, 1, 'vehicle 2 has no report yet: shown');
+  state.reports.set('v1', {});
+  await context.autoFill('/quote');
+  assert.equal(rendered.length, 1, 'a follow-up on vehicle 2: a line on its report');
+  next = 2;
+  await context.autoFill('/quote');
+  assert.equal(rendered.length, 2, 'vehicle 3: shown');
 });
 
 test('during a quote, switching to a non-rater tab keeps the panel on the quote tab (background)', async () => {
@@ -2265,7 +2308,8 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
   const record = { garaging: { state: 'FL' }, operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Cargo Van' }], trailers: [], drivers: [{}], coverage: {} };
   const context = {
     state: { tab: { id: 1, url: 'Vehicles', carrier: { id: 'progressive', layoutUrl: /./ } }, intake: { record }, active: {}, filling: false, intakeRevision: 0, layoutGeneration: 0, layoutHold: false, layoutReadyTabs: new Set(), layoutNewTabs: new Set(), layoutLatest: null, viewTabs: new Map(),
-      lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set() },
+      lastLayouts: new Map(), layoutChain: Promise.resolve(), layoutTimer: null, layoutPending: null, layoutErrors: 0, layoutErrorsLogged: new Set(), stopScreens: new Map() },
+    stopScreen, fillEvents, renderSite: () => { context.rendered = (context.rendered ?? 0) + 1; },
     // These carriers declare no quote-state control (the state warning has its own test).
     quoteStatePick: () => undefined, showStateNote: () => {},
     sha256Hex, buildPlan: () => [], redactionTerms: () => [], editScope: (page) => page, pageOf: (url) => url, onQuotePage: () => true,
@@ -2278,14 +2322,14 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
         return [{ result: context.busy }];
       }
       // The page as the page itself names it (pagekit's capture), normally the tab's.
-      return [{ result: { controls: controls(), buttons: ['Continue'], isTopFrame: true, page: context.domPage ?? context.state.tab.url, step: context.domStep ?? '', messages: context.messages ?? [] } }];
+      return [{ result: { controls: controls(), buttons: context.buttons ?? ['Continue'], isTopFrame: true, page: context.domPage ?? context.state.tab.url, step: context.domStep ?? '', messages: context.messages ?? [] } }];
     },
     sessionId: session,
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     store: { saved: {}, set(k, v) { this.saved[k] = v; return Promise.resolve(); } },
     LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; }, knownStep,
   };
-  vm.runInNewContext(['viewOf', 'saveViews', 'resetViews', 'stepScope', 'recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
+  vm.runInNewContext(['viewOf', 'saveViews', 'resetViews', 'stepScope', 'recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'noteStopScreen', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);
   return { context, logged };
 }
@@ -3353,6 +3397,24 @@ test('a fill whose intake changed while the carrier worked is dropped: the new i
   assert.deepEqual(t.seen.problems.map((p) => p.tabId), [7], 'said in the report of the page it filled');
   assert.match(t.seen.problems[0].text, /intake changed during the fill/);
   assert.doesNotMatch(JSON.stringify(t.seen.logged), /A value|clientA/, 'no client data in the error');
+});
+
+// FL live run 6, 2026-10-21 (the maintainer: "give back, then Recalculate"): GEICO put its own
+// coverage choices back over the fill's, and the agent picked each one again by hand. The agent's
+// Fill this page gives such an answer again (no `takenBack`); an automatic fill and Looks right keep
+// what the page shows (the carrier's `takenBack`, as fillOptions builds it).
+test('only the agent\'s Fill this page gives back an answer the page took back', async () => {
+  const runs = [];
+  for (const args of [[], [{ auto: 'page' }], [{ confirmed: 'receipt' }]]) {
+    const t = fillHarness();
+    t.context.fillOptions = (carrier, extra) => ({ takenBack: { steps: ['Quote & Coverages'], keys: {} }, ...extra });
+    const run = t.context.fillPage(...args);
+    await t.started;
+    t.release(t.results);
+    await run;
+    runs.push(t.seen.options.takenBack);
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(runs)), [null, { steps: ['Quote & Coverages'], keys: {} }, { steps: ['Quote & Coverages'], keys: {} }]);
 });
 
 test('an intake correction during a fill makes its results stale too, for automatic fills as well', async () => {
@@ -4837,6 +4899,95 @@ test('each arrival at a stop step is logged once as a fill_run blocker, with the
   assert.equal(before.ui['stop-note'].hidden, false);
 });
 
+// W43-27 (TNI, 2026-10-21): after Business & Owner Info GEICO showed a screen with only Add USDOT
+// Number and Skip (SC, PA; the kit reads no step there), and the panel said nothing. Its layout
+// names it (`stopButtons`): a red stop, logged as a fill run that stopped; nothing filled, clicked or
+// asked; Add or Skip is the agent's; the next step ends it.
+test('GEICO\'s Add USDOT Number screen: read from its layout\'s buttons, logged once as a stop, ended by a layout without it', async () => {
+  const { context, logged } = layoutHarness(() => []);
+  context.state.tab = { id: 1, url: '/quote', carrier: { ...geico, layoutUrl: /./ } };
+  context.knownStep = knownStep;
+  context.buttons = ['Menu', 'Add USDOT Number', 'Skip'];
+  await context.recordLayout('/quote', 'arrived+removed');
+  assert.deepEqual({ ...context.state.stopScreens.get(1) }, { name: 'USDOT Number', page: '/quote' });
+  const stops = () => JSON.parse(JSON.stringify(logged.filter((e) => e.type === 'fill_run')));
+  assert.deepEqual(stops().map((e) => [e.blockerList, e.auto, e.page, e.fields]), [[['stop: USDOT Number'], 'stop', '/quote', 0]]);
+  // The page's layout is logged as before, with the button the next review looks for.
+  assert.ok(logged.some((e) => e.type === 'page_layout' && e.buttons.includes('Add USDOT Number')));
+  assert.equal(context.rendered, 1);
+  // Read again on the same screen: logged once.
+  await context.recordLayout('/quote', 'changed');
+  assert.equal(stops().length, 1);
+  // Another page's layout without the button (Skip led on): over.
+  context.buttons = ['Menu', 'Next'];
+  await context.recordLayout('/quote', 'arrived');
+  assert.equal(context.state.stopScreens.has(1), false);
+  assert.equal(stops().length, 1);
+  // No such screen for a carrier without stopButtons.
+  const other = layoutHarness(() => []);
+  other.context.buttons = ['Add USDOT Number'];
+  await other.context.recordLayout('Vehicles', 'arrived');
+  assert.equal(other.context.state.stopScreens.size, 0);
+  assert.equal(stopScreen(geico, ['  Add   USDOT Number ']), 'USDOT Number');
+  assert.equal(stopScreen(geico, ['Add USDOT Number later', 'Skip']), null);
+});
+
+test('on GEICO\'s Add USDOT Number screen the panel says so in red, and nothing is filled, clicked, scheduled or asked until the next step', async () => {
+  const t = stopStepHarness('Business & Owner Info');
+  t.state.stopScreens = new Map([[4, { name: 'USDOT Number', page: '/quote' }]]);
+  await t.context.fillPage({ auto: 'page' });
+  await t.context.fillPage();
+  t.context.scheduleAutoFill('/quote');
+  await t.context.autoFill('/quote');
+  assert.deepEqual([t.kits, t.timers, t.state.filling], [[], [], false]);
+  const ctx = { intake: t.state.intake, tabId: 4, tabUrl: t.state.tab.url, page: '/quote' };
+  assert.equal(t.context.aiActionCurrent(ctx, []), false);
+  t.context.showStopPage();
+  let text = JSON.stringify(t.ui['stop-note'].children);
+  assert.equal(t.ui['stop-note'].hidden, false);
+  assert.match(text, /USDOT Number: yours/);
+  assert.match(text, /GEICO asks for a USDOT number, and the intake has none\. Add USDOT Number or Skip is yours\./);
+  assert.match(text, /Nothing on this screen is filled or clicked/);
+  assert.match(text, /"role":"alert"/);
+  assert.doesNotMatch(text, /Business & Owner Info: yours/);
+  // An intake with a USDOT number: the note names it.
+  t.state.intake = { record: { applicant: { name: 'Synthetic Client LLC', dot: '1234567' } } };
+  t.context.showStopPage();
+  assert.match(JSON.stringify(t.ui['stop-note'].children), /the intake's is \\"1234567\\"/);
+  // Another page of the tab (the gateway): not that screen.
+  assert.equal(t.context.stopNoteFor(geico, '/'), null);
+  // Skip led to Vehicles: over, and the step is filled again.
+  t.show('Vehicles');
+  assert.equal(t.state.stopScreens.has(4), false);
+  text = JSON.stringify(t.ui['stop-note'].children);
+  assert.doesNotMatch(text, /USDOT/);
+  t.context.scheduleAutoFill('/quote');
+  assert.equal(t.timers.length, 1);
+  // A question or list GEICO draws while the screen shows doesn't end it (review of #141); a new
+  // document does.
+  const again = stopStepHarness('Business & Owner Info');
+  again.state.stopScreens = new Map([[4, { name: 'USDOT Number', page: '/quote' }]]);
+  for (const event of ['new_fields', 'list_shown', 'field_changes', 'step_shown']) {
+    again.show('Business & Owner Info', event);
+    assert.equal(again.state.stopScreens.has(4), true, event);
+  }
+  again.context.scheduleAutoFill('/quote');
+  assert.equal(again.timers.length, 0);
+  again.show('Business & Owner Info', 'page_view');
+  assert.equal(again.state.stopScreens.has(4), false);
+  // Two GEICO quote tabs (review of #141): the screen is the tab's that shows it. Tab 7 shows it,
+  // tab 4 is filled: tab 4's fills and follow-ups go on, tab 7's are refused.
+  const two = stopStepHarness('Business & Owner Info');
+  two.state.stopScreens = new Map([[7, { name: 'USDOT Number', page: '/quote' }]]);
+  assert.equal(two.context.stopNoteFor(geico, '/quote'), null);
+  assert.match(two.context.stopNoteFor(geico, '/quote', undefined, 7), /Add USDOT Number or Skip is yours/);
+  two.context.scheduleAutoFill('/quote', { tabId: 7, intake: two.state.intake, revision: two.state.intakeRevision });
+  assert.equal(two.timers.length, 0, 'tab 7: refused');
+  two.context.scheduleAutoFill('/quote');
+  assert.equal(two.timers.length, 1, 'tab 4: scheduled');
+  assert.equal(two.context.aiActionCurrent({ intake: two.state.intake, tabId: 4, tabUrl: two.state.tab.url, page: '/quote' }, []), true);
+});
+
 // The site strip and Fill button as renderSite draws them, for a tab on `step`.
 function siteHarness(carrier, step) {
   const el = () => ({ hidden: false, textContent: '', disabled: false, className: '', title: '', alt: '', children: [], isConnected: true,
@@ -5040,6 +5191,36 @@ test('on a GEICO unit list step, a form that went away gets a follow-up fill wit
   on = true;
   context.state.tab.carrier = { ...amwins };
   removed();
+  assert.equal(followUps.length, 2);
+});
+
+// FL live run 6, 2026-10-21: GEICO drew the vehicle list 5–7 s after the agent's Next on a vehicle
+// form, after the follow-up for the form that went away had run, and nothing ran on the list. The
+// recorder says when a unit list is drawn (list_shown), by the step it read with it.
+test('a GEICO unit list drawn gets a follow-up fill with either switch on', () => {
+  const { context } = layoutHarness(() => []);
+  const followUps = [];
+  const on = { 'auto-advance': false, 'auto-pages': true };
+  Object.assign(context, { samePage: (p) => p, knownStep, pageOf: (url) => new URL(url).pathname, $: (id) => ({ checked: on[id] ?? true }),
+    scheduleAutoFill: (page) => followUps.push(page) });
+  Object.assign(context.state.tab, { carrier: geico, url: 'https://sales.geico.com/quote' });
+  context.state.tabSteps = new Map([[context.state.tab.id, 'Additional Business Info']]);
+  vm.runInContext(['tabStep', 'onRecorderMessage'].map(extractFunction).join('\n'), context);
+  const drawn = (step) => context.onRecorderMessage({ ra: 'usage', event: 'list_shown', page: '/quote', step }, { tab: { id: context.state.tab.id } });
+  // The step it came with counts, though the panel's word on the tab's step lags.
+  drawn('Vehicles');
+  on['auto-pages'] = false;
+  on['auto-advance'] = true;
+  drawn('Drivers & Incidents');
+  assert.deepEqual(followUps, ['/quote', '/quote']);
+  // Both off (the agent's Fill this page adds it then), a step without a list, or a carrier without
+  // unit lists: nothing.
+  on['auto-advance'] = false;
+  drawn('Vehicles');
+  on['auto-advance'] = true;
+  drawn('Quote & Coverages');
+  context.state.tab.carrier = { ...amwins };
+  drawn('Vehicles');
   assert.equal(followUps.length, 2);
 });
 
@@ -5662,7 +5843,7 @@ test('GEICO: questions drawn over a gateway page no fill answered anything on ge
 // Trailer". On GEICO's unit lists the panel names the unit the fill adds (ctx.adding), by the intake's
 // order, from what the list shows and the forms fills answered, and moves the picker to it.
 test('GEICO: the next intake unit not on the quote is the one added; never one listed, filled, or past the intake\'s count', async () => {
-  const run = async ({ step = 'Vehicles', forms = [], lists, active = {}, unitForms = {}, done = [], record, autoAdvance = true, autoPages = false }) => {
+  const run = async ({ step = 'Vehicles', forms = [], lists, active = {}, unitForms = {}, done = [], record, autoAdvance = true, autoPages = false, asked = false }) => {
     const intake = { record };
     const state = { tab: { id: 4 }, intake, intakeRevision: 1, active: { vehicles: 0, drivers: 0, trailers: 0, ...active },
       unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms }, doneActions: new Set(done) };
@@ -5677,7 +5858,7 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
       unitToAdd, unitListSpecs,
     };
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
-    const ctx = { tabId: 4, intake, revision: 1, settings: { autoAdvance, autoPages } };
+    const ctx = { tabId: 4, intake, revision: 1, asked, settings: { autoAdvance, autoPages } };
     await context.pickUnitToAdd(geico, ctx);
     return JSON.parse(JSON.stringify({ adding: ctx.adding, listed: ctx.unitsListed, active: { ...state.active }, done: [...state.doneActions].sort(), ...calls }));
   };
@@ -5698,13 +5879,16 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
   out = await run({ lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record });
   assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: true });
   // The plan clicks the "+" and the chooser's Next for it (`click`) with "Fill the pages" or "Click
-  // Continue" on (W43-20, TNI, FL live run 5, 2026-10-21); with both off the same unit, and it only
-  // answers the chooser.
+  // Continue" on (W43-20, TNI, FL live run 5, 2026-10-21), and on the agent's own Fill this page with
+  // both off (FL live run 6, 2026-10-21: Fill this page on the vehicle list did nothing); an automatic
+  // fill with both off has the same unit, and only answers the chooser.
   const both = { lists: [{ rows: 2, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0, B: 1 } }, active: { vehicles: 1 }, record };
   out = await run({ ...both, autoAdvance: false, autoPages: true });
   assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: true });
   out = await run({ ...both, autoAdvance: false });
   assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: false });
+  out = await run({ ...both, autoAdvance: false, asked: true });
+  assert.deepEqual(out.adding, { list: 'trailers', index: 0, click: true });
   // As many units listed as the intake has (one added by hand, with no fill): nothing is added.
   out = await run({ lists: [{ rows: 3, shown: [true, false, false] }, null], unitForms: { vehicles: { A: 0 } }, record });
   assert.equal(out.adding, null);

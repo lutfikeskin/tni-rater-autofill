@@ -5,7 +5,7 @@ import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, inta
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
-import { carrierForUrl, quoteProgress } from '../src/carriers.js';
+import { carrierForUrl, quoteProgress, stopScreen } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
@@ -241,7 +241,7 @@ function aiAnswerOrigin(frames, x, answerFrame) {
 
 function aiActionCurrent(ctx, list) {
   return !!ctx.intake && state.intake === ctx.intake && state.tab?.id === ctx.tabId
-    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page && !stopNoteFor(state.tab?.carrier, ctx.page)
+    && state.tab?.url === ctx.tabUrl && pageOf(state.tab?.url) === ctx.page && !stopNoteFor(state.tab?.carrier, ctx.page, undefined, ctx.tabId)
     && list.every(x => [...state.aiCache.values()].includes(x));
 }
 
@@ -349,6 +349,9 @@ const state = {
   fillingFor: null,
   // The step a one-address application's tab is on (AmWINS), for the page strip (noteStep).
   tabSteps: new Map(),
+  // The screen that is the agent's (carrier `stopButtons`: GEICO's "Add USDOT Number / Skip") a tab
+  // shows, as `{ name, page }` (noteStopScreen).
+  stopScreens: new Map(),
   // The Luna controls are available from the brain button even while the Settings screen is
   // hidden. Keep the opening trigger so Escape and the close button return focus
   // to the control the agent used.
@@ -1272,6 +1275,8 @@ function onRecorderMessage(msg, sender) {
     // already open and only now gets a recorder may still show the previous client's quote.
     if (msg.from ? samePage(msg.from) !== samePage(msg.page) : state.layoutNewTabs.has(sender.tab.id)) state.layoutReadyTabs.add(sender.tab.id);
     log({ type: 'page_view', carrier, page: msg.page, view: viewOf(sender.tab.id, samePage(msg.page)), from: msg.from, fields: msg.fields });
+    // A new document: a stop screen (noteStopScreen) is read again from its arrival's layout.
+    state.stopScreens?.delete(sender.tab.id);
     // Arriving at a carrier stop page (a new document, a reload, or a move from another page; not
     // its "-Reload" re-render): logged as a fill run that stopped, with the page name only, and
     // only once the tab is shown to be this intake's quote. A step that is the agent's (stopSteps)
@@ -1364,6 +1369,15 @@ function onRecorderMessage(msg, sender) {
     // 2026-10-21: nothing ran on the list until the agent clicked "+").
     const step = tabStep(state.tab.carrier);
     if (state.tab.carrier?.unitLists?.some((s) => s.steps.includes(step)) && $('auto-advance').checked) scheduleAutoFill(pageOf(state.tab.url));
+  }
+  // A unit list drawn, or its rows changed (the recorder's list_shown): GEICO draws the list 5–7 s
+  // after the Next that saved a unit's form, after the follow-up above ran (FL live run 6,
+  // 2026-10-21: nothing ran on the vehicle list until the agent clicked "+"). With "Fill the pages"
+  // or "Click Continue when the page is done" on, as the "+" is clicked (pickUnitToAdd), a
+  // follow-up fill adds the next intake unit.
+  if (msg.event === 'list_shown') {
+    const step = knownStep(state.tab.carrier, msg.step) ?? tabStep(state.tab.carrier);
+    if (state.tab.carrier?.unitLists?.some((s) => s.steps.includes(step)) && ($('auto-advance').checked || $('auto-pages').checked)) scheduleAutoFill(pageOf(state.tab.url));
   }
   // A button the agent clicked themselves (its text, redacted): a helper or a Continue by hand.
   // On a one-address application, the step it was on (a known step name only, as elsewhere).
@@ -1534,7 +1548,8 @@ function agentEdited(page, key) {
 const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checked, active = state.active, unitsListed = false) => ({
   replaceChoices: !!carrier.replaceChoices,
   // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
-  // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only.
+  // this tab's fills answered, so a later fill keeps what the page shows there now. Keys only. The
+  // agent's Fill this page passes none (fillPage): it gives the answer again.
   takenBack: carrier.keepTakenBack?.length ? { steps: carrier.keepTakenBack, keys: Object.fromEntries([...(state.filled?.keys() ?? [])].map((key) => [key, true])) } : null,
   // The field keys this tab's fills answered: one the page has reset since is given again only on a
   // quiet page (W43-21). Keys only.
@@ -1591,11 +1606,12 @@ if (inExtension) {
 // the panel's current state (staleFill), and its bookkeeping goes to this tab (rememberFill).
 // `ids`: the quote (usage session) and intake the fill began in, which its events keep when they're
 // logged after another intake was loaded. `settings.overwrite` is the overwrite the fill used
-// (never for an automatic fill), not the checkbox.
-function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = false }) {
+// (never for an automatic fill), not the checkbox. `asked`: the agent's own Fill this page (not an
+// automatic fill, nor Looks right, which continues the page as approved).
+function fillContext({ tabId, carrier, page, tabUrl, auto = false, overwrite = false, asked = false }) {
   const session = usage.currentSession();
   return {
-    run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite,
+    run: crypto.randomUUID(), tabId, carrier, page, tabUrl, auto, overwrite, asked,
     intake: state.intake, revision: state.intakeRevision, ids: { session: session?.id ?? null, intakeId: session?.intakeId ?? null },
     view: viewOf(tabId, page, carrier), scope: editScope(page, carrier, tabStep(carrier, tabId)), active: { ...state.active },
     settings: { autoAdvance: !!$('auto-advance').checked, autoFollowUps: !!$('auto-followups').checked, autoPages: !!$('auto-pages').checked, overwrite: !!overwrite },
@@ -1696,7 +1712,7 @@ function logFillError(ctx, error) {
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page)) return;
+  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId)) return;
   if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
@@ -1740,6 +1756,10 @@ async function autoFill(page) {
     if (!fillCurrent(ctx)) return;
     // The list page may have picked the next vehicle or driver: the plan is for that one.
     ctx.active = { ...state.active };
+    // A unit no fill has a report for yet (the one the list added, or the next one's form): its
+    // report is shown, as a new step's is (FL live run 6, 2026-10-21: vehicles 2 and 3 were filled by
+    // follow-ups while the panel still showed the answers of the vehicle before).
+    const unseen = !state.reports.has(reportKey(tabId, page, carrier, ctx.active, stepBefore));
     // Honor the latest switch after preparation, and log the same value used by the kit. The unit the
     // fill adds (pickUnitToAdd) has its "+" and chooser Next clicked only with it on (`click`).
     ctx.settings.autoAdvance = !!$('auto-advance').checked;
@@ -1766,9 +1786,9 @@ async function autoFill(page) {
     const step = carrier.layoutSteps ? stepOfResults(carrier, results) : null;
     const newStep = !!step && step !== stepBefore && !state.reports.has(reportKey(tabId, page, carrier, ctx.active, step));
     // The fill whose helper this follows up held Luna back for it.
-    const rendered = current && (newStep || held || state.autoPaused || hasWarnings || state.assistPage === page);
+    const rendered = current && (newStep || unseen || held || state.autoPaused || hasWarnings || state.assistPage === page);
     if (rendered) { renderReport(frames, { ...ctx, plan }); assistFrames = frames; }
-    if (current && (newStep || held)) showFinish({ auto: true });
+    if (current && (newStep || unseen || held)) showFinish({ auto: true });
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
     const added = frames.flatMap((f) => f.filled).filter((x) => !x.otherStep);
     const n = added.length + frames.reduce((k, f) => k + (f.actions?.length ?? 0), 0);
@@ -1899,6 +1919,7 @@ async function captureLayout(job, reason) {
     const stopTitle = Object.keys(carrier.stopSteps ?? {}).some((n) => String(top.title ?? '').toLowerCase().includes(n.toLowerCase()));
     if ((step && carrier.stopSteps?.[step]) || stopTitle) return;
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
+    noteStopScreen(job, step, buttons);
     // What the page said about the answers (validation, errors, help), as pagekit's capture reads
     // and redacts it: the carrier's own wording of a refusal, which no other event carries.
     const messages = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.messages ?? []))].slice(0, 40);
@@ -1950,6 +1971,21 @@ async function captureLayout(job, reason) {
     // on instead of reporting a failure for a page that is being captured anyway.
     if (jobCurrent(job) && !superseded(job)) layoutFailed(job, why(), layoutErrorKind(e));
   }
+}
+
+// A screen that is the agent's (carrier `stopButtons`: GEICO's "Add USDOT Number / Skip", W43-27),
+// known by a button only it shows, as a layout reads the page: said in red above the steps while the
+// tab shows it (showStopPage), its arrival logged as a fill run that stopped, as a stop step's is,
+// and nothing filled, clicked or asked of the AI there (stopNoteFor). A layout read without it, a
+// move to a step or a new document (noteStep, the page_view arrival) ends it; a question or list
+// GEICO draws while the screen is up doesn't (review of #141).
+function noteStopScreen({ tabId, carrier, page }, step, buttons) {
+  const name = stopScreen(carrier, buttons);
+  const was = state.stopScreens.get(tabId);
+  if (name === (was?.name ?? null) && (!name || was.page === page)) return;
+  if (name) state.stopScreens.set(tabId, { name, page }); else state.stopScreens.delete(tabId);
+  if (name) usage.log(...fillEvents([{ fields: 0, blockers: [`stop: ${name}`] }], { carrier: carrier.id, page, view: viewOf(tabId, page, carrier), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text, step }));
+  if (tabId === state.tab?.id) renderSite();
 }
 
 function waitForFill(job) {
@@ -2019,6 +2055,8 @@ function holdLayouts() {
   // Nor is the previous client's last fill: a problem report must not name it.
   state.lastRuns = new Map();
   state.layoutErrorsLogged = new Set();
+  // Nor a stop screen read for the previous client (its note names their USDOT number).
+  state.stopScreens = new Map();
 }
 
 async function layoutWhenQuiet(job, tries = 0) {
@@ -2464,9 +2502,11 @@ function showStopPage() {
   state.autoPending = false;
   state.pagePending = null;
   if (!carrier.stopPages?.[page]) {
+    // A stop step's, or a stop screen's (`stopButtons`) on a step that is no stop.
+    const screen = step && carrier.stopSteps?.[step] ? null : state.stopScreens?.get(state.tab?.id)?.name;
     box.replaceChildren(h('div', { class: 'agent-page stop-page', role: 'alert' },
-      h('b', {}, `${step}: yours`), h('p', {}, note),
-      h('p', { class: 'small' }, 'Nothing on this step is filled or clicked.')));
+      h('b', {}, `${screen ?? step}: yours`), h('p', {}, note),
+      h('p', { class: 'small' }, `Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.`)));
     return;
   }
   const ours = stopPageIsOurs();
@@ -2547,9 +2587,15 @@ function showStateNote() {
 
 // What the carrier's stop says on this page, or on the step this tab is on (`step`, its name):
 // null where filling and clicking are allowed. Every check of a stop goes through it, so a stop
-// step is refused wherever a stop page is (fill, follow-ups, Luna, the panel's buttons).
-function stopNoteFor(carrier, page, step = tabStep(carrier)) {
-  return carrier?.stopPages?.[page] ?? (step ? carrier?.stopSteps?.[step] : null) ?? null;
+// step is refused wherever a stop page is (fill, follow-ups, Luna, the panel's buttons). `tabId`:
+// the tab being filled or asked about (a follow-up's, the AI's), the shown one by default.
+function stopNoteFor(carrier, page, step, tabId = state.tab?.id) {
+  if (step === undefined) step = tabStep(carrier, tabId);
+  // A screen that is the agent's (`stopButtons`), while that tab shows it on this page (noteStopScreen).
+  const screen = state.stopScreens?.get(tabId);
+  const said = screen?.page === page ? carrier?.stopButtons?.[screen.name]?.note : null;
+  return carrier?.stopPages?.[page] ?? (step ? carrier?.stopSteps?.[step] : null)
+    ?? (typeof said === 'function' ? said(state.intake?.record ?? null) : said) ?? null;
 }
 
 // A tab may still show the previous client's quote after an intake is loaded (or the panel
@@ -2601,7 +2647,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   const overwrite = auto || confirmed ? false : $('overwrite').checked;
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
-  const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite });
+  const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
   await pickListItem(carrier, page, ctx);
   if (staleFill(ctx) || state.tab?.id !== tabId) { state.filling = false; renderSite(); return; }
   // The list page may have picked the next vehicle or driver: the plan is for that one.
@@ -2639,7 +2685,10 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
       return;
     }
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
-    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), run: ctx.run }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    // The agent's Fill this page gives back an answer the page took back (keepTakenBack): GEICO's
+    // own coverage choice put back over the fill's, on a question the agent didn't answer
+    // themselves (their answers are in `skip`). An automatic fill keeps and flags it.
+    const options = fillOptions(carrier, { overwrite, skip: fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier), ...(skipBy ? { skipBy } : {}), ...(confirmed ? { confirmed } : {}), ...(ctx.asked ? { takenBack: null } : {}), run: ctx.run }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
@@ -2752,8 +2801,10 @@ async function pickUnitForm(carrier, ctx) {
 // row no intake unit is known to be on (it may be that one, added by hand). With no unit form on
 // screen (the list, the chooser, the owner's own forms) the picker moves to that unit, so the plan
 // is for it. The plan clicks the list's "+" and the chooser's Next for it (`click`) with "Fill the
-// pages" or "Click Continue when the page is done" on (TNI, FL live run 5, 2026-10-21, W43-20);
-// with both off it only answers the chooser.
+// pages" or "Click Continue when the page is done" on (TNI, FL live run 5, 2026-10-21, W43-20), and
+// on the agent's own Fill this page with both off (FL live run 6, 2026-10-21: Fill this page on the
+// vehicle list did nothing, and the agent clicked "+"); an automatic fill with both off only answers
+// the chooser.
 async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   ctx.unitsListed = false;
@@ -2779,7 +2830,7 @@ async function pickUnitToAdd(carrier, ctx) {
     persistDoneActions(ctx.tabId, state.doneActions);
   }
   if (!next.adding) return;
-  ctx.adding = { ...next.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance) };
+  ctx.adding = { ...next.adding, click: !!(ctx.settings?.autoPages || ctx.settings?.autoAdvance || ctx.asked) };
   const { list, index } = next.adding;
   if (next.move && state.active[list] !== index) {
     state.active[list] = index;
@@ -3320,6 +3371,9 @@ function renderReport(frames, ctx = {}) {
     body)] : [];
   const nodes = [
     agentPage ? h('p', { class: 'agent-page' }, agentPage) : null,
+    // An answer picked in place of one the page doesn't offer (pagekit `orMost`: GEICO's pay plan
+    // with no 11 Payments, W43-32): named here; nothing is left for the agent by it.
+    ...filled.filter((x) => x.said).map((x) => h('p', { class: 'card quiet said' }, x.said)),
     frames.some((f) => f.halted) ? h('p', { class: 'card bad' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then fill again.`) : null,
     pageChanged ? h('p', { class: 'card bad' }, pageChanged) : null,
     // The AI's messages and its approval card go here, above the items (runAssist).
@@ -4572,7 +4626,7 @@ async function openPdfInTab() {
 // move from another step, or a new document on it) is logged as a fill run that stopped, as a stop
 // page is, with the step's name only, once the tab is shown to be this intake's quote.
 function noteStep(msg, sender) {
-  if (msg?.ra !== 'usage' || !['field_changes', 'new_fields', 'page_view', 'step_shown'].includes(msg.event) || !state.intake || sender.tab?.id !== state.tab?.id) return;
+  if (msg?.ra !== 'usage' || !['field_changes', 'new_fields', 'page_view', 'step_shown', 'list_shown'].includes(msg.event) || !state.intake || sender.tab?.id !== state.tab?.id) return;
   const carrier = state.tab.carrier;
   const step = knownStep(carrier, msg.step);
   if (!step) return;
@@ -4582,7 +4636,11 @@ function noteStep(msg, sender) {
     const page = samePage(msg.page) || pageOf(state.tab.url);
     usage.log(...fillEvents([{ fields: 0, blockers: [`stop: ${step}`] }], { carrier: carrier.id, page, view: viewOf(sender.tab.id, page), overwrite: false, auto: 'stop', ms: 0, redact: (text) => text, step }));
   }
-  if (moved) renderSite();
+  // A stop screen (noteStopScreen) ends with a move to a step or a new document: a question or list
+  // drawn while it shows doesn't end it (a layout read without its button does).
+  const screenOver = !!state.stopScreens?.has(sender.tab.id) && (moved || msg.event === 'page_view');
+  if (screenOver) state.stopScreens.delete(sender.tab.id);
+  if (moved || screenOver) renderSite();
 }
 
 // What the agent did on this intake, for the file menu's question and the same-file note:
@@ -4700,7 +4758,7 @@ function wire() {
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
-    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); dropReports((entry) => entry.tabId === tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { state.tabSteps.delete(tabId); state.stopScreens.delete(tabId); dropReports((entry) => entry.tabId === tabId); });
     chrome.windows.onFocusChanged.addListener(refreshTab);
   }
 }

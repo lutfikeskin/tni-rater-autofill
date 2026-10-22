@@ -186,7 +186,7 @@ const hasClaimsNote = (r) => (typeof r.claims?.hasClaims !== 'boolean' && claimS
 // No (standard) unless the intake says they haul hazardous material, or what they haul names
 // something that may be (fuel, propane, chemicals…; "non-hazardous" and "no hazmat" don't count);
 // then it's the agent's, with a note saying why.
-const HAZ_HAUL = /(?<!\bnon[- ]?|\bno\s)\bhaz(?:ard(?:ous)?|mat)\b|\b(?:fuel|gasoline|diesel|propane|butane|explosives?|ammunition|fireworks|flammable|corrosive|radioactive|chemicals?|acids?|lithium|placard\w*)\b/i;
+export const HAZ_HAUL = /(?<!\bnon[- ]?|\bno\s)\bhaz(?:ard(?:ous)?|mat)\b|\b(?:fuel|gasoline|diesel|propane|butane|explosives?|ammunition|fireworks|flammable|corrosive|radioactive|chemicals?|acids?|lithium|placard\w*)\b/i;
 const hazPlacardNote = (r) => {
   if (typeof r.operations.hazPlacard === 'boolean') return null;
   if (r.operations.hazmat === true) return 'The intake says they haul hazardous material but doesn\'t answer the placard question: answer it yourself.';

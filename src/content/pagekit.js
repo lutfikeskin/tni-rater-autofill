@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 79 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 83 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -956,6 +956,12 @@
   // How long the page is quiet before such a helper is clicked.
   const LOAD_QUIET_MS = 1000;
   const LOAD_HALT = 'The page was still loading after a minute: wait for it, then fill again.';
+  // A helper clicked once a quote (`once`: GEICO's Recalculate, W43-31) whose result didn't show.
+  // How long after a helper that redraws answers (`keepAnswers`: GEICO's Recalculate) they are
+  // watched before the fill goes on (View More Payment Plans, Print): GEICO drew its own values 9 to
+  // 14 s after the fill's click (FL run 6, 2026-10-21).
+  const KEPT_WATCH_MS = 15000;
+  const ONCE_UNVERIFIED = 'it was clicked, but the page showed no current premium afterwards. Check the page and click Recalculate yourself: the fill clicks it once a quote.';
   // What a `whenClear` helper waits for (its `why`).
   const NOTHING_LEFT = 'nothing left for you on the page';
   // What holds Continue after the agent's own button during a fill (`notePress`).
@@ -1061,46 +1067,140 @@
     return e;
   }
 
-  // Type-ahead dropdowns (select2: a hidden <select> with a search box the page fills from its
-  // server). Open it, type `step.search`, and pick the one result containing `step.value`; no
-  // such result (or several) means no confident match, and the agent picks.
-  async function applySearchSelect(step, c) {
-    const select = c.el;
-    const container = [select.nextElementSibling, ...(select.parentElement?.children ?? [])]
-      .find((n) => n && n !== select && /\bselect2\b/.test(String(n.className))) ?? null;
+  // Type-ahead dropdowns (select2: a hidden <select> with the box select2 draws after it, and a
+  // search box that lists what matches the typed text). select2 opens on a left-button mousedown
+  // (it checks the event's button), so a plain Event isn't enough.
+  const Mouse = () => (typeof MouseEvent === 'function' ? MouseEvent : Event);
+  const press = (el) => { for (const type of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new (Mouse())(type, { bubbles: true, cancelable: true, button: 0 })); };
+  const select2Box = (select) => [select.nextElementSibling, ...(select.parentElement?.children ?? [])]
+    .find((n) => n && n !== select && /\bselect2\b/.test(String(n.className))) ?? null;
+  // A list select2 draws (its own <select> hidden by select2), not one it only searches for.
+  const isSelect2 = (c) => c.kind === 'select' && !c.cmp && !!c.el.classList?.contains('select2-hidden-accessible') && !!select2Box(c.el);
+
+  // Opens a select2 list and types `text` in its search box: { box, results } as the list then
+  // shows them, or { reason } when it can't. A list taking several choices types in its own box,
+  // drawn in the list's box; another in the box its open dropdown draws (none on a short list:
+  // its results are read as listed). The results are the list's own (select2 names them after the
+  // <select>: select2-<id>-results), else those on screen.
+  async function select2Search(select, text) {
+    const container = select2Box(select);
     const opener = container?.querySelectorAll?.('.select2-selection')?.[0] ?? container;
-    if (!opener) return { ok: false, reason: 'the search box for this list was not found; pick it yourself' };
-    // select2 opens on a left-button mousedown (it checks the event's button), so a plain Event
-    // isn't enough.
-    const Mouse = typeof MouseEvent === 'function' ? MouseEvent : Event;
-    const press = (el) => { for (const type of ['mousedown', 'mouseup', 'click']) el.dispatchEvent(new Mouse(type, { bubbles: true, cancelable: true, button: 0 })); };
-    press(opener);
+    if (!opener) return { reason: 'the search box for this list was not found; pick it yourself' };
+    if (!/\bselect2-container--open\b/.test(String(container.className))) press(opener);
+    const inline = () => (select.multiple ? container.querySelectorAll?.('.select2-search__field')?.[0] ?? null : null);
+    // Never another list's own box (a list taking several choices always shows its box).
+    const dropdownBox = () => deepQueryAll(document, '.select2-search__field').find((n) => n.getClientRects().length && !n.closest?.('.select2-selection')) ?? null;
+    const own = () => (select.id ? document.getElementById?.(`select2-${select.id}-results`) : null);
+    const listed = () => (own() ? [...own().querySelectorAll('.select2-results__option')] : deepQueryAll(document, '.select2-results__option'))
+      .filter((n) => n.getClientRects().length && !/loading|message/.test(String(n.className)));
     let box = null;
     for (const start = Date.now(); !box && Date.now() - start < 3000;) {
       await sleep(100);
-      box = deepQueryAll(document, '.select2-search__field').find((n) => n.getClientRects().length) ?? null;
+      box = inline() ?? dropdownBox();
+      if (!box && !select.multiple && own() && listed().length && Date.now() - start >= 1000) break;
     }
-    if (!box) return { ok: false, reason: "the list's search box didn't open; pick it yourself" };
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, String(step.search ?? step.value));
-    for (const type of ['input', 'keyup']) box.dispatchEvent(new Event(type, { bubbles: true }));
-    const want = squash(step.value);
-    let hits = [];
+    if (!box && !(own() && listed().length)) return { reason: "the list's search box didn't open; pick it yourself" };
+    if (box) {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(box, String(text));
+      for (const type of ['input', 'keyup']) box.dispatchEvent(new Event(type, { bubbles: true }));
+    }
+    let results = [];
     for (const start = Date.now(); Date.now() - start < 6000;) {
       await sleep(200);
-      const results = deepQueryAll(document, '.select2-results__option').filter((n) => n.getClientRects().length && !/loading|message/.test(String(n.className)));
-      // The result that is exactly the wanted text wins over others that only contain it.
-      const exact = results.filter((n) => squash(n.textContent) === want);
-      hits = exact.length ? exact : results.filter((n) => squash(n.textContent).includes(want));
+      results = listed();
       if (results.length) break;
     }
+    return { box, results };
+  }
+
+  // Closes an open select2 list without a pick (its box takes a key, the page a click elsewhere).
+  function closeSelect2(box) {
+    box?.dispatchEvent(new Event('keydown', { bubbles: true }));
+    document.body.dispatchEvent(new (Mouse())('mousedown', { bubbles: true, button: 0 }));
+  }
+
+  // Type-ahead dropdowns the page fills from its server (AmWINS' classification): type
+  // `step.search`, and pick the one result containing `step.value`; no such result (or several)
+  // means no confident match, and the agent picks.
+  async function applySearchSelect(step, c) {
+    const found = await select2Search(c.el, step.search ?? step.value);
+    if (found.reason) return { ok: false, reason: found.reason };
+    const want = squash(step.value);
+    // The result that is exactly the wanted text wins over others that only contain it.
+    const exact = found.results.filter((n) => squash(n.textContent) === want);
+    const hits = exact.length ? exact : found.results.filter((n) => squash(n.textContent).includes(want));
     if (hits.length !== 1) {
-      box.dispatchEvent(new Event('keydown', { bubbles: true }));
-      document.body.dispatchEvent(new Mouse('mousedown', { bubbles: true, button: 0 }));
+      closeSelect2(found.box);
       return { ok: false, reason: hits.length ? `${hits.length} results match "${step.value}"; pick the right one` : `no confident match for "${step.value}"; pick it yourself` };
     }
     press(hits[0]);
     await settle({ quietMs: 250, maxMs: 4000 });
     return squash(selectedText(c) ?? '').includes(want) ? { ok: true, shown: oneLine(hits[0].textContent) } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
+  }
+
+  // One option of a select2 list picked as the agent picks it: its text typed in the list's search
+  // box, and the one result reading exactly that clicked (one not picked yet, on a list taking
+  // several: clicking a picked one takes it off).
+  async function pickSelect2(select, text) {
+    const found = await select2Search(select, text);
+    if (found.reason) return { ok: false, reason: found.reason };
+    const want = oneLine(text).toLowerCase();
+    const hits = found.results.filter((n) => oneLine(n.textContent).toLowerCase() === want && n.getAttribute?.('aria-selected') !== 'true');
+    if (hits.length !== 1) {
+      closeSelect2(found.box);
+      return { ok: false, reason: hits.length ? `the list showed "${text}" ${hits.length} times; pick it yourself` : `the list didn't show "${text}" when it was typed; pick it yourself` };
+    }
+    press(hits[0]);
+    await settle({ quietMs: 250, maxMs: 4000 });
+    return { ok: true };
+  }
+
+  // A pick taken off a select2 list taking several choices: its own × in the list's box.
+  async function unpickSelect2(select, text) {
+    const want = oneLine(text).toLowerCase();
+    const chip = [...(select2Box(select)?.querySelectorAll?.('.select2-selection__choice') ?? [])]
+      .find((n) => oneLine(n.getAttribute?.('title') ?? n.textContent.replace(/^×/, '')).toLowerCase() === want);
+    const remove = chip?.querySelectorAll?.('.select2-selection__choice__remove')?.[0] ?? null;
+    if (!remove) return { ok: false, reason: `"${text}" is picked but has no × to take it off; take it off yourself` };
+    press(remove);
+    await settle({ quietMs: 250, maxMs: 4000 });
+    return { ok: true };
+  }
+
+  // GEICO's select2 lists (business description, cargo commodities, a driver's suffix, a vehicle's
+  // year, make and model) take a pick only from select2 itself: the page reads its select2:select
+  // and select2:unselect, never a change of the hidden <select> (FL live run 6, 2026-10-21: the
+  // commodity set on the <select> showed, but GEICO took none and never asked for the cargo limit;
+  // the business description set so was refused at Next). Each pick is made in the list (typed,
+  // then clicked: pickSelect2), and on a list taking several a pick the answer doesn't name is
+  // taken off first (GEICO takes at most four).
+  async function applySelect2(step, c) {
+    let options = optionsOf(c);
+    if (c.el.multiple) {
+      const wanted = multiValue(step.value, options);
+      const picks = wanted.map((w) => options.find((o) => !o.el.disabled && o.text.toLowerCase() === w.toLowerCase()));
+      if (!wanted.length || picks.some((o) => !o)) return noMatch({ ...step, value: wanted.filter((w, i) => !picks[i]).join('; ') || step.value }, options);
+      for (const o of options.filter((x) => x.el.selected && !picks.includes(x))) {
+        const off = await unpickSelect2(c.el, o.text);
+        if (!off.ok) return off;
+      }
+      for (const o of picks.filter((x) => !x.el.selected)) {
+        const on = await pickSelect2(c.el, o.text);
+        if (!on.ok) return on;
+      }
+      if (!options.every((o) => !!o.el.selected === picks.includes(o))) return { ok: false, reason: 'the page did not keep these picks' };
+      return { ok: true, shown: picks.map((o) => o.text).join('; ') };
+    }
+    let opt = matchOption(options, step);
+    for (const start = Date.now(); !opt && new Set(options.map((o) => oneLine(o.text)).filter(Boolean)).size <= 1 && Date.now() - start < 6000;) {
+      await sleep(250);
+      options = optionsOf(c);
+      opt = matchOption(options, step);
+    }
+    if (!opt) return noMatch(step, options);
+    const on = await pickSelect2(c.el, opt.text);
+    if (!on.ok) return on;
+    return selectedText(c) === opt.text ? { ok: true, shown: opt.text } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
   }
 
   // Returns { ok: true, shown } or { ok: false, reason, options? }.
@@ -1109,6 +1209,7 @@
     if (step.kind === 'search-select') return applySearchSelect(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
     if (c.el.readOnly) return { ok: false, reason: 'the field is read-only (usually a date picker or lookup) — set it by hand' };
+    if (isSelect2(c)) return applySelect2(step, c);
     // A list taking several choices (GEICO's commodities: W43-23): exactly the answer's options,
     // named by their texts joined by "; " (as selectedText reads them back), each of them offered.
     if (c.kind === 'select' && c.el.multiple) {
@@ -1440,6 +1541,9 @@
   // the last fill in this document whose plan had any: unitFormsNow reads the forms on screen by
   // them between fills. Null until a fill gives some.
   let knownUnitMarkers = null;
+  // The unit lists the panel read in this document (unitList's selectors): unitListsNow tells the
+  // recorder when one is drawn.
+  const knownUnitLists = [];
 
   // The fill running in this frame (its report and how to halt it): the side panel reads how many
   // answers are in so far, and its Stop halts it the way an agent edit does (no Continue after).
@@ -1678,6 +1782,8 @@
     const consumedPaths = () => new Set(actions.filter((a) => clicked.has(a.action)).flatMap((a) => a.after));
     // Choices whose option isn't offered yet (`whenOffered`), by step id.
     const unoffered = new Map();
+    // Options picked in place of one never offered (`orMost`), by step id: what the report says.
+    const substituted = new Map();
     const retryOnce = (id) => { const n = retries.get(id) ?? 0; if (n >= 2) return false; retries.set(id, n + 1); return true; };
     // Steps waiting for the page (`waitFor`): since when, by step id.
     const waitingSince = new Map();
@@ -1927,7 +2033,7 @@
       if (window === window.top && clickNextAction(controls, true)) {
         // A lookup (Import Data) may wait on its server without changing the page for a while.
         if (!await settle(serverBacked ? {} : { quietMs: 800, maxMs: 8000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
-        if (!verifyAction()) break;
+        if (!await verifyAction()) break;
         if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
         if (stepChanged()) break;
         continue;
@@ -2114,21 +2220,23 @@
               if (!report.invalidatedActions.includes(id)) report.invalidatedActions.push(id);
             }
           }
-          // A step-fenced recalculation is due again after any later answer on its step (GEICO's
-          // Recalculate on Quote & Coverages, mock run, 2026-10-20, until it became the agent's on
-          // 2026-10-21: the premium showed "$ --.--" until it was clicked, and Next stayed hidden). It still waits for ratesStale() and the
-          // required questions before it's clicked.
-          for (const a of actions.filter((x) => x.needsRecalculation && x.steps?.length && actionHere(x))) {
+          // A step-fenced recalculation is due again after any later answer on its step (the
+          // premium showed "$ --.--" until it was clicked, and Next stayed hidden: GEICO mock run,
+          // 2026-10-20). It still waits for ratesStale() and the required questions before it's
+          // clicked. One clicked once a quote (`once`: GEICO's, W43-31) never is again.
+          for (const a of actions.filter((x) => x.needsRecalculation && !x.once && x.steps?.length && actionHere(x))) {
             clicked.delete(a.action);
             report.actions = report.actions.filter((x) => x.id !== a.action);
             if (!report.invalidatedActions.includes(a.action)) report.invalidatedActions.push(a.action);
           }
-          report.filled.push({ ...item, shown: result.shown });
+          // An option picked in place of one never offered (`orMost`) is named in the report.
+          const instead = substituted.get(step.id);
+          report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}) });
           unoffered.delete(step.id);
           // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
           handled.set(step.id, step.standard
-            ? { status: 'standard', note: `TNI standard answer, not from the intake: ${step.name}` }
-            : { status: 'filled', note: `filled from intake: ${step.name}` });
+            ? { status: 'standard', note: instead ?? `TNI standard answer, not from the intake: ${step.name}` }
+            : { status: 'filled', note: instead ?? `filled from intake: ${step.name}` });
           if (step.warn) {
             report.checks.push({ ...item, note: step.warn, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.warn });
@@ -2140,12 +2248,21 @@
         } else if (step.whenOffered && /^no option matches/.test(result.reason ?? '')) {
           // Not offered yet: a helper may show it (GEICO's 11 Payments, behind View More Payment
           // Plans). Tried again each round; never offered by the fill's end, it is the agent's.
-          unoffered.set(step.id, { item: { ...item, ...describe(c) }, control: c, step });
+          unoffered.set(step.id, { item: { ...item, ...describe(c) }, control: c, step, options: result.options ?? [] });
         } else if (/did not keep/.test(result.reason ?? '') && !report.halted && retryOnce(step.id)) {
           // Often a later redraw resets it (a coverage list reloading): try again next round.
           refill.add(step.id);
           retry = true;
           if (serverBacked) break;
+        } else if (step.keepUnlisted && /^no option matches/.test(result.reason ?? '') && hasValue(c) && !/^other\b/i.test(oneLine(selectedText(c) ?? ''))) {
+          // A list without the answer that already holds the page's own (`keepUnlisted`: GEICO's
+          // cities for the ZIP, TNI, 2026-10-21, W43-35: one city and OTHER in GA, "failed: City"
+          // on two steps, and the agent kept GEICO's): kept, with a check naming the answer. Its
+          // OTHER is no answer to keep (review of #141): that still fails.
+          const note = `The page's list has no "${step.value}" (${step.name}): its "${selectedText(c)}" is left as it is. Check it.`;
+          report.kept.push(item);
+          report.checks.push({ ...item, note, ...describe(c) });
+          handled.set(step.id, { status: 'needs', note });
         } else {
           report.failed.push({ ...item, reason: result.reason, ...describe(c) });
           handled.set(step.id, { status: 'failed', note: `couldn't fill ${step.name}: ${result.reason}` });
@@ -2159,6 +2276,10 @@
       if (report.halted) break;
       // The next round's start ends the fill (or stops it on a step that is the agent's).
       if (stepMoved) continue;
+      // A choice never offered once the helper that shows every option has been clicked (`orMost`:
+      // GEICO's pay plans after View More Payment Plans, W43-32): the option with the highest count
+      // among its question's fields is its answer, given next round.
+      if (!changed && substitute()) continue;
       // Nothing left to type or pick: click the next button whose turn it is.
       let helperClicked = false;
       if (!changed && window === window.top && !agentPressed) {
@@ -2166,11 +2287,13 @@
         changed = helperClicked = clickNextAction(controls);
         // A helper that loads a view (GEICO's "+", Add Driver) is clicked on a page quiet for a
         // second (FL live run 4, 2026-10-21: Add Driver 2 s after the list showed, and GEICO's
-        // spinner stayed until the agent reloaded): once it is due, the page is waited for, and
+        // spinner stayed until the agent reloaded), and one that waits for a quiet page for its own
+        // time (`quietMs`: GEICO's Recalculate, W43-31): once it is due, the page is waited for, and
         // clicked next round if nothing changed meanwhile (a page that changed is read again).
         if (loadDue) {
           const before = signature();
-          if (!await settle({ quietMs: LOAD_QUIET_MS, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
+          const due = actions.find((x) => x.action === loadDue);
+          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
           quiet = !agentPressed && signature() === before ? { action: loadDue, sig: before } : null;
           continue;
         }
@@ -2196,9 +2319,11 @@
       // click or a batch of answers still needs the wait. (Waiting twice cost Progressive about
       // 0.3 s per answer.)
       // A helper that draws a new view (`loads`: GEICO's add icons and the chooser's Next) is waited
-      // for as long as a step's load.
+      // for as long as a step's load, and so is one that rates the quote (GEICO's Recalculate, its
+      // spinner up while it rates).
       const loads = helperClicked && !!pendingAction?.loads;
-      if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads ? LOAD_MS : 3000 })) {
+      const rates = helperClicked && pendingAction?.verify === 'premium';
+      if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads || rates ? LOAD_MS : 3000 })) {
         halt(loads ? LOAD_HALT : 'The page did not settle after the helper.');
         break;
       }
@@ -2221,7 +2346,7 @@
         }
         if (!await settle({ quietMs: 250, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
       }
-      if (!verifyAction()) break;
+      if (!await verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
       if (stepChanged()) break;
     }
@@ -2238,7 +2363,7 @@
         || resultShown(a, assign(controls, plan));
     }
 
-    function verifyAction() {
+    async function verifyAction() {
       const a = pendingAction;
       pendingAction = null;
       if (!a) return true;
@@ -2248,6 +2373,15 @@
       }
       let accepted = true;
       if (a.verify === 'premium') accepted = premiumReady();
+      // Clicked once a quote (`once`: GEICO's Recalculate, W43-31): never again, also when its
+      // result didn't show; from here it is the agent's, and they're told.
+      if (!accepted && a.once) {
+        report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, reason: ONCE_UNVERIFIED });
+        return false;
+      }
+      // The answers it may have redrawn (`keepAnswers`), read again once its result shows, and
+      // watched until KEPT_WATCH_MS after the click when they held.
+      if (accepted && a.kept && !await answersKept(a)) await watchKept(a);
       // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
       // screen but disabled is not gone.
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
@@ -2318,6 +2452,141 @@
     // What the page's questions show, by question: the snapshot a `revealed` check compares with.
     function controlSnapshot(controls) {
       return new Map(controls.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
+    }
+
+    // Each question by its field and its place among the fields of that key (`key#n`): a GEICO
+    // coverage row's label holds its premium, which a recalculation changes.
+    function answerPlaces(controls) {
+      const seen = new Map();
+      return controls.map((c) => {
+        const key = fieldKey(c);
+        const n = (seen.get(key) ?? 0) + 1;
+        seen.set(key, n);
+        return [`${key}#${n}`, c];
+      });
+    }
+    function answerShown(c) {
+      return c.kind === 'text' ? c.el.value : selectedText(c);
+    }
+
+    // The answers on the page as a helper that redraws them is clicked (`keepAnswers`: GEICO's
+    // Recalculate, W43-31): the fill's (any fill's, the page agreeing with its step) and the agent's.
+    function answersNow() {
+      const controls = collectControls();
+      const pairs = assign(controls, plan);
+      return answerPlaces(controls).flatMap(([at, c]) => {
+        if (!hasValue(c)) return [];
+        const step = pairs.find((p) => p.control === c)?.step;
+        const agents = skippedField(c);
+        const ours = !agents && !!step && step.value != null && !step.ignore && !step.note && !step.verifyOnly && agreesWith(step, c);
+        return agents || ours ? [{ at, stepId: ours ? step.id : null, shown: answerShown(c) }] : [];
+      });
+    }
+
+    // Once its result shows (W43-31: GEICO drew its own choices back after a Recalculate the fill
+    // clicked): an answer the page shows otherwise now is given back once if it was the fill's, and
+    // left as it is if it was the agent's. Each is red, and one more item says the premium may not
+    // be for the answers shown. The helper isn't clicked again (`once`): the agent recalculates,
+    // and Print waits for them (`whenClear`).
+    // Whether any answer had changed.
+    function keptChanged(a, now) {
+      return a.kept.flatMap((k) => {
+        const c = now.get(k.at);
+        return c && answerShown(c) !== k.shown ? [{ k, c }] : [];
+      });
+    }
+    async function answersKept(a) {
+      const now = new Map(answerPlaces(collectControls()));
+      const changed = keptChanged(a, now);
+      if (!changed.length) return false;
+      const pairs = assign([...now.values()], plan);
+      const given = new Set();
+      for (const { k, c } of changed) {
+        const step = k.stepId != null ? pairs.find((p) => p.control === c && p.step.id === k.stepId)?.step : null;
+        if (!step) continue;
+        let result;
+        try { result = await apply(step, c); } catch (e) { result = { ok: false }; }
+        if (result.ok) given.add(k.at);
+      }
+      if (given.size) await settle({ quietMs: 250, maxMs: LOAD_MS });
+      const after = new Map(answerPlaces(collectControls()));
+      for (const { k, c: before } of changed) {
+        const c = after.get(k.at) ?? before;
+        const step = k.stepId != null ? plan.find((s) => s.id === k.stepId) : null;
+        // A choice's own words only (a typed box may hold a client's value).
+        const was = c.kind === 'text' ? '' : ` (it was "${k.shown}")`;
+        const back = !!step && given.has(k.at) && after.has(k.at) && agreesWith(step, c);
+        const reason = !step ? `the page changed your answer when it recalculated${was}: answer it again, then click Recalculate yourself.`
+          : back ? 'the page changed this answer when it recalculated, and the fill put it back: click Recalculate yourself, then check the answer is kept.'
+            : `the page changed this answer when it recalculated${was}, and the fill couldn't put it back: answer it yourself, then click Recalculate.`;
+        const key = fieldKey(c);
+        // Only this answer's own entry (its step, key and label): another field with its key (a
+        // sibling, another step's) keeps its own. The agent's answer has none.
+        const own = (list) => {
+          const i = step ? list.findIndex((x) => x.stepId === step.id && x.key === key && x.label === c.label) : -1;
+          return i < 0 ? list : list.filter((_, j) => j !== i);
+        };
+        report.filled = own(report.filled);
+        report.kept = own(report.kept);
+        report.failed.push({ stepId: step?.id ?? null, label: c.label, path: step?.path ?? null, name: step?.name ?? c.label, key, q: c.q ?? null, controlKind: c.kind, reason, ...describe(c) });
+        mark(c, 'failed', reason);
+        if (step) handled.set(step.id, { status: 'failed', note: reason });
+      }
+      const n = changed.length;
+      report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null,
+        reason: `the page changed ${n === 1 ? 'an answer' : `${n} answers`} when it recalculated (marked above), so the premium may not be for the answers shown. Check them and click Recalculate yourself: the fill clicks it once a quote.` });
+      return true;
+    }
+
+    // A redraw after the first check (GEICO's came 9 to 14 s after the click): the answers are read
+    // again every half second until KEPT_WATCH_MS after the click, and a change is checked as above
+    // once the page is quiet. An agent edit, another page or another step ends the watch.
+    async function watchKept(a) {
+      while (Date.now() - a.clickedAt < KEPT_WATCH_MS && !report.halted && currentPage() === startPage && !stepChanged()) {
+        await sleep(500);
+        if (!keptChanged(a, new Map(answerPlaces(collectControls()))).length) continue;
+        await settle({ quietMs: 1000, maxMs: LOAD_MS });
+        await answersKept(a);
+        return;
+      }
+    }
+
+    // A choice never offered once the helper that shows every option was clicked (`orMost`: GEICO's
+    // pay plans, W43-32: TX offers no 11 Payments): among the options of every field of its
+    // question, the one with the highest count (`count`'s first group; `one`: an option that counts
+    // 1) becomes its answer, given next round and named in the report. Clicked by an earlier fill,
+    // the page may have drawn fewer plans since: only the page's own pick, when it is that one (a
+    // later fill agrees with the 9 Payments the first picked). No option with a count, or one of its
+    // fields already answered: still the agent's.
+    function substitute() {
+      const byPath = new Map();
+      for (const u of unoffered.values()) {
+        const m = u.step.orMost;
+        if (!m || !clicked.has(m.after)) continue;
+        byPath.set(u.step.path, [...(byPath.get(u.step.path) ?? []), u]);
+      }
+      let any = false;
+      for (const [path, group] of byPath) {
+        if (report.filled.some((x) => x.path === path) || plan.some((s) => s.path === path && substituted.has(s.id))) continue;
+        const { count, one, name } = group[0].step.orMost;
+        const counted = (text) => (one && new RegExp(one, 'i').test(text) ? 1 : Number(new RegExp(count, 'i').exec(text)?.[1] ?? NaN));
+        let best = null;
+        for (const u of group) {
+          for (const text of u.options) {
+            const n = counted(oneLine(text));
+            if (Number.isFinite(n) && (!best || n > best.n)) best = { n, text: oneLine(text), id: u.step.id, control: u.control };
+          }
+        }
+        if (!best) continue;
+        const fresh = report.actions.some((x) => x.id === group[0].step.orMost.after);
+        if (!fresh && oneLine(selectedText(best.control) ?? '') !== best.text) continue;
+        const step = plan.find((s) => s.id === best.id);
+        substituted.set(step.id, `The page doesn't offer "${step.value}" here: the fill picked "${best.text}", ${name}.`);
+        step.value = best.text;
+        unoffered.delete(step.id);
+        any = true;
+      }
+      return any;
     }
 
     // A helper's own pages, and its own steps of a one-address application (`steps`: GEICO's
@@ -2448,14 +2717,15 @@
           opener.click();
           return true;
         }
-        if (a.loads && !(quiet?.action === a.action && quiet.sig === signature())) { loadDue = a.action; return false; }
+        if ((a.loads || a.quietMs) && !(quiet?.action === a.action && quiet.sig === signature())) { loadDue = a.action; return false; }
         quiet = null;
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
         // What the page shows as the button is clicked (the round's controls are older: answers
         // have landed since): what a `revealed` / `appears` check compares with afterwards.
         pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
-          : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length } : a;
+          : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length }
+            : a.keepAnswers ? { ...a, kept: answersNow(), clickedAt: Date.now() } : a;
         button.click();
         return true;
       }
@@ -2540,9 +2810,12 @@
     }
     // A choice never offered (`whenOffered`), unless another rule for the same question answered it
     // (GEICO's two pay plan groups, one of which lists 11 Payments), or a helper that may show it is
-    // still waiting (View More Payment Plans, for the agent's answers): the agent's.
+    // still waiting (View More Payment Plans, for the agent's answers, or for a Recalculate: GEICO hides
+    // the link while the premium is out of date): the agent's, or the offered plan with the most (`orMost`).
+    const offerPending = report.blocked.some((x) => !clicked.has(x.id) && x.waits?.some((w) => w.say === NOTHING_LEFT))
+      || (unoffered.size > 0 && actions.some((a) => a.needsPremium && !clicked.has(a.action) && actionHere(a)) && !premiumReady());
     for (const { item, control, step } of unoffered.values()) {
-      if (handled.has(step.id) || report.blocked.some((x) => !clicked.has(x.id) && x.waits?.some((w) => w.say === NOTHING_LEFT)) || report.filled.some((x) => x.path === step.path) || report.kept.some((x) => x.path === step.path)) continue;
+      if (handled.has(step.id) || offerPending || report.filled.some((x) => x.path === step.path) || report.kept.some((x) => x.path === step.path)) continue;
       const note = `The page doesn't offer "${step.value}" here: pick it yourself.`;
       report.noData.push({ ...item, note });
       handled.set(step.id, { status: 'needs', note });
@@ -2808,6 +3081,7 @@
   // rows but the add row) and which of `items` it shows, as listed() reads them but within the list
   // only. Only numbers and true/false go back.
   function unitList(selector, items) {
+    if (!knownUnitLists.includes(selector)) knownUnitLists.push(selector);
     const list = deepQueryAll(document, selector).find((el) => el.getClientRects().length);
     if (!list) return null;
     const text = String(list.innerText ?? '').toUpperCase();
@@ -2821,6 +3095,24 @@
       return v.length >= 11 && flat.includes(` ${v} `);
     });
     return { rows, shown };
+  }
+
+  // The unit lists unitList read here that are on screen now, each with its rows but the add row:
+  // '' when none is. The recorder reads it on every poll and tells the panel when it changes: GEICO
+  // draws a vehicle or driver list with no question on it, 5–7 s after the Next that saved a unit's
+  // form, so neither new_fields nor removed_fields comes with it (FL live run 6, 2026-10-21: the
+  // follow-up for the form that went away ran before the list was there, and nothing ran after).
+  // Light DOM and no text, as it runs every poll; GEICO's lists are in the light DOM. Selectors and
+  // counts only.
+  function unitListsNow() {
+    try {
+      return knownUnitLists.map((selector) => {
+        const list = [...document.querySelectorAll(selector)].find((el) => el.getClientRects().length);
+        return list ? `${selector}:${[...list.children].filter((li) => li.tagName === 'LI' && !li.classList.contains('add-state')).length}` : '';
+      }).filter(Boolean).join('|');
+    } catch {
+      return '';
+    }
   }
 
   function markKey(key, label, status, note) {
@@ -3125,5 +3417,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 79, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 83, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();
