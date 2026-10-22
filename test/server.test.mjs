@@ -613,6 +613,7 @@ test('profile text with a phone, SSN, date of birth, licence or policy number wr
     await post({ events: [
       ...ids.map((whatHaul) => profileEvent({ operations: { ...p.operations, whatHaul } })),
       ...limits.map((l) => profileEvent({ coverage: { ...p.coverage, autoLiabLimit: l, glLimit: l }, priorInsurance: [{ ...p.priorInsurance[0], limit: l }] })),
+      profileEvent({ coverage: { ...p.coverage, autoLiabLimit: 'SSN 123 45 6789' } }),
       profileEvent({ priorInsurance: [{ ...p.priorInsurance[0], limit: '123-45-6789' }], business: { ...p.business, dot: 'other', mc: 'other', fein: 'blank' } }),
     ] });
   });
@@ -625,6 +626,8 @@ test('profile text with a phone, SSN, date of birth, licence or policy number wr
     const e = kept[ids.length + i];
     assert.deepEqual([e.coverage.autoLiabLimit, e.coverage.glLimit, e.priorInsurance[0].limit, e.dropped], [l, l, l, undefined], l);
   }
+  const spaced = kept.at(-2);
+  assert.deepEqual([spaced.coverage.autoLiabLimit, spaced.dropped], [undefined, ['coverage']], 'an SSN written with spaces is no limit');
   const last = kept.at(-1);
   assert.equal(last.priorInsurance[0].limit, undefined, 'an SSN is no limit');
   assert.deepEqual([last.business.dot, last.business.mc, last.business.fein], ['other', 'other', 'blank'], 'something other than a number is said as such');
