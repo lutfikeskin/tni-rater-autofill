@@ -5827,6 +5827,140 @@ test('a button the agent clicks during a fill is the step\'s move: the fill clic
   for (const press of ['heading', 'toggle']) assert.deepEqual(await run(press), [['fill'], 'Next', null, 0], press);
 });
 
+// Where each element is drawn, as a browser lays the page out (the fake DOM has none): a 100×40
+// box per element down the page, one marked `_below` under the fold until it is scrolled to, and
+// `over.set(el, node)` puts `node` (a dialog, a chat window) over that element.
+function drawnPage(h, els) {
+  h.context.innerWidth = 1200;
+  h.context.innerHeight = 800;
+  const over = new Map();
+  const scrolled = [];
+  els.forEach((el, i) => {
+    el.getBoundingClientRect = () => ({ left: 10, top: (el._below && !scrolled.includes(el) ? 2000 : 10) + i * 50, width: 100, height: 40 });
+    el.scrollIntoView = () => scrolled.push(el);
+  });
+  h.document.elementFromPoint = (x, y) => {
+    const el = els.find((e) => {
+      const r = e.getBoundingClientRect();
+      return x >= r.left && x < r.left + r.width && y >= r.top && y < r.top + r.height;
+    });
+    return over.get(el) ?? el ?? h.document.body;
+  };
+  return { over, scrolled };
+}
+
+const vinPlan = [
+  { id: 'vin-step', selector: '#vin', path: 'vehicles[0].vin', kind: 'text', value: '1FTBR3X87MKA12345' },
+  { id: 'lookup', kind: 'action', action: 'lookupVin:0', text: '^lookup vin$', pages: [], after: ['vehicles[0].vin'], afterActions: [], afterPages: [], unless: [], immediate: true },
+];
+
+// From comparing the extension with MetaMask's and browser-harness's checks before a click
+// (2026-10-22): a script's click reaches a button under a dialog, a message or a chat window, where
+// the agent's wouldn't, and the page may not expect it.
+test('Continue with something open over it is not clicked, and the report says so', async () => {
+  const run = async ({ open = false, below = false } = {}) => {
+    const h = harness({ search: '?pageName=AddVehicle' });
+    const vin = makeInput({ id: 'vin', ariaLabel: 'VIN' });
+    h.document.body.append(vin);
+    const next = addButton(h, 'Continue');
+    next.onclick = () => { next._clicked = true; };
+    next._below = below;
+    const { over, scrolled } = drawnPage(h, [vin, next]);
+    if (open) over.set(next, h.document.body.append(new FakeNode('div', { className: 'chat-window' })));
+    const report = await h.kit.fill(vinPlan.slice(0, 1), { maxRounds: 3, advance: { text: '^continue$' } });
+    return plain([!!next._clicked, report.advanced ?? null, report.covered ?? null, report.blockers.filter((b) => /open over Continue/.test(b)).length, scrolled.length]);
+  };
+  // Under it: looked at again in the middle of the screen, still under it, not clicked.
+  assert.deepEqual(await run({ open: true }), [false, null, true, 1, 1]);
+  // Nothing over it: clicked as before, nothing scrolled.
+  assert.deepEqual(await run(), [true, 'Continue', null, 0, 0]);
+  // Below the fold: scrolled to the middle, then clicked.
+  assert.deepEqual(await run({ below: true }), [true, 'Continue', null, 0, 1]);
+});
+
+test('a helper with something open over it waits, holding Continue, and is clicked once it is closed', async () => {
+  const h = harness({ search: '?pageName=AddVehicle' });
+  const vin = makeInput({ id: 'vin', ariaLabel: 'VIN' });
+  h.document.body.append(vin);
+  const lookup = addButton(h, 'Lookup VIN');
+  lookup.onclick = () => { lookup._clicked = (lookup._clicked ?? 0) + 1; };
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const { over } = drawnPage(h, [vin, lookup, next]);
+  over.set(lookup, h.document.body.append(new FakeNode('div', { className: 'chat-window' })));
+  let report = await h.kit.fill(vinPlan, { maxRounds: 6, advance: { text: '^continue$' } });
+  assert.equal(lookup._clicked, undefined, 'not clicked through it');
+  assert.deepEqual(plain(report.blocked.map((b) => [b.id, b.why])), [['lookupVin:0', 'something on the page is open over it']]);
+  assert.equal(next._clicked, undefined, 'Continue waits for it');
+  // The agent closed it: the next fill clicks the helper, then Continue.
+  over.clear();
+  report = await h.kit.fill(vinPlan, { maxRounds: 6, advance: { text: '^continue$' } });
+  assert.deepEqual(plain([lookup._clicked, report.blocked.length, !!next._clicked]), [1, 0, true]);
+});
+
+// A GEICO button draws its words through a slot: what is at its centre is its own text, in the
+// page, or its host. Neither is over it.
+test('a button drawn in a shadow root is not covered by its own host or the words its slot shows', async () => {
+  for (const at of ['host', 'words']) {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Business Class & USDOT');
+    const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
+    const next = gdsButton('');
+    const words = new FakeNode('span', { textContent: 'Next' });
+    next.host.append(words);
+    words.assignedSlot = next.button.children[1].children[0];
+    h.document.body.append(dot, next.host);
+    const { over } = drawnPage(h, [dot, next.button]);
+    over.set(next.button, at === 'host' ? next.host : words);
+    const clicks = [];
+    next.button.onclick = () => clicks.push('Next');
+    const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
+    const report = await h.kit.fill(plan, { maxRounds: 6, advance: { text: '^next$', steps: ['Business Class & USDOT'], byForm: true } });
+    assert.deepEqual(plain([clicks, report.covered ?? null]), [['Next'], null], at);
+  }
+});
+
+// GEICO draws its questions with its own components (gds-*): until the page's script defines one,
+// nothing of it is drawn, and defining it draws it with no change the kit is told of. Each is waited
+// for up to 3 s from when a wait first saw it, so one the page never defines holds nothing longer.
+test('a quiet page is one whose components are all defined, each waited for up to 3 s', async () => {
+  const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
+  const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
+  const run = async (definedAfter) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Business Class & USDOT');
+    const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
+    const clicks = [];
+    const next = gdsButton('Next');
+    next.button.onclick = () => clicks.push('Next');
+    // The address check's component, not defined yet (`:not(:defined)`, which the fake DOM can't
+    // match), and two widgets the page never defines.
+    const pending = new FakeNode('gds-address-check');
+    const widgets = [new FakeNode('gds-chat'), new FakeNode('gds-survey')];
+    h.document.body.append(dot, next.host, pending, ...widgets);
+    let notDefined = [pending, ...widgets];
+    const all = h.document.querySelectorAll.bind(h.document);
+    h.document.querySelectorAll = (selector) => (selector === ':not(:defined)' ? notDefined : all(selector));
+    if (definedAfter != null) {
+      setTimeout(() => {
+        notDefined = widgets;
+        pending.remove();
+        h.document.body.append(gdsRadios('GiveExtendUsDotVerifyBusinessAddress', 12, 'Is this the customer\'s business?', [['Yes', 'Yes'], ['No', 'No']]).group);
+      }, definedAfter);
+    }
+    const start = clock.Date.now();
+    const report = await h.kit.fill(plan, { maxRounds: 6, advance });
+    return { clicks: plain(clicks), advanced: report.advanced ?? null, took: clock.Date.now() - start };
+  };
+  // Defined after 2.5 s, drawing a question without an answer: waited for, and it holds Next.
+  const late = await run(2500);
+  assert.deepEqual([late.clicks, late.advanced], [[], null]);
+  // Never defined: waited for 3 s, all three together, then Next as usual.
+  const never = await run(null);
+  assert.deepEqual([never.clicks, never.advanced], [['Next'], 'Next']);
+  assert.ok(never.took >= 3000 && never.took < 6000, `took ${never.took} ms`);
+});
+
 // FL live run 4, 2026-10-21 (W43-18, TNI): GEICO's pay plan is 11 Payments, one of the plans "View
 // More Payment Plans" shows; the fill clicks View More, picks 11 Payments and prints, only once
 // nothing on the page is left for the agent (Recalculate before it is the agent's: FL live run 6). `whenOffered`: a choice whose option isn't

@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 84 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 85 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -276,7 +276,27 @@
       .some((m) => m.getClientRects().length && getComputedStyle(m).visibility !== 'hidden');
   }
 
-  // Wait until the page stops changing: not busy and no new nodes for `quietMs`.
+  // Custom elements the page hasn't defined yet (GEICO's gds-* components while their script
+  // loads): no control of theirs is drawn, and defining one draws its shadow root without a
+  // mutation record. Each is waited for up to UNDEFINED_MS from when a wait first saw it: one the
+  // page never defines (a widget that failed to load) doesn't hold every wait after it.
+  const UNDEFINED_MS = 3000;
+  const undefinedSince = new WeakMap();
+  function partsUndefined() {
+    let parts;
+    try { parts = document.querySelectorAll(':not(:defined)'); } catch { return false; }
+    const now = Date.now();
+    // Every one is noted as it is first seen, so they are waited for together, not one after another.
+    let waiting = false;
+    for (const el of parts) {
+      if (!undefinedSince.has(el)) undefinedSince.set(el, now);
+      if (now - undefinedSince.get(el) < UNDEFINED_MS) waiting = true;
+    }
+    return waiting;
+  }
+
+  // Wait until the page stops changing: not busy, every component it draws defined, and no new
+  // nodes for `quietMs`.
   async function settle({ quietMs = 250, maxMs = 15000 } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
@@ -288,7 +308,7 @@
     try {
       await sleep(60);
       while (Date.now() - start < maxMs) {
-        if (!pageBusy() && Date.now() - last >= quietMs) return true;
+        if (!pageBusy() && Date.now() - last >= quietMs && !partsUndefined()) return true;
         await sleep(60);
       }
       return false;
@@ -1456,6 +1476,37 @@
   // that commit anything stay off limits whatever the pattern says, and so do discarding a form and
   // signing (scripts/lib/signals.mjs RESTRICTED keeps every word of this list).
   const NEVER_ADVANCE = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out|order)\b/i;
+  // What is over `el` where a click on it lands, its centre: a dialog, a message or a mask open on
+  // the page, through which a script's click would still reach it. Null when a click there reaches
+  // it (the element, a part of it, the words its slots show, or what it is drawn in: its shadow
+  // host), or when that can't be told (no size, no layout, no point to look at). A centre off the
+  // screen or under something is looked at again with the element scrolled to the middle (a button
+  // below the fold, a sticky header).
+  function coveredBy(el) {
+    // Up the page as it is drawn: a slotted element to its slot, a shadow root's top to its host.
+    const drawnIn = (node, outer) => {
+      for (let n = node; n; n = n.assignedSlot ?? n.parentElement ?? n.getRootNode?.()?.host ?? null) if (n === outer) return true;
+      return false;
+    };
+    const look = () => {
+      const r = el.getBoundingClientRect?.();
+      if (!r?.width || !r.height) return null;
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return 'off';
+      // Inside a shadow root, that root's own view of the point (the page's is retargeted to the host).
+      const root = el.getRootNode?.();
+      const top = (root?.elementFromPoint ? root : document).elementFromPoint?.(x, y);
+      return !top || drawnIn(top, el) || drawnIn(el, top) ? null : top;
+    };
+    if (!look()) return null;
+    el.scrollIntoView?.({ block: 'center', inline: 'center' });
+    const cover = look();
+    return cover === 'off' ? null : cover;
+  }
+  const COVERED = 'something on the page is open over Continue: close it, then fill again';
+  const COVERED_HELPER = 'something on the page is open over it';
+
   // `notWithin`: never a button inside this (GEICO's chooser behind Add Vehicle or Trailer, whose
   // Next opens a unit's form: the add helpers' own, after their "+").
   function findAdvanceButton(pattern, { notWithin = null } = {}) {
@@ -2656,6 +2707,11 @@
       const pairs = assign(controls, plan);
       const has = (path) => answered(pairs, path);
       const blocked = [];
+      // A helper's button with something open over it: waits, as one waiting for its prerequisites.
+      const holdCovered = (a) => {
+        blocked.push(a.action);
+        report.blocked.push({ id: a.action, why: COVERED_HELPER, waits: [{ say: 'what is open over it closed' }] });
+      };
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         // A link verified by its going away that is back on its page (NTL removed by hand, then
         // asked for again) is due again.
@@ -2740,12 +2796,16 @@
         if (!button) {
           const opener = !openersTried.has(a.action) && findButton({ text: a.opener });
           if (!opener) continue;
+          // Something open over it (a dialog, a message): not clicked through it.
+          if (coveredBy(opener)) { holdCovered(a); continue; }
           openersTried.add(a.action);
           report.actions.push({ id: `${a.action}:menu`, text: buttonText(opener).slice(0, 60) });
           opener.click();
           return true;
         }
         if ((a.loads || a.quietMs) && !(quiet?.action === a.action && quiet.sig === signature())) { loadDue = a.action; return false; }
+        // Something open over it (a dialog, a message): not clicked through it; clicked once it's gone.
+        if (coveredBy(button)) { holdCovered(a); continue; }
         quiet = null;
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
@@ -2886,7 +2946,9 @@
       clicked.add(b.id);
       report.actions.push({ id: b.id, text: 'done by the page itself', alreadyShown: true });
     }
-    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findIndex((x) => x.id === b.id) === i);
+    // Each helper once, with what held it last (its prerequisites in one round, something open over
+    // it in the next).
+    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findLastIndex((x) => x.id === b.id) === i);
     // Where each item's field is on the page (`order`: its place among the page's questions, in
     // document order), so the side panel lists what's left in the page's order, whichever kind
     // of item it is. Read once, from the page as it is now (as the last round read it when a
@@ -2987,6 +3049,11 @@
         if (button && approved && agentPressed) {
           report.agentPressed = true;
           report.blockers.push(AGENT_PRESSED);
+        } else if (button && approved && coveredBy(button)) {
+          // Something is open over Continue (a dialog, a message, a mask): a script's click would
+          // go through it. Continue waits until the agent closes it.
+          report.covered = true;
+          report.blockers.push(COVERED);
         } else if (button && approved) {
           const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
@@ -3450,5 +3517,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 84, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 85, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

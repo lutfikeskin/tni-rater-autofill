@@ -63,6 +63,10 @@
 //   new rated premium; with ?plans=no11 the plans offered have no 11 Payments (TX, 2026-10-21);
 // - Final Quote Details, MVR & CLUE, Payment Information (never captured): placeholder views; every click
 //   or fill there is recorded in stopActions.
+// - GEICO's components are defined, as GEICO's script defines its gds-* elements once it has loaded (the
+//   fixture holds their drawn shadow roots, not that script): every custom element in the page, its
+//   views and shadow roots, and the two the address box draws, each a plain element. The fill engine
+//   waits for components a page hasn't defined yet;
 // Start options: ?view=<id> (a view, at its step), ?delay=<ms> (page loads, default 400; lookups take
 // half, Recalculate twice), ?radio=attribute|property|redraw, ?ssn=0 (skip the owner/SSN sub-form),
 // ?plans=no11 (no 11 Payments among the plans).
@@ -120,6 +124,18 @@
     state.log.push(e);
     if (STOP_VIEWS.includes(state.view) && e.type !== 'view') state.stopActions.push(e);
   };
+
+  // --- GEICO's components ------------------------------------------------------------------------------
+  const components = new Set(['gds-dropdown-list', 'gds-dropdown-list-item']);
+  const collect = (root) => {
+    for (const el of root.querySelectorAll('*')) {
+      if (el.localName.includes('-')) components.add(el.localName);
+      if (el.shadowRoot) collect(el.shadowRoot);
+      if (el.content) collect(el.content);
+    }
+  };
+  collect(document);
+  for (const name of components) if (!customElements.get(name)) customElements.define(name, class extends HTMLElement {});
 
   // --- Render numbers --------------------------------------------------------------------------------
   const ATTRS = ['id', 'name', 'for', 'input-id', 'group-id', 'fieldset-aria-labelledby', 'aria-controls', 'aria-labelledby', 'aria-describedby'];

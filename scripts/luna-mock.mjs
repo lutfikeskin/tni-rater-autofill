@@ -6,6 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import http from 'node:http';
 import { chromium } from 'playwright';
+import { STORAGE_VERSION } from '../src/storage-version.js';
 
 const root = path.resolve(import.meta.dirname, '..');
 const out = path.resolve(process.argv[2] || path.join(os.tmpdir(), `luna-mock-${Date.now()}`));
@@ -302,6 +303,8 @@ try {
   await mock.bringToFront();
   const legacyTabId = await panel.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id);
   const legacyScope = await panel.evaluate(async () => (await chrome.storage.session.get('session')).session.intakeId);
+  // A profile from before versioned storage (src/storage-version.js) has no version.
+  await panel.evaluate(() => chrome.storage.local.remove('storageVersion'));
   await panel.evaluate(({ scope, tabId }) => chrome.storage.local.set({
     settings: { aiOn: true, aiAuto: true, jevKey: 'legacy-typesafe-key', aiKey: 'legacy-openai-key', jevModel: 'jev-1.13.0',
       autoFollowUps: false, autoPages: false, autoAdvance: true, serverUrl: '', serverToken: '' },
@@ -320,6 +323,7 @@ try {
   const migratedSettings = await panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings ?? {});
   verify('legacy OpenAI/TypeSafe fields do not become a Luna key', migratedSettings.lunaKey ?? '', '');
   verify('legacy settings are purged after migration', ['aiKey', 'jevKey', 'jevModel'].every(key => !Object.hasOwn(migratedSettings, key)), true);
+  verify('legacy profile is brought to the latest storage version', await panel.evaluate(async () => (await chrome.storage.local.get('storageVersion')).storageVersion), STORAGE_VERSION);
   await keyboardSelect(mock.locator('#mockLunaChoice'), 'Yes');
   await panel.waitForFunction(async () => (await chrome.storage.local.get('aiPendingDecisions')).aiPendingDecisions?.some(x => x.key === 'mockLunaChoice' && x.manual) === true);
   await panel.reload();

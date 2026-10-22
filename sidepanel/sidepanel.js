@@ -10,6 +10,7 @@ import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
+import { migrateStorage } from '../src/storage-version.js';
 import { collectItems, AssistError, assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated, firstNameOf } from '../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../src/ai/providers.js';
@@ -383,6 +384,16 @@ const state = {
 // so a review sees what the agent only saw as a panel that stopped: each message once while the
 // panel is open, at most 20, with the page it happened on. Practice pages log nothing, as usual.
 const loggedCrashes = new Set();
+// What is stored on this computer brought up to this build's version (src/storage-version.js), by
+// one copy of the panel at a time. A migration that fails leaves the data as it was and is logged
+// as the panel's error, by its version and the error's name only (settings hold the OpenAI key).
+async function migrateStoredData() {
+  if (!inExtension) return;
+  const run = () => migrateStorage(chrome.storage.local);
+  const result = await (navigator.locks ? navigator.locks.request('rater-storage-version', run) : run()).catch((error) => ({ error }));
+  if (result.error) logCrash(new Error(`stored data not migrated${result.failedAt ? ` to version ${result.failedAt}` : ''}: ${result.error?.name ?? 'Error'}`));
+}
+
 function logCrash(err) {
   try {
     if (state.tab?.carrier?.practice) return;
@@ -3652,6 +3663,9 @@ function renderReport(frames, ctx = {}) {
     // An answer picked in place of one the page doesn't offer (pagekit `orMost`: GEICO's pay plan
     // with no 11 Payments, W43-32): named here; nothing is left for the agent by it.
     ...filled.filter((x) => x.said).map((x) => h('p', { class: 'note-line said' }, x.said)),
+    // Continue had something open over it on the page (pagekit `covered`): not clicked through it.
+    !advanced && frames.some((f) => f.covered)
+      ? issueCard({ tone: 'warn', title: 'Continue wasn’t clicked', text: 'Something is open over it on the page, such as a dialog or a message. Close it, then fill again or click Continue yourself.' }) : null,
     halted ? (stopped
       ? issueCard({ tone: 'quiet', title: 'You stopped the fill', text: 'Nothing more was filled or clicked. What went in stays.' })
       : issueCard({ title: 'Filling stopped', text: `${halted.reason ?? ''} Check the page, then fill again.`.trim(), role: 'alert' })) : null,
@@ -5549,6 +5563,8 @@ function wire() {
 }
 
 async function init() {
+  // Stored data in this build's shape before anything reads it (migrateStoredData).
+  await migrateStoredData();
   wire();
   if (inExtension && popped) keepPlace();
   // An intake saved by an earlier panel: while the panel was closed the tabs may have moved to
@@ -5564,7 +5580,7 @@ async function init() {
   // once its intake is known, for the copy giving way to hand over to (takeOver).
   announceCopy();
   await restoreAiPending();
-  const saved = await usage.migrateAssistantSettings();
+  const saved = await usage.settings();
   $('auto-followups').checked = saved.autoFollowUps ?? true;
   $('auto-pages').checked = saved.autoPages ?? false;
   $('auto-advance').checked = saved.autoAdvance ?? true;

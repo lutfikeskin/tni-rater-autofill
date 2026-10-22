@@ -587,6 +587,20 @@ test('Undo after Mark done gives the field back only while the agent hasn\'t ans
   assert.deepEqual([parts['.need-note'].hidden, parts['.need-note'].children.length], [true, 0]);
 });
 
+// pagekit `covered`: something on the page was open over Continue, so the fill didn't click it.
+test('fill report says Continue wasn\'t clicked when something was open over it', () => {
+  const said = (frames) => {
+    const { context, box } = reportHarness({ tab: { id: 1, url: 'AddVehicle' } }, { pageOf: () => 'AddVehicle' });
+    context.renderReport(frames);
+    return nodesIn(box.children).filter((n) => n.props?.class === 'issue-title').map((n) => n.children[0]);
+  };
+  const frame = { fields: 1, filled: [{ label: 'VIN', shown: '1FTBR3X87MKA12345' }], kept: [], failed: [], noData: [], leftRequired: [], actions: [] };
+  assert.deepEqual(said([{ ...frame, covered: true, blockers: ['something on the page is open over Continue: close it, then fill again'] }]), ['Continue wasn’t clicked']);
+  assert.deepEqual(said([frame]), []);
+  // Continued in another frame: nothing to say.
+  assert.deepEqual(said([{ ...frame, covered: true }, { ...frame, advanced: 'Continue' }]), []);
+});
+
 test('each item left for the agent has a labelled Mark done bound to its field and page', () => {
   const clicks = [];
   const { context, box } = reportHarness({ tab: { id: 7, url: 'Rates' } }, { markDone: (item, ...args) => clicks.push(args) });
