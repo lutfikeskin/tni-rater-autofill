@@ -2810,7 +2810,7 @@ function renderDock() {
     button.hidden = d.button !== id;
     if (d.button !== id) continue;
     button.textContent = d.label;
-    button.disabled = !!d.disabled;
+    button.disabled = !!d.disabled || (id === 'fill' && !!state.filling);
   }
   $('dock-alt').hidden = !d.alt;
   $('dock-alt').dataset.go = d.alt ?? '';
@@ -4008,15 +4008,21 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
   }
   item.querySelector('.ai-slot')?.replaceChildren();
   for (const b of item.querySelectorAll('.opt-btn')) b.setAttribute('aria-pressed', String(b.dataset.choice === choice));
-  if (item.classList.contains('need')) settleNeed(item, 'picked', null, choiceSaid(shown));
-  else {
-    item.dataset.value = shown;
-    item.classList.remove('changed');
-    setRowHead(item, { icon: '✓', value: choiceSaid(shown), tag: { kind: 'you', text: 'You', title: 'Your answer, put in from the panel' } });
-    item.querySelector('.change-slot')?.replaceChildren();
-    note.hidden = false;
-    note.classList.remove('bad');
-    note.replaceChildren('✓ Put in for you. No fill changes it now.');
+  // The question's other row too: a filled answer with a check shows as an answer and as a check.
+  const label = x.label ?? field.label ?? '';
+  const same = [...(item.closest?.('#report')?.querySelectorAll('.row[data-key]') ?? [])]
+    .filter((r) => r.dataset.key === x.key && (r.dataset.need ?? `|${r.dataset.field ?? ''}`).endsWith(`|${label}`));
+  for (const row of new Set([item, ...same])) {
+    if (row.classList.contains('need')) { settleNeed(row, 'picked', null, choiceSaid(shown)); continue; }
+    row.dataset.value = shown;
+    row.classList.remove('changed');
+    setRowHead(row, { icon: '✓', value: choiceSaid(shown), tag: { kind: 'you', text: 'You', title: 'Your answer, put in from the panel' } });
+    row.querySelector('.change-slot')?.replaceChildren();
+    const n = row.querySelector('.need-note');
+    if (!n) continue;
+    n.hidden = false;
+    n.classList.remove('bad');
+    n.replaceChildren('✓ Put in for you. No fill changes it now.');
   }
   // Questions the answer revealed are filled as after an edit on the page.
   scheduleAutoFill(page);
@@ -4809,7 +4815,7 @@ function renderAi(holder, suggestions, ctx) {
     item.querySelector('.ai-slot').replaceChildren(...(content ? [content] : []));
     // The AI's choice among the row's own: picking it there is accepting it (applyAi).
     const offered = !x.done && !x.dismissed && !x.leave && x.applyable && x.controlKind !== 'text' ? x.choice : null;
-    item.aiAccept = offered ? (button) => act([x], 'accepted', button) : null;
+    item.aiAccept = offered ? () => act([x], 'accepted') : null;
     if (offered) item.dataset.aiPick = offered; else delete item.dataset.aiPick;
     for (const b of item.querySelectorAll('.opt-btn')) {
       const pick = b.dataset.choice === offered;
@@ -5129,7 +5135,7 @@ function closeDetails() {
   showScreen();
   const back = state.detailsReturn;
   state.detailsReturn = null;
-  if (back?.isConnected) back.focus();
+  (back?.isConnected ? back : $(state.view === 'check' ? 'step-check' : 'step-fill'))?.focus();
 }
 
 function closePdf() {
@@ -5138,7 +5144,7 @@ function closePdf() {
   render();
   const back = state.pdfReturn;
   state.pdfReturn = null;
-  if (back?.isConnected) back.focus();
+  (back?.isConnected ? back : $(state.view === 'check' ? 'step-check' : 'step-fill'))?.focus();
 }
 
 async function drawPdf({ focus = false } = {}) {
