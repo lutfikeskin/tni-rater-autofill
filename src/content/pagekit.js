@@ -2440,10 +2440,7 @@
         // spinner stayed until the agent reloaded), and one that waits for a quiet page for its own
         // time (`quietMs`: GEICO's Recalculate, W43-31), its own requests included (REQUESTS_MS at
         // most): once it is due, the page is waited for, and clicked next round if nothing changed
-        // meanwhile (a page that changed is read again). Its own requests include those still
-        // running where the page counts them (W43-44: FL, 2026-10-22, the fill's Recalculate 2 s
-        // after its last answer was rated with GEICO's own liability, UM, heavy-vehicle road service
-        // and cargo while a save ran, which the agent's own Recalculate never was).
+        // meanwhile (a page that changed is read again).
         if (loadDue) {
           const before = signature();
           const due = actions.find((x) => x.action === loadDue);

@@ -80,7 +80,8 @@
 //                or an add-on panel's), edit-icon (reopen a unit), link, checkbox, option, other.
 //                Changes name the control's key (below) and its value; the SSN's value is never logged.
 //                A button's click (and a recalculate) has ownEntry: whether the request would carry
-//                the button's own part (an event still dispatched as the press resumes: W43-44);
+//                the button's own part (an event of a type GEICO's React treats as discrete still
+//                dispatched as the press resumes, named in ownEvent: W43-44);
 //   view, step   the current view id and step name; renders: views drawn so far;
 //   saved        [{ view, step, values }]: what each form held when it was left with Next, Save and
 //                Continue or Looks Good (keys below);
@@ -555,15 +556,23 @@
     else state.units[list].push({ form: formId, values: v, seq: ++seq });
     state.editing = null;
   }
+  // The events GEICO's React 18 (its 961.*.js, getEventPriority) gives the sync lane, committed in a
+  // microtask: an update made while one is window.event lands before the request is built. Any other
+  // ('message', a media timeupdate, scroll) waits for a later task, as after a script's click.
+  const DISCRETE = new Set(['cancel', 'click', 'close', 'contextmenu', 'copy', 'cut', 'auxclick', 'dblclick', 'dragend', 'dragstart', 'drop',
+    'focusin', 'focusout', 'input', 'invalid', 'keydown', 'keypress', 'keyup', 'mousedown', 'mouseup', 'paste', 'pause', 'play',
+    'pointercancel', 'pointerdown', 'pointerup', 'ratechange', 'reset', 'resize', 'seeked', 'submit', 'touchcancel', 'touchend',
+    'touchstart', 'volumechange', 'change', 'selectionchange', 'textInput', 'compositionstart', 'compositionend', 'compositionupdate',
+    'beforeblur', 'afterblur', 'beforeinput', 'blur', 'fullscreenchange', 'focus', 'hashchange', 'popstate', 'select', 'selectstart']);
   const FLOW = { 'business-class': 'business-owner', 'owner-verification': 'vehicle-form', 'business-info': 'quote', quote: 'final-quote-details', 'final-quote-details': 'mvr-and-clue', 'mvr-and-clue': 'payment-information' };
   function press(host, e) {
     const text = textOf(host);
     if (host.hasAttribute('disabled')) { e.preventDefault(); e.stopPropagation(); record({ type: 'disabled', target: 'button', text, isTrusted: e.isTrusted }); return; }
     const logged = record({ type: 'click', target: 'button', text, isTrusted: e.isTrusted });
     // GEICO's buttons set their own part of the request after an await, which its React applies in
-    // time only while an event is still being dispatched then: a mouse click, or a click made inside
-    // an event the browser dispatches; never a script's click (W43-44).
-    Promise.resolve().then(() => { logged.ownEntry = !!window.event; });
+    // time only while an event of a discrete type is still being dispatched then: a mouse click, or a
+    // click made inside such an event the browser dispatches; never a script's click (W43-44).
+    Promise.resolve().then(() => { logged.ownEvent = window.event?.type ?? null; logged.ownEntry = DISCRETE.has(logged.ownEvent); });
     if (/^print quote proposal$/i.test(text) || host.hasAttribute('href')) { e.preventDefault(); return; }
     const v = state.view;
     // The USDOT screen: Skip goes on as Business & Owner Info's Next does; Add USDOT Number is only recorded.
