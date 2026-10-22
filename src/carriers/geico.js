@@ -737,6 +737,9 @@ export const geico = {
   // in layouts, fill and field-change events only when it is one of these (src/usage.js knownStep).
   layoutSteps: STEPS,
   quoteSteps: STEPS.map((name) => ({ name, step: name })),
+  // GEICO draws its questions with its own components: a fill waits for those the page hasn't
+  // defined yet (pagekit `components`).
+  components: 'gds-',
   // The generic label rules misfired on GEICO's pages (FL: the first driver in the owner's boxes,
   // the intake's phone in the mobile-homes cargo question).
   useGenericRules: false,

@@ -81,6 +81,19 @@ test('a migration that fails keeps the data as the last one left it, and the nex
   assert.deepEqual(area.data, { a: 2, b: 21, keep: 'x', [STORAGE_VERSION_KEY]: 3 });
 });
 
+// A key moved under another name is written, with the version, before the old one goes: a panel
+// closed between the two leaves the old key, never the data lost.
+test('a migration\'s write goes before its removals, so stopping between them loses nothing', async () => {
+  const steps = [{ to: 1, keys: ['old'], run: ({ old }) => ({ set: { renamed: old }, remove: ['old'] }) }];
+  const area = storageArea({ old: 'token' });
+  area.remove = async () => { throw new Error('the panel closed'); };
+  const result = await migrateStorage(area, steps);
+  assert.deepEqual([result.to, result.failedAt], [1, 1]);
+  assert.deepEqual(area.data, { old: 'token', renamed: 'token', [STORAGE_VERSION_KEY]: 1 }, 'written; only the old key is left over');
+  assert.deepEqual(await migrateStorage(area, steps), { from: 1, to: 1 });
+  assert.equal(area.data.renamed, 'token');
+});
+
 test('data from a newer build, or with a version that isn\'t one, is left as it is', async () => {
   for (const version of [STORAGE_VERSION + 5, '2', 1.5]) {
     const area = storageArea({ ...SNAPSHOTS[0].before, [STORAGE_VERSION_KEY]: version });

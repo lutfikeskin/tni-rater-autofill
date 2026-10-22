@@ -4,13 +4,13 @@
 // (test/storage-version.test.mjs). A reader then sees only the latest shape.
 //
 // A migration names the keys it reads (`keys`) and returns its changes: keys to set and keys to
-// remove. Its removals go first; its sets go with its version, in one write, so the version never
-// moves without them. A migration that fails changes nothing more: the data stays as the last one
-// that went through left it, the version stays there, and it is tried again the next time the panel
-// opens. Nothing is reset to defaults: agent corrections, pending AI approvals and the usage queue
-// are kept here. A migration gives the same result when run again (a panel closed between its
-// removals and its write). Data from a newer build (after going back to an older one) is left as
-// it is.
+// remove. Its sets go with its version, in one write, so the version never moves without them; its
+// removals come after, so a panel closed between the two leaves only keys no reader uses, never data
+// lost (a key moved under another name is written before the old one goes). A migration that fails
+// before its write changes nothing more: the data stays as the last one that went through left it,
+// the version stays there, and it is tried again the next time the panel opens. Nothing is reset to
+// defaults: agent corrections, pending AI approvals and the usage queue are kept here. Data from a
+// newer build (after going back to an older one) is left as it is.
 //
 // To change a stored shape: add a migration with the next `to`, and a saved copy of the version
 // before it to the test.
@@ -48,12 +48,12 @@ export async function migrateStorage(area, migrations = MIGRATIONS) {
   for (const m of migrations.filter((x) => x.to > from)) {
     try {
       const changes = (await m.run(m.keys?.length ? await area.get(m.keys) : {})) ?? {};
-      if (changes.remove?.length) await area.remove(changes.remove);
       await area.set({ ...(changes.set ?? {}), [STORAGE_VERSION_KEY]: m.to });
+      to = m.to;
+      if (changes.remove?.length) await area.remove(changes.remove);
     } catch (error) {
       return { from, to, failedAt: m.to, error };
     }
-    to = m.to;
   }
   return { from, to };
 }

@@ -599,6 +599,11 @@ test('fill report says Continue wasn\'t clicked when something was open over it'
   assert.deepEqual(said([frame]), []);
   // Continued in another frame: nothing to say.
   assert.deepEqual(said([{ ...frame, covered: true }, { ...frame, advanced: 'Continue' }]), []);
+  // A helper held for it (pagekit `coveredHelpers`), by its words.
+  assert.deepEqual(said([{ ...frame, coveredHelpers: ['Lookup VIN'] }]), ['Lookup VIN wasn’t clicked']);
+  assert.deepEqual(said([{ ...frame, coveredHelpers: ['Lookup VIN'] }, { ...frame, covered: true }]), ['Lookup VIN and Continue weren’t clicked']);
+  // A follow-up fill shows its report for it, as for a page held for the agent's check.
+  assert.match(extractFunction('autoFill'), /const covered = frames\.some\(\(f\) => f\.covered \|\| f\.coveredHelpers\?\.length\);[\s\S]{0,1500}const rendered = current && \([^)]*\bcovered\b[^)]*\);[\s\S]{0,120}if \(current && \(newStep \|\| unseen \|\| held \|\| covered\)\) showFinish/);
 });
 
 test('each item left for the agent has a labelled Mark done bound to its field and page', () => {
@@ -2811,7 +2816,7 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   // Fills ready their tab once they went through (tested with autoFill below; fillPage the same).
   // (After the stale check: a fill whose intake changed meanwhile proves nothing for the new one;
   // nor does one whose page had moved on, which filled nothing.)
-  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
+  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
 });
 
 test('a queued capture is dropped for a later change on its page, which gets its reasons', async () => {
@@ -4522,11 +4527,16 @@ test('a fill whose page moved on before it began fills nothing, and only the age
     let kitCalls = 0;
     t.context.runKit = async () => { kitCalls++; return []; };
     t.context.chrome = { tabs: { get: async (id) => ({ id, url: 'https://carrier.test/quote-B' }) } };
+    // The page in front, waiting while this fill ran (state.pagePending): its fill once this one is over.
+    const pending = [];
+    t.context.runPendingPage = () => pending.push(t.state.filling);
     await t.context.fillPage({ auto });
     assert.equal(kitCalls, 0, 'the kit is not asked to fill');
     assert.deepEqual(t.seen.problems.map((p) => p.text), auto ? [] : ['The page changed before the fill began. Nothing was filled or clicked; fill the page in front.']);
-    assert.deepEqual(t.seen.logged.filter((e) => e.type === 'fill_error').map((e) => e.error), ['page moved before the fill began']);
+    // Logged only for the agent's own fill: an automatic one's is routine (a Continue just left the page).
+    assert.deepEqual(t.seen.logged.filter((e) => e.type === 'fill_error').map((e) => e.error), auto ? [] : ['page moved before the fill began']);
     assert.deepEqual([t.state.filling, t.state.layoutReadyTabs.size, t.state.autoPaused], [false, 0, false], 'automatic filling goes on for the page in front');
+    assert.deepEqual(pending, [false], 'the waiting page is filled, after this fill');
   }
   // The kit found another page as it began (pagekit `pageMoved`): nothing is remembered from it.
   const u = fillHarness();
@@ -4539,7 +4549,9 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   u.release([{ frameId: 0, result: { ...u.results[0].result, pageMoved: '/quote-B' } }]);
   await run;
   assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
-  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,400}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ notePageMoved\(ctx\); return; \}/);
+  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,400}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
+  // autoFill too: once it is over, the page in front gets its stop card or its own fill.
+  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,300}if \(moved && fillCurrent\(ctx\)\) \{\s+if \(stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);/);
 });
 
 // Review 2026-10-22: rows a follow-up fill added had no source or group, so a worked-out answer or

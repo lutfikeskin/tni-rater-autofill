@@ -131,6 +131,8 @@ class FakeNode {
     return this._textContent + this.children.map((c) => c.textContent).join('');
   }
 
+  get localName() { return this.tagName.toLowerCase(); }
+
   set textContent(value) { this._textContent = String(value ?? ''); }
 
   get attributes() {
@@ -192,7 +194,7 @@ class FakeNode {
     const out = [];
     const visit = (node) => {
       for (const child of node.children) {
-        if (matchesSelector(child, selector)) out.push(child);
+        if (child.matches(selector)) out.push(child);
         visit(child);
       }
     };
@@ -5837,7 +5839,7 @@ function drawnPage(h, els) {
   const scrolled = [];
   els.forEach((el, i) => {
     el.getBoundingClientRect = () => ({ left: 10, top: (el._below && !scrolled.includes(el) ? 2000 : 10) + i * 50, width: 100, height: 40 });
-    el.scrollIntoView = () => scrolled.push(el);
+    el.scrollIntoView = (options) => { assert.equal(options?.behavior, 'instant', 'at once: no smooth scroll between the looks'); scrolled.push(el); };
   });
   h.document.elementFromPoint = (x, y) => {
     const el = els.find((e) => {
@@ -5891,11 +5893,12 @@ test('a helper with something open over it waits, holding Continue, and is click
   let report = await h.kit.fill(vinPlan, { maxRounds: 6, advance: { text: '^continue$' } });
   assert.equal(lookup._clicked, undefined, 'not clicked through it');
   assert.deepEqual(plain(report.blocked.map((b) => [b.id, b.why])), [['lookupVin:0', 'something on the page is open over it']]);
+  assert.deepEqual(plain(report.coveredHelpers), ['Lookup VIN'], 'named for the panel');
   assert.equal(next._clicked, undefined, 'Continue waits for it');
   // The agent closed it: the next fill clicks the helper, then Continue.
   over.clear();
   report = await h.kit.fill(vinPlan, { maxRounds: 6, advance: { text: '^continue$' } });
-  assert.deepEqual(plain([lookup._clicked, report.blocked.length, !!next._clicked]), [1, 0, true]);
+  assert.deepEqual(plain([lookup._clicked, report.blocked.length, !!next._clicked, report.coveredHelpers ?? null]), [1, 0, true, null]);
 });
 
 // A GEICO button draws its words through a slot: what is at its centre is its own text, in the
@@ -5920,45 +5923,89 @@ test('a button drawn in a shadow root is not covered by its own host or the word
   }
 });
 
-// GEICO draws its questions with its own components (gds-*): until the page's script defines one,
-// nothing of it is drawn, and defining it draws it with no change the kit is told of. Each is waited
-// for up to 3 s from when a wait first saw it, so one the page never defines holds nothing longer.
+// A custom element as a browser has it before the page defines it (`:not(:defined)`, which the fake
+// DOM doesn't match), until `defined()` says it is.
+function notDefinedYet(node, defined = () => false) {
+  node.matches = (selector) => (selector === ':not(:defined)' ? !defined() : FakeNode.prototype.matches.call(node, selector));
+  return node;
+}
+
+// GEICO draws its questions with its own components (gds-*, the carrier's `components`): until the
+// page's script defines one, nothing of it is drawn, and defining it draws it with no change the kit
+// is told of. Each is waited for up to 3 s from when a wait first saw it, so one the page never
+// defines holds nothing longer; one that isn't the carrier's (another extension's) isn't waited for.
 test('a quiet page is one whose components are all defined, each waited for up to 3 s', async () => {
   const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
   const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
-  const run = async (definedAfter) => {
+  const run = async ({ definedAfter = null, tags = ['gds-chat', 'gds-survey'] } = {}) => {
     const h = harness({ pathname: '/quote' });
     geicoBar(h, 'Business Class & USDOT');
     const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
     const clicks = [];
     const next = gdsButton('Next');
     next.button.onclick = () => clicks.push('Next');
-    // The address check's component, not defined yet (`:not(:defined)`, which the fake DOM can't
-    // match), and two widgets the page never defines.
-    const pending = new FakeNode('gds-address-check');
-    const widgets = [new FakeNode('gds-chat'), new FakeNode('gds-survey')];
-    h.document.body.append(dot, next.host, pending, ...widgets);
-    let notDefined = [pending, ...widgets];
-    const all = h.document.querySelectorAll.bind(h.document);
-    h.document.querySelectorAll = (selector) => (selector === ':not(:defined)' ? notDefined : all(selector));
+    // The address check's component, not defined yet, and widgets the page never defines.
+    let defined = false;
+    const pending = notDefinedYet(new FakeNode('gds-address-check'), () => defined);
+    const widgets = tags.map((tag) => notDefinedYet(new FakeNode(tag)));
+    h.document.body.append(dot, next.host, ...(definedAfter != null ? [pending] : []), ...widgets);
     if (definedAfter != null) {
       setTimeout(() => {
-        notDefined = widgets;
+        defined = true;
         pending.remove();
         h.document.body.append(gdsRadios('GiveExtendUsDotVerifyBusinessAddress', 12, 'Is this the customer\'s business?', [['Yes', 'Yes'], ['No', 'No']]).group);
       }, definedAfter);
     }
     const start = clock.Date.now();
-    const report = await h.kit.fill(plan, { maxRounds: 6, advance });
-    return { clicks: plain(clicks), advanced: report.advanced ?? null, took: clock.Date.now() - start };
+    const report = await h.kit.fill(plan, { maxRounds: 6, advance, components: 'gds-' });
+    return { clicks: plain(clicks), advanced: report.advanced ?? null, halted: report.halted, took: clock.Date.now() - start };
   };
   // Defined after 2.5 s, drawing a question without an answer: waited for, and it holds Next.
-  const late = await run(2500);
+  const late = await run({ definedAfter: 2500 });
   assert.deepEqual([late.clicks, late.advanced], [[], null]);
-  // Never defined: waited for 3 s, all three together, then Next as usual.
-  const never = await run(null);
+  // Never defined: waited for 3 s, all together, then Next as usual.
+  const never = await run();
   assert.deepEqual([never.clicks, never.advanced], [['Next'], 'Next']);
   assert.ok(never.took >= 3000 && never.took < 6000, `took ${never.took} ms`);
+  // Another extension's elements: not the carrier's, not waited for.
+  const other = await run({ tags: ['grammarly-extension', 'grammarly-popups'] });
+  assert.deepEqual([other.clicks, other.halted], [['Next'], false]);
+  assert.ok(other.took < 3000, `took ${other.took} ms`);
+});
+
+// A wait with a limit of 3 s (after a helper click, after an answer) and a component that appears
+// with it and is never defined: the wait for it ends at the limit, and the page counts as settled.
+test('a component never defined doesn\'t make a short wait fail', async () => {
+  const h = harness({ pathname: '/quote' });
+  const vin = makeInput({ id: 'vin', ariaLabel: 'VIN' });
+  h.document.body.append(vin);
+  const lookup = addButton(h, 'Lookup VIN');
+  lookup.onclick = () => { lookup._clicked = true; h.document.body.append(notDefinedYet(new FakeNode('gds-vin-result'))); };
+  // Clicked in its round (not right after the VIN), so the page is waited for after it, 3 s at most.
+  const report = await h.kit.fill([vinPlan[0], { ...vinPlan[1], immediate: false }], { maxRounds: 6, components: 'gds-' });
+  assert.deepEqual([lookup._clicked, report.halted, report.reason ?? null], [true, false, null]);
+});
+
+// A frame inside the page reads the top's address when it may (the same origin): a fill meant for a
+// page the top has left fills nothing there either. One that can't (another origin's) fills.
+test('a frame inside the page fills nothing once the top frame shows another page', async () => {
+  const plan = [{ id: 'zip-step', selector: '#zip', path: 'garaging.zip', kind: 'text', value: '17101' }];
+  const frame = (top) => {
+    const h = harness({ search: '?pageName=AddVehicle' });
+    h.context.top = top;
+    const zip = makeInput({ id: 'zip', ariaLabel: 'Zip code' });
+    h.document.body.append(zip);
+    return { h, zip };
+  };
+  const moved = frame({ location: { search: '?pageName=Drivers', pathname: '/rater', hash: '' } });
+  let report = await moved.h.kit.fill(plan, { maxRounds: 2, expectPage: 'AddVehicle' });
+  assert.deepEqual([report.pageMoved, moved.zip.value], ['Drivers', '']);
+  const same = frame({ location: { search: '?pageName=AddVehicle', pathname: '/rater', hash: '' } });
+  report = await same.h.kit.fill(plan, { maxRounds: 2, expectPage: 'AddVehicle' });
+  assert.deepEqual([report.pageMoved ?? null, same.zip.value], [null, '17101']);
+  const other = frame({ get location() { throw new Error('cross-origin'); } });
+  report = await other.h.kit.fill(plan, { maxRounds: 2, expectPage: 'AddVehicle' });
+  assert.deepEqual([report.pageMoved ?? null, other.zip.value], [null, '17101'], 'another origin: unknown, filled');
 });
 
 // FL live run 4, 2026-10-21 (W43-18, TNI): GEICO's pay plan is 11 Payments, one of the plans "View

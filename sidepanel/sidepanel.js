@@ -1625,6 +1625,8 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
   filledBefore: [...(state.filled?.keys() ?? [])],
   // Carriers whose pages never wait on a server per answer are filled a round at a time.
   batch: !!carrier.batch,
+  // The carrier's own components (GEICO's gds-*): a fill waits for those not defined yet.
+  components: carrier.components ?? null,
   // Steps of a one-address application already continued from (a step the agent goes back to
   // isn't continued again). Each entry is scoped by its own step, not the one the panel last heard
   // the tab was on: GEICO's Vehicles is continued per vehicle, its other steps once a quote, and
@@ -1707,10 +1709,13 @@ async function pageMoved(ctx) {
   return now != null && now !== ctx.page;
 }
 // A fill whose page moved on before it began: nothing was filled or clicked. The page in front now is
-// filled as a new page when the agent fills each new page; a fill the agent asked for says so.
+// filled as a new page when the agent fills each new page (runPendingPage, once the fill is over); a
+// fill the agent asked for says so and is logged. An automatic one isn't: a follow-up for the page
+// a Continue just left is routine.
 function notePageMoved(ctx) {
+  if (ctx.auto) return;
   logFillError(ctx, 'page moved before the fill began');
-  if (!ctx.auto) fillProblem(ctx, 'The page changed before the fill began. Nothing was filled or clicked; fill the page in front.', 'notice');
+  fillProblem(ctx, 'The page changed before the fill began. Nothing was filled or clicked; fill the page in front.', 'notice');
 }
 
 // A fill's error in words the agent can act on, with the browser's own message (redacted with the
@@ -1904,6 +1909,8 @@ async function autoFill(page) {
   const started = Date.now();
   let assistFrames = null;
   let followUp = false;
+  // The page moved on before the fill began (pageMoved): the page in front gets its fill after this.
+  let moved = false;
   try {
     await tellRecorder('pause', tabId);
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
@@ -1922,11 +1929,11 @@ async function autoFill(page) {
     const skip = fillSkip(tabMaps(tabId).agentKeys, ctx.scope, ctx.page, carrier);
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // The tab moved on to another page meanwhile: that one gets its own fill (fillPage).
-    if (await pageMoved(ctx)) { notePageMoved(ctx); return; }
+    if (await pageMoved(ctx)) { moved = true; notePageMoved(ctx); return; }
     const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (results.some((r) => r.result?.pageMoved)) { notePageMoved(ctx); return; }
+    if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
@@ -1938,15 +1945,18 @@ async function autoFill(page) {
     // unit form held as maybe another vehicle's or driver's (pagekit unitHeld) is said there too:
     // a quiet follow-up would leave the agent looking at the last form's report.
     const held = frames.some((f) => f.held || f.unitHeld);
+    // Continue or a helper not clicked for something open over it on the page (pagekit `covered`,
+    // `coveredHelpers`): said in the report, which a quiet follow-up wouldn't show.
+    const covered = frames.some((f) => f.covered || f.coveredHelpers?.length);
     const current = fillCurrent(ctx);
     // The page showed another step than the panel knew (the recorder's step came late): a new
     // step, with a report of its own, as above.
     const step = carrier.layoutSteps ? stepOfResults(carrier, results) : null;
     const newStep = !!step && step !== stepBefore && !state.reports.has(reportKey(tabId, page, carrier, ctx.active, step));
     // The fill whose helper this follows up held Luna back for it.
-    const rendered = current && (newStep || unseen || held || state.autoPaused || hasWarnings || state.assistPage === page);
+    const rendered = current && (newStep || unseen || held || covered || state.autoPaused || hasWarnings || state.assistPage === page);
     if (rendered) { renderReport(frames, { ...ctx, plan }); assistFrames = frames; }
-    if (current && (newStep || unseen || held)) showFinish({ auto: true });
+    if (current && (newStep || unseen || held || covered)) showFinish({ auto: true });
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
     const added = frames.flatMap((f) => f.filled).filter((x) => !x.otherStep);
     const n = added.length + frames.reduce((k, f) => k + (f.actions?.length ?? 0), 0);
@@ -1979,6 +1989,11 @@ async function autoFill(page) {
     await tellRecorder('resume', tabId);
     state.filling = false;
     if (fillCurrent(ctx) && state.autoPending) scheduleAutoFill(page);
+    // The page in front, which this fill wasn't for: its stop card, or its own fill.
+    if (moved && fillCurrent(ctx)) {
+      if (stopNoteFor(state.tab?.carrier, pageOf(state.tab?.url))) showStopPage();
+      runPendingPage(ctx);
+    }
   }
   if (!fillCurrent(ctx)) return;
   // The page moved on to a stop page while this ran: its card stays on top of this fill's report.
@@ -3042,6 +3057,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   const started = Date.now();
   let assistFrames = null;
   let followUp = false;
+  // The page moved on before the fill began (pageMoved): the page in front gets its fill after this.
+  let moved = false;
   // Our own fills aren't the agent's changes: pause the recorder while filling.
   try {
     await ensureRecorder();
@@ -3063,7 +3080,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     }
     // The tab moved on to another page while the panel prepared: that one isn't filled with this
     // page's plan (the kit checks again as it starts: `expectPage`).
-    if (await pageMoved(ctx)) { notePageMoved(ctx); return; }
+    if (await pageMoved(ctx)) { moved = true; notePageMoved(ctx); return; }
     const skipBy = fillSkipBy(tabMaps(tabId).agentKeys, ctx.page, carrier, ctx.active);
     // The agent's Fill this page gives back an answer the page took back (keepTakenBack): GEICO's
     // own coverage choice put back over the fill's, on a question the agent didn't answer
@@ -3072,7 +3089,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     // The intake changed meanwhile: the page holds the earlier one's answers (fillContext).
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
-    if (results.some((r) => r.result?.pageMoved)) { notePageMoved(ctx); return; }
+    if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
@@ -3099,6 +3116,8 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     state.filling = false;
     if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
     renderSite();
+    // The page in front, which this fill wasn't for, gets its own fill.
+    if (moved && fillCurrent(ctx)) runPendingPage(ctx);
   }
   if (!fillCurrent(ctx)) return;
   // The agent's next step is the page's answers: in view (showFinish).
@@ -3618,6 +3637,9 @@ function renderReport(frames, ctx = {}) {
   const needs = [...items.filter(onPage).sort((a, b) => a.frame - b.frame || a.order - b.order), ...items.filter((x) => !onPage(x))];
   const waiting = all('blocked');
   const advanced = frames.find((f) => f.advanced)?.advanced;
+  // Buttons not clicked for something open over them on the page (pagekit `coveredHelpers`, a
+  // helper's words; `covered`, Continue).
+  const covered = [...new Set(frames.flatMap((f) => [...(f.coveredHelpers ?? []), ...(f.covered ? ['Continue'] : [])]))];
   // A page note may depend on the intake (Progressive's Rates for an NTL quote).
   const pageNote = carrier?.agentPages?.[page];
   const agentPage = typeof pageNote === 'function' ? pageNote(state.intake?.record ?? {}) : pageNote;
@@ -3663,9 +3685,10 @@ function renderReport(frames, ctx = {}) {
     // An answer picked in place of one the page doesn't offer (pagekit `orMost`: GEICO's pay plan
     // with no 11 Payments, W43-32): named here; nothing is left for the agent by it.
     ...filled.filter((x) => x.said).map((x) => h('p', { class: 'note-line said' }, x.said)),
-    // Continue had something open over it on the page (pagekit `covered`): not clicked through it.
-    !advanced && frames.some((f) => f.covered)
-      ? issueCard({ tone: 'warn', title: 'Continue wasn’t clicked', text: 'Something is open over it on the page, such as a dialog or a message. Close it, then fill again or click Continue yourself.' }) : null,
+    // Not clicked through what is open over them (Continue, a helper), which the agent closes.
+    !advanced && covered.length
+      ? issueCard({ tone: 'warn', title: `${covered.length > 1 ? `${covered.slice(0, -1).join(', ')} and ${covered.at(-1)} weren’t` : `${covered[0]} wasn’t`} clicked`,
+        text: `Something is open over ${covered.length > 1 ? 'them' : 'it'} on the page, such as a dialog or a message. Close it, then fill again${covered.includes('Continue') ? ' or click Continue yourself' : ''}.` }) : null,
     halted ? (stopped
       ? issueCard({ tone: 'quiet', title: 'You stopped the fill', text: 'Nothing more was filled or clicked. What went in stays.' })
       : issueCard({ title: 'Filling stopped', text: `${halted.reason ?? ''} Check the page, then fill again.`.trim(), role: 'alert' })) : null,

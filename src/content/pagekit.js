@@ -55,6 +55,9 @@
   // In page order: what a shadow root holds comes where its host is. GEICO draws its radios in
   // shadow roots between plain fields; listed after everything else, they came last in the report,
   // the panel and an `askAfter` anchor's "the next one".
+  // Up the page as it is drawn: a slotted element to its slot, a shadow root's top to its host.
+  const drawnParent = (n) => n.assignedSlot ?? n.parentElement ?? n.getRootNode?.()?.host ?? null;
+
   function deepQueryAll(root, selector, out = []) {
     for (const el of root.querySelectorAll('*')) {
       if (el.matches(selector)) out.push(el);
@@ -276,15 +279,20 @@
       .some((m) => m.getClientRects().length && getComputedStyle(m).visibility !== 'hidden');
   }
 
-  // Custom elements the page hasn't defined yet (GEICO's gds-* components while their script
-  // loads): no control of theirs is drawn, and defining one draws its shadow root without a
-  // mutation record. Each is waited for up to UNDEFINED_MS from when a wait first saw it: one the
-  // page never defines (a widget that failed to load) doesn't hold every wait after it.
+  // The carrier's own components the page hasn't defined yet (`components`, a fill option: GEICO's
+  // gds-* while their script loads): no control of theirs is drawn, and defining one draws its
+  // shadow root without a mutation record. In the page only: a part inside a component's shadow root
+  // exists once that component is defined, by the same script (the GEICO mock's are copies that
+  // are never defined, and each render waited for them). Only the carrier's: another element never
+  // defined (a widget, another extension's) holds nothing. Each is waited for up to UNDEFINED_MS
+  // from when a wait first saw it, and never past a wait's own limit (settle).
   const UNDEFINED_MS = 3000;
   const undefinedSince = new WeakMap();
+  let componentPrefix = null;
   function partsUndefined() {
+    if (!componentPrefix) return false;
     let parts;
-    try { parts = document.querySelectorAll(':not(:defined)'); } catch { return false; }
+    try { parts = [...document.querySelectorAll(':not(:defined)')].filter((el) => el.localName.startsWith(componentPrefix)); } catch { return false; }
     const now = Date.now();
     // Every one is noted as it is first seen, so they are waited for together, not one after another.
     let waiting = false;
@@ -311,7 +319,8 @@
         if (!pageBusy() && Date.now() - last >= quietMs && !partsUndefined()) return true;
         await sleep(60);
       }
-      return false;
+      // Only components still not defined at the limit: the page itself is settled.
+      return !pageBusy() && Date.now() - last >= quietMs;
     } finally {
       mo.disconnect();
     }
@@ -1453,7 +1462,8 @@
   const STEP_LINKS = '#progressIndicator';
 
   // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
-  const currentPage = () => (new URLSearchParams(location.search).get('pageName') || (location.pathname + ((location.hash ?? '').startsWith('#/') ? location.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
+  const pageAt = (loc) => (new URLSearchParams(loc.search).get('pageName') || (loc.pathname + ((loc.hash ?? '').startsWith('#/') ? loc.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
+  const currentPage = () => pageAt(location);
 
   function ratesStale() {
     const text = document.body.innerText ?? '';
@@ -1483,9 +1493,8 @@
   // screen or under something is looked at again with the element scrolled to the middle (a button
   // below the fold, a sticky header).
   function coveredBy(el) {
-    // Up the page as it is drawn: a slotted element to its slot, a shadow root's top to its host.
     const drawnIn = (node, outer) => {
-      for (let n = node; n; n = n.assignedSlot ?? n.parentElement ?? n.getRootNode?.()?.host ?? null) if (n === outer) return true;
+      for (let n = node; n; n = drawnParent(n)) if (n === outer) return true;
       return false;
     };
     const look = () => {
@@ -1500,7 +1509,8 @@
       return !top || drawnIn(top, el) || drawnIn(el, top) ? null : top;
     };
     if (!look()) return null;
-    el.scrollIntoView?.({ block: 'center', inline: 'center' });
+    // At once: a page that scrolls smoothly (Bootstrap's) would still show the place it left.
+    el.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' });
     const cover = look();
     return cover === 'off' ? null : cover;
   }
@@ -1527,7 +1537,7 @@
   // The element itself, or the shadow host it is drawn in (a gds-button's inner <button>), inside
   // `selector`.
   const insideOf = (el, selector) => {
-    for (let n = el; n; n = n.parentElement ?? n.getRootNode?.()?.host ?? null) if (n.matches?.(selector)) return true;
+    for (let n = el; n; n = drawnParent(n)) if (n.matches?.(selector)) return true;
     return false;
   };
 
@@ -1789,7 +1799,7 @@
   // again.
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, components = null } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -1877,13 +1887,17 @@
     const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], reworded: [], renamed: [], halted: false, rounds: 0, unitForm: null, unitHeld: null, stepUnread: false };
     // The page the panel asked to fill (`expectPage`, as it reads the tab's address): the top frame
     // shows another one now (the agent or the carrier moved on while the panel prepared), so nothing
-    // is filled, marked or clicked here (`pageMoved`, the page found). A frame inside the page can't
-    // read the top's address: the panel checked it just before.
-    if (expectPage != null && window === window.top && startPage !== expectPage) {
+    // is filled, marked or clicked here (`pageMoved`, the page found). A frame inside the page reads
+    // the top's address when it may (the same origin); one that can't (another origin's: a chat
+    // window) goes on, as the panel checked just before.
+    let topPage = null;
+    try { topPage = window === window.top ? startPage : pageAt(window.top.location); } catch { /* another origin */ }
+    if (expectPage != null && topPage != null && topPage !== expectPage) {
       try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
-      report.pageMoved = startPage;
+      report.pageMoved = topPage;
       return report;
     }
+    componentPrefix = components;
     if (!keepMarks) clear();
     stopSteps = [].concat(stopSteps ?? []);
     if (stopSteps.length) knownStopSteps = [...new Set([...knownStopSteps, ...stopSteps])];
@@ -2708,9 +2722,9 @@
       const has = (path) => answered(pairs, path);
       const blocked = [];
       // A helper's button with something open over it: waits, as one waiting for its prerequisites.
-      const holdCovered = (a) => {
+      const holdCovered = (a, el) => {
         blocked.push(a.action);
-        report.blocked.push({ id: a.action, why: COVERED_HELPER, waits: [{ say: 'what is open over it closed' }] });
+        report.blocked.push({ id: a.action, why: COVERED_HELPER, waits: [{ say: 'what is open over it closed' }], text: buttonText(el).slice(0, 60) || (a.label ?? '') });
       };
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         // A link verified by its going away that is back on its page (NTL removed by hand, then
@@ -2797,7 +2811,7 @@
           const opener = !openersTried.has(a.action) && findButton({ text: a.opener });
           if (!opener) continue;
           // Something open over it (a dialog, a message): not clicked through it.
-          if (coveredBy(opener)) { holdCovered(a); continue; }
+          if (coveredBy(opener)) { holdCovered(a, opener); continue; }
           openersTried.add(a.action);
           report.actions.push({ id: `${a.action}:menu`, text: buttonText(opener).slice(0, 60) });
           opener.click();
@@ -2805,7 +2819,7 @@
         }
         if ((a.loads || a.quietMs) && !(quiet?.action === a.action && quiet.sig === signature())) { loadDue = a.action; return false; }
         // Something open over it (a dialog, a message): not clicked through it; clicked once it's gone.
-        if (coveredBy(button)) { holdCovered(a); continue; }
+        if (coveredBy(button)) { holdCovered(a, button); continue; }
         quiet = null;
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
@@ -2949,6 +2963,9 @@
     // Each helper once, with what held it last (its prerequisites in one round, something open over
     // it in the next).
     report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findLastIndex((x) => x.id === b.id) === i);
+    // Helpers still held by something open over them: the panel names them (`coveredHelpers`).
+    const coveredHelpers = report.blocked.filter((b) => b.why === COVERED_HELPER).map((b) => b.text);
+    if (coveredHelpers.length) report.coveredHelpers = coveredHelpers;
     // Where each item's field is on the page (`order`: its place among the page's questions, in
     // document order), so the side panel lists what's left in the page's order, whichever kind
     // of item it is. Read once, from the page as it is now (as the last round read it when a
