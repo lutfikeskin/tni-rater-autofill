@@ -351,13 +351,16 @@ test('fill events say why an answer was given; a dismissed check is keyed like t
 // don't read as the page's (reason 'recalculate'), without client data.
 test('a Recalculate trace is logged as a page_layout the layouts leave out, without client data', async () => {
   const { buildLayouts } = await import('../scripts/lib/layouts.mjs');
-  const recalcTrace = { action: 'recalculate', ms: 4680, pendingAtClick: 0, premiumMs: 300, requests: [[-2500, -2000]], answers: [
+  const recalcTrace = { action: 'recalculate', ms: 4680, press: 'page', premiumMs: 300, requests: [[-2500, -2000]], answers: [
     { label: 'Jordan Casey 1FTBR3X87MKA12345 Coverage', key: 'cov:COMP#1', shown: '$1,000 deductible', agents: false, seen: [[300, '$500 deductible'], [4680, '$1,000 deductible']], putBack: true },
     { label: 'Liability', key: 'cov:liability#1', shown: '$1,000,000 Combined Single Limit', agents: true, seen: [], putBack: false },
   ] };
   const events = fillEvents([{ filled: [], recalcTrace }], { carrier: 'geico', page: '/quote', overwrite: false, ms: 1, redact, step: 'Quote & Coverages' });
   const trace = events.find((e) => e.type === 'page_layout');
-  assert.deepEqual([trace.reason, trace.step, trace.context.premiumMs, trace.context.pendingAtClick, trace.context.requests], ['recalculate', 'Quote & Coverages', 300, 0, [[-2500, -2000]]]);
+  assert.deepEqual([trace.reason, trace.step, trace.context.premiumMs, trace.context.press, trace.context.requests], ['recalculate', 'Quote & Coverages', 300, 'page', [[-2500, -2000]]]);
+  // How it was pressed is one of three words, nothing else.
+  const odd = fillEvents([{ filled: [], recalcTrace: { ...recalcTrace, press: 'Jordan Casey' } }], { carrier: 'geico', page: '/quote', overwrite: false, ms: 1, redact, step: 'Quote & Coverages' });
+  assert.equal(odd.find((e) => e.type === 'page_layout').context.press, null);
   assert.deepEqual(trace.fields.map((f) => [f.key, f.selected, f.seen, f.putBack, f.agents]), [
     ['cov:COMP#1', '$1,000 deductible', [[300, '$500 deductible'], [4680, '$1,000 deductible']], true, false],
     ['cov:liability#1', '$1,000,000 Combined Single Limit', [], false, true],

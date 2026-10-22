@@ -726,9 +726,11 @@ export const geico = {
   id: 'geico',
   name: 'GEICO',
   hosts: [/(^|\.)geico\.com$/],
-  // Its requests still running are counted in the page's own world (src/content/request-count.js):
-  // GEICO saves each coverage pick with one, and Recalculate waits for them (W43-44).
-  countRequests: true,
+  // The buttons the fill presses are clicked from the page's own world (src/content/page-press.js),
+  // inside an event the browser dispatches: GEICO's submit buttons send their own part of the request
+  // only then, as with a mouse click. A script's click sent Recalculate without it, rated with
+  // GEICO's own liability, UM, road service and cargo (W43-44).
+  pressInPage: true,
   // Fills on the quote and on the gateway, where the quote starts with the ZIP (TNI, 2026-10-21);
   // nothing else of the gateway. Page layouts as the agent works: the quote only.
   autoFillUrl: FILLED,
@@ -792,10 +794,11 @@ export const geico = {
     // at once, GEICO drew the coverages again with its own choices wherever one wasn't saved yet
     // (liability and UM back to $750,000, road service declined, cargo $5k), the fill's and the
     // agent's alike; after each the agent clicked, it kept what the page showed (FL live run 6,
-    // 2026-10-21). So it waits for a page quiet for 2 s (`quietMs`), with none of GEICO's own requests
-    // finishing for 2 s either (each coverage change goes to GEICO's server a moment after it is
-    // picked: 2026-10-22, the fill's clicks were rated 13 to 19 s later with GEICO's liability, UM,
-    // road service and cargo, the agent's in about 2 s with every answer kept). It waits for the
+    // 2026-10-21). The fill's click was a script's: its request lacked the button's own part (171
+    // entries, the agent's 172) and was rated 13 to 19 s later with GEICO's liability, UM, road
+    // service and cargo, the agent's in about 2 s with every answer kept (2026-10-22, W43-44). It is
+    // pressed from the page's own world now (`pressInPage`). It waits for a page quiet for 2 s
+    // (`quietMs`), with none of GEICO's own requests finishing for 2 s either. It waits for the
     // premium up to a minute (GEICO's loader shows only 3 s in), and after GEICO's redraw every
     // answer is checked (`keepAnswers`): one of the fill's that GEICO changed is put back once, the
     // agent's is left, and each is a red item; it is never clicked again (`once`), so the agent

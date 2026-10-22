@@ -204,6 +204,7 @@ Updates reach agents through the Chrome Web Store; their usage logs go to TNI's 
 | `src/carriers.js`, `src/carriers/` | Per-carrier domains and exact mappings (`carriers/progressive.js`, `carriers/amwins.js`, `carriers/geico.js`) |
 | `src/plan.js` | Resolves values into fill steps; builds the capture redaction list |
 | `src/content/pagekit.js` | Runs inside the rater page: find fields, fill, put in AI answers, highlight, capture |
+| `src/content/page-press.js` | On GEICO, presses the buttons the fill clicks from the page's own world, as a mouse click would |
 | `src/ai/` | AI assistant: Luna request/response checks and TNI's rules as the model reads them (`tni-rules.js`) |
 | `captures/` | Page layouts captured from real quotes (no client data) |
 | `src/usage.js`, `sidepanel/usage-log.js`, `src/content/recorder.js` | Usage log: event building, local storage/export, page recorder |
