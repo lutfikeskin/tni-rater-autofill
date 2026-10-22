@@ -108,6 +108,39 @@ export function testSessionsOf(all, testIntakes = []) {
 }
 
 /**
+ * How each quote ended on each carrier it went to: done (its final page or final click, after this
+ * quote's own fill there), declined (the carrier stopped it), or stopped at its last page; with its
+ * first and last carrier event, and how often the carrier's login came up in the middle (its
+ * session ran out). Shared by the weekly numbers and the quoting history warehouse (warehouse.mjs).
+ * @param {object[]} events  in time order
+ * @param {Set<string>} quotes  the sessions to report
+ * @returns {{carrier, session, first: number, last: number, lastPage: string|null, done: boolean, declined: boolean, logins: number, seenWork: boolean}[]}
+ */
+export function quoteOutcomes(events, quotes) {
+  const perQuote = new Map();
+  for (const e of events) {
+    if (!quotes.has(e.session) || !e.carrier || !e.page) continue;
+    const k = `${e.carrier}|${e.session}`;
+    const q = perQuote.get(k) ?? { carrier: e.carrier, session: e.session, first: Date.parse(e.t), last: Date.parse(e.t), lastPage: null, done: false, declined: false, logins: 0, seenWork: false };
+    const t = Date.parse(e.t);
+    q.first = Math.min(q.first, t);
+    q.last = Math.max(q.last, t);
+    const page = `${e.page}${e.step ? ` › ${mask(e.step)}` : ''}`;
+    if (['page_view', 'fill_run', 'page_layout', 'fill_field', 'field_change'].includes(e.type)) q.lastPage = page;
+    if (e.type === 'fill_run') q.seenWork = true;
+    // Only after this quote's own fill: the page the panel opens on may be the previous client's
+    // confirmation, or an old quote the agent reopened.
+    if (q.seenWork && (FINAL[e.carrier]?.test(page) || FINAL[e.carrier]?.test(e.page) || finalClick(e))) q.done = true;
+    // A stop page is the carrier's refusal (Progressive's DeclinationNotice); a stop step that is a
+    // final page (GEICO's) is the agent's part of a quote that got there.
+    if (e.type === 'fill_run' && !FINAL[e.carrier]?.test(page) && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
+    if (e.type === 'page_view' && LOGIN.test(e.page) && q.seenWork) q.logins++;
+    perQuote.set(k, q);
+  }
+  return [...perQuote.values()];
+}
+
+/**
  * @param {object[]} all  every event (loadEvents), for which sessions are quotes
  * @param {{since?: string|null, top?: number, testIntakes?: Iterable<string>, answerKey?: object|null}} opts  since: ISO
  *   time the server received them from; testIntakes: intake fingerprints whose quotes are tests;
@@ -261,32 +294,9 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     };
   });
 
-  // How each quote ended on each carrier it went to: done (its final page or final click, after
-  // this quote's own fill there), declined (the carrier stopped it), or stopped at its last page;
-  // with its minutes from first to last carrier event, and whether the carrier's login came up in
-  // the middle (its session ran out).
-  const perQuote = new Map();
-  for (const e of events) {
-    if (!inPeriod.has(e.session) || !e.carrier || !e.page) continue;
-    const k = `${e.carrier}|${e.session}`;
-    const q = perQuote.get(k) ?? { carrier: e.carrier, session: e.session, first: Date.parse(e.t), last: Date.parse(e.t), lastPage: null, done: false, declined: false, logins: 0, seenWork: false };
-    const t = Date.parse(e.t);
-    q.first = Math.min(q.first, t);
-    q.last = Math.max(q.last, t);
-    const page = `${e.page}${e.step ? ` › ${mask(e.step)}` : ''}`;
-    if (['page_view', 'fill_run', 'page_layout', 'fill_field', 'field_change'].includes(e.type)) q.lastPage = page;
-    if (e.type === 'fill_run') q.seenWork = true;
-    // Only after this quote's own fill: the page the panel opens on may be the previous client's
-    // confirmation, or an old quote the agent reopened.
-    if (q.seenWork && (FINAL[e.carrier]?.test(page) || FINAL[e.carrier]?.test(e.page) || finalClick(e))) q.done = true;
-    // A stop page is the carrier's refusal (Progressive's DeclinationNotice); a stop step that is a
-    // final page (GEICO's) is the agent's part of a quote that got there.
-    if (e.type === 'fill_run' && !FINAL[e.carrier]?.test(page) && (e.blockerList ?? []).some((b) => /^stop:/.test(String(b)))) q.declined = true;
-    if (e.type === 'page_view' && LOGIN.test(e.page) && q.seenWork) q.logins++;
-    perQuote.set(k, q);
-  }
+  const perQuote = quoteOutcomes(events, inPeriod);
   const outcomes = {};
-  for (const q of perQuote.values()) {
+  for (const q of perQuote) {
     const o = (outcomes[q.carrier] ??= { quotes: 0, done: 0, declined: 0, stopped: new Map(), minutes: [], loginInterrupted: 0 });
     o.quotes++;
     if (q.done) { o.done++; o.minutes.push((q.last - q.first) / 60000); } else if (q.declined) o.declined++; else tally(o.stopped, q.lastPage ?? '?');
@@ -315,7 +325,7 @@ export function signals(all, { since = null, top: n = 12, testIntakes = [], answ
     reformatted,
     leftPerQuote: Object.fromEntries([...left].map(([r, s2]) => [r, per(s2.size, inPeriod.size)])),
     donePercent: carrierQuotes ? Math.round((allDone / carrierQuotes) * 100) : null,
-    medianMinutesDone: med([...perQuote.values()].filter((q) => q.done).map((q) => (q.last - q.first) / 60000)),
+    medianMinutesDone: med(perQuote.filter((q) => q.done).map((q) => (q.last - q.first) / 60000)),
     problemReportsPer10Quotes: per(events.filter((e) => e.type === 'problem_report').length * 10, inPeriod.size),
     problemReportsInTestRuns: periodAll.filter((e) => e.type === 'problem_report' && testSessions.has(e.session)).length,
     aiRequests: asks.length,

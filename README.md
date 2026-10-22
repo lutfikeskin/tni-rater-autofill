@@ -131,6 +131,17 @@ npm run benchmark -- --intakes layouts/intakes --key layouts/answer-key/key.json
 
 When `layouts/answer-key/key.json` exists, `npm run signals` adds the key's score to the weekly numbers.
 
+### Quoting history
+
+For business questions (states, classes, fleets, coverages, carriers over time), build the warehouse after a pull and query it with the DuckDB command line:
+
+```bash
+npm run warehouse    # server-data -> server-data/warehouse.duckdb (needs reviews/test-intakes.txt or --tests)
+duckdb -readonly server-data/warehouse.duckdb
+```
+
+It holds client data and stays on this computer. Its tables and example queries are in [quoting history database](docs/quoting-history-database.md).
+
 ### Replay test pages
 
 ```bash

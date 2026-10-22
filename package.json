@@ -34,10 +34,12 @@
     "push-logs": "node scripts/logs-push.mjs",
     "coverage": "node scripts/coverage.mjs server-data",
     "benchmark": "node scripts/benchmark.mjs server-data",
+    "warehouse": "node scripts/warehouse.mjs",
     "key:sheet": "node scripts/answer-key-sheet.mjs server-data",
     "fixtures:progressive": "node scripts/refresh-fixtures.mjs"
   },
   "devDependencies": {
+    "@duckdb/node-api": "1.5.6-r.1",
     "fflate": "0.8.3",
     "oxlint": "1.89.0",
     "pdfjs-dist": "^4.10.38",
