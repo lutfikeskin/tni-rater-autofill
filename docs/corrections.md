@@ -6,7 +6,7 @@ Read this when an agent reports a wrong answer, missing field, stalled page, or 
 
 Start with the supplied report and affected scenario. If the task needs current central evidence, run `npm run pull`, then `npm run review`; do not download logs for unrelated edits. Locate the session, carrier, page, extension version, active entity, and preceding answers where available.
 
-Useful events are `problem_report`, `fill_run` (blockers and advancement), `fill_field` (result, reason, timing), `field_change` (agent versus page), `page_layout`, and `ai_suggest`/`ai_decision`. A layout has structure, not the client's original typed answers. Do not claim it proves a client fact or the cause of a server rejection.
+Useful events are `problem_report`, `fill_run` (blockers and advancement), `fill_field` (result, reason, timing), `field_change` (agent versus page), `page_layout` (reason `recalculate`: what GEICO showed after the fill's Recalculate, see [Browser filling](browser-filling.md)), and `ai_suggest`/`ai_decision`. A layout has structure, not the client's original typed answers. Do not claim it proves a client fact or the cause of a server rejection.
 
 | Cause | Change the relevant layer |
 | --- | --- |

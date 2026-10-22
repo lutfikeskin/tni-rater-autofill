@@ -20,7 +20,7 @@ import { GENERIC_RULES } from '../../src/rules.js';
 import { fieldInfo } from '../../src/schema.js';
 import { matchIntake, normalizeForMatch } from '../../src/usage.js';
 import { get, STATES } from '../../src/util.js';
-import { quoteSessions, sessionContexts } from './events.mjs';
+import { isPageLayout, quoteSessions, sessionContexts } from './events.mjs';
 import { claimingRule } from './coverage.mjs';
 import { finalAnswers } from './learn.mjs';
 
@@ -126,7 +126,7 @@ function ruleByPath(carrier, path, unique = false) {
 function elementIds(events) {
   const seen = new Map();
   for (const e of events) {
-    if (e.type !== 'page_layout' || !e.session) continue;
+    if (!isPageLayout(e) || !e.session) continue;
     for (const f of e.fields ?? []) {
       if (f.q || (!f.id && !f.dataId) || !squash(f.label)) continue;
       // Also under any step: an answer whose event names no step.

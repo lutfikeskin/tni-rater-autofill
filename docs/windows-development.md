@@ -36,7 +36,7 @@ update. Do not copy `node_modules` from the Mac.
 
 1. Open `chrome://extensions` and enable Developer mode.
 2. Choose **Load unpacked** and select `dist\tni-rater-autofill`.
-3. Open the panel and set **Usage log → Server** to `http://localhost:8787`
+3. Open the panel and set **Settings → Advanced, for setup only → Server** to `http://localhost:8787`
    when developing with `npm run server`, or blank it to disable uploads.
    The default is the production collection server.
 4. After source edits, run `npm run package`, reload the extension in Chrome,

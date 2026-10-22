@@ -60,6 +60,9 @@ export const EVENT_FIELDS = {
   // test: the agent marked this intake as a test run before (on this computer).
   // platform: the computer's system and Chrome's major version.
   intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings', 'test', 'platform'],
+  // What the client's business looks like, never who it is (src/usage.js intakeProfile): when the
+  // intake is loaded and after the agent corrects it. Each group is kept in its shape (PROFILE).
+  intake_profile: ['business', 'operations', 'vehicles', 'trailers', 'trailerInfo', 'drivers', 'coverage', 'priorInsurance', 'hasClaims'],
   // Events the computer's log dropped (full, oldest first): how many.
   usage_lost: ['count'],
   intake_closed: ['reason'],
@@ -114,6 +117,77 @@ export const RUN_FIELDS = {
     && Object.keys(v).length === SETTINGS_KEYS.length && SETTINGS_KEYS.every((k) => typeof v[k] === 'boolean'),
   step: (v) => typeof v === 'string' && v.length <= 120,
 };
+
+// The business profile (intake_profile): no name, number, address, date of birth or VIN, and every
+// value in its exact shape. A yes/no is true, false or null (unanswered, never No); a dollar amount
+// is whole; USDOT, MC and FEIN are `given` (a valid number), `other` (something else written:
+// "Pending", "Applied for") or `blank`. Text is bounded and never holds what could identify the
+// client (ID_LIKE: an @; a date with /, - or . between its parts; seven or more digits, even with
+// spaces, dashes, dots, slashes or brackets between them, as in a phone, SSN, licence or policy
+// number; five digits in a row; a word of eight or more letters and digits mixed, as in a VIN). A
+// limit may also be a limit as written (LIMIT: $1M CSL, $1,000,000, 1000000, $1M/$2M, 25/50/25,
+// State Minimum), which can hold such digits. src/usage.js applies the same tests before sending.
+// A value that isn't in its shape is left out and its group named in `dropped`; a group that isn't
+// the right kind of object or list is dropped whole.
+export const ID_LIKE = /@|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d(?:[\s()./-]{0,2}\d){6,}|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/i;
+// An amount: with thousands commas, round thousands written plainly, or up to four digits with an
+// optional K or M; a pair of amounts with a slash ($1M/$2M); a split limit (25/50/25, 100/300/100,
+// whose first part is 15 or more, so a date isn't one); a word; & + -.
+const MONEY = String.raw`\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$?\d{1,6}000|\$?\d{1,4}(?:\.\d+)?[km]?`;
+const LIMIT_PART = String.raw`(?:1[5-9]|[2-9]\d|[1-9]\d{2})(?:\/\d{1,3}){1,2}|(?:${MONEY})(?:\s*\/\s*(?:${MONEY}))?|[a-z]+\.?|[&+-]`;
+// Two numbers with only a space, &, + or - between them aren't a limit (an SSN or a phone written
+// with spaces: 123 45 6789).
+export const LIMIT = new RegExp(String.raw`^(?![\s\S]*\d[\s&+-]+\$?\d)(?:${LIMIT_PART})(?:\s+(?:${LIMIT_PART}))*$`, 'i');
+const yesNo = (v) => v === null || typeof v === 'boolean';
+const whole = (min, max) => (v) => v === null || (Number.isSafeInteger(v) && v >= min && v <= max);
+const text = (max) => (v) => v === null || (typeof v === 'string' && v.length > 0 && v.length <= max && !ID_LIKE.test(v));
+const limit = (max) => (v) => v === null || (typeof v === 'string' && v.length > 0 && v.length <= max && (LIMIT.test(v) || !ID_LIKE.test(v)));
+const oneOf = (...values) => (v) => v === null || values.includes(v);
+const usState = (v) => v === null || (typeof v === 'string' && /^[A-Z]{2}$/.test(v));
+const dollars = whole(0, 99_999_999);
+const year = whole(1900, 2100);
+const given = oneOf('given', 'other', 'blank');
+const UNIT = { type: text(40), year, make: text(40), model: text(40), value: dollars };
+export const PROFILE_UNITS = 50;
+export const PROFILE = {
+  business: {
+    state: usState, businessClass: text(80), dot: given, mc: given, fein: given, dotWithin60Days: yesNo,
+    yearsInBusiness: whole(0, 200), yearsExperience: whole(0, 100), ownerDrives: yesNo,
+  },
+  operations: {
+    whatHaul: text(120), radiusMiles: whole(0, 10_000), vehicleOwnership: text(40), personalUse: yesNo, usesEld: yesNo,
+    eldBrand: text(60), needSr22: yesNo, filingsRequired: yesNo, filingsWhich: text(60), hazmat: yesNo, hazPlacard: yesNo,
+    movingState: yesNo, teamDriving: yesNo, canadaLoads: yesNo, equipVehicle: dollars,
+  },
+  vehicles: [UNIT],
+  trailers: [UNIT],
+  trailerInfo: { ownership: text(40), hitch: text(40), interchange: yesNo, interchangeLimit: dollars, equipTrailer: dollars },
+  drivers: [{
+    age: whole(0, 120), licenseState: usState, cdl: yesNo, cdlYear: year, excluded: yesNo, maritalStatus: text(30),
+    gender: oneOf('MALE', 'FEMALE'),
+  }],
+  coverage: {
+    autoLiability: text(20), autoLiabLimit: limit(40), cargo: yesNo, cargoLimit: dollars, cargoDeductible: dollars,
+    gl: yesNo, hasGl: yesNo, glLimit: limit(40), reeferBreakdown: yesNo, ntl: yesNo,
+  },
+  priorInsurance: [{ type: text(40), carrier: text(60), limit: limit(40), expires: (v) => v === null || v === 'none' || (typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v)) }],
+  hasClaims: yesNo,
+};
+
+// A profile value kept in its shape: { value, trimmed } (trimmed: something inside wasn't in its
+// shape and was left out), or null when it isn't the right kind of object or list at all.
+function keepShape(v, spec) {
+  if (typeof spec === 'function') return spec(v) ? { value: v, trimmed: false } : null;
+  if (Array.isArray(spec)) {
+    if (!Array.isArray(v) || v.length > PROFILE_UNITS) return null;
+    const items = v.map((x) => keepShape(x, spec[0]));
+    return items.includes(null) ? null : { value: items.map((x) => x.value), trimmed: items.some((x) => x.trimmed) };
+  }
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null;
+  const value = {};
+  for (const [k, x] of Object.entries(v)) if (Object.hasOwn(spec, k) && spec[k](x)) value[k] = x;
+  return { value, trimmed: Object.keys(value).length !== Object.keys(v).length };
+}
 
 export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
   const eventsDir = path.join(dataDir, 'events');
@@ -203,6 +277,14 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
       if (out.where !== undefined && out.where !== 'panel') drop('where');
       if (out.error !== undefined && !(typeof out.error === 'string' && out.error.length <= 300)) drop('error');
       if (out.stack !== undefined && !(Array.isArray(out.stack) && out.stack.length <= 4 && out.stack.every((x) => typeof x === 'string' && x.length <= 160 && /^[\w./-]+:\d+:\d+$/.test(x)))) drop('stack');
+    }
+    if (out.type === 'intake_profile') {
+      for (const group of Object.keys(PROFILE)) {
+        if (out[group] === undefined) continue;
+        const kept = keepShape(out[group], PROFILE[group]);
+        if (!kept) drop(group);
+        else { out[group] = kept.value; if (kept.trimmed) dropped.push(group); }
+      }
     }
     // Which copy and commit logged it (scripts/package.mjs): those values, nothing else in their place.
     if (out.channel !== undefined && !['store', 'unpacked', 'source'].includes(out.channel)) drop('channel');

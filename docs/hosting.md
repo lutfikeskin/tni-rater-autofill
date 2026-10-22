@@ -34,10 +34,15 @@ within hours of approval.
 The extension sends to this server by default (`sidepanel/usage-log.js`, `DEFAULT_SERVER` /
 `DEFAULT_TOKEN`); an agent's own Server setting (a local test server) overrides it, and a blank
 one turns uploads off. Harnesses that load the packaged extension must set that Server to a local
-server first (`npm run e2e:extension` does, and fails on any request to production), so test runs
+server first (`npm run e2e:extension` does, and fails on any request that leaves the machine), so test runs
 stay out of the pilot's usage data. The upload token can only add events, which the server cleans; reading
 them back needs the admin token, kept in Railway, in the repository secret `RATER_ADMIN_TOKEN`,
 and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
+
+For business analysis, `npm run warehouse` copies the pulled log into a DuckDB file on the
+maintainer's computer (`server-data/warehouse.duckdb`, git-ignored). It runs nothing on Railway and
+leaves this volume the only full copy of the log. Its tables, the richer intake profile it plans and
+optional quoted premiums are in [quoting history database](quoting-history-database.md).
 
 Redeploy after a server change: `railway up --service usage-server` from the repository root
 (`.railwayignore` keeps the upload to what the image needs).
@@ -70,6 +75,24 @@ no quote; the review scripts also skip the ones stored before. The server names 
 the stored event (`dropped`: field names only, at most 20, `droppedMore` counts the rest), and
 `/v1/health` names its version (`server`, a hash of its `server/index.mjs`). `node scripts/server-check.mjs` compares that with this checkout, without
 sending any event: after a deploy it should say `same`.
+
+The server accepts `intake_profile`, a profile of the client's business (`PROFILE` in
+`server/index.mjs`): its groups `business`, `operations`, `vehicles`, `trailers`, `trailerInfo`,
+`drivers`, `coverage`, `priorInsurance` and `hasClaims`, each value in its exact shape. A yes/no is
+true, false or null; a dollar amount, a year, an age or a count of years is a whole number in a
+plausible range; USDOT, MC and FEIN are only `given` (a valid number), `other` (something else
+written, such as "Pending") or `blank`; a state is two capital letters, a driver's gender `MALE`,
+`FEMALE` or null, a policy's expiry a month (`YYYY-MM`) or `none`; a list holds at most 50 units.
+Text is bounded and refused when it looks like it could identify the client (`ID_LIKE`: an `@`; a
+date with `/`, `-` or `.` between its parts; seven or more digits, even with spaces, dashes, dots,
+slashes or brackets between them, as in a phone, SSN, licence or policy number; five digits in a
+row; a word of eight or more letters and digits mixed, as in a VIN). A limit may also be a limit as
+written (`LIMIT`: `$1M CSL`, `$1,000,000`, `1000000`, `$1M/$2M`, `25/50/25`, `State Minimum`). A
+value out of its shape, or a key the profile has no shape for (a VIN, a date of birth), is left out
+and its group named in `dropped`; a group that isn't the right kind of object or list is dropped
+whole. Accepting the event collects nothing until an extension sends it, so this server can be
+deployed whenever; the extension that sends the profile is released only after the privacy policy
+names it.
 
 ## Logs on your computer
 

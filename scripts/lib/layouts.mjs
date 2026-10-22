@@ -7,6 +7,7 @@
 import { fieldId, inferShowWhenByGroup } from './conditions.mjs';
 import { CARRIERS } from '../../src/carriers.js';
 import { knownStep } from '../../src/usage.js';
+import { isPageLayout } from './events.mjs';
 
 // Carriers whose steps share one address (AmWINS): their layouts from before 0.9.6 name no step,
 // so every step looks like one page whose questions come and go. Those are kept in the page's
@@ -213,7 +214,7 @@ const baseId = (k) => (String(k).startsWith('ref:') ? String(k).replace(/[@#].*$
 export function fieldIdentities(events) {
   const pages = new Map();
   for (const e of events) {
-    if (e.type !== 'page_layout' || !e.carrier || !e.page || !e.session) continue;
+    if (!isPageLayout(e) || !e.carrier || !e.page || !e.session) continue;
     if (e.carrier === 'progressive' && e.page.startsWith('/')) continue;
     const name = e.step ? `${e.page} › ${layoutStep(e)}` : e.page;
     const p = pages.get(`${e.carrier}|${name}`) ?? { carrier: e.carrier, page: e.page, snapshots: [] };
@@ -260,7 +261,7 @@ export function fieldIdentities(events) {
 export function buildLayouts(events, { stepped = STEPPED, entityPages = ENTITY_PAGES } = {}) {
   const layouts = new Map();
   for (const e of events) {
-    if (e.type !== 'page_layout' || !e.carrier || !e.page) continue;
+    if (!isPageLayout(e) || !e.carrier || !e.page) continue;
     // Progressive's portal pages outside the quote flow (home, quote search) are recorded by
     // path, not by page name; they're never filled. Other carriers' pages are all paths.
     if (e.carrier === 'progressive' && e.page.startsWith('/')) continue;
