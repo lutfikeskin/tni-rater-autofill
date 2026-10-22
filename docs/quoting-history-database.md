@@ -1,6 +1,6 @@
 # Quoting history database
 
-**Status: the warehouse is built, nothing deployed.** It is a DuckDB file on the maintainer's computer, built from the pulled usage log by `npm run warehouse` (#PRW). The intake profile that fills most of its columns is in pull requests waiting for the privacy text to be approved: the privacy policy and store answers (#147), the server that accepts `intake_profile` (#148), and the extension that sends it (#149). Until that release, the profile columns are empty. This was first written on 2026-10-22 as a proposal for Postgres on Railway; the maintainer chose a local DuckDB file the same day ([where it runs](#where-it-runs)).
+**Status: the warehouse is built, nothing deployed.** It is a DuckDB file on the maintainer's computer, built from the pulled usage log by `npm run warehouse` (#152). The intake profile that fills most of its columns is in pull requests waiting for the privacy text to be approved: the privacy policy and store answers (#147), the server that accepts `intake_profile` (#148), and the extension that sends it (#149). Until that release, the profile columns are empty. This was first written on 2026-10-22 as a proposal for Postgres on Railway; the maintainer chose a local DuckDB file the same day ([where it runs](#where-it-runs)).
 
 Read this when querying the warehouse, changing its tables, or deciding what to add to it. For the usage server, read [hosting](hosting.md); for what each event means, [learning](learning.md).
 
@@ -426,7 +426,7 @@ The profile goes first: the warehouse can load all history whenever it arrives, 
    - #148: the server's shape checks. It can be deployed whenever, since accepting the event collects nothing; confirm with `node scripts/server-check.mjs`.
    - #147: the privacy policy and store answers (decision 1).
    - #149: the profile function in [usage.js](../src/usage.js) and the panel's sending, released only after #147 is approved and #148 deployed. [learning](learning.md) documents the event.
-2. **Built (#PRW):** the warehouse as a DuckDB file. It brings `npm run warehouse`, its pure transform and tests, the per-quote outcome shared with `signals()`, and `rule_source` kept by `finalAnswers`.
+2. **Built (#152):** the warehouse as a DuckDB file. It brings `npm run warehouse`, its pure transform and tests, the per-quote outcome shared with `signals()`, and `rule_source` kept by `finalAnswers`.
 3. The coverage map with its tests, checked against recorded layouts of each carrier's coverage page.
 4. Optional: the backfill from local PDFs.
 5. Optional: Postgres, if several people need to query the history. Having the server write each event on receipt comes after it.
