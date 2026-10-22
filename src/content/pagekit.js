@@ -180,19 +180,38 @@
     return (cut >= 0 ? t.slice(0, cut) : t).trim();
   }
 
+  // A design-system group (GEICO's <gds-radio-button-group>): the nearest element above the option
+  // hosts that holds them all and has words in its [slot=legend] part. Each option's shadow root
+  // holds only its own input, so a fieldset or container reading never reaches the question.
+  function legendHolder(radios) {
+    const hosts = (radios ?? []).map(radioHost);
+    if (!hosts.length || !hosts.every(Boolean)) return null;
+    for (let n = hosts[0].parentElement ?? null, i = 0; n && i < 3; n = n.parentElement ?? n.getRootNode?.()?.host ?? null, i++) {
+      if (hosts.every((h) => n.contains(h)) && slotText(n, 'legend')) return n;
+    }
+    return null;
+  }
+
+  // The legend's words with each line apart. GEICO draws its USDOT record as one element per line
+  // with nothing between them, so textContent runs the business name into the house number
+  // (W43-46): here each text node, or each element in a page without them, is its own words.
+  // Tooltips are left out, as in slotText.
+  function legendWords(radios) {
+    const part = [...(legendHolder(radios)?.children ?? [])].find((n) => n.getAttribute?.('slot') === 'legend');
+    const words = (n) => {
+      if (n.nodeType === 3) return n.nodeValue ?? n.textContent ?? '';
+      if (n.matches?.('gds-tooltip, [role=tooltip]') || /^GDS-TOOLTIP$/i.test(n.tagName ?? '') || n.getAttribute?.('role') === 'tooltip') return '';
+      const nodes = n.childNodes ? [...n.childNodes] : null;
+      if (nodes) return nodes.map(words).join(' ');
+      return n.children?.length ? [...n.children].map(words).join(' ') : (n.textContent ?? '');
+    };
+    return part ? oneLine(words(part)) : '';
+  }
+
   function radioGroupLabel(radios, optionTexts) {
     const first = radios[0];
-    // A design-system group (GEICO's <gds-radio-button-group>): the question is the [slot=legend]
-    // part of the nearest element above the option hosts that holds them all. Each option's shadow
-    // root holds only its own input, so the fieldset and container reading below never reach it.
-    const hosts = radios.map(radioHost);
-    if (hosts.every(Boolean)) {
-      for (let n = hosts[0].parentElement ?? null, i = 0; n && i < 3; n = n.parentElement ?? n.getRootNode?.()?.host ?? null, i++) {
-        if (!hosts.every((h) => n.contains(h))) continue;
-        const legend = slotText(n, 'legend');
-        if (legend) return legend.slice(0, 160);
-      }
-    }
+    const holder = legendHolder(radios);
+    if (holder) return slotText(holder, 'legend').slice(0, 160);
     const group = first.closest('[role=radiogroup]');
     if (group && (group.getAttribute('aria-label') || group.getAttribute('aria-labelledby'))) return labelFor(group);
     const fieldset = first.closest('fieldset');
@@ -2240,9 +2259,9 @@
         }
         // Answered only when the question's own text shows each of these intake words (`labelHas`:
         // GEICO's USDOT record, Yes when it shows the intake's street and ZIP: W43-24); otherwise
-        // the agent's, with `labelNote`.
+        // the agent's, with `labelNote`. The legend is read with its lines apart (W43-46).
         if (step.labelHas?.length && step.value != null && !step.note) {
-          const text = ` ${squash(`${c.label ?? ''} ${c.text ?? ''}`)} `;
+          const text = ` ${squash(`${c.label ?? ''} ${c.text ?? ''} ${legendWords(c.radios)}`)} `;
           if (!step.labelHas.every((w) => squash(w) && text.includes(` ${squash(w)} `))) {
             report.noData.push({ ...item, note: step.labelNote, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.labelNote });
