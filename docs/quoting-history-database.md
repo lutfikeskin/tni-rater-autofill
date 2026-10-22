@@ -1,8 +1,8 @@
-# Quoting history database (proposal)
+# Quoting history database
 
-**Status: proposal, nothing deployed.** Written 2026-10-22 for the maintainer to review. Step 1 (the intake profile) is in pull requests waiting for the privacy text to be approved: the privacy policy and store answers (#147), the server that accepts `intake_profile` (#148), and the extension that sends it (#149). The rest is not built. Each step at the end is its own pull request, after the decisions listed there are made.
+**Status: the warehouse is built, nothing deployed.** It is a DuckDB file on the maintainer's computer, built from the pulled usage log by `npm run warehouse` (#152). The intake profile that fills most of its columns is in pull requests waiting for the privacy text to be approved: the privacy policy and store answers (#147), the server that accepts `intake_profile` (#148), and the extension that sends it (#149). Until that release, the profile columns are empty. This was first written on 2026-10-22 as a proposal for Postgres on Railway; the maintainer chose a local DuckDB file the same day ([where it runs](#where-it-runs)).
 
-Read this when deciding whether and how TNI keeps its quoting history in Postgres for business analysis. For the usage server as it runs today, read [hosting](hosting.md); for what each event means, [learning](learning.md).
+Read this when querying the warehouse, changing its tables, or deciding what to add to it. For the usage server, read [hosting](hosting.md); for what each event means, [learning](learning.md).
 
 ## What it is for
 
@@ -16,7 +16,7 @@ TNI wants to ask its quoting history business questions:
 - how all of that moves over time;
 - later, what the carriers quoted (premiums).
 
-The usage server already receives part of this, as JSON lines on a Railway volume. Reading it today means `npm run pull` and a script. A Postgres copy lets the maintainer, or a reporting tool, answer these questions in SQL. The rest needs one extension change, the intake profile below.
+The usage server already receives part of this, as JSON lines on a Railway volume. `npm run warehouse` turns the pulled copy into tables the maintainer queries in SQL with the DuckDB command line. The rest needs one extension change, the intake profile below.
 
 The database is a copy for analysis. The extension never reads it, the JSONL files stay the source of record, and nothing in it is a bound policy.
 
@@ -110,187 +110,55 @@ Quotes from before that release have no profile. A one-time backfill could build
 flowchart LR
   EXT["Extension<br/>(+ intake_profile)"] -- "usage events" --> SRV["usage-server<br/>/data/events/*.jsonl<br/>(source of record)"]
   SRV -- "npm run pull" --> LOCAL["server-data/events/"]
-  LOCAL -- "loader (proposed)" --> RAW["Postgres: events"]
-  LOCAL -- "same loader, scripts/lib definitions" --> DER["Postgres: quotes, quote_vehicles,<br/>quote_drivers, quote_carriers,<br/>answers, coverage_choices"]
-  DER --> SQL["SQL, a reporting tool"]
+  LOCAL -- "npm run warehouse<br/>(scripts/lib definitions)" --> DUCK["server-data/warehouse.duckdb<br/>events, quotes, quote_vehicles,<br/>quote_drivers, quote_prior_insurance,<br/>quote_carriers, answers"]
+  DUCK --> SQL["duckdb command line"]
 ```
 
-Three rules shape it.
+Four rules shape it.
 
-1. **The JSONL stays the source of record.** Postgres can be dropped and rebuilt from the files at any time. A bug in the loader costs a reload, never data.
-2. **One definition of a quote.** What counts as a quote, a test run, a done quote and a final answer already lives in `scripts/lib`: `quoteSessions` and `loadEvents` ([events.mjs](../scripts/lib/events.mjs)), `readTestList` and `testSessionsOf` ([signals.mjs](../scripts/lib/signals.mjs)), `finalAnswers` ([learn.mjs](../scripts/lib/learn.mjs)). The loader computes the derived tables with those functions in Node and writes the rows. Rewriting them in SQL would give the database a second quote count that disagrees with the weekly review.
+1. **The JSONL stays the source of record.** Each run builds the whole file again from the pulled log. The pilot's 33,000 events so far take about 3 seconds. A bug in the warehouse costs a rebuild, never data.
+2. **One definition of a quote.** What counts as a quote, a test run, a done quote and a final answer already lives in `scripts/lib`: `quoteSessions` and `loadEvents` ([events.mjs](../scripts/lib/events.mjs)), `readTestList`, `testSessionsOf` and `quoteOutcomes` ([signals.mjs](../scripts/lib/signals.mjs)), `finalAnswers` ([learn.mjs](../scripts/lib/learn.mjs)). The warehouse computes its tables with those functions in Node and writes the rows. Rewriting them in SQL would give the database a second quote count that disagrees with the weekly review.
 3. **The database collects nothing itself.** Everything in it came through the usage server as an event. New data, like the profile, is an extension and server change with its own review.
+4. **It stays on the maintainer's computer.** It is one file in git-ignored `server-data/`, beside the log it is built from. There is no server, port or password. It holds client data: don't copy, attach or commit it.
 
-### Raw events
+### Tables
 
-```sql
--- Every event the usage server stored, one row per event id.
-CREATE TABLE events (
-  id           text PRIMARY KEY,
-  t            timestamptz NOT NULL,   -- logged, by the agent's computer clock
-  received_at  timestamptz,            -- stored by the usage server (receivedAt)
-  type         text NOT NULL,
-  session      text,                   -- one intake loaded in the panel
-  intake_id    text,                   -- SHA-256 of the intake PDF
-  carrier      text,
-  page         text,
-  agent        text,                   -- the agent's initials
-  install      text,
-  version      text,                   -- v
-  body         jsonb NOT NULL          -- the JSONL line as stored
-);
-CREATE INDEX events_session ON events (session);
-CREATE INDEX events_type_t ON events (type, t);
-CREATE INDEX events_intake ON events (intake_id);
-```
+| Table | One row per | Built from |
+| --- | --- | --- |
+| `events` | event, once per id | `readEvents`: every line as stored, test runs, the local test page and blank pages included |
+| `quotes` | quote | `quoteSessions` and `testSessionsOf`, with the session's `intake_loaded` and its last `intake_profile` |
+| `v_quotes` (view) | quote that isn't a test run | `quotes`. Start here. |
+| `quote_vehicles` | vehicle or trailer on the profile | `intake_profile.vehicles` and `.trailers` |
+| `quote_drivers` | driver on the profile | `intake_profile.drivers` |
+| `quote_prior_insurance` | prior policy on the profile | `intake_profile.priorInsurance` |
+| `quote_carriers` | quote and carrier it was worked on | `quoteOutcomes` |
+| `answers` | question and unit a quote answered on a carrier | `finalAnswers` |
+| `build_info` | the run that built the file | the commit, whether it had uncommitted changes, the sources, the test-run list, counts, the first and last event |
 
-Loading is idempotent by event id:
+Every column is defined once, in `TABLES` in [warehouse.mjs](../scripts/lib/warehouse.mjs), with a note the file keeps as its comment. In the command line, `DESCRIBE quotes` lists a table's columns, and `SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'quotes'` gives the notes.
 
-```sql
-INSERT INTO events (id, t, received_at, type, session, intake_id, carrier, page, agent, install, version, body)
-VALUES ($1, $2, ...)
-ON CONFLICT (id) DO NOTHING;
-```
+What to know when reading them:
 
-The server already refuses a second copy of an id, so each id is in the files once. `ON CONFLICT` covers a loader run twice over the same days. `events` keeps lines exactly as stored, the local test page's and `blank` pages' too. The derived tables go through `loadEvents`, which skips those and merges `-Reload` pages, as every review does.
+- **`quotes`** has a column for each single value in the profile: business, operations, the trailer section, requested coverage and claims, named in snake case (`dotWithin60Days` is `dot_within_60_days`). The whole profile is also there as JSON (`profile`).
+  - `profile_source` is `event` when the quote has a profile, null when only the summary logged on load exists. `profile_dropped` names fields the usage server left out of that profile as out of shape.
+  - State, business class, vehicle types and the counts come from the profile when there is one, else from the summary logged on load. So a quote from before the profile still has them. `requested` is the load summary's coverages answered Yes.
+  - A yes/no column is null when the intake left it unanswered, never No. A group the server dropped leaves its columns null: missing, not No.
+- **`quote_carriers.outcome`** is `done`, `declined` or `stopped`, as the weekly numbers read it (done first). `last_page` is where the quote was last seen on that carrier.
+- **`answers.answered_by`** is `autofill`, `agent`, `page` (the page's own answer left standing), or null when no answer was seen: a question left to the agent that the recorder never saw answered.
+- **`answers.rule_source`** is where autofill's answer came from: `intake`, `derived`, `standard` (TNI's), `fact` or `attestation`. It stays when the agent then changed the answer (`corrected`), so "TNI standards agents correct" is one query. Builds from before `source` was logged leave it null.
+- **`answers.value`** is the option picked. Typed text is never logged, so it is null there, and `matches_intake` names the intake fields a typed value matched. `question` is the learner's key, which survives Progressive renumbering its questions; `label` is the question's text as logged.
+- **`events.body`** is the event as JSON: `body->>'state'`.
 
-### Derived tables
+### Coverage questions (not built)
 
-The loader rebuilds these from the whole history on every run, in one transaction (`TRUNCATE`, then insert). At pilot volume that takes seconds. If it ever doesn't, rebuild only the sessions with new events.
-
-```sql
--- One row per quote: an intake loaded in a session that worked on a carrier's page (quoteSessions).
--- Profile columns come from the session's last intake_profile; null on quotes without one.
-CREATE TABLE quotes (
-  session            text PRIMARY KEY,
-  intake_id          text NOT NULL,
-  agent              text,
-  install            text,
-  started_at         timestamptz NOT NULL,  -- the session's intake_loaded
-  last_at            timestamptz NOT NULL,  -- its last event
-  version            text,
-  channel            text,
-  is_test            boolean NOT NULL,      -- testSessionsOf
-  profile_source     text,                  -- event, backfill, or null (summary only)
-  -- business
-  state              text,
-  business_class     text,
-  dot                text,                  -- given, other, blank
-  mc                 text,
-  dot_within_60_days boolean,
-  years_in_business  int,
-  years_experience   int,
-  owner_drives       boolean,
-  -- operations
-  what_haul          text,
-  radius_miles       int,
-  vehicle_ownership  text,
-  personal_use       boolean,
-  uses_eld           boolean,
-  eld_brand          text,
-  needs_sr22         boolean,
-  filings_required   boolean,
-  hazmat             boolean,
-  haz_placard        boolean,
-  team_driving       boolean,
-  canada_loads       boolean,
-  -- fleet
-  vehicle_types      text[] NOT NULL,       -- distinct types (also on quotes without a profile)
-  drivers            int,
-  vehicles           int,
-  trailers           int,
-  -- requested coverage
-  requested          text[] NOT NULL,       -- intake_loaded.coverages
-  auto_liab_limit    text,
-  cargo_limit        numeric,
-  cargo_deductible   numeric,
-  gl_limit           text,
-  has_claims         boolean,
-  profile            jsonb                  -- the whole profile, for fields without a column
-);
-
--- One row per vehicle or trailer on the intake.
-CREATE TABLE quote_vehicles (
-  session  text REFERENCES quotes,
-  kind     text,                            -- vehicle, trailer
-  n        int,                             -- its order on the intake
-  type     text,
-  year     int,
-  make     text,
-  model    text,
-  value    numeric,
-  PRIMARY KEY (session, kind, n)
-);
-
--- One row per driver on the intake.
-CREATE TABLE quote_drivers (
-  session        text REFERENCES quotes,
-  n              int,
-  age            int,
-  license_state  text,
-  cdl            boolean,
-  cdl_year       int,
-  excluded       boolean,
-  marital_status text,                      -- the intake's answer
-  gender         text,                      -- MALE, FEMALE as set in the panel; null: not set, sent as Male (TNI's standard)
-  PRIMARY KEY (session, n)
-);
-
--- One row per prior policy on the intake.
-CREATE TABLE quote_prior_insurance (
-  session  text REFERENCES quotes,
-  n        int,
-  type     text,
-  carrier  text,
-  "limit"  text,
-  expires  text,                            -- YYYY-MM, or none
-  PRIMARY KEY (session, n)
-);
-
--- One row per quote and carrier it was worked on.
-CREATE TABLE quote_carriers (
-  session    text REFERENCES quotes,
-  carrier    text,
-  first_at   timestamptz,
-  last_at    timestamptz,
-  last_page  text,                          -- page, or "page › step" on AmWINS and GEICO
-  done       boolean,                       -- reached the carrier's final page or printed (FINAL, FINAL_CLICK)
-  declined   boolean,                       -- a stop: blocker on a page that isn't final
-  logins     int,                           -- the carrier's login came up mid-quote
-  PRIMARY KEY (session, carrier)
-);
-
--- One row per question and unit a quote answered on a carrier (finalAnswers).
-CREATE TABLE answers (
-  session        text REFERENCES quotes,
-  carrier        text,
-  question       text,                      -- the learner's key: carrier|page|ref:<name>, or its text on its page
-  unit           text,                      -- vehicle, driver or trailer and row; '' for the quote
-  page           text,
-  step           text,
-  label          text,                      -- question text, redacted as logged
-  control_kind   text,
-  value          text,                      -- the option picked; null for typed text, which is never logged
-  answered_by    text,                      -- autofill, agent, page (the page's own answer left standing)
-  rule_source    text,                      -- intake, derived, standard, fact, attestation
-  corrected      boolean,                   -- the agent changed an autofilled answer
-  left_to_agent  boolean,
-  PRIMARY KEY (session, carrier, question, unit)
-);
-```
-
-Two small code changes come with the loader. `quote_carriers` needs the per-quote outcome that `signals()` computes inside itself; it would move to an exported function that both use. `answers.rule_source` needs `fill_field.source`, which `finalAnswers` reads past today; it would keep it.
-
-### Coverage questions
-
-Each carrier asks for the same coverage in its own words and keys. GEICO keys its coverage lists by caption (`cov:liability coverage`) or by coverage and row (`cov:COMP#2`), Progressive by data-model name on `CoveragesRates`, AmWINS by label on its Coverages step. A map from the carrier's question to one TNI name turns those into comparable rows.
+Each carrier asks for the same coverage in its own words and keys. GEICO keys its coverage lists by caption (`cov:liability coverage`) or by coverage and row (`cov:COMP#2`), Progressive by data-model name on `CoveragesRates`, AmWINS by label on its Coverages step. A map from the carrier's question to one TNI name would turn those into comparable rows.
 
 ```sql
 -- Written in code (proposed: scripts/lib/warehouse-coverages.mjs), checked by tests, loaded each run.
 CREATE TABLE coverage_questions (
-  carrier   text,
-  question  text,                           -- answers.question
-  coverage  text,                           -- auto_liability, cargo_limit, cargo_deductible, gl_limit,
+  carrier   VARCHAR,
+  question  VARCHAR,                        -- answers.question
+  coverage  VARCHAR,                        -- auto_liability, cargo_limit, cargo_deductible, gl_limit,
                                             -- um_uim, comp_deductible, collision_deductible, medical_payments,
                                             -- pip, rental, road_service, pay_plan, ...
   PRIMARY KEY (carrier, question)
@@ -301,8 +169,7 @@ SELECT q.session, q.started_at, q.state, q.business_class, a.carrier, c.coverage
        a.value, a.answered_by, a.rule_source, a.corrected
 FROM answers a
 JOIN coverage_questions c USING (carrier, question)
-JOIN quotes q USING (session)
-WHERE NOT q.is_test;
+JOIN v_quotes q USING (session);
 
 -- Questions on a coverage page that the map doesn't name yet: the list to add to it.
 CREATE VIEW unmapped_coverage_questions AS
@@ -314,66 +181,54 @@ WHERE c.coverage IS NULL
 GROUP BY 1, 2;
 ```
 
-The map belongs in code for the same reason the rules do: it is a mapping, it needs review against recorded layouts, and a test catches a broken entry. Matching labels in SQL would quietly merge or split questions when a carrier rewords one.
+The map belongs in code for the same reason the rules do: it is a mapping, it needs review against recorded layouts, and a test catches a broken entry. Matching labels in SQL would quietly merge or split questions when a carrier rewords one. Until it exists, read coverage answers by their page, as the example below does.
 
-### Analysis views and the load log
+## Where it runs
 
-```sql
-CREATE VIEW v_quotes AS SELECT * FROM quotes WHERE NOT is_test;
+The first version of this document put the tables in Postgres on Railway. The maintainer chose a DuckDB file on their own computer instead (2026-10-22):
 
--- One row per loader run: which commit's definitions built the derived tables.
-CREATE TABLE load_runs (
-  started_at   timestamptz PRIMARY KEY,
-  finished_at  timestamptz,
-  commit       text,
-  events_read  int,
-  events_new   int,
-  quotes       int,
-  test_list    text                        -- the test-run list it read, or null
-);
+- There is nothing to provision, pay for or secure: no database service, no public endpoint through Railway's TCP proxy, no roles or passwords to keep out of logs.
+- It runs where the log is pulled and the test-run list lives, with the same commit's definitions as the review scripts.
+- The tables and queries are the same. DuckDB reads the SQL in this document as written: `FILTER`, `percentile_cont`, `date_trunc`, JSON's `->>`.
+
+It gives up two things. One person on one computer reads it, and its numbers are as fresh as the last `npm run pull`. If several people need to query the history, or a reporting tool online needs it, move to Postgres then. `warehouseRows` stays as it is; only `writeWarehouse` changes. The move needs:
+
+- a `pg` writer;
+- a Postgres service in the Railway project;
+- a role that loads and a role that only reads the derived tables;
+- the connection string kept out of the repository and logs, as the admin token is.
+
+Having the server write each event to the database on receipt is possible only after that move.
+
+### The command
+
+```bash
+npm run pull
+npm run warehouse
 ```
 
-## How events get in
+`npm run warehouse` reads `server-data/` and writes `server-data/warehouse.duckdb`. From a git worktree, which has no `reviews/`, pass the main checkout's list:
 
-| | A. Loader from the JSONL | B. Server writes on receipt | C. Railway cron loader |
-| --- | --- | --- | --- |
-| Runs | On the maintainer's computer after `npm run pull` (with `npm run daily`) | Inside `usage-server`, after it appends to the day's file | A second Railway service on a schedule, reading `/v1/export` over the private network |
-| Delay | Until the next pull, about a day | Seconds | The schedule |
-| Server change | None | `pg` becomes the server's first dependency; a database outage must not fail an upload | None |
-| Database reachable from the internet | Yes, through Railway's TCP proxy | No | No |
-| Test-run list | The main checkout's `reviews/test-intakes.txt` | Not available on the server | Needs a copy in Railway |
+```bash
+node scripts/warehouse.mjs server-data --tests <main checkout>/reviews/test-intakes.txt --out <file>
+```
 
-I recommend **A** first. It changes nothing on the ingest path agents depend on, and it reuses the files and the test-run list the daily review already has. It also runs where the review runs, so the derived tables follow the same commit's definitions. A day's delay doesn't matter for monthly business questions.
+- It reads the server folder, exported logs or both, as the review scripts do ([warehouse.mjs](../scripts/warehouse.mjs)).
+- It builds a new file beside the old one (`warehouse.duckdb.building`) and swaps it in only once it is whole. A failed build leaves the old file.
+- It refuses to run without a test-run list: `--tests <file>`, or `reviews/test-intakes.txt` in the checkout, which may be empty. The review only warns; a database people query for months should not count the maintainer's test quotes as clients. The fixture PDFs' fingerprints are added, as in the review.
+- It prints counts only (events, quotes, test runs, rows per table) and the commit. It prints no client value.
+- It replaces the file on every run. Keep your own queries in `.sql` files, not as views inside the file. Close the file in the command line before a rebuild: Windows won't replace a file another program has open.
 
-**B** is worth it only if someone needs live numbers. If chosen: the JSONL append stays first and decides the reply; the Postgres insert follows, and if it fails the server logs one line without the event or the connection string, and loader A fills the gap on its next run. The derived tables would still come from loader A, since the server has no test-run list.
+## Setting it up
 
-**C** is the choice if TNI wants no public database endpoint and the reporting tool also runs inside Railway. The test-run fingerprints would then live in a Railway variable or a small table.
-
-### The loader (proposed)
-
-- `scripts/warehouse.mjs`, run as `npm run warehouse` once it exists, after `npm run pull`.
-- Reads `server-data/events/`, inserts new events in batches, rebuilds the derived tables, writes a `load_runs` row.
-- Refuses to run without a test-run list (`--tests <file>`, or the main checkout's `reviews/test-intakes.txt`). The review only warns; a database that people query for months should not count the maintainer's test quotes as clients.
-- The step from events to rows is a pure function, tested by `npm test` on synthetic events with no database. Writing to Postgres is tested by hand against a local Postgres.
-- `pg` is added as a dev dependency, for the script only. The extension and the server image don't change.
-- It never prints the connection string or password. A connection error says which variable or file it read.
-
-## Provisioning on Railway
-
-The maintainer does this in the dashboard; nothing here does it. Railway's menus as of 2026-10; check them in the dashboard.
-
-1. In project `tni-rater-autofill`, add a PostgreSQL database (**New → Database → PostgreSQL**). It becomes its own service with its own volume. Railway sets its variables: `DATABASE_URL` for the private network (`postgres.railway.internal`), `DATABASE_PUBLIC_URL` through a TCP proxy, and `PGPASSWORD` with the rest. Leave `usage-server` unchanged unless option B is chosen; then give it `DATABASE_URL=${{Postgres.DATABASE_URL}}` as a reference variable, so the password is never copied by hand.
-2. Create two roles with their own generated passwords. The superuser's password stays in Railway only.
-   - `tni_loader`: inserts into `events`, rebuilds the derived tables.
-   - `tni_analyst`: `SELECT` on the derived tables and views. Not on `events`, which also holds problem reports in agents' own words and AI decisions that business analysis doesn't need.
-3. Keep credentials where the admin token already lives. The loader's URL goes in an environment variable (`TNI_WAREHOUSE_URL`) or in `~/.config/tni-rater/warehouse-url` on the maintainer's computer. Nothing goes in the repository, a committed `.env`, a pull request, an issue or a log.
-4. For option A the database is reachable through the TCP proxy. Connect with `sslmode=require`, and confirm the template serves TLS before relying on it. With options B or C and a reporting tool inside Railway, remove the TCP proxy (the service's **Settings → Networking**) so the database has no public address.
-5. Backups. The database can be rebuilt from the JSONL, so the volume to back up is `usage-data`, not Postgres. Check Railway's volume backups for it either way.
-6. Cost is usage-based. `/v1/days` (admin token) gives the size of each day's file; the whole history today is small enough for the smallest instance, but check it before choosing.
-
-Once it exists, [hosting](hosting.md) gets a row for the database service and its variables, in the same pull request as the loader.
+1. `npm ci` installs `@duckdb/node-api`, pinned as a development dependency. The extension and the server image don't use it.
+2. Install the command line to query the file: `winget install DuckDB.cli` on Windows, `brew install duckdb` on a Mac. Use the same version as `@duckdb/node-api` in `package.json` (1.5.6) or newer: an older command line may not open a file a newer library wrote.
+3. Open it with `duckdb -readonly server-data/warehouse.duckdb`. `-readonly` keeps a query from changing the file. `.tables` lists the tables, `.mode line` shows one value per line, `.quit` leaves.
+4. Backups: the file can be rebuilt. The copy to back up is the usage server's `usage-data` volume ([hosting](hosting.md)), the only full copy of the log.
 
 ## Example SQL
+
+`test/warehouse.test.mjs` runs every block in this section against a warehouse built from synthetic events, so a renamed column fails the tests.
 
 Where customers come from, by month. `intakes` counts distinct PDFs, so a client re-quoted from the same PDF counts once.
 
@@ -441,7 +296,7 @@ ORDER BY 1, 2;
 Who insured them before, and when those policies expire: a renewal calendar by insurer.
 
 ```sql
-SELECT p.expires, lower(trim(p.carrier)) AS prior_insurer, count(DISTINCT p.session) AS quotes
+SELECT p.expires, lower(trim(p.insurer)) AS prior_insurer, count(DISTINCT p.session) AS quotes
 FROM quote_prior_insurance p
 JOIN v_quotes q USING (session)
 WHERE p.expires <> 'none'
@@ -459,18 +314,21 @@ GROUP BY 1, 2, 3, 4
 ORDER BY 1, 5 DESC;
 ```
 
-Limits chosen on each carrier, split by who chose them. Read the split before the total. A limit that is a TNI standard (GEICO's $100,000 uninsured motorist limit, for one) tops the list because TNI chose it, not because clients asked for it.
+What was chosen on each carrier's coverage page, split by who chose it. Read the split before the total. A limit that is a TNI standard (GEICO's $100,000 uninsured motorist limit, for one) tops the list because TNI chose it, not because clients asked for it. Until the coverage map exists, a question is its carrier's key, with its label beside it.
 
 ```sql
-SELECT carrier, coverage, value AS chosen,
-       count(DISTINCT session) AS quotes,
-       count(*) FILTER (WHERE answered_by = 'autofill' AND rule_source IN ('intake', 'derived')) AS from_intake,
-       count(*) FILTER (WHERE answered_by = 'autofill' AND rule_source = 'standard') AS tni_standard,
-       count(*) FILTER (WHERE answered_by = 'agent') AS agent_picked,
-       count(*) FILTER (WHERE answered_by = 'page') AS carrier_default_left
-FROM coverage_choices
-GROUP BY 1, 2, 3
-ORDER BY 1, 2, 4 DESC;
+SELECT a.carrier, a.question, min(a.label) AS label, a.value AS chosen,
+       count(DISTINCT a.session) AS quotes,
+       count(*) FILTER (WHERE a.answered_by = 'autofill' AND a.rule_source IN ('intake', 'derived')) AS from_intake,
+       count(*) FILTER (WHERE a.answered_by = 'autofill' AND a.rule_source = 'standard') AS tni_standard,
+       count(*) FILTER (WHERE a.answered_by = 'agent') AS agent_picked,
+       count(*) FILTER (WHERE a.answered_by = 'agent' AND a.corrected) AS agent_corrected,
+       count(*) FILTER (WHERE a.answered_by = 'page') AS carrier_default_left
+FROM answers a
+JOIN v_quotes q USING (session)
+WHERE a.page = 'CoveragesRates' OR a.step IN ('Quote & Coverages', 'Coverages')
+GROUP BY a.carrier, a.question, a.value
+ORDER BY 1, 2, 5 DESC;
 ```
 
 Quotes per carrier per week, and how they ended. Hazmat haulers apart, since carriers decline them more:
@@ -480,15 +338,15 @@ SELECT date_trunc('week', q.started_at)::date AS week,
        qc.carrier,
        coalesce(q.hazmat, false) AS hazmat,
        count(*) AS quotes,
-       count(*) FILTER (WHERE qc.done) AS done,
-       count(*) FILTER (WHERE qc.declined) AS declined
+       count(*) FILTER (WHERE qc.outcome = 'done') AS done,
+       count(*) FILTER (WHERE qc.outcome = 'declined') AS declined
 FROM v_quotes q
 JOIN quote_carriers qc USING (session)
 GROUP BY 1, 2, 3
 ORDER BY 1, 2, 3;
 ```
 
-A question the derived tables don't answer yet can go to the raw events, as the loader role. This one counts PDFs loaded per state. It includes test runs and PDFs never taken to a carrier, which is why the derived tables exist.
+A question the derived tables don't answer yet can go to the raw events. This one counts PDFs loaded per state. It includes test runs and PDFs never taken to a carrier, which is why the derived tables exist.
 
 ```sql
 SELECT body->>'state' AS state, count(DISTINCT intake_id) AS pdfs_loaded
@@ -496,6 +354,13 @@ FROM events
 WHERE type = 'intake_loaded'
 GROUP BY 1
 ORDER BY 2 DESC;
+```
+
+Which build of the definitions made the file, and from what:
+
+```sql
+SELECT built_at, commit, dirty, events, quotes, test_quotes, test_list, first_event, last_event
+FROM build_info;
 ```
 
 ## Premiums: a separate, optional step
@@ -512,7 +377,7 @@ A `quote_premium` event could carry it:
 | `wording` | Which pattern matched: `total premium` (Progressive) or `quote total` (GEICO). |
 | `dueToday` | GEICO's Due Today amount, same shape as `amount`, when shown. |
 
-The panel would send it when pagekit reads a current premium on a carrier's rating page, and again each time the amount changes after a Recalculate. The last one before the quote leaves the page is the quote's final quoted premium. GEICO's stop steps (Final Quote Details, MVR & CLUE, Payment Information) stay unlogged as today. The server would keep these fields in exactly these shapes and drop anything else. The loader would add a `quote_premiums` table (session, carrier, amount, term, at, final).
+The panel would send it when pagekit reads a current premium on a carrier's rating page, and again each time the amount changes after a Recalculate. The last one before the quote leaves the page is the quote's final quoted premium. GEICO's stop steps (Final Quote Details, MVR & CLUE, Payment Information) stay unlogged as today. The server would keep these fields in exactly these shapes and drop anything else. The warehouse would add a `quote_premiums` table (session, carrier, amount, term, at, final).
 
 **It is a quoted premium, never a bound one.** It is the carrier's figure on screen at that moment, before underwriting. On GEICO it comes before the MVR and CLUE reports, since TNI stops the quote at Quote & Coverages. A Recalculate or a report can change it, and it is not what the client paid. The tables and reports would call it `quoted_premium`.
 
@@ -526,45 +391,50 @@ The maintainer decides these before anyone writes the event:
 4. **Which reading counts.** The last one before the agent leaves the rating page, or the one on screen when the agent prints.
 5. **Carriers.** `premiumReady` knows Progressive's and GEICO's wording. Whether AmWINS shows a premium before submission is not known.
 6. **A check before trusting it.** The amount comes from a pattern on page text. Compare it with the printed quote for some real quotes on each carrier first, so a Due Today amount is never read as the total.
-7. **Retention and readers.** How long premiums are kept, and whether `tni_analyst` sees them per quote or only in totals.
+7. **Retention and readers.** How long premiums are kept, and who besides the maintainer may see them per quote rather than in totals.
 
 ## Limits
 
 - **Only quotes run through the extension.** Quotes typed by hand, other carriers and renewals done elsewhere never reach the log, and the log can't say what share of TNI's business they are. Agents can also turn uploads off, and a computer whose queue fills drops its oldest events (`usage_lost`).
+- **One computer, one reader.** The file lives on the maintainer's computer and is as fresh as the last `npm run pull`. Anyone else needs the Postgres route above, not a copy of the file.
 - **No ZIPs, cities, names, VINs or numbers, by design.** State is the finest geography. The profile says whether a USDOT or MC number was given, never which. That is not anonymity: a carrier with an unusual fleet in a small state can still be recognised, so the database is client data.
 - **The intake's word, not the policy's.** The profile is what the client wrote on the intake, as corrected by the agent in the panel. A vehicle type or limit changed later on the carrier's page shows in `answers`, not in the profile.
-- **No profile before its release.** Older quotes have only today's summary, unless the backfill finds their PDFs.
+- **No profile before its release.** Older quotes have only the summary logged on load, unless the backfill finds their PDFs.
 - **No bind or outcome data.** "Done" means the quote reached the carrier's final page or was printed. Whether the client bought, and from which carrier, is in TNI's agency system, and the log has no identifier that could join to it.
 - **A quote is a panel session, not a client.** A client quoted twice is two quotes. The same PDF has the same `intake_id`; a re-saved or edited PDF gets a new one.
 - **GEICO is not verified live.** Its step names, coverage keys and the premium wording come from saved pages and the first live runs (2026-10-21). Treat GEICO's numbers as provisional until its coverage map is checked against real quotes.
-- **History is uneven.** Older builds sent fewer fields: no `step`, `run` or `source`, no `view` before 0.9.9. Questions asked of early events get blanks, and `dropped` on an event names fields an older server threw away.
+- **History is uneven.** Older builds sent fewer fields: no `step`, `run` or `source`, no `view` before 0.9.9. Questions asked of early events get blanks, such as a null `rule_source` on most early answers, and `dropped` on an event names fields an older server threw away.
 - **Final answers are inferred.** `finalAnswers` takes the last fill, agent change, or the page's pick when the agent left the page. A change the recorder didn't see, or one made after the last layout, is missed. The weekly review shares the same caveat.
 - **Gender is mostly an assumption.** The intake doesn't ask it. Unless the agent set it, the carriers got Male by TNI's standard, and the profile says not set.
-- **Times are the agent's clock.** `t` comes from the agent's computer; `received_at` is the server's.
+- **Times are the agent's clock.** `t` comes from the agent's computer; `received_at` is the server's. The command line shows times in the computer's time zone.
 
 ## Decisions for the maintainer
 
 1. **Purpose and disclosure.** The [privacy policy](../server/privacy.html) says usage information is kept "to maintain the extension" and that client names, numbers and addresses are not included. The Chrome Web Store's data-usage answers ([store release](chrome-web-store.md)) describe the usage log the same way. Business analysis is a new purpose, and the profile sends intake details the server never had: fleet, drivers' ages, marital status and gender, prior insurer, limits. Gender and marital status are personal attributes; the policy should name them. TNI's compliance owner should update the policy and the store answers before the profile ships, or confirm in writing that they already cover it.
 2. **The profile's fields.** The tables above are a starting list. Confirm it, and decide the open ones: `whatHaul` as redacted text, the prior insurer's name, drivers' exact age or a band, expiration by month. Every identifier stays out unless TNI decides otherwise.
-3. **Where the loader runs:** A, B or C. The proposal recommends A.
-4. **Which tool reads the database:** `psql` on the maintainer's computer, or a reporting tool. A reporting tool inside the Railway project lets the database stay off the internet (option C).
-5. **Agents' initials.** Whether `tni_analyst` sees them, or only totals across agents.
+3. **Where it runs.** Decided on 2026-10-22: a DuckDB file on the maintainer's computer. Postgres later, if several people need it.
+4. **Which tool reads it.** The DuckDB command line for now. A reporting tool on the same computer can open the file; one that runs elsewhere needs Postgres.
+5. **Agents' initials.** They are in `quotes.agent` and `events.agent`, as in the log. Nobody but the maintainer reads the file today; decide whether others see initials or only totals before anyone else does.
 6. **The backfill.** Whether to build profiles for older quotes from the PDFs on the maintainer's computer.
 7. **Premiums,** with the decisions in their section, if and when they are wanted.
 
 ## Steps, each its own pull request
 
-The profile goes first: the database can load all history whenever it arrives, but a profile field only exists for quotes after the release that sends it.
+The profile goes first: the warehouse can load all history whenever it arrives, but a profile field only exists for quotes after the release that sends it.
 
-1. `intake_profile` (#147, #148, #149): the server's shape checks (#148), deployable whenever since accepting collects nothing, and confirmed with `node scripts/server-check.mjs`; the privacy policy and store answers (#147, decision 1); then the profile function in [usage.js](../src/usage.js) and the panel's sending (#149), released only after #147 is approved and #148 deployed. [learning](learning.md) documents the event.
-2. Schema file, the loader with its pure transform and tests, the per-quote outcome shared with `signals()`, `rule_source` kept by `finalAnswers`. [hosting](hosting.md) gets the database service and the loader command; [testing](testing.md) the new tests.
+1. `intake_profile` (#147, #148, #149):
+   - #148: the server's shape checks. It can be deployed whenever, since accepting the event collects nothing; confirm with `node scripts/server-check.mjs`.
+   - #147: the privacy policy and store answers (decision 1).
+   - #149: the profile function in [usage.js](../src/usage.js) and the panel's sending, released only after #147 is approved and #148 deployed. [learning](learning.md) documents the event.
+2. **Built (#152):** the warehouse as a DuckDB file. It brings `npm run warehouse`, its pure transform and tests, the per-quote outcome shared with `signals()`, and `rule_source` kept by `finalAnswers`.
 3. The coverage map with its tests, checked against recorded layouts of each carrier's coverage page.
 4. Optional: the backfill from local PDFs.
-5. Optional: the server writes on receipt (option B).
+5. Optional: Postgres, if several people need to query the history. Having the server write each event on receipt comes after it.
 6. Optional: `quote_premium`, after the premium decisions. Server first, then the extension.
 
 ## Related code
 
+- [warehouse.mjs](../scripts/warehouse.mjs) (the command) and [its lib](../scripts/lib/warehouse.mjs): `TABLES`, `warehouseRows`, `writeWarehouse`.
 - [server/index.mjs](../server/index.mjs): what the server keeps (`COMMON`, `EVENT_FIELDS`, `RUN_FIELDS`; `PROFILE` in #148).
 - [usage.js](../src/usage.js): `intakeSummary`, `fillEvents`, `fieldChangeEvent`, `redactor`; `intakeProfile` and `ID_LIKE` (#149).
 - [schema.js](../src/schema.js), [normalize.js](../src/normalize.js): the client record the profile reads.
