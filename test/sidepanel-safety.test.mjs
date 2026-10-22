@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
@@ -10,12 +12,20 @@ import { unitToAdd, unitListSpecs, advanceFor } from '../src/units.js';
 import { intakeNotes } from '../src/normalize.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
+import { progressive } from '../src/carriers/progressive.js';
 import { quoteProgress, stopScreen } from '../src/carriers.js';
 
 
 const SIDEPANEL = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
 // Layout scheduling has its own tests (layoutHarness); others only need it to exist.
 const LAYOUT_STUB = '\nfunction scheduleLayout() {}';
+
+// Most tests take single functions out of the panel's script, and some only match its text: the
+// whole script must still parse (a stray line break in a string once passed them all).
+test('the panel script parses', () => {
+  const r = spawnSync(process.execPath, ['--check', fileURLToPath(new URL('../sidepanel/sidepanel.js', import.meta.url))], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+});
 
 test('AI accept refuses a suggestion for a previous driver, vehicle or intake', async () => {
   const record = { vehicles: [{ value: 34000 }, { value: 36000 }] };
@@ -306,14 +316,18 @@ const nodesIn = (node, out = []) => {
   else if (node && typeof node === 'object') { out.push(node); nodesIn(node.children, out); }
   return out;
 };
+// What an opened row says its source is ("Intake, page 2").
+const srcTitle = (row) => nodesIn(row).find((n) => n.props?.class === 'src-title')?.children[0] ?? null;
 // The report's list of answers and items, in order.
 const rowsOf = (box) => nodesIn(box.children.find((n) => n?.props?.class === 'rows')?.children ?? []).filter((n) => /^row(\s|$)/.test(n.props?.class ?? ''));
-// A row as the agent reads it: its label, what it says, its source tag, and whether it needs them.
+// A row as the agent reads it: its label, what it says, its source tag (none for an intake answer,
+// whose source is said only to screen readers: `quiet`), and whether it needs them.
 const rowSaid = (row) => {
   const head = row.children.find((n) => n?.props?.class === 'row-head');
   const text = head.children.find((n) => n?.props?.class === 'row-text');
   const tag = head.children.find((n) => /^tag\b/.test(n?.props?.class ?? ''));
-  return { label: text.children[0].children[0], value: text.children[1].children[0], tag: tag ? tag.children[0] : null, need: /\bneed\b/.test(row.props.class) };
+  const quiet = head.children.find((n) => n?.props?.class === 'sr-only');
+  return { label: text.children[0].children[0], value: text.children[1].children[0], tag: tag ? tag.children[0] : null, quiet: quiet ? quiet.children[0] : null, need: /\bneed\b/.test(row.props.class) };
 };
 
 test('fill report omits absent sections without rendering null text', () => {
@@ -346,7 +360,7 @@ test('fill report counts answers an earlier pass on the page filled', () => {
     kept: [{ label: 'VIN', key: 'ref:RiskInput.VIN' }, { label: 'Annual Mileage', key: 'ref:RiskInput.AnnualMileage' }] }]);
   assert.equal(context.state.reportFor.filled, 1, 'step 2 counts what we filled');
   assert.deepEqual(rowsOf(box).map(rowSaid).map((r) => [r.label, r.value, r.tag]), [
-    ['VIN', '1FTBR3X87MKA12345', 'Intake'],
+    ['VIN', '1FTBR3X87MKA12345', null],
     ['Annual Mileage', 'left as the page had it', 'On the page'],
   ], 'a value the page had itself is still said so');
 });
@@ -360,7 +374,7 @@ test('fill report tags standards that an earlier pass filled or the page already
     kept: [{ label: 'Defensive driver', key: 'earlier-std' }, { label: 'First name', key: 'earlier-intake' },
       { label: 'Waiver', key: 'page-std', standard: true }, { label: 'Middle', key: 'page-intake' }] }]);
   assert.deepEqual(rowsOf(box).map(rowSaid).map((r) => [r.label, r.tag]), [
-    ['Defensive driver', 'TNI standard'], ['First name', 'Intake'], ['Waiver', 'TNI standard'], ['Middle', 'On the page']]);
+    ['Defensive driver', 'TNI standard'], ['First name', null], ['Waiver', 'TNI standard'], ['Middle', 'On the page']]);
 });
 
 // PR #72 audit: the AmWINS gender the agent chose (Use Female / Keep Male, or client details) was
@@ -377,7 +391,7 @@ test('fill report tags answers filled from the agent\'s edits as theirs, and wor
       { label: 'Radius', shown: '300', stepId: 's5' }] }],
   { plan: [{ id: 's2', from: ['drivers[0].gender'] }, { id: 's4', from: ['drivers[0].dob'] }, { id: 's5', from: ['operations.radius'] }] });
   assert.deepEqual(rowsOf(box).map(rowSaid).map((r) => [r.label, r.tag]), [
-    ['First name', 'Intake'], ['Gender', 'Your edit'], ['Years in business', 'Your edit'], ['Year licensed', 'TNI standard'], ['Radius', 'Worked out']]);
+    ['First name', null], ['Gender', 'Your edit'], ['Years in business', 'Your edit'], ['Year licensed', 'TNI standard'], ['Radius', 'Worked out']]);
 });
 
 // Live review 2026-10-09: 38 filled rows pushed what was left off screen, so the old list showed six.
@@ -390,7 +404,9 @@ test('fill report lists every answer and item in the page order of their fields,
     unknown: [{ key: 'u', label: 'Unfamiliar', order: 5 }] }]);
   const rows = rowsOf(box);
   assert.deepEqual(rows.map(rowSaid).map((r) => r.label), ['Q0', 'Q1', 'Q2', 'Unfamiliar', 'Q3', 'Q4', 'Q5', 'Q6', 'Q7', 'Q8', 'Clicked']);
-  assert.deepEqual(rows.map(rowSaid).filter((r) => !r.need).map((r) => r.tag), [...Array(9).fill('Intake'), 'Clicked']);
+  assert.deepEqual(rows.map(rowSaid).filter((r) => !r.need).map((r) => r.tag), [...Array(9).fill(null), 'Clicked']);
+  assert.deepEqual(rows.map(rowSaid).filter((r) => !r.need && !r.tag).map((r) => r.quiet), Array(9).fill('From the intake'),
+    'an intake answer has no tag to read past, and says where it came from to screen readers');
   assert.equal(context.state.reportFor.filled, 9);
   assert.deepEqual(rows.filter((r) => /\bopen\b/.test(r.props.class)).map((r) => rowSaid(r).label), ['Unfamiliar'], 'the first item starts open');
 });
@@ -477,7 +493,8 @@ test('fill report links each answer to its source on the intake PDF', () => {
   context.renderReport([frame], { plan: [{ id: 0, from: ['applicant.dot'] }] });
   const links = () => rowsOf(box).map((row) => nodesIn(row).find((n) => /\bsrc\b/.test(n.props?.class ?? '') && n.tag === 'button') ?? null);
   assert.equal(links()[0].children[0], 'See in intake');
-  assert.deepEqual(rowsOf(box).map(rowSaid).map((r) => r.tag), ['Worked out', 'Intake', 'TNI standard'], 'a one-page intake: no page number');
+  assert.deepEqual(rowsOf(box).map(rowSaid).map((r) => r.tag), ['Worked out', null, 'TNI standard'], 'an intake answer: no tag');
+  assert.equal(srcTitle(rowsOf(box)[1]), 'Intake', 'a one-page intake: no page number');
   links()[0].props.onclick();
   assert.deepEqual(JSON.parse(JSON.stringify(opened)), [{ path: 'amwins.q4', from: ['applicant.dot'], label: 'DOT number', kind: 'filled' }]);
   assert.equal(links()[1], null, 'a path the PDF has no field for: no link');
@@ -486,12 +503,12 @@ test('fill report links each answer to its source on the intake PDF', () => {
   context.sourcePlace = (paths) => ({ page: [].concat(paths).includes('applicant.dot') ? 0 : 1, rect: [0, 0, 1, 1] });
   state.intake.places.pages = [{}, {}];
   context.renderReport([frame], { plan: [{ id: 0, from: ['applicant.dot'] }] });
-  assert.equal(rowSaid(rowsOf(box)[1]).tag, 'Intake p.2', 'several pages: which one');
+  assert.equal(srcTitle(rowsOf(box)[1]), 'Intake, page 2', 'several pages: which one, once the row opens');
   assert.ok(links()[1], 'linked once the PDF has its field');
   state.intake.pdfKept = false;
   context.renderReport([frame], { plan: [{ id: 0, from: ['applicant.dot'] }] });
   assert.deepEqual(links(), [null, null, null], 'no PDF kept: no link');
-  assert.equal(rowSaid(rowsOf(box)[1]).tag, 'Intake', 'nor a page');
+  assert.equal(srcTitle(rowsOf(box)[1]), 'Intake', 'nor a page');
 });
 
 // FL live run, 2026-10-07: the cargo commodity list has no caption, and the panel showed a
@@ -2925,6 +2942,81 @@ test('an intake opens on its checks while one is open, else on the page, loaded 
   assert.match(extractFunction('loadFile'), /state\.view = firstView\(state\.intake\);/);
   // The panel reopened on a saved intake: its checks again only while one is open.
   assert.match(extractFunction('init'), /state\.intake = \(await store\.get\('intake'\)\) \?\? null;\s+if \(state\.intake\) state\.view = firstView\(state\.intake\);/);
+});
+
+// TNI, 2026-10-21: the first driver's name showed on Progressive's business page, as if the page
+// were about them, and AmWINS (every driver and vehicle on one page) showed only the first. The
+// pickers show only where a page or step is about one unit, or adds the next one.
+test('the unit pickers show only on pages and steps about one driver, vehicle or trailer', () => {
+  const context = { state: { tab: null }, pageOf: (u) => u, tabStep: () => undefined };
+  vm.runInNewContext(extractFunction('unitListsHere'), context);
+  const here = (carrier, page, step) => [...context.unitListsHere(carrier, page, step)].sort();
+  const [, , vehicles, drivers] = geico.layoutSteps;
+  assert.deepEqual(here(progressive, 'BusinessOwnerInfo'), []);
+  assert.deepEqual(here(progressive, 'AddDriver'), ['drivers']);
+  assert.deepEqual(here(progressive, 'DriverSummary'), ['drivers'], 'the list where the next driver is added');
+  assert.deepEqual(here(progressive, 'AddVehicle'), ['vehicles']);
+  assert.deepEqual(here(progressive, 'VehicleSummary'), ['trailers', 'vehicles']);
+  assert.deepEqual(here(progressive, 'AddTrailer'), ['trailers']);
+  for (const step of amwins.layoutSteps) assert.deepEqual(here(amwins, '/application', step), [], `AmWINS ${step}: every unit on one page`);
+  assert.deepEqual(here(geico, '/quote', drivers), ['drivers']);
+  assert.deepEqual(here(geico, '/quote', vehicles), ['trailers', 'vehicles']);
+  assert.deepEqual(here(geico, '/quote', geico.layoutSteps[1]), []);
+  assert.deepEqual(here(null, 'AddDriver'), [], 'not a rater');
+  assert.match(extractFunction('renderPickers'), /here\.includes\(list\) && \(record\[list\] \?\? \[\]\)\.length > 1/);
+  assert.match(extractFunction('renderSteps'), /renderPickers\(\);/, 'they follow the page in front');
+});
+
+// TNI, 2026-10-21: an earlier page's answers (the business page, once on Vehicles) could only be
+// checked on the rater. The answers' page menu lists the tab's other filled pages by name, in the
+// order filled, and shows one read-only.
+test('the page menu lists the other pages filled on this tab, by name, and shows one read-only', () => {
+  const entry = (key, extra = {}) => ({ key, tabId: Number(key.split('|')[0]), fields: 3, nodes: [], ...extra });
+  const reports = new Map(['1|BusinessOwnerInfo||', '1|AddDriver|d1|', '1|AddVehicle|v0|', '2|BusinessOwnerInfo||', '7|/application||Insured Info']
+    .map((key) => [key, entry(key)]));
+  reports.set('1|PortalHome||', entry('1|PortalHome||', { fields: 0 }));
+  const context = { state: { tab: { id: 1 }, reports, pastKey: null }, currentReportKey: () => '1|AddVehicle|v0|', renderSteps() {}, announce() {} };
+  vm.runInNewContext(['earlierReports', 'reportTitle', 'showPast'].map(extractFunction).join('\n'), context);
+  assert.deepEqual([...context.earlierReports()].map((e) => context.reportTitle(e)), ['Business Owner Info', 'Add Driver · Driver 2'],
+    'in the order filled; never the page in front, another tab\'s, or a page with no answers');
+  assert.equal(context.reportTitle(reports.get('7|/application||Insured Info')), 'Insured Info', 'a one-address application: its step');
+  context.showPast('2|BusinessOwnerInfo||');
+  assert.equal(context.state.pastKey, null, 'another tab\'s page is not shown here');
+  context.showPast('1|AddDriver|d1|');
+  assert.equal(context.state.pastKey, '1|AddDriver|d1|');
+  context.showPast(null);
+  assert.equal(context.state.pastKey, null);
+  assert.match(extractFunction('renderSteps'), /const earlier = onRater && !filling \? earlierReports\(\) : \[\];/, 'never while a fill runs');
+  assert.match(extractFunction('setView'), /state\.pastKey = null;/, 'a step button goes back to the page in front');
+  // Read-only: what changes an answer works only on the page in front, so it isn't offered there.
+  const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
+  const start = css.indexOf('.past .change');
+  const rule = css.slice(start, css.indexOf('}', start) + 1);
+  for (const cls of ['change', 'mark-done', 'show-on-page', 'opts', 'opt-select', 'change-slot', 'ai-slot']) assert.ok(rule.includes(`.past .${cls}`), cls);
+  assert.match(rule, /\{ display: none; \}$/);
+});
+
+// All client details opens in a drawer from the right (TNI, 2026-10-21: the collapsed list was hard
+// to read): focus goes into it, Escape or Close closes it, and focus goes back where it was.
+test('client details open in a drawer that takes focus and gives it back', () => {
+  const nodes = {};
+  const context = { state: { intake: {}, detailsOpen: false, detailsReturn: null, fileMenuOpen: true }, document: { activeElement: null },
+    render() {}, showScreen() {} };
+  const el = (id) => (nodes[id] ??= { id, isConnected: true, focus() { context.document.activeElement = this; }, contains: (n) => n === nodes['details-close'] });
+  context.$ = el;
+  vm.runInNewContext(['openDetails', 'closeDetails'].map(extractFunction).join('\n'), context);
+  const opener = el('details-row');
+  opener.focus();
+  context.openDetails();
+  assert.equal(context.state.detailsOpen, true);
+  assert.equal(context.state.fileMenuOpen, false);
+  assert.equal(context.document.activeElement, el('details-close'));
+  context.closeDetails();
+  assert.equal(context.state.detailsOpen, false);
+  assert.equal(context.document.activeElement, opener, 'focus back on the row that opened it');
+  assert.match(extractFunction('jumpTo'), /openDetails\(\);/, 'Show in client details opens it at the field');
+  assert.match(extractFunction('wire'), /e\.key === 'Escape' && state\.detailsOpen[^\n]*closeDetails\(\)/);
+  assert.match(extractFunction('wire'), /state\.detailsOpen && !\$\('details-view'\)\.hidden \? \$\('details-view'\)/, 'Tab stays inside it');
 });
 
 test('a capture overtaken by a later change does not report its failure, and hands its reasons on', async () => {

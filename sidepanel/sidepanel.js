@@ -347,6 +347,12 @@ const state = {
   // is the one shown now.
   reports: new Map(),
   reportFor: null,
+  // An earlier page's report on the tab in front, picked in the answers' page menu: its key, shown
+  // read-only in place of the page's own (renderSteps); null for the page in front. `keyOpen`: what
+  // the tags and the rater page's marks mean, open under the list's title.
+  pastKey: null,
+  pastNodes: null,
+  keyOpen: false,
   // The fill running now (its tab, report key and answers in so far), for step 2's progress line.
   fillingFor: null,
   // The step a one-address application's tab is on (AmWINS), for the page strip (noteStep).
@@ -359,6 +365,9 @@ const state = {
   aiDock: null,
   // Where focus was when the intake PDF opened, for Back.
   pdfReturn: null,
+  // All client details, in a drawer over the panel, and where focus was when it opened.
+  detailsOpen: false,
+  detailsReturn: null,
 };
 
 // Crashes nothing in the panel caught (an exception, a promise nobody awaited) go in the usage log,
@@ -785,6 +794,8 @@ async function loadFile(file) {
   state.view = firstView(state.intake);
   state.filter = 'all';
   state.aiDock = null;
+  state.pastKey = null;
+  state.detailsOpen = false;
   state.settingsOpen = false;
   state.fileMenuOpen = false;
   state.fileConfirm = null;
@@ -913,6 +924,8 @@ function showScreen() {
   const settings = state.settingsOpen;
   $('settings').hidden = !settings;
   $('pdf-view').hidden = !(has && !settings && state.pdf);
+  $('details-view').hidden = !(has && !settings && state.detailsOpen && !state.pdf);
+  for (const id of ['details-btn', 'details-row']) $(id).setAttribute('aria-expanded', String(!!state.detailsOpen));
   $('home').hidden = settings || has;
   $('quote').hidden = settings || !has;
   $('check-view').hidden = settings || !has || state.view !== 'check';
@@ -946,6 +959,7 @@ async function openKeyForm(open) {
 // The step buttons: the quote's view, step 1's checks ('check') or the page's answers ('page').
 function setView(view) {
   state.view = view;
+  state.pastKey = null;
   showScreen();
   renderSteps();
   $('view').scrollTop = 0;
@@ -1033,10 +1047,13 @@ function openFlags(prefix) {
   return warnings.filter((w, i) => w.level === 'check' && !done.includes(i) && w.path && (w.path === prefix || w.path.startsWith(`${prefix}.`) || w.path.startsWith(`${prefix}[`)));
 }
 
+// All client details, one card per section (the drawer), every field editable. Built again after
+// an edit: the drawer keeps its place and the field in focus.
 function renderSections() {
   const { record } = state.intake;
-  const openIds = new Set([...document.querySelectorAll('details.section[open]')].map((d) => d.dataset.id));
   const box = $('sections');
+  const focused = box.contains(document.activeElement) ? document.activeElement.id : null;
+  const top = box.scrollTop;
   box.replaceChildren();
   for (const section of SECTIONS) {
     const items = section.list ? record[section.list] ?? [] : [record[section.id]];
@@ -1050,10 +1067,12 @@ function renderSections() {
         body.append(fieldRow(path, label, kind, flags.some((w) => w.path === path)));
       }
     });
-    box.append(h('details', { class: 'section', dataset: { id: section.id }, open: openIds.has(section.id) },
-      h('summary', {}, h('span', { class: 'title' }, section.title), flags.length ? h('span', { class: 'flag' }, `${flags.length} to check`) : null),
+    box.append(h('section', { class: 'section', dataset: { id: section.id }, 'aria-label': section.title },
+      h('h3', { class: 'section-title' }, h('span', { class: 'title' }, section.title), flags.length ? h('span', { class: 'flag' }, `${flags.length} to check`) : null),
       body));
   }
+  box.scrollTop = top;
+  if (focused) $(focused)?.focus({ preventScroll: true });
 }
 
 function fieldRow(path, label, kind, flagged, layout = 'row') {
@@ -1116,15 +1135,15 @@ async function agentEdit(path, after, kind) {
   if (/^drivers\[\d+\]\.first$/.test(path)) reviewDriverGender({ retry: true });
 }
 
+// "Show in client details": the drawer opens at the field, which is focused and flashed.
 function jumpTo(path) {
-  $('details').open = true;
+  openDetails();
   const info = fieldInfo(path);
   const sectionId = info.section?.id ?? SECTIONS.find((s) => s.id === path || s.list === path)?.id;
-  const details = document.querySelector(`details.section[data-id="${sectionId}"]`);
-  if (!details) return;
-  details.open = true;
-  const row = document.querySelector(`.field[data-path="${CSS.escape(path)}"]`) ?? details;
-  row.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  const section = $('sections').querySelector(`.section[data-id="${sectionId}"]`);
+  if (!section) return;
+  const row = $('sections').querySelector(`.field[data-path="${CSS.escape(path)}"]`) ?? section;
+  row.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
   if (row.classList.contains('field')) {
     row.classList.add('pulse');
     row.querySelector('input, select, textarea')?.focus({ preventScroll: true });
@@ -1132,17 +1151,37 @@ function jumpTo(path) {
   }
 }
 
-// Which driver / vehicle / trailer the page is about (only when the intake has several), as a
-// compact choice each at the top of the page view.
+// The intake lists the page in front is about one of, or adds the next of: Progressive's vehicle
+// and trailer pages and their list, Add Driver and the driver list; GEICO's Vehicles (vehicles and
+// trailers) and Drivers & Incidents steps. None elsewhere: a business page isn't about a driver,
+// and AmWINS shows every driver and every vehicle on one page.
+function unitListsHere(carrier = state.tab?.carrier, page = pageOf(state.tab?.url), step = tabStep(carrier)) {
+  if (!carrier) return [];
+  const lists = new Set();
+  if (carrier.vehiclePages?.includes(page) || carrier.vehicleList === page || (step && carrier.vehicleSteps?.includes(step))) lists.add('vehicles');
+  if (carrier.trailerPages?.includes(page) || carrier.trailerList === page || (step && carrier.vehicleSteps?.includes(step))) lists.add('trailers');
+  if (carrier.driverPage === page || carrier.driverList === page || (step && carrier.driverSteps?.includes(step))) lists.add('drivers');
+  return [...lists];
+}
+
+// Which driver / vehicle / trailer the page is about (only when the intake has several, and only
+// on a page about one of them: unitListsHere), as a compact choice each at the top of the page view.
 function renderPickers() {
+  if (!state.intake) return;
   const { record } = state.intake;
+  const here = unitListsHere();
   const pickers = [
     ['drivers', 'Driver', (d) => [d.first, d.last].filter(Boolean).join(' ')],
     ['vehicles', 'Vehicle', (v) => [v.year, v.make, v.model].filter(Boolean).join(' ')],
     ['trailers', 'Trailer', (t) => [t.year, t.make, t.type].filter(Boolean).join(' ')],
-  ];
+  ].filter(([list]) => here.includes(list) && (record[list] ?? []).length > 1)
+    .map(([list, what, describe]) => ({ list, what, names: record[list].map((it, i) => `${i + 1}. ${describe(it) || what}`) }));
+  // Drawn again only when what it shows changes (a list open stays open).
+  const drawn = JSON.stringify(pickers.map((p) => [p.list, p.names, state.active[p.list]]));
+  if ($('pickers').dataset.drawn === drawn) return;
+  $('pickers').dataset.drawn = drawn;
   const focused = document.activeElement?.closest?.('#pickers') ? document.activeElement.id : null;
-  $('pickers').replaceChildren(...pickers.filter(([list]) => (record[list] ?? []).length > 1).map(([list, what, describe]) => {
+  $('pickers').replaceChildren(...pickers.map(({ list, what, names }) => {
     const id = `pick-${list}`;
     return h('div', { class: 'picker' },
       h('label', { for: id }, what),
@@ -1157,7 +1196,7 @@ function renderPickers() {
         // The page is now about this vehicle or driver: its own layout (a capture waiting for
         // the previous one is dropped).
         scheduleLayout(pageOf(state.tab?.url), 'picked');
-      } }, record[list].map((it, i) => h('option', { value: String(i), selected: state.active[list] === i }, `${i + 1}. ${describe(it) || what}`))));
+      } }, names.map((name, i) => h('option', { value: String(i), selected: state.active[list] === i }, name))));
   }));
   if (focused) $(focused)?.focus();
 }
@@ -2322,6 +2361,31 @@ function reportKey(tabId, page, carrier, active = state.active, step = state.tab
 }
 function currentReportKey() { return reportKey(state.tab?.id, pageOf(state.tab?.url), state.tab?.carrier); }
 
+// The reports of other pages on the tab in front, in the order they were first filled: the
+// answers' page menu (renderSteps). Only reports with answers; never the page in front's.
+function earlierReports() {
+  const here = currentReportKey();
+  return [...state.reports.values()].filter((e) => e.fields && e.tabId === state.tab?.id && e.key !== here && e.nodes);
+}
+
+// An earlier page's name in the page menu: its step on a one-address application (AmWINS, GEICO),
+// else its page's name spaced out ("AddDriver": Add Driver); on a page about one vehicle, trailer
+// or driver, which one ("Add Driver · Driver 2"). From its report key (reportKey).
+function reportTitle(entry) {
+  const [, page = '', unit = '', step = ''] = String(entry?.key ?? '').split('|');
+  const place = step || page.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z])([A-Z][a-z])/g, '$1 $2');
+  const which = /^(v|tr|d)(\d+)$/.exec(unit);
+  return which ? `${place} · ${{ v: 'Vehicle', tr: 'Trailer', d: 'Driver' }[which[1]]} ${Number(which[2]) + 1}` : place;
+}
+
+// Shows an earlier page's answers (its report key), read-only, in place of this page's; null goes
+// back to this page's. Nothing on either page changes.
+function showPast(key) {
+  state.pastKey = key && state.reports.get(key)?.tabId === state.tab?.id ? key : null;
+  renderSteps();
+  if (state.pastKey) announce(`Showing the answers of ${reportTitle(state.reports.get(state.pastKey))}, as filled.`);
+}
+
 // Puts the report of the page in front into the page view, keeping the one it replaces with its
 // own nodes, so its buttons and the AI's cards work again when its page is back. Returns it.
 function showReport() {
@@ -2402,6 +2466,8 @@ function announce(text) {
 function renderSteps() {
   renderLive();
   if (!state.intake) { renderDock(); return; }
+  // The unit pickers follow the page or step in front (unitListsHere).
+  renderPickers();
   const { warnings, done } = state.intake;
   const open = warnings.filter((w, i) => w.level === 'check' && !done.includes(i)).length;
   const carrier = state.tab?.carrier;
@@ -2447,24 +2513,50 @@ function renderSteps() {
   problem.hidden = !error && !notice;
   problem.replaceChildren(...(error ? [issueCard({ title: 'Filling didn’t finish', text: error, role: 'alert' })]
     : notice ? [issueCard({ tone: 'quiet', title: notice })] : []));
-  $('feed').hidden = !onRater || (!filling && !filled);
-  $('feed-title').textContent = filling ? 'Filling now' : 'Answers on this page';
-  $('report').hidden = !filled;
+  // Pages filled earlier on this tab (the page menu), and the one picked, shown read-only in place
+  // of this page's: never while a fill runs on the tab.
+  const earlier = onRater && !filling ? earlierReports() : [];
+  const past = earlier.find((e) => e.key === state.pastKey) ?? null;
+  if (!past) state.pastKey = null;
+  if (!past) $('past').replaceChildren();
+  else if (state.pastNodes !== past.nodes) $('past').replaceChildren(...past.nodes);
+  state.pastNodes = past?.nodes ?? null;
+  const at = (entry) => new Date(entry.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  $('feed').hidden = !onRater || (!filling && !filled && !earlier.length);
+  $('feed-title').textContent = filling ? 'Filling now' : earlier.length ? 'Answers' : 'Answers on this page';
+  const menu = $('page-menu');
+  menu.hidden = !earlier.length;
+  if (earlier.length) {
+    const keys = JSON.stringify(earlier.map((e) => e.key));
+    if (menu.dataset.keys !== keys) {
+      menu.replaceChildren(h('option', { value: '' }, 'This page'), ...earlier.map((e) => h('option', { value: e.key }, reportTitle(e))));
+      menu.dataset.keys = keys;
+    }
+    menu.value = past?.key ?? '';
+  }
+  $('past').hidden = !past;
+  $('past-head').hidden = !past;
+  $('past-when').textContent = past ? `${reportTitle(past)} · filled ${at(past)} · view only` : '';
+  $('report').hidden = !filled || !!past;
   $('report').dataset.filter = state.filter;
   const rows = filled ? [...$('report').querySelectorAll('.rows > .row')] : [];
   const needing = rows.filter((n) => n.classList.contains('need') && !n.classList.contains('resolved')).length;
   const counts = { all: rows.length, needs: needing, done: rows.length - needing };
-  $('filters').hidden = !filled || !rows.length;
+  $('filters').hidden = !filled || !rows.length || !!past;
   for (const b of $('filters').querySelectorAll('button')) {
     b.setAttribute('aria-pressed', String(b.dataset.filter === state.filter));
     b.querySelector('span').textContent = String(counts[b.dataset.filter] ?? 0);
   }
-  $('feed-empty').hidden = !filled || (counts[state.filter] ?? 0) > 0;
-  $('feed-empty').textContent = state.filter === 'needs' ? 'Nothing needs you on this page.' : 'Nothing here.';
-  $('answer-key').hidden = !filled;
-  $('unmark').hidden = !filled;
+  $('feed-empty').hidden = !!past || filling || (filled && (counts[state.filter] ?? 0) > 0);
+  $('feed-empty').textContent = !filled ? 'This page isn’t filled yet.' : state.filter === 'needs' ? 'Nothing needs you on this page.' : 'Nothing here.';
+  // What the tags and the rater page's marks mean: behind the i in the title.
+  const keyHere = !filling && (filled || !!past);
+  $('key-btn').hidden = !keyHere;
+  $('key-btn').setAttribute('aria-expanded', String(keyHere && state.keyOpen));
+  $('answer-key').hidden = !(keyHere && state.keyOpen);
+  $('unmark').hidden = !filled || !!past;
   // A report kept while another page was in front may be out of date.
-  const age = filled && report.restored && report.at ? new Date(report.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null;
+  const age = filled && !past && report.restored && report.at ? at(report) : null;
   $('report-age').hidden = !age;
   $('report-age').textContent = age ? `From the fill at ${age}. Fill again if the page changed.` : '';
   renderDock();
@@ -3531,7 +3623,9 @@ function answerRow(row, { tabId, page, carrier }) {
     h('span', { class: 'row-icon', 'aria-hidden': 'true' }, kind === 'page' || kind === 'yours' ? '•' : '✓'),
     h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, row.label), h('span', { class: 'row-value' }, row.value),
       row.key ? h('span', { class: 'kv-now', hidden: true }) : null),
-    h('span', { class: `tag ${tag.cls}`, title: tag.title }, tag.text)),
+    // From the intake is the usual source: no tag to read past (said to screen readers), so the
+    // others stand out.
+    kind === 'intake' ? h('span', { class: 'sr-only' }, tag.title) : h('span', { class: `tag ${tag.cls}`, title: tag.title }, tag.text)),
   h('div', { class: 'row-body', hidden: true },
     h('div', { class: 'src-box' }, h('span', { class: 'src-title' }, title), quote ? h('span', { class: 'src-quote' }, quote) : null),
     h('div', { class: 'change-slot' }),
@@ -3622,9 +3716,10 @@ function toggleRow(item, open = !item.classList.contains('open')) {
 // The dock's Show the next one: the next question still needing the agent after the one open now
 // (the first when none is), opened in the whole list and brought into view.
 function showNextNeed() {
-  if (state.view !== 'page' || state.filter !== 'all') {
+  if (state.view !== 'page' || state.filter !== 'all' || state.pastKey) {
     state.view = 'page';
     state.filter = 'all';
+    state.pastKey = null;
     showScreen();
     renderSteps();
   }
@@ -4852,6 +4947,25 @@ async function openPdf(target = null) {
   await drawPdf({ focus: !!place });
 }
 
+// All client details: the drawer over the panel, from the button by the client's name or the row
+// under the checks. Focus goes into it and back where it was when it closes.
+function openDetails() {
+  if (!state.intake) return;
+  if (!state.detailsOpen) state.detailsReturn = document.activeElement;
+  state.detailsOpen = true;
+  state.fileMenuOpen = false;
+  render();
+  if (!$('details-view').contains(document.activeElement)) $('details-close').focus();
+}
+function closeDetails() {
+  if (!state.detailsOpen) return;
+  state.detailsOpen = false;
+  showScreen();
+  const back = state.detailsReturn;
+  state.detailsReturn = null;
+  if (back?.isConnected) back.focus();
+}
+
 function closePdf() {
   state.pdf = null;
   state.pdfTask?.cancel();
@@ -5059,6 +5173,8 @@ async function clearClient() {
   state.view = 'check';
   state.filter = 'all';
   state.aiDock = null;
+  state.pastKey = null;
+  state.detailsOpen = false;
   dropReports();
   clientNote(null);
   usage.restoreSession(null);
@@ -5088,6 +5204,14 @@ function wire() {
   for (const b of $('filters').querySelectorAll('button')) b.addEventListener('click', () => setFilter(b.dataset.filter));
   $('file-menu-btn').addEventListener('click', () => { state.fileMenuOpen = !state.fileMenuOpen; state.fileConfirm = null; render(); });
   $('open-pdf').addEventListener('click', () => openPdf());
+  $('details-btn').addEventListener('click', () => (state.detailsOpen ? closeDetails() : openDetails()));
+  $('details-row').addEventListener('click', () => openDetails());
+  $('details-close').addEventListener('click', closeDetails);
+  $('details-scrim').addEventListener('click', closeDetails);
+  // An earlier page's answers on this tab (read-only), and back to this page's.
+  $('page-menu').addEventListener('change', (e) => showPast(e.target.value || null));
+  $('past-back').addEventListener('click', () => { showPast(null); $('page-menu').focus(); });
+  $('key-btn').addEventListener('click', () => { state.keyOpen = !state.keyOpen; renderSteps(); });
   $('pdf-back').addEventListener('click', closePdf);
   $('pdf-close').addEventListener('click', closePdf);
   $('pdf-scrim').addEventListener('click', closePdf);
@@ -5105,15 +5229,18 @@ function wire() {
     if (w !== width && state.pdf && width) drawPdf();
     width = w;
   }).observe($('pdf-scroll'));
-  // Escape closes the PDF sheet, then Settings; the sheet keeps keyboard focus while it's open.
+  // Escape closes the PDF sheet, the client details drawer, then Settings; the sheet or the drawer
+  // keeps keyboard focus while it's open.
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && state.pdf && !$('pdf-view').hidden) { e.preventDefault(); closePdf(); return; }
+    if (e.key === 'Escape' && state.detailsOpen && !$('details-view').hidden) { e.preventDefault(); closeDetails(); return; }
     if (e.key === 'Escape' && state.settingsOpen) { e.preventDefault(); state.settingsOpen = false; showScreen(); $('settings-btn').focus(); return; }
-    if (e.key !== 'Tab' || !state.pdf || $('pdf-view').hidden) return;
-    const stops = [...$('pdf-view').querySelectorAll('button:not(:disabled)')].filter((n) => n.offsetParent !== null);
+    const modal = state.pdf && !$('pdf-view').hidden ? $('pdf-view') : state.detailsOpen && !$('details-view').hidden ? $('details-view') : null;
+    if (e.key !== 'Tab' || !modal) return;
+    const stops = [...modal.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')].filter((n) => n.offsetParent !== null);
     if (!stops.length) return;
     const [first, last] = [stops[0], stops.at(-1)];
-    if (!$('pdf-view').contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+    if (!modal.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
     else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   });

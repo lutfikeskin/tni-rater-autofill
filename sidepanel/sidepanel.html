@@ -17,6 +17,7 @@
       <circle cx="12" cy="12" r="3"/>
     </symbol>
     <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="card" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="8.5" cy="11" r="2"/><path d="M5.5 16a3.2 3.2 0 0 1 6 0M14 10h4.5M14 13.5h3"/></symbol>
   </svg>
 
   <h1 class="sr-only">TNI Rater Autofill</h1>
@@ -51,6 +52,7 @@
         <p id="client-meta" class="client-meta"></p>
       </div>
       <button type="button" id="open-pdf" class="ghost intake-btn" title="Show the intake PDF"><span class="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
+      <button type="button" id="details-btn" class="ghost more-btn details-btn" aria-label="Client details" title="Client details" aria-controls="details-view" aria-expanded="false"><svg aria-hidden="true"><use href="#card"/></svg></button>
       <button type="button" id="file-menu-btn" class="ghost more-btn" aria-label="File options" aria-expanded="false" aria-controls="file-menu">⋯</button>
     </div>
     <div id="file-menu" class="file-menu" hidden>
@@ -112,10 +114,9 @@
         <p id="check-sub" class="pane-sub"></p>
       </div>
       <div id="warnings" class="checks"></div>
-      <details id="details" class="details">
-        <summary><span class="arrow">›</span><span class="grow">All client details</span><span id="details-count" class="small muted"></span></summary>
-        <div id="sections"></div>
-      </details>
+      <button type="button" id="details-row" class="list-row" aria-controls="details-view" aria-expanded="false">
+        <span class="grow">All client details</span><span id="details-count" class="small muted"></span><span class="chev" aria-hidden="true">›</span>
+      </button>
     </section>
 
     <!-- Steps 2 and 3: the page's answers, one list -->
@@ -138,21 +139,23 @@
       <div id="pickers" class="pickers"></div>
       <div id="feed" class="feed">
         <div class="feed-head">
-          <span id="feed-title" class="eyebrow">Answers on this page</span>
+          <div class="feed-title">
+            <span id="feed-title" class="eyebrow">Answers on this page</span>
+            <!-- The answers of a page filled earlier on this tab, read-only (renderSteps). -->
+            <select id="page-menu" class="page-menu" aria-label="Show the answers of" hidden></select>
+            <button type="button" id="key-btn" class="key-btn" aria-label="What the tags and marks mean" title="What the tags and marks mean" aria-expanded="false" aria-controls="answer-key" hidden>i</button>
+          </div>
           <div id="filters" class="filters" role="group" aria-label="Show answers" hidden>
             <button type="button" data-filter="all" aria-pressed="true">All <span></span></button>
             <button type="button" data-filter="needs" aria-pressed="false">Need you <span></span></button>
             <button type="button" data-filter="done" aria-pressed="false">Filled <span></span></button>
           </div>
         </div>
-        <p id="report-age" class="report-age" hidden></p>
-        <div id="live" class="rows live" hidden></div>
-        <div id="report" class="report" data-filter="all"></div>
-        <p id="feed-empty" class="feed-empty" hidden></p>
+        <!-- What the row tags and the rater page's marks mean, behind the i in the list's title. -->
         <div id="answer-key" class="answer-key" hidden>
           <div class="key-line">
-            <span class="key-title">Where answers come from:</span>
-            <span class="tag intake">Intake</span>
+            <span class="key-title">Tags:</span>
+            <span class="key-plain">none = from the intake</span>
             <span class="tag derived">Worked out</span>
             <span class="tag standard">TNI standard</span>
             <span class="tag ai">AI</span>
@@ -169,6 +172,16 @@
             <span><span class="mark ai"></span>AI answer</span>
           </div>
         </div>
+        <!-- An earlier page's answers (the page menu): which, when, and the way back. -->
+        <div id="past-head" class="past-head" hidden>
+          <button type="button" id="past-back" class="link small">‹ This page</button>
+          <span id="past-when" class="small muted"></span>
+        </div>
+        <p id="report-age" class="report-age" hidden></p>
+        <div id="live" class="rows live" hidden></div>
+        <div id="report" class="report" data-filter="all"></div>
+        <div id="past" class="report past" hidden></div>
+        <p id="feed-empty" class="feed-empty" hidden></p>
         <button type="button" id="unmark" class="link small subtle unmark" hidden>Clear the marks on the page</button>
       </div>
     </section>
@@ -283,6 +296,18 @@
         <button type="button" id="pdf-tab" class="link">Open the full PDF</button>
         <button type="button" id="pdf-back" class="primary small-btn">Back</button>
       </div>
+    </section>
+  </div>
+
+  <!-- Every answer on the intake, to read or correct, in a drawer from the right over the panel -->
+  <div id="details-view" class="drawer" hidden>
+    <div id="details-scrim" class="drawer-scrim"></div>
+    <section class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="details-title" aria-describedby="details-sub">
+      <div class="sheet-head">
+        <div class="grow"><h2 id="details-title">Client details</h2><p id="details-sub" class="sheet-sub">Your edits are what gets filled.</p></div>
+        <button type="button" id="details-close" class="icon-btn" aria-label="Close client details"><svg aria-hidden="true"><use href="#close"/></svg></button>
+      </div>
+      <div id="sections" class="drawer-body"></div>
     </section>
   </div>
 

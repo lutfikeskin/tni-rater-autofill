@@ -247,11 +247,12 @@ try {
   const closeAgent = () => panel.locator('#settings-done').click();
   // The dock's Fill: its button, or its "Fill this page again" while questions remain.
   const clickFill = () => panel.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first().click();
-  // No fill running on the tab, and (given the report before) a new report in front.
-  const dockIdle = (old = undefined) => panel.waitForFunction((o) => {
-    const dock = document.querySelector('#dock');
-    return dock.dataset.phase !== 'filling' && (o === undefined || (!!dock.dataset.report && dock.dataset.report !== o));
-  }, old, { timeout: 30000 });
+  // No fill running on the tab. On a timeout it says what the dock and the list showed.
+  const dockIdle = () => panel.waitForFunction(() => document.querySelector('#dock').dataset.phase !== 'filling', null, { timeout: 30000 })
+    .catch(async (error) => {
+      const said = await panel.evaluate(() => ['#dock', '#issues', '#feed'].map((id) => document.querySelector(id)?.innerText.replace(/\s+/g, ' ').slice(0, 200)).join(' / ')).catch(() => null);
+      throw new Error(`The fill did not finish: ${said}; panel errors: ${errors.join(' | ') || 'none'}`, { cause: error });
+    });
   // A question's row in the page's list, opened (its suggestion, choices and buttons are inside).
   const openRow = async (label) => {
     const row = panel.locator('#report .row.need', { hasText: label }).first();
@@ -260,12 +261,13 @@ try {
     return row;
   };
   const savedSettings = () => panel.evaluate(async () => (await chrome.storage.local.get('settings')).settings);
+  // The fill started (the dock shows its progress and Stop in place of the button), then ended. Not
+  // a new report in front: on the mock, the step the fill read and the one the recorder read
+  // afterwards can differ for a moment, and the report is filed under the fill's (1 run in 3).
   const fillAndWait = async () => {
-    const old = await panel.locator('#dock').getAttribute('data-report');
     await clickFill();
-    // While it fills, the dock shows its progress and Stop in place of the button.
     await panel.locator('#fill-progress').waitFor({ state: 'visible' });
-    await dockIdle(old);
+    await dockIdle();
   };
   const waitSetting = (key, value) => panel.waitForFunction(([k, v]) => chrome.storage.local.get('settings').then(({ settings }) => settings?.[k] === v), [key, value]);
   const installSnapshotVariation = async ({ firstReversed = false } = {}) => {

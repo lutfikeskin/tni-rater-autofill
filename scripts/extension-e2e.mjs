@@ -43,6 +43,8 @@ const mock = await ctx.newPage();
 await mock.goto('http://localhost:8792/test/fixtures/amwins/application.html');
 const panel = await ctx.newPage();
 panel.on('console', (m) => { if (m.type() === 'error') console.log('PANEL', m.text()); });
+// A script that doesn't run at all (a syntax error) shows only here.
+panel.on('pageerror', (e) => console.log('PANEL ERROR', e.message));
 await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
 await mock.bringToFront();
 await panel.waitForTimeout(1000);
@@ -57,8 +59,16 @@ await panel.waitForTimeout(500);
 const CLEARED = 'drivers[1].maritalStatus';
 await panel.bringToFront();
 if (await panel.locator('#check-view').isHidden()) await panel.click('#step-check');
-if (!await panel.locator('#details').evaluate(el => el.open)) await panel.click('#details > summary');
-if (!await panel.locator('details.section[data-id="drivers"]').evaluate(el => el.open)) await panel.click('details.section[data-id="drivers"] > summary');
+// All client details opens in a drawer from the right (the row under the checks).
+await panel.click('#details-row');
+await panel.locator('#details-view').waitFor({ state: 'visible' });
+if (process.argv[2]) {
+  await panel.screenshot({ path: path.join(process.argv[2], 'client-details.png'), animations: 'disabled' });
+  const size = panel.viewportSize();
+  await panel.setViewportSize({ width: 380, height: 860 });
+  await panel.screenshot({ path: path.join(process.argv[2], 'client-details-narrow.png'), animations: 'disabled' });
+  await panel.setViewportSize(size);
+}
 const clearedBox = panel.locator(`#f-${CLEARED.replace(/[^\w]/g, '_')}`);
 if (!await clearedBox.inputValue()) throw new Error(`The sample intake no longer answers ${CLEARED}.`);
 await clearedBox.click();
@@ -73,6 +83,8 @@ try {
 } catch (error) {
   throw new Error(`The panel did not save the cleared ${CLEARED}.`, { cause: error });
 }
+await panel.click('#details-close');
+await panel.locator('#details-view').waitFor({ state: 'hidden' });
 console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#dock-sub'));
 await panel.bringToFront();
 await panel.click('#fill');
@@ -281,6 +293,31 @@ const lastMock = await mock.evaluate(() => JSON.stringify(window.__amwinsMock));
 console.log('MOCK', lastMock);
 console.log('REPORT', (await panel.textContent('#report')).replace(/\s+/g, ' ').slice(0, 1500));
 if (process.argv[2]) await panel.screenshot({ path: path.join(process.argv[2], 'panel.png'), fullPage: true });
+// An earlier step's answers from the list's page menu: shown read-only (nothing to change there),
+// then back to this step's.
+const earlierPages = await panel.locator('#page-menu option').allTextContents();
+console.log('Earlier pages:', earlierPages.join(', '));
+let earlierOk = earlierPages[0] === 'This page' && earlierPages.includes('Insured Info');
+if (earlierOk) {
+  await panel.locator('#page-menu').selectOption({ label: 'Insured Info' });
+  const firstRow = panel.locator('#past .row').first();
+  await firstRow.waitFor({ timeout: 5000 });
+  await firstRow.locator('.row-head').click();
+  if (process.argv[2]) {
+    await panel.click('#key-btn');
+    await panel.screenshot({ path: path.join(process.argv[2], 'earlier-page.png'), fullPage: true, animations: 'disabled' });
+    // As wide as a side panel.
+    const size = panel.viewportSize();
+    await panel.setViewportSize({ width: 380, height: 860 });
+    await panel.screenshot({ path: path.join(process.argv[2], 'earlier-page-narrow.png'), animations: 'disabled' });
+    await panel.setViewportSize(size);
+    await panel.click('#key-btn');
+  }
+  earlierOk = await panel.locator('#report').isHidden() && !await firstRow.locator('.change, .mark-done, .show-on-page').evaluateAll((els) => els.some((e) => e.offsetParent !== null));
+  await panel.click('#past-back');
+  earlierOk &&= await panel.locator('#past').isHidden() && await panel.locator('#report').isVisible();
+}
+if (!earlierOk) console.log('EARLIER PAGES: the page menu did not show Insured Info read-only and come back to this step.');
 // The events the panel uploaded (it sends right after the intake loads, then every minute).
 await panel.evaluate(() => document.getElementById('upload-usage')?.click()).catch(() => {});
 await panel.waitForTimeout(1500);
@@ -292,6 +329,6 @@ console.log(`Usage: ${received.length} events to the local server (${[...new Set
 if (toProduction.length) console.log('TO PRODUCTION:', toProduction.join('; '));
 const usageOk = !toProduction.length && received.includes('intake_loaded');
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = usageOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, declaration and Submit stayed untouched, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one.' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, or Prev did not stay put.');
+const ok = usageOk && earlierOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, declaration and Submit stayed untouched, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one.' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, or the earlier step was not shown read-only.');
 process.exit(ok ? 0 : 1);
