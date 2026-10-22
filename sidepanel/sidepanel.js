@@ -824,7 +824,7 @@ async function loadFile(file) {
   const work = same ? workSaid(same.agentEdited?.length ?? 0, same.done?.length ?? 0) : '';
   clientNote(same ? `Same intake${work ? `: you ${work}, and that stays` : ''}.` : null);
   await keepPdf(bytes);
-  state.active = { drivers: 0, vehicles: 0, trailers: 0 };
+  state.active = firstUnits();
   state.filled = new Map();
   state.doneActions = new Set();
   state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
@@ -903,6 +903,12 @@ function showLoadError(msg, name = '') {
 async function save() {
   await store.set('intake', state.intake);
   await store.set('active', state.active);
+  await store.set('activeTab', state.tab?.id ?? null);
+}
+
+// Vehicle 1, driver 1, trailer 1: where an intake, and a quote tab, starts.
+function firstUnits() {
+  return { drivers: 0, vehicles: 0, trailers: 0 };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1273,13 +1279,18 @@ async function refreshTab() {
   }
   if (tab?.id !== state.tab?.id) {
     // `active`: each quote tab is on its own vehicle and driver (Continue is remembered per vehicle).
-    const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'unreadRetried', 'agentKeys', 'doneActions', 'unitForms', 'unitShown', 'visitedPages', 'doneSteps', 'assistPage', 'active'];
+    const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'unreadRetried', 'agentKeys', 'doneActions', 'unitForms', 'unitShown', 'visitedPages', 'doneSteps', 'assistPage', 'unitNamed', 'active'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
     const previous = state.tabSessions.get(tab?.id);
+    // A quote tab the panel has no record for starts on vehicle 1 and driver 1, never on the tab it
+    // was on before (W43-37, 2026-10-22: Progressive's first driver form got the second driver's
+    // details, the one last picked on GEICO). The panel's first tab after it opens keeps the
+    // selection saved for that tab.
+    const restored = !state.tab && !state.tabSessions.size && state.activeTab === tab?.id;
     Object.assign(state, previous ?? {
       filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false,
       agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null,
-      active: { ...state.active },
+      unitNamed: null, active: restored ? { ...state.active } : firstUnits(),
     });
     if (state.intake) renderPickers();
     clearTimeout(state.autoTimer);
@@ -1656,10 +1667,28 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
     count: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, state.intake?.record?.[list]?.length ?? 0])),
     bound: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...state.unitForms?.[list] }])),
   },
+  // A form that names its driver (carrier.unitNames: Progressive's "Questions about <name>") is
+  // filled only for the driver the plan is for (W43-37).
+  formUnit: unitNameFor(carrier, extra.expectPage ?? pageOf(state.tab?.url), active, state.intake?.record),
+  // What this tab's fills gave, by field key, with the unit each was for: a field still showing
+  // another unit's answer gets this unit's (W43-38).
+  givenBefore: Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])),
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
   skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
   ...extra,
 });
+
+// For the kit (fill `formUnit`) on a page whose form names its unit (carrier.unitNames): the
+// pattern, each intake unit's name words (first and last, 2 letters or more), the plan's unit and
+// its name as the panel shows it.
+function unitNameFor(carrier, page, active, record) {
+  const spec = (carrier?.unitNames ?? []).find((s) => s.page === page);
+  if (!spec || !record) return null;
+  const units = record[spec.list] ?? [];
+  const words = (d) => [d?.first, d?.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
+  const i = active?.[spec.list] ?? 0;
+  return { list: spec.list, text: spec.text, names: units.map(words), active: i, label: [units[i]?.first, units[i]?.last].filter(Boolean).join(' ') || 'the selected driver' };
+}
 
 // Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
 // from the extension's own package when the panel starts, on every fill_run. Null outside the
@@ -2282,7 +2311,7 @@ function tabMaps(tabId) {
   let saved = state.tabSessions.get(tabId);
   if (!saved) {
     saved = { filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false,
-      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null, active: { ...state.active } };
+      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null, unitNamed: null, active: firstUnits() };
     state.tabSessions.set(tabId, saved);
   }
   return saved;
@@ -2299,6 +2328,9 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
     state.intake.ntlAdded = true;
     save();
   }
+  // The intake unit the form named (pagekit unitNamed), for the mark once its list comes back.
+  const named = frames.find((f) => f.unitNamed)?.unitNamed;
+  if (named) maps.unitNamed = { ...named, page };
   const unitOk = (u) => ['vehicles', 'drivers', 'trailers'].includes(u?.list) && typeof u.id === 'string' && u.id;
   // Where one address holds every step and unit form (formScoped: GEICO): the form the page shows
   // now, held (pagekit unitHeld, the one the agent has to look at) or else filled (unitForm), with
@@ -3312,7 +3344,11 @@ async function verifyDrivers(carrier, ctx = { tabId: state.tab?.id, intake: stat
 function unitArrival(carrier, from, page) {
   for (const [unitPage, listPage, list, marker] of [[carrier?.driverPage, carrier?.driverList, 'drivers', 'driverEntered'], [carrier?.trailerPage, carrier?.trailerList, 'trailers', 'trailerEntered']]) {
     if (!unitPage || from !== unitPage || page !== listPage) continue;
-    state.doneActions.add(`${marker}:${state.active[list] ?? 0}`);
+    // The unit the form named, when it named one (W43-37): a form for no intake driver marks none.
+    const named = state.unitNamed?.list === list && state.unitNamed.page === unitPage ? state.unitNamed : null;
+    const index = named ? named.index : state.active[list] ?? 0;
+    if (index != null) state.doneActions.add(`${marker}:${index}`);
+    if (named) state.unitNamed = null;
     persistDoneActions();
   }
   // Back on the vehicle list from the active vehicle's pages: only a mark that it may be on the
@@ -5596,6 +5632,7 @@ async function init() {
   state.intake = (await store.get('intake')) ?? null;
   if (state.intake) state.view = firstView(state.intake);
   state.active = (await store.get('active')) ?? state.active;
+  state.activeTab = (await store.get('activeTab')) ?? null;
   usage.restoreSession((await store.get('session')) ?? null);
   const views = await store.get('views');
   if (views?.session && views.session === usage.currentSession()?.id) state.viewTabs = new Map(views.tabs);

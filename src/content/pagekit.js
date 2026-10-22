@@ -1826,7 +1826,7 @@
   // again.
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, components = null } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, components = null, formUnit = null, givenBefore = {} } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -2067,6 +2067,17 @@
         if (!report.halted) { halt(STEP_UNREAD_HALT); report.stepUnread = true; }
         break;
       }
+      // A form that names its unit for another one than the plan's: nothing is filled (W43-37).
+      if (formUnit) {
+        const named = unitNamedNow();
+        if (named) report.unitNamed = { list: formUnit.list, index: named.index };
+        if (named && named.index !== formUnit.active) {
+          halt(`This form is for ${named.name || 'someone else'}, not ${formUnit.label}: nothing was filled. ${named.index == null
+            ? 'The intake has no driver by that name: fill the form yourself.' : `Pick ${named.name} in the panel, then fill again.`}`);
+          report.unitMismatch = true;
+          break;
+        }
+      }
       const controls = collectControls();
       roundControls = controls;
       report.fields = Math.max(report.fields, controls.length);
@@ -2128,8 +2139,9 @@
         if (step.verifyOnly && !agreesWith(step, control)) {
           flag(report.failed, { label: control.label, key: fieldKey(control), q: control.q, reason: 'The looked-up value differs from the intake. Check the VIN.' });
           mark(control, 'failed', 'lookup result differs from the intake');
-        } else if (!step.verifyOnly && !step.ignore && !step.note && !step.replace && !step.trustPage && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id)) {
+        } else if (!step.verifyOnly && !step.ignore && !step.note && !step.replace && !step.trustPage && step.value != null && control.kind === 'text' && !overwrite && !agreesWith(step, control) && !handled.has(step.id) && !refill.has(step.id) && !givenForOtherUnit(step, control)) {
           // The page already had a different value (e.g. from the USDOT lookup): keep it, show it.
+          // Not what a fill gave for another unit (W43-38): that is replaced below.
           flag(report.kept, { label: control.label, key: fieldKey(control), q: control.q, path: step.path, name: step.name, differs: true });
           mark(control, 'needs', `page says something different from the intake (${step.name})`);
           handled.set(step.id, { status: 'needs', note: `page value differs from the intake: ${step.name}` });
@@ -2260,7 +2272,11 @@
         // Coverages set 9–12 coverages again, once right after Recalculate). An address-suggest
         // box agrees with any address, so Replace still retypes it.
         const sameAnswer = overwrite && answered && step.kind !== 'address-suggest' && agreesWith(step, c);
-        if (legacyHold || sameAnswer || (!overwrite && answered && !presetToReplace && !differs && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+        // What a fill gave here for another vehicle, driver or trailer, still as it gave it, is
+        // replaced with this unit's answer (W43-38, Progressive Add Driver, 2026-10-22: another
+        // driver's name and date of birth were kept as differing and left to the agent).
+        const otherUnits = answered && !agreesWith(step, c) && givenForOtherUnit(step, c);
+        if (legacyHold || sameAnswer || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';
@@ -2589,6 +2605,29 @@
       return new Map(controls.map((x) => [`${fieldKey(x)}|${x.label}`, x.kind === 'text' ? x.el.value : selectedText(x)]));
     }
 
+    // The intake unit a form names (`formUnit`: { list, text, names, active, label }, Progressive's
+    // "Questions about <driver>" on Add Driver for a driver it already has), by the words of each
+    // unit's name (`names`), all of them in the form's: `index` the plan's unit when it is one of
+    // those named, the only one named otherwise, null for none or several. Null when the page
+    // names none (a new driver's blank form).
+    function unitNamedNow() {
+      const re = new RegExp(formUnit.text, 'i');
+      const line = String(document.body?.innerText ?? '').split(/\n+/).map((l) => l.trim()).find((l) => re.test(l));
+      if (!line) return null;
+      const name = (re.exec(line)?.[1] ?? '').trim();
+      const words = ` ${name.toUpperCase().replace(/[^A-Z0-9]+/g, ' ')} `;
+      const named = (formUnit.names ?? []).flatMap((n, i) => (n.length && n.every((w) => words.includes(` ${w} `)) ? [i] : []));
+      return { name, index: named.includes(formUnit.active) ? formUnit.active : named.length === 1 ? named[0] : null };
+    }
+    // Whether the field shows just what an earlier fill gave for another unit of the plan step's
+    // list (`givenBefore`: field key -> { path, shown }, the panel's record of this tab's answers).
+    function givenForOtherUnit(step, c) {
+      const given = givenBefore?.[fieldKey(c)];
+      const unit = (path) => String(path ?? '').match(/^(vehicles|drivers|trailers)\[(\d+)\]/);
+      const mine = unit(step.path);
+      const theirs = unit(given?.path);
+      return !!mine && !!theirs && mine[1] === theirs[1] && mine[2] !== theirs[2] && given.shown != null && String(given.shown) === String(answerShown(c) ?? '');
+    }
     // Each question by its field and its place among the fields of that key (`key#n`): a GEICO
     // coverage row's label holds its premium, which a recalculation changes.
     function answerPlaces(controls) {
