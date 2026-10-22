@@ -1,4 +1,4 @@
-# Unit and package checks on Ubuntu, the cheapest runner. Windows and the browser checks run
+# Lint, unit and package checks on Ubuntu, the cheapest runner. Windows and the browser checks run
 # locally (`npm run ci`) or by hand (windows-smoke.yml).
 name: Checks
 
