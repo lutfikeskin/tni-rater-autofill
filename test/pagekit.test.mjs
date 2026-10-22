@@ -4814,6 +4814,61 @@ test('GEICO\'s Recalculate waits until the page\'s own requests stop finishing, 
   assert.ok(stopped.ended < 6000, `ended ${stopped.ended} ms in`);
 });
 
+// W43-44 (TNI, 2026-10-22; W43-41 again on the build with its fix): after the fill's Recalculate,
+// GEICO drew its own liability, UM, heavy-vehicle road service and cargo, steady once the page was
+// quiet; the agent picked the same values again and recalculated, and they held. A page quiet for 2 s
+// can't show a request still running, and GEICO saves a pick with one sent half a second later: the
+// click waits for a request started after the fill's last answer to finish, 10 s at most. What the
+// page did after the click is kept for the usage log (`recalcTrace`).
+test('GEICO\'s Recalculate waits for the save of the fill\'s last answer, and what the page did after it is traced (W43-44)', async () => {
+  const run = async ({ saveMs = null, redraw } = {}) => {
+    const p = recalcPage({ redraw });
+    p.comp.value = '';
+    let observer = null;
+    const t0 = clock.Date.now();
+    p.h.context.performance = { now: () => clock.Date.now() - t0 };
+    p.h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+    let answeredAt = null;
+    let savedAt = null;
+    p.comp.addEventListener('change', () => {
+      if (answeredAt != null) return;
+      answeredAt = clock.Date.now();
+      if (saveMs == null) return;
+      // GEICO's save: sent half a second after the pick, finished `saveMs` after it.
+      const start = answeredAt - t0 + 500;
+      setTimeout(() => { savedAt = clock.Date.now(); observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/lookup/coverage', startTime: start, responseEnd: savedAt - t0 }] }); }, saveMs);
+    });
+    const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+    return { p, report, recalcs: p.recalcs, afterSave: savedAt == null ? null : p.clickedAt - savedAt, afterAnswer: p.clickedAt - answeredAt };
+  };
+  // A save that takes 6 s: clicked 2 s after it is back, never while it runs.
+  const slow = await run({ saveMs: 6000 });
+  assert.equal(slow.recalcs, 1);
+  assert.ok(slow.afterSave >= 2000 && slow.afterSave < 3000, `clicked ${slow.afterSave} ms after the save finished`);
+  // No request for it at all: clicked once the wait has lasted 10 s.
+  const none = await run();
+  assert.equal(none.recalcs, 1);
+  assert.ok(none.afterAnswer >= 10000 && none.afterAnswer < 13000, `clicked ${none.afterAnswer} ms after the answer`);
+  // The trace: GEICO's own value drawn at the click and still there once quiet: put back and red, as
+  // before, and the trace says when the answer was given, when the premium showed, the save, and what
+  // the page showed.
+  const drawn = await run({ saveMs: 1000, redraw: ({ comp }) => { comp.value = '$500 deductible'; } });
+  assert.deepEqual(plain(drawn.report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
+  const t = plain(drawn.report.recalcTrace);
+  assert.equal(t.action, 'recalculate');
+  assert.ok(t.lastAnswerMs < -2000, `last answer ${t.lastAnswerMs} ms before the click`);
+  assert.ok(t.premiumMs >= 0 && t.ms >= t.premiumMs);
+  assert.ok(t.requests.some(([start, end]) => start < 0 && end < 0), 'the save, before the click');
+  const comp = t.answers.find((x) => x.key === 'cov:COMP#1');
+  assert.deepEqual([comp.shown, comp.seen.map(([, v]) => v), comp.putBack, comp.agents], ['$1,000 deductible', ['$500 deductible', '$1,000 deductible'], true, false]);
+  // Seen as the premium showed, before the page was quiet.
+  assert.ok(comp.seen[0][0] >= 0 && comp.seen[0][0] <= t.premiumMs + 600, `first seen ${comp.seen[0][0]} ms after the click`);
+  // Nothing changed: every answer traced with no value after the click, nothing put back.
+  const held = await run({ saveMs: 1000 });
+  assert.deepEqual(plain(held.report.failed), []);
+  assert.ok(plain(held.report.recalcTrace.answers).every((x) => !x.seen.length && !x.putBack));
+});
+
 // W43-32 (TNI, 2026-10-21): with no 11 Payments among the plans View More Payment Plans shows (TX:
 // Pay In Full, 4 Payments Bi-Monthly Plan, 9 Payments), the plan with the most payments offered,
 // named in the report; Print follows it.

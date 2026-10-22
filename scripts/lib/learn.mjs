@@ -131,7 +131,7 @@ function pageLeftAnswers(events, out, get, ids) {
   for (const e of events) {
     if (!e.session || !e.carrier) continue;
     const at = (p) => `${e.session}|${tabOf(e)}|${page(p)}`;
-    if (e.type === 'page_layout' && !e.step) lastLayout.set(at(e.page), e);
+    if (e.type === 'page_layout' && e.reason !== 'recalculate' && !e.step) lastLayout.set(at(e.page), e);
     if (e.type === 'layout_error') lastLayout.delete(at(e.page));
     if (e.type === 'ai_decision' && e.q && ['accepted', 'approved', 'auto'].includes(e.decision)) aiChosen.add(`${e.session}|${identify(e, ids).key}`);
     if (e.type !== 'page_view') continue;

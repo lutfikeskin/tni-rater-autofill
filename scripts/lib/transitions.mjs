@@ -63,7 +63,7 @@ export function layoutTransitions(events, { stepped = STEPPED } = {}) {
     const ordered = list.every((e) => Number.isInteger(e.seq)) ? [...list].sort((x, y) => x.seq - y.seq) : list;
     let last = null; // { page, layout, changes }
     for (const e of ordered) {
-      if (e.type === 'page_layout') {
+      if (e.type === 'page_layout' && e.reason !== 'recalculate') {
         // A one-address application's layout without its step (before 0.9.6): can't be paired.
         if (stepped.has(e.carrier) && !e.step) { last = null; continue; }
         const page = pageOf(e);

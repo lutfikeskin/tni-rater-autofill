@@ -311,12 +311,23 @@
   // 2 s and kept every answer (13 of 13 since 2026-10-21). Watched from a fill's start in the top frame.
   let lastRequestAt = -Infinity;
   let requestWatch = null;
+  // The last of them (start and end, performance time), and when the fill last gave an answer
+  // (apply): GEICO saves a coverage pick with a request it sends about half a second later, and a
+  // Recalculate clicked before that save is back was rated with GEICO's own values (W43-44).
+  const recentRequests = [];
+  let lastAnswerAt = -Infinity;
+  // The time the page's requests are timed in (Date.now where a page has no performance clock).
+  const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   function watchRequests() {
     if (requestWatch !== null) return;
     try {
       requestWatch = new PerformanceObserver((list) => {
         for (const e of list.getEntries()) {
-          if ((e.initiatorType === 'fetch' || e.initiatorType === 'xmlhttprequest') && String(e.name).startsWith(`${location.origin}/`)) lastRequestAt = Math.max(lastRequestAt, e.responseEnd);
+          if ((e.initiatorType === 'fetch' || e.initiatorType === 'xmlhttprequest') && String(e.name).startsWith(`${location.origin}/`)) {
+            lastRequestAt = Math.max(lastRequestAt, e.responseEnd);
+            recentRequests.push({ start: e.startTime ?? e.responseEnd, end: e.responseEnd });
+            if (recentRequests.length > 200) recentRequests.shift();
+          }
         }
       });
       requestWatch.observe({ type: 'resource', buffered: true });
@@ -327,11 +338,16 @@
   // How long a wait for the page's requests (settle's `requests`) lasts at most. After that, a page
   // that keeps sending them (a session check) counts as quiet once its controls are.
   const REQUESTS_MS = 30000;
+  // How long a wait for the save of the fill's last answer (settle's `saved`) lasts at most: an
+  // answer the page saves with no request of its own doesn't hold the click longer than this.
+  const SAVE_WAIT_MS = 10000;
 
   // Wait until the page stops changing: not busy, every component it draws defined, and no new
   // nodes for `quietMs`. With `requests`, a check that holds while they are waited for (the fill
-  // not stopped), also none of its own requests finished for `quietMs`.
-  async function settle({ quietMs = 250, maxMs = 15000, requests = null } = {}) {
+  // not stopped), also none of its own requests finished for `quietMs`. With `saved` too, a request
+  // the page started after the fill's last answer has finished (SAVE_WAIT_MS at most): a quiet page
+  // can't show a request still running, and GEICO's save of the last coverage is one (W43-44).
+  async function settle({ quietMs = 250, maxMs = 15000, requests = null, saved = false } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
     // A pick on a design-system radio redraws nothing: its host's `checked` and its group's
@@ -341,7 +357,9 @@
     const start = Date.now();
     try {
       await sleep(60);
-      const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && performance.now() - lastRequestAt < quietMs;
+      const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS
+        && (performance.now() - lastRequestAt < quietMs
+          || (saved && lastAnswerAt > -Infinity && Date.now() - start < SAVE_WAIT_MS && !recentRequests.some((r) => r.start >= lastAnswerAt)));
       while (Date.now() - start < maxMs) {
         if (!pageBusy() && Date.now() - last >= quietMs && !partsUndefined() && !requested()) return true;
         await sleep(60);
@@ -1260,8 +1278,14 @@
     return selectedText(c) === opt.text ? { ok: true, shown: opt.text } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
   }
 
-  // Returns { ok: true, shown } or { ok: false, reason, options? }.
+  // Returns { ok: true, shown } or { ok: false, reason, options? }. An answer given is stamped
+  // (lastAnswerAt): a helper that rates the answers waits for the page to save it (W43-44).
   async function apply(step, c) {
+    const result = await applyAnswer(step, c);
+    if (result?.ok) lastAnswerAt = perfNow();
+    return result;
+  }
+  async function applyAnswer(step, c) {
     if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
     if (step.kind === 'search-select') return applySearchSelect(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
@@ -2411,11 +2435,14 @@
         // spinner stayed until the agent reloaded), and one that waits for a quiet page for its own
         // time (`quietMs`: GEICO's Recalculate, W43-31), its own requests included (REQUESTS_MS at
         // most): once it is due, the page is waited for, and clicked next round if nothing changed
-        // meanwhile (a page that changed is read again).
+        // meanwhile (a page that changed is read again). One that rates the answers (`keepAnswers`)
+        // also waits for the save of the fill's last answer (`saved`, W43-44: FL, 2026-10-22, the
+        // fill's Recalculate 2 s after its last answer was rated with GEICO's own liability, UM,
+        // heavy-vehicle road service and cargo, which the agent's own Recalculate never was).
         if (loadDue) {
           const before = signature();
           const due = actions.find((x) => x.action === loadDue);
-          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !report.halted : null })) { halt(LOAD_HALT); break; }
+          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !report.halted : null, saved: !!due?.keepAnswers })) { halt(LOAD_HALT); break; }
           quiet = !agentPressed && signature() === before ? { action: loadDue, sig: before } : null;
           continue;
         }
@@ -2478,8 +2505,10 @@
       // GEICO.
       if (rates && !serverBacked) {
         const until = Date.now() + LOAD_MS;
-        while (Date.now() < until && !premiumReady() && !report.halted && currentPage() === startPage && !stepChanged()) await sleep(500);
-        if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted })) { halt(LOAD_HALT); break; }
+        while (Date.now() < until && !premiumReady() && !report.halted && currentPage() === startPage && !stepChanged()) { traceRead(pendingAction); await sleep(500); }
+        if (pendingAction?.trace && premiumReady()) { pendingAction.trace.premiumMs = Math.round(perfNow() - pendingAction.trace.at); traceRead(pendingAction); }
+        if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted })) { traceEnd(pendingAction); halt(LOAD_HALT); break; }
+        traceRead(pendingAction);
       }
       if (!await verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
@@ -2512,11 +2541,13 @@
       // result didn't show; from here it is the agent's, and they're told.
       if (!accepted && a.once) {
         report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, reason: ONCE_UNVERIFIED });
+        traceEnd(a);
         return false;
       }
       // The answers it may have redrawn (`keepAnswers`), read again once its result shows, and
       // watched until KEPT_WATCH_MS after the click when they held.
       if (accepted && a.kept && !await answersKept(a)) await watchKept(a);
+      traceEnd(a);
       // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
       // screen but disabled is not gone.
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
@@ -2614,8 +2645,50 @@
         const step = pairs.find((p) => p.control === c)?.step;
         const agents = skippedField(c);
         const ours = !agents && !!step && step.value != null && !step.ignore && !step.note && !step.verifyOnly && agreesWith(step, c);
-        return agents || ours ? [{ at, stepId: ours ? step.id : null, shown: answerShown(c) }] : [];
+        return agents || ours ? [{ at, stepId: ours ? step.id : null, shown: answerShown(c), label: c.label, key: fieldKey(c), kind: c.kind }] : [];
       });
+    }
+
+    // What the page did after the click of a helper that rates the answers (`keepAnswers`: GEICO's
+    // Recalculate), for the usage log (W43-44, to tell a check read too early from GEICO drawing its
+    // own values): each kept choice's value whenever it changed, in ms after the click; when the
+    // premium showed; the page's requests from the fill's last answer on; and which answers the
+    // fill put back. Typed boxes are left out (they may hold a client's value).
+    function traceStart() {
+      return { at: perfNow(), lastAnswerAt, last: new Map(), seen: [], premiumMs: null, putBack: [] };
+    }
+    function traceRead(a) {
+      const t = a?.trace;
+      if (!t) return;
+      const now = new Map(answerPlaces(collectControls()));
+      const ms = Math.round(perfNow() - t.at);
+      for (const k of a.kept) {
+        const c = now.get(k.at);
+        if (!c || k.kind === 'text' || c.kind === 'text') continue;
+        const value = answerShown(c);
+        if (value === (t.last.get(k.at) ?? k.shown)) continue;
+        t.last.set(k.at, value);
+        if (t.seen.length < 120) t.seen.push({ at: k.at, ms, value });
+      }
+    }
+    function traceEnd(a) {
+      const t = a?.trace;
+      if (!t) return;
+      traceRead(a);
+      const rel = (x) => Math.round(x - t.at);
+      const from = Number.isFinite(t.lastAnswerAt) ? t.lastAnswerAt - 1000 : t.at - 5000;
+      report.recalcTrace = {
+        action: a.action,
+        ms: rel(perfNow()),
+        lastAnswerMs: Number.isFinite(t.lastAnswerAt) ? rel(t.lastAnswerAt) : null,
+        premiumMs: t.premiumMs,
+        requests: recentRequests.filter((r) => r.end >= from).slice(-40).map((r) => [rel(r.start), rel(r.end)]),
+        answers: a.kept.filter((k) => k.kind !== 'text').map((k) => ({
+          label: k.label, key: k.key, shown: k.shown, agents: k.stepId == null,
+          seen: t.seen.filter((s) => s.at === k.at).slice(0, 10).map((s) => [s.ms, s.value]),
+          putBack: t.putBack.includes(k.at),
+        })),
+      };
     }
 
     // Once its result shows (W43-31: GEICO drew its own choices back after a Recalculate the fill
@@ -2637,6 +2710,7 @@
       // by itself isn't a change (W43-41, FL, 2026-10-22: four answers marked as changed and put
       // back, which the agent saw right the whole time).
       await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
+      traceRead(a);
       const now = new Map(answerPlaces(collectControls()));
       const changed = keptChanged(a, now);
       if (!changed.length) return false;
@@ -2649,7 +2723,7 @@
         if (!step) continue;
         let result;
         try { result = await apply(step, c); } catch (e) { result = { ok: false }; }
-        if (result.ok) given.add(k.at);
+        if (result.ok) { given.add(k.at); a.trace?.putBack.push(k.at); }
       }
       if (given.size) await settle({ quietMs: 250, maxMs: LOAD_MS });
       const after = new Map(answerPlaces(collectControls()));
@@ -2687,6 +2761,7 @@
     async function watchKept(a) {
       while (Date.now() - a.clickedAt < KEPT_WATCH_MS && !report.halted && currentPage() === startPage && !stepChanged()) {
         await sleep(500);
+        traceRead(a);
         if (!keptChanged(a, new Map(answerPlaces(collectControls()))).length) continue;
         await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
         await answersKept(a);
@@ -2877,7 +2952,7 @@
         // have landed since): what a `revealed` / `appears` check compares with afterwards.
         pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
           : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length }
-            : a.keepAnswers ? { ...a, kept: answersNow(), clickedAt: Date.now() } : a;
+            : a.keepAnswers ? { ...a, kept: answersNow(), clickedAt: Date.now(), trace: traceStart() } : a;
         button.click();
         return true;
       }
