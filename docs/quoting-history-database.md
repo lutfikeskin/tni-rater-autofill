@@ -43,7 +43,7 @@ Missing today: whether the business has a USDOT or MC number, the 60-day answer,
 
 `intakeSummary` in [usage.js](../src/usage.js) was written to say what kind of intake an agent loaded, for fixing rules. Business analysis needs more of the intake. The proposal is a new event, `intake_profile`, built on the agent's computer from the client record by one function next to `intakeSummary`.
 
-The line it draws: **the profile describes the business, never identifies it.** It keeps no name, number, address, contact, date of birth, VIN or plate. Where an identifier matters for analysis, it keeps a fact about it instead: whether a USDOT number was given, not the number; a driver's age, not the date of birth.
+The line it draws: **the profile describes the business without names, numbers or addresses.** It keeps no name, identification number, address, contact, date of birth, VIN or plate. Where an identifier matters for analysis, it keeps a fact about it instead: whether a USDOT number was given, not the number; a driver's age, not the date of birth. It is pseudonymous, not anonymous: state, fleet, makes and years in business together can still point to one carrier, for example beside public FMCSA records, and free text can name someone the intake doesn't (a shipper). Treat the database as client data.
 
 Yes/no answers keep three values, as the record does (`yesNo` in [normalize.js](../src/normalize.js)): `true`, `false`, and `null` when the intake left the question unanswered. A blank is missing information, never a No.
 
@@ -51,16 +51,16 @@ Yes/no answers keep three values, as the record does (`yesNo` in [normalize.js](
 
 | Profile field | From the record | Kept as |
 | --- | --- | --- |
-| `dot` | `applicant.dot` | `given` or `blank`. The number is never sent. |
-| `mc` | `applicant.mc` | `given` or `blank`. |
+| `dot` | `applicant.dot` | `given` (a valid number), `other` (something else written, such as "Pending") or `blank`. The number is never sent. |
+| `mc` | `applicant.mc` | `given`, `other` or `blank`. |
 | `dotWithin60Days` | `applicant.mcDotWithin60Days` | Yes/no/null: no DOT/MC yet, will have one within 60 days. |
-| `fein` | `applicant.fein` | `given` or `blank`. |
+| `fein` | `applicant.fein` | `given`, `other` or `blank`. |
 | `yearsInBusiness` | `applicant.yearsInBusiness` | Whole years, or null. |
 | `yearsExperience` | `applicant.yearsExperience` | Years under own authority, or null. |
 | `ownerDrives` | `applicant.ownerDrives` | Yes/no/null. |
 | `businessClass`, `state` | as today | As on `intake_loaded`. |
 
-A blank DOT box is not "no DOT number". Read with `dotWithin60Days`, the three cases are: number given; blank and will have one within 60 days (a new venture); blank with no answer (unknown).
+A blank DOT box is not "no DOT number", and a filled one is not always a number ("Pending", "Applied for"). Read with `dotWithin60Days`, the cases are: a number given; no number (`blank` or `other`) and will have one within 60 days (a new venture); no number and no answer (unknown).
 
 ### Operations
 
@@ -100,7 +100,7 @@ Company and owner names, phone, email, street, city, ZIP, USDOT, MC and FEIN num
 
 The panel sends `intake_profile` right after `intake_loaded`, 15 seconds after the agent's last correction in the panel, and when it opens on a saved intake, each time only when the profile changed; one still waiting is sent before the intake is replaced or cleared. The session's last profile wins. Today an agent's correction shows up only as `intake_edit` with the field's path, never the new value; with the profile, a corrected state or class reaches the database.
 
-The server keeps the profile only in its exact shapes, as it does for the run fields: booleans or null where yes/no, whole numbers in a plausible range, `given`/`blank`, months as `YYYY-MM`, lists of at most 50 vehicles, 50 trailers and 50 drivers, text within its length. Text that could identify the client (`ID_LIKE`: a date, an `@`, five digits in a row, or a word of eight or more letters and digits mixed, as in a VIN or policy number) is refused by the server; the extension replaces such parts with `#` before sending, so a VIN, phone or email that slipped into a make or an insurer's name never gets stored. A consistency test checks that the extension and the server agree on every field and on that test. The whole event must fit the server's 32 KB limit. Following [hosting](hosting.md), the server that accepts the event deploys before the extension that sends it.
+The server keeps the profile only in its exact shapes, as it does for the run fields: booleans or null where yes/no, whole numbers in a plausible range, `given`/`other`/`blank`, months as `YYYY-MM` from real dates only, lists of at most 50 vehicles, 50 trailers and 50 drivers, text within its length. Text that could identify the client (`ID_LIKE`: an `@`; a date with `/`, `-` or `.` between its parts; seven or more digits, even with spaces, dashes, dots, slashes or brackets between them, as in a phone, SSN, licence or policy number; five digits in a row; a word of eight or more letters and digits mixed, as in a VIN) is refused by the server; the extension replaces such parts with `#` before sending, and the intake's own VINs however spaced, so they never get stored. A limit written as a limit (`LIMIT`: `$1M CSL`, `1000000`, `25/50/25`) is kept as written. Consistency tests check that the extension and the server agree on every field and on both tests, also for real intakes with odd values. The whole event must fit the server's 32 KB limit. The server that accepts the event can be deployed whenever, since accepting collects nothing; the extension that sends it is released after the privacy text is approved and the server is deployed.
 
 Quotes from before that release have no profile. A one-time backfill could build profiles for the older quotes whose intake PDFs TNI still has on the maintainer's computer, matched by fingerprint as `npm run benchmark` matches them, through the same profile function. Those rows would be marked as backfilled.
 
@@ -175,7 +175,7 @@ CREATE TABLE quotes (
   -- business
   state              text,
   business_class     text,
-  dot                text,                  -- given, blank
+  dot                text,                  -- given, other, blank
   mc                 text,
   dot_within_60_days boolean,
   years_in_business  int,
@@ -394,8 +394,8 @@ SELECT lower(trim(business_class)) AS business_class,
        count(*) AS quotes,
        count(*) FILTER (WHERE dot = 'given') AS dot_given,
        count(*) FILTER (WHERE mc = 'given') AS mc_given,
-       count(*) FILTER (WHERE dot = 'blank' AND dot_within_60_days) AS new_venture,
-       count(*) FILTER (WHERE dot = 'blank' AND dot_within_60_days IS NULL) AS dot_unknown,
+       count(*) FILTER (WHERE dot <> 'given' AND dot_within_60_days) AS new_venture,
+       count(*) FILTER (WHERE dot <> 'given' AND dot_within_60_days IS NULL) AS dot_unknown,
        percentile_cont(0.5) WITHIN GROUP (ORDER BY years_in_business) AS median_years
 FROM v_quotes
 WHERE profile_source IS NOT NULL
@@ -531,7 +531,7 @@ The maintainer decides these before anyone writes the event:
 ## Limits
 
 - **Only quotes run through the extension.** Quotes typed by hand, other carriers and renewals done elsewhere never reach the log, and the log can't say what share of TNI's business they are. Agents can also turn uploads off, and a computer whose queue fills drops its oldest events (`usage_lost`).
-- **No ZIPs, cities, names, VINs or numbers, by design.** State is the finest geography. The profile says whether a USDOT or MC number was given, never which.
+- **No ZIPs, cities, names, VINs or numbers, by design.** State is the finest geography. The profile says whether a USDOT or MC number was given, never which. That is not anonymity: a carrier with an unusual fleet in a small state can still be recognised, so the database is client data.
 - **The intake's word, not the policy's.** The profile is what the client wrote on the intake, as corrected by the agent in the panel. A vehicle type or limit changed later on the carrier's page shows in `answers`, not in the profile.
 - **No profile before its release.** Older quotes have only today's summary, unless the backfill finds their PDFs.
 - **No bind or outcome data.** "Done" means the quote reached the carrier's final page or was printed. Whether the client bought, and from which carrier, is in TNI's agency system, and the log has no identifier that could join to it.
@@ -556,7 +556,7 @@ The maintainer decides these before anyone writes the event:
 
 The profile goes first: the database can load all history whenever it arrives, but a profile field only exists for quotes after the release that sends it.
 
-1. The privacy policy and store answers (decision 1), then `intake_profile`: the server's shape checks and tests, deployed with `node scripts/server-check.mjs`; then the profile function in [usage.js](../src/usage.js) and the panel's sending, with tests, in a release. [learning](learning.md) documents the event.
+1. `intake_profile` (#147, #148, #149): the server's shape checks (#148), deployable whenever since accepting collects nothing, and confirmed with `node scripts/server-check.mjs`; the privacy policy and store answers (#147, decision 1); then the profile function in [usage.js](../src/usage.js) and the panel's sending (#149), released only after #147 is approved and #148 deployed. [learning](learning.md) documents the event.
 2. Schema file, the loader with its pure transform and tests, the per-quote outcome shared with `signals()`, `rule_source` kept by `finalAnswers`. [hosting](hosting.md) gets the database service and the loader command; [testing](testing.md) the new tests.
 3. The coverage map with its tests, checked against recorded layouts of each carrier's coverage page.
 4. Optional: the backfill from local PDFs.
