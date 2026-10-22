@@ -37,20 +37,25 @@ the store refuses a version it already has.
    - `scripting`: "Fills and highlights form fields on the carrier quote page the agent is viewing."
    - `storage`: "Keeps the loaded intake for the session and the agent's settings."
    - `unlimitedStorage`: "Keeps the usage log on the agent's computer while TNI's usage server
-     can't be reached, so what happened isn't lost before it's uploaded (no client details beyond what an agent
-     types into a problem report)."
+     can't be reached, so what happened isn't lost before it's uploaded (no client names, numbers or
+     addresses; the business profile and problem reports are described in the privacy policy)."
    - Host permissions: "foragentsonly.com / progressive.com / amwinsadmittedplacement.com /
      geico.com: the carrier quote pages it fills. api.openai.com: Luna suggestions for unresolved
      choice questions, a review of the application's claims box, and a check of drivers' first
      names (for the gender TNI assumes), with the agent's own OpenAI key.
-     usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, no client
-     details beyond what an agent types into a problem report).
+     usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, and a
+     profile of each client's business without names, numbers or addresses).
      localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
      page, sent to OpenAI when the AI assistant is on, with client names and numbers redacted).
      With the assistant on, drivers' first names are sent to OpenAI unredacted, alone in their own
-     request: declare "Personally identifiable information" (name). TNI's compliance owner should
-     confirm these answers.
+     request: declare "Personally identifiable information" (name). The usage server gets a
+     profile of each client's business (the privacy policy lists it): drivers' ages, marital
+     status and gender as the agent set it are personal information too, and the garaging state
+     is a region ("Location"). The store also asks to certify that data isn't used for purposes
+     unrelated to the extension's single purpose; analysing TNI's own quoting from the usage log is
+     a purpose beyond filling quotes. TNI's compliance owner should confirm these answers, and
+     that certification, before a version that sends the profile is uploaded.
 4. **Distribution** → Visibility: *Private* (domain or trusted testers) or *Unlisted*.
 5. **Submit for review**. Reviews usually take from a few hours to a few days; the dashboard
    shows the status.
