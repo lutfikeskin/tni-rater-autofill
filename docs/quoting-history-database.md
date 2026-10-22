@@ -319,11 +319,11 @@ What was chosen on each carrier's coverage page, split by who chose it. Read the
 ```sql
 SELECT a.carrier, a.question, min(a.label) AS label, a.value AS chosen,
        count(DISTINCT a.session) AS quotes,
-       count(*) FILTER (WHERE a.answered_by = 'autofill' AND a.rule_source IN ('intake', 'derived')) AS from_intake,
-       count(*) FILTER (WHERE a.answered_by = 'autofill' AND a.rule_source = 'standard') AS tni_standard,
-       count(*) FILTER (WHERE a.answered_by = 'agent') AS agent_picked,
-       count(*) FILTER (WHERE a.answered_by = 'agent' AND a.corrected) AS agent_corrected,
-       count(*) FILTER (WHERE a.answered_by = 'page') AS carrier_default_left
+       count(DISTINCT a.session) FILTER (WHERE a.answered_by = 'autofill' AND a.rule_source IN ('intake', 'derived')) AS from_intake,
+       count(DISTINCT a.session) FILTER (WHERE a.answered_by = 'autofill' AND a.rule_source = 'standard') AS tni_standard,
+       count(DISTINCT a.session) FILTER (WHERE a.answered_by = 'agent') AS agent_picked,
+       count(DISTINCT a.session) FILTER (WHERE a.answered_by = 'agent' AND a.corrected) AS agent_corrected,
+       count(DISTINCT a.session) FILTER (WHERE a.answered_by = 'page') AS carrier_default_left
 FROM answers a
 JOIN v_quotes q USING (session)
 WHERE a.page = 'CoveragesRates' OR a.step IN ('Quote & Coverages', 'Coverages')
@@ -336,7 +336,7 @@ Quotes per carrier per week, and how they ended. Hazmat haulers apart, since car
 ```sql
 SELECT date_trunc('week', q.started_at)::date AS week,
        qc.carrier,
-       coalesce(q.hazmat, false) AS hazmat,
+       q.hazmat AS hazmat,
        count(*) AS quotes,
        count(*) FILTER (WHERE qc.outcome = 'done') AS done,
        count(*) FILTER (WHERE qc.outcome = 'declined') AS declined

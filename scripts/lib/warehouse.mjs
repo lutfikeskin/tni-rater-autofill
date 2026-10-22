@@ -123,7 +123,7 @@ export const TABLES = {
     columns: [
       ['session', 'VARCHAR'], ['carrier', 'VARCHAR'],
       ['question', 'VARCHAR', "The learner's key: carrier|page|ref:<name>, or its text on its page"],
-      ['unit', 'VARCHAR', "Which vehicle, driver or trailer, and row; '' for the quote"],
+      ['unit', 'VARCHAR', "Which vehicle, driver or trailer, and row: '<unit>@<row>'; '@<row>' for the quote, or '' for a question without an id"],
       ['page', 'VARCHAR'], ['step', 'VARCHAR'], ['label', 'VARCHAR', 'The question as logged (redacted)'], ['control_kind', 'VARCHAR'],
       ['value', 'VARCHAR', 'The option picked'],
       ['answered_by', 'VARCHAR', "autofill, agent, or page (the page's own answer left standing)"],

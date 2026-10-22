@@ -81,4 +81,4 @@ const count = (name) => (name === 'events' ? stored.length : rows[name].length);
 console.log(`Built ${shown}: ${count('events')} events, ${info.quotes} quotes (${info.test_quotes} test runs, left out of v_quotes), `
   + `${count('quote_carriers')} quote-carrier rows, ${count('answers')} answers, ${count('quote_drivers')} drivers, ${count('quote_vehicles')} vehicles and trailers.`);
 console.log(`Profiles on ${rows.quotes.filter((q) => q.profile_source).length} quotes. Test-run list: ${testList.file}. Commit ${commit?.slice(0, 7) ?? 'unknown'}${info.dirty ? ' with uncommitted changes' : ''}.`);
-console.log(`Open it: duckdb ${shown}`);
+console.log(`Open it: duckdb -readonly ${shown}`);
