@@ -690,7 +690,7 @@ async function restoreReports(tabId) {
   for (const e of was.entries) {
     if (!e?.key || !String(e.key).startsWith(`${tabId}|`) || state.reports.has(e.key) || !Array.isArray(e.frames)) continue;
     const active = { ...firstUnits(), ...(e.active ?? {}) };
-    renderReport(e.frames, { tabId, page: e.page, carrier, active, plan: buildPlan(state.intake.record, carrier, active), stopped: !!e.stopped, keptKey: e.key, restoredAt: e.at ?? Date.now() });
+    renderReport(e.frames, { tabId, page: e.page, carrier, active, plan: buildPlan(state.intake.record, carrier, active), stopped: !!e.stopped, keptKey: e.key, restoredAt: e.at ?? Date.now(), filledBefore: e.filledBefore });
   }
   refreshAnswers();
 }
@@ -3759,7 +3759,9 @@ function renderReport(frames, ctx = {}) {
   const key = ctx.keptKey ?? reportKey(tabId, page, carrier, ctx.active ?? state.active);
   // Kept for the panel opened again (keepReport); one made again from what was kept isn't, nor
   // one that says nothing while its page is filled again.
-  const keep = () => { if (!ctx.restoredAt) keepReport(tabId, { key, page, active: { ...(ctx.active ?? state.active) }, at: Date.now(), stopped: !!ctx.stopped, frames }); };
+  const keep = () => { if (!ctx.restoredAt) keepReport(tabId, { key, page, active: { ...(ctx.active ?? state.active) }, at: Date.now(), stopped: !!ctx.stopped,
+    // What earlier passes on this page filled, for the report shown again (restoreReports).
+    filledBefore: Object.fromEntries(frames.flatMap((fr) => fr.kept ?? []).filter((x) => maps.filled?.get?.(x.key)).map((x) => [x.key, maps.filled.get(x.key)])), frames }); };
   // A page of tiles only (Most Common Vehicles) has no fields but may still need the agent.
   if (!fields && !all('actions').length && !all('noData').length) {
     // A step the kit couldn't read pauses nothing (rememberFill): its reason alone.
@@ -3808,14 +3810,15 @@ function renderReport(frames, ctx = {}) {
   const agentPage = typeof pageNote === 'function' ? pageNote(state.intake?.record ?? {}) : pageNote;
   // Answers an earlier pass on this page filled (a follow-up pass, after the VIN lookup or a
   // redraw, finds them already there): still ours, shown as filled.
-  const earlier = kept.filter((x) => !x.differs && maps.filled?.get?.(x.key));
+  const before = ctx.filledBefore ? new Map(Object.entries(ctx.filledBefore)) : maps.filled;
+  const earlier = kept.filter((x) => !x.differs && before?.get?.(x.key));
   const { fromOf, groupOf, ticks, editedBy } = answerSources(ctx.plan);
   const doneRows = groupRows([
     // `key`/`field`: the field and its label on the page, for checking the answer is still there
     // (checkAnswers) and changing it (changeAnswer); `kind`: what it is when it's no answer of ours.
     ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order })),
     ...earlier.map((x) => {
-      const was = maps.filled.get(x.key);
+      const was = before.get(x.key);
       return { label: x.label || x.name, value: was.shown || 'filled', standard: !!(x.standard || was.standard), path: was.path, from: fromOf.get(x.stepId), edited: editedBy(was.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: was.shown ? x.key : null, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order };
     }),
     ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
@@ -5473,6 +5476,8 @@ function noteStep(msg, sender) {
   const screenOver = !!state.stopScreens?.has(sender.tab.id) && (moved || msg.event === 'page_view');
   if (screenOver) state.stopScreens.delete(sender.tab.id);
   if (moved || screenOver) renderSite();
+  // A report shown again for this step is read back from the page (read only).
+  if (moved && state.reportFor?.restored) refreshAnswers();
 }
 
 // What the agent did on this intake, for the file menu's question and the same-file note:
