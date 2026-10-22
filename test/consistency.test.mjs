@@ -8,10 +8,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { EVENT_FIELDS, COMMON, RUN_FIELDS } from '../server/index.mjs';
+import { EVENT_FIELDS, COMMON, RUN_FIELDS, PROFILE, PROFILE_UNITS, ID_LIKE } from '../server/index.mjs';
 import { CARRIERS } from '../src/carriers.js';
 import { DEFAULT_SERVER } from '../sidepanel/usage-log.js';
-import { fillEvents, fieldChangeEvent } from '../src/usage.js';
+import { fillEvents, fieldChangeEvent, intakeProfile, ID_LIKE as EXTENSION_ID_LIKE, PROFILE_UNITS as EXTENSION_UNITS } from '../src/usage.js';
 import { findPii } from '../scripts/lib/privacy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -59,6 +59,41 @@ test('field change events carry only fields the server keeps', () => {
     const dropped = Object.keys(e).filter((k) => !keep.has(k) && e[k] !== undefined);
     assert.deepEqual(dropped, [], `${c.kind}: the server drops ${dropped.join(', ')}`);
   }
+});
+
+// The business profile: every value the extension sends fits the server's shape for it, and each
+// side knows the other's fields, so nothing is dropped on the way and nothing is sent unchecked.
+test('the business profile the extension builds is one the server keeps whole', () => {
+  const unit = { type: 'Semi Truck', year: 2019, make: 'Freightliner', model: 'Cascadia', vin: 'x', value: 65000 };
+  const record = {
+    applicant: { dot: '1', mc: '2', fein: '3', mcDotWithin60Days: false, yearsInBusiness: 4, yearsExperience: 6, ownerDrives: true },
+    garaging: { state: 'TX' },
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight', radiusMiles: 500, vehicleOwnership: 'Owned', personalUse: false, usesEld: true, eldBrand: 'Motive',
+      needSr22: false, filingsRequired: true, filingsWhich: 'MCS-90', hazmat: false, hazPlacard: false, movingState: false, teamDriving: false, canadaLoads: false, equipVehicle: 5000 },
+    vehicles: Array(PROFILE_UNITS + 1).fill(unit), trailers: [{ ...unit, type: 'Dry Van' }],
+    trailerInfo: { ownership: 'Owned', hitch: 'Fifth wheel', interchange: true, interchangeLimit: '$20,000', equipTrailer: 2000 },
+    drivers: [{ dob: '02/03/1985', licenseState: 'TX', cdl: true, cdlYear: 2010, excluded: false, maritalStatus: 'Married', gender: 'FEMALE' }],
+    coverage: { autoLiability: 'Yes', autoLiabLimit: '$1M CSL', cargo: true, cargoLimit: 100000, cargoDeductible: 1000, gl: true, hasGl: false, glLimit: '$1M/$2M', reeferBreakdown: false, ntl: false },
+    priorInsurance: [{ type: 'Commercial Auto', carrier: 'Progressive', limit: '$1M CSL', expiration: '11/30/2026' }],
+    claims: { hasClaims: false },
+  };
+  const p = intakeProfile(record, { today: new Date('2026-10-22') });
+  assert.deepEqual(Object.keys(p).filter((k) => k !== 'type'), EVENT_FIELDS.intake_profile);
+  assert.equal(EXTENSION_UNITS, PROFILE_UNITS);
+  assert.equal(String(EXTENSION_ID_LIKE), String(ID_LIKE), 'the extension and the server refuse the same text');
+  const fits = (v, spec, where) => {
+    if (typeof spec === 'function') return assert.ok(spec(v), `${where}: the server would leave out ${JSON.stringify(v)}`);
+    if (Array.isArray(spec)) {
+      assert.ok(Array.isArray(v) && v.length <= PROFILE_UNITS, `${where}: not a list of at most ${PROFILE_UNITS}`);
+      return v.forEach((x, i) => fits(x, spec[0], `${where}[${i}]`));
+    }
+    assert.deepEqual(Object.keys(v).sort(), Object.keys(spec).sort(), `${where}: the extension sends every field the server has a shape for, and no other`);
+    for (const k of Object.keys(v)) fits(v[k], spec[k], `${where}.${k}`);
+  };
+  for (const group of EVENT_FIELDS.intake_profile) fits(p[group], PROFILE[group], group);
+  // The record above fills every value, so a value the extension can't send in its shape shows.
+  const leaves = (v) => (v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [v]);
+  assert.ok(!leaves(p).includes(null), `a value came out null: ${JSON.stringify(p)}`);
 });
 
 // Earlier AI clients emitted decision scores; current builders omit them, but ingestion must

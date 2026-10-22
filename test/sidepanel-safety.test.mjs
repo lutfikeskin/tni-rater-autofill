@@ -1592,6 +1592,7 @@ test('reloading an intake drops settled ledger entries without losing unresolved
     $: () => ({}), clearTimeout() {}, pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
     normalizeIntake: () => ({ record, warnings: [] }), intakeSummary: async () => ({ intakeId: scope }),
     store: { set: async () => {} }, doneRestored: new Set(['same-intake|1']), pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
+    profileTimer: null, logProfile: () => false,
     save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {} };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks',
     'persistAiPending', 'restoreAiPending', 'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid'].map(extractFunction).join('\n'), context);
@@ -2174,7 +2175,7 @@ test('a panel edit of the claims box or the Additional Notes box asks Luna again
   const calls = [];
   const sandbox = {
     state: { intake: { record: { claims: { text: 'No' }, notes: { text: null }, applicant: {} }, warnings: [] } },
-    get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, usage: { log: () => {} }, save: async () => {},
+    get, set, rederive, document: { getElementById: () => null }, intakeEdited: () => {}, usage: { log: () => {} }, save: async () => {}, profileLater() {},
     claimsTextEdited: () => calls.push('claimsTextEdited'), reviewClaimsBox: () => calls.push('reviewClaimsBox'), reviewDriverGender: () => {},
   };
   vm.createContext(sandbox);
@@ -4145,7 +4146,7 @@ test('editing a source field in the panel recomputes what derives from it and re
     intakeEdited: () => calls.push(['intakeEdited', record.operations.radiusMiles]),
     usage: { log: (e) => calls.push(['log', e.type, e.path]) },
     save: async () => { calls.push(['save']); stored = structuredClone(sandbox.state.intake); },
-    claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {},
+    claimsTextEdited: () => {}, reviewClaimsBox: () => {}, reviewDriverGender: () => {}, profileLater() {},
   };
   let stored = null;
   vm.createContext(sandbox);
@@ -4249,6 +4250,7 @@ for (const switchTo of ['tab', 'intake', 'entity', 'clear']) for (const transpor
         return [frame];
       },
       pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }),
+      profileTimer: null, logProfile: () => false,
       readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, normalizeIntake: () => ({ record: nextRecord, warnings: [] }),
       intakeSummary: async () => ({ intakeId: nextFingerprint }), pdfjs: {},
       cancelLayouts() {}, holdLayouts() {}, resetViews() {}, discardAiSuggestions() {}, uploadNow() {},
@@ -4343,6 +4345,7 @@ test('completed helpers survive actual intake A to B to A loading and panel relo
         set: async (id, tab, value) => { forms.set(`${id}|${tab}`, structuredClone(value)); } },
       $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {}, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }),
       normalizeIntake: () => ({ record: {}, warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+      profileTimer: null, logProfile: () => false,
       store: { set: async () => {} }, cancelLayouts() {}, holdLayouts() {}, resetViews() {},
       discardAiSuggestions() {}, persistAiPending: async () => {}, restoreAiPending: async () => {},
       uploadNow() {}, render() {}, reviewClaimsBox() {}, reviewIntake() {},
@@ -4735,6 +4738,7 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
     renderSteps() {}, renderSections: () => calls.push(['renderSections', get(record, 'drivers[0].gender') ?? null]), fieldRow() {}, jumpTo() {}, openPdf() {},
     intakeEdited: () => calls.push(['intakeEdited']), usage: { log: (e) => calls.push(['log', e.type, e.path, e.code ?? null]) },
     save: async () => calls.push(['save']), claimsTextEdited() {}, reviewClaimsBox: () => calls.push(['reviewClaimsBox']), reviewDriverGender: () => calls.push(['reviewDriverGender']),
+    profileLater() {},
   };
   vm.createContext(sandbox);
   vm.runInContext(['renderWarnings', 'toggleDone', 'agentEdit', 'applyCheckChoice'].map(extractFunction).join('\n') + `\nconst CHOICE_FIELDS = ${SIDEPANEL.match(/const CHOICE_FIELDS = (.*);/)[1]};`, sandbox);
@@ -5915,3 +5919,39 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
   for (const args of [{ step: 'Additional Business Info', lists: [null, null], record }]) assert.equal((await run(args)).adding, null);
 });
 
+
+test('the business profile is logged on load, after a correction settles, and on opening, only when it changed', async () => {
+  const { intakeProfile, redactor } = await import('../src/usage.js');
+  const { redactionTerms } = await import('../src/plan.js');
+  const logged = [];
+  const timers = [];
+  const record = { applicant: { name: 'Sample Co' }, garaging: { state: 'TX' }, operations: { businessClass: 'Freight Hauler' }, drivers: [], vehicles: [], trailers: [], coverage: {} };
+  const sandbox = {
+    state: { intake: { record } }, PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile, redactor, redactionTerms,
+    usage: { currentSession: () => ({ id: 's1' }), log: (e) => logged.push(e) },
+    save: async () => logged.push('save'),
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(['logProfile', 'profileLater'].map(extractFunction).join('\n'), sandbox);
+  assert.equal(sandbox.logProfile(), true);
+  assert.equal(logged[0].type, 'intake_profile');
+  assert.equal(logged[0].business.state, 'TX');
+  assert.equal(sandbox.logProfile(), false, 'the same profile again is not logged');
+  record.garaging.state = 'OK';
+  sandbox.profileLater();
+  assert.equal(timers.at(-1).ms, 15_000, 'a correction waits for the agent to finish');
+  timers.at(-1).fn();
+  await Promise.resolve();
+  assert.deepEqual([logged.length, logged[1].business.state, logged[2]], [3, 'OK', 'save'], 'the corrected profile, then saved with the intake');
+  sandbox.usage.currentSession = () => null;
+  record.garaging.state = 'KS';
+  assert.equal(sandbox.logProfile(), false, 'no quote session, nothing logged');
+
+  // One still waiting stays with its own quote: logged before the intake is replaced or cleared.
+  assert.match(extractFunction('loadFile'), /if \(profileTimer\) logProfile\(\);\n\s+if \(state\.intake\) usage\.log\(\{ type: 'intake_closed', reason: 'replaced' \}\);/);
+  assert.match(extractFunction('loadFile'), /await logSettings\('intake'\);\n\s+logProfile\(\);/);
+  assert.match(extractFunction('clearClient'), /if \(profileTimer\) logProfile\(\);\n\s+usage\.log\(\{ type: 'intake_closed', reason: 'cleared' \}\);/);
+  assert.match(extractFunction('agentEdit'), /usage\.log\(\{ type: 'intake_edit'[^\n]*\n\s+profileLater\(\);/);
+  assert.match(extractFunction('init'), /logSettings\('opened'\);\n[^\n]*\n\s+if \(logProfile\(\)\) save\(\);/);
+});

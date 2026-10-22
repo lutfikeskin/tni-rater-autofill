@@ -7,7 +7,8 @@
 // Checks retained answers after reloads, stops at the declaration and never submits.
 // Usage events go to a throwaway local usage server (server/index.mjs on a temporary folder), set
 // as the panel's Server before it opens: the harness fails if anything is sent to the production
-// usage server, or if the intake_loaded event doesn't reach the local one.
+// usage server, or if the intake_loaded event, or the intake_profile event whole (nothing in it out
+// of the server's shapes), doesn't reach the local one.
 //
 //   npm run package && npm run replay   # (in another terminal)
 //   npm run e2e:extension -- [screenshot folder]
@@ -281,12 +282,14 @@ await panel.evaluate(() => document.getElementById('upload-usage')?.click()).cat
 await panel.waitForTimeout(1500);
 await ctx.close();
 await new Promise((resolve) => usageServer.close(resolve));
-const received = fs.readdirSync(path.join(usageDir, 'events')).flatMap((f) => fs.readFileSync(path.join(usageDir, 'events', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).type));
+const stored = fs.readdirSync(path.join(usageDir, 'events')).flatMap((f) => fs.readFileSync(path.join(usageDir, 'events', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+const received = stored.map((e) => e.type);
+const profileWhole = stored.some((e) => e.type === 'intake_profile' && !e.dropped);
 fs.rmSync(usageDir, { recursive: true, force: true });
 console.log(`Usage: ${received.length} events to the local server (${[...new Set(received)].join(', ')}), ${toProduction.length} requests to production`);
 if (toProduction.length) console.log('TO PRODUCTION:', toProduction.join('; '));
-const usageOk = !toProduction.length && received.includes('intake_loaded');
+const usageOk = !toProduction.length && received.includes('intake_loaded') && profileWhole;
 const result = JSON.parse(await Promise.resolve(lastMock));
 const ok = usageOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, declaration and Submit stayed untouched, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one.' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, or Prev did not stay put.');
+console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, declaration and Submit stayed untouched, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one (intake_loaded, and intake_profile with nothing dropped).' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, or Prev did not stay put.');
 process.exit(ok ? 0 : 1);

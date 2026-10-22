@@ -7,6 +7,9 @@
 //  - text typed into boxes is never logged. It is compared with the intake on this computer and
 //    only the result is kept ("matches drivers[0].dob", "same as autofill except formatting").
 
+import { toMoney } from './normalize.js';
+import { noPriorInsurance } from './util.js';
+
 export const LOG_KEY = 'usageLog';
 export const MAX_EVENTS = 20000;
 
@@ -30,6 +33,83 @@ export async function intakeSummary(pdfBytes, raw, result) {
     counts: { drivers: record.drivers.length, vehicles: record.vehicles.length, trailers: record.trailers.length },
     coverages: Object.entries(record.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     warnings: warnings.map((w) => ({ code: w.code, path: w.path, level: w.level })),
+  };
+}
+
+// What the client's business looks like, never who it is (intake_profile, for TNI's analysis of
+// its quoting): no name, number, address, contact, date of birth, VIN or plate. Where an identifier
+// matters, a fact about it instead: whether a USDOT, MC or FEIN number was given, a driver's age on
+// `today`, the month a policy expires. A yes/no keeps null (unanswered, never No). Gender is the
+// panel's (the intake doesn't ask it): null is not set, filled Male by TNI's standard. The intake's
+// own words (what they haul, makes and models, the insurer) are redacted like a label and lose
+// anything that could identify the client (ID_LIKE: a date, an email, five digits in a row, a word
+// of eight or more letters and digits mixed, as in a VIN). The server keeps each value only in the
+// same shapes (PROFILE in server/index.mjs).
+export const ID_LIKE = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|@|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/i;
+const ID_PARTS = /\S*@\S*|\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/gi;
+export const PROFILE_UNITS = 50;
+const MAX_DOLLARS = 99_999_999;
+const yesNo = (v) => (typeof v === 'boolean' ? v : null);
+const given = (v) => (String(v ?? '').trim() ? 'given' : 'blank');
+const whole = (v, min, max) => (typeof v === 'number' && Number.isFinite(v) && Math.round(v) >= min && Math.round(v) <= max ? Math.round(v) : null);
+const usState = (v) => { const s = String(v ?? '').trim().toUpperCase(); return /^[A-Z]{2}$/.test(s) ? s : null; };
+const MDY = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+function ageOn(dob, today) {
+  const m = MDY.exec(dob ?? '');
+  if (!m) return null;
+  const [month, day, year] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const birthdayPassed = today.getMonth() + 1 > month || (today.getMonth() + 1 === month && today.getDate() >= day);
+  return whole(today.getFullYear() - year - (birthdayPassed ? 0 : 1), 0, 120);
+}
+const monthOf = (date) => { const m = MDY.exec(date ?? ''); return m ? `${m[3]}-${m[1]}` : null; };
+
+export function intakeProfile(record, { redact = (s) => s, today = new Date() } = {}) {
+  const r = record ?? {};
+  const a = r.applicant ?? {};
+  const o = r.operations ?? {};
+  const t = r.trailerInfo ?? {};
+  const c = r.coverage ?? {};
+  const words = (v, max) => {
+    if (v == null || typeof v === 'object') return null;
+    const s = redact(String(v)).replace(ID_PARTS, '#').replace(/\s+/g, ' ').trim().slice(0, max).trim();
+    return /[a-z\d]/i.test(s.replace(/#/g, '')) && !ID_LIKE.test(s) ? s : null;
+  };
+  const dollars = (v) => whole(v, 0, MAX_DOLLARS);
+  const year = (v) => whole(v, 1900, 2100);
+  const unit = (u) => ({ type: words(u.type, 40), year: year(u.year), make: words(u.make, 40), model: words(u.model, 40), value: dollars(u.value) });
+  const list = (k) => (Array.isArray(r[k]) ? r[k].slice(0, PROFILE_UNITS) : []);
+  return {
+    type: 'intake_profile',
+    business: {
+      state: usState(r.garaging?.state), businessClass: words(o.businessClass, 80), dot: given(a.dot), mc: given(a.mc), fein: given(a.fein),
+      dotWithin60Days: yesNo(a.mcDotWithin60Days), yearsInBusiness: whole(a.yearsInBusiness, 0, 200), yearsExperience: whole(a.yearsExperience, 0, 100),
+      ownerDrives: yesNo(a.ownerDrives),
+    },
+    operations: {
+      whatHaul: words(o.whatHaul, 120), radiusMiles: whole(o.radiusMiles, 0, 10_000), vehicleOwnership: words(o.vehicleOwnership, 40),
+      personalUse: yesNo(o.personalUse), usesEld: yesNo(o.usesEld), eldBrand: words(o.eldBrand, 60), needSr22: yesNo(o.needSr22),
+      filingsRequired: yesNo(o.filingsRequired), filingsWhich: words(o.filingsWhich, 60), hazmat: yesNo(o.hazmat), hazPlacard: yesNo(o.hazPlacard),
+      movingState: yesNo(o.movingState), teamDriving: yesNo(o.teamDriving), canadaLoads: yesNo(o.canadaLoads), equipVehicle: dollars(o.equipVehicle),
+    },
+    vehicles: list('vehicles').map(unit),
+    trailers: list('trailers').map(unit),
+    trailerInfo: {
+      ownership: words(t.ownership, 40), hitch: words(t.hitch, 40), interchange: yesNo(t.interchange),
+      interchangeLimit: dollars(toMoney(t.interchangeLimit)), equipTrailer: dollars(t.equipTrailer),
+    },
+    drivers: list('drivers').map((d) => ({
+      age: ageOn(d.dob, today), licenseState: usState(d.licenseState), cdl: yesNo(d.cdl), cdlYear: year(d.cdlYear), excluded: yesNo(d.excluded),
+      maritalStatus: words(d.maritalStatus, 30), gender: ['MALE', 'FEMALE'].includes(d.gender) ? d.gender : null,
+    })),
+    coverage: {
+      autoLiability: words(c.autoLiability, 20), autoLiabLimit: words(c.autoLiabLimit, 40), cargo: yesNo(c.cargo), cargoLimit: dollars(c.cargoLimit),
+      cargoDeductible: dollars(c.cargoDeductible), gl: yesNo(c.gl), hasGl: yesNo(c.hasGl), glLimit: words(c.glLimit, 40),
+      reeferBreakdown: yesNo(c.reeferBreakdown), ntl: yesNo(c.ntl),
+    },
+    priorInsurance: list('priorInsurance').map((p) => ({
+      type: words(p.type, 40), carrier: words(p.carrier, 60), limit: words(p.limit, 40), expires: noPriorInsurance(p) ? 'none' : monthOf(p.expiration),
+    })),
+    hasClaims: yesNo(r.claims?.hasClaims),
   };
 }
 
