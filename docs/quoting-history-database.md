@@ -1,6 +1,6 @@
 # Quoting history database (proposal)
 
-**Status: proposal, nothing implemented or deployed.** Written 2026-10-22 for the maintainer to review. It changes no extension, server or Railway setting. Each step at the end would be its own pull request, after the decisions listed there are made.
+**Status: proposal, nothing deployed.** Written 2026-10-22 for the maintainer to review. Step 1 (the intake profile) is in pull requests waiting for the privacy text to be approved: the privacy policy and store answers (#147), the server that accepts `intake_profile` (#148), and the extension that sends it (#149). The rest is not built. Each step at the end is its own pull request, after the decisions listed there are made.
 
 Read this when deciding whether and how TNI keeps its quoting history in Postgres for business analysis. For the usage server as it runs today, read [hosting](hosting.md); for what each event means, [learning](learning.md).
 
@@ -98,9 +98,9 @@ Company and owner names, phone, email, street, city, ZIP, USDOT, MC and FEIN num
 
 ### When it is sent, and how the server checks it
 
-The panel sends `intake_profile` right after `intake_loaded`, and again after the agent corrects the intake in the panel, at most once a minute. The session's last profile wins. Today an agent's correction shows up only as `intake_edit` with the field's path, never the new value; with the profile, a corrected state or class reaches the database.
+The panel sends `intake_profile` right after `intake_loaded`, 15 seconds after the agent's last correction in the panel, and when it opens on a saved intake, each time only when the profile changed; one still waiting is sent before the intake is replaced or cleared. The session's last profile wins. Today an agent's correction shows up only as `intake_edit` with the field's path, never the new value; with the profile, a corrected state or class reaches the database.
 
-The server keeps the profile only in its exact shapes, as it does for the run fields: booleans or null where yes/no, whole numbers in a plausible range, `given`/`blank`, months as `YYYY-MM`, lists of at most 50 vehicles, 50 trailers and 50 drivers, text within its length. Any text holding five or more digits in a row, an `@` or a date is dropped, the test the extension already uses to keep typed values out of choice events (`LOOKS_TYPED` in [usage.js](../src/usage.js)), so a VIN, phone or email that slipped into a make or an insurer's name never gets stored. The whole event must fit the server's 32 KB limit. Following [hosting](hosting.md), the server that accepts the event deploys before the extension that sends it.
+The server keeps the profile only in its exact shapes, as it does for the run fields: booleans or null where yes/no, whole numbers in a plausible range, `given`/`blank`, months as `YYYY-MM`, lists of at most 50 vehicles, 50 trailers and 50 drivers, text within its length. Text that could identify the client (`ID_LIKE`: a date, an `@`, five digits in a row, or a word of eight or more letters and digits mixed, as in a VIN or policy number) is refused by the server; the extension replaces such parts with `#` before sending, so a VIN, phone or email that slipped into a make or an insurer's name never gets stored. A consistency test checks that the extension and the server agree on every field and on that test. The whole event must fit the server's 32 KB limit. Following [hosting](hosting.md), the server that accepts the event deploys before the extension that sends it.
 
 Quotes from before that release have no profile. A one-time backfill could build profiles for the older quotes whose intake PDFs TNI still has on the maintainer's computer, matched by fingerprint as `npm run benchmark` matches them, through the same profile function. Those rows would be marked as backfilled.
 
