@@ -309,6 +309,18 @@ test('fill report omits absent sections without rendering null text', () => {
   assert.ok(box.children.every((child) => child != null && child !== false), 'DOM replaceChildren must receive only actual report nodes');
 });
 
+// W43-32 (TNI, 2026-10-21): GEICO without 11 Payments; the fill picked the plan with the most payments
+// offered (pagekit `orMost`). Said above the items, and nothing is left for the agent by it.
+test('fill report names an answer picked in place of one the page does not offer', () => {
+  const { context, box } = reportHarness({ tab: { id: 1, url: '/quote' } }, { pageOf: () => '/quote' });
+  const said = 'The page doesn\'t offer "11 Payments" here: the fill picked "9 Payments", the plan with the most payments GEICO offers.';
+  context.renderReport([{ fields: 2, filled: [{ label: 'give pay plan v2', shown: '9 Payments', standard: true, said }, { label: 'Liability Coverage', shown: 'Bodily Injury and Property Damage Liability' }],
+    kept: [], failed: [], noData: [], leftRequired: [], actions: [{ id: 'printProposal', text: 'Print Quote Proposal' }] }]);
+  const lines = box.children.filter((n) => n?.props?.class === 'card quiet said');
+  assert.deepEqual(lines.map((n) => n.children[0]), [said]);
+  assert.equal(context.state.reportFor.left, 0);
+});
+
 // FL live run, 2026-10-07: "See what was filled always shows 0". A follow-up pass finds the
 // answers an earlier pass filled already there; they're still ours, counted and shown as filled.
 test('fill report counts answers an earlier pass on the page filled', () => {

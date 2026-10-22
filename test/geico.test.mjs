@@ -134,20 +134,29 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   assert.equal(geico.advance.quietMs, 800);
   // Helpers: those adding a unit the panel is adding (below), and on Quote & Coverages (TNI, FL live
   // run 4, 2026-10-21): Motor Truck Cargo opened when the intake asks for cargo (W43-16), then, once
-  // nothing there is left for the agent and the premium is current, View More Payment Plans and Print
-  // Quote Proposal after 11 Payments (W43-18). Recalculate is the agent's (FL live run 6, 2026-10-21:
-  // GEICO put its own coverage choices back after each one the fill clicked). Quote & Coverages takes
+  // nothing there is left for the agent: Recalculate, once a quote, on a page quiet for 2 s, every
+  // answer checked after GEICO's redraw (W43-31, after FL live run 6, 2026-10-21: GEICO put its own
+  // coverage choices back after each one the fill clicked at once); with the premium current, View
+  // More Payment Plans and Print Quote Proposal once a plan is picked (W43-18, W43-32). Quote & Coverages takes
   // follow-ups only for questions it draws (FL live run 2: the cargo section's); an answer GEICO takes
   // back there is kept by an automatic fill (the agent's Fill this page gives it again: sidepanel).
   const quoteHelpers = (r) => buildPlan(r, geico, {}).filter((s) => s.kind === 'action').map((s) => [s.action, s.steps, s.whenClear, s.verify]);
-  assert.deepEqual(quoteHelpers(with_({ 'coverage.cargo': null })), [['morePayPlans', [QC], true, null], ['printProposal', [QC], true, null]]);
+  assert.deepEqual(quoteHelpers(with_({ 'coverage.cargo': null })), [['recalculate', [QC], true, 'premium'], ['morePayPlans', [QC], true, null], ['printProposal', [QC], true, null]]);
+  const recalc = buildPlan(intake(), geico, {}).find((s) => s.action === 'recalculate');
+  assert.deepEqual([recalc.needsRecalculation, recalc.waitRequired, recalc.quietMs, recalc.once, recalc.keepAnswers], [true, true, 2000, true, true]);
   assert.deepEqual(quoteHelpers(with_({ 'coverage.cargo': true }))[0], ['openCargo', [QC], false, null]);
   assert.ok(!quoteHelpers(with_({ 'coverage.cargo': false })).some(([id]) => id === 'openCargo'));
   const cargo = geico.actions.find((a) => a.id === 'openCargo');
   assert.deepEqual([cargo.token, cargo.within, cargo.unlessSelector], ['editIcon', 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]', 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"].expanded']);
-  assert.deepEqual(geico.actions.find((a) => a.id === 'printProposal').afterValue, ['geico.qGivePayPlanV2', '^11 Payments']);
-  assert.ok(geico.actions.filter((a) => a.steps.includes(QC) && a.id !== 'openCargo').every((a) => a.needsPremium), 'each waits for the agent\'s Recalculate');
-  assert.ok(!geico.actions.some((a) => a.id === 'recalculate' || /recalculate/.test(a.text ?? '')), 'Recalculate is never the fill\'s');
+  // Print once a pay plan is picked: 11 Payments, or the plan the fill picked in its place.
+  assert.deepEqual(geico.actions.find((a) => a.id === 'printProposal').after, ['geico.qGivePayPlanV2']);
+  // 11 Payments not offered once View More Payment Plans was clicked: the plan with the most
+  // payments offered, Pay In Full counting one (W43-32; the page kit picks it).
+  const ORMOST = { count: '^(\\d+)\\s+payments?\\b', one: '^pay\\s+in\\s+full\\b', after: 'morePayPlans', name: 'the plan with the most payments GEICO offers' };
+  assert.deepEqual(buildPlan(intake(), geico, {}).filter((s) => s.field === 'GivePayPlanV2').map((s) => [s.value, s.whenOffered, s.orMost]), [['11 Payments', true, ORMOST], ['11 Payments', true, ORMOST]]);
+  const most = (texts) => texts.map((t) => (new RegExp(ORMOST.one, 'i').test(t) ? 1 : Number(new RegExp(ORMOST.count, 'i').exec(t)?.[1] ?? NaN)));
+  assert.deepEqual(most(['Pay In Full', '4 Payments Bi-Monthly Plan', '9 Payments', '11 Payments', 'Paperless discount']), [1, 4, 9, 11, NaN]);
+  assert.ok(geico.actions.filter((a) => a.steps.includes(QC) && !['openCargo', 'recalculate'].includes(a.id)).every((a) => a.needsPremium), 'each waits for a current premium');
   for (const a of geico.actions) assert.ok(a.steps.every((s) => [VEH, DRV, QC].includes(s)), a.id);
   assert.deepEqual([geico.newQuestionsOnlySteps, geico.keepTakenBack], [[QC], [QC]]);
   assert.ok(!('noFollowUpSteps' in geico));
@@ -707,10 +716,10 @@ test('adding units: the chooser answers the unit the panel adds; its "+" and Nex
   assert.equal(buildPlan(with_({ 'applicant.ownerDrives': false }, RECORDS()[1]), geico, driver).filter((s) => s.kind === 'action' && !s.steps.includes(QC)).length, 1);
   // Never a button that leaves a step or commits: on the unit steps only the add icon and Next inside
   // the chooser; on Quote & Coverages the cargo card's chevron, View More Payment Plans and Print
-  // Quote Proposal (TNI, 2026-10-21), never its Recalculate (the agent's) or Next (MVR & CLUE).
+  // Quote Proposal (TNI, 2026-10-21), Recalculate once a quote (W43-31), never its Next (MVR & CLUE).
   for (const a of geico.actions) {
     assert.ok(a.token === 'addIcon' || (a.text === '^next$' && a.moveOn && /VehicleOrTrailer/.test(a.within))
-      || (a.steps.includes(QC) && (a.token === 'editIcon' || ['^view more payment plans$', '^print quote proposal$'].includes(a.text))), a.id);
+      || (a.steps.includes(QC) && (a.token === 'editIcon' || ['^recalculate$', '^view more payment plans$', '^print quote proposal$'].includes(a.text))), a.id);
   }
 });
 

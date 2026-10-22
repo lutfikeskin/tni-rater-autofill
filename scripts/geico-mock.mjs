@@ -354,7 +354,9 @@ let totalMs = 0;
 // picker's units, the options of sidepanel.js fillOptions for GEICO, then rememberFill's bookkeeping.
 // `asked`: the agent's own Fill this page (fillContext), which gives back an answer GEICO took back (no
 // takenBack) and adds a unit with both switches off; the others are the panel's automatic fills.
-async function fill(form, { asked = false } = {}) {
+// `expectFailed`: patterns for the keys of the red items this fill must leave (the answers GEICO
+// changed when the fill's Recalculate redrew the step; `null` for the item without a field).
+async function fill(form, { asked = false, expectFailed = [] } = {}) {
   await poll();
   const step = await inWorld('__raterKit.step()');
   const shown = (await mock()).step;
@@ -431,7 +433,7 @@ async function fill(form, { asked = false } = {}) {
   if (report.advanced) lines.push(`  → ${report.advanced}`);
   if (report.halted) lines.push(`  halted: ${report.reason}`);
   for (const x of report.unknown ?? []) fail(`${form}: unfamiliar question "${x.label}" (${x.key}): left for the agent and offered to the AI assistant`);
-  for (const x of report.failed ?? []) fail(`${form}: failed "${x.label}" (${x.key}): ${x.reason}`);
+  for (const x of report.failed ?? []) if (!expectFailed.some((re) => re.test(String(x.key)))) fail(`${form}: failed "${x.label}" (${x.key}): ${x.reason}`);
   return report;
 }
 
@@ -724,11 +726,13 @@ async function scenario() {
   // (FL live run 2, 2026-10-21), and the fill waits for them. The fill answers mobile homes No and picks
   // the commodities (W43-23); the agent changes the liability limit, answers household goods and marks
   // the rest done; nothing clicked meanwhile
-  // (`whenClear`). Then Fill this page: nothing clicked while the premium is out of date, as
-  // Recalculate is the agent's (FL live run 6, 2026-10-21: GEICO put its own coverage choices back
-  // after each one the fill clicked). The agent clicks Recalculate, and the follow-up fill picks 11
-  // Payments under View More Payment Plans and clicks Print Quote Proposal, once each (TNI, FL live
-  // run 4, 2026-10-21: W43-18); the agent's limit is kept.
+  // (`whenClear`). Then Fill this page: with nothing left, Recalculate once the page has been quiet for
+  // 2 s (W43-31). GEICO draws its own choices back for UM/UIM (the fill's) and the liability limit (the
+  // agent's), as on FL live run 6: the fill puts UM/UIM back, leaves the agent's limit, marks both red
+  // with one more red item, and clicks nothing more. The agent picks the limit again and clicks
+  // Recalculate, and the follow-up fill picks 11 Payments under View More Payment Plans and clicks
+  // Print Quote Proposal, once each (TNI, FL live run 4, 2026-10-21: W43-18), never Recalculate
+  // again; the agent's limit is kept.
   const CARGO = 'li[id^="Id_MtcCoverageQuestionsComboActivityData_"]';
   await fillDrawn('Quote & Coverages');
   if (!doneActions.has('openCargo')) fail('Quote & Coverages: the fill did not open Motor Truck Cargo');
@@ -743,10 +747,26 @@ async function scenario() {
   const leftKeys = [...(needsSeen.get('Quote & Coverages')?.keys() ?? [])];
   for (const key of leftKeys) keysIn(`${PAGE}|s:Quote & Coverages`).add(key);
   lines.push(`  (agent marked ${leftKeys.length} item(s) done)`);
-  const asked = await fill('Quote & Coverages', { asked: true });
-  if (asked.actions?.length || (await mock()).recalcs) fail(`Quote & Coverages: Fill this page clicked ${(asked.actions ?? []).map((a) => a.id).join(', ') || 'Recalculate'} before the agent's Recalculate`);
+  const UM = 'cov:Uninsured Motorist Bodily Injury (includes Underinsured)';
+  const LIMIT = 'cov:Bodily Injury or Combined Single Limit Liability';
+  await page.evaluate(([um, limit]) => { window.__geicoMock.recalcResets = { [um]: '$750,000 Combined Single Limit', [limit]: '$1,000,000 Combined Single Limit' }; }, [UM, LIMIT]);
+  const asked = await fill('Quote & Coverages', { asked: true, expectFailed: [/^cov:uninsured motorist bodily injury/, /^cov:bodily injury or combined single limit/, /^null$/] });
+  await settled();
+  await poll();
+  const askedIds = asked.actions?.map((a) => a.id) ?? [];
+  if (JSON.stringify(askedIds) !== '["recalculate"]') fail(`Quote & Coverages: Fill this page clicked [${askedIds.join(', ')}], expected [recalculate] (GEICO then changed answers)`);
+  if ((await mock()).recalcs !== 1) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s) after Fill this page, expected once`);
+  // In page order: the agent's limit (left, "your answer"), UM/UIM (put back), then the one without a field.
+  const red = (asked.failed ?? []).map((x) => [x.key ?? null, /your answer/.test(x.reason) ? 'agent' : /put it back/.test(x.reason) ? 'back' : 'say']);
+  if (JSON.stringify(red) !== JSON.stringify([['cov:bodily injury or combined single limit liability', 'agent'], ['cov:uninsured motorist bodily injury includes underinsured', 'back'], [null, 'say']])) {
+    fail(`Quote & Coverages: the red items after Recalculate were ${JSON.stringify(red)}, expected the agent's limit left, UM/UIM put back and one without a field`);
+  }
+  const redrawn = await values();
+  if (redrawn[UM] !== '$100,000 Combined Single Limit') fail(`Quote & Coverages: UM/UIM is ${JSON.stringify(redrawn[UM])} after Recalculate, not put back to $100,000 CSL`);
+  if (redrawn[LIMIT] !== '$1,000,000 Combined Single Limit') fail(`Quote & Coverages: the agent's limit is ${JSON.stringify(redrawn[LIMIT])} after Recalculate: the fill changed it`);
   // TNI's pay plan isn't offered until View More Payment Plans, which GEICO shows once rated: not the agent's.
   if ([...needsSeen.get('Quote & Coverages')?.keys() ?? []].some((k) => /PayPlan/.test(k))) fail('Quote & Coverages: the pay plan was left for the agent before Recalculate');
+  await agent.choose(await coverage('Bodily Injury or Combined Single Limit Liability'), '$750,000 Combined Single Limit');
   await agent.press('Recalculate');
   await page.waitForFunction(() => window.__geicoMock.premium, null, { timeout: 15000 });
   await settled();
@@ -755,10 +775,11 @@ async function scenario() {
   await page.waitForTimeout(700);
   await settled();
   await poll();
-  // The page's own count says Recalculate ran once (the click checks below say by whom: the agent).
+  // The page's own count says Recalculate ran twice (the click checks below say by whom: the fill once,
+  // the agent once).
   const clickedIds = done.actions?.map((a) => a.id) ?? [];
   if (JSON.stringify(clickedIds) !== JSON.stringify(['morePayPlans', 'printProposal'])) fail(`Quote & Coverages: the fill clicked [${clickedIds.join(', ')}], expected [morePayPlans, printProposal] after the agent's Recalculate`);
-  if ((await mock()).recalcs !== 1) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s), expected once`);
+  if ((await mock()).recalcs !== 2) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s), expected twice (the fill's, then the agent's)`);
   if (!(await mock()).premium) fail('Quote & Coverages: the premium is out of date after the agent\'s Recalculate and the pay plan');
   if ((await values())['GivePayPlanV2#2'] !== 'GEICO_PP_11Pay') fail(`Quote & Coverages: the pay plan is ${JSON.stringify((await values())['GivePayPlanV2#2'])}, not 11 Payments`);
   const after = await fill('Quote & Coverages');
@@ -837,10 +858,10 @@ if (ownerCheck && (filledOn('Vehicles: owner check', 'ref:GiveLastName') || owne
 // when the page is done" on), once, its list's "+" and, for a vehicle, the chooser's Next: vehicle 2's
 // and driver 2's, never the trailer's (added with the setting off). Its Continues, once each, where
 // nothing was left for the agent: the owner's driver form, Add Driver, both lists with every intake
-// unit, Additional Business Info. On Quote & Coverages, once each: Motor Truck Cargo's chevron, View
-// More Payment Plans and Print Quote Proposal (TNI, 2026-10-21); Recalculate only the agent's (FL live
-// run 6, 2026-10-21). Never another Next, Save and Continue or Looks Good, Discard, a progress link,
-// another edit icon or link.
+// unit, Additional Business Info. On Quote & Coverages, once each: Motor Truck Cargo's chevron,
+// Recalculate (W43-31: once a quote; the agent's after that), View More Payment Plans and Print Quote
+// Proposal (TNI, 2026-10-21). Never another Next, Save and Continue or Looks Good, Discard, a progress
+// link, another edit icon or link.
 const isAdd = (e) => e.type === 'click' && (e.target === 'addIcon' || (e.target === 'button' && e.text === 'Next' && e.view === 'vehicle-or-trailer'));
 const adds = final.log.filter((e) => !e.isTrusted && isAdd(e)).map((e) => `${e.target} on ${e.view}`);
 const wantAdds = ['addIcon on vehicle-list', 'button on vehicle-or-trailer', 'addIcon on driver-list'];
@@ -854,7 +875,7 @@ if (JSON.stringify(picks) !== '["business-owner"]') fail(`the extension picked a
 const isQuoteHelper = (e) => e.type === 'click' && e.view === 'quote' && (e.target === 'editIcon' || (e.target === 'button' && /^(recalculate|print quote proposal)$/i.test(e.text ?? ''))
   || (e.target === 'link' && /^view more payment plans$/i.test(e.text ?? '')));
 const helperClicks = final.log.filter((e) => !e.isTrusted && isQuoteHelper(e)).map((e) => `${e.target}${e.text ? ` ${e.text}` : ''}`);
-const wantHelpers = ['editIcon', 'link View More Payment Plans', 'button Print Quote Proposal'];
+const wantHelpers = ['editIcon', 'button Recalculate', 'link View More Payment Plans', 'button Print Quote Proposal'];
 if (JSON.stringify(helperClicks) !== JSON.stringify(wantHelpers)) fail(`the extension's Quote & Coverages clicks were [${helperClicks.join(', ')}], expected [${wantHelpers.join(', ')}]`);
 const agentRecalcs = final.log.filter((e) => e.isTrusted && e.type === 'click' && e.target === 'button' && /^recalculate$/i.test(e.text ?? '')).length;
 if (agentRecalcs !== 1) fail(`the agent's Recalculate clicks were ${agentRecalcs}, expected 1`);
@@ -865,6 +886,63 @@ for (const e of final.stopActions.filter((x) => !x.isTrusted)) fail(`${e.step}: 
 // The Social Security number: never typed, by anyone here.
 for (const e of final.log.filter((x) => x.target === 'GiveSocialSecurityNumber' && x.type !== 'view')) fail(`the Social Security number was ${e.type === 'change' ? 'changed' : e.type} (${e.isTrusted ? 'agent' : 'extension'})`);
 for (const f of fills) for (const x of f.report.filled) if (x.key === 'ref:GiveSocialSecurityNumber') fail(`${f.form}: the Social Security number was filled`);
+// W43-32: a quote whose plans have no 11 Payments (TX, 2026-10-21: Pay In Full, 4 Payments Bi-Monthly
+// Plan, 9 Payments): after View More Payment Plans the fill picks the plan with the most payments
+// offered, names it in its report, and prints. A fresh quote view (?view=quote&plans=no11), filled with
+// the pay plan's rules and those two helpers only: no unit is saved there for the coverage rows.
+async function noElevenPayments() {
+  const tx = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+  tx.on('pageerror', (e) => errors.push(String(e.message)));
+  await tx.route(/^(https?|wss?):/i, (r) => { refused.push(r.request().url()); return r.abort(); });
+  await tx.goto(`${pathToFileURL(path.join(root, 'test/fixtures/geico/quote.html')).href}?view=quote&plans=no11`);
+  await tx.waitForFunction(() => window.__geicoMock?.view === 'quote');
+  const txCdp = await tx.context().newCDPSession(tx);
+  const { frameTree: txFrames } = await txCdp.send('Page.getFrameTree');
+  const { executionContextId: txWorld } = await txCdp.send('Page.createIsolatedWorld', { frameId: txFrames.frame.id, worldName: 'TNI Rater Autofill (mock, no 11 Payments)' });
+  const run = async (expression) => {
+    const r = await txCdp.send('Runtime.evaluate', { expression, contextId: txWorld, awaitPromise: true, returnByValue: true });
+    if (r.exceptionDetails) throw new Error(`in the extension's world: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+    return r.result.value;
+  };
+  await run(`globalThis.chrome = { runtime: { id: 'geico-mock', sendMessage() { return Promise.resolve(); }, onMessage: { addListener() {}, removeListener() {} } } }; true`);
+  await run(KIT);
+  const carrier = { ...geico, rules: geico.rules.filter((r) => r.field === 'GivePayPlanV2'), actions: geico.actions.filter((a) => ['morePayPlans', 'printProposal'].includes(a.id)) };
+  const plan = buildPlan(record, carrier, {});
+  const options = { replaceChoices: !!geico.replaceChoices, stopSteps: STOP_STEPS, maxRounds: 20 };
+  // The step's other questions (no rule for them here) are left as the page has them: the agent
+  // marks them done, and the fill after that is the one checked.
+  const first = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify(options)})`);
+  if (first.actions?.length) fail(`Quote & Coverages without 11 Payments: the fill clicked ${first.actions.map((a) => a.text).join(', ')} with questions left for the agent`);
+  const skip = (first.unknown ?? []).map((x) => x.key);
+  const report = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify({ ...options, skip })})`);
+  const plans = await tx.evaluate(() => window.__geicoMock.values());
+  const clicks = (await tx.evaluate(() => window.__geicoMock.log)).filter((e) => !e.isTrusted && e.type === 'click' && ['link', 'button'].includes(e.target)).map((e) => e.text);
+  lines.push(`## Quote & Coverages without 11 Payments · ${report.rounds} rounds · filled ${report.filled.map((x) => x.shown).join(', ') || 'nothing'}`);
+  for (const x of report.filled) if (x.said) lines.push(`  said: ${x.said}`);
+  if (report.actions?.length) lines.push(`  clicked: ${report.actions.map((a) => a.text).join(' · ')}`);
+  const said = report.filled.find((x) => x.said)?.said ?? '';
+  if (JSON.stringify(report.filled.map((x) => x.shown)) !== '["9 Payments"]' || !/doesn't offer "11 Payments".*picked "9 Payments", the plan with the most payments GEICO offers/.test(said)) {
+    fail(`Quote & Coverages without 11 Payments: filled [${report.filled.map((x) => x.shown).join(', ')}] saying ${JSON.stringify(said)}, expected 9 Payments, named`);
+  }
+  if (!Object.values(plans).includes('GEICO_PP_9Pay')) fail('Quote & Coverages without 11 Payments: 9 Payments is not the plan picked on the page');
+  if (JSON.stringify(clicks) !== '["View More Payment Plans","Print Quote Proposal"]') fail(`Quote & Coverages without 11 Payments: the fill clicked [${clicks.join(', ')}], expected View More Payment Plans, then Print Quote Proposal`);
+  for (const k of ['noData', 'failed', 'checks']) if (report[k]?.length) fail(`Quote & Coverages without 11 Payments: ${k} ${report[k].map((x) => x.label).join('; ')}`);
+  // A later fill of the quote (after Print, or Fill this page), with those clicks done: it agrees
+  // with the 9 Payments on the page and leaves nothing, clicking nothing (review of #140).
+  const doneActions = [...new Set(report.actions.map((a) => a.id))];
+  const later = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify({ ...options, skip, doneActions })})`);
+  lines.push(`## Quote & Coverages without 11 Payments, filled again · ${later.rounds} rounds · kept ${later.kept.map((x) => x.label).join(', ') || 'nothing'}`);
+  for (const k of ['noData', 'failed', 'checks']) if (later[k]?.length) fail(`Quote & Coverages without 11 Payments, filled again: ${k} ${later[k].map((x) => x.note ?? x.reason ?? x.label).join('; ')}`);
+  if (later.actions?.length) fail(`Quote & Coverages without 11 Payments, filled again: the fill clicked ${later.actions.map((a) => a.text).join(', ')}`);
+  if (!Object.values(await tx.evaluate(() => window.__geicoMock.values())).includes('GEICO_PP_9Pay')) fail('Quote & Coverages without 11 Payments, filled again: 9 Payments is no longer the plan picked');
+  await tx.close();
+}
+try {
+  await noElevenPayments();
+} catch (e) {
+  fail(`the no-11-Payments run stopped: ${String(e.message).split('\n')[0]}`);
+}
+
 if (errors.length) fail(`page errors: ${errors.join(' | ')}`);
 if (refused.length) lines.push(`Requests refused: ${refused.length}`);
 
