@@ -888,9 +888,11 @@ async function loadFile(file) {
   clientNote(same ? `Same intake${work ? `: you ${work}, and that stays` : ''}.` : null);
   await keepPdf(bytes);
   state.active = firstUnits();
+  state.activeTab = null;
   state.filled = new Map();
   state.doneActions = new Set();
   state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
+  state.unitNamed = null;
   state.unitShown = null;
   state.unreadRetried = false;
   state.triedAgain = null;
@@ -1350,11 +1352,11 @@ async function refreshTab() {
     // was on before (W43-37, 2026-10-22: Progressive's first driver form got the second driver's
     // details, the one last picked on GEICO). The panel's first tab after it opens keeps the
     // selection saved for that tab.
-    const restored = !state.tab && !state.tabSessions.size && state.activeTab === tab?.id;
+    const restored = !previous && state.activeTab === tab?.id;
     Object.assign(state, previous ?? {
       filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false, triedAgain: null,
       agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null,
-      unitNamed: null, active: restored ? { ...state.active } : firstUnits(),
+      unitNamed: null, active: restored ? { ...(state.savedActive ?? state.active) } : firstUnits(),
     });
     if (state.intake) renderPickers();
     clearTimeout(state.autoTimer);
@@ -2049,6 +2051,8 @@ async function autoFill(page) {
     // Continue or a helper not clicked for something open over it on the page (pagekit `covered`,
     // `coveredHelpers`): said in the report, which a quiet follow-up wouldn't show.
     const covered = frames.some((f) => f.covered || f.coveredHelpers?.length);
+    // Stopped by the agent: said as a stop, not as an error (as fillPage does).
+    const stopped = state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted);
     const current = fillCurrent(ctx);
     // The page showed another step than the panel knew (the recorder's step came late): a new
     // step, with a report of its own, as above.
@@ -2056,7 +2060,7 @@ async function autoFill(page) {
     const newStep = !!step && step !== stepBefore && !state.reports.has(reportKey(tabId, page, carrier, ctx.active, step));
     // The fill whose helper this follows up held Luna back for it.
     const rendered = current && (newStep || unseen || held || covered || state.autoPaused || hasWarnings || state.assistPage === page);
-    if (rendered) { renderReport(frames, { ...ctx, plan, retrying }); assistFrames = frames; }
+    if (rendered) { renderReport(frames, { ...ctx, plan, retrying, stopped }); assistFrames = frames; }
     if (current && (newStep || unseen || held || covered)) showFinish({ auto: true });
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
     const added = frames.flatMap((f) => f.filled).filter((x) => !x.otherStep);
@@ -2079,7 +2083,7 @@ async function autoFill(page) {
         announce(`Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically.`);
       }
       if (current) recordLayout(page);
-    }
+    } else if (ctx.listNote || frames.some((f) => f.advanceDue || f.held)) logFill(ctx, frames, results, started);
   } catch (e) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
@@ -2091,6 +2095,7 @@ async function autoFill(page) {
     if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
     await tellRecorder('resume', tabId);
     state.filling = false;
+    renderSteps();
     if (fillCurrent(ctx) && state.autoPending) scheduleAutoFill(page);
     // The page in front, which this fill wasn't for: its stop card, or its own fill.
     if (moved && fillCurrent(ctx)) {
@@ -2404,7 +2409,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   }
   // The intake unit the form named (pagekit unitNamed), for the mark once its list comes back.
   const named = frames.find((f) => f.unitNamed)?.unitNamed;
-  if (named) maps.unitNamed = { ...named, page };
+  maps.unitNamed = named ? { ...named, page } : null;
   const unitOk = (u) => ['vehicles', 'drivers', 'trailers'].includes(u?.list) && typeof u.id === 'string' && u.id;
   // Where one address holds every step and unit form (formScoped: GEICO): the form the page shows
   // now, held (pagekit unitHeld, the one the agent has to look at) or else filled (unitForm), with
@@ -2457,7 +2462,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   const where = `${page}|${knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey) ?? ''}`;
   const due = !frames.some((f) => f.halted || f.advanced) && frames.some((f) => f.notDrawn || f.advanceDue);
   let retrying = false;
-  if (due && maps.triedAgain !== where) {
+  if (due && maps.triedAgain !== where && $('auto-followups').checked && !maps.autoPaused) {
     maps.triedAgain = where;
     retrying = true;
     setTimeout(() => {
@@ -2710,7 +2715,8 @@ function renderSteps() {
   const stopped = !!stopNoteFor(carrier, page);
   const report = showReport();
   // The fill running on this tab: its answers in so far, in place of the report.
-  const filling = state.filling && !!state.fillingFor && state.fillingFor.tabId === state.tab?.id;
+  // A quiet automatic fill (no rows yet) leaves the report in place, as the live list and the dock do.
+  const filling = state.filling && !!state.fillingFor && state.fillingFor.tabId === state.tab?.id && (!state.fillingFor.auto || !!state.fillingFor.rows?.length);
   const filled = !filling && !!report?.fields;
   // Why the last fill didn't finish, or what it found instead of questions (a portal page).
   const error = filling ? null : report?.error ?? null;
@@ -2802,7 +2808,7 @@ function renderSteps() {
 // done but held Continue for the agent's check ('check'), or the page changed after they clicked
 // Looks right ('changed'). With "Let me look before Continue" on, Looks right takes the place of
 // Fill again and continue.
-function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, page, settled, held, tabId }, carrier = state.tab?.carrier) {
+function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0, page, settled, held, tabId }, carrier = state.tab?.carrier) {
   const holding = left || waiting;
   // A step the carrier's Continue is never clicked on (GEICO's Quote & Coverages: advance `steps`).
   const offSteps = !!carrier?.advance?.steps?.length && !carrier.advance.steps.includes(tabStep(carrier, tabId ?? state.tab?.id));
@@ -2823,6 +2829,8 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, page, settl
       : 'Then Fill this page again to continue. Never Bind or Submit.';
     // Buttons waiting on others (Progressive's bill plan before Recalculate): the fill clicks them
     // in turn, and a question one waits on is a row of its own.
+    // Something open on the page over the button: never clicked in turn until it is closed.
+    if (!left && covered) return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled`, title: 'Close what is open over the button', sub: 'Then fill this page again. Never Bind or Submit.', ...again };
     if (!left) return { phase: 'waiting', tone: 'blue', eyebrow: `${filled} filled`, title: 'The fill clicks the rest in turn', sub: then, ...again };
     return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled · ${left} need${left === 1 ? 's' : ''} you`,
       title: left === 1 ? 'Answer the last question' : `Answer ${left} questions`, sub: then, button: 'dock-next', label: 'Show the next one', ...again };
@@ -2942,7 +2950,7 @@ function renderDock() {
     button.hidden = d.button !== id;
     if (d.button !== id) continue;
     button.textContent = d.label;
-    button.disabled = !!d.disabled;
+    button.disabled = !!d.disabled || (id === 'fill' && !!state.filling);
   }
   $('dock-alt').hidden = !d.alt;
   $('dock-alt').dataset.go = d.alt ?? '';
@@ -3766,7 +3774,8 @@ function renderReport(frames, ctx = {}) {
       // A panel opened again doesn't keep the pause: a report made again doesn't say it.
       ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
       : frames.some((f) => f.notDrawn) ? { notice: 'No questions found on this page.' }
-        : { notice: 'Nothing to fill on this page.', empty: true }) }, []);
+        : { notice: 'Nothing to fill on this page.', empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null,
+          held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
     renderSteps();
     return;
   }
@@ -3825,7 +3834,7 @@ function renderReport(frames, ctx = {}) {
   // Held for the agent's check (Let me look before Continue): the top frame's word.
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
-  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
+  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
     ...(ctx.restoredAt ? { restored: true } : {}) };
   // The answers and the items in one list, by their place on the page: an item without a field on
   // the page (a helper, a unit without its row) after them, then answers without one (a click).
@@ -4163,15 +4172,21 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
   }
   item.querySelector('.ai-slot')?.replaceChildren();
   for (const b of item.querySelectorAll('.opt-btn')) b.setAttribute('aria-pressed', String(b.dataset.choice === choice));
-  if (item.classList.contains('need')) settleNeed(item, 'picked', null, choiceSaid(shown));
-  else {
-    item.dataset.value = shown;
-    item.classList.remove('changed');
-    setRowHead(item, { icon: '✓', value: choiceSaid(shown), tag: { kind: 'you', text: 'You', title: 'Your answer, put in from the panel' } });
-    item.querySelector('.change-slot')?.replaceChildren();
-    note.hidden = false;
-    note.classList.remove('bad');
-    note.replaceChildren('✓ Put in for you. No fill changes it now.');
+  // The question's other row too: a filled answer with a check shows as an answer and as a check.
+  const label = x.label ?? field.label ?? '';
+  const same = [...(item.closest?.('#report')?.querySelectorAll('.row[data-key]') ?? [])]
+    .filter((r) => r.dataset.key === x.key && (r.dataset.need ?? `|${r.dataset.field ?? ''}`).endsWith(`|${label}`));
+  for (const row of new Set([item, ...same])) {
+    if (row.classList.contains('need')) { settleNeed(row, 'picked', null, choiceSaid(shown)); continue; }
+    row.dataset.value = shown;
+    row.classList.remove('changed');
+    setRowHead(row, { icon: '✓', value: choiceSaid(shown), tag: { kind: 'you', text: 'You', title: 'Your answer, put in from the panel' } });
+    row.querySelector('.change-slot')?.replaceChildren();
+    const n = row.querySelector('.need-note');
+    if (!n) continue;
+    n.hidden = false;
+    n.classList.remove('bad');
+    n.replaceChildren('✓ Put in for you. No fill changes it now.');
   }
   // Questions the answer revealed are filled as after an edit on the page.
   scheduleAutoFill(page);
@@ -4964,7 +4979,7 @@ function renderAi(holder, suggestions, ctx) {
     item.querySelector('.ai-slot').replaceChildren(...(content ? [content] : []));
     // The AI's choice among the row's own: picking it there is accepting it (applyAi).
     const offered = !x.done && !x.dismissed && !x.leave && x.applyable && x.controlKind !== 'text' ? x.choice : null;
-    item.aiAccept = offered ? (button) => act([x], 'accepted', button) : null;
+    item.aiAccept = offered ? () => act([x], 'accepted') : null;
     if (offered) item.dataset.aiPick = offered; else delete item.dataset.aiPick;
     for (const b of item.querySelectorAll('.opt-btn')) {
       const pick = b.dataset.choice === offered;
@@ -5284,7 +5299,7 @@ function closeDetails() {
   showScreen();
   const back = state.detailsReturn;
   state.detailsReturn = null;
-  if (back?.isConnected) back.focus();
+  (back?.isConnected ? back : $(state.view === 'check' ? 'step-check' : 'step-fill'))?.focus();
 }
 
 function closePdf() {
@@ -5293,7 +5308,7 @@ function closePdf() {
   render();
   const back = state.pdfReturn;
   state.pdfReturn = null;
-  if (back?.isConnected) back.focus();
+  (back?.isConnected ? back : $(state.view === 'check' ? 'step-check' : 'step-fill'))?.focus();
 }
 
 async function drawPdf({ focus = false } = {}) {
@@ -5751,6 +5766,8 @@ async function init() {
   state.intake = (await store.get('intake')) ?? null;
   if (state.intake) state.view = firstView(state.intake);
   state.active = (await store.get('active')) ?? state.active;
+  // The selection saved for that tab, kept should the panel reach another tab first.
+  state.savedActive = state.active;
   state.activeTab = (await store.get('activeTab')) ?? null;
   usage.restoreSession((await store.get('session')) ?? null);
   const views = await store.get('views');
