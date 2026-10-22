@@ -56,7 +56,7 @@ await panel.waitForTimeout(500);
 // is then a client fact the intake leaves blank (amwins.js `clientFact`), the agent's to answer.
 const CLEARED = 'drivers[1].maritalStatus';
 await panel.bringToFront();
-if (await panel.locator('#check-body').isHidden()) await panel.click('#check-head');
+if (await panel.locator('#check-view').isHidden()) await panel.click('#step-check');
 if (!await panel.locator('#details').evaluate(el => el.open)) await panel.click('#details > summary');
 if (!await panel.locator('details.section[data-id="drivers"]').evaluate(el => el.open)) await panel.click('details.section[data-id="drivers"] > summary');
 const clearedBox = panel.locator(`#f-${CLEARED.replace(/[^\w]/g, '_')}`);
@@ -73,7 +73,7 @@ try {
 } catch (error) {
   throw new Error(`The panel did not save the cleared ${CLEARED}.`, { cause: error });
 }
-console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#fill-hint'));
+console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#dock-sub'));
 await panel.bringToFront();
 await panel.click('#fill');
 // These are explicit synthetic agent answers for this workflow test, not facts inferred from
@@ -92,7 +92,13 @@ const manualFailures = [], agentAnswered = new Set();
 const answeredSteps = new Map();
 let reachedDeclaration = false;
 const atStep = () => mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), saves: window.__amwinsMock.saves }));
-const idlePanel = () => panel.waitForFunction(() => !document.querySelector('#fill').disabled && document.querySelector('#report .continue-note'), null, { timeout: 20000, polling: 100 });
+// Idle: no fill running on the tab (the dock's phase), and a fill's report in front (its time).
+const idlePanel = () => panel.waitForFunction(() => {
+  const dock = document.querySelector('#dock');
+  return dock.dataset.phase !== 'filling' && !!dock.dataset.report;
+}, null, { timeout: 20000, polling: 100 });
+// The dock's way to fill the page again: its button, or its alternative while questions remain.
+const fillAgain = () => panel.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first();
 const recorderContext = await sw.evaluate(async url => {
   const tab = (await chrome.tabs.query({})).find(tab => tab.url === url);
   const { session } = await chrome.storage.session.get('session');
@@ -122,33 +128,32 @@ const resumeFromPanel = async () => {
   // in front on Windows, just as the agent would focus the real side panel to resume.
   await panel.bringToFront();
   await idlePanel();
-  const oldSummary = await panel.locator('#report .continue-note').elementHandle();
+  const oldReport = await panel.locator('#dock').getAttribute('data-report');
   const deadline = Date.now() + 15000;
   let lastTimeout;
-  try {
-    // Automatic follow-ups do not always disable Fill or replace the report. A click while
-    // one is running is ignored. An accepted ordinary Fill removes this summary before it
-    // runs; observing that removal also catches a fill that starts and finishes very quickly.
-    while (await oldSummary.evaluate(node => node.isConnected)) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new Error('The panel did not accept Fill after the recorder acknowledged the agent answers.', { cause: lastTimeout });
-      try {
-        await panel.click('#fill', { timeout: Math.min(1000, remaining) });
-        await panel.waitForFunction(node => !node.isConnected, oldSummary, { timeout: Math.min(250, Math.max(1, deadline - Date.now())), polling: 50 });
-      } catch (error) {
-        if (error.name !== 'TimeoutError') throw error;
-        lastTimeout = error;
-      }
+  // Automatic follow-ups do not always replace the report. A click while one is running is
+  // ignored. An accepted ordinary Fill starts a new report (the dock's data-report changes);
+  // observing that also catches a fill that starts and finishes very quickly.
+  const replaced = () => panel.locator('#dock').evaluate((dock, old) => dock.dataset.phase === 'filling' || dock.dataset.report !== old, oldReport);
+  while (!await replaced()) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('The panel did not accept Fill after the recorder acknowledged the agent answers.', { cause: lastTimeout });
+    try {
+      await fillAgain().click({ timeout: Math.min(1000, remaining) });
+      await panel.waitForFunction(old => { const dock = document.querySelector('#dock'); return dock.dataset.phase === 'filling' || dock.dataset.report !== old; }, oldReport, { timeout: Math.min(250, Math.max(1, deadline - Date.now())), polling: 50 });
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      lastTimeout = error;
     }
-    await idlePanel();
-  } finally { await oldSummary.dispose(); }
+  }
+  await idlePanel();
 };
 for (let round = 0; round < 20; round++) {
   await idlePanel();
   await mock.waitForTimeout(1500); // the carrier's background save/reload and next-page fill
-  if (await panel.locator('#fill').isDisabled()) continue;
+  if (await panel.locator('#dock').getAttribute('data-phase') === 'filling') continue;
   const before = await atStep();
-  const needs = await panel.locator('#report > .need:not(.resolved) .row-text b').allTextContents();
+  const needs = await panel.locator('#report .row.need:not(.resolved) .row-label').allTextContents();
   const unresolved = needs.filter(label => !/i declare/i.test(label));
   console.log('Step:', before.step, 'saves:', before.saves, 'needs:', unresolved.join(', '));
   if (before.step === 'Underwriting' && needs.some(label => /i declare/i.test(label))
@@ -226,7 +231,7 @@ for (let round = 0; round < 20; round++) {
   // ordinary resume action and must preserve every correction the recorder just observed.
   await resumeFromPanel();
   const afterResume = await atStep();
-  const freshNeeds = await panel.locator('#report > .need:not(.resolved) .row-text b').allTextContents();
+  const freshNeeds = await panel.locator('#report .row.need:not(.resolved) .row-label').allTextContents();
   if (afterResume.step === before.step && freshNeeds.some(label => answers.some(([, re]) => re.test(label)))) {
     manualFailures.push(`The fresh report still needs acknowledged agent answers on ${before.step}: ${freshNeeds.join(', ')}`);
     break;
