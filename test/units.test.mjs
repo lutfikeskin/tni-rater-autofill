@@ -72,3 +72,21 @@ test('a carrier\'s Continue for one fill: its list button only once the list is 
   assert.deepEqual(advanceFor(geico), rest);
   assert.deepEqual(advanceFor(geico, true), { ...rest, text: `(?:${rest.text})|(?:${listed})` });
 });
+
+// W43-40 (GEICO FL, 2026-10-21 and 2026-10-22): Looks Good was never clicked on a list that needed
+// a VIN or name read (0 of 8), only on owner-only driver lists (2 of 2); the captured lists and the
+// mock read right. A unit a fill answered and saved a form for counts as on the list, with the
+// list's rows matching the intake; a unit neither shown nor saved still holds Looks Good.
+test('a unit list is complete with every unit shown or saved from a form a fill answered, and says its counts', () => {
+  const record = { vehicles: [{ vin: VIN(1) }, { vin: VIN(2) }, { vin: VIN(3) }], trailers: [], drivers: [] };
+  const seen = (rows, shown) => ({ forms: [], lists: [{ rows, shown }, null] });
+  const saved = { unitForms: { vehicles: { A: 0, B: 1, C: 2 } } };
+  let out = unitToAdd(geico, record, VEH, seen(3, [false, false, false]), saved);
+  assert.equal(out.complete, true, 'every vehicle saved by a fill, three rows');
+  assert.deepEqual(out.read, { rows: 3, units: 3, shown: 0, saved: 3 });
+  assert.equal(unitToAdd(geico, record, VEH, seen(3, [false, false, false]), { unitForms: { vehicles: { A: 0, B: 1 } } }).complete, false, 'one neither shown nor saved');
+  assert.equal(unitToAdd(geico, record, VEH, seen(3, [false, false, true]), { unitForms: { vehicles: { A: 0, B: 1 } } }).complete, true, 'that one shown');
+  assert.equal(unitToAdd(geico, record, VEH, seen(2, [false, false, false]), saved).complete, false, 'a row short: one saved form was discarded');
+  assert.equal(unitToAdd(geico, record, VEH, seen(4, [false, false, false]), saved).complete, false, 'a row the intake does not have');
+  assert.equal(unitToAdd(geico, record, VEH, { forms: [], lists: [null, null] }, saved).read, null, 'no list: no read');
+});

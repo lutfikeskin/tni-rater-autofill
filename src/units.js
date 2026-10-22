@@ -35,9 +35,12 @@ const MARKER = { vehicles: 'vehicleEntered', trailers: 'trailerEntered', drivers
 // (no VIN, a name another driver's holds), while the list has a row no intake unit is known to be
 // on, may be that row (added by hand): it is taken as on the quote, left to the agent, never added
 // twice. `move`: no unit form on screen (the list, the chooser), so the picker may move to that unit.
-// `complete`: the list is on screen, holds exactly as many units as the intake, and shows every
-// intake unit it can be read for (the driver GEICO lists itself included): the list may be left
-// (advanceFor). Null off the carrier's unit-list steps.
+// `complete`: the list is on screen, holds exactly as many units as the intake, and each intake
+// unit is on it: shown (as it can be read for), the driver GEICO lists itself, or saved from a
+// form a fill answered for it (`unitForms`: W43-40, GEICO FL 2026-10-21 and 2026-10-22, Looks Good
+// never clicked on a list that needed a VIN or name read, 0 of 8, while the captured lists and the
+// mock read right): the list may be left (advanceFor). `read`: the counts behind it, for the usage
+// log. Null off the carrier's unit-list steps.
 export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = new Set() } = {}) {
   const specs = unitListSpecs(carrier, record);
   const at = specs.findIndex((s) => s.steps.includes(step));
@@ -63,10 +66,11 @@ export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = 
     }
   }
   const entered = (u) => isListed(u) || bound(u.list, u.i) || done.has(mark(u)) || marks.includes(mark(u));
-  const complete = !!shown && shown.rows === units.length && units.every((u) => u.shown || isListed(u) || !readable(u.item));
-  if (shown && shown.rows >= units.length) return { marks, adding: null, move: false, complete };
+  const complete = !!shown && shown.rows === units.length && units.every((u) => u.shown || isListed(u) || !readable(u.item) || bound(u.list, u.i));
+  const read = shown ? { rows: shown.rows, units: units.length, shown: units.filter((u) => u.shown).length, saved: units.filter((u) => bound(u.list, u.i)).length } : null;
+  if (shown && shown.rows >= units.length) return { marks, adding: null, move: false, complete, read };
   const next = units.find((u) => !entered(u));
-  return { marks, adding: next ? { list: next.list, index: next.i } : null, move: Array.isArray(seen.forms) && !seen.forms.length, complete: false };
+  return { marks, adding: next ? { list: next.list, index: next.i } : null, move: Array.isArray(seen.forms) && !seen.forms.length, complete: false, read };
 }
 
 // The carrier's Continue for one fill (fill `advance`), or null without one: its `listed` button

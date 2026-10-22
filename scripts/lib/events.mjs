@@ -62,6 +62,10 @@ export function loadEvents(paths, stored = readEvents(paths)) {
 // An event on a real carrier's page (not the local test page).
 export const isCarrierEvent = (e) => !!e.carrier && e.carrier !== 'test';
 
+// A layout of a page's questions. A Recalculate's trace (page_layout, reason 'recalculate', W43-44)
+// holds the kept answers over time instead, and isn't one.
+export const isPageLayout = (e) => e.type === 'page_layout' && e.reason !== 'recalculate';
+
 // The quotes: intakes loaded in a session that worked on a carrier's page. A PDF loaded and never
 // taken to a carrier (a sample retried, a test-page session whose test events the server refused)
 // is no quote. `events`: all of them, so a quote whose fills come later still counts.

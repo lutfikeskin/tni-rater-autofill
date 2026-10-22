@@ -35,15 +35,6 @@ export const currentSession = () => session;
 export async function settings() {
   return (await local.get('settings')) ?? {};
 }
-export async function migrateAssistantSettings() {
-  const saved = await settings();
-  const obsolete = ['aiKey', 'jevKey', 'jevModel', 'aiProvider', 'aiAuto'];
-  if (!obsolete.some(key => Object.hasOwn(saved, key))) return saved;
-  const clean = { ...saved };
-  for (const key of obsolete) delete clean[key];
-  await local.set('settings', clean);
-  return clean;
-}
 export async function saveSettings(patch) {
   await local.set('settings', { ...(await settings()), ...patch });
 }
