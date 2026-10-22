@@ -8,7 +8,8 @@
 // - the progress bar (value 100 / 50 / 0, a link for a finished step, a span for the others) and
 //   document.title ("GEICO <step>") move with the step. A progress link click is recorded, goes nowhere;
 // - Next shows #page-load (inline display:block) and disables the pressed button until the next view is
-//   drawn; Recalculate shows #extendedWaiting;
+//   drawn; Recalculate rates for 10 delays and shows #extendedWaiting only 3 s in (GEICO's loader waits
+//   3 s before it shows; the fill's Recalculate was rated 13 to 19 s after the click, 2026-10-22);
 // - the list's "+" draws the chooser (Add Driver's form) 1.2 s later with no loader, as the live page
 //   did (FL live run 4, 2026-10-21); a second "+" meanwhile queues a second add (recorded, so the
 //   check "added once each" fails on it);
@@ -68,7 +69,7 @@
 //   views and shadow roots, and the two the address box draws, each a plain element. The fill engine
 //   waits for components a page hasn't defined yet;
 // Start options: ?view=<id> (a view, at its step), ?delay=<ms> (page loads, default 400; lookups take
-// half, Recalculate twice), ?radio=attribute|property|redraw, ?ssn=0 (skip the owner/SSN sub-form),
+// half, Recalculate ten times), ?radio=attribute|property|redraw, ?ssn=0 (skip the owner/SSN sub-form),
 // ?plans=no11 (no 11 Payments among the plans).
 //
 // What happened is kept in window.__geicoMock for the runner (scripts/geico-mock.mjs):
@@ -654,12 +655,15 @@
     hide(slot('rated'));
     slot('recalc')?.classList.remove('hide');
   }
+  // Rating takes 10 delays (4 s by default), and the loader shows only 3 s in, as GEICO's own waits
+  // 3 s before it shows (its loader's delayTime): until then nothing on the page says it is busy.
   function recalculate(host) {
     const keep = { ...values(), ...(state.recalcResets ?? {}) };
     state.recalcResets = null;
     host.setAttribute('disabled', '');
-    waiting.style.display = 'block';
-    later(delay * 2, () => {
+    const shown = later(3000, () => { waiting.style.display = 'block'; });
+    later(delay * 10, () => {
+      clearTimeout(shown);
       state.recalcs++;
       render('quote', { keep });
       waiting.style.display = '';
