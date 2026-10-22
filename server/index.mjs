@@ -135,7 +135,9 @@ export const ID_LIKE = /@|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d(?:[\s()./-]{0,2}\d)
 // whose first part is 15 or more, so a date isn't one); a word; & + -.
 const MONEY = String.raw`\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$?\d{1,6}000|\$?\d{1,4}(?:\.\d+)?[km]?`;
 const LIMIT_PART = String.raw`(?:1[5-9]|[2-9]\d|[1-9]\d{2})(?:\/\d{1,3}){1,2}|(?:${MONEY})(?:\s*\/\s*(?:${MONEY}))?|[a-z]+\.?|[&+-]`;
-export const LIMIT = new RegExp(String.raw`^(?:${LIMIT_PART})(?:\s+(?:${LIMIT_PART}))*$`, 'i');
+// Two numbers with only a space, &, + or - between them aren't a limit (an SSN or a phone written
+// with spaces: 123 45 6789).
+export const LIMIT = new RegExp(String.raw`^(?![\s\S]*\d[\s&+-]+\$?\d)(?:${LIMIT_PART})(?:\s+(?:${LIMIT_PART}))*$`, 'i');
 const yesNo = (v) => v === null || typeof v === 'boolean';
 const whole = (min, max) => (v) => v === null || (Number.isSafeInteger(v) && v >= min && v <= max);
 const text = (max) => (v) => v === null || (typeof v === 'string' && v.length > 0 && v.length <= max && !ID_LIKE.test(v));
