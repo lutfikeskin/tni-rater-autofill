@@ -308,15 +308,25 @@
   // picked, with nothing drawn (its widget actions' callServiceForOutcomes). A Recalculate the fill
   // clicked 2 s after its last answer was rated 13 to 19 s later, with GEICO's own liability, UM,
   // road service and cargo (2026-10-22, 5 fills of 5). The agent's own clicks were rated in about
-  // 2 s and kept every answer (13 of 13 since 2026-10-21). Watched from a fill's start in the top frame.
-  let lastRequestAt = -Infinity;
+  // 2 s and kept every answer (13 of 13 since 2026-10-21). That was the script's click itself, not a
+  // request still running: GEICO's button sent its request without its own part (W43-44, pressButton).
+  // Watched from a fill's start in the top frame.
   let requestWatch = null;
+  // The last of them (start and end, performance time); the last one's end is when the page's own
+  // requests last finished.
+  const recentRequests = [];
+  const lastRequestEnd = () => recentRequests.reduce((m, r) => Math.max(m, r.end), -Infinity);
+  // The time the page's requests are timed in (Date.now where a page has no performance clock).
+  const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   function watchRequests() {
     if (requestWatch !== null) return;
     try {
       requestWatch = new PerformanceObserver((list) => {
         for (const e of list.getEntries()) {
-          if ((e.initiatorType === 'fetch' || e.initiatorType === 'xmlhttprequest') && String(e.name).startsWith(`${location.origin}/`)) lastRequestAt = Math.max(lastRequestAt, e.responseEnd);
+          if ((e.initiatorType === 'fetch' || e.initiatorType === 'xmlhttprequest') && String(e.name).startsWith(`${location.origin}/`)) {
+            recentRequests.push({ start: e.startTime ?? e.responseEnd, end: e.responseEnd });
+            if (recentRequests.length > 200) recentRequests.shift();
+          }
         }
       });
       requestWatch.observe({ type: 'resource', buffered: true });
@@ -341,7 +351,7 @@
     const start = Date.now();
     try {
       await sleep(60);
-      const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && performance.now() - lastRequestAt < quietMs;
+      const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
       while (Date.now() - start < maxMs) {
         if (!pageBusy() && Date.now() - last >= quietMs && !partsUndefined() && !requested()) return true;
         await sleep(60);
@@ -1545,6 +1555,25 @@
   const COVERED = 'something on the page is open over Continue: close it, then fill again';
   const COVERED_HELPER = 'something on the page is open over it';
 
+  // A button the fill presses (a helper, its menu, Continue). GEICO's submit buttons set their own
+  // part of the request after an await, which its React applies in time only while an event is
+  // still being dispatched: a script's click sent Recalculate without it, rated with GEICO's own
+  // liability, UM, road service and cargo (W43-44, FL, 2026-10-22: 171 entries, the agent's 172).
+  // Where the page's own world has src/content/page-press.js (`pressInPage`: GEICO), the press is
+  // asked of it with a `rater-press` event on the button, and it clicks a moment later, inside an
+  // event the browser dispatches; elsewhere, clicked here. Returns how: 'page' or 'kit'. `late`:
+  // called if the page's world clicked only once its wait for that event ran out (a script's click).
+  function pressButton(el, { late = null } = {}) {
+    let taken = false;
+    try { taken = !el.dispatchEvent(new CustomEvent('rater-press', { bubbles: true, composed: true, cancelable: true })); } catch { /* no CustomEvent */ }
+    if (!taken) {
+      el.click();
+      return 'kit';
+    }
+    if (late) el.addEventListener('rater-pressed-late', late, { once: true });
+    return 'page';
+  }
+
   // `notWithin`: never a button inside this (GEICO's chooser behind Add Vehicle or Trailer, whose
   // Next opens a unit's form: the add helpers' own, after their "+").
   function findAdvanceButton(pattern, { notWithin = null } = {}) {
@@ -2463,6 +2492,7 @@
       const loads = helperClicked && !!pendingAction?.loads;
       const rates = helperClicked && pendingAction?.verify === 'premium';
       if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads || rates ? LOAD_MS : 3000 })) {
+        traceEnd(pendingAction);
         halt(loads ? LOAD_HALT : 'The page did not settle after the helper.');
         break;
       }
@@ -2495,10 +2525,12 @@
       // GEICO.
       if (rates && !serverBacked) {
         const until = Date.now() + LOAD_MS;
-        while (Date.now() < until && !premiumReady() && !report.halted && currentPage() === startPage && !stepChanged()) await sleep(500);
+        while (Date.now() < until && !premiumReady() && !report.halted && currentPage() === startPage && !stepChanged()) { traceRead(pendingAction); await sleep(500); }
+        if (pendingAction?.trace && premiumReady()) { pendingAction.trace.premiumMs = Math.round(perfNow() - pendingAction.trace.at); traceRead(pendingAction); }
         // Stopped, or the agent edited, while it rated: nothing more is done here.
-        if (report.halted) break;
-        if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted })) { halt(LOAD_HALT); break; }
+        if (report.halted) { traceEnd(pendingAction); break; }
+        if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted })) { traceEnd(pendingAction); halt(LOAD_HALT); break; }
+        traceRead(pendingAction);
       }
       if (!await verifyAction()) break;
       if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
@@ -2531,11 +2563,13 @@
       // result didn't show; from here it is the agent's, and they're told.
       if (!accepted && a.once) {
         report.failed.push({ label: a.label ?? 'Recalculate', path: null, name: a.label ?? a.action, key: null, q: null, controlKind: null, reason: ONCE_UNVERIFIED });
+        traceEnd(a);
         return false;
       }
       // The answers it may have redrawn (`keepAnswers`), read again once its result shows, and
       // watched until KEPT_WATCH_MS after the click when they held.
       if (accepted && a.kept && !await answersKept(a)) await watchKept(a);
+      traceEnd(a);
       // A link that opens a section (Add Non-Trucking Liability) is gone once it took; still on
       // screen but disabled is not gone.
       if (a.verify === 'gone') accepted = !findButton(a, { disabledToo: true });
@@ -2661,8 +2695,50 @@
         const step = pairs.find((p) => p.control === c)?.step;
         const agents = skippedField(c);
         const ours = !agents && !!step && step.value != null && !step.ignore && !step.note && !step.verifyOnly && agreesWith(step, c);
-        return agents || ours ? [{ at, stepId: ours ? step.id : null, shown: answerShown(c) }] : [];
+        return agents || ours ? [{ at, stepId: ours ? step.id : null, shown: answerShown(c), label: c.label, key: fieldKey(c), kind: c.kind }] : [];
       });
+    }
+
+    // What the page did after the click of a helper that rates the answers (`keepAnswers`: GEICO's
+    // Recalculate), for the usage log (W43-44, to tell a check read too early from GEICO drawing its
+    // own values): each kept choice's value whenever it changed, in ms after the click; how it was
+    // pressed (pressButton: 'page', 'late' or 'kit'); when the premium showed; the page's requests
+    // from 10 s before the click on; and which answers the fill put back. Typed boxes are left out
+    // (they may hold a client's value). `now`: the controls already read.
+    function traceStart() {
+      return { at: perfNow(), press: null, last: new Map(), seen: [], premiumMs: null, putBack: [] };
+    }
+    function traceRead(a, now = null) {
+      const t = a?.trace;
+      if (!t) return;
+      now ??= new Map(answerPlaces(collectControls()));
+      const ms = Math.round(perfNow() - t.at);
+      for (const k of a.kept) {
+        const c = now.get(k.at);
+        if (!c || k.kind === 'text' || c.kind === 'text') continue;
+        const value = answerShown(c);
+        if (value === (t.last.has(k.at) ? t.last.get(k.at) : k.shown)) continue;
+        t.last.set(k.at, value);
+        if (t.seen.length < 120) t.seen.push({ at: k.at, ms, value });
+      }
+    }
+    function traceEnd(a) {
+      const t = a?.trace;
+      if (!t) return;
+      traceRead(a);
+      const rel = (x) => Math.round(x - t.at);
+      report.recalcTrace = {
+        action: a.action,
+        ms: rel(perfNow()),
+        press: t.press,
+        premiumMs: t.premiumMs,
+        requests: recentRequests.filter((r) => r.end >= t.at - 10000).slice(-40).map((r) => [rel(r.start), rel(r.end)]),
+        answers: a.kept.filter((k) => k.kind !== 'text').map((k) => ({
+          label: k.label, key: k.key, shown: k.shown, agents: k.stepId == null,
+          seen: t.seen.filter((s) => s.at === k.at).slice(0, 10).map((s) => [s.ms, s.value]),
+          putBack: t.putBack.includes(k.at),
+        })),
+      };
     }
 
     // Once its result shows (W43-31: GEICO drew its own choices back after a Recalculate the fill
@@ -2686,6 +2762,7 @@
       await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
       if (report.halted) return false;
       const now = new Map(answerPlaces(collectControls()));
+      traceRead(a, now);
       const changed = keptChanged(a, now);
       if (!changed.length) return false;
       const pairs = assign([...now.values()], plan);
@@ -2697,7 +2774,7 @@
         if (!step) continue;
         let result;
         try { result = await apply(step, c); } catch (e) { result = { ok: false }; }
-        if (result.ok) given.add(k.at);
+        if (result.ok) { given.add(k.at); a.trace?.putBack.push(k.at); }
       }
       if (given.size) await settle({ quietMs: 250, maxMs: LOAD_MS });
       const after = new Map(answerPlaces(collectControls()));
@@ -2735,7 +2812,9 @@
     async function watchKept(a) {
       while (Date.now() - a.clickedAt < KEPT_WATCH_MS && !report.halted && currentPage() === startPage && !stepChanged()) {
         await sleep(500);
-        if (!keptChanged(a, new Map(answerPlaces(collectControls()))).length) continue;
+        const now = new Map(answerPlaces(collectControls()));
+        traceRead(a, now);
+        if (!keptChanged(a, now).length) continue;
         await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
         await answersKept(a);
         return;
@@ -2912,7 +2991,7 @@
           if (coveredBy(opener)) { holdCovered(a, opener); continue; }
           openersTried.add(a.action);
           report.actions.push({ id: `${a.action}:menu`, text: buttonText(opener).slice(0, 60) });
-          opener.click();
+          pressButton(opener);
           return true;
         }
         if ((a.loads || a.quietMs) && !(quiet?.action === a.action && quiet.sig === signature())) { loadDue = a.action; return false; }
@@ -2925,8 +3004,10 @@
         // have landed since): what a `revealed` / `appears` check compares with afterwards.
         pendingAction = a.verify === 'revealed' ? { ...a, before: controlSnapshot(collectControls()) }
           : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length }
-            : a.keepAnswers ? { ...a, kept: answersNow(), clickedAt: Date.now() } : a;
-        button.click();
+            : a.keepAnswers ? { ...a, kept: answersNow(), clickedAt: Date.now(), trace: traceStart() } : a;
+        const trace = pendingAction.trace;
+        const how = pressButton(button, { late: trace ? () => { trace.press = 'late'; } : null });
+        if (trace) trace.press = how;
         return true;
       }
       return false;
@@ -3181,8 +3262,9 @@
           const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
           report.signatureBefore = signature();
-          button.click();
-          // Recorded once the click went out, never before it.
+          pressButton(button);
+          // Recorded once the press went out (on GEICO the page's world clicks a moment later, within
+          // a second at most), never before it.
           report.advanced = text;
           if (advance.byForm) report.advanceKey = key;
         }

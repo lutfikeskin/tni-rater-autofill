@@ -3143,6 +3143,8 @@ function stopPageIsOurs() {
 const worldFor = (carrier) => (carrier?.world === 'MAIN' ? 'MAIN' : 'ISOLATED');
 
 async function injectKit(tabId, carrier) {
+  // The buttons the kit presses, clicked from the page's own world (`pressInPage`: GEICO, W43-44).
+  if (carrier?.pressInPage) await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: 'MAIN', files: ['src/content/page-press.js'] });
   await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), files: ['src/content/field-key.js', 'src/content/pagekit.js'] });
 }
 

@@ -234,7 +234,7 @@ class FakeNode {
     event.target ??= this;
     for (const fn of this._listeners.get(event.type) ?? []) fn.call(this, event);
     this.ownerDocument?._dispatch(event);
-    return true;
+    return !event.defaultPrevented;
   }
 
   click() {
@@ -4812,6 +4812,151 @@ test('GEICO\'s Recalculate waits until the page\'s own requests stop finishing, 
   const stopped = await run({ own: Infinity, stopAfter: 5000 });
   assert.deepEqual([stopped.recalcs, stopped.halted], [0, true]);
   assert.ok(stopped.ended < 6000, `ended ${stopped.ended} ms in`);
+});
+
+// W43-44 (TNI, 2026-10-22; W43-41 again on the build with its fix): after the fill's Recalculate,
+// GEICO drew its own liability, UM, heavy-vehicle road service and cargo, though the request carried
+// the fill's values; the agent's own Recalculate kept them. GEICO's button sets its own part of the
+// request after an await, which its React applies in time only while an event is still being
+// dispatched: the fill's, a script's click, went out without it (171 entries, the agent's 172). The
+// kit asks the page's own world to press the buttons it presses (src/content/page-press.js takes a
+// `rater-press`), and clicks itself only where nothing takes it. What the page did after the
+// Recalculate is kept for the usage log (`recalcTrace`), with how it was pressed.
+const PressEvent = class {
+  constructor(type, init = {}) { Object.assign(this, { type, bubbles: !!init.bubbles, composed: !!init.composed, cancelable: !!init.cancelable, defaultPrevented: false, isTrusted: false }); }
+  preventDefault() { if (this.cancelable) this.defaultPrevented = true; }
+};
+// The page's world for `els`: `taker` 'page' clicks 5 ms after a press and says so, 'late' clicks after
+// its 1 s wait and says it was late, null takes nothing. Each click is noted with who made it.
+function pressTaker(h, els, taker) {
+  h.context.CustomEvent = PressEvent;
+  const clicks = [];
+  let byPage = false;
+  for (const [name, el] of Object.entries(els)) {
+    const click = el.click.bind(el);
+    el.click = () => { clicks.push(`${name} by ${byPage ? 'page' : 'kit'}`); click(); };
+    el.addEventListener('rater-press', (e) => {
+      if (!taker) return;
+      e.preventDefault();
+      setTimeout(() => {
+        byPage = true;
+        try { el.click(); } finally { byPage = false; }
+        el.dispatchEvent({ type: taker === 'late' ? 'rater-pressed-late' : 'rater-pressed', target: el });
+      }, taker === 'late' ? 1000 : 5);
+    });
+  }
+  return clicks;
+}
+test('GEICO\'s buttons are pressed from the page\'s own world where it takes the press, and its Recalculate is traced (W43-44)', async () => {
+  const run = async ({ taker = 'page', redraw } = {}) => {
+    const p = recalcPage({ redraw });
+    p.comp.value = '';
+    let observer = null;
+    const t0 = clock.Date.now();
+    p.h.context.performance = { now: () => clock.Date.now() - t0 };
+    p.h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+    // One of the page's own requests, finished as the fill starts.
+    setTimeout(() => observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/lookup/coverage', startTime: 0, responseEnd: clock.Date.now() - t0 }] }), 100);
+    const clicks = pressTaker(p.h, { recalc: p.recalc, more: p.more }, taker);
+    const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+    return { p, report, clicks, trace: plain(report.recalcTrace) };
+  };
+  // Taken: the page's world clicks Recalculate and View More Payment Plans, the kit neither.
+  const page = await run();
+  assert.equal(page.p.recalcs, 1);
+  assert.deepEqual(page.clicks, ['recalc by page', 'more by page']);
+  assert.deepEqual(plain(page.report.actions.map((x) => x.id)), ['recalculate', 'morePayPlans']);
+  assert.equal(page.trace.press, 'page');
+  assert.ok(page.trace.requests.some(([start, end]) => start < 0 && end < 0), 'the page\'s request, before the click');
+  // Its wait for the browser's event ran out: clicked there, and the trace says it was late.
+  const late = await run({ taker: 'late' });
+  assert.deepEqual([late.p.recalcs, late.clicks[0], late.trace.press], [1, 'recalc by page', 'late']);
+  // Nothing takes it (no page script: another carrier, or a page the side panel didn't reach): the
+  // kit clicks, once, as before.
+  const kit = await run({ taker: null });
+  assert.deepEqual([kit.p.recalcs, kit.clicks[0], kit.trace.press], [1, 'recalc by kit', 'kit']);
+  // GEICO's own value drawn after the click: put back and red, as before; the trace says when the
+  // premium showed and what the page showed.
+  const drawn = await run({ redraw: ({ comp }) => { comp.value = '$500 deductible'; } });
+  assert.deepEqual(plain(drawn.report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
+  const t = drawn.trace;
+  assert.equal(t.action, 'recalculate');
+  assert.ok(t.premiumMs >= 0 && t.ms >= t.premiumMs);
+  const comp = t.answers.find((x) => x.key === 'cov:COMP#1');
+  assert.deepEqual([comp.shown, comp.seen.map(([, v]) => v), comp.putBack, comp.agents], ['$1,000 deductible', ['$500 deductible', '$1,000 deductible'], true, false]);
+  assert.ok(comp.seen[0][0] >= 0 && comp.seen[0][0] <= t.premiumMs + 600, `first seen ${comp.seen[0][0]} ms after the click`);
+  // Nothing changed: every answer traced with no value after the click, nothing put back.
+  assert.deepEqual(plain(page.report.failed), []);
+  assert.ok(page.trace.answers.every((x) => !x.seen.length && !x.putBack));
+});
+
+// Continue too: pressed by the page's world where it takes the press.
+test('Continue is pressed from the page\'s own world where it takes the press (W43-44)', async () => {
+  for (const taker of ['page', null]) {
+    const h = harness();
+    const next = addButton(h, 'Continue');
+    const clicks = pressTaker(h, { next }, taker);
+    const report = await h.kit.fill([], { maxRounds: 4, advance: { text: '^Continue$' } });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(report.advanced, 'Continue');
+    assert.deepEqual(clicks, [`next by ${taker ?? 'kit'}`]);
+  }
+});
+
+// The page's own world (src/content/page-press.js): a `rater-press` is taken, and the button is
+// clicked inside the volume change the browser dispatches for an audio element never added to the
+// page (an event in progress as the button's await resumes, as with a mouse click); once, however
+// often the script is injected (a copy injected again replaces the one before); after a second
+// anyway when that event never comes, said late.
+test('the page\'s own world presses a button inside an event the browser dispatches, once (W43-44)', async () => {
+  const source = fs.readFileSync(new URL('../src/content/page-press.js', import.meta.url), 'utf8');
+  const setup = ({ volumeEvent = true } = {}) => {
+    const document = new EventTarget();
+    let dispatching = null;
+    document.createElement = (tag) => {
+      const media = new EventTarget();
+      media.tag = tag;
+      let volume = 1;
+      Object.defineProperty(media, 'volume', {
+        get: () => volume,
+        set: (v) => {
+          if (v === volume) return;
+          volume = v;
+          // The browser queues it: dispatched later, from no script of the page's.
+          if (volumeEvent) setTimeout(() => { dispatching = 'volumechange'; try { media.dispatchEvent(new Event('volumechange')); } finally { dispatching = null; } }, 0);
+        },
+      });
+      return media;
+    };
+    const context = { document, CustomEvent, Event, EventTarget, setTimeout, clearTimeout };
+    context.window = context;
+    vm.runInNewContext(source, context);
+    vm.runInNewContext(source, context);
+    const button = new EventTarget();
+    const clicks = [];
+    const said = [];
+    button.click = () => clicks.push(dispatching);
+    for (const type of ['rater-pressed', 'rater-pressed-late']) button.addEventListener(type, () => said.push(type));
+    // The kit's ask, dispatched on the button (here the document hears it as the page's would).
+    const press = () => {
+      const e = new CustomEvent('rater-press', { bubbles: true, composed: true, cancelable: true });
+      document.dispatchEvent(Object.defineProperty(e, 'composedPath', { value: () => [button, document] }));
+      return e.defaultPrevented;
+    };
+    return { press, clicks, said };
+  };
+  const live = setup();
+  assert.equal(live.press(), true, 'taken');
+  assert.deepEqual(live.clicks, [], 'not clicked during the kit\'s own dispatch');
+  await new Promise((r) => setTimeout(r, 1100));
+  assert.deepEqual(live.clicks, ['volumechange'], 'once, inside the browser\'s event, though injected twice');
+  assert.deepEqual(live.said, ['rater-pressed']);
+  // No volume change from the browser: clicked after a second anyway, and said late.
+  const silent = setup({ volumeEvent: false });
+  assert.equal(silent.press(), true);
+  await new Promise((r) => setTimeout(r, 1100));
+  assert.deepEqual(silent.clicks, [null]);
+  assert.deepEqual(silent.said, ['rater-pressed-late']);
 });
 
 // W43-32 (TNI, 2026-10-21): with no 11 Payments among the plans View More Payment Plans shows (TX:

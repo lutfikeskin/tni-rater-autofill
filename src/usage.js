@@ -303,5 +303,21 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   });
   events.push(...all('filled').map(item('filled')), ...all('failed').map(item('failed')), ...all('noData').map(item('noData')),
     ...all('kept').map(item('kept')), ...all('leftRequired').map(item('leftRequired')), ...all('unknown').map(item('unfamiliar')));
+  // A helper the fill clicked that rates the answers (GEICO's Recalculate, W43-44), as a layout the
+  // review scripts don't read as the page's (reason 'recalculate'): each choice it kept, what the
+  // page showed at the click (`selected`) and after it ([ms after the click, value]), whether the
+  // fill put it back; in `context` how it was pressed ('page': from the page's own world, 'late': there
+  // without the browser's event, 'kit': a script's click), when the premium showed, and the page's
+  // requests ([start, end] in ms after the click).
+  for (const t of frames.map((f) => f.recalcTrace).filter(Boolean)) {
+    events.push({
+      type: 'page_layout', carrier, page, view, ...stepField, reason: 'recalculate',
+      context: { action: t.action ?? null, ms: t.ms ?? null, press: ['page', 'late', 'kit'].includes(t.press) ? t.press : null, premiumMs: t.premiumMs ?? null, requests: (t.requests ?? []).slice(0, 40) },
+      fields: (t.answers ?? []).slice(0, 60).map((x) => ({
+        label: redact(x.label ?? ''), key: fieldKeyOf(x.key, redact, keySalt), selected: redact(x.shown ?? ''), agents: !!x.agents,
+        seen: (x.seen ?? []).slice(0, 10).map(([ms, value]) => [ms, redact(value ?? '')]), putBack: !!x.putBack,
+      })),
+    });
+  }
   return events;
 }

@@ -53,6 +53,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
 const source = (file) => fs.readFileSync(path.join(root, 'src/content', file), 'utf8');
 const KIT = ['field-key.js', 'pagekit.js'].map(source).join('\n');
+// In the page's own world, as the side panel injects it for GEICO (pressInPage): the buttons the kit
+// presses are clicked there (W43-44).
+const PRESS = source('page-press.js');
 const RECORDER = source('recorder.js');
 
 // A synthetic client (synthetic values only, the VINs from scripts/lib/privacy.mjs ALLOWED): an
@@ -182,6 +185,7 @@ const page = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
 page.setDefaultTimeout(10000);
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e.message)));
+await page.addInitScript({ content: PRESS });
 // The fixture is one file: anything it asks of a server is refused (and counted).
 const refused = [];
 await page.route(/^(https?|wss?):/i, (r) => { refused.push(r.request().url()); return r.abort(); });
@@ -586,6 +590,7 @@ const formIdOf = (list) => Object.keys(unitForms[list]).find((id) => unitForms[l
 async function sidePage(query, name) {
   const tab = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
   tab.on('pageerror', (e) => errors.push(String(e.message)));
+  await tab.addInitScript({ content: PRESS });
   await tab.route(/^(https?|wss?):/i, (r) => { refused.push(r.request().url()); return r.abort(); });
   await tab.goto(`${pathToFileURL(path.join(root, 'test/fixtures/geico/quote.html')).href}?${query}`);
   await tab.waitForFunction(() => !!window.__geicoMock?.view);
@@ -978,6 +983,14 @@ const wantHelpers = ['editIcon', 'button Recalculate', 'link View More Payment P
 if (JSON.stringify(helperClicks) !== JSON.stringify(wantHelpers)) fail(`the extension's Quote & Coverages clicks were [${helperClicks.join(', ')}], expected [${wantHelpers.join(', ')}]`);
 const agentRecalcs = final.log.filter((e) => e.isTrusted && e.type === 'click' && e.target === 'button' && /^recalculate$/i.test(e.text ?? '')).length;
 if (agentRecalcs !== 1) fail(`the agent's Recalculate clicks were ${agentRecalcs}, expected 1`);
+// W43-44: every button the extension pressed went out with the button's own part of the request, as
+// the agent's do: pressed from the page's own world (src/content/page-press.js), never a script's
+// click. Each Recalculate was rated with it.
+const kitPresses = final.log.filter((e) => !e.isTrusted && e.type === 'click' && e.target === 'button');
+for (const e of kitPresses.filter((x) => x.ownEntry !== true)) fail(`${e.step}: the extension's ${e.text} went out without the button's own part (${e.ownEvent ?? 'no event'} in progress: W43-44)`);
+for (const e of final.log.filter((x) => x.isTrusted && x.type === 'click' && x.target === 'button' && x.ownEntry !== true)) fail(`${e.step}: the agent's ${e.text} went out without the button's own part (the mock's reading is off)`);
+if (final.log.some((x) => x.type === 'recalculate' && x.ownEntry !== true)) fail(`a Recalculate was rated without the button's own part (W43-44)`);
+lines.push(`Buttons the extension pressed with the button's own part: ${kitPresses.length - kitPresses.filter((x) => x.ownEntry !== true).length} of ${kitPresses.length}`);
 const kitClicks = final.log.filter((e) => !e.isTrusted && (e.type === 'click' || e.type === 'disabled'))
   .filter((e) => !['radio', 'checkbox', 'option'].includes(e.target) && !isAdd(e) && !isContinue(e) && !isQuoteHelper(e));
 for (const e of kitClicks) fail(`the extension clicked ${e.target}${e.text ? ` "${e.text}"` : ''} on ${e.step}`);
@@ -992,6 +1005,7 @@ for (const f of fills) for (const x of f.report.filled) if (x.key === 'ref:GiveS
 async function noElevenPayments() {
   const tx = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
   tx.on('pageerror', (e) => errors.push(String(e.message)));
+  await tx.addInitScript({ content: PRESS });
   await tx.route(/^(https?|wss?):/i, (r) => { refused.push(r.request().url()); return r.abort(); });
   await tx.goto(`${pathToFileURL(path.join(root, 'test/fixtures/geico/quote.html')).href}?view=quote&plans=no11`);
   await tx.waitForFunction(() => window.__geicoMock?.view === 'quote');

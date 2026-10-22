@@ -60,7 +60,8 @@
 //   service lists (…Full); any coverage or add-on change makes the quote stale (premiums "$ --.--",
 //   "Please Recalculate Due To Coverage Change", Print and Next hidden, Recalculate shown); Recalculate
 //   redraws the step with new numbers and UUIDs, the answers kept (but those in recalcResets, set by the
-//   runner for the next Recalculate only: GEICO's own choices drawn back, as on FL live run 6), and a
+//   runner for the next Recalculate only: GEICO's own choices drawn back, as on FL live run 6; and the
+//   policy coverages as GEICO first drew them when the press was a script's click: W43-44), and a
 //   new rated premium; with ?plans=no11 the plans offered have no 11 Payments (TX, 2026-10-21);
 // - Final Quote Details, MVR & CLUE, Payment Information (never captured): placeholder views; every click
 //   or fill there is recorded in stopActions.
@@ -77,7 +78,10 @@
 //                | disabled (a press on a disabled button) | recalculate | decode. Clicks name
 //                their target: button (text), radio (stem=value), progress, addIcon, editIcon (a row's
 //                or an add-on panel's), edit-icon (reopen a unit), link, checkbox, option, other.
-//                Changes name the control's key (below) and its value; the SSN's value is never logged;
+//                Changes name the control's key (below) and its value; the SSN's value is never logged.
+//                A button's click (and a recalculate) has ownEntry: whether the request would carry
+//                the button's own part (an event of a type GEICO's React treats as discrete still
+//                dispatched as the press resumes, named in ownEvent: W43-44);
 //   view, step   the current view id and step name; renders: views drawn so far;
 //   saved        [{ view, step, values }]: what each form held when it was left with Next, Save and
 //                Continue or Looks Good (keys below);
@@ -117,6 +121,7 @@
   const later = (ms, fn) => setTimeout(fn, ms);
   let seq = 0;
   let stale = false;
+  let geicoOwn = null;
   const oneLine = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
   const stemOf = (el) => String(el?.getAttribute?.('name') || el?.id || '').match(/^Id_([A-Za-z][A-Za-z0-9]*)_\d+/)?.[1] ?? null;
   const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
@@ -124,6 +129,7 @@
     const e = { view: state.view, step: state.step, ...entry };
     state.log.push(e);
     if (STOP_VIEWS.includes(state.view) && e.type !== 'view') state.stopActions.push(e);
+    return e;
   };
 
   // --- GEICO's components ------------------------------------------------------------------------------
@@ -221,6 +227,8 @@
     ENTER[id]?.();
     // Once Business & Owner Info is left, the summary panel shows its contact details.
     if (state.business) summary();
+    // GEICO's own policy coverages, as the quote is first drawn (before anything is put back).
+    if (id === 'quote' && !geicoOwn) geicoOwn = Object.fromEntries(Object.entries(values()).filter(([k]) => /^cov:[^#]*$/.test(k)));
     if (keep) restore(keep);
     mirrorAll();
     record({ type: 'view', target: id, text: state.step, isTrusted: false });
@@ -548,11 +556,23 @@
     else state.units[list].push({ form: formId, values: v, seq: ++seq });
     state.editing = null;
   }
+  // The events GEICO's React 18 (its 961.*.js, getEventPriority) gives the sync lane, committed in a
+  // microtask: an update made while one is window.event lands before the request is built. Any other
+  // ('message', a media timeupdate, scroll) waits for a later task, as after a script's click.
+  const DISCRETE = new Set(['cancel', 'click', 'close', 'contextmenu', 'copy', 'cut', 'auxclick', 'dblclick', 'dragend', 'dragstart', 'drop',
+    'focusin', 'focusout', 'input', 'invalid', 'keydown', 'keypress', 'keyup', 'mousedown', 'mouseup', 'paste', 'pause', 'play',
+    'pointercancel', 'pointerdown', 'pointerup', 'ratechange', 'reset', 'resize', 'seeked', 'submit', 'touchcancel', 'touchend',
+    'touchstart', 'volumechange', 'change', 'selectionchange', 'textInput', 'compositionstart', 'compositionend', 'compositionupdate',
+    'beforeblur', 'afterblur', 'beforeinput', 'blur', 'fullscreenchange', 'focus', 'hashchange', 'popstate', 'select', 'selectstart']);
   const FLOW = { 'business-class': 'business-owner', 'owner-verification': 'vehicle-form', 'business-info': 'quote', quote: 'final-quote-details', 'final-quote-details': 'mvr-and-clue', 'mvr-and-clue': 'payment-information' };
   function press(host, e) {
     const text = textOf(host);
     if (host.hasAttribute('disabled')) { e.preventDefault(); e.stopPropagation(); record({ type: 'disabled', target: 'button', text, isTrusted: e.isTrusted }); return; }
-    record({ type: 'click', target: 'button', text, isTrusted: e.isTrusted });
+    const logged = record({ type: 'click', target: 'button', text, isTrusted: e.isTrusted });
+    // GEICO's buttons set their own part of the request after an await, which its React applies in
+    // time only while an event of a discrete type is still being dispatched then: a mouse click, or a
+    // click made inside such an event the browser dispatches; never a script's click (W43-44).
+    Promise.resolve().then(() => { logged.ownEvent = window.event?.type ?? null; logged.ownEntry = DISCRETE.has(logged.ownEvent); });
     if (/^print quote proposal$/i.test(text) || host.hasAttribute('href')) { e.preventDefault(); return; }
     const v = state.view;
     // The USDOT screen: Skip goes on as Business & Owner Info's Next does; Add USDOT Number is only recorded.
@@ -572,7 +592,7 @@
       return;
     }
     if (/^looks good$/i.test(text)) { snapshotForm(); return go(v === 'vehicle-list' ? 'owner-driver' : 'business-info', { button: host }); }
-    if (/^recalculate$/i.test(text) && v === 'quote') return recalculate(host);
+    if (/^recalculate$/i.test(text) && v === 'quote') return void Promise.resolve().then(() => recalculate(host, logged.ownEntry));
     if (/^cancel$/i.test(text) && v === 'vehicle-or-trailer') return go('vehicle-list', { button: host });
     if (/^discard changes$/i.test(text)) return openModal(true);
     if (/^yes, please discard\.?$/i.test(text)) { openModal(false); const list = v === 'add-driver' ? 'driver-list' : 'vehicle-list'; state.editing = null; return go(list, { button: host }); }
@@ -656,9 +676,11 @@
     slot('recalc')?.classList.remove('hide');
   }
   // Rating takes 10 delays (4 s by default), and the loader shows only 3 s in, as GEICO's own waits
-  // 3 s before it shows (its loader's delayTime): until then nothing on the page says it is busy.
-  function recalculate(host) {
-    const keep = { ...values(), ...(state.recalcResets ?? {}) };
+  // 3 s before it shows (its loader's delayTime): until then nothing on the page says it is busy. A
+  // request without the button's own part (`own` false: a script's click) is rated with GEICO's own
+  // policy coverages, as first drawn (W43-44: liability and UM back to GEICO's).
+  function recalculate(host, own) {
+    const keep = { ...values(), ...(own ? {} : geicoOwn), ...(state.recalcResets ?? {}) };
     state.recalcResets = null;
     host.setAttribute('disabled', '');
     const shown = later(3000, () => { waiting.style.display = 'block'; });
@@ -667,7 +689,7 @@
       state.recalcs++;
       render('quote', { keep });
       waiting.style.display = '';
-      record({ type: 'recalculate', target: 'button', text: state.premium, isTrusted: false });
+      record({ type: 'recalculate', target: 'button', text: state.premium, isTrusted: false, ownEntry: own });
     });
   }
   // A rated premium per Recalculate: every amount on the step moves by $50.00 a time (fakes all along).
