@@ -2679,7 +2679,7 @@ function renderSteps() {
 // done but held Continue for the agent's check ('check'), or the page changed after they clicked
 // Looks right ('changed'). With "Let me look before Continue" on, Looks right takes the place of
 // Fill again and continue.
-function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, page, settled, held, tabId }, carrier = state.tab?.carrier) {
+function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0, page, settled, held, tabId }, carrier = state.tab?.carrier) {
   const holding = left || waiting;
   // A step the carrier's Continue is never clicked on (GEICO's Quote & Coverages: advance `steps`).
   const offSteps = !!carrier?.advance?.steps?.length && !carrier.advance.steps.includes(tabStep(carrier, tabId ?? state.tab?.id));
@@ -2698,6 +2698,8 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, page, settl
       : 'Then Fill this page again to continue. Never Bind or Submit.';
     // Buttons waiting on others (Progressive's bill plan before Recalculate): the fill clicks them
     // in turn, and a question one waits on is a row of its own.
+    // Something open on the page over the button: never clicked in turn until it is closed.
+    if (!left && covered) return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled`, title: 'Close what is open over the button', sub: 'Then fill this page again. Never Bind or Submit.', ...again };
     if (!left) return { phase: 'waiting', tone: 'blue', eyebrow: `${filled} filled`, title: 'The fill clicks the rest in turn', sub: then, ...again };
     return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled · ${left} need${left === 1 ? 's' : ''} you`,
       title: left === 1 ? 'Answer the last question' : `Answer ${left} questions`, sub: then, button: 'dock-next', label: 'Show the next one', ...again };
@@ -2810,7 +2812,7 @@ function renderDock() {
     button.hidden = d.button !== id;
     if (d.button !== id) continue;
     button.textContent = d.label;
-    button.disabled = !!d.disabled;
+    button.disabled = !!d.disabled || (id === 'fill' && !!state.filling);
   }
   $('dock-alt').hidden = !d.alt;
   $('dock-alt').dataset.go = d.alt ?? '';
@@ -3673,7 +3675,7 @@ function renderReport(frames, ctx = {}) {
   // Held for the agent's check (Let me look before Continue): the top frame's word.
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
-  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, advanced: advanced ?? null, held, at: Date.now(), auto: !!ctx.auto, stopped };
+  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: Date.now(), auto: !!ctx.auto, stopped };
   // The answers and the items in one list, by their place on the page: an item without a field on
   // the page (a helper, a unit without its row) after them, then answers without one (a click).
   const listed = [...doneRows.map((row) => ({ row, at: row })), ...needs.map((x) => ({ x, at: x }))];
@@ -4010,15 +4012,21 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
   }
   item.querySelector('.ai-slot')?.replaceChildren();
   for (const b of item.querySelectorAll('.opt-btn')) b.setAttribute('aria-pressed', String(b.dataset.choice === choice));
-  if (item.classList.contains('need')) settleNeed(item, 'picked', null, choiceSaid(shown));
-  else {
-    item.dataset.value = shown;
-    item.classList.remove('changed');
-    setRowHead(item, { icon: '✓', value: choiceSaid(shown), tag: { kind: 'you', text: 'You', title: 'Your answer, put in from the panel' } });
-    item.querySelector('.change-slot')?.replaceChildren();
-    note.hidden = false;
-    note.classList.remove('bad');
-    note.replaceChildren('✓ Put in for you. No fill changes it now.');
+  // The question's other row too: a filled answer with a check shows as an answer and as a check.
+  const label = x.label ?? field.label ?? '';
+  const same = [...(item.closest?.('#report')?.querySelectorAll('.row[data-key]') ?? [])]
+    .filter((r) => r.dataset.key === x.key && (r.dataset.need ?? `|${r.dataset.field ?? ''}`).endsWith(`|${label}`));
+  for (const row of new Set([item, ...same])) {
+    if (row.classList.contains('need')) { settleNeed(row, 'picked', null, choiceSaid(shown)); continue; }
+    row.dataset.value = shown;
+    row.classList.remove('changed');
+    setRowHead(row, { icon: '✓', value: choiceSaid(shown), tag: { kind: 'you', text: 'You', title: 'Your answer, put in from the panel' } });
+    row.querySelector('.change-slot')?.replaceChildren();
+    const n = row.querySelector('.need-note');
+    if (!n) continue;
+    n.hidden = false;
+    n.classList.remove('bad');
+    n.replaceChildren('✓ Put in for you. No fill changes it now.');
   }
   // Questions the answer revealed are filled as after an edit on the page.
   scheduleAutoFill(page);
@@ -4811,7 +4819,7 @@ function renderAi(holder, suggestions, ctx) {
     item.querySelector('.ai-slot').replaceChildren(...(content ? [content] : []));
     // The AI's choice among the row's own: picking it there is accepting it (applyAi).
     const offered = !x.done && !x.dismissed && !x.leave && x.applyable && x.controlKind !== 'text' ? x.choice : null;
-    item.aiAccept = offered ? (button) => act([x], 'accepted', button) : null;
+    item.aiAccept = offered ? () => act([x], 'accepted') : null;
     if (offered) item.dataset.aiPick = offered; else delete item.dataset.aiPick;
     for (const b of item.querySelectorAll('.opt-btn')) {
       const pick = b.dataset.choice === offered;
@@ -5131,7 +5139,7 @@ function closeDetails() {
   showScreen();
   const back = state.detailsReturn;
   state.detailsReturn = null;
-  if (back?.isConnected) back.focus();
+  (back?.isConnected ? back : $(state.view === 'check' ? 'step-check' : 'step-fill'))?.focus();
 }
 
 function closePdf() {
@@ -5140,7 +5148,7 @@ function closePdf() {
   render();
   const back = state.pdfReturn;
   state.pdfReturn = null;
-  if (back?.isConnected) back.focus();
+  (back?.isConnected ? back : $(state.view === 'check' ? 'step-check' : 'step-fill'))?.focus();
 }
 
 async function drawPdf({ focus = false } = {}) {

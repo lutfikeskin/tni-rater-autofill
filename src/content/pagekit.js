@@ -1543,7 +1543,8 @@
       // Inside a shadow root, that root's own view of the point (the page's is retargeted to the host).
       const root = el.getRootNode?.();
       const top = (root?.elementFromPoint ? root : document).elementFromPoint?.(x, y);
-      return !top || drawnIn(top, el) || drawnIn(el, top) ? null : top;
+      // The kit's own AI banner is not the page's.
+      return !top || drawnIn(top, el) || drawnIn(el, top) || top.closest?.(`#${BANNER_ID}`) ? null : top;
     };
     if (!look()) return null;
     // At once: a page that scrolls smoothly (Bootstrap's) would still show the place it left.
@@ -2475,6 +2476,7 @@
       const loads = helperClicked && !!pendingAction?.loads;
       const rates = helperClicked && pendingAction?.verify === 'premium';
       if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads || rates ? LOAD_MS : 3000 })) {
+        traceEnd(pendingAction);
         halt(loads ? LOAD_HALT : 'The page did not settle after the helper.');
         break;
       }
@@ -2509,6 +2511,8 @@
         const until = Date.now() + LOAD_MS;
         while (Date.now() < until && !premiumReady() && !report.halted && currentPage() === startPage && !stepChanged()) { traceRead(pendingAction); await sleep(500); }
         if (pendingAction?.trace && premiumReady()) { pendingAction.trace.premiumMs = Math.round(perfNow() - pendingAction.trace.at); traceRead(pendingAction); }
+        // Stopped, or the agent edited, while it rated: nothing more is done here.
+        if (report.halted) { traceEnd(pendingAction); break; }
         if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted })) { traceEnd(pendingAction); halt(LOAD_HALT); break; }
         traceRead(pendingAction);
       }
@@ -2669,7 +2673,7 @@
         const c = now.get(k.at);
         if (!c || k.kind === 'text' || c.kind === 'text') continue;
         const value = answerShown(c);
-        if (value === (t.last.get(k.at) ?? k.shown)) continue;
+        if (value === (t.last.has(k.at) ? t.last.get(k.at) : k.shown)) continue;
         t.last.set(k.at, value);
         if (t.seen.length < 120) t.seen.push({ at: k.at, ms, value });
       }
@@ -2712,6 +2716,7 @@
       // by itself isn't a change (W43-41, FL, 2026-10-22: four answers marked as changed and put
       // back, which the agent saw right the whole time).
       await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
+      if (report.halted) return false;
       const now = new Map(answerPlaces(collectControls()));
       traceRead(a, now);
       const changed = keptChanged(a, now);
