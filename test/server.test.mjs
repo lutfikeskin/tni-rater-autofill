@@ -6,7 +6,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE } from '../server/index.mjs';
 import { checkServer } from '../scripts/lib/central.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
@@ -530,4 +530,105 @@ test('keeps a button the agent clicked: its text, bounded', async () => {
   const [ok, long] = stored(dataDir);
   assert.deepEqual([ok.type, ok.text, ok.view], ['agent_click', 'Recalculate', 't1']);
   assert.equal(long.text, undefined);
+});
+
+// A synthetic business profile, as src/usage.js intakeProfile builds it.
+const profile = () => ({
+  business: { state: 'TX', businessClass: 'Freight Hauler', dot: 'given', mc: 'blank', fein: 'given', dotWithin60Days: null, yearsInBusiness: 4, yearsExperience: 6, ownerDrives: true },
+  operations: { whatHaul: 'General freight', radiusMiles: 500, vehicleOwnership: 'Owned', personalUse: false, usesEld: true, eldBrand: 'Motive', needSr22: false,
+    filingsRequired: true, filingsWhich: 'MCS-90', hazmat: false, hazPlacard: null, movingState: false, teamDriving: null, canadaLoads: false, equipVehicle: null },
+  vehicles: [{ type: 'Semi Truck', year: 2019, make: 'Freightliner', model: 'Cascadia', value: 65000 }],
+  trailers: [{ type: 'Dry Van', year: 2016, make: 'Great Dane', model: null, value: 25000 }],
+  trailerInfo: { ownership: 'Owned', hitch: null, interchange: false, interchangeLimit: null, equipTrailer: null },
+  drivers: [{ age: 41, licenseState: 'TX', cdl: true, cdlYear: 2010, excluded: false, maritalStatus: 'Married', gender: null }],
+  coverage: { autoLiability: 'Yes', autoLiabLimit: '$1M CSL', cargo: true, cargoLimit: 100000, cargoDeductible: 1000, gl: false, hasGl: null, glLimit: null, reeferBreakdown: false, ntl: null },
+  priorInsurance: [{ type: 'Commercial Auto', carrier: 'Progressive', limit: '$1M CSL', expires: '2026-11' }],
+  hasClaims: false,
+});
+const profileEvent = (over = {}) => ev({ type: 'intake_profile', filled: undefined, carrier: undefined, page: undefined, ...profile(), ...over });
+
+test('keeps a business profile as sent when every value is in its shape', async () => {
+  const dataDir = tmp();
+  const sent = profileEvent();
+  await withServer({ dataDir }, async ({ post }) => {
+    assert.equal((await (await post({ events: [sent] })).json()).accepted, 1);
+  });
+  const [kept] = stored(dataDir);
+  for (const group of EVENT_FIELDS.intake_profile) assert.deepEqual(kept[group], sent[group], group);
+  assert.equal(kept.dropped, undefined);
+  assert.deepEqual(EVENT_FIELDS.intake_profile, Object.keys(PROFILE), 'the event keeps the profile\'s groups, no more');
+});
+
+test('a profile value out of its shape, or one that identifies the client, is left out and its group named', async () => {
+  const dataDir = tmp();
+  const p = profile();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [profileEvent({
+      business: { ...p.business, dot: '1234567', constructor: 'x' },
+      operations: { ...p.operations, whatHaul: 'call owner@example.com', eldBrand: 'x'.repeat(61) },
+      vehicles: [{ ...p.vehicles[0], vin: '1FUJGLDR0CLBP8834', make: 'Freightliner 1FUJGLDR0CLBP8834' }],
+      trailers: { type: 'Dry Van' },
+      drivers: [{ ...p.drivers[0], dob: '01/02/1980', gender: 'M', age: 41.5 }],
+      coverage: { ...p.coverage, cargoLimit: 1500.5 },
+      priorInsurance: [{ ...p.priorInsurance[0], expires: '11/30/2026' }],
+      hasClaims: 'yes',
+      name: 'Sample Trucking LLC',
+    })] });
+  });
+  const [kept] = stored(dataDir);
+  assert.equal(kept.business.dot, undefined, 'a number in place of given/blank');
+  assert.equal(kept.business.constructor, Object, 'a key the profile has no shape for is left out');
+  assert.equal(kept.business.mc, 'blank');
+  assert.equal(kept.operations.whatHaul, undefined, 'an email address');
+  assert.equal(kept.operations.eldBrand, undefined, 'too long');
+  assert.equal(kept.operations.radiusMiles, 500);
+  assert.deepEqual(kept.vehicles, [{ type: 'Semi Truck', year: 2019, model: 'Cascadia', value: 65000 }], 'no VIN, in its own key or in a make');
+  assert.equal(kept.trailers, undefined, 'a list sent as an object goes whole');
+  assert.deepEqual(kept.drivers, [{ licenseState: 'TX', cdl: true, cdlYear: 2010, excluded: false, maritalStatus: 'Married' }]);
+  assert.equal(kept.coverage.cargoLimit, undefined, 'dollars are whole');
+  assert.equal(kept.priorInsurance[0].expires, undefined, 'a month, never a date');
+  assert.equal(kept.hasClaims, undefined);
+  assert.equal(kept.name, undefined);
+  assert.deepEqual(kept.dropped.sort(), ['business', 'coverage', 'drivers', 'hasClaims', 'name', 'operations', 'priorInsurance', 'trailers', 'vehicles']);
+});
+
+test('a profile keeps at most 50 vehicles, trailers or drivers', async () => {
+  const dataDir = tmp();
+  const p = profile();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [profileEvent({ drivers: Array(51).fill(p.drivers[0]), vehicles: Array(50).fill(p.vehicles[0]) })] });
+  });
+  const [kept] = stored(dataDir);
+  assert.equal(kept.drivers, undefined);
+  assert.equal(kept.vehicles.length, 50);
+  assert.deepEqual(kept.dropped, ['drivers']);
+});
+
+test('profile text with a phone, SSN, date of birth, licence or policy number written with punctuation is left out; limits as written are kept', async () => {
+  const dataDir = tmp();
+  const p = profile();
+  const ids = ['call 312-555-0142', '(312) 555-0142', 'SSN 123-45-6789', 'born 01-05-1980', 'born 01.05.1980', 'licence S123-4567-8901', 'policy CA-0193-4471'];
+  const limits = ['$1M CSL', '$1,000,000', '1000000', '$1000000 CSL', '$1M/$2M', '25/50/25', '100/300/100', 'State Minimum'];
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ...ids.map((whatHaul) => profileEvent({ operations: { ...p.operations, whatHaul } })),
+      ...limits.map((l) => profileEvent({ coverage: { ...p.coverage, autoLiabLimit: l, glLimit: l }, priorInsurance: [{ ...p.priorInsurance[0], limit: l }] })),
+      profileEvent({ coverage: { ...p.coverage, autoLiabLimit: 'SSN 123 45 6789' } }),
+      profileEvent({ priorInsurance: [{ ...p.priorInsurance[0], limit: '123-45-6789' }], business: { ...p.business, dot: 'other', mc: 'other', fein: 'blank' } }),
+    ] });
+  });
+  const kept = stored(dataDir);
+  for (const [i, id] of ids.entries()) {
+    assert.equal(kept[i].operations.whatHaul, undefined, id);
+    assert.deepEqual(kept[i].dropped, ['operations'], id);
+  }
+  for (const [i, l] of limits.entries()) {
+    const e = kept[ids.length + i];
+    assert.deepEqual([e.coverage.autoLiabLimit, e.coverage.glLimit, e.priorInsurance[0].limit, e.dropped], [l, l, l, undefined], l);
+  }
+  const spaced = kept.at(-2);
+  assert.deepEqual([spaced.coverage.autoLiabLimit, spaced.dropped], [undefined, ['coverage']], 'an SSN written with spaces is no limit');
+  const last = kept.at(-1);
+  assert.equal(last.priorInsurance[0].limit, undefined, 'an SSN is no limit');
+  assert.deepEqual([last.business.dot, last.business.mc, last.business.fein], ['other', 'other', 'blank'], 'something other than a number is said as such');
 });
