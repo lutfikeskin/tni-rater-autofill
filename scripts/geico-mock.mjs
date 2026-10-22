@@ -52,7 +52,8 @@ import { stopScreen } from '../src/carriers.js';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const headed = process.argv.includes('--headed');
 const source = (file) => fs.readFileSync(path.join(root, 'src/content', file), 'utf8');
-const KIT = ['field-key.js', 'pagekit.js'].map(source).join('\n');
+// The page-world request counter the side panel injects for GEICO (countRequests), then the kit.
+const KIT = ['request-count.js', 'field-key.js', 'pagekit.js'].map(source).join('\n');
 const RECORDER = source('recorder.js');
 
 // A synthetic client (synthetic values only, the VINs from scripts/lib/privacy.mjs ALLOWED): an

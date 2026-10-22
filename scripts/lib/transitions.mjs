@@ -7,7 +7,7 @@
 // time. What it lists happened once; it isn't a rule.
 
 import { fieldId } from './conditions.mjs';
-import { sessionContexts } from './events.mjs';
+import { isPageLayout, sessionContexts } from './events.mjs';
 import { STEPPED, layoutStep } from './layouts.mjs';
 
 const pageOf = (e) => (e.step ? `${e.page} › ${layoutStep(e)}` : e.page);
@@ -63,7 +63,7 @@ export function layoutTransitions(events, { stepped = STEPPED } = {}) {
     const ordered = list.every((e) => Number.isInteger(e.seq)) ? [...list].sort((x, y) => x.seq - y.seq) : list;
     let last = null; // { page, layout, changes }
     for (const e of ordered) {
-      if (e.type === 'page_layout' && e.reason !== 'recalculate') {
+      if (isPageLayout(e)) {
         // A one-address application's layout without its step (before 0.9.6): can't be paired.
         if (stepped.has(e.carrier) && !e.step) { last = null; continue; }
         const page = pageOf(e);

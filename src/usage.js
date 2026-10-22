@@ -301,12 +301,12 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   // A helper the fill clicked that rates the answers (GEICO's Recalculate, W43-44), as a layout the
   // review scripts don't read as the page's (reason 'recalculate'): each choice it kept, what the
   // page showed at the click (`selected`) and after it ([ms after the click, value]), whether the
-  // fill put it back; in `context` when the fill's last answer was given, when the premium showed,
-  // and the page's requests ([start, end] in ms after the click).
+  // fill put it back; in `context` how many of the page's requests were still running at the click,
+  // when the premium showed, and the page's requests ([start, end] in ms after the click).
   for (const t of frames.map((f) => f.recalcTrace).filter(Boolean)) {
     events.push({
       type: 'page_layout', carrier, page, view, ...stepField, reason: 'recalculate',
-      context: { action: t.action ?? null, ms: t.ms ?? null, lastAnswerMs: t.lastAnswerMs ?? null, premiumMs: t.premiumMs ?? null, requests: (t.requests ?? []).slice(0, 40) },
+      context: { action: t.action ?? null, ms: t.ms ?? null, pendingAtClick: t.pendingAtClick ?? null, premiumMs: t.premiumMs ?? null, requests: (t.requests ?? []).slice(0, 40) },
       fields: (t.answers ?? []).slice(0, 60).map((x) => ({
         label: redact(x.label ?? ''), key: fieldKeyOf(x.key, redact, keySalt), selected: redact(x.shown ?? ''), agents: !!x.agents,
         seen: (x.seen ?? []).slice(0, 10).map(([ms, value]) => [ms, redact(value ?? '')]), putBack: !!x.putBack,

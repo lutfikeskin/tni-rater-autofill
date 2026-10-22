@@ -4817,46 +4817,68 @@ test('GEICO\'s Recalculate waits until the page\'s own requests stop finishing, 
 // W43-44 (TNI, 2026-10-22; W43-41 again on the build with its fix): after the fill's Recalculate,
 // GEICO drew its own liability, UM, heavy-vehicle road service and cargo, steady once the page was
 // quiet; the agent picked the same values again and recalculated, and they held. A page quiet for 2 s
-// can't show a request still running, and GEICO saves a pick with one sent half a second later: the
-// click waits for a request started after the fill's last answer to finish, 10 s at most. What the
-// page did after the click is kept for the usage log (`recalcTrace`).
-test('GEICO\'s Recalculate waits for the save of the fill\'s last answer, and what the page did after it is traced (W43-44)', async () => {
-  const run = async ({ saveMs = null, redraw } = {}) => {
+// can't show a request still running, and GEICO saves a pick with one sent half a second later. The
+// page's own world counts those still running (src/content/request-count.js, on <html
+// data-rater-pending>), and the waits hold while any is: the fill's saves, overlapping ones, and the
+// agent's. What the page did after the click is kept for the usage log (`recalcTrace`).
+test('GEICO\'s Recalculate waits for the page\'s requests still running, and what the page did after it is traced (W43-44)', async () => {
+  // `saves`: for each answer the fill gives, in order, how long its save runs (it starts 500 ms
+  // after the answer); `agentSave`: a save of the agent's still running as the fill starts.
+  const run = async ({ saves = [], agentSave = null, empty = ['comp'], redraw } = {}) => {
     const p = recalcPage({ redraw });
-    p.comp.value = '';
+    for (const k of empty) p[k].value = '';
+    const html = new FakeNode('html');
+    p.h.document.documentElement = html;
+    let pending = 0;
+    const count = (d) => { pending += d; html.setAttribute('data-rater-pending', String(pending)); };
+    count(0);
     let observer = null;
     const t0 = clock.Date.now();
     p.h.context.performance = { now: () => clock.Date.now() - t0 };
     p.h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+    const ends = [];
+    const save = (after, ms) => {
+      const start = clock.Date.now() + after;
+      setTimeout(() => count(1), after);
+      setTimeout(() => { count(-1); ends.push(clock.Date.now()); observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/lookup/coverage', startTime: start - t0, responseEnd: clock.Date.now() - t0 }] }); }, after + ms);
+    };
+    if (agentSave != null) save(0, agentSave);
+    let answered = 0;
     let answeredAt = null;
-    let savedAt = null;
-    p.comp.addEventListener('change', () => {
-      if (answeredAt != null) return;
-      answeredAt = clock.Date.now();
-      if (saveMs == null) return;
-      // GEICO's save: sent half a second after the pick, finished `saveMs` after it.
-      const start = answeredAt - t0 + 500;
-      setTimeout(() => { savedAt = clock.Date.now(); observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name: 'https://synthetic.example/api/lookup/coverage', startTime: start, responseEnd: savedAt - t0 }] }); }, saveMs);
-    });
+    for (const k of empty) {
+      p[k].addEventListener('change', () => {
+        if (p.recalcs) return;
+        answeredAt = clock.Date.now();
+        const ms = saves[answered++];
+        if (ms != null) save(500, ms);
+      });
+    }
     const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
-    return { p, report, recalcs: p.recalcs, afterSave: savedAt == null ? null : p.clickedAt - savedAt, afterAnswer: p.clickedAt - answeredAt };
+    return { p, report, recalcs: p.recalcs, afterLastSave: ends.length ? p.clickedAt - Math.max(...ends) : null, afterAnswer: answeredAt == null ? null : p.clickedAt - answeredAt };
   };
   // A save that takes 6 s: clicked 2 s after it is back, never while it runs.
-  const slow = await run({ saveMs: 6000 });
+  const slow = await run({ saves: [6000] });
   assert.equal(slow.recalcs, 1);
-  assert.ok(slow.afterSave >= 2000 && slow.afterSave < 3000, `clicked ${slow.afterSave} ms after the save finished`);
-  // No request for it at all: clicked once the wait has lasted 10 s.
-  const none = await run();
+  assert.ok(slow.afterLastSave >= 2000 && slow.afterLastSave < 3000, `clicked ${slow.afterLastSave} ms after the save finished`);
+  // Two answers: the first's save quick, the second's slow and still running when the first is back.
+  const overlapping = await run({ saves: [500, 6000], empty: ['comp', 'coll'] });
+  assert.equal(overlapping.recalcs, 1);
+  assert.ok(overlapping.afterLastSave >= 2000 && overlapping.afterLastSave < 3000, `clicked ${overlapping.afterLastSave} ms after the last save finished`);
+  // Every answer already right, the agent's own pick still saving for 5 s: waited for too.
+  const agents = await run({ empty: [], agentSave: 5000 });
+  assert.equal(agents.recalcs, 1);
+  assert.ok(agents.afterLastSave >= 2000 && agents.afterLastSave < 3000, `clicked ${agents.afterLastSave} ms after the agent's save finished`);
+  // Nothing running: clicked once the page has been quiet for 2 s, as before.
+  const none = await run({ saves: [null] });
   assert.equal(none.recalcs, 1);
-  assert.ok(none.afterAnswer >= 10000 && none.afterAnswer < 13000, `clicked ${none.afterAnswer} ms after the answer`);
+  assert.ok(none.afterAnswer >= 2000 && none.afterAnswer < 3500, `clicked ${none.afterAnswer} ms after the answer`);
   // The trace: GEICO's own value drawn at the click and still there once quiet: put back and red, as
-  // before, and the trace says when the answer was given, when the premium showed, the save, and what
-  // the page showed.
-  const drawn = await run({ saveMs: 1000, redraw: ({ comp }) => { comp.value = '$500 deductible'; } });
+  // before, and the trace says how many requests ran at the click, when the premium showed, the save,
+  // and what the page showed.
+  const drawn = await run({ saves: [1000], redraw: ({ comp }) => { comp.value = '$500 deductible'; } });
   assert.deepEqual(plain(drawn.report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
   const t = plain(drawn.report.recalcTrace);
-  assert.equal(t.action, 'recalculate');
-  assert.ok(t.lastAnswerMs < -2000, `last answer ${t.lastAnswerMs} ms before the click`);
+  assert.deepEqual([t.action, t.pendingAtClick], ['recalculate', 0]);
   assert.ok(t.premiumMs >= 0 && t.ms >= t.premiumMs);
   assert.ok(t.requests.some(([start, end]) => start < 0 && end < 0), 'the save, before the click');
   const comp = t.answers.find((x) => x.key === 'cov:COMP#1');
@@ -4864,9 +4886,51 @@ test('GEICO\'s Recalculate waits for the save of the fill\'s last answer, and wh
   // Seen as the premium showed, before the page was quiet.
   assert.ok(comp.seen[0][0] >= 0 && comp.seen[0][0] <= t.premiumMs + 600, `first seen ${comp.seen[0][0]} ms after the click`);
   // Nothing changed: every answer traced with no value after the click, nothing put back.
-  const held = await run({ saveMs: 1000 });
+  const held = await run({ saves: [1000] });
   assert.deepEqual(plain(held.report.failed), []);
   assert.ok(plain(held.report.recalcTrace.answers).every((x) => !x.seen.length && !x.putBack));
+});
+
+// The page-world counter itself (src/content/request-count.js): fetch and XHR to the page's own
+// origin while they run, another origin's never, once however often it is injected.
+test('the page\'s requests still running are counted on <html data-rater-pending> (W43-44)', async () => {
+  const source = fs.readFileSync(new URL('../src/content/request-count.js', import.meta.url), 'utf8');
+  const html = new FakeNode('html');
+  const resolvers = [];
+  class XHR {
+    constructor() { this.listeners = new Map(); }
+    open() {}
+    send() {}
+    addEventListener(type, fn) { this.listeners.set(type, fn); }
+    finish() { this.listeners.get('loadend')?.(); }
+  }
+  const context = {
+    location: new URL('https://synthetic.example/quote'), URL, Promise,
+    document: { documentElement: html },
+    fetch: () => new Promise((resolve) => resolvers.push(resolve)),
+    XMLHttpRequest: XHR,
+  };
+  context.window = context;
+  vm.runInNewContext(source, context);
+  vm.runInNewContext(source, context);
+  const shown = () => html.getAttribute('data-rater-pending');
+  assert.equal(shown(), '0');
+  context.fetch('/api/lookup/coverage');
+  context.fetch(new URL('https://synthetic.example/api/save'));
+  context.fetch('https://analytics.example/collect');
+  assert.equal(shown(), '2', 'own origin only, wrapped once');
+  const xhr = new context.XMLHttpRequest();
+  xhr.open('POST', '/api/save');
+  xhr.send();
+  assert.equal(shown(), '3');
+  resolvers[0]();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(shown(), '2');
+  xhr.finish();
+  resolvers[1]();
+  resolvers[2]();
+  await new Promise((r) => setImmediate(r));
+  assert.equal(shown(), '0');
 });
 
 // W43-32 (TNI, 2026-10-21): with no 11 Payments among the plans View More Payment Plans shows (TX:

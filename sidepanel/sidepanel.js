@@ -3003,6 +3003,9 @@ function stopPageIsOurs() {
 const worldFor = (carrier) => (carrier?.world === 'MAIN' ? 'MAIN' : 'ISOLATED');
 
 async function injectKit(tabId, carrier) {
+  // The page's requests still running, counted in its own world (`countRequests`: GEICO, W43-44);
+  // the kit's waits read the count. Wrapped once, in the top frame.
+  if (carrier?.countRequests) await chrome.scripting.executeScript({ target: { tabId }, world: 'MAIN', files: ['src/content/request-count.js'] });
   await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), files: ['src/content/field-key.js', 'src/content/pagekit.js'] });
 }
 

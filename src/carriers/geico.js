@@ -726,6 +726,9 @@ export const geico = {
   id: 'geico',
   name: 'GEICO',
   hosts: [/(^|\.)geico\.com$/],
+  // Its requests still running are counted in the page's own world (src/content/request-count.js):
+  // GEICO saves each coverage pick with one, and Recalculate waits for them (W43-44).
+  countRequests: true,
   // Fills on the quote and on the gateway, where the quote starts with the ZIP (TNI, 2026-10-21);
   // nothing else of the gateway. Page layouts as the agent works: the quote only.
   autoFillUrl: FILLED,

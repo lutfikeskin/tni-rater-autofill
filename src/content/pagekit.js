@@ -309,22 +309,27 @@
   // clicked 2 s after its last answer was rated 13 to 19 s later, with GEICO's own liability, UM,
   // road service and cargo (2026-10-22, 5 fills of 5). The agent's own clicks were rated in about
   // 2 s and kept every answer (13 of 13 since 2026-10-21). Watched from a fill's start in the top frame.
-  let lastRequestAt = -Infinity;
   let requestWatch = null;
-  // The last of them (start and end, performance time), and when the fill last gave an answer
-  // (apply): GEICO saves a coverage pick with a request it sends about half a second later, and a
-  // Recalculate clicked before that save is back was rated with GEICO's own values (W43-44).
+  // The last of them (start and end, performance time); the last one's end is when the page's own
+  // requests last finished.
   const recentRequests = [];
-  let lastAnswerAt = -Infinity;
+  const lastRequestEnd = () => recentRequests.reduce((m, r) => Math.max(m, r.end), -Infinity);
   // The time the page's requests are timed in (Date.now where a page has no performance clock).
   const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  // Those still running, as the page's own world counts them (src/content/request-count.js, for a
+  // carrier with `countRequests`: GEICO); null where nothing counts them. A request that hasn't
+  // finished isn't in Resource Timing: GEICO saves each coverage pick with one sent half a second
+  // later, and a Recalculate clicked while it ran was rated with GEICO's own values (W43-44).
+  const pendingRequests = () => {
+    const n = document.documentElement?.getAttribute?.('data-rater-pending');
+    return n == null || n === '' ? null : Number(n) || 0;
+  };
   function watchRequests() {
     if (requestWatch !== null) return;
     try {
       requestWatch = new PerformanceObserver((list) => {
         for (const e of list.getEntries()) {
           if ((e.initiatorType === 'fetch' || e.initiatorType === 'xmlhttprequest') && String(e.name).startsWith(`${location.origin}/`)) {
-            lastRequestAt = Math.max(lastRequestAt, e.responseEnd);
             recentRequests.push({ start: e.startTime ?? e.responseEnd, end: e.responseEnd });
             if (recentRequests.length > 200) recentRequests.shift();
           }
@@ -338,16 +343,12 @@
   // How long a wait for the page's requests (settle's `requests`) lasts at most. After that, a page
   // that keeps sending them (a session check) counts as quiet once its controls are.
   const REQUESTS_MS = 30000;
-  // How long a wait for the save of the fill's last answer (settle's `saved`) lasts at most: an
-  // answer the page saves with no request of its own doesn't hold the click longer than this.
-  const SAVE_WAIT_MS = 10000;
 
   // Wait until the page stops changing: not busy, every component it draws defined, and no new
   // nodes for `quietMs`. With `requests`, a check that holds while they are waited for (the fill
-  // not stopped), also none of its own requests finished for `quietMs`. With `saved` too, a request
-  // the page started after the fill's last answer has finished (SAVE_WAIT_MS at most): a quiet page
-  // can't show a request still running, and GEICO's save of the last coverage is one (W43-44).
-  async function settle({ quietMs = 250, maxMs = 15000, requests = null, saved = false } = {}) {
+  // not stopped), also none of its own requests still running (pendingRequests, where counted) or
+  // finished for `quietMs`.
+  async function settle({ quietMs = 250, maxMs = 15000, requests = null } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
     // A pick on a design-system radio redraws nothing: its host's `checked` and its group's
@@ -357,9 +358,8 @@
     const start = Date.now();
     try {
       await sleep(60);
-      const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS
-        && (performance.now() - lastRequestAt < quietMs
-          || (saved && lastAnswerAt > -Infinity && Date.now() - start < SAVE_WAIT_MS && !recentRequests.some((r) => r.start >= lastAnswerAt)));
+      const requested = () => !!requests?.() && Date.now() - start < REQUESTS_MS
+        && ((pendingRequests() ?? 0) > 0 || (!!requestWatch && perfNow() - lastRequestEnd() < quietMs));
       while (Date.now() - start < maxMs) {
         if (!pageBusy() && Date.now() - last >= quietMs && !partsUndefined() && !requested()) return true;
         await sleep(60);
@@ -1278,14 +1278,8 @@
     return selectedText(c) === opt.text ? { ok: true, shown: opt.text } : { ok: false, reason: 'the page did not keep the choice; pick it yourself' };
   }
 
-  // Returns { ok: true, shown } or { ok: false, reason, options? }. An answer given is stamped
-  // (lastAnswerAt): a helper that rates the answers waits for the page to save it (W43-44).
+  // Returns { ok: true, shown } or { ok: false, reason, options? }.
   async function apply(step, c) {
-    const result = await applyAnswer(step, c);
-    if (result?.ok) lastAnswerAt = perfNow();
-    return result;
-  }
-  async function applyAnswer(step, c) {
     if (step.kind === 'address-suggest' && c.kind === 'text') return applyAddress(step, c);
     if (step.kind === 'search-select') return applySearchSelect(step, c);
     if (c.cmp || c.options?.some((o) => o.cmp)) return applyExt(step, c);
@@ -2435,14 +2429,14 @@
         // spinner stayed until the agent reloaded), and one that waits for a quiet page for its own
         // time (`quietMs`: GEICO's Recalculate, W43-31), its own requests included (REQUESTS_MS at
         // most): once it is due, the page is waited for, and clicked next round if nothing changed
-        // meanwhile (a page that changed is read again). One that rates the answers (`keepAnswers`)
-        // also waits for the save of the fill's last answer (`saved`, W43-44: FL, 2026-10-22, the
-        // fill's Recalculate 2 s after its last answer was rated with GEICO's own liability, UM,
-        // heavy-vehicle road service and cargo, which the agent's own Recalculate never was).
+        // meanwhile (a page that changed is read again). Its own requests include those still
+        // running where the page counts them (W43-44: FL, 2026-10-22, the fill's Recalculate 2 s
+        // after its last answer was rated with GEICO's own liability, UM, heavy-vehicle road service
+        // and cargo while a save ran, which the agent's own Recalculate never was).
         if (loadDue) {
           const before = signature();
           const due = actions.find((x) => x.action === loadDue);
-          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !report.halted : null, saved: !!due?.keepAnswers })) { halt(LOAD_HALT); break; }
+          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !report.halted : null })) { halt(LOAD_HALT); break; }
           quiet = !agentPressed && signature() === before ? { action: loadDue, sig: before } : null;
           continue;
         }
@@ -2651,16 +2645,17 @@
 
     // What the page did after the click of a helper that rates the answers (`keepAnswers`: GEICO's
     // Recalculate), for the usage log (W43-44, to tell a check read too early from GEICO drawing its
-    // own values): each kept choice's value whenever it changed, in ms after the click; when the
-    // premium showed; the page's requests from the fill's last answer on; and which answers the
-    // fill put back. Typed boxes are left out (they may hold a client's value).
+    // own values): each kept choice's value whenever it changed, in ms after the click; how many of
+    // the page's requests were still running at the click (where counted); when the premium showed;
+    // the page's requests from 10 s before the click on; and which answers the fill put back. Typed
+    // boxes are left out (they may hold a client's value). `now`: the controls already read.
     function traceStart() {
-      return { at: perfNow(), lastAnswerAt, last: new Map(), seen: [], premiumMs: null, putBack: [] };
+      return { at: perfNow(), pendingAtClick: pendingRequests(), last: new Map(), seen: [], premiumMs: null, putBack: [] };
     }
-    function traceRead(a) {
+    function traceRead(a, now = null) {
       const t = a?.trace;
       if (!t) return;
-      const now = new Map(answerPlaces(collectControls()));
+      now ??= new Map(answerPlaces(collectControls()));
       const ms = Math.round(perfNow() - t.at);
       for (const k of a.kept) {
         const c = now.get(k.at);
@@ -2676,13 +2671,12 @@
       if (!t) return;
       traceRead(a);
       const rel = (x) => Math.round(x - t.at);
-      const from = Number.isFinite(t.lastAnswerAt) ? t.lastAnswerAt - 1000 : t.at - 5000;
       report.recalcTrace = {
         action: a.action,
         ms: rel(perfNow()),
-        lastAnswerMs: Number.isFinite(t.lastAnswerAt) ? rel(t.lastAnswerAt) : null,
+        pendingAtClick: t.pendingAtClick,
         premiumMs: t.premiumMs,
-        requests: recentRequests.filter((r) => r.end >= from).slice(-40).map((r) => [rel(r.start), rel(r.end)]),
+        requests: recentRequests.filter((r) => r.end >= t.at - 10000).slice(-40).map((r) => [rel(r.start), rel(r.end)]),
         answers: a.kept.filter((k) => k.kind !== 'text').map((k) => ({
           label: k.label, key: k.key, shown: k.shown, agents: k.stepId == null,
           seen: t.seen.filter((s) => s.at === k.at).slice(0, 10).map((s) => [s.ms, s.value]),
@@ -2710,8 +2704,8 @@
       // by itself isn't a change (W43-41, FL, 2026-10-22: four answers marked as changed and put
       // back, which the agent saw right the whole time).
       await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
-      traceRead(a);
       const now = new Map(answerPlaces(collectControls()));
+      traceRead(a, now);
       const changed = keptChanged(a, now);
       if (!changed.length) return false;
       const pairs = assign([...now.values()], plan);
@@ -2761,8 +2755,9 @@
     async function watchKept(a) {
       while (Date.now() - a.clickedAt < KEPT_WATCH_MS && !report.halted && currentPage() === startPage && !stepChanged()) {
         await sleep(500);
-        traceRead(a);
-        if (!keptChanged(a, new Map(answerPlaces(collectControls()))).length) continue;
+        const now = new Map(answerPlaces(collectControls()));
+        traceRead(a, now);
+        if (!keptChanged(a, now).length) continue;
         await settle({ quietMs: a.quietMs ?? 1000, maxMs: LOAD_MS, requests: () => !report.halted });
         await answersKept(a);
         return;
