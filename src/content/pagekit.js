@@ -303,9 +303,35 @@
     return waiting;
   }
 
+  // The page's own requests (fetch or XHR to its origin), each as it finishes. A request still
+  // running can't be seen. GEICO sends its server a coverage change half a second after it is
+  // picked, with nothing drawn (its widget actions' callServiceForOutcomes). A Recalculate the fill
+  // clicked 2 s after its last answer was rated 13 to 19 s later, with GEICO's own liability, UM,
+  // road service and cargo (2026-10-22, 5 fills of 5). The agent's own clicks were rated in about
+  // 2 s and kept every answer (13 of 13 since 2026-10-21). Watched from a fill's start in the top frame.
+  let lastRequestAt = -Infinity;
+  let requestWatch = null;
+  function watchRequests() {
+    if (requestWatch !== null) return;
+    try {
+      requestWatch = new PerformanceObserver((list) => {
+        for (const e of list.getEntries()) {
+          if ((e.initiatorType === 'fetch' || e.initiatorType === 'xmlhttprequest') && String(e.name).startsWith(`${location.origin}/`)) lastRequestAt = Math.max(lastRequestAt, e.responseEnd);
+        }
+      });
+      requestWatch.observe({ type: 'resource', buffered: true });
+    } catch {
+      requestWatch = false;
+    }
+  }
+  // How long a wait for the page's requests (settle's `requests`) lasts at most. After that, a page
+  // that keeps sending them (a session check) counts as quiet once its controls are.
+  const REQUESTS_MS = 30000;
+
   // Wait until the page stops changing: not busy, every component it draws defined, and no new
-  // nodes for `quietMs`.
-  async function settle({ quietMs = 250, maxMs = 15000 } = {}) {
+  // nodes for `quietMs`. With `requests`, a check that holds while they are waited for (the fill
+  // not stopped), also none of its own requests finished for `quietMs`.
+  async function settle({ quietMs = 250, maxMs = 15000, requests = null } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
     // A pick on a design-system radio redraws nothing: its host's `checked` and its group's
@@ -315,8 +341,9 @@
     const start = Date.now();
     try {
       await sleep(60);
+      const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && performance.now() - lastRequestAt < quietMs;
       while (Date.now() - start < maxMs) {
-        if (!pageBusy() && Date.now() - last >= quietMs && !partsUndefined()) return true;
+        if (!pageBusy() && Date.now() - last >= quietMs && !partsUndefined() && !requested()) return true;
         await sleep(60);
       }
       // Only components still not defined at the limit: the page itself is settled.
@@ -1898,6 +1925,7 @@
       return report;
     }
     componentPrefix = components;
+    if (window === window.top) watchRequests();
     if (!keepMarks) clear();
     stopSteps = [].concat(stopSteps ?? []);
     if (stopSteps.length) knownStopSteps = [...new Set([...knownStopSteps, ...stopSteps])];
@@ -2381,12 +2409,13 @@
         // A helper that loads a view (GEICO's "+", Add Driver) is clicked on a page quiet for a
         // second (FL live run 4, 2026-10-21: Add Driver 2 s after the list showed, and GEICO's
         // spinner stayed until the agent reloaded), and one that waits for a quiet page for its own
-        // time (`quietMs`: GEICO's Recalculate, W43-31): once it is due, the page is waited for, and
-        // clicked next round if nothing changed meanwhile (a page that changed is read again).
+        // time (`quietMs`: GEICO's Recalculate, W43-31), its own requests included (REQUESTS_MS at
+        // most): once it is due, the page is waited for, and clicked next round if nothing changed
+        // meanwhile (a page that changed is read again).
         if (loadDue) {
           const before = signature();
           const due = actions.find((x) => x.action === loadDue);
-          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
+          if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !report.halted : null })) { halt(LOAD_HALT); break; }
           quiet = !agentPressed && signature() === before ? { action: loadDue, sig: before } : null;
           continue;
         }
@@ -2437,6 +2466,16 @@
         } finally {
           mo.disconnect();
         }
+        if (!await settle({ quietMs: 250, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
+      }
+      // One that rates the quote on a page that isn't ExtJS (GEICO's Recalculate) shows nothing
+      // busy at first: GEICO's loader shows only 3 s into a load. GEICO rated the fill's click 13 to
+      // 19 s after it (2026-10-22). The wait above had ended by then, so the click was failed as
+      // unrated, and GEICO's redraw with its own values was never checked. Its premium is waited for
+      // as long as a step's load.
+      if (rates && !serverBacked) {
+        const until = Date.now() + LOAD_MS;
+        while (Date.now() < until && !premiumReady() && !report.halted && currentPage() === startPage && !stepChanged()) await sleep(500);
         if (!await settle({ quietMs: 250, maxMs: LOAD_MS })) { halt(LOAD_HALT); break; }
       }
       if (!await verifyAction()) break;

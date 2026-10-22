@@ -789,7 +789,11 @@ export const geico = {
     // at once, GEICO drew the coverages again with its own choices wherever one wasn't saved yet
     // (liability and UM back to $750,000, road service declined, cargo $5k), the fill's and the
     // agent's alike; after each the agent clicked, it kept what the page showed (FL live run 6,
-    // 2026-10-21). So it waits for a page quiet for 2 s (`quietMs`), and after GEICO's redraw every
+    // 2026-10-21). So it waits for a page quiet for 2 s (`quietMs`), with none of GEICO's own requests
+    // finishing for 2 s either (each coverage change goes to GEICO's server a moment after it is
+    // picked: 2026-10-22, the fill's clicks were rated 13 to 19 s later with GEICO's liability, UM,
+    // road service and cargo, the agent's in about 2 s with every answer kept). It waits for the
+    // premium up to a minute (GEICO's loader shows only 3 s in), and after GEICO's redraw every
     // answer is checked (`keepAnswers`): one of the fill's that GEICO changed is put back once, the
     // agent's is left, and each is a red item; it is never clicked again (`once`), so the agent
     // recalculates after that. With the premium current, each once (W43-18): View More Payment Plans

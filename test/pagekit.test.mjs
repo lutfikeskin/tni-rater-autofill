@@ -4721,6 +4721,68 @@ test('GEICO\'s Recalculate: a redraw seconds later is caught before View More; o
   assert.deepEqual(plain(shared.failed.map((x) => [x.key, x.name])), [['ref:GiveFoo', 'second'], [null, 'recalculate']]);
 });
 
+// 2026-10-22, 5 automatic fills of 5: GEICO rated the fill's Recalculate 13 to 19 s after the click,
+// its loader up only 3 s in, and drew its own liability, UM, road service and cargo. The fill had
+// already failed the click as unrated, so nothing was put back. Its premium is waited for, and the
+// redraw is checked.
+test('GEICO\'s Recalculate rated 18 s after the click, nothing busy for 3 s: its premium is waited for, and what GEICO changed is put back (2026-10-22)', async () => {
+  const slow = recalcPage({ redraw: ({ h, comp }) => {
+    h.document.body.innerText = STALE;
+    const loader = new FakeNode('div', { id: 'page-load', className: 'loader-container' });
+    setTimeout(() => h.document.body.append(loader), 3000);
+    setTimeout(() => { loader._visible = false; h.document.body.innerText = RATED; comp.value = '$500 deductible'; }, 18000);
+  } });
+  const report = await slow.h.kit.fill(slow.plan, { maxRounds: 12 });
+  assert.equal(slow.recalcs, 1);
+  assert.equal(slow.comp.value, '$1,000 deductible', 'put back');
+  assert.deepEqual(plain(report.failed.map((x) => x.key)), ['cov:COMP#1', null]);
+  assert.match(report.failed[0].reason, /changed this answer when it recalculated, and the fill put it back/);
+  assert.match(report.failed[1].reason, /changed an answer when it recalculated/);
+  assert.equal(slow.more._clicked, undefined, 'View More Payment Plans waits for the agent');
+});
+
+// The same runs: GEICO sends each coverage change to its server half a second after it is picked,
+// and draws nothing meanwhile. The agent's own Recalculates were rated in about 2 s and kept every
+// answer. Recalculate waits until none of the page's own requests has finished for 2 s, for 30 s at most.
+test('GEICO\'s Recalculate waits until the page\'s own requests stop finishing, for 30 s at most (2026-10-22)', async () => {
+  const run = async ({ own = 0, every = 1000, other = false, stopAfter = null }) => {
+    const p = recalcPage();
+    let observer = null;
+    const t0 = clock.Date.now();
+    p.h.context.performance = { now: () => clock.Date.now() - t0 };
+    p.h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() {} };
+    const finished = (name) => observer?.fn({ getEntries: () => [{ initiatorType: 'xmlhttprequest', name, responseEnd: clock.Date.now() - t0 }] });
+    let lastOwn = null;
+    let done = false;
+    const tick = (n) => {
+      if (p.recalcs || done) return;
+      if (n < own) { finished('https://synthetic.example/api/lookup/coverage'); lastOwn = clock.Date.now(); }
+      if (other) finished('https://analytics.example/collect');
+      if (n < own || other) setTimeout(() => tick(n + 1), every);
+    };
+    setTimeout(() => tick(0), 100);
+    if (stopAfter) setTimeout(() => p.h.kit.stop(), stopAfter);
+    const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+    done = true;
+    return { recalcs: p.recalcs, sinceLast: lastOwn == null ? null : p.clickedAt - lastOwn, sinceStart: p.clickedAt - t0, ended: clock.Date.now() - t0, halted: report.halted };
+  };
+  // GEICO's server working through ten changes, one a second: clicked 2 s after the last.
+  const queued = await run({ own: 10 });
+  assert.equal(queued.recalcs, 1);
+  assert.ok(queued.sinceLast >= 2000 && queued.sinceLast < 3000, `clicked ${queued.sinceLast} ms after the last request finished`);
+  // Another site's requests (analytics) hold nothing.
+  const others = await run({ other: true, every: 500 });
+  assert.ok(others.sinceStart < 5000, `clicked ${others.sinceStart} ms in`);
+  // The page's own, never ending: clicked once the wait has lasted 30 s.
+  const endless = await run({ own: Infinity });
+  assert.equal(endless.recalcs, 1);
+  assert.ok(endless.sinceStart >= 30000 && endless.sinceStart < 35000, `clicked ${endless.sinceStart} ms in`);
+  // Stopped during the wait: nothing clicked, and the fill ends at once.
+  const stopped = await run({ own: Infinity, stopAfter: 5000 });
+  assert.deepEqual([stopped.recalcs, stopped.halted], [0, true]);
+  assert.ok(stopped.ended < 6000, `ended ${stopped.ended} ms in`);
+});
+
 // W43-32 (TNI, 2026-10-21): with no 11 Payments among the plans View More Payment Plans shows (TX:
 // Pay In Full, 4 Payments Bi-Monthly Plan, 9 Payments), the plan with the most payments offered,
 // named in the report; Print follows it.
