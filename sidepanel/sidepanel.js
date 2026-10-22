@@ -2679,7 +2679,7 @@ function renderSteps() {
 // done but held Continue for the agent's check ('check'), or the page changed after they clicked
 // Looks right ('changed'). With "Let me look before Continue" on, Looks right takes the place of
 // Fill again and continue.
-function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, page, settled, held, tabId }, carrier = state.tab?.carrier) {
+function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0, page, settled, held, tabId }, carrier = state.tab?.carrier) {
   const holding = left || waiting;
   // A step the carrier's Continue is never clicked on (GEICO's Quote & Coverages: advance `steps`).
   const offSteps = !!carrier?.advance?.steps?.length && !carrier.advance.steps.includes(tabStep(carrier, tabId ?? state.tab?.id));
@@ -2698,6 +2698,8 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, page, settl
       : 'Then Fill this page again to continue. Never Bind or Submit.';
     // Buttons waiting on others (Progressive's bill plan before Recalculate): the fill clicks them
     // in turn, and a question one waits on is a row of its own.
+    // Something open on the page over the button: never clicked in turn until it is closed.
+    if (!left && covered) return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled`, title: 'Close what is open over the button', sub: 'Then fill this page again. Never Bind or Submit.', ...again };
     if (!left) return { phase: 'waiting', tone: 'blue', eyebrow: `${filled} filled`, title: 'The fill clicks the rest in turn', sub: then, ...again };
     return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled · ${left} need${left === 1 ? 's' : ''} you`,
       title: left === 1 ? 'Answer the last question' : `Answer ${left} questions`, sub: then, button: 'dock-next', label: 'Show the next one', ...again };
@@ -3671,7 +3673,7 @@ function renderReport(frames, ctx = {}) {
   // Held for the agent's check (Let me look before Continue): the top frame's word.
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
-  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, advanced: advanced ?? null, held, at: Date.now(), auto: !!ctx.auto, stopped };
+  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: Date.now(), auto: !!ctx.auto, stopped };
   // The answers and the items in one list, by their place on the page: an item without a field on
   // the page (a helper, a unit without its row) after them, then answers without one (a click).
   const listed = [...doneRows.map((row) => ({ row, at: row })), ...needs.map((x) => ({ x, at: x }))];

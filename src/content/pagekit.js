@@ -1506,7 +1506,8 @@
       // Inside a shadow root, that root's own view of the point (the page's is retargeted to the host).
       const root = el.getRootNode?.();
       const top = (root?.elementFromPoint ? root : document).elementFromPoint?.(x, y);
-      return !top || drawnIn(top, el) || drawnIn(el, top) ? null : top;
+      // The kit's own AI banner is not the page's.
+      return !top || drawnIn(top, el) || drawnIn(el, top) || top.closest?.(`#${BANNER_ID}`) ? null : top;
     };
     if (!look()) return null;
     // At once: a page that scrolls smoothly (Bootstrap's) would still show the place it left.
