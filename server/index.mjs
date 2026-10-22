@@ -120,20 +120,31 @@ export const RUN_FIELDS = {
 
 // The business profile (intake_profile): no name, number, address, date of birth or VIN, and every
 // value in its exact shape. A yes/no is true, false or null (unanswered, never No); a dollar amount
-// is whole; text is bounded and never holds what could identify the client (ID_LIKE: a date, an @,
-// five digits in a row, or a word of eight or more letters and digits mixed, as a birth date,
-// email, phone, VIN or policy number would), the test src/usage.js applies before sending. A value
-// that isn't in its shape is left out and its group named in `dropped`; a group that isn't the
-// right kind of object or list is dropped whole.
-export const ID_LIKE = /\d{1,2}\/\d{1,2}\/\d{2,4}|\d{4}-\d{2}-\d{2}|@|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/i;
+// is whole; USDOT, MC and FEIN are `given` (a valid number), `other` (something else written:
+// "Pending", "Applied for") or `blank`. Text is bounded and never holds what could identify the
+// client (ID_LIKE: an @; a date with /, - or . between its parts; seven or more digits, even with
+// spaces, dashes, dots, slashes or brackets between them, as in a phone, SSN, licence or policy
+// number; five digits in a row; a word of eight or more letters and digits mixed, as in a VIN). A
+// limit may also be a limit as written (LIMIT: $1M CSL, $1,000,000, 1000000, $1M/$2M, 25/50/25,
+// State Minimum), which can hold such digits. src/usage.js applies the same tests before sending.
+// A value that isn't in its shape is left out and its group named in `dropped`; a group that isn't
+// the right kind of object or list is dropped whole.
+export const ID_LIKE = /@|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d(?:[\s()./-]{0,2}\d){6,}|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/i;
+// An amount: with thousands commas, round thousands written plainly, or up to four digits with an
+// optional K or M; a pair of amounts with a slash ($1M/$2M); a split limit (25/50/25, 100/300/100,
+// whose first part is 15 or more, so a date isn't one); a word; & + -.
+const MONEY = String.raw`\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$?\d{1,6}000|\$?\d{1,4}(?:\.\d+)?[km]?`;
+const LIMIT_PART = String.raw`(?:1[5-9]|[2-9]\d|[1-9]\d{2})(?:\/\d{1,3}){1,2}|(?:${MONEY})(?:\s*\/\s*(?:${MONEY}))?|[a-z]+\.?|[&+-]`;
+export const LIMIT = new RegExp(String.raw`^(?:${LIMIT_PART})(?:\s+(?:${LIMIT_PART}))*$`, 'i');
 const yesNo = (v) => v === null || typeof v === 'boolean';
 const whole = (min, max) => (v) => v === null || (Number.isSafeInteger(v) && v >= min && v <= max);
 const text = (max) => (v) => v === null || (typeof v === 'string' && v.length > 0 && v.length <= max && !ID_LIKE.test(v));
+const limit = (max) => (v) => v === null || (typeof v === 'string' && v.length > 0 && v.length <= max && (LIMIT.test(v) || !ID_LIKE.test(v)));
 const oneOf = (...values) => (v) => v === null || values.includes(v);
 const usState = (v) => v === null || (typeof v === 'string' && /^[A-Z]{2}$/.test(v));
 const dollars = whole(0, 99_999_999);
 const year = whole(1900, 2100);
-const given = oneOf('given', 'blank');
+const given = oneOf('given', 'other', 'blank');
 const UNIT = { type: text(40), year, make: text(40), model: text(40), value: dollars };
 export const PROFILE_UNITS = 50;
 export const PROFILE = {
@@ -154,10 +165,10 @@ export const PROFILE = {
     gender: oneOf('MALE', 'FEMALE'),
   }],
   coverage: {
-    autoLiability: text(20), autoLiabLimit: text(40), cargo: yesNo, cargoLimit: dollars, cargoDeductible: dollars,
-    gl: yesNo, hasGl: yesNo, glLimit: text(40), reeferBreakdown: yesNo, ntl: yesNo,
+    autoLiability: text(20), autoLiabLimit: limit(40), cargo: yesNo, cargoLimit: dollars, cargoDeductible: dollars,
+    gl: yesNo, hasGl: yesNo, glLimit: limit(40), reeferBreakdown: yesNo, ntl: yesNo,
   },
-  priorInsurance: [{ type: text(40), carrier: text(60), limit: text(40), expires: (v) => v === null || v === 'none' || (typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v)) }],
+  priorInsurance: [{ type: text(40), carrier: text(60), limit: limit(40), expires: (v) => v === null || v === 'none' || (typeof v === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(v)) }],
   hasClaims: yesNo,
 };
 

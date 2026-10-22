@@ -603,3 +603,29 @@ test('a profile keeps at most 50 vehicles, trailers or drivers', async () => {
   assert.equal(kept.vehicles.length, 50);
   assert.deepEqual(kept.dropped, ['drivers']);
 });
+
+test('profile text with a phone, SSN, date of birth, licence or policy number written with punctuation is left out; limits as written are kept', async () => {
+  const dataDir = tmp();
+  const p = profile();
+  const ids = ['call 312-555-0142', '(312) 555-0142', 'SSN 123-45-6789', 'born 01-05-1980', 'born 01.05.1980', 'licence S123-4567-8901', 'policy CA-0193-4471'];
+  const limits = ['$1M CSL', '$1,000,000', '1000000', '$1000000 CSL', '$1M/$2M', '25/50/25', '100/300/100', 'State Minimum'];
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ...ids.map((whatHaul) => profileEvent({ operations: { ...p.operations, whatHaul } })),
+      ...limits.map((l) => profileEvent({ coverage: { ...p.coverage, autoLiabLimit: l, glLimit: l }, priorInsurance: [{ ...p.priorInsurance[0], limit: l }] })),
+      profileEvent({ priorInsurance: [{ ...p.priorInsurance[0], limit: '123-45-6789' }], business: { ...p.business, dot: 'other', mc: 'other', fein: 'blank' } }),
+    ] });
+  });
+  const kept = stored(dataDir);
+  for (const [i, id] of ids.entries()) {
+    assert.equal(kept[i].operations.whatHaul, undefined, id);
+    assert.deepEqual(kept[i].dropped, ['operations'], id);
+  }
+  for (const [i, l] of limits.entries()) {
+    const e = kept[ids.length + i];
+    assert.deepEqual([e.coverage.autoLiabLimit, e.coverage.glLimit, e.priorInsurance[0].limit, e.dropped], [l, l, l, undefined], l);
+  }
+  const last = kept.at(-1);
+  assert.equal(last.priorInsurance[0].limit, undefined, 'an SSN is no limit');
+  assert.deepEqual([last.business.dot, last.business.mc, last.business.fein], ['other', 'other', 'blank'], 'something other than a number is said as such');
+});
