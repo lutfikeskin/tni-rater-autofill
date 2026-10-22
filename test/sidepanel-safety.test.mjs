@@ -5955,3 +5955,42 @@ test('the business profile is logged on load, after a correction settles, and on
   assert.match(extractFunction('agentEdit'), /usage\.log\(\{ type: 'intake_edit'[^\n]*\n\s+profileLater\(\);/);
   assert.match(extractFunction('init'), /logSettings\('opened'\);\n[^\n]*\n\s+if \(logProfile\(\)\) save\(\);/);
 });
+
+// Review of PR #149: the wiring above was checked by its order only. Here loadFile runs, with timers
+// that really cancel: a correction's profile still waiting when another intake is loaded is logged
+// under its own quote, before that quote is closed, and no timer outlives the switch.
+test('a profile still waiting when another intake is loaded goes to its own quote, and its timer is gone', async () => {
+  const { intakeProfile, redactor } = await import('../src/usage.js');
+  const { redactionTerms } = await import('../src/plan.js');
+  const records = { a: { garaging: { state: 'TX' }, drivers: [], vehicles: [], trailers: [] }, b: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] } };
+  let loading = 'a', session = null, n = 0;
+  const logged = [];
+  const timers = new Map();
+  const state = { intake: null, tabSessions: new Map(), layoutPending: null, aiCache: new Map() };
+  const context = { state, doneRestored: new Set(), DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
+    aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
+    aiPendingStore: { get: async () => [], set: async () => {} },
+    usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: `s${++n}`, intakeId }), log: (e) => logged.push({ ...e, session: session?.id }) },
+    $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
+    normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+    store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
+    save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
+    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile, redactor, redactionTerms,
+    setTimeout: (fn) => { timers.set(timers.size + 1, fn); return timers.size; }, clearTimeout: (id) => timers.delete(id) };
+  vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks', 'persistAiPending', 'restoreAiPending',
+    'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid', 'logProfile', 'profileLater'].map(extractFunction).join('\n'), context);
+  const pdf = { name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) };
+  await context.loadFile(pdf);
+  records.a.garaging.state = 'OK';
+  context.profileLater();
+  assert.equal(timers.size, 1, 'the corrected profile waits');
+  loading = 'b';
+  await context.loadFile(pdf);
+  const seen = logged.filter((e) => ['intake_loaded', 'intake_profile', 'intake_closed'].includes(e.type)).map((e) => [e.type, e.session, e.business?.state ?? null]);
+  assert.deepEqual(seen, [
+    ['intake_loaded', 's1', null], ['intake_profile', 's1', 'TX'],
+    ['intake_profile', 's1', 'OK'], ['intake_closed', 's1', null],
+    ['intake_loaded', 's2', null], ['intake_profile', 's2', 'FL'],
+  ]);
+  assert.equal(timers.size, 0, 'no timer outlives the switch');
+});

@@ -390,3 +390,27 @@ test('profile text loses what could identify the client; numbers, yes/no and gen
   assert.equal(p.hasClaims, null);
   for (const leak of ['Ann', '1FUJ', 'A1234567', '10/01/1980', 'example.com', '12-3456789', '40000']) assert.ok(!JSON.stringify(p).includes(leak), leak);
 });
+
+// Review of PR #149: identifiers written with punctuation, ID boxes holding words, impossible dates
+// and limits typed with digits.
+test('profile: punctuated identifiers and the intake\'s spaced VINs go; ID boxes, expiry months and limits keep their meaning', () => {
+  const synthetic = {
+    applicant: { dot: 'Pending', mc: '0', fein: '123456789' },
+    operations: { whatHaul: 'Produce; call (312) 555-0142, SSN 123-45-6789, born 01-05-1980 or 01.05.1980, licence S123-4567-8901, policy CA-0193-4471, truck 1FUJ GLDR 0CLB P8834' },
+    vehicles: [{ make: 'Freightliner', model: 'Cascadia 126', vin: '1FUJGLDR0CLBP8834' }],
+    drivers: [{ dob: '02/30/1980' }],
+    coverage: { autoLiabLimit: '$1000000 CSL', glLimit: '1000000' },
+    priorInsurance: [
+      { carrier: 'Progressive', limit: '25/50/25', expiration: '13/01/2026' },
+      { limit: '100/300/100', expiration: '11/30/2026' },
+      { limit: '123-45-6789' },
+    ],
+  };
+  const p = intakeProfile(synthetic, { today: new Date('2026-10-22') });
+  assert.equal(p.operations.whatHaul, 'Produce; call (#, SSN #, born # or #, licence S#, policy CA-#, truck #');
+  assert.deepEqual([p.business.dot, p.business.mc, p.business.fein], ['other', 'other', 'given'], 'a word or a zero is something written, not a number');
+  assert.equal(p.vehicles[0].model, 'Cascadia 126', 'a model number stays');
+  assert.equal(p.drivers[0].age, null, 'no age from an impossible date of birth');
+  assert.deepEqual([p.coverage.autoLiabLimit, p.coverage.glLimit], ['$1000000 CSL', '1000000']);
+  assert.deepEqual(p.priorInsurance.map((x) => [x.limit, x.expires]), [['25/50/25', null], ['100/300/100', '2026-11'], [null, null]], 'no month 13; an SSN is no limit');
+});
