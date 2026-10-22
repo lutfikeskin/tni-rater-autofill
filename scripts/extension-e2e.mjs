@@ -6,8 +6,11 @@
 // explicit synthetic agent answers using trusted browser controls, then resumes from the panel.
 // Checks retained answers after reloads, stops at the declaration and never submits.
 // Usage events go to a throwaway local usage server (server/index.mjs on a temporary folder), set
-// as the panel's Server before it opens: the harness fails if anything is sent to the production
-// usage server, or if the intake_loaded event doesn't reach the local one.
+// as the panel's Server before it opens. The run fails if any request leaves the machine (a host
+// other than localhost: the production usage server, an AI provider, a CDN), if the intake_loaded
+// event doesn't reach the local server, or on any console error or uncaught exception in the panel,
+// the mock tab or the extension's service worker that isn't on BENIGN. It waits on what the mock
+// and the panel do (quiet), never a fixed time, except where it watches that nothing happens.
 //
 //   npm run package && npm run replay   # (in another terminal)
 //   npm run e2e:extension -- [screenshot folder]
@@ -25,10 +28,38 @@ const usageServer = createServer({ dataDir: usageDir });
 await new Promise((resolve) => usageServer.listen(0, '127.0.0.1', resolve));
 const usageUrl = `http://127.0.0.1:${usageServer.address().port}`;
 const ctx = await chromium.launchPersistentContext(userDir, { channel: 'chromium', headless: true, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`] });
-// Anything still headed for the production usage server is refused and fails the run.
-const toProduction = [];
-ctx.on('request', (r) => { if (new URL(r.url()).host === PRODUCTION_HOST) toProduction.push(`${r.method()} ${r.url()}`); });
-await ctx.route(`https://${PRODUCTION_HOST}/**`, (route) => route.abort());
+// Only this machine: a request to any other host is refused and fails the run (the production
+// usage server named apart). The extension's own pages, data: and blob: URLs aren't requests out.
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+const leavesMachine = (url) => /^(https?|wss?):$/.test(url.protocol) && !LOCAL_HOSTS.has(url.hostname);
+// What the mock page's own HTML loads (the captured page's Bootstrap from a CDN, its Intercom frame
+// not saved with it): refused or missing, so the run never needs the network, and no request or
+// error of the extension's.
+const MOCK_URL = 'http://localhost:8792/test/fixtures/amwins/application.html';
+const MOCK_HTML = fs.readFileSync('test/fixtures/amwins/application.html', 'utf8');
+const MOCK_ASSETS = new Set([...MOCK_HTML.matchAll(/<(?:link|script|iframe|img)\b[^>]*\b(?:href|src)="([^"]+)"/g)].map((m) => new URL(m[1], MOCK_URL).href));
+const outside = [];
+ctx.on('request', (r) => { if (leavesMachine(new URL(r.url())) && !MOCK_ASSETS.has(r.url())) outside.push(`${r.method()} ${r.url()}`); });
+await ctx.route(leavesMachine, (route) => route.abort());
+// Errors anywhere fail the run, as they are logged: the panel's (as a page, popped out), the mock
+// tab's and the service worker's console errors, and uncaught exceptions in a page. BENIGN: errors
+// the run causes on purpose or the browser logs for a reason outside the extension, each with why.
+const failedLoad = (text) => /^Failed to load resource\b/.test(text);
+const BENIGN = [
+  // What the mock page's HTML loads, refused or missing (MOCK_ASSETS).
+  (text, url) => failedLoad(text) && MOCK_ASSETS.has(url),
+];
+const errors = [];
+const surface = (page) => (!page ? 'page' : page.url().includes('/sidepanel/') ? (page.url().includes('window=popup') ? 'POPUP' : 'PANEL') : 'MOCK');
+const noteError = (where, text, url = '') => {
+  console.log(`${where} ERROR`, text, url);
+  if (!BENIGN.some((benign) => benign(text, url))) errors.push(`${where}: ${text}${url ? ` (${url})` : ''}`);
+};
+ctx.on('console', (m) => { if (m.type() === 'error') noteError(surface(m.page()), m.text(), m.location()?.url); });
+ctx.on('weberror', (e) => noteError(surface(e.page()), e.error().message));
+const watchWorker = (w) => w.on('console', (m) => { if (m.type() === 'error') noteError('WORKER', m.text(), m.location()?.url); });
+ctx.serviceWorkers().forEach(watchWorker);
+ctx.on('serviceworker', watchWorker);
 let [sw] = ctx.serviceWorkers();
 if (!sw) sw = await ctx.waitForEvent('serviceworker');
 const id = new URL(sw.url()).host;
@@ -40,18 +71,17 @@ await sw.evaluate(async (serverUrl) => {
 }, usageUrl);
 console.log('usage server', usageUrl);
 const mock = await ctx.newPage();
-await mock.goto('http://localhost:8792/test/fixtures/amwins/application.html');
+await mock.goto(MOCK_URL);
 const panel = await ctx.newPage();
-panel.on('console', (m) => { if (m.type() === 'error') console.log('PANEL', m.text()); });
-// A script that doesn't run at all (a syntax error) shows only here.
-panel.on('pageerror', (e) => console.log('PANEL ERROR', e.message));
 await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
 await mock.bringToFront();
-await panel.waitForTimeout(1000);
+// The panel follows the mock's tab, then reads the intake.
+const onAmwins = (page) => page.waitForFunction(() => /^AmWINS/.test(document.querySelector('#site')?.textContent ?? ''), null, { timeout: 10000 });
+await onAmwins(panel);
 await panel.setInputFiles('#file', 'test/fixtures/sample-intake.pdf');
-await panel.waitForTimeout(2500);
+await panel.waitForFunction(async () => !!(await chrome.storage.session.get('intake')).intake, null, { timeout: 15000, polling: 100 });
+await panel.locator('#details-row').waitFor({ state: 'visible', timeout: 10000 });
 console.log('site:', await panel.textContent('#site'));
-await panel.waitForTimeout(500);
 // The sample intake answers every client fact AmWINS asks, and TNI's standards answer the rest,
 // so nothing would be left to the agent. Clear the second driver's marital status (Married on the
 // PDF) in All client details, as an agent correcting the intake would: that row's marital status
@@ -104,6 +134,29 @@ const manualFailures = [], agentAnswered = new Set();
 const answeredSteps = new Map();
 let reachedDeclaration = false;
 const atStep = () => mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), saves: window.__amwinsMock.saves }));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+// The mock and the panel are quiet: every Save & Continue's background save has reloaded the steps,
+// the mock's loading overlay is gone, no fill runs, and nothing of these changed for `quietMs`.
+// `surface`: the panel's page (the popped-out window once it is the panel). In place of fixed waits.
+const quiet = async (surface = panel, quietMs = 1000, timeoutMs = 30000) => {
+  const look = async () => JSON.stringify([
+    await mock.evaluate(() => {
+      const m = window.__amwinsMock;
+      const overlay = document.querySelector('#loadingDefault');
+      return [m.saves, m.reloads ?? 0, m.steps.length, m.steps.at(-1), m.prevs ?? 0, !!overlay && getComputedStyle(overlay).display !== 'none'];
+    }),
+    await surface.evaluate(() => { const dock = document.querySelector('#dock'); return [dock.dataset.phase, dock.dataset.report]; }),
+  ]);
+  let last = null;
+  let since = 0;
+  for (const end = Date.now() + timeoutMs; Date.now() < end; await sleep(100)) {
+    const now = await look();
+    const [[saves, reloads, , , , loading], [phase]] = JSON.parse(now);
+    if (now !== last) { last = now; since = Date.now(); continue; }
+    if (saves === reloads && !loading && phase !== 'filling' && Date.now() - since >= quietMs) return;
+  }
+  throw new Error(`The mock and the panel did not settle in ${timeoutMs / 1000} s: ${last}`);
+};
 // Idle: no fill running on the tab (the dock's phase), and a fill's report in front (its time).
 const idlePanel = () => panel.waitForFunction(() => {
   const dock = document.querySelector('#dock');
@@ -162,7 +215,7 @@ const resumeFromPanel = async () => {
 };
 for (let round = 0; round < 20; round++) {
   await idlePanel();
-  await mock.waitForTimeout(1500); // the carrier's background save/reload and next-page fill
+  await quiet(); // the carrier's background save/reload and the next page's fill
   if (await panel.locator('#dock').getAttribute('data-phase') === 'filling') continue;
   const before = await atStep();
   const needs = await panel.locator('#report .row.need:not(.resolved) .row-label').allTextContents();
@@ -192,8 +245,9 @@ for (let round = 0; round < 20; round++) {
     manualFailures.push(`Unexpected unresolved questions on ${before.step}: ${unresolved.join(', ')}`);
     break;
   }
-  // The agent has not answered yet: the blank facts must remain unresolved and Continue held.
-  await mock.waitForTimeout(1000);
+  // The agent has not answered yet: the blank facts must remain unresolved and Continue held, the
+  // mock and the panel quiet for 1.5 s meanwhile.
+  await quiet(panel, 1500);
   const held = await atStep();
   if (held.step !== before.step || held.saves !== before.saves) {
     manualFailures.push(`Continue ran before the agent answered ${before.step}`);
@@ -253,7 +307,7 @@ for (const [, , selector] of AGENT_ANSWERS) if (!agentAnswered.has(selector)) ma
 if (manualFailures.length) console.log('MANUAL:', manualFailures.join('; '));
 // Every step's answers must survive the site's background save and reload (it redraws all
 // steps from what was saved): read them once the last reload has landed.
-await mock.waitForTimeout(2500);
+await quiet();
 const kept = await mock.evaluate(() => {
   const v = (sel) => { const el = document.querySelector(sel); if (!el) return '(missing)'; if (el.type === 'checkbox') return el.checked; if (el.classList.contains('datepicker-input')) return el._pickerDate ?? ''; return el.tagName === 'SELECT' ? el.selectedOptions[0]?.text.trim() ?? '' : el.value; };
   return {
@@ -285,8 +339,11 @@ if (lost.length) console.log('LOST:', lost.join(', '));
 
 // The agent goes back a step: the panel must leave them there (no second Save & Continue).
 const savesBefore = await mock.evaluate(() => window.__amwinsMock.saves);
+const prevsBefore = await mock.evaluate(() => window.__amwinsMock.prevs ?? 0);
 await mock.evaluate(() => document.querySelector('.form-tab:not([style*="none"]) [data-id="prevButton"], [data-id="prevButton"]:not([style*="none"])')?.click());
-await mock.waitForTimeout(6000);
+await mock.waitForFunction((n) => (window.__amwinsMock.prevs ?? 0) > n, prevsBefore, { timeout: 5000, polling: 50 });
+// Nothing should happen now: watched for 4 s of quiet, long enough for a follow-up fill to start.
+await quiet(panel, 4000);
 const stayed = await mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), saves: window.__amwinsMock.saves }));
 console.log('After Prev:', JSON.stringify(stayed));
 const lastMock = await mock.evaluate(() => JSON.stringify(window.__amwinsMock));
@@ -320,7 +377,11 @@ if (earlierOk) {
 if (!earlierOk) console.log('EARLIER PAGES: the page menu did not show Insured Info read-only and come back to this step.');
 // The events the panel uploaded (it sends right after the intake loads, then every minute).
 await panel.evaluate(() => document.getElementById('upload-usage')?.click()).catch(() => {});
-await panel.waitForTimeout(1500);
+const eventsIn = () => {
+  const dir = path.join(usageDir, 'events');
+  return fs.existsSync(dir) ? fs.readdirSync(dir).flatMap((f) => fs.readFileSync(path.join(dir, f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).type)) : [];
+};
+for (const end = Date.now() + 10000; Date.now() < end && !eventsIn().includes('intake_loaded'); await sleep(100));
 // Pop out: the panel in a window of its own follows the quote's tab (the browser window the agent
 // last used) and fills it, and the copy that was open gives way, so one copy fills at a time.
 // Back to the side panel opens Chrome's side panel and closes the window; a window popped out
@@ -330,7 +391,7 @@ const panelPages = () => ctx.pages().filter((p) => p.url().includes('/sidepanel/
 // Chrome's side panel isn't a page Playwright shows: the extension's own count of them.
 const sidePanels = () => sw.evaluate(async () => (await chrome.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] })).length);
 const within = async (ms, check) => {
-  for (const end = Date.now() + ms; Date.now() < end; await mock.waitForTimeout(200)) if (await check()) return true;
+  for (const end = Date.now() + ms; Date.now() < end; await sleep(200)) if (await check()) return true;
   return false;
 };
 try {
@@ -342,11 +403,10 @@ try {
   gaveWay.catch(() => {});
   await panel.click('#pop-out');
   const popup = await opened;
-  popup.on('pageerror', (e) => console.log('POPUP ERROR', e.message));
   await popup.waitForURL(/sidepanel\.html\?window=popup$/, { timeout: 10000 });
   await gaveWay;
   await mock.bringToFront();
-  await popup.waitForFunction(() => /^AmWINS/.test(document.querySelector('#site')?.textContent ?? ''), null, { timeout: 10000 });
+  await onAmwins(popup);
   // Native clicks need the panel's surface in front on Windows; the quote's window stays the last used.
   await popup.bringToFront();
   const before = await popup.locator('#dock').getAttribute('data-report');
@@ -355,7 +415,7 @@ try {
     const dock = document.querySelector('#dock');
     return dock.dataset.phase !== 'filling' && !!dock.dataset.report && dock.dataset.report !== old;
   }, before, { timeout: 30000, polling: 100 });
-  await mock.waitForTimeout(1500);
+  await quiet(popup);
   const after = await mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), submitted: window.__amwinsMock.submitted, declared: document.querySelector('#accept')?.checked }));
   const buttons = { dock: await popup.locator('#dock-back').isVisible(), popOut: await popup.locator('#pop-out').isVisible() };
   console.log('Popped out:', JSON.stringify({ panels: panelPages().length, ...after, ...buttons }), (await popup.textContent('#report')).replace(/\s+/g, ' ').slice(0, 300));
@@ -383,12 +443,14 @@ try {
 if (!poppedOk) console.log('POP OUT: the panel in its own window did not replace the open one, follow the quote tab and fill it, go back to the side panel, or give way to a new window, or something was declared or submitted.');
 await ctx.close();
 await new Promise((resolve) => usageServer.close(resolve));
-const received = fs.readdirSync(path.join(usageDir, 'events')).flatMap((f) => fs.readFileSync(path.join(usageDir, 'events', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).type));
+const received = eventsIn();
 fs.rmSync(usageDir, { recursive: true, force: true });
-console.log(`Usage: ${received.length} events to the local server (${[...new Set(received)].join(', ')}), ${toProduction.length} requests to production`);
-if (toProduction.length) console.log('TO PRODUCTION:', toProduction.join('; '));
-const usageOk = !toProduction.length && received.includes('intake_loaded');
+const toProduction = outside.filter((r) => r.includes(`//${PRODUCTION_HOST}/`));
+console.log(`Usage: ${received.length} events to the local server (${[...new Set(received)].join(', ')}), ${outside.length} requests off this machine (${toProduction.length} to production)`);
+if (outside.length) console.log('OFF THIS MACHINE:', outside.join('; '));
+const usageOk = !outside.length && received.includes('intake_loaded');
+console.log(`Errors: ${errors.length}${errors.length ? ` (${errors.join('; ')})` : ''}`);
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = usageOk && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone, filled and went back to the side panel, declaration and Submit stayed untouched, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one.' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
+const ok = usageOk && !errors.length && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
 process.exit(ok ? 0 : 1);

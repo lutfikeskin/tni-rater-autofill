@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 84 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 85 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -55,6 +55,9 @@
   // In page order: what a shadow root holds comes where its host is. GEICO draws its radios in
   // shadow roots between plain fields; listed after everything else, they came last in the report,
   // the panel and an `askAfter` anchor's "the next one".
+  // Up the page as it is drawn: a slotted element to its slot, a shadow root's top to its host.
+  const drawnParent = (n) => n.assignedSlot ?? n.parentElement ?? n.getRootNode?.()?.host ?? null;
+
   function deepQueryAll(root, selector, out = []) {
     for (const el of root.querySelectorAll('*')) {
       if (el.matches(selector)) out.push(el);
@@ -276,7 +279,32 @@
       .some((m) => m.getClientRects().length && getComputedStyle(m).visibility !== 'hidden');
   }
 
-  // Wait until the page stops changing: not busy and no new nodes for `quietMs`.
+  // The carrier's own components the page hasn't defined yet (`components`, a fill option: GEICO's
+  // gds-* while their script loads): no control of theirs is drawn, and defining one draws its
+  // shadow root without a mutation record. In the page only: a part inside a component's shadow root
+  // exists once that component is defined, by the same script (the GEICO mock's are copies that
+  // are never defined, and each render waited for them). Only the carrier's: another element never
+  // defined (a widget, another extension's) holds nothing. Each is waited for up to UNDEFINED_MS
+  // from when a wait first saw it, and never past a wait's own limit (settle).
+  const UNDEFINED_MS = 3000;
+  const undefinedSince = new WeakMap();
+  let componentPrefix = null;
+  function partsUndefined() {
+    if (!componentPrefix) return false;
+    let parts;
+    try { parts = [...document.querySelectorAll(':not(:defined)')].filter((el) => el.localName.startsWith(componentPrefix)); } catch { return false; }
+    const now = Date.now();
+    // Every one is noted as it is first seen, so they are waited for together, not one after another.
+    let waiting = false;
+    for (const el of parts) {
+      if (!undefinedSince.has(el)) undefinedSince.set(el, now);
+      if (now - undefinedSince.get(el) < UNDEFINED_MS) waiting = true;
+    }
+    return waiting;
+  }
+
+  // Wait until the page stops changing: not busy, every component it draws defined, and no new
+  // nodes for `quietMs`.
   async function settle({ quietMs = 250, maxMs = 15000 } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
@@ -288,10 +316,11 @@
     try {
       await sleep(60);
       while (Date.now() - start < maxMs) {
-        if (!pageBusy() && Date.now() - last >= quietMs) return true;
+        if (!pageBusy() && Date.now() - last >= quietMs && !partsUndefined()) return true;
         await sleep(60);
       }
-      return false;
+      // Only components still not defined at the limit: the page itself is settled.
+      return !pageBusy() && Date.now() - last >= quietMs;
     } finally {
       mo.disconnect();
     }
@@ -1433,7 +1462,8 @@
   const STEP_LINKS = '#progressIndicator';
 
   // Progressive names its pages in ?pageName=; other sites by path or #/route (ids normalised).
-  const currentPage = () => (new URLSearchParams(location.search).get('pageName') || (location.pathname + ((location.hash ?? '').startsWith('#/') ? location.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
+  const pageAt = (loc) => (new URLSearchParams(loc.search).get('pageName') || (loc.pathname + ((loc.hash ?? '').startsWith('#/') ? loc.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
+  const currentPage = () => pageAt(location);
 
   function ratesStale() {
     const text = document.body.innerText ?? '';
@@ -1456,6 +1486,38 @@
   // that commit anything stay off limits whatever the pattern says, and so do discarding a form and
   // signing (scripts/lib/signals.mjs RESTRICTED keeps every word of this list).
   const NEVER_ADVANCE = /\b(finish|buy|bind|purchase|submit|save|delete|remove|cancel|discard|sign|signature|esign|esignature|e-sign|e-signature|logout|log out|sign out|order)\b/i;
+  // What is over `el` where a click on it lands, its centre: a dialog, a message or a mask open on
+  // the page, through which a script's click would still reach it. Null when a click there reaches
+  // it (the element, a part of it, the words its slots show, or what it is drawn in: its shadow
+  // host), or when that can't be told (no size, no layout, no point to look at). A centre off the
+  // screen or under something is looked at again with the element scrolled to the middle (a button
+  // below the fold, a sticky header).
+  function coveredBy(el) {
+    const drawnIn = (node, outer) => {
+      for (let n = node; n; n = drawnParent(n)) if (n === outer) return true;
+      return false;
+    };
+    const look = () => {
+      const r = el.getBoundingClientRect?.();
+      if (!r?.width || !r.height) return null;
+      const x = r.left + r.width / 2;
+      const y = r.top + r.height / 2;
+      if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return 'off';
+      // Inside a shadow root, that root's own view of the point (the page's is retargeted to the host).
+      const root = el.getRootNode?.();
+      const top = (root?.elementFromPoint ? root : document).elementFromPoint?.(x, y);
+      // The kit's own AI banner is not the page's.
+      return !top || drawnIn(top, el) || drawnIn(el, top) || top.closest?.(`#${BANNER_ID}`) ? null : top;
+    };
+    if (!look()) return null;
+    // At once: a page that scrolls smoothly (Bootstrap's) would still show the place it left.
+    el.scrollIntoView?.({ block: 'center', inline: 'center', behavior: 'instant' });
+    const cover = look();
+    return cover === 'off' ? null : cover;
+  }
+  const COVERED = 'something on the page is open over Continue: close it, then fill again';
+  const COVERED_HELPER = 'something on the page is open over it';
+
   // `notWithin`: never a button inside this (GEICO's chooser behind Add Vehicle or Trailer, whose
   // Next opens a unit's form: the add helpers' own, after their "+").
   function findAdvanceButton(pattern, { notWithin = null } = {}) {
@@ -1476,7 +1538,7 @@
   // The element itself, or the shadow host it is drawn in (a gds-button's inner <button>), inside
   // `selector`.
   const insideOf = (el, selector) => {
-    for (let n = el; n; n = n.parentElement ?? n.getRootNode?.()?.host ?? null) if (n.matches?.(selector)) return true;
+    for (let n = el; n; n = drawnParent(n)) if (n.matches?.(selector)) return true;
     return false;
   };
 
@@ -1738,7 +1800,7 @@
   // again.
   // A fill on a page with a step progress bar ends when the step on screen changes (stepKey): the
   // rest of its plan is that step's, and the new step gets a fill of its own.
-  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [] } = {}) {
+  async function fill(plan, { overwrite = false, maxRounds = 60, skip = [], keepMarks = false, doneActions = [], replaceChoices = false, visitedPages = [], advance = null, batch = false, doneSteps = [], stopPages = [], stopSteps = [], units = null, skipBy = null, takenBack = null, hold = false, confirmed = null, run = null, loadResultMs = LOAD_RESULT_MS, filledBefore = [], expectPage = null, components = null } = {}) {
     // The agent's edits: `skipKeys` apply everywhere (`skip`, and those this fill protected itself),
     // `scopedKeys` are those of `skipBy` that apply where the kit is now, read again every round
     // (skipWhere).
@@ -1822,9 +1884,22 @@
     try { ext()?.Ajax?.on?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
     const visited = new Set(visitedPages);
     const startPage = currentPage();
-    if (!keepMarks) clear();
     const handled = new Map(); // step id -> { status, note }
     const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], reworded: [], renamed: [], halted: false, rounds: 0, unitForm: null, unitHeld: null, stepUnread: false };
+    // The page the panel asked to fill (`expectPage`, as it reads the tab's address): the top frame
+    // shows another one now (the agent or the carrier moved on while the panel prepared), so nothing
+    // is filled, marked or clicked here (`pageMoved`, the page found). A frame inside the page reads
+    // the top's address when it may (the same origin); one that can't (another origin's: a chat
+    // window) goes on, as the panel checked just before.
+    let topPage = null;
+    try { topPage = window === window.top ? startPage : pageAt(window.top.location); } catch { /* another origin */ }
+    if (expectPage != null && topPage != null && topPage !== expectPage) {
+      try { ext()?.Ajax?.un?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
+      report.pageMoved = topPage;
+      return report;
+    }
+    componentPrefix = components;
+    if (!keepMarks) clear();
     stopSteps = [].concat(stopSteps ?? []);
     if (stopSteps.length) knownStopSteps = [...new Set([...knownStopSteps, ...stopSteps])];
     // Its unit forms' markers, by which unitFormsNow tells the forms on screen between fills.
@@ -2647,6 +2722,11 @@
       const pairs = assign(controls, plan);
       const has = (path) => answered(pairs, path);
       const blocked = [];
+      // A helper's button with something open over it: waits, as one waiting for its prerequisites.
+      const holdCovered = (a, el) => {
+        blocked.push(a.action);
+        report.blocked.push({ id: a.action, why: COVERED_HELPER, waits: [{ say: 'what is open over it closed' }], text: buttonText(el).slice(0, 60) || (a.label ?? '') });
+      };
       for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
         // A link verified by its going away that is back on its page (NTL removed by hand, then
         // asked for again) is due again.
@@ -2731,12 +2811,16 @@
         if (!button) {
           const opener = !openersTried.has(a.action) && findButton({ text: a.opener });
           if (!opener) continue;
+          // Something open over it (a dialog, a message): not clicked through it.
+          if (coveredBy(opener)) { holdCovered(a, opener); continue; }
           openersTried.add(a.action);
           report.actions.push({ id: `${a.action}:menu`, text: buttonText(opener).slice(0, 60) });
           opener.click();
           return true;
         }
         if ((a.loads || a.quietMs) && !(quiet?.action === a.action && quiet.sig === signature())) { loadDue = a.action; return false; }
+        // Something open over it (a dialog, a message): not clicked through it; clicked once it's gone.
+        if (coveredBy(button)) { holdCovered(a, button); continue; }
         quiet = null;
         clicked.add(a.action);
         report.actions.push({ id: a.action, text: buttonText(button).slice(0, 60) || (a.label ?? '') });
@@ -2877,7 +2961,12 @@
       clicked.add(b.id);
       report.actions.push({ id: b.id, text: 'done by the page itself', alreadyShown: true });
     }
-    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findIndex((x) => x.id === b.id) === i);
+    // Each helper once, with what held it last (its prerequisites in one round, something open over
+    // it in the next).
+    report.blocked = report.blocked.filter((b, i, all) => !clicked.has(b.id) && all.findLastIndex((x) => x.id === b.id) === i);
+    // Helpers still held by something open over them: the panel names them (`coveredHelpers`).
+    const coveredHelpers = report.blocked.filter((b) => b.why === COVERED_HELPER).map((b) => b.text);
+    if (coveredHelpers.length) report.coveredHelpers = coveredHelpers;
     // Where each item's field is on the page (`order`: its place among the page's questions, in
     // document order), so the side panel lists what's left in the page's order, whichever kind
     // of item it is. Read once, from the page as it is now (as the last round read it when a
@@ -2978,6 +3067,11 @@
         if (button && approved && agentPressed) {
           report.agentPressed = true;
           report.blockers.push(AGENT_PRESSED);
+        } else if (button && approved && coveredBy(button)) {
+          // Something is open over Continue (a dialog, a message, a mask): a script's click would
+          // go through it. Continue waits until the agent closes it.
+          report.covered = true;
+          report.blockers.push(COVERED);
         } else if (button && approved) {
           const text = buttonText(button).slice(0, 40);
           // On one-address applications (AmWINS) the side panel waits for the questions to change.
@@ -3441,5 +3535,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 84, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 85, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

@@ -104,7 +104,7 @@ function extractFunction(name) {
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards and row heads (issueCard, setRowHead) come along as they are.
-        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior']) {
+        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -585,6 +585,25 @@ test('Undo after Mark done gives the field back only while the agent hasn\'t ans
   assert.deepEqual([parts['.mark-done'].hidden, item.dataset.settled, counted], [false, undefined, 1]);
   // Open again: its note is empty and hidden (the row itself says where to answer it).
   assert.deepEqual([parts['.need-note'].hidden, parts['.need-note'].children.length], [true, 0]);
+});
+
+// pagekit `covered`: something on the page was open over Continue, so the fill didn't click it.
+test('fill report says Continue wasn\'t clicked when something was open over it', () => {
+  const said = (frames) => {
+    const { context, box } = reportHarness({ tab: { id: 1, url: 'AddVehicle' } }, { pageOf: () => 'AddVehicle' });
+    context.renderReport(frames);
+    return nodesIn(box.children).filter((n) => n.props?.class === 'issue-title').map((n) => n.children[0]);
+  };
+  const frame = { fields: 1, filled: [{ label: 'VIN', shown: '1FTBR3X87MKA12345' }], kept: [], failed: [], noData: [], leftRequired: [], actions: [] };
+  assert.deepEqual(said([{ ...frame, covered: true, blockers: ['something on the page is open over Continue: close it, then fill again'] }]), ['Continue wasn’t clicked']);
+  assert.deepEqual(said([frame]), []);
+  // Continued in another frame: nothing to say.
+  assert.deepEqual(said([{ ...frame, covered: true }, { ...frame, advanced: 'Continue' }]), []);
+  // A helper held for it (pagekit `coveredHelpers`), by its words.
+  assert.deepEqual(said([{ ...frame, coveredHelpers: ['Lookup VIN'] }]), ['Lookup VIN wasn’t clicked']);
+  assert.deepEqual(said([{ ...frame, coveredHelpers: ['Lookup VIN'] }, { ...frame, covered: true }]), ['Lookup VIN and Continue weren’t clicked']);
+  // A follow-up fill shows its report for it, as for a page held for the agent's check.
+  assert.match(extractFunction('autoFill'), /const covered = frames\.some\(\(f\) => f\.covered \|\| f\.coveredHelpers\?\.length\);[\s\S]{0,1500}const rendered = current && \([^)]*\bcovered\b[^)]*\);[\s\S]{0,120}if \(current && \(newStep \|\| unseen \|\| held \|\| covered\)\) showFinish/);
 });
 
 test('each item left for the agent has a labelled Mark done bound to its field and page', () => {
@@ -2795,8 +2814,9 @@ test('after an intake is loaded, a tab gives layouts only once it shows a new pa
   await context.state.layoutChain;
   assert.deepEqual(logged.filter((e) => e.type === 'page_layout').map((e) => [e.page, e.reason]), [['Drivers', 'arrived']]);
   // Fills ready their tab once they went through (tested with autoFill below; fillPage the same).
-  // (After the stale check: a fill whose intake changed meanwhile proves nothing for the new one.)
-  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
+  // (After the stale check: a fill whose intake changed meanwhile proves nothing for the new one;
+  // nor does one whose page had moved on, which filled nothing.)
+  assert.equal((extractFunction('fillPage').match(/__raterKit\.fill\(p, o\), \[plan, options\]\);\s+\/\/[^\n]*\n\s+if \(staleFill\(ctx\)\) \{ noteStaleFill\(ctx\); return; \}\s+if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}\s+\/\/[^\n]*\n\s+state\.layoutReadyTabs\.add\(tabId\);/g) ?? []).length, 1);
 });
 
 test('a queued capture is dropped for a later change on its page, which gets its reasons', async () => {
@@ -4459,6 +4479,79 @@ test('while a fill runs the panel asks each frame only for new rows and keeps th
   reply = [{ result: { frame: 'f', list: 'f:2', since: 1, rows: [] } }];
   await tick();
   assert.equal(renders, 3);
+});
+
+// AdGuard and browser-harness comparison (2026-10-22): a message box on the page (alert, confirm,
+// beforeunload) holds its scripts, and the dock said "Working…" with no word why. A reading the
+// page hasn't answered for 5 s is said; nothing is done to the page, and the word goes once it answers.
+test('a fill whose page stops answering is said in the dock, and the word goes when it answers', async () => {
+  let tick = null;
+  let clock = 0;
+  let answer = null;
+  let renders = 0;
+  const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
+  const context = {
+    inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, UNANSWERED_MS: 5000,
+    Date: { now: () => clock }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+    chrome: { scripting: { executeScript: () => new Promise((resolve) => { answer = resolve; }) } },
+  };
+  vm.runInNewContext(extractFunction('watchFill'), context);
+  context.watchFill({ run: 'r1', tabId: 3, carrier: {} });
+  const reading = tick();
+  clock = 4999;
+  await tick();
+  assert.deepEqual([state.fillingFor.unanswered, renders], [undefined, 0], 'not yet');
+  clock = 5000;
+  await tick();
+  assert.deepEqual([state.fillingFor.unanswered, renders], [true, 1]);
+  await tick();
+  assert.equal(renders, 1, 'said once, and no second reading meanwhile');
+  answer([{ result: { frame: 'f', list: 'f:1', since: 0, rows: [] } }]);
+  await reading;
+  assert.deepEqual([state.fillingFor.unanswered, renders], [false, 2], 'it answered: the word goes');
+  // The dock says so, with Stop as ever.
+  const d = dockHarness({ carrier: { name: 'Progressive', advance: { text: 'Continue' } } });
+  Object.assign(d.state, { filling: true, fillingFor: { tabId: 7, filled: 3, rows: [], unanswered: true } });
+  const word = d.dock();
+  assert.deepEqual([word.phase, word.tone, word.title, word.sub, word.button, word.label],
+    ['filling', 'warn', 'The page isn’t answering', 'If it shows a message box, answer it there. The fill goes on after.', 'fill-stop', 'Stop']);
+  assert.match(extractFunction('renderLive'), /f\.unanswered \? 'Waiting for the page'/);
+});
+
+// Bitwarden comparison (2026-10-22): a fill went on with the page it was asked for while the panel
+// prepared (the list pick, the recorder, the AI retirement), whatever the tab showed by then. The
+// tab's page is read again just before the kit is asked, and the kit checks it as it starts.
+test('a fill whose page moved on before it began fills nothing, and only the agent\'s own says so', async () => {
+  for (const auto of [false, 'page']) {
+    const t = fillHarness();
+    let kitCalls = 0;
+    t.context.runKit = async () => { kitCalls++; return []; };
+    t.context.chrome = { tabs: { get: async (id) => ({ id, url: 'https://carrier.test/quote-B' }) } };
+    // The page in front, waiting while this fill ran (state.pagePending): its fill once this one is over.
+    const pending = [];
+    t.context.runPendingPage = () => pending.push(t.state.filling);
+    await t.context.fillPage({ auto });
+    assert.equal(kitCalls, 0, 'the kit is not asked to fill');
+    assert.deepEqual(t.seen.problems.map((p) => p.text), auto ? [] : ['The page changed before the fill began. Nothing was filled or clicked; fill the page in front.']);
+    // Logged only for the agent's own fill: an automatic one's is routine (a Continue just left the page).
+    assert.deepEqual(t.seen.logged.filter((e) => e.type === 'fill_error').map((e) => e.error), auto ? [] : ['page moved before the fill began']);
+    assert.deepEqual([t.state.filling, t.state.layoutReadyTabs.size, t.state.autoPaused], [false, 0, false], 'automatic filling goes on for the page in front');
+    assert.deepEqual(pending, [false], 'the waiting page is filled, after this fill');
+  }
+  // The kit found another page as it began (pagekit `pageMoved`): nothing is remembered from it.
+  const u = fillHarness();
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', u.context);
+  u.context.chrome = { tabs: { get: async (id) => ({ id, url: 'https://carrier.test/quote-A' }) } };
+  const run = u.context.fillPage();
+  await u.started;
+  assert.equal(u.seen.options.expectPage, '/quote-A', 'the kit is told the page');
+  u.release([{ frameId: 0, result: { ...u.results[0].result, pageMoved: '/quote-B' } }]);
+  await run;
+  assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
+  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,400}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
+  // autoFill too: once it is over, the page in front gets its stop card or its own fill.
+  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,300}if \(moved && fillCurrent\(ctx\)\) \{\s+if \(stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);/);
 });
 
 // Review 2026-10-22: rows a follow-up fill added had no source or group, so a worked-out answer or
