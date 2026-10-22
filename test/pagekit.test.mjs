@@ -6620,3 +6620,48 @@ test('an answer the fill gave for another unit is replaced with this unit\'s, ne
   assert.ok(report.filled.some((x) => x.path === 'drivers[1].first'));
   assert.ok(!report.filled.some((x) => x.path !== 'drivers[1].first'));
 });
+
+
+
+
+// W43-40, Progressive Vehicle Summary (2026-10-22, every vehicle added): the fill clicked nothing,
+// held nothing, and said nothing; the agent clicked Continue.
+test('a page with nothing left but no Continue to click says Continue is due; the next fill clicks the one drawn since', async () => {
+  const addVehicle = { id: 'action:addVehicle:0', kind: 'action', action: 'addVehicle:2', baseAction: 'addVehicle', path: 'action.addVehicle', name: 'Click addVehicle', pages: ['VehicleSummary'], text: '^add vehicle$' };
+  const h = harness({ ext: true, search: '?pageName=VehicleSummary' });
+  let report = await h.kit.fill([addVehicle], { maxRounds: 2, advance: { text: '^continue$' }, doneActions: ['addVehicle:2'] });
+  assert.equal(report.advanced, undefined);
+  assert.equal(report.advanceDue, 'none');
+  assert.equal(report.notDrawn, undefined, 'a page only a helper is for has no questions to wait for');
+  assert.equal(report.blockers.length, 0);
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  report = await h.kit.fill([addVehicle], { maxRounds: 2, advance: { text: '^continue$' }, doneActions: ['addVehicle:2'] });
+  assert.equal(report.advanced, 'Continue');
+  assert.equal(report.advanceDue, undefined);
+  // Held for the agent's check (Let me look before Continue): found, not due.
+  const held = harness({ ext: true, search: '?pageName=VehicleSummary' });
+  addButton(held, 'Continue');
+  report = await held.kit.fill([], { maxRounds: 2, advance: { text: '^continue$' }, hold: true });
+  assert.equal(report.held, 'check');
+  assert.equal(report.advanceDue, undefined);
+  // Held by something left for the agent: not due.
+  const left = harness({ ext: true, search: '?pageName=VehicleSummary' });
+  left.document.body.append(new SelectNode([{ text: '', value: '' }, { text: 'Yes', value: 'y' }], { id: 'odd', ariaLabel: 'Some new question', required: true }));
+  report = await left.kit.fill([], { maxRounds: 2, advance: { text: '^continue$' } });
+  assert.ok(report.blockers.length);
+  assert.equal(report.advanceDue, undefined);
+});
+
+// W43-42, Progressive Business Owner Info (2026-10-22): the arrival fill ran before the page drew
+// its questions and the panel said "No questions found on this page."
+test('a page the plan has questions for that shows none yet is reported not drawn, and never continued', async () => {
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const report = await h.kit.fill([{ id: 'name', path: 'applicant.name', kind: 'text', value: 'Sample Freight', pages: ['BusinessOwnerInfo'], label: '^business name$' }], { maxRounds: 2, advance: { text: '^continue$' } });
+  assert.equal(report.fields, 0);
+  assert.equal(report.notDrawn, true);
+  assert.equal(!!next._clicked, false);
+  assert.equal(report.advanceDue, undefined);
+});

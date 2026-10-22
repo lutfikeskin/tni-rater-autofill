@@ -823,7 +823,7 @@ test('an automatic follow-up on a step without a report fills it as a new page, 
   const fills = [];
   const state = { tab: { id: 1, url: 'Quote', carrier: { id: 'amwins', layoutSteps: ['Insured Info', 'Vehicles'] } }, intake: { record: {} }, autoPaused: false, filling: false,
     reports: new Map([['1|Insured Info', { fields: 9 }]]), tabSteps: new Map([[1, 'Vehicles']]) };
-  const context = { state, pageOf: (u) => u, fillPage: (o) => fills.push(o), reportKey: (tabId) => `${tabId}|${state.tabSteps.get(tabId)}`,
+  const context = { watchFill: () => () => {}, state, pageOf: (u) => u, fillPage: (o) => fills.push(o), reportKey: (tabId) => `${tabId}|${state.tabSteps.get(tabId)}`,
     fillContext: () => { throw new Error('no follow-up fill'); }, stateIssue: () => null };
   // autoFill alone: its helpers (fillContext and the rest) are the stubs above; its stop check is
   // the panel's own (no stop here).
@@ -1023,7 +1023,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   const frames = [{ fields: 1, filled: [], actions: [], unknown: [{ key: 'new', label: 'New question' }], halted: false }];
   const logged = [], rendered = [], layouts = [], assisted = [];
   const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
-  const context = {
+  const context = { watchFill: () => () => {},
     state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
@@ -1061,7 +1061,7 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
   // The page's list on the report shown, where a follow-up's answers join it.
   const appended = [];
   const list = { append: (...rows) => appended.push(...rows) };
-  const context = {
+  const context = { watchFill: () => () => {},
     state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {}, querySelector: (sel) => (sel === ':scope > .rows' ? list : null) }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: () => {}, renderSteps: () => {}, announce: () => {}, h: () => ({}), answerRow: (row) => row,
@@ -2051,8 +2051,14 @@ test('a page without form fields still shows what needs the agent', () => {
   assert.match(text, /Vehicle type/);
   assert.match(text, /pick the vehicle yourself/);
   assert.equal(state.reportFor.notice, undefined);
-  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [] }]);
+  // A page that should have questions and has none yet (pagekit notDrawn), filled again: said empty.
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], notDrawn: true }]);
   assert.match(state.reportFor.notice, /No questions found on this page/, 'an empty page is still said to be empty (in step 2)');
+  assert.equal(state.reportFor.empty, undefined);
+  // One with no question for the fill (a unit list, every unit on it) is done (W43-40).
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [] }]);
+  assert.equal(state.reportFor.notice, 'Nothing to fill on this page.');
+  assert.equal(state.reportFor.empty, true);
 });
 
 function assistHarness({ suggest, cfg = {} } = {}) {
@@ -2133,7 +2139,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
     const rendered = [], assisted = [];
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), layoutReadyTabs: new Set(),
       autoPaused: false, filling: false, assistPage: 'Rates' };
-    const context = {
+    const context = { watchFill: () => () => {},
       state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
       recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
@@ -3022,7 +3028,7 @@ test('a queued page-change capture waits again when a fill starts before it read
 test('an automatic fill readies its tab for layouts only when it went through', async () => {
   const run = async (runKit) => {
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
-    const context = {
+    const context = { watchFill: () => () => {},
       state, Date, crypto, rulesVersion: null, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
       redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
@@ -3596,7 +3602,7 @@ test('fills take their view before waiting, stop pages log theirs, and a reopene
     assert.match(body, /logFill\(ctx, frames, results, started\)/, `${name} logs that view`);
   }
   assert.match(extractFunction('fillContext'), /view: viewOf\(tabId, page, carrier\)/);
-  assert.match(extractFunction('logFill'), /fillEvents\(frames, \{[^}]*\bview: ctx\.view\b/);
+  assert.match(extractFunction('logFill'), /fillEvents\(ctx\.listNote \? \[\.\.\.frames, \{ blockers: \[ctx\.listNote\] \}\] : frames, \{[^}]*\bview: ctx\.view\b/);
   assert.match(extractFunction('onRecorderMessage'), /auto: 'stop'/);
   assert.match(extractFunction('onRecorderMessage'), /page: stopPage, view: viewOf\(sender\.tab\.id, stopPage\)/);
   assert.match(extractFunction('init'), /usage\.restoreSession\([\s\S]{0,80}\);\s+const views = await store\.get\('views'\);\s+if \(views\?\.session && views\.session === usage\.currentSession\(\)\?\.id\) state\.viewTabs = new Map\(views\.tabs\);/);
@@ -4616,9 +4622,9 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   u.release([{ frameId: 0, result: { ...u.results[0].result, pageMoved: '/quote-B' } }]);
   await run;
   assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
-  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,400}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
+  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
-  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,300}if \(moved && fillCurrent\(ctx\)\) \{\s+if \(stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);/);
+  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,400}if \(moved && fillCurrent\(ctx\)\) \{\s+if \(stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);/);
 });
 
 // Review 2026-10-22: rows a follow-up fill added had no source or group, so a worked-out answer or
@@ -4680,7 +4686,7 @@ function continueHarness(switches = {}) {
   const carrier = { advance: { text: 'Continue' } };
   const said = (entry, c = carrier) => {
     const d = context.continueSaid({ page: 'Quote', tabId: 7, left: 0, waiting: 0, ...entry }, c);
-    return { phase: d.phase, title: d.title, sub: d.sub, button: d.button ?? null, label: d.label ?? null, alt: d.alt ?? null, altLabel: d.altLabel ?? null };
+    return { phase: d.phase, title: d.title, sub: d.sub, button: d.button ?? null, label: d.label ?? null, go: d.go ?? null, alt: d.alt ?? null, altLabel: d.altLabel ?? null };
   };
   return { said, ui, state, carrier };
 }
@@ -4704,8 +4710,9 @@ test('Continue\'s word asks for Looks right while Continue waits for the agent\'
   ui['check-continue'].checked = false;
   const off = said({ settled: true });
   assert.deepEqual([off.phase, off.title, off.button, off.label], ['ready-continue', 'Ready for Continue', 'fill', 'Fill again and continue']);
+  // Nothing left and the page not moved on: the main button continues, replacing nothing (W43-40).
   const nothing = said({});
-  assert.deepEqual([nothing.phase, nothing.button, nothing.alt, nothing.altLabel], ['ready-continue', null, 'fill-again', 'Fill this page again']);
+  assert.deepEqual([nothing.phase, nothing.button, nothing.label, nothing.go, nothing.alt, nothing.altLabel], ['ready-continue', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
 });
 
 // Coordinator on the v5 dock: a word that can tell the agent to "Fill this page again to continue"
@@ -6876,4 +6883,100 @@ test('"<state> is right" lets the quote state stand for this intake only, and fo
   session.intakeId = 'intake-1';
   pick.code = 'VA';
   assert.equal(context.stateIssue()?.picked, 'Virginia');
+});
+
+// W43-40 (a list page with nothing left and no Continue to click yet) and W43-42 (Progressive's
+// Business Owner Info filled before it drew its questions, "No questions found on this page."):
+// the page is filled once more in a moment, once per page and step, and its report says nothing
+// until then.
+test('a page still drawing, or done with no Continue to click yet, is filled once more and said nothing of until then', () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'VehicleSummary'), carrier: { id: 'progressive' } };
+  h.state.intake = { record: {} };
+  h.state.autoPages.add('VehicleSummary');
+  const opts = { page: 'VehicleSummary', auto: 'page', intake: h.state.intake, revision: undefined };
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], advanceDue: 'none' }], opts), true);
+  assert.equal(h.scheduled.length, 1);
+  assert.equal(h.scheduled[0].ms, 1500);
+  // Due again on the same page: not tried a third time.
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], advanceDue: 'none' }], opts), false);
+  assert.equal(h.scheduled.length, 1);
+  // A fill there that found neither lets a later one try again.
+  assert.equal(h.rememberFill([{ fields: 0, filled: [] }], opts), false);
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], notDrawn: true }], opts), true);
+  // Halted or continued: never.
+  assert.equal(h.rememberFill([{ fields: 0, filled: [] }], opts), false);
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], notDrawn: true, halted: true, reason: 'x' }], opts), false);
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], advanceDue: 'none', advanced: 'Continue' }], opts), false);
+
+  // The report: nothing while it is tried again; a page still empty after that says so.
+  const state = { tab: { id: 7, url: 'BusinessOwnerInfo' } };
+  const { context } = reportHarness(state);
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], notDrawn: true }], { retrying: true });
+  assert.equal(state.reportFor, undefined);
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], notDrawn: true }], { retrying: false });
+  assert.match(state.reportFor.notice, /No questions found on this page/);
+});
+
+test('a page with nothing to fill and nothing left offers Continue, a fill that replaces nothing', () => {
+  const dock = extractFunction('dockFor');
+  assert.match(dock, /if \(report\?\.empty\) return continueSaid\(\{ \.\.\.report, tabId: state\.tab\.id \}, carrier\);/);
+  assert.ok(dock.indexOf('report?.empty') < dock.indexOf('if (report?.fields)'), 'before the page-with-questions word');
+  assert.match(SIDEPANEL, /\$\('fill'\)\.addEventListener\('click', \(\) => fillPage\(\{ continuing: \$\('fill'\)\.dataset\.go === 'continue' \}\)\);/);
+  assert.match(extractFunction('fillPage'), /const overwrite = auto \|\| confirmed \|\| continuing \? false : \$\('overwrite'\)\.checked;/);
+  assert.match(extractFunction('renderDock'), /\$\('fill'\)\.dataset\.go = d\.go \?\? '';/);
+});
+
+// W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
+// says, in counts, what the list showed when it isn't read as complete.
+test('a unit list not read as complete is said in counts in the usage log', async () => {
+  const run = async (lists, unitForms = {}) => {
+    const record = { vehicles: [{ vin: '1FTBR3X80MKA12341' }, { vin: '1FTBR3X80MKA12342' }], trailers: [], drivers: [] };
+    const state = { tab: { id: 4 }, intake: { record }, intakeRevision: 1, active: { vehicles: 1, drivers: 0, trailers: 0 },
+      unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms }, doneActions: new Set() };
+    const context = { state, knownStep, runKit: async () => [{ result: { step: 'Vehicles', forms: [], lists } }], fillCurrent: () => true,
+      persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs };
+    vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
+    const ctx = { tabId: 4, intake: state.intake, revision: 1, settings: { autoAdvance: true } };
+    await context.pickUnitToAdd(geico, ctx);
+    return [ctx.unitsListed, ctx.listNote];
+  };
+  assert.deepEqual(await run([{ rows: 2, shown: [true, false] }, null]), [false, 'list: 2 rows for 2 units, 1 shown, 0 saved by a fill']);
+  assert.deepEqual(await run([{ rows: 2, shown: [true, false] }, null], { vehicles: { B: 1 } }), [true, null], 'vehicle 2 saved by a fill');
+  assert.deepEqual(await run([{ rows: 1, shown: [true, false] }, null]), [false, null], 'a unit still to add: no word');
+  // Logged with the fill's own blockers, nothing else added.
+  const logged = [];
+  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => null }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, fillEvents, knownStep };
+  vm.runInNewContext(extractFunction('logFill'), context);
+  context.logFill({ carrier: { id: 'geico' }, intake: { record: {} }, page: '/quote', view: 't1', run: 'r', settings: {}, listNote: 'list: 2 rows for 2 units, 1 shown, 0 saved by a fill' },
+    [{ fields: 0, filled: [], blockers: [], advanceDue: 'none' }], [{ frameId: 0, result: { stepKey: 'Vehicles' } }], Date.now());
+  const run_ = logged.find((e) => e.type === 'fill_run');
+  assert.deepEqual([...run_.blockerList], ['list: 2 rows for 2 units, 1 shown, 0 saved by a fill', 'continue: none to click']);
+  assert.equal(run_.blockers, 1);
+  assert.equal(run_.fields, 0);
+});
+
+// W43-42 (Progressive, 2026-10-22): a 29-second automatic follow-up fill showed no rows until it
+// ended. An automatic fill is watched as the agent's is; its rows show from the first answer in.
+test('an automatic fill lists its answers as they go in, from the first one', async () => {
+  const t = fillHarness();
+  let watched = null;
+  t.context.watchFill = (ctx) => { watched = ctx.run; return () => { watched = `${watched}:stopped`; }; };
+  const run = t.context.autoFill('/quote-A');
+  await t.started;
+  const f = t.state.fillingFor;
+  assert.deepEqual([f?.auto, f?.tabId, watched === f?.run], [true, 7, true]);
+  t.release(t.results);
+  await run;
+  assert.equal(t.state.fillingFor, null);
+  assert.match(watched, /:stopped$/);
+  // Shown once a row is in, never for a follow-up that has answered nothing yet.
+  const ui = { live: { hidden: true, dataset: {}, replaceChildren() {}, drawn: [] } };
+  const state = { filling: true, tab: { id: 7 }, fillingFor: { auto: true, tabId: 7, rows: [] } };
+  const context = { state, $: (id) => ui[id] };
+  vm.runInNewContext(extractFunction('renderLive'), context);
+  context.renderLive();
+  assert.equal(ui.live.hidden, true);
+  assert.match(extractFunction('renderLive'), /const on = !!f && state\.filling && f\.tabId === state\.tab\?\.id && \(!f\.auto \|\| !!f\.rows\?\.length\);/);
+  assert.match(extractFunction('dockFor'), /if \(state\.filling && f\?\.tabId === state\.tab\.id && \(!f\.auto \|\| !!f\.rows\?\.length\)\) \{/);
 });
