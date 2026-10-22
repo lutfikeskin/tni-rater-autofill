@@ -76,6 +76,8 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
       if (e.result === 'filled') {
         a.source = 'autofill';
         a.autofilled = true;
+        // Where the fill's answer came from (intake, derived, standard, fact, attestation).
+        if (e.source) a.ruleSource = e.source;
         if (e.shown !== undefined) { a.value = e.shown; a.filledValue = e.shown; }
       }
     } else if (e.type === 'field_change') {
