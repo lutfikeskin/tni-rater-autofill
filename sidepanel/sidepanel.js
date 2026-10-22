@@ -10,7 +10,7 @@ import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
-import { collectItems, AssistError, assistContextKey, stableJson } from '../src/ai/common.js';
+import { collectItems, AssistError, assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated, firstNameOf } from '../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../src/ai/providers.js';
 
@@ -19,6 +19,11 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', impor
 // Outside the extension (e.g. opening this page directly to check the layout) there is no
 // chrome.* API: keep data in memory and disable filling.
 const inExtension = !!globalThis.chrome?.scripting;
+// The panel opened in a window of its own (Pop out, popOut) rather than as Chrome's side panel: it
+// follows the browser window the agent last used (tabInView) and offers Dock instead.
+const popped = new URLSearchParams(globalThis.location?.search ?? '').get('window') === 'popup';
+// This copy of the panel: with one in its own window, only the newest stays (onPanelMessage).
+const panelCopy = { id: globalThis.crypto?.randomUUID?.() ?? String(Math.random()), at: Date.now() };
 const memory = {};
 const store = inExtension
   ? {
@@ -325,10 +330,12 @@ const state = {
   // per page and set of questions, so a refill doesn't ask again.
   aiRun: 0,
   aiCache: new Map(),
-  // Which screen shows: Settings over everything, then the intake PDF; otherwise the start screen
-  // or the quote with its three steps.
+  // Which screen shows: Settings over everything; otherwise the start screen, or the quote with its
+  // three steps and the view they picked: step 1's checks ('check') or the page's answers ('page'),
+  // all of them or a filter's ('all' | 'needs' | 'done'). The intake PDF opens in a sheet over it.
   settingsOpen: false,
-  checkOpen: true, // step 1's card open (closes when its last item is checked)
+  view: 'check',
+  filter: 'all',
   fileMenuOpen: false,
   fileConfirm: null, // the file menu's question before the agent's work would go: 'replace' | 'clear'
   // The intake PDF: its bytes (also kept in session storage, keepPdf), the document pdf.js opened,
@@ -345,6 +352,12 @@ const state = {
   // is the one shown now.
   reports: new Map(),
   reportFor: null,
+  // An earlier page's report on the tab in front, picked in the answers' page menu: its key, shown
+  // read-only in place of the page's own (renderSteps); null for the page in front. `keyOpen`: what
+  // the tags and the rater page's marks mean, open under the list's title.
+  pastKey: null,
+  pastNodes: null,
+  keyOpen: false,
   // The fill running now (its tab, report key and answers in so far), for step 2's progress line.
   fillingFor: null,
   // The step a one-address application's tab is on (AmWINS), for the page strip (noteStep).
@@ -352,11 +365,18 @@ const state = {
   // The screen that is the agent's (carrier `stopButtons`: GEICO's "Add USDOT Number / Skip") a tab
   // shows, as `{ name, page }` (noteStopScreen).
   stopScreens: new Map(),
-  // The Luna controls are available from the brain button even while the Settings screen is
-  // hidden. Keep the opening trigger so Escape and the close button return focus
-  // to the control the agent used.
-  agentPopoverOpen: false,
-  agentPopoverTrigger: null,
+  // The AI picks waiting for approval, for the dock's Approve (renderAi), by tab and page
+  // (`${tabId}|${page}`): { canContinue, go }.
+  aiDocks: new Map(),
+  // Where focus was when the intake PDF opened, for Back.
+  pdfReturn: null,
+  // All client details, in a drawer over the panel, and where focus was when it opened.
+  detailsOpen: false,
+  detailsReturn: null,
+  // The browser window of the tab in view, for Dock (popped out), and whether this copy of the
+  // panel is giving way to a newer one (giveWay).
+  browserWindow: null,
+  closing: false,
 };
 
 // Crashes nothing in the panel caught (an exception, a promise nobody awaited) go in the usage log,
@@ -780,8 +800,11 @@ async function loadFile(file) {
   // test: a test run, not a client's quote (marked before on this computer, or by the agent now).
   state.intake = { ...result, fileName: file.name, done: [], agentEdited: [], places, test };
   if (same) keepWork(state.intake, same);
-  // Step 1 starts open when something on the intake needs a look.
-  state.checkOpen = state.intake.warnings.some((w, i) => w.level === 'check' && !state.intake.done.includes(i));
+  state.view = firstView(state.intake);
+  state.filter = 'all';
+  state.aiDocks = new Map();
+  state.pastKey = null;
+  state.detailsOpen = false;
   state.settingsOpen = false;
   state.fileMenuOpen = false;
   state.fileConfirm = null;
@@ -878,27 +901,20 @@ function render() {
   const has = !!state.intake;
   showScreen();
   $('recording').hidden = !has;
-  $('foot-version').hidden = has;
   // Marking a test run (Settings → Advanced) needs an intake to mark.
   $('test-run-row').hidden = !has;
   if (!has) return;
   const { record, stats, fileName } = state.intake;
   const n = (k, one) => `${record[k].length} ${one}${record[k].length === 1 ? '' : 's'}`;
-  // The count with its icon, named for screen readers.
-  const counted = (k, one, icon) => h('span', { title: n(k, one), 'aria-label': n(k, one) },
-    svgIcon(icon), String(record[k].length));
   const st = record.garaging?.state;
   $('client-name').textContent = record.applicant.name || record.applicant.owner1 || 'Unnamed business';
   $('client-name').title = `${fileName} · ${stats.filled} answers`;
-  $('client-meta').replaceChildren(...[
-    st ? h('span', {}, STATES[st] ?? st) : null,
-    counted('drivers', 'driver', 'person'),
-    counted('vehicles', 'vehicle', 'truck'),
-    record.trailers.length ? h('span', { title: n('trailers', 'trailer') }, n('trailers', 'trailer')) : null,
-  ].filter(Boolean));
+  // The garaging state and what the quote is about: "Maryland · 2 drivers · 1 vehicle".
+  $('client-meta').textContent = [st ? STATES[st] ?? st : null, n('drivers', 'driver'), n('vehicles', 'vehicle'),
+    record.trailers.length ? n('trailers', 'trailer') : null].filter(Boolean).join(' · ');
   $('test-run').checked = !!state.intake.test;
   $('details-count').textContent = `${stats.filled} answers`;
-  $('open-pdf').hidden = !state.pdfBytes && !state.intake.pdfKept;
+  $('open-pdf').hidden = !pdfAvailable();
   $('file-menu').hidden = !state.fileMenuOpen;
   $('file-menu-btn').setAttribute('aria-expanded', String(state.fileMenuOpen));
   $('file-menu-items').hidden = !!state.fileConfirm;
@@ -909,105 +925,112 @@ function render() {
   renderSite();
 }
 
-// Agent options can open without leaving the current quote.
-function closeAgentPopover({ restore = true } = {}) {
-  $('agent-popover').hidden = true;
-  $('agent-btn').setAttribute('aria-expanded', 'false');
-  $('settings-agent').setAttribute('aria-expanded', 'false');
-  state.agentPopoverOpen = false;
-  const trigger = state.agentPopoverTrigger || $('agent-btn');
-  state.agentPopoverTrigger = null;
-  if (restore) trigger.focus();
-}
-
-function openAgentPopover({ trigger = $('agent-btn'), focusId = null } = {}) {
-  state.agentPopoverTrigger = trigger;
-  state.agentPopoverOpen = true;
-  $('agent-popover').hidden = false;
-  $('agent-btn').setAttribute('aria-expanded', 'true');
-  $('settings-agent').setAttribute('aria-expanded', 'true');
-  if (focusId) $('ai-connection').open = true;
-  const target = focusId ? $(focusId) : $('ai-on');
-  target.focus();
-  target.scrollIntoView({ block: 'nearest' });
-}
-
-// Settings over everything, then the intake PDF; otherwise the start screen, or the quote.
+// Settings over everything but the header; otherwise the start screen, or the quote in the view its
+// steps picked (step 1's checks, or the page's answers), with the intake PDF in a sheet over it.
+// The dock goes away with Settings.
 function showScreen() {
   const has = !!state.intake;
-  const pdf = has && !state.settingsOpen && !!state.pdf;
-  $('settings').hidden = !state.settingsOpen;
-  $('pdf-view').hidden = !pdf;
-  $('home').hidden = state.settingsOpen || has;
-  $('quote').hidden = state.settingsOpen || pdf || !has;
-  $('settings-btn').setAttribute('aria-expanded', String(state.settingsOpen));
+  const settings = state.settingsOpen;
+  $('settings').hidden = !settings;
+  $('pdf-view').hidden = !(has && !settings && state.pdf);
+  $('details-view').hidden = !(has && !settings && state.detailsOpen && !state.pdf);
+  for (const id of ['details-btn', 'details-row']) $(id).setAttribute('aria-expanded', String(!!state.detailsOpen));
+  $('home').hidden = settings || has;
+  $('quote').hidden = settings || !has;
+  $('check-view').hidden = settings || !has || state.view !== 'check';
+  $('page-view').hidden = settings || !has || state.view !== 'page';
+  $('settings-btn').setAttribute('aria-expanded', String(settings));
+  renderDock();
 }
 
-function svgIcon(id) {
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('aria-hidden', 'true');
-  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-  use.setAttribute('href', `#${id}`);
-  svg.append(use);
-  return svg;
-}
-
+// Settings, at `focusId` when given (a setup reminder's field, the assistant's switch, its key).
 function openSettings(focusId = null) {
-  // The assistant connection fields live in the agent popover now. Setup notices still call
-  // openSettings('ai-openai-key'), so route those requests to the visible controls instead of
-  // opening a Settings screen whose fields may be hidden behind the popover.
-  if (focusId === 'ai-openai-key' || focusId === 'ai-model') {
-    state.settingsOpen = false;
-    showScreen();
-    openAgentPopover({ trigger: state.agentPopoverTrigger || $('agent-btn'), focusId });
-    return;
-  }
-  closeAgentPopover({ restore: false });
   state.settingsOpen = true;
   showScreen();
-  if (!focusId) return;
+  if (!focusId) { $('view').scrollTop = 0; return; }
   if ($('advanced').contains($(focusId))) $('advanced').open = true;
-  $(focusId).focus();
+  if (focusId === 'ai-openai-key') openKeyForm(true);
+  else $(focusId).focus();
   $(focusId).scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
-// Step 1, Check the intake: one card per thing to check, with its field to fix, Looks right now,
-// and where it is on the PDF.
+// The assistant's key in Settings: Add key (or Change) opens the box with the saved key in it, as
+// dots, so clearing it and saving removes it; Save or Cancel closes it.
+async function openKeyForm(open) {
+  $('key-form').hidden = !open;
+  $('key-edit').setAttribute('aria-expanded', String(open));
+  if (!open) { await renderAiSettings(); return; }
+  $('key-edit').textContent = 'Cancel';
+  $('ai-openai-key').value = (await usage.settings()).lunaKey || '';
+  $('ai-openai-key').focus();
+}
+
+// The step buttons: the quote's view, step 1's checks ('check') or the page's answers ('page').
+function setView(view) {
+  state.view = view;
+  state.pastKey = null;
+  showScreen();
+  renderSteps();
+  $('view').scrollTop = 0;
+}
+
+// The view an intake opens on (loaded, or restored when the panel reopens): step 1's checks while
+// one is still open; else the page's answers.
+function firstView(intake) {
+  return intake?.warnings?.some((w, i) => w.level === 'check' && !intake.done?.includes(i)) ? 'check' : 'page';
+}
+
+// The feed's filters: every answer ('all'), what still needs the agent ('needs'), or what is in
+// ('done'), whose answers are read back from the page then (refreshAnswers).
+function setFilter(filter) {
+  state.filter = filter;
+  renderSteps();
+  if (filter === 'done') refreshAnswers();
+}
+
+// Step 1, Check intake: one card per thing that looked wrong or missing, with its field to fix,
+// Looks right now and where it is on the PDF; then the cleanup notes, and All client details below.
 function renderWarnings() {
   const { warnings, done } = state.intake;
   const checks = warnings.map((w, i) => [w, i]).filter(([w]) => w.level === 'check');
   const infos = warnings.filter((w) => w.level === 'info');
   const open = checks.filter(([, i]) => !done.includes(i)).length;
-  $('check-intro').hidden = !open;
-  $('check-intro').textContent = 'These look wrong or missing. You can fill pages meanwhile.';
+  $('check-title').textContent = open ? `${open} thing${open === 1 ? '' : 's'} to look at on the intake` : 'The intake is checked';
+  $('check-sub').textContent = open
+    ? 'These looked wrong or missing. Fix the value or say it looks right. You can do this before or after filling.'
+    : 'Nothing else looked wrong. You can change these any time.';
   const editable = (path) => path && /\.|\]$/.test(path) && fieldInfo(path).label !== path;
-  // "See in PDF" only where the PDF shows the item (an answer only the agent gives: none).
+  // "See intake" only where the PDF shows the item (an answer only the agent gives: none).
   const pdfLink = (w, label) => {
     const place = sourcePlace(w.path, state.intake);
-    return place && (state.pdfBytes || state.intake.pdfKept)
-      ? h('button', { type: 'button', class: 'link small', onclick: () => openPdf({ path: w.path, label, kind: 'check' }) }, `See in PDF${pdfPageSaid(place.page, ', page ')}`)
+    return place && pdfAvailable()
+      ? h('button', { type: 'button', class: 'link small', onclick: () => openPdf({ path: w.path, label, kind: 'check' }) }, `See intake${pdfPageSaid(place.page, ', page ')}`)
       : null;
   };
+  const head = (info, w) => h('div', { class: 'issue-head' }, h('span', { class: 'bang', 'aria-hidden': 'true' }, '!'),
+    h('div', { class: 'check-text' }, info ? h('b', {}, info.label) : null, h('span', {}, w.msg)));
   const cards = checks.map(([w, i]) => {
     const info = editable(w.path) ? fieldInfo(w.path) : null;
+    const label = info?.label ?? fieldInfo(w.path ?? '').label;
     if (done.includes(i)) {
-      return h('div', { class: 'checked-row', dataset: { check: String(i) } }, h('b', {}, '✓'), h('span', { class: 'grow' }, info ? `${info.label} checked` : 'Checked'),
+      return h('div', { class: 'checked-row', dataset: { check: String(i) } }, h('span', { class: 'tick', 'aria-hidden': 'true' }, '✓'),
+        h('span', { class: 'grow' }, info ? `${info.label} checked` : 'Checked'),
         h('button', { type: 'button', class: 'link small', onclick: () => toggleDone(i, false) }, 'Undo'));
     }
     // Luna's GL and driver-gender items: their own buttons set the field (the agent's edit) or
     // dismiss the item, in place of the field and Looks right now.
     if (w.choices?.length) {
-      return h('div', { class: 'warn-card', dataset: { check: String(i) } },
-        h('div', { class: 'warn-head' }, info ? h('b', {}, info.label) : null, h('span', { class: 'warn-msg' }, w.msg)),
-        h('div', { class: 'warn-actions' }, ...w.choices.map((c) => h('button', { type: 'button', class: 'ghost', onclick: () => applyCheckChoice(i, c) }, c.label)),
-          pdfLink(w, info?.label ?? fieldInfo(w.path ?? '').label)));
+      return h('div', { class: 'check', dataset: { check: String(i) } }, head(info, w),
+        h('div', { class: 'check-body' }, h('div', { class: 'check-actions' },
+          h('div', { class: 'check-choices' }, ...w.choices.map((c) => h('button', { type: 'button', class: 'ghost', onclick: () => applyCheckChoice(i, c) }, c.label))),
+          pdfLink(w, label))));
     }
-    return h('div', { class: 'warn-card', dataset: { check: String(i) } },
-      h('div', { class: 'warn-head' }, info ? h('b', {}, info.label) : null, h('span', { class: 'warn-msg' }, w.msg)),
-      info ? fieldRow(w.path, info.label, info.kind, true, 'input') : null,
-      h('div', { class: 'warn-actions' },
-        h('button', { type: 'button', class: 'ghost', onclick: () => toggleDone(i, true) }, 'Looks right now'),
-        pdfLink(w, info?.label ?? fieldInfo(w.path ?? '').label) ?? (w.path && !info ? h('button', { type: 'button', class: 'link small', onclick: () => jumpTo(w.path) }, 'Show in client details') : null)));
+    return h('div', { class: 'check', dataset: { check: String(i) } }, head(info, w),
+      h('div', { class: 'check-body' },
+        info ? fieldRow(w.path, info.label, info.kind, true, 'input') : null,
+        h('div', { class: 'check-actions' },
+          h('button', { type: 'button', class: 'ghost', onclick: () => toggleDone(i, true) }, 'Looks right now'),
+          pdfLink(w, label) ?? (w.path && !info ? h('button', { type: 'button', class: 'link small', onclick: () => jumpTo(w.path) }, 'Show in client details') : null))));
   });
   $('warnings').replaceChildren(...cards,
     ...(infos.length ? [h('details', { class: 'cleanup' }, h('summary', { class: 'small muted' }, `Cleanup notes (${infos.length})`), h('ul', {}, infos.map((w) => h('li', {}, w.msg))))] : []));
@@ -1020,15 +1043,12 @@ async function toggleDone(i, isDone) {
   const done = new Set(state.intake.done);
   if (isDone) done.add(i); else done.delete(i);
   state.intake.done = [...done];
-  // The last one checked closes the step.
-  if (isDone && state.intake.warnings.every((w, j) => w.level !== 'check' || done.has(j))) state.checkOpen = false;
   await save();
   renderWarnings();
   renderSections();
-  // Keyboard focus stays where the agent was: on the row's Undo, or the card's Looks right now;
-  // on step 1's header once the step folds away.
-  const row = state.checkOpen ? document.querySelector(`#warnings [data-check="${i}"]`) : null;
-  (row?.querySelector('button') ?? $('check-head')).focus();
+  // Keyboard focus stays where the agent was: on the row's Undo, or the card's Looks right now.
+  const row = document.querySelector(`#warnings [data-check="${i}"]`);
+  (row?.querySelector('button') ?? $('step-check')).focus();
 }
 
 function openFlags(prefix) {
@@ -1036,10 +1056,13 @@ function openFlags(prefix) {
   return warnings.filter((w, i) => w.level === 'check' && !done.includes(i) && w.path && (w.path === prefix || w.path.startsWith(`${prefix}.`) || w.path.startsWith(`${prefix}[`)));
 }
 
+// All client details, one card per section (the drawer), every field editable. Built again after
+// an edit: the drawer keeps its place and the field in focus.
 function renderSections() {
   const { record } = state.intake;
-  const openIds = new Set([...document.querySelectorAll('details.section[open]')].map((d) => d.dataset.id));
   const box = $('sections');
+  const focused = box.contains(document.activeElement) ? document.activeElement.id : null;
+  const top = box.scrollTop;
   box.replaceChildren();
   for (const section of SECTIONS) {
     const items = section.list ? record[section.list] ?? [] : [record[section.id]];
@@ -1053,10 +1076,12 @@ function renderSections() {
         body.append(fieldRow(path, label, kind, flags.some((w) => w.path === path)));
       }
     });
-    box.append(h('details', { class: 'section', dataset: { id: section.id }, open: openIds.has(section.id) },
-      h('summary', {}, h('span', { class: 'title' }, section.title), flags.length ? h('span', { class: 'flag' }, `${flags.length} to check`) : null),
+    box.append(h('section', { class: 'section', dataset: { id: section.id }, 'aria-label': section.title },
+      h('h3', { class: 'section-title' }, h('span', { class: 'title' }, section.title), flags.length ? h('span', { class: 'flag' }, `${flags.length} to check`) : null),
       body));
   }
+  box.scrollTop = top;
+  if (focused) $(focused)?.focus({ preventScroll: true });
 }
 
 function fieldRow(path, label, kind, flagged, layout = 'row') {
@@ -1119,15 +1144,15 @@ async function agentEdit(path, after, kind) {
   if (/^drivers\[\d+\]\.first$/.test(path)) reviewDriverGender({ retry: true });
 }
 
+// "Show in client details": the drawer opens at the field, which is focused and flashed.
 function jumpTo(path) {
-  $('details').open = true;
+  openDetails();
   const info = fieldInfo(path);
   const sectionId = info.section?.id ?? SECTIONS.find((s) => s.id === path || s.list === path)?.id;
-  const details = document.querySelector(`details.section[data-id="${sectionId}"]`);
-  if (!details) return;
-  details.open = true;
-  const row = document.querySelector(`.field[data-path="${CSS.escape(path)}"]`) ?? details;
-  row.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  const section = $('sections').querySelector(`.section[data-id="${sectionId}"]`);
+  if (!section) return;
+  const row = $('sections').querySelector(`.field[data-path="${CSS.escape(path)}"]`) ?? section;
+  row.scrollIntoView({ block: 'start', behavior: scrollBehavior() });
   if (row.classList.contains('field')) {
     row.classList.add('pulse');
     row.querySelector('input, select, textarea')?.focus({ preventScroll: true });
@@ -1135,31 +1160,54 @@ function jumpTo(path) {
   }
 }
 
-// Which driver / vehicle / trailer the page is about, as pills (only when the intake has several).
+// The intake lists the page in front is about one of, or adds the next of: Progressive's vehicle
+// and trailer pages and their list, Add Driver and the driver list; GEICO's Vehicles (vehicles and
+// trailers) and Drivers & Incidents steps. None elsewhere: a business page isn't about a driver,
+// and AmWINS shows every driver and every vehicle on one page.
+function unitListsHere(carrier = state.tab?.carrier, page = pageOf(state.tab?.url), step = tabStep(carrier)) {
+  if (!carrier) return [];
+  const lists = new Set();
+  if (carrier.vehiclePages?.includes(page) || carrier.vehicleList === page || (step && carrier.vehicleSteps?.includes(step))) lists.add('vehicles');
+  if (carrier.trailerPages?.includes(page) || carrier.trailerList === page || (step && carrier.vehicleSteps?.includes(step))) lists.add('trailers');
+  if (carrier.driverPage === page || carrier.driverList === page || (step && carrier.driverSteps?.includes(step))) lists.add('drivers');
+  return [...lists];
+}
+
+// Which driver / vehicle / trailer the page is about (only when the intake has several, and only
+// on a page about one of them: unitListsHere), as a compact choice each at the top of the page view.
 function renderPickers() {
+  if (!state.intake) return;
   const { record } = state.intake;
+  const here = unitListsHere();
   const pickers = [
-    ['drivers', 'driver', (d) => [d.first, d.last].filter(Boolean).join(' ')],
-    ['vehicles', 'vehicle', (v) => [v.year, v.make, v.model].filter(Boolean).join(' ')],
-    ['trailers', 'trailer', (t) => [t.year, t.make, t.type].filter(Boolean).join(' ')],
-  ];
-  $('pickers').replaceChildren(...pickers.filter(([list]) => (record[list] ?? []).length > 1).map(([list, what, describe]) =>
-    h('div', { class: 'picker' },
-      h('div', { class: 'picker-q' }, `Which ${what} is this page about?`),
-      h('div', { class: 'pills' }, record[list].map((it, i) => h('button', {
-        type: 'button', class: 'pill', 'aria-pressed': String(state.active[list] === i),
-        onclick: async () => {
-          // The agent says the form on the page is this one's: the form it was filled on before
-          // (unitForms) no longer holds this form back.
-          releaseUnitForms(list, i);
-          state.active[list] = i;
-          await save();
-          renderPickers();
-          // The page is now about this vehicle or driver: its own layout (a capture waiting for
-          // the previous one is dropped).
-          scheduleLayout(pageOf(state.tab?.url), 'picked');
-        },
-      }, `${i + 1}. ${describe(it) || what}`))))));
+    ['drivers', 'Driver', (d) => [d.first, d.last].filter(Boolean).join(' ')],
+    ['vehicles', 'Vehicle', (v) => [v.year, v.make, v.model].filter(Boolean).join(' ')],
+    ['trailers', 'Trailer', (t) => [t.year, t.make, t.type].filter(Boolean).join(' ')],
+  ].filter(([list]) => here.includes(list) && (record[list] ?? []).length > 1)
+    .map(([list, what, describe]) => ({ list, what, names: record[list].map((it, i) => `${i + 1}. ${describe(it) || what}`) }));
+  // Drawn again only when what it shows changes (a list open stays open).
+  const drawn = JSON.stringify(pickers.map((p) => [p.list, p.names, state.active[p.list]]));
+  if ($('pickers').dataset.drawn === drawn) return;
+  $('pickers').dataset.drawn = drawn;
+  const focused = document.activeElement?.closest?.('#pickers') ? document.activeElement.id : null;
+  $('pickers').replaceChildren(...pickers.map(({ list, what, names }) => {
+    const id = `pick-${list}`;
+    return h('div', { class: 'picker' },
+      h('label', { for: id }, what),
+      h('select', { id, onchange: async (e) => {
+        const i = Number(e.target.value);
+        // The agent says the form on the page is this one's: the form it was filled on before
+        // (unitForms) no longer holds this form back.
+        releaseUnitForms(list, i);
+        state.active[list] = i;
+        await save();
+        renderPickers();
+        // The page is now about this vehicle or driver: its own layout (a capture waiting for
+        // the previous one is dropped).
+        scheduleLayout(pageOf(state.tab?.url), 'picked');
+      } }, names.map((name, i) => h('option', { value: String(i), selected: state.active[list] === i }, name))));
+  }));
+  if (focused) $(focused)?.focus();
 }
 
 // Picking vehicle (driver, trailer) `index` in the panel: the forms bound to it (unitForms) are
@@ -1186,9 +1234,18 @@ function onTabUpdated(id, change, tab) {
   if ((id === state.tab?.id || tab?.active) && (change.url || change.status === 'complete')) refreshTab();
 }
 
+// The tab the panel looks at: as a side panel, the active tab of its own browser window; popped
+// out, of the browser window the agent last used (the panel's own window has no quote tab).
+async function tabInView() {
+  if (!popped) return (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+  const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] }).catch(() => null);
+  return win ? (await chrome.tabs.query({ active: true, windowId: win.id }))[0] : undefined;
+}
+
 async function refreshTab() {
   if (!inExtension) { state.tab = null; return renderSite(); }
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tab = await tabInView();
+  if (Number.isInteger(tab?.windowId)) state.browserWindow = tab.windowId;
   // During a quote the agent may look at another site (email, the intake PDF): the panel stays
   // on the tab of the quote and keeps filling it in the background. Another rater tab is followed.
   const activeIsRater = !!(tab?.url && carrierForUrl(tab.url));
@@ -1196,7 +1253,7 @@ async function refreshTab() {
     const quote = await chrome.tabs.get(state.tab.id).catch(() => null);
     const carrier = quote?.url ? carrierForUrl(quote.url) : null;
     if (carrier) {
-      state.tab = { id: quote.id, url: quote.url, carrier, background: true };
+      state.tab = { id: quote.id, url: quote.url, carrier, background: true, windowId: quote.windowId };
       renderSite();
       ensureRecorder();
       scheduleLayout(pageOf(state.tab.url), 'arrived');
@@ -1218,7 +1275,7 @@ async function refreshTab() {
     state.autoDrawn = null;
     state.autoPending = false;
   }
-  state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false } : null;
+  state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false, windowId: tab.windowId } : null;
   await restoreAgentKeys(state.tab?.id);
   await restoreDoneActions(state.tab?.id);
   if (state.tab?.carrier && !state.filling) await retireAiOrigins({ tabId: state.tab.id, tabUrl: state.tab.url, intake: state.intake, carrier: state.tab.carrier });
@@ -1339,8 +1396,9 @@ function onRecorderMessage(msg, sender) {
         state.agentKeys.set(scope, keys);
       }
       persistAgentKeys();
-      // What the agent answered is no longer left for them in step 3 (an answer cleared still is).
-      answeredOnPage(page, byAgent.filter((c) => c.after !== '').map((c) => c.key));
+      // What the agent answered is no longer left for them in step 3 (an answer cleared still is),
+      // and an answer the fill put in that they changed is theirs.
+      answeredOnPage(page, byAgent.filter((c) => c.after !== ''));
       settleRejectedAi(page, byAgent, sender).then((released) => {
         if (released && state.tab?.id === sender.tab?.id && pageOf(state.tab?.url) === page) {
           syncAiBanner({ tabId: state.tab.id, page, carrier: state.tab.carrier });
@@ -1642,24 +1700,76 @@ function fillErrorMessage(ctx, e) {
   return detail ? `${plain} (${detail})` : plain;
 }
 
-// While a fill runs: how many answers are in so far, read from the page each second for step 2
-// (pagekit progress). Returns what stops the reading.
+// While a fill runs: the answers in so far, read from the page every half second (pagekit
+// progress), listed as they go in (renderLive) and counted in step 2 and the dock. Each frame sends
+// only the rows after those the panel has from its list (`seen`, by the frame's list); a reading
+// still under way skips the next. Returns what stops the reading.
 function watchFill(ctx) {
   if (!inExtension) return () => {};
+  const lists = new Map();
+  let reading = false;
   const timer = setInterval(async () => {
     if (state.fillingFor?.run !== ctx.run) { clearInterval(timer); return; }
+    if (reading) return;
+    reading = true;
     let frames;
     try {
+      const seen = Object.fromEntries([...lists].map(([list, rows]) => [list, rows.length]));
       frames = await chrome.scripting.executeScript({ target: { tabId: ctx.tabId, allFrames: true }, world: worldFor(ctx.carrier),
-        func: () => globalThis.__raterKit?.progress?.() ?? null });
-    } catch { return; /* the page is navigating */ }
-    const n = frames.reduce((k, f) => k + (f.result?.filled ?? 0), 0);
-    if (state.fillingFor?.run === ctx.run && n !== state.fillingFor.filled) {
-      state.fillingFor.filled = n;
-      renderSteps();
+        func: (s) => globalThis.__raterKit?.progress?.(s) ?? null, args: [seen] });
+    } catch { return; /* the page is navigating */ } finally { reading = false; }
+    const f = state.fillingFor;
+    if (f?.run !== ctx.run) return;
+    for (const { result } of frames) {
+      if (!result?.list) continue;
+      // A list the frame has rewritten (an answer given again) comes whole (`since` 0), as a new one.
+      const had = result.since ? lists.get(result.list) ?? [] : [];
+      if (!result.since) for (const list of lists.keys()) if (list.startsWith(`${result.frame}:`)) lists.delete(list);
+      lists.set(result.list, [...had.slice(0, result.since), ...result.rows]);
     }
-  }, 1000);
+    // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
+    const rows = [...lists.values()].flat().filter((x) => !x.otherStep);
+    if (rows.length === f.filled && rows.every((x, i) => f.rows[i] === x)) return;
+    f.filled = rows.length;
+    f.rows = rows;
+    renderSteps();
+  }, 500);
   return () => clearInterval(timer);
+}
+
+// The answers going in now, one row each as the page takes them, and a row for the one coming:
+// read from the page (pagekit progress), nothing typed or guessed here. Shown in the page view in
+// place of the report while a fill on the tab in front runs.
+function renderLive() {
+  const f = state.fillingFor;
+  const live = $('live');
+  const on = !!f && state.filling && f.tabId === state.tab?.id;
+  live.hidden = !on;
+  if (!on) { live.replaceChildren(); delete live.dataset.count; live.drawn = []; return; }
+  const rows = f.rows ?? [];
+  const count = `${rows.length}${f.stopping ? 's' : ''}`;
+  if (live.dataset.count === count && live.drawn === rows) return;
+  live.dataset.count = count;
+  // The new answers join those listed already; a list the page rewrote is listed anew.
+  const drawn = live.drawn ?? [];
+  const more = drawn.length <= rows.length && drawn.every((x, i) => rows[i] === x);
+  if (more) {
+    live.querySelector(':scope > .typing')?.remove();
+    live.querySelector(':scope > .fresh')?.classList.remove('fresh');
+  } else live.replaceChildren();
+  live.append(...rows.slice(more ? drawn.length : 0).map((x) => h('div', { class: 'row' },
+    h('div', { class: 'row-head' },
+      h('span', { class: 'row-icon', 'aria-hidden': 'true' }, '✓'),
+      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, x.label || 'Answer'), h('span', { class: 'row-value' }, x.shown || 'filled')),
+      x.standard ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'TNI standard') : null))));
+  live.drawn = rows;
+  if (rows.length) live.lastElementChild?.classList.add('fresh');
+  if (!f.stopping) {
+    live.append(h('div', { class: 'row typing' }, h('div', { class: 'row-head' },
+      h('span', { class: 'row-icon', 'aria-hidden': 'true' }, h('span', { class: 'spinner' })),
+      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, rows.length ? 'Next answer' : 'Reading the page'), h('span', { class: 'row-value' }, 'Working…')))));
+  }
+  live.lastElementChild?.scrollIntoView?.({ block: 'nearest' });
 }
 
 // Step 2's Stop: halts the running fill in every frame of its tab (pagekit stop), as an agent edit
@@ -1677,14 +1787,19 @@ async function stopFill() {
   } catch { /* the page is navigating: the fill ends anyway */ }
 }
 
-// After a fill the agent asked for: step 1 folds away (its header still counts what's open) and
-// step 3 comes into view.
+// Scrolling into view: at once for an agent who asked the system for less motion.
+function scrollBehavior() {
+  return matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+}
+
+// After a fill: the page's answers come into view (steps 2 and 3). An automatic fill doesn't pull
+// the agent out of step 1 while they're working in it.
 function showFinish({ auto = false } = {}) {
-  // An automatic fill doesn't pull the agent out of step 1 while they're working in it.
-  if (auto && $('step-check').contains(document.activeElement)) return;
-  state.checkOpen = false;
+  if (auto && state.view === 'check' && $('check-view').contains(document.activeElement)) return;
+  state.view = 'page';
+  showScreen();
   renderSteps();
-  $('step-finish').scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  $('page-view').scrollIntoView({ block: 'start', behavior: scrollBehavior() });
 }
 // The step a one-address application (AmWINS) showed to the fill: the top frame's headings, sent
 // only as one of the carrier's step names (knownStep).
@@ -1712,7 +1827,7 @@ function logFillError(ctx, error) {
 // `drawn`: the page drew new questions (the recorder's new_fields), which a step that takes
 // follow-ups only for those (`newQuestionsOnlySteps`) waits for.
 function scheduleAutoFill(page, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }, drawn = false) {
-  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId)) return;
+  if (state.autoPaused || !$('auto-followups').checked || !state.autoPages.has(page) || !onQuotePage() || stopNoteFor(state.tab?.carrier, page, undefined, ctx.tabId) || stateIssue()) return;
   if (drawn) state.autoDrawn = page;
   if (state.filling) { state.autoPending = true; return; }
   clearTimeout(state.autoTimer);
@@ -1725,8 +1840,8 @@ async function autoFill(page) {
   const drawn = state.autoDrawn === page;
   state.autoDrawn = null;
   // The client may have been cleared while this fill was waiting to run.
-  if (state.autoPaused || state.filling || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
-  if (stopNoteFor(state.tab.carrier, page)) return;
+  if (state.autoPaused || state.filling || state.closing || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
+  if (stopNoteFor(state.tab.carrier, page) || stateIssue()) return;
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
   // step themselves (same address, new questions). It's filled as a new page, with its report.
@@ -1795,12 +1910,17 @@ async function autoFill(page) {
     if (n || hasWarnings || frames.some((f) => f.filled.length)) {
       logFill(ctx, frames, results, started);
       if (n && current && !rendered && reportShown()) {
-        const note = h('p', { class: 'muted small' }, `Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically: ${added.map((x) => x.label).join(' · ')}`);
-        $('report').append(note);
-        // Step 2's count includes them, and so does Answers on this page's.
-        state.reportFor.filled = (state.reportFor.filled ?? 0) + added.length;
-        const said = $('filled-report').querySelector?.('.answers-count');
-        if (said) said.textContent = said.textContent.replace(/^\d+ filled/, `${state.reportFor.filled} filled`);
+        // Listed with the page's answers, marked new, and counted in step 2.
+        // With their sources and groups as the report has them (answerSources, groupRows).
+        const rctx = { tabId, page, carrier };
+        const { fromOf, groupOf, ticks, editedBy } = answerSources(plan);
+        const answers = groupRows(added.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null })), ticks);
+        const rows = [...answers.map((row) => answerRow({ ...row, fresh: true }, rctx)),
+          ...frames.flatMap((f) => f.actions ?? []).map((a) => answerRow({ label: 'Clicked', value: a.text || a.id, kind: 'clicked', fresh: true }, rctx))];
+        let list = $('report').querySelector(':scope > .rows');
+        if (!list) { list = h('div', { class: 'rows' }); $('report').append(list); }
+        list.append(...rows);
+        state.reportFor.filled = (state.reportFor.filled ?? 0) + answers.filter((row) => row.answer).length;
         renderSteps();
         announce(`Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically.`);
       }
@@ -1974,7 +2094,7 @@ async function captureLayout(job, reason) {
 }
 
 // A screen that is the agent's (carrier `stopButtons`: GEICO's "Add USDOT Number / Skip", W43-27),
-// known by a button only it shows, as a layout reads the page: said in red above the steps while the
+// known by a button only it shows, as a layout reads the page: said on a quiet card above the page's answers while the
 // tab shows it (showStopPage), its arrival logged as a fill run that stopped, as a stop step's is,
 // and nothing filled, clicked or asked of the AI there (stopNoteFor). A layout read without it, a
 // move to a step or a new document (noteStep, the page_view arrival) ends it; a question or list
@@ -2214,6 +2334,10 @@ function renderSite() {
   const noAccess = inExtension && state.tab && !state.tab.url;
   // Retain the carrier text as an image-error fallback and for the panel harness.
   site.textContent = !inExtension ? 'Preview only' : carrier ? carrier.name : noAccess ? 'No access to this page' : 'Not a rater page';
+  // On a rater page, its logo, page and place in the quote; elsewhere the panel's own name (the
+  // dock says what to open).
+  $('carrier-line').hidden = !carrier;
+  $('brand').hidden = !!carrier;
   // Where the tab is in the quote: its step, "Step 3 of 7" and a bar (carriers.js quoteProgress).
   const page = pageOf(state.tab?.url);
   const progress = carrier ? quoteProgress(carrier, page, state.tabSteps.get(state.tab.id)) : null;
@@ -2228,8 +2352,7 @@ function renderSite() {
   })) : []));
   caption.textContent = [
     carrier ? (carrier.practice ? 'Practice page' : progress ? null : 'Commercial auto') : null,
-    state.tab?.background ? 'In background' : null,
-    inExtension && !carrier && !noAccess ? 'Open Progressive, GEICO or AmWINS to fill.' : null,
+    carrier && state.tab?.background ? 'In background' : null,
   ].filter(Boolean).join(' · ');
   caption.hidden = !caption.textContent;
   const paths = {
@@ -2269,26 +2392,9 @@ function renderSite() {
   $('recording').hidden = !state.intake || !!carrier?.practice;
   site.title = title;
   site.classList.toggle('on', !!carrier);
-  const stopped = !!stopNoteFor(carrier, page);
-  const canFill = inExtension && !!carrier && !!state.intake && !stopped;
-  $('fill').disabled = !canFill || state.filling;
-  // On a one-address application (AmWINS) every step shares the address: "again" only once this
-  // step has a report.
-  const filledBefore = carrier?.layoutSteps ? !!state.reports.get(currentReportKey())?.fields : state.autoPages.has(page);
-  if (!state.filling) $('fill').textContent = filledBefore || filledHere ? 'Fill this page again' : 'Fill this page';
   $('capture').disabled = !(inExtension && carrier);
-  $('fill-hint').textContent = !inExtension
-    ? 'Filling works only in the Chrome extension.'
-    : stopped ? 'Nothing on this page is filled or clicked.'
-    : carrier && state.tab.background ? 'Fills the quote tab in the background. Go back to it to review.'
-    // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd), and Next only up to
-    // Additional Business Info (advance `steps`).
-    : carrier && $('auto-advance').checked && carrier.advance && carrier.unitLists ? 'Adds the intake\'s vehicles, trailers and drivers not on the quote yet, and clicks Next once nothing is left for you, up to Quote & Coverages. Never submits or binds.'
-    : carrier && $('auto-advance').checked && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
-    : carrier ? 'Nothing is submitted. Review, then click Next yourself.'
-      : noAccess
-        ? "The extension can't read this page. Allow it on this site (toolbar icon or site access), then reload."
-        : 'Open a Progressive, GEICO or AmWINS quote page.';
+  // "Let me look before Continue" is about the panel's Continue: off with it.
+  $('check-continue').disabled = !$('auto-advance').checked;
   showStopPage();
   showStateNote();
   showReviewMode();
@@ -2304,37 +2410,56 @@ function reportKey(tabId, page, carrier, active = state.active, step = state.tab
 }
 function currentReportKey() { return reportKey(state.tab?.id, pageOf(state.tab?.url), state.tab?.carrier); }
 
-// Puts the report of the page in front into steps 2 and 3, keeping the one it replaces with its own
-// nodes, so its buttons and the AI's cards work again when its page is back. Returns it.
+// The reports of other pages on the tab in front, in the order they were first filled: the
+// answers' page menu (renderSteps). Only reports with answers; never the page in front's.
+function earlierReports() {
+  const here = currentReportKey();
+  return [...state.reports.values()].filter((e) => e.fields && e.tabId === state.tab?.id && e.key !== here && e.nodes);
+}
+
+// An earlier page's name in the page menu: its step on a one-address application (AmWINS, GEICO),
+// else its page's name spaced out ("AddDriver": Add Driver); on a page about one vehicle, trailer
+// or driver, which one ("Add Driver · Driver 2"). From its report key (reportKey).
+function reportTitle(entry) {
+  const [, page = '', unit = '', step = ''] = String(entry?.key ?? '').split('|');
+  const place = step || page.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z])([A-Z][a-z])/g, '$1 $2');
+  const which = /^(v|tr|d)(\d+)$/.exec(unit);
+  return which ? `${place} · ${{ v: 'Vehicle', tr: 'Trailer', d: 'Driver' }[which[1]]} ${Number(which[2]) + 1}` : place;
+}
+
+// Shows an earlier page's answers (its report key), read-only, in place of this page's; null goes
+// back to this page's. Nothing on either page changes.
+function showPast(key) {
+  state.pastKey = key && state.reports.get(key)?.tabId === state.tab?.id ? key : null;
+  renderSteps();
+  if (state.pastKey) announce(`Showing the answers of ${reportTitle(state.reports.get(state.pastKey))}, as filled.`);
+}
+
+// Puts the report of the page in front into the page view, keeping the one it replaces with its
+// own nodes, so its buttons and the AI's cards work again when its page is back. Returns it.
 function showReport() {
   const key = currentReportKey();
   const shown = state.reportFor;
   if ((shown?.key ?? null) === key) return shown;
-  if (shown) {
-    shown.nodes = [...$('report').childNodes];
-    shown.filledNodes = [...$('filled-report').childNodes];
-  }
+  if (shown) shown.nodes = [...$('report').childNodes];
   const next = key ? state.reports.get(key) ?? null : null;
-  // Kept while another page was in front: said in step 3 (renderSteps).
+  // Kept while another page was in front: said in the page view (renderSteps).
   if (next?.nodes) next.restored = true;
   $('report').replaceChildren(...(next?.nodes ?? []));
-  $('filled-report').replaceChildren(...(next?.filledNodes ?? []));
   state.reportFor = next;
   return next;
 }
 function reportShown() { return !!showReport(); }
 
 // A fill's report for its page: shown when that page is in front, else kept until it is.
-function putReport(entry, nodes, filledNodes) {
+function putReport(entry, nodes) {
   showReport();
   state.reports.set(entry.key, entry);
   if (entry.key === currentReportKey()) {
     $('report').replaceChildren(...nodes);
-    $('filled-report').replaceChildren(...filledNodes);
     state.reportFor = entry;
   } else {
     entry.nodes = nodes;
-    entry.filledNodes = filledNodes;
   }
 }
 
@@ -2344,39 +2469,34 @@ function dropReports(drop = () => true) {
   if (state.reportFor && state.reports.get(state.reportFor.key) !== state.reportFor) {
     state.reportFor = null;
     $('report').replaceChildren();
-    $('filled-report').replaceChildren();
   }
 }
 
-// A fill that couldn't finish ('error'), or found nothing to do ('notice'), said in step 2 of its
-// page's report (one is made for a page that has none), where Fill this page retries it. `ctx`:
-// the fill's tab, page, carrier and unit.
+// A fill that couldn't finish ('error'), or found nothing to do ('notice'), said above its page's
+// answers (a report is made for a page that has none), where Fill this page retries it. `ctx`: the
+// fill's tab, page, carrier and unit.
 function fillProblem(ctx, text, kind = 'error') {
   const key = reportKey(ctx.tabId, ctx.page, ctx.carrier, ctx.active ?? state.active);
   if (!key) return;
   showReport();
   const entry = state.reports.get(key);
   if (entry) Object.assign(entry, { error: null, notice: null, [kind]: text });
-  else putReport({ key, tabId: ctx.tabId, page: ctx.page, at: Date.now(), [kind]: text }, [], []);
+  else putReport({ key, tabId: ctx.tabId, page: ctx.page, at: Date.now(), [kind]: text }, []);
   renderSteps();
 }
 
 // What's left for the agent on the report shown: its items not settled since (answered on the
-// page, marked done, an AI answer the agent accepted). The count in step 3's header follows, and
-// Continue's note once nothing is left.
+// page or here, marked done, an AI answer the agent accepted). The steps, the filters and the dock
+// follow.
 function recount() {
   const entry = state.reportFor;
   if (!entry?.fields) return;
-  const items = [...$('report').children].filter((n) => n.classList?.contains('need'));
+  const items = [...$('report').querySelectorAll('.row.need')];
   const left = items.filter((n) => !n.classList.contains('resolved')).length;
   if (left === entry.left) return;
   // Settled since the fill: the panel's Continue is a click away now, never on its own.
   entry.settled = !left && entry.left > 0;
   entry.left = left;
-  // "Answer these on the page" only while some are open.
-  const say = $('report').querySelector('.needs-say');
-  if (say) say.hidden = !left;
-  $('report').querySelector('.continue-note')?.replaceWith(continueNote(entry));
   renderSteps();
   announce(left ? `${left} left for you on this page.` : 'Nothing is left for you on this page.');
 }
@@ -2389,82 +2509,253 @@ function announce(text) {
   setTimeout(() => { live.textContent = text; }, 50);
 }
 
-// The three steps: which one is the agent's now, and what each says about this page. Step 2
-// waits for a rater page; steps 2 and 3 show the last fill of the page in front.
+// The three steps under the client's name: what each says about the intake and the page in front,
+// and which one's view is shown; then the page view (the answers going in, or the last fill's, with
+// their filters) and the dock. Steps 2 and 3 show the last fill of the page in front.
 function renderSteps() {
-  if (!state.intake) return;
+  renderLive();
+  // Pop out or Dock: never while a fill runs.
+  $('pop-out').hidden = !inExtension || popped;
+  $('dock-back').hidden = !popped;
+  $('pop-out').disabled = $('dock-back').disabled = !!state.filling;
+  if (!state.intake) { renderDock(); return; }
+  // The unit pickers follow the page or step in front (unitListsHere).
+  renderPickers();
   const { warnings, done } = state.intake;
   const open = warnings.filter((w, i) => w.level === 'check' && !done.includes(i)).length;
-  const head = (id, { num, mark, summary, tone, active, reached }) => {
-    $(`${id}-num`).textContent = num;
-    $(`${id}-num`).className = `step-num${mark ? ` ${mark}` : ''}`;
-    $(`${id}-summary`).textContent = summary;
-    $(`${id}-summary`).className = `step-summary${tone ? ` ${tone}` : ''}`;
-    const card = $(`step-${id}`);
-    card.classList.toggle('active', !!active);
-    card.classList.toggle('reached', !!reached);
-  };
-  // 1. Check the intake: open and closed by its header.
-  head('check', { num: open ? '1' : '✓', mark: open ? 'active' : 'done', summary: open ? `${open} to check` : 'All checked',
-    tone: open ? 'warn' : 'good', active: open && state.checkOpen, reached: true });
-  $('check-body').hidden = !state.checkOpen;
-  $('check-head').setAttribute('aria-expanded', String(state.checkOpen));
-  $('check-arrow').textContent = state.checkOpen ? '˅' : '›';
-  // 2. Fill this page.
   const carrier = state.tab?.carrier;
   const page = pageOf(state.tab?.url);
   const onRater = inExtension && !!carrier;
   const stopped = !!stopNoteFor(carrier, page);
   const report = showReport();
-  // The fill running on this tab: its progress and Stop in step 2, step 3 waits for its report.
+  // The fill running on this tab: its answers in so far, in place of the report.
   const filling = state.filling && !!state.fillingFor && state.fillingFor.tabId === state.tab?.id;
   const filled = !filling && !!report?.fields;
-  const ready = onRater && !stopped;
   // Why the last fill didn't finish, or what it found instead of questions (a portal page).
   const error = filling ? null : report?.error ?? null;
   const notice = filling || error ? null : report?.notice ?? null;
-  head('fill', { num: filled ? '✓' : '2', mark: filled ? 'done' : ready ? 'active' : null,
-    summary: filling ? 'Filling…' : error ? 'Didn’t finish' : filled ? `${report.filled} filled${report.auto ? ' automatically' : ''}` : stopped ? 'Stopped' : onRater ? '' : 'Waiting',
-    tone: error || stopped ? 'bad' : filled ? 'good' : null, active: ready && !filled, reached: onRater });
-  $('fill-waiting').hidden = onRater;
-  // Not a rater page: why (preview, no site access) when the hint says more than "open a rater".
-  $('fill-waiting-text').textContent = !inExtension || (state.tab && !state.tab.url) ? $('fill-hint').textContent
-    : 'Open the client’s quote on one of these raters.';
-  $('fill-stopped').hidden = !(onRater && stopped);
-  $('fill-ready').hidden = !ready;
-  $('checks-pending').hidden = !open || filled || filling;
-  $('checks-pending').textContent = `${open} intake ${open === 1 ? 'item isn’t' : 'items aren’t'} checked yet. You can still fill.`;
-  $('fill-progress').hidden = !filling;
-  if (filling) {
-    const n = state.fillingFor.filled;
-    $('fill-progress-text').textContent = state.fillingFor.stopping ? 'Stopping after the answer going in now…'
-      : n ? `Filling… ${n} answer${n === 1 ? '' : 's'} in so far.` : 'Filling…';
-  }
-  $('fill-error').hidden = !error && !notice;
-  $('fill-error').className = error ? 'card bad small' : 'muted small';
-  $('fill-error').setAttribute('role', error ? 'alert' : 'status');
-  $('fill-error').textContent = error ?? notice ?? '';
-  $('filled-report').hidden = !filled;
-  $('fill-actions').hidden = filling;
-  $('fill').className = filled ? 'link' : 'primary big';
-  $('fill-actions').classList.toggle('filled', filled);
-  $('fill-hint').hidden = filled;
-  $('unmark').hidden = !filled;
-  // 3. Finish this page: what's left for the agent, and Continue.
   const left = filled ? report.left ?? 0 : 0;
-  head('finish', { num: filled && !left ? '✓' : '3', mark: filled ? (left ? 'active' : 'done') : null,
-    summary: filled ? (left ? `${left} left for you` : 'Ready') : '', tone: filled ? (left ? 'warn' : 'good') : null,
-    active: filled, reached: filled });
-  $('report').hidden = !filled;
+  const step = (id, prefix, number, { tone = '', note, current }) => {
+    const button = $(`step-${id}`);
+    button.dataset.state = tone;
+    if (current) button.setAttribute('aria-current', 'step'); else button.removeAttribute('aria-current');
+    $(`${prefix}-num`).textContent = tone === 'done' ? '✓' : number;
+    $(`${prefix}-summary`).textContent = note;
+  };
+  // 1. Check intake.
+  step('check', 'check', '1', { tone: open ? 'warn' : 'done', note: open ? `${open} to look at` : 'All checked', current: state.view === 'check' });
+  // 2. Fill page.
+  step('fill', 'fill', '2', {
+    tone: !onRater ? '' : error || (stopped && !filled) ? 'bad' : filled ? 'done' : 'active',
+    note: !onRater ? 'Open a rater' : filling ? `Filling… ${state.fillingFor.filled ?? 0} in` : error ? 'Didn’t finish'
+      : filled ? `${report.filled} filled${report.auto ? ' automatically' : ''}` : stopped ? 'Stopped' : 'Ready to fill',
+    current: state.view === 'page' && !filled,
+  });
+  // 3. Confirm: what's left for the agent, and Continue.
+  step('confirm', 'finish', '3', {
+    tone: !filled ? '' : report.advanced ? 'done' : 'active',
+    note: !filled ? 'After filling' : report.advanced ? 'Continued' : left ? `${left} need${left === 1 ? 's' : ''} you` : 'Ready',
+    current: state.view === 'page' && filled,
+  });
+  // The page view: a rater to open, what's wrong about the last fill, the answers.
+  $('fill-waiting').hidden = onRater;
+  $('fill-waiting-text').textContent = !inExtension ? 'Filling works only in the Chrome extension.'
+    : state.tab && !state.tab.url ? 'The extension can’t read this page. Allow it on this site (toolbar icon or site access), then reload.'
+      : 'Open the client’s quote on one of these raters.';
+  const problem = $('fill-error');
+  problem.hidden = !error && !notice;
+  problem.replaceChildren(...(error ? [issueCard({ title: 'Filling didn’t finish', text: error, role: 'alert' })]
+    : notice ? [issueCard({ tone: 'quiet', title: notice })] : []));
+  // Pages filled earlier on this tab (the page menu), and the one picked, shown read-only in place
+  // of this page's: never while a fill runs on the tab.
+  const earlier = onRater && !filling ? earlierReports() : [];
+  const past = earlier.find((e) => e.key === state.pastKey) ?? null;
+  if (!past) state.pastKey = null;
+  if (!past) $('past').replaceChildren();
+  else if (state.pastNodes !== past.nodes) $('past').replaceChildren(...past.nodes);
+  state.pastNodes = past?.nodes ?? null;
+  const at = (entry) => new Date(entry.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  $('feed').hidden = !onRater || (!filling && !filled && !earlier.length);
+  $('feed-title').textContent = filling ? 'Filling now' : earlier.length ? 'Answers' : 'Answers on this page';
+  const menu = $('page-menu');
+  menu.hidden = !earlier.length;
+  if (earlier.length) {
+    const keys = JSON.stringify(earlier.map((e) => e.key));
+    if (menu.dataset.keys !== keys) {
+      menu.replaceChildren(h('option', { value: '' }, 'This page'), ...earlier.map((e) => h('option', { value: e.key }, reportTitle(e))));
+      menu.dataset.keys = keys;
+    }
+    menu.value = past?.key ?? '';
+  }
+  $('past').hidden = !past;
+  $('past-head').hidden = !past;
+  $('past-when').textContent = past ? `${reportTitle(past)} · filled ${at(past)} · view only` : '';
+  $('report').hidden = !filled || !!past;
+  $('report').dataset.filter = state.filter;
+  const rows = filled ? [...$('report').querySelectorAll('.rows > .row')] : [];
+  const needing = rows.filter((n) => n.classList.contains('need') && !n.classList.contains('resolved')).length;
+  const counts = { all: rows.length, needs: needing, done: rows.length - needing };
+  $('filters').hidden = !filled || !rows.length || !!past;
+  for (const b of $('filters').querySelectorAll('button')) {
+    b.setAttribute('aria-pressed', String(b.dataset.filter === state.filter));
+    b.querySelector('span').textContent = String(counts[b.dataset.filter] ?? 0);
+  }
+  $('feed-empty').hidden = !!past || filling || (filled && (counts[state.filter] ?? 0) > 0);
+  $('feed-empty').textContent = !filled ? 'This page isn’t filled yet.' : state.filter === 'needs' ? 'Nothing needs you on this page.' : 'Nothing here.';
+  // What the tags and the rater page's marks mean: behind the i in the title.
+  const keyHere = !filling && (filled || !!past);
+  $('key-btn').hidden = !keyHere;
+  $('key-btn').setAttribute('aria-expanded', String(keyHere && state.keyOpen));
+  $('answer-key').hidden = !(keyHere && state.keyOpen);
+  $('unmark').hidden = !filled || !!past;
   // A report kept while another page was in front may be out of date.
-  const age = filled && report.restored && report.at ? new Date(report.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null;
+  const age = filled && !past && report.restored && report.at ? at(report) : null;
   $('report-age').hidden = !age;
   $('report-age').textContent = age ? `From the fill at ${age}. Fill again if the page changed.` : '';
+  renderDock();
+}
+
+// The dock's word on a page the fill went through: whether Continue was clicked, is the panel's
+// to click, or the agent's, and what is left before it. `settled`: what was left has been settled
+// since the fill; the panel's Continue then waits for a fill again. `held`: the fill found the page
+// done but held Continue for the agent's check ('check'), or the page changed after they clicked
+// Looks right ('changed'). With "Let me look before Continue" on, Looks right takes the place of
+// Fill again and continue.
+function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, page, settled, held, tabId }, carrier = state.tab?.carrier) {
+  const holding = left || waiting;
+  // A step the carrier's Continue is never clicked on (GEICO's Quote & Coverages: advance `steps`).
+  const offSteps = !!carrier?.advance?.steps?.length && !carrier.advance.steps.includes(tabStep(carrier, tabId ?? state.tab?.id));
+  const autoAdvance = !!carrier?.advance && $('auto-advance').checked && !carrier.advance.exceptPages?.includes(page) && !offSteps;
+  const check = autoAdvance && !!$('check-continue')?.checked;
+  const looks = { button: 'look-right', label: 'Looks right, continue' };
+  const again = { alt: 'fill-again', altLabel: 'Fill this page again' };
+  if (advanced) return { phase: 'done', tone: 'good', eyebrow: 'Continued', title: 'Continue clicked', sub: `Clicked “${advanced}” for you. Nothing is submitted or bound.` };
+  if (holding) {
+    const then = check ? 'Then check the answers and click Looks right. Never Bind or Submit.'
+      : offSteps ? 'Then moving on is yours: nothing on this step is clicked for you.'
+      : !autoAdvance ? (carrier?.advance && $('auto-advance').checked
+        ? 'Then click Continue on this page yourself. Nothing is submitted or bound.'
+        : 'Then click Continue yourself, and Fill this page on the next one.')
+      : $('auto-followups').checked ? 'Then the panel continues to the next page. Never Bind or Submit.'
+      : 'Then Fill this page again to continue. Never Bind or Submit.';
+    // Buttons waiting on others (Progressive's bill plan before Recalculate): the fill clicks them
+    // in turn, and a question one waits on is a row of its own.
+    if (!left) return { phase: 'waiting', tone: 'blue', eyebrow: `${filled} filled`, title: 'The fill clicks the rest in turn', sub: then, ...again };
+    return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled · ${left} need${left === 1 ? 's' : ''} you`,
+      title: left === 1 ? 'Answer the last question' : `Answer ${left} questions`, sub: then, button: 'dock-next', label: 'Show the next one', ...again };
+  }
+  if (held === 'changed') return { phase: 'check', tone: 'warn', eyebrow: 'The page changed', title: 'Check the answers again', sub: 'It changed after you clicked Looks right. Check them, or click Continue on the page yourself.', ...looks };
+  if (held || (check && settled)) return { phase: 'check', tone: 'good', eyebrow: 'All answered', title: 'Look over the answers, then continue', sub: 'The panel clicks Continue. Never Bind or Submit.', ...looks };
+  if (offSteps) return { phase: 'yours', tone: 'good', eyebrow: 'All answered', title: 'Moving on is yours', sub: 'Nothing on this step is clicked for you. Nothing is submitted or bound.', ...again };
+  if (!autoAdvance) {
+    return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', ...again,
+      sub: carrier?.advance && $('auto-advance').checked ? 'Click Continue on this page yourself. Nothing is submitted or bound.' : 'Click Continue yourself, then Fill this page on the next one.' };
+  }
+  if (settled) return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', sub: 'Fill again to click Continue, or click it yourself. Nothing is submitted or bound.', button: 'fill', label: 'Fill again and continue' };
+  return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', sub: 'If the page doesn’t move on, click Continue. Nothing is submitted or bound.', ...again };
+}
+
+// The dock: the one next thing to do, always in the same place under the panel, and its button.
+// #dock[data-phase] names it, and data-report the fill it is about (the panel harness reads both).
+function dockFor() {
+  if (!state.intake) return { phase: 'start', eyebrow: 'Step 1 of 3', title: 'Add the client’s intake PDF', sub: 'Then the panel checks it and fills the rater for you.' };
+  const { warnings, done } = state.intake;
+  const open = warnings.filter((w, i) => w.level === 'check' && !done.includes(i)).length;
+  const checksSaid = state.view === 'check' && open ? `${open} intake item${open === 1 ? '' : 's'} not looked at yet. You can still fill.` : null;
+  const carrier = state.tab?.carrier;
+  if (!inExtension) return { phase: 'off', eyebrow: 'Preview', title: 'Filling works only in the Chrome extension' };
+  if (!carrier) {
+    return state.tab && !state.tab.url
+      ? { phase: 'off', eyebrow: 'Next', title: 'The extension can’t read this page', sub: 'Allow it on this site (toolbar icon or site access), then reload.' }
+      : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? 'Progressive, GEICO or AmWINS. Filling starts on its page.' };
+  }
+  const f = state.fillingFor;
+  if (state.filling && f?.tabId === state.tab.id) {
+    const last = f.rows?.at(-1);
+    return { phase: 'filling', tone: 'blue', progress: true, eyebrow: f.stopping ? 'Stopping' : `Filling · ${f.filled ?? 0} in`,
+      title: f.stopping ? 'Stopping after the answer going in now…' : last ? `Just filled: ${last.label || 'an answer'}` : 'Reading the page…',
+      sub: 'Keep this tab open.', button: 'fill-stop', label: f.stopping ? 'Stopping…' : 'Stop', disabled: !!f.stopping };
+  }
+  const page = pageOf(state.tab.url);
+  const step = tabStep(carrier);
+  // The carrier stopped the quote here, or the step or screen is the agent's: nothing to press.
+  if (stopNoteFor(carrier, page, step)) {
+    if (carrier.stopPages?.[page]) return { phase: 'stopped', tone: 'bad', eyebrow: `Stopped by ${carrier.name}`, title: 'Nothing to fill on this rater', sub: 'Nothing on this page was filled or clicked.' };
+    const screen = step && carrier.stopSteps?.[step] ? null : state.stopScreens?.get(state.tab.id)?.name;
+    return { phase: 'yours', eyebrow: 'This step is yours', title: `Finish ${screen ?? step ?? 'this step'} yourself`, sub: `Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.` };
+  }
+  // The tab's quote is for another state than the intake's: no fill until the agent says which.
+  const issue = stateIssue();
+  if (issue) {
+    return { phase: 'hold', tone: 'bad', eyebrow: 'Check first', title: 'Sort out the state above', sub: `Filling a ${issue.picked} quote with ${issue.intake} answers will fail on later pages.`,
+      button: 'fill', label: 'Fill this page', disabled: true, alt: 'fill-anyway', altLabel: 'Fill anyway' };
+  }
+  // The carrier's portal pages outside a quote are never filled (fillPage).
+  if (!onQuotePage()) return { phase: 'portal', eyebrow: 'Next', title: 'Open the client’s quote', sub: 'This is the portal. Filling starts on a quote page.' };
+  const report = showReport();
+  // On a one-address application (AmWINS) every step shares the address: "again" only once this
+  // step has a report.
+  const filledBefore = carrier.layoutSteps ? !!report?.fields : state.autoPages.has(page);
+  const fill = { button: 'fill', label: filledBefore || report?.fields ? 'Fill this page again' : 'Fill this page' };
+  if (report?.error) return { phase: 'error', tone: 'bad', eyebrow: 'Didn’t finish', title: 'Check the page, then fill again', sub: 'What went in stays; your changes are kept.', ...fill };
+  if (report?.fields) {
+    if (report.stopped) return { phase: 'stopped-fill', tone: 'warn', eyebrow: 'Stopped', title: `${report.filled} filled before you stopped`, sub: 'What went in stays. Fill again to finish the rest; your changes are kept.', button: 'fill', label: 'Fill this page again' };
+    // AI picks waiting for approval hold Continue: approved (or confirmed) from here or their rows.
+    const aiDock = state.aiDocks.get(`${state.tab.id}|${page}`);
+    const ai = aiDock ? pendingAi(state.tab.id, page) : [];
+    if (ai.length) {
+      const waiting = ai.filter((x) => !x.rejected).length;
+      const continues = aiDock.canContinue && (report.left ?? 0) <= ai.length;
+      return { phase: 'ai', tone: 'ai', eyebrow: `AI picked ${ai.length} answer${ai.length === 1 ? '' : 's'}`,
+        title: waiting ? 'Check the purple answers, then approve' : 'Confirm the page answer, or change it',
+        sub: waiting < ai.length ? 'Continue waits until you confirm the page answer or change it.'
+          : aiDock.canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.',
+        button: 'ai-approve', label: waiting ? (continues ? 'Approve and continue' : `Approve ${waiting === 1 ? 'the AI pick' : `${waiting} AI picks`}`)
+          : continues ? 'Confirm and continue' : 'Confirm the page answer' };
+    }
+    const said = continueSaid(report, carrier);
+    // A question open now with others after it: the dock moves on past it.
+    if (said.button === 'dock-next' && (report.left ?? 0) > 1 && $('report').querySelector('.row.need.open:not(.resolved)')) said.label = 'Skip to the next one';
+    return said;
+  }
+  // Nothing filled on this page yet: what the fill will and won't do here.
+  const hint = state.tab.background ? 'Fills the quote tab in the background. Go back to it to review.'
+    // GEICO: the units it adds with that setting on (unitLists, pickUnitToAdd), and Next only up to
+    // Additional Business Info (advance `steps`).
+    : $('auto-advance').checked && carrier.advance && carrier.unitLists ? 'Adds the intake’s vehicles, trailers and drivers not on the quote yet, and clicks Next once nothing is left for you, up to Quote & Coverages. Never submits or binds.'
+    : $('auto-advance').checked && carrier.advance ? 'Clicks Continue once nothing is left for you. Never submits or binds.'
+    : 'Nothing is submitted. Review, then click Next yourself.';
+  const progress = quoteProgress(carrier, page, state.tabSteps.get(state.tab.id));
+  return { phase: 'ready', eyebrow: 'Next', title: progress ? `Fill the ${progress.name} page` : 'Fill this page', sub: checksSaid ?? hint, ...fill };
+}
+
+function renderDock() {
+  const dock = $('dock');
+  const d = dockFor();
+  dock.hidden = state.settingsOpen;
+  dock.dataset.phase = d.phase;
+  dock.dataset.report = state.reportFor?.at && d.phase !== 'filling' ? String(state.reportFor.at) : '';
+  $('fill-progress').hidden = !d.progress;
+  $('dock-eyebrow').textContent = d.eyebrow ?? '';
+  $('dock-eyebrow').dataset.tone = d.tone ?? '';
+  $('dock-title').textContent = d.title;
+  $('dock-sub').textContent = d.sub ?? '';
+  $('dock-sub').hidden = !d.sub;
+  for (const id of ['fill', 'fill-stop', 'dock-next', 'look-right', 'ai-approve']) {
+    const button = $(id);
+    button.hidden = d.button !== id;
+    if (d.button !== id) continue;
+    button.textContent = d.label;
+    button.disabled = !!d.disabled || (id === 'fill' && !!state.filling);
+  }
+  $('dock-alt').hidden = !d.alt;
+  $('dock-alt').dataset.go = d.alt ?? '';
+  $('dock-alt').textContent = d.altLabel ?? '';
 }
 
 // Review mode (plan.js supportedClass): the intake's business class isn't one this carrier's rules
 // were written for, so every standard answer is filled as a check item (Continue waits on every
-// page) and the agent is told why, above the fill button.
+// page) and the agent is told why, above the page's answers.
 function showReviewMode() {
   const box = $('review-note');
   const carrier = state.tab?.carrier;
@@ -2473,19 +2764,30 @@ function showReviewMode() {
   box.hidden = !on;
   if (!on) { box.replaceChildren(); return; }
   const cls = String(record.operations?.businessClass ?? '').trim();
-  box.replaceChildren(h('div', { class: 'review-mode', role: 'status' },
-    h('b', {}, `Review mode: ${cls ? `"${cls}"` : 'no business class'} on the intake`),
-    h('p', {}, `${carrier.name}'s rules cover expediters and general freight. Standard answers are filled but marked for you to confirm; Continue waits on each page.`)));
+  box.replaceChildren(issueCard({ tone: 'warn', title: `Review mode: ${cls ? `"${cls}"` : 'no business class'} on the intake`,
+    text: `${carrier.name}'s rules cover expediters and general freight. Standard answers are filled but marked for you to confirm; Continue waits on each page.` }));
+}
+
+// A card above the page's answers (or in them): what's wrong or different, in the panel's own
+// words, never the page's. `tone`: '' (red: the carrier stopped the quote, a fill failed, the
+// quote's state differs), 'warn', 'info' or 'quiet' (a step that is the agent's).
+function issueCard({ tone = '', title, text = null, notes = [], compare = [], actions = [], role = 'status' }) {
+  return h('div', { class: `issue${tone ? ` ${tone}` : ''}`, role },
+    h('div', { class: 'issue-head' }, h('span', { class: 'bang', 'aria-hidden': 'true' }, tone === 'info' ? 'i' : '!'),
+      h('div', { class: 'issue-text' }, h('span', { class: 'issue-title' }, title), text ? h('span', {}, text) : null,
+        ...notes.map((note) => h('span', { class: 'small-note' }, note)))),
+    compare.length ? h('div', { class: 'compare' }, compare.map(([k, v]) => h('span', {}, h('span', { class: 'k' }, `${k}:`), ` ${v}`))) : null,
+    actions.filter(Boolean).length ? h('div', { class: 'issue-actions' }, actions.filter(Boolean)) : null);
 }
 
 // Pages where the carrier has stopped the quote (Progressive's DeclinationNotice: the client
 // already has a commercial auto policy with Progressive). Nothing is filled or clicked there,
-// automatically or on request, and Luna isn't asked; the panel says why above both steps (outside
-// the fill report, which Clear marks empties) and the page is the agent's. The carrier's reason is
-// said of this client only once the tab is shown to be this intake's quote (stopPageIsOurs).
-// Steps of a one-address application that are the agent's (GEICO's Final Quote Details, MVR &
-// CLUE, Payment Information: `stopSteps`) are kept the same way; their note is the step's, about
-// no client, so it is said as it is.
+// automatically or on request, and Luna isn't asked; the panel says why in red above the page's
+// answers (outside the fill report, which Clear marks empties) and the page is the agent's. The
+// carrier's reason is said of this client only once the tab is shown to be this intake's quote
+// (stopPageIsOurs). Steps of a one-address application that are the agent's (GEICO's Final Quote
+// Details, MVR & CLUE, Payment Information: `stopSteps`) are kept the same way, in a quiet card:
+// their note is the step's, about no client, so it is said as it is.
 function showStopPage() {
   const carrier = state.tab?.carrier;
   const page = pageOf(state.tab?.url);
@@ -2495,7 +2797,7 @@ function showStopPage() {
   // A step the fill still answers, with what the carrier says there (GEICO: stop at Quote & Coverages).
   const stepNote = !note && state.intake && step ? carrier?.stepNotes?.[step] ?? null : null;
   box.hidden = !note && !stepNote;
-  if (stepNote) { box.replaceChildren(h('div', { class: 'agent-page', role: 'status' }, h('b', {}, step), h('p', {}, stepNote))); return; }
+  if (stepNote) { box.replaceChildren(issueCard({ tone: 'info', title: step, text: stepNote })); return; }
   if (!note) { box.replaceChildren(); return; }
   clearTimeout(state.autoTimer);
   state.autoDrawn = null;
@@ -2504,21 +2806,19 @@ function showStopPage() {
   if (!carrier.stopPages?.[page]) {
     // A stop step's, or a stop screen's (`stopButtons`) on a step that is no stop.
     const screen = step && carrier.stopSteps?.[step] ? null : state.stopScreens?.get(state.tab?.id)?.name;
-    box.replaceChildren(h('div', { class: 'agent-page stop-page', role: 'alert' },
-      h('b', {}, `${screen ?? step}: yours`), h('p', {}, note),
-      h('p', { class: 'small' }, `Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.`)));
+    box.replaceChildren(issueCard({ tone: 'quiet', title: `${screen ?? step}: yours`, text: note,
+      notes: [`Nothing on this ${screen ? 'screen' : 'step'} is filled or clicked.`] }));
     return;
   }
   const ours = stopPageIsOurs();
-  box.replaceChildren(h('div', { class: 'agent-page stop-page', role: 'alert' },
-    h('b', {}, ours ? `${carrier.name} stopped this quote` : `${carrier.name} stop page`),
-    h('p', {}, ours ? note : `This tab was on the stop page before this client was loaded; it may be another client's quote. Open this client's quote.`),
-    h('p', { class: 'small' }, 'Nothing on this page is filled or clicked.')));
+  box.replaceChildren(issueCard({ role: 'alert', title: ours ? `${carrier.name} stopped this quote` : `${carrier.name} stop page`,
+    text: ours ? note : 'This tab was on the stop page before this client was loaded; it may be another client\'s quote. Open this client\'s quote.',
+    notes: ['Nothing on this page is filled or clicked.'] }));
 }
 
 // The tab's quote is for another state than the intake's garaging state (src/quote-state.js): said
-// above both steps until the pick matches, the intake does, or the agent says the pick is right
-// (for this intake). Also when the pick came before this intake was loaded: the tab's quote
+// above the page's answers, and filling waits, until the pick matches, the intake does, or the
+// agent says the pick is right (for this intake). Also when the pick came before this intake was loaded: the tab's quote
 // doesn't change with the intake. A tab that moves to another carrier forgets its pick.
 // A tab's quote state: a new pick replaces it (the same pick keeps when it was made and whether the
 // agent said it's right); no state forgets it.
@@ -2564,25 +2864,53 @@ function inheritQuoteState(tab) {
   if (pick && Number.isInteger(tab.id) && !state.quoteStates.has(tab.id)) state.quoteStates.set(tab.id, { ...pick });
 }
 
+// The tab's quote state against the intake's garaging state (stateIssue): said in red above the
+// page's answers, with the pick and the intake's address side by side, "<state> is right" and
+// where the address is on the intake. Filling waits meanwhile (dockFor, fillPage, autoFill).
 function showStateNote() {
   const box = $('state-note');
+  const issue = stateIssue();
+  box.hidden = !issue;
+  if (!issue) { box.replaceChildren(); return; }
+  const { picked, intake, pick } = issue;
+  const name = state.tab.carrier.name;
+  const before = pick.session !== (usage.currentSession()?.id ?? null);
+  const g = state.intake.record.garaging ?? {};
+  const address = [g.street, g.city, [g.state, g.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const place = sourcePlace('garaging.state', state.intake);
+  const pdf = place && pdfAvailable();
+  box.replaceChildren(issueCard({ role: 'alert', title: `This ${name} quote is for ${picked}. The intake says ${intake}.`,
+    text: `${before ? `The quote was started in ${picked} before this intake was loaded. ` : ''}A ${picked} quote won’t take ${intake} ZIP codes or rules. Start the quote in ${intake}, or check the intake.`,
+    compare: [['Rater', picked], [`Intake${place ? pdfPageSaid(place.page, ' page ') : ''}`, address || intake]],
+    actions: [
+      h('button', { type: 'button', class: 'ghost', onclick: dismissState }, `${picked} is right`),
+      pdf ? h('button', { type: 'button', class: 'link small', onclick: () => openPdf({ path: 'garaging.state', label: 'Garaging state', kind: 'check' }) }, `See intake${pdfPageSaid(place.page, ', page ')}`) : null,
+    ] }));
+}
+
+// The tab's quote is for another state than the intake's garaging state (src/quote-state.js), until
+// the pick matches, the intake does, or the agent says the pick is right (for this intake). Also
+// when the pick came before this intake was loaded: the tab's quote doesn't change with the
+// intake. A tab that moves to another carrier forgets its pick. Returns { picked, intake } (state
+// names) with the pick, or null.
+function stateIssue() {
   const tabId = state.tab?.id;
   let pick = state.quoteStates.get(tabId);
   if (pick && state.tab?.carrier && pick.carrier !== state.tab.carrier.id) { state.quoteStates.delete(tabId); pick = null; }
   const intakeId = usage.currentSession()?.intakeId ?? null;
   const off = !pick || !state.intake || pick.carrier !== state.tab?.carrier?.id || pick.dismissed === `${intakeId}|${pick.code}`;
   const differs = off ? null : stateMismatch(pick.code, state.intake.record);
-  box.hidden = !differs;
-  if (!differs) { box.replaceChildren(); return; }
-  const name = state.tab.carrier.name;
-  const before = pick.session !== (usage.currentSession()?.id ?? null);
-  box.replaceChildren(h('div', { class: 'agent-page stop-page', role: 'alert' },
-    h('b', {}, `This ${name} quote is for ${differs.picked}, the intake for ${differs.intake}`),
-    h('p', {}, before
-      ? `This quote was started in ${differs.picked} before this intake was loaded; garaging state is ${differs.intake}.`
-      : `${differs.picked} was picked for this ${name} quote; garaging state is ${differs.intake}.`),
-    h('p', { class: 'small' }, `Start the quote in ${differs.intake}, or check the intake's address.`),
-    h('button', { type: 'button', class: 'link small', onclick: () => { pick.dismissed = `${intakeId}|${pick.code}`; showStateNote(); } }, `${differs.picked} is right for this client`)));
+  return differs ? { ...differs, pick, intakeId } : null;
+}
+
+// "<state> is right" or the dock's Fill anyway: the tab's quote state stands for this intake, and
+// filling goes on.
+function dismissState() {
+  const issue = stateIssue();
+  if (!issue) return;
+  issue.pick.dismissed = `${issue.intakeId}|${issue.pick.code}`;
+  showStateNote();
+  renderSteps();
 }
 
 // What the carrier's stop says on this page, or on the step this tab is on (`step`, its name):
@@ -2624,10 +2952,13 @@ async function runKit(tabId, carrier, func, args = [], frameIds) {
 async function fillPage({ auto = false, confirmed = null } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
   if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
+  // The tab's quote is for another state than the intake's: nothing is filled until the agent says
+  // the state is right (or Fill anyway), on request or automatically (stateIssue).
+  if (state.intake && stateIssue()) { showStateNote(); renderSteps(); return; }
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
-  if (state.filling || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
+  if (state.filling || state.closing || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
   // Back on a step that takes follow-ups only for new questions (newQuestionsOnlySteps) after its
   // fill: only the agent, or new questions, fill it again.
   if (auto && state.tab.carrier.newQuestionsOnlySteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
@@ -2654,12 +2985,9 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   ctx.active = { ...state.active };
   // And the unit it adds, if any (pickUnitToAdd): the chooser's answer and the add helpers.
   let plan = buildPlan(ctx.intake.record, carrier, ctx.adding ? { ...ctx.active, adding: ctx.adding } : ctx.active);
-  $('fill').disabled = true;
-  $('fill').textContent = 'Filling…';
-  // Step 2 shows how far it is and its Stop; step 3 waits for the new report (the last one stays
-  // until it comes, in case this fill stops before it gets anywhere).
-  state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, stopping: false };
-  $('fill-stop').disabled = false;
+  // The page view lists the answers as they go in and the dock has Stop; the new report replaces
+  // the last one when it comes (kept until then, in case this fill stops before it gets anywhere).
+  state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false };
   const unwatch = watchFill(ctx);
   renderSteps();
   const started = Date.now();
@@ -2700,7 +3028,9 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     followUp = afterFill(frames, ctx);
     logFill(ctx, frames, results, started);
     // The report is its own tab's: kept for it when the agent has moved to another tab meanwhile.
-    renderReport(frames, { ...ctx, plan });
+    // Stopped by the agent before the kit was done (a frame halted): said so, and the dock offers to
+    // fill the rest.
+    renderReport(frames, { ...ctx, plan, stopped: state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted) });
     if (!fillCurrent(ctx)) return;
     recordLayout(page);
     assistFrames = frames;
@@ -2718,7 +3048,7 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     renderSite();
   }
   if (!fillCurrent(ctx)) return;
-  // The agent's next step is step 3: in view, with step 1 folded away (its header still counts).
+  // The agent's next step is the page's answers: in view (showFinish).
   // An automatic fill too: the agent sees what it filled and what's left, as after their own.
   showFinish({ auto: !!auto });
   runPendingPage(ctx);
@@ -3041,7 +3371,8 @@ async function undoMarkDone(item, key, tabId, page, scope = editScope(page)) {
   item.classList.remove('resolved');
   delete item.dataset.settled;
   item.querySelector('.mark-done').hidden = false;
-  // Open again: the note is empty ("Answer these on the page" is said once, above the items).
+  // Open again: its row says what it waits on, and the note is empty.
+  setRowHead(item, { icon: item.dataset.icon, value: item.dataset.wait });
   const note = item.querySelector('.need-note');
   note.replaceChildren();
   note.hidden = true;
@@ -3070,74 +3401,60 @@ async function showOnPage(item, x, tabId, page, carrier) {
   where.hideTimer = setTimeout(() => { where.hidden = true; where.textContent = ''; }, 6000);
 }
 
-// An item left for the agent that is settled now: answered on the page ('answered') or marked
-// done ('marked', with `undo`). It leaves "left for you" at once, without a refill.
-function settleNeed(item, how, undo = null) {
+// An item left for the agent that is settled now: answered on the page ('answered'), put in from
+// its row ('picked', with what the page shows), or marked done ('marked', with `undo`). It leaves
+// "need you" at once, without a refill: its row says the answer is theirs.
+function settleNeed(item, how, undo = null, value = null) {
   item.classList.add('resolved');
   item.dataset.settled = how;
+  const focused = item.contains(document.activeElement);
   const button = item.querySelector('.mark-done');
-  const focused = document.activeElement === button;
   if (button) button.hidden = true;
+  setRowHead(item, { icon: '✓', value: value ?? (how === 'marked' ? 'Marked done' : 'Answered on the page'),
+    tag: { kind: 'you', text: 'You', title: how === 'picked' ? 'Your answer, put in from the panel' : 'Your answer' } });
   const note = item.querySelector('.need-note');
   note.hidden = false;
+  note.classList.remove('bad');
   note.replaceChildren(...(how === 'answered'
     ? ['✓ You answered it on the page.']
-    : ['✓ Marked done: won’t be filled or waited on.',
-      undo ? h('button', { type: 'button', class: 'link small', onclick: undo }, 'Undo') : null].filter(Boolean)));
-  // Keyboard focus stays on the item: on its Undo, or on the item itself.
-  if (focused) (note.querySelector('button') ?? item).focus();
+    : how === 'picked' ? ['✓ Put in for you. No fill changes it now.']
+      : ['✓ Marked done: won’t be filled or waited on.',
+        undo ? h('button', { type: 'button', class: 'link small', onclick: undo }, 'Undo') : null].filter(Boolean)));
+  // Keyboard focus stays on the item: on its Undo, or on its row.
+  if (focused) (note.querySelector('button') ?? item.querySelector('.row-head') ?? item).focus();
   recount();
 }
 
-// The agent changed questions on the page (the recorder's field_changes): the items for them in
-// step 3 are settled, when the report shown is this page's.
-function answeredOnPage(page, keys) {
-  if (!keys.length || pageOf(state.tab?.url) !== page || !state.reportFor?.fields) return;
-  for (const item of $('report').querySelectorAll(':scope > .need')) {
-    if (keys.includes(item.dataset.key) && item.dataset.settled !== 'answered') settleNeed(item, 'answered');
-  }
+// A row's head: its icon, what it says now, and its source tag (none for an open item).
+function setRowHead(item, { icon, value = null, tag = null }) {
+  const head = item.querySelector('.row-head');
+  if (!head) return;
+  if (icon != null) head.querySelector('.row-icon').textContent = icon;
+  if (value != null) head.querySelector('.row-value').textContent = value;
+  head.querySelector('.tag')?.remove();
+  if (tag) head.append(h('span', { class: `tag ${tag.kind}`, title: tag.title ?? '' }, tag.text));
 }
 
-// Step 3's last word: whether Continue was clicked, is the panel's to click, or the agent's.
-// `settled`: what was left has been settled since the fill; the panel's Continue then waits for
-// Fill this page again.
-// `held`: the fill found the page done but held Continue for the agent's check ('check'), or the
-// page changed after they clicked Looks right ('changed'). With Check answers before Continue on,
-// Looks right takes the place of Fill again and continue.
-function continueNote({ advanced, left, waiting, page, settled, held, tabId }, carrier = state.tab?.carrier) {
-  const holding = left || waiting;
-  // A step the carrier's Continue is never clicked on (GEICO's Quote & Coverages: advance `steps`).
-  const offSteps = !!carrier?.advance?.steps?.length && !carrier.advance.steps.includes(tabStep(carrier, tabId ?? state.tab?.id));
-  const autoAdvance = !!carrier?.advance && $('auto-advance').checked && !carrier.advance.exceptPages?.includes(page) && !offSteps;
-  const check = autoAdvance && !!$('check-continue')?.checked;
-  const looksRight = !advanced && !holding && (held || (check && settled))
-    ? h('button', { type: 'button', class: 'primary continue-fill looks-right', onclick: function () { this.disabled = true; lookRight(tabId ?? state.tab?.id, page, carrier, this); } }, 'Looks right, continue')
-    : null;
-  const [title, text] = advanced
-    ? ['Continue clicked', `Clicked "${advanced}" for you. Nothing is submitted or bound.`]
-    : held === 'changed' && !holding
-      ? ['The page changed', 'It changed after you clicked Looks right. Check the answers again, or click Continue on the page yourself.']
-    : held && !holding
-      ? ['Check the answers', 'Look over Answers on this page, then click Looks right. Never Bind or Submit.']
-    : check && holding
-      ? ['Then check and continue', 'Once nothing above is left, check the answers and click Looks right. Never Bind or Submit.']
-    : check && settled && !holding
-      ? ['Ready to check', 'Nothing left for you. Check the answers, then click Looks right. Nothing is submitted or bound.']
-    : offSteps
-      ? ['Moving on is yours', 'Nothing on this step is clicked for you. Nothing is submitted or bound.']
-    : !autoAdvance
-      ? [holding ? 'Then click Continue on the page' : 'Ready for Continue', carrier?.advance && $('auto-advance').checked
-        ? 'Click Continue on this page yourself. Nothing is submitted or bound.'
-        : 'Click Continue yourself, then Fill this page on the next one.']
-      : holding
-        ? ['Then Continue', $('auto-followups').checked
-          ? 'Once nothing above is left, the panel clicks Continue. Never Bind or Submit.'
-          : 'Once nothing above is left, Fill this page again to click Continue. Never Bind or Submit.']
-        : settled
-          ? ['Ready for Continue', 'Nothing left for you. Fill again to click Continue, or click it yourself. Nothing is submitted or bound.']
-          : ['Ready for Continue', 'Nothing left for you. If the page doesn’t move on, click Continue. Nothing is submitted or bound.'];
-  return h('div', { class: 'continue-note' }, h('b', {}, title), h('span', {}, text),
-    looksRight ?? (!advanced && !holding && settled && autoAdvance ? h('button', { type: 'button', class: 'primary continue-fill', onclick: () => fillPage() }, 'Fill again and continue') : null));
+// The agent changed questions on the page (the recorder's field_changes: { key, label, after }, `after`
+// what it holds now): their items in the page's list are settled, and an answer the fill put in that
+// they changed is theirs now, when the report shown is this page's. Rows of one repeated question
+// share its key (one per vehicle or driver): one of those is matched by its label too, and left as
+// it is when the change doesn't say which.
+function answeredOnPage(page, changes) {
+  if (!changes.length || pageOf(state.tab?.url) !== page || !state.reportFor?.fields) return;
+  for (const item of $('report').querySelectorAll('.row.need')) {
+    const change = changes.findLast((c) => c.key === item.dataset.key);
+    if (change && item.dataset.settled !== 'answered') settleNeed(item, 'answered', null, change.after || null);
+  }
+  const rows = [...$('report').querySelectorAll('.row:not(.need)[data-key]')];
+  for (const row of rows) {
+    const shared = rows.some((r) => r !== row && r.dataset.key === row.dataset.key);
+    const change = changes.findLast((c) => c.key === row.dataset.key && (!shared || c.label === row.dataset.field));
+    if (!change?.after) continue;
+    row.dataset.value = change.after;
+    row.classList.remove('changed');
+    setRowHead(row, { icon: '✓', value: row.dataset.value, tag: { kind: 'you', text: 'You', title: 'You changed it on the page: no fill puts it back' } });
+  }
 }
 
 // Looks right: the agent approved the page as it stands now. Its receipt (pagekit receipt: a
@@ -3160,25 +3477,13 @@ async function lookRight(tabId, page, carrier, button = null) {
   await fillPage({ confirmed });
 }
 
-// What's filled is listed in step 2: the first few, then the rest on request.
-const FILLED_SHOWN = 6;
-// The groups of "Answers on this page", in the order shown (renderReport).
-const ANSWER_GROUPS = {
-  intake: 'From the intake',
-  edited: 'Your edits',
-  standard: 'TNI standard',
-  page: 'Already on the page',
-  clicked: 'Clicked',
-  yours: 'Yours (not filled)',
-};
-
 // Whether the page still shows the answers the fill put in (pagekit readBack: reads only). A row
 // whose field shows something else now (the carrier's server, or the agent) says what; one whose
 // field isn't on the page now (a closed section) is left as it was. Only for the page in front.
 // `plan`: the fill's plan, so the kit judges each answer as fill does (readBack `agrees`).
 async function checkAnswers(body, tabId, page, carrier, plan = []) {
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
-  const rows = [...body.querySelectorAll('.kv[data-key]')];
+  const rows = [...body.querySelectorAll('.row:not(.need)[data-key]')];
   if (!rows.length) return;
   const items = rows.map((row) => ({ key: row.dataset.key, label: row.dataset.field || null, stepId: row.dataset.step || null }));
   const ids = new Set(items.map((x) => x.stepId).filter(Boolean));
@@ -3203,28 +3508,29 @@ async function checkAnswers(body, tabId, page, carrier, plan = []) {
     note.textContent = differs ? `Now on the page: ${x.shown || 'empty'}` : '';
   }
   const changed = rows.filter((row) => row.classList.contains('changed')).length;
-  const said = body.closest('details')?.querySelector('.answers-count');
-  if (said) said.textContent = said.textContent.replace(/ · \d+ changed$/, '') + (changed ? ` · ${changed} changed` : '');
   if (changed) announce(`${changed} answer${changed === 1 ? '' : 's'} on the page changed since the fill.`);
 }
 
-// After a fill: step 2 lists what was filled (each answer from the intake with where it is on the
-// PDF, a derived one with the answers it was worked out from); step 3 lists everything left for the
-// agent on this page (each item with Mark done and, once the AI has looked, its suggestion), the
-// page key, and what happens about Continue. The report is the fill's own tab and page's (`ctx`;
-// the tab in front when none is given), kept for it while another one is in front.
+// Reads the answers of the report shown back from the page (checkAnswers): when the agent looks at
+// what is in (the Filled filter, step 3) and when the fill holds Continue for their check.
+function refreshAnswers() {
+  const entry = state.reportFor;
+  if (entry?.fields && entry.tabId === state.tab?.id) checkAnswers($('report'), entry.tabId, entry.page, entry.carrier ?? state.tab.carrier, entry.plan);
+}
+
+// After a fill: the page's answers in one list, in the order of their fields on the page. Each
+// answer that went in says what and where it came from (the intake, worked out from it, a TNI
+// standard, the agent, the page) and opens to its source, Change answer and See in intake; each
+// item left for the agent says why, and offers its choices where the panel may put the agent's
+// pick in (agentPickable), or Show on page and Mark done. The report is the fill's own tab and
+// page's (`ctx`; the tab in front when none is given), kept for it while another one is in front.
 function renderReport(frames, ctx = {}) {
   const all = (k) => frames.flatMap((f) => f[k] ?? []);
-  // A field of another step (pagekit otherStep: AmWINS' prior carriers, filled again while hidden)
-  // isn't this step's: left out of its list and count (live run 2026-10-09).
-  const filled = all('filled').filter((x) => !x.otherStep);
-  const kept = all('kept').filter((x) => !x.otherStep);
   const fields = frames.reduce((n, f) => n + (f.fields ?? 0), 0);
   const tabId = ctx.tabId ?? state.tab?.id;
   const page = ctx.page ?? pageOf(state.tab?.url);
   const carrier = ctx.carrier ?? state.tab?.carrier;
   const maps = tabMaps(tabId);
-  $('report').className = 'step-body report';
   // The one-address application's step this fill was on, for the page strip and the report's key.
   const step = knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey);
   if (step) state.tabSteps.set(tabId, step);
@@ -3235,25 +3541,26 @@ function renderReport(frames, ctx = {}) {
     const halted = frames.find((f) => f.halted && !f.stepUnread) ?? frames.find((f) => f.halted);
     putReport({ key, tabId, page, at: Date.now(), ...(halted
       ? { error: `${halted.stepUnread ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
-      : { notice: 'No questions found on this page.' }) }, [], []);
+      : { notice: 'No questions found on this page.' }) }, []);
     renderSteps();
     return;
   }
   const unknownKeys = new Set(all('unknown').map((x) => x.key));
   // Each item with its frame's place among the page's frames (pagekit's `order` counts within one).
+  // A field of another step (pagekit otherStep: AmWINS' prior carriers, filled again while hidden)
+  // isn't this step's: left out of its list and count (live run 2026-10-09).
   const framed = (k) => frames.flatMap((f, frame) => (f[k] ?? []).map((x) => ({ ...x, frame })));
+  const filled = framed('filled').filter((x) => !x.otherStep);
+  const kept = framed('kept').filter((x) => !x.otherStep);
   const items = [
     ...framed('unknown').map((x) => ({ ...x, mark: 'needs', why: `Unfamiliar question${x.required ? ' (required)' : ''}: no TNI rule for it yet.` })),
     ...framed('failed').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'failed', why: `Couldn't fill: ${x.reason}` })),
     ...framed('noData').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
     ...framed('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
-    ...framed('kept').filter((x) => !x.otherStep && x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
+    ...kept.filter((x) => x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
     // Defaults filled for the agent to confirm (e.g. marital status missing on the intake).
     ...framed('checks').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: x.note })),
   ];
-  // In the order of their fields on the page, the same on every fill, whatever kind each item is
-  // (pagekit `order`: the field's place in its frame; frames in the order the page gave them). An
-  // item with no field on the page (a helper, a unit without its row) comes last, as it came.
   const onPage = (x) => Number.isInteger(x.order);
   const needs = [...items.filter(onPage).sort((a, b) => a.frame - b.frame || a.order - b.order), ...items.filter((x) => !onPage(x))];
   const waiting = all('blocked');
@@ -3261,70 +3568,22 @@ function renderReport(frames, ctx = {}) {
   // A page note may depend on the intake (Progressive's Rates for an NTL quote).
   const pageNote = carrier?.agentPages?.[page];
   const agentPage = typeof pageNote === 'function' ? pageNote(state.intake?.record ?? {}) : pageNote;
-  const need = (x) => {
-    const label = x.label || x.name;
-    const done = x.key ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page',
-      'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page, x) }, 'Mark done') : null;
-    // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
-    const show = x.key ? h('button', { class: 'link small show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
-      'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
-    const item = h('div', { class: 'need', tabindex: '-1', dataset: { need: `${x.key}|${x.label}`, key: x.key ?? '' } },
-      h('div', { class: 'need-head' },
-        h('span', { class: `mark ${x.mark}` }),
-        h('div', { class: 'row-text' }, h('b', {}, label), h('span', {}, x.why), show,
-          show ? h('span', { class: 'need-where', hidden: true }) : null),
-        done),
-      x.options?.length && x.mark === 'failed' ? h('div', { class: 'options' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null,
-      h('div', { class: 'ai-slot' }),
-      // Empty while the item is open ("Answer these on the page" is said once, above the items):
-      // what settled it, once it is (settleNeed).
-      h('div', { class: 'need-note', hidden: true }));
-    return item;
-  };
   // Answers an earlier pass on this page filled (a follow-up pass, after the VIN lookup or a
   // redraw, finds them already there): still ours, shown as filled.
   const earlier = kept.filter((x) => !x.differs && maps.filled?.get?.(x.key));
-  // What a derived answer was worked out from (plan.js `from`), by its step.
-  const fromOf = new Map((ctx.plan ?? []).filter((s) => s.from).map((s) => [s.id, s.from]));
-  const groupOf = new Map((ctx.plan ?? []).filter((s) => s.group).map((s) => [s.id, s.group]));
-  const ticks = new Set((ctx.plan ?? []).filter((s) => s.group && s.value === true).map((s) => s.id));
-  // An intake answer links to where it is on the PDF, a derived one to the answers it was worked
-  // out from; a TNI standard (not an intake fact) is tagged instead (plan.js source), also when an
-  // earlier pass filled it or the page already had it. No link while the PDF isn't kept.
-  const pdfHere = !!(state.pdfBytes || state.intake?.pdfKept);
-  // An answer filled from a field the agent set or corrected in the panel (client details, a Check
-  // intake button such as Use Female): the agent's, not the client's (also openPdf's `edited`).
-  const editedBy = (path, from) => [path, ...(from ?? [])].some((p) => p && state.intake?.agentEdited?.includes(p));
-  const source = ({ label, standard, path, from, edited }) => {
-    const place = !standard && pdfHere && state.intake && (from || path) ? sourcePlace(from ?? path, state.intake) : null;
-    if (!place) return null;
-    const where = pdfPageSaid(place.page, 'p. ') || 'PDF';
-    return h('button', { type: 'button', class: 'link src',
-      title: edited ? 'Show what the intake said before your edit' : from ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake',
-      'aria-label': `${where}: ${label}, ${edited ? 'your edit' : from ? 'worked out from the intake' : 'from the intake'}`,
-      onclick: () => openPdf({ path, from, label, kind: 'filled' }) }, where);
-  };
-  const doneRows = [
+  const { fromOf, groupOf, ticks, editedBy } = answerSources(ctx.plan);
+  const doneRows = groupRows([
     // `key`/`field`: the field and its label on the page, for checking the answer is still there
-    // (checkAnswers); `kind`: which group of "Answers on this page" it goes in.
-    ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null })),
-    ...earlier.map((x) => ({ label: x.label || x.name, value: maps.filled.get(x.key).shown || 'filled', standard: !!(x.standard || maps.filled.get(x.key).standard), path: maps.filled.get(x.key).path, from: fromOf.get(x.stepId), edited: editedBy(maps.filled.get(x.key).path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: maps.filled.get(x.key).shown ? x.key : null, field: x.label ?? null })),
+    // (checkAnswers) and changing it (changeAnswer); `kind`: what it is when it's no answer of ours.
+    ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order })),
+    ...earlier.map((x) => {
+      const was = maps.filled.get(x.key);
+      return { label: x.label || x.name, value: was.shown || 'filled', standard: !!(x.standard || was.standard), path: was.path, from: fromOf.get(x.stepId), edited: editedBy(was.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: was.shown ? x.key : null, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order };
+    }),
     ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
-    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: !!x.standard, group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page' })),
-    ...all('skipped').map((x) => ({ label: x.label, value: 'yours (not filled)', kind: 'yours' })),
-  ].reduce((rows, row) => {
-    // One question asked as several boxes (plan.js `group`: AmWINS' auto symbols): one row, the
-    // question and the boxes ticked, where the first box was (live run 2026-10-09: nine rows).
-    if (!row.group) return [...rows, row];
-    const g = rows.find((r) => r.grouped === row.group)
-      ?? (rows.push({ label: row.group, grouped: row.group, ticked: [], standard: true, answer: false }), rows.at(-1));
-    // Ticked by our answer (filled now, earlier, or already so on the page).
-    if (ticks.has(row.stepId)) g.ticked.push(row.label);
-    g.answer ||= !!row.answer;
-    g.standard &&= row.standard;
-    g.value = g.ticked.join(', ') || 'none ticked';
-    return rows;
-  }, []);
+    ...kept.filter((x) => !x.differs && !earlier.includes(x)).map((x) => ({ label: x.label || x.name, value: 'left as the page had it', standard: !!x.standard, group: groupOf.get(x.stepId), stepId: x.stepId, kind: 'page', frame: x.frame, order: x.order })),
+    ...all('skipped').map((x) => ({ label: x.label, value: 'yours, not filled', kind: 'yours' })),
+  ], ticks);
   const count = doneRows.filter((row) => row.answer).length;
   // The carrier probably changed this page (pagekit: a known field renamed, or most questions
   // unfamiliar). The rest still filled; Continue waits for the agent.
@@ -3334,68 +3593,360 @@ function renderReport(frames, ctx = {}) {
       + (renamedNames ? ', and ' + renamedNames + " moved to a field the extension doesn't know" : '')
       + ". They're left for you and Continue waits. Please report it (a Capture page layout helps)."
     : null;
-  // Held for the agent's check (Check answers before Continue): the top frame's word.
+  // Held for the agent's check (Let me look before Continue): the top frame's word.
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
-  const entry = { key, tabId, page, fields, filled: count, left: needs.length, waiting: waiting.length, advanced: advanced ?? null, held, at: Date.now(), auto: !!ctx.auto };
-  // "Answers on this page", grouped by where each came from, in this order. A row whose answer the
-  // page shows differently now is marked once the list is opened (checkAnswers).
-  const kindOf = (row) => row.kind ?? (row.edited ? 'edited' : row.standard ? 'standard' : 'intake');
-  const listed = Object.keys(ANSWER_GROUPS).flatMap((kind) => doneRows.filter((row) => kindOf(row) === kind));
-  const rowNode = (row) => h('div', { class: 'kv', dataset: row.key ? { key: row.key, field: row.field ?? '', value: row.value, step: row.stepId ?? '' } : {} },
-    h('span', {}, row.label, row.standard && kindOf(row) !== 'standard' ? h('span', { class: 'tag standard', title: 'A TNI standard answer, not a fact from the intake' }, 'standard') : null),
-    h('span', {}, row.value),
-    source(row),
-    row.key ? h('span', { class: 'kv-now', hidden: true }) : null);
-  // Each group's heading goes before its first row: the first rows shown, the rest behind Show all.
-  const firstOfGroup = (row) => { const i = listed.indexOf(row); return i === 0 || kindOf(listed[i - 1]) !== kindOf(row); };
-  const nodesOf = (rows) => rows.flatMap((row) => [
-    firstOfGroup(row) ? h('p', { class: 'answers-group' }, ANSWER_GROUPS[kindOf(row)]) : null,
-    rowNode(row),
-  ].filter(Boolean));
-  const more = listed.length > FILLED_SHOWN
-    ? h('button', { type: 'button', class: 'link small show-all', onclick: function () {
-      const rest = nodesOf(listed.slice(FILLED_SHOWN));
-      this.replaceWith(...rest);
-      // Focus stays in the list: the first new row's link, or the row itself when it has none.
-      const first = rest.find((n) => n.classList.contains('kv'));
-      const target = first?.querySelector('button') ?? first;
-      if (target && target === first) target.tabIndex = -1;
-      target?.focus();
-      checkAnswers(body, tabId, page, carrier, ctx.plan);
-    } }, `Show all ${listed.length}`)
-    : null;
-  const body = h('div', { class: 'more-body' }, nodesOf(listed.slice(0, FILLED_SHOWN)), more);
-  // Open when Continue waits for the agent's check: the answers are what they check.
-  const filledNodes = doneRows.length ? [h('details', { class: 'more answers', open: !!held, ontoggle: function () { if (this.open) checkAnswers(body, tabId, page, carrier, ctx.plan); } },
-    h('summary', {}, h('span', { class: 'arrow' }, '›'), h('span', { class: 'grow' }, 'Answers on this page'), h('span', { class: 'small muted answers-count' }, `${count} filled`)),
-    body)] : [];
+  const stopped = !!ctx.stopped;
+  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, advanced: advanced ?? null, held, at: Date.now(), auto: !!ctx.auto, stopped };
+  // The answers and the items in one list, by their place on the page: an item without a field on
+  // the page (a helper, a unit without its row) after them, then answers without one (a click).
+  const listed = [...doneRows.map((row) => ({ row, at: row })), ...needs.map((x) => ({ x, at: x }))];
+  const ordered = [...listed.filter((e) => onPage(e.at)).sort((a, b) => a.at.frame - b.at.frame || a.at.order - b.at.order),
+    ...listed.filter((e) => !onPage(e.at) && e.x), ...listed.filter((e) => !onPage(e.at) && e.row)];
+  const first = ordered.find((e) => e.x);
+  const rctx = { tabId, page, carrier };
+  const halted = frames.find((f) => f.halted);
   const nodes = [
-    agentPage ? h('p', { class: 'agent-page' }, agentPage) : null,
+    agentPage ? h('p', { class: 'note-line agent-page' }, agentPage) : null,
     // An answer picked in place of one the page doesn't offer (pagekit `orMost`: GEICO's pay plan
     // with no 11 Payments, W43-32): named here; nothing is left for the agent by it.
-    ...filled.filter((x) => x.said).map((x) => h('p', { class: 'card quiet said' }, x.said)),
-    frames.some((f) => f.halted) ? h('p', { class: 'card bad' }, `Filling stopped: ${frames.find((f) => f.halted).reason ?? ''} Check the page, then fill again.`) : null,
-    pageChanged ? h('p', { class: 'card bad' }, pageChanged) : null,
-    // The AI's messages and its approval card go here, above the items (runAssist).
+    ...filled.filter((x) => x.said).map((x) => h('p', { class: 'note-line said' }, x.said)),
+    halted ? (stopped
+      ? issueCard({ tone: 'quiet', title: 'You stopped the fill', text: 'Nothing more was filled or clicked. What went in stays.' })
+      : issueCard({ title: 'Filling stopped', text: `${halted.reason ?? ''} Check the page, then fill again.`.trim(), role: 'alert' })) : null,
+    pageChanged ? issueCard({ title: 'This page seems to have changed', text: pageChanged, role: 'alert' }) : null,
+    advanced ? h('div', { class: 'done-card' }, h('span', { class: 'tick', 'aria-hidden': 'true' }, '✓'), h('b', {}, 'This page is done'),
+      h('span', {}, `${count} answer${count === 1 ? '' : 's'} in. Clicked “${advanced}” for you.`)) : null,
+    // The AI's messages, and what it suggests without a row, go here, above the list (runAssist).
     h('div', { class: 'needs-head', hidden: true }),
-    // Said once for all the items (hidden by recount once none is open).
-    needs.length ? h('p', { class: 'needs-say muted small' }, 'Answer these on the page.') : null,
-    ...needs.map(need),
-    // Buttons waiting on others (Progressive's bill plan before Recalculate) aren't shown: the fill
-    // clicks them in turn, and a question one waits on is already an item above. The fill log
-    // keeps them (blockerList).
-    // The marks on the page (pagekit.js COLORS, the same colors: sidepanel.css --mark-*).
-    h('div', { class: 'legend' },
-      h('span', {}, h('span', { class: 'mark filled' }), 'Filled'),
-      h('span', { title: 'Filled with a TNI standard answer, not a fact from the intake' }, h('span', { class: 'mark standard' }), 'TNI standard'),
-      h('span', {}, h('span', { class: 'mark needs' }), 'Needs you'),
-      h('span', {}, h('span', { class: 'mark failed' }), "Couldn't fill"),
-      h('span', {}, h('span', { class: 'mark ai' }), 'AI answer')),
-    continueNote(entry, carrier),
+    // Buttons waiting on others (Progressive's bill plan before Recalculate) aren't listed: the fill
+    // clicks them in turn, and a question one waits on is a row. The fill log keeps them (blockerList).
+    ordered.length ? h('div', { class: 'rows' }, ordered.map((e) => (e.x ? needRow(e.x, rctx, e === first) : answerRow(e.row, rctx)))) : null,
   ].filter((node) => node != null && node !== false);
-  putReport(entry, nodes, filledNodes);
+  if (key === currentReportKey()) state.filter = 'all';
+  putReport(entry, nodes);
   renderSteps();
-  if (state.reportFor === entry) announce(`Filled ${count} answer${count === 1 ? '' : 's'}. ${needs.length ? `${needs.length} left for you.` : held ? 'Check the answers, then click Looks right.' : 'Nothing is left for you.'}`);
+  if (state.reportFor !== entry) return;
+  announce(`Filled ${count} answer${count === 1 ? '' : 's'}. ${needs.length ? `${needs.length} left for you.` : held ? 'Check the answers, then click Looks right.' : 'Nothing is left for you.'}`);
+  if (held) refreshAnswers();
+}
+
+// Where a fill's answers came from, by their plan step (plan.js): `fromOf`, the intake answers a
+// derived one was worked out from; `groupOf`, the question several boxes answer together; `ticks`,
+// the boxes our answer ticks. `editedBy`: an answer filled from a field the agent set or corrected
+// in the panel (client details, a Check intake button such as Use Female) is the agent's, not the
+// client's (also openPdf's `edited`).
+function answerSources(plan) {
+  const steps = plan ?? [];
+  return {
+    fromOf: new Map(steps.filter((s) => s.from).map((s) => [s.id, s.from])),
+    groupOf: new Map(steps.filter((s) => s.group).map((s) => [s.id, s.group])),
+    ticks: new Set(steps.filter((s) => s.group && s.value === true).map((s) => s.id)),
+    editedBy: (path, from) => [path, ...(from ?? [])].some((p) => p && state.intake?.agentEdited?.includes(p)),
+  };
+}
+
+// One question asked as several boxes (plan.js `group`: AmWINS' auto symbols): one row, the
+// question and the boxes ticked, where the first box was (live run 2026-10-09: nine rows).
+function groupRows(rows, ticks) {
+  return rows.reduce((out, row) => {
+    if (!row.group) return [...out, row];
+    const g = out.find((r) => r.grouped === row.group)
+      ?? (out.push({ label: row.group, grouped: row.group, ticked: [], standard: true, answer: false, frame: row.frame, order: row.order }), out.at(-1));
+    // Ticked by our answer (filled now, earlier, or already so on the page).
+    if (ticks.has(row.stepId)) g.ticked.push(row.label);
+    g.answer ||= !!row.answer;
+    g.standard &&= row.standard;
+    g.value = g.ticked.join(', ') || 'none ticked';
+    return out;
+  }, []);
+}
+
+// One answer in the page's list (renderReport): what went in and where it came from, opening to its
+// source with Change answer and See in intake. `row.kind`: 'clicked', 'page' (left as the page had
+// it) or 'yours' (the agent's own answer, not filled); otherwise an answer, by its source.
+function answerRow(row, { tabId, page, carrier }) {
+  const kind = row.kind ?? (row.edited ? 'edited' : row.standard ? 'standard' : row.from ? 'derived' : 'intake');
+  // Where it is on the intake PDF: the field an answer came from, or those a derived one was worked
+  // out from. A TNI standard is no intake fact; no link while the PDF isn't kept.
+  const pdfHere = pdfAvailable();
+  const paths = [].concat(row.from ?? row.path ?? []);
+  const place = ['intake', 'derived', 'edited'].includes(kind) && pdfHere && state.intake && paths.length ? sourcePlace(paths, state.intake) : null;
+  const tag = {
+    intake: { cls: 'intake', text: `Intake${place ? pdfPageSaid(place.page, ' p.') : ''}`, title: 'From the intake' },
+    derived: { cls: 'derived', text: 'Worked out', title: 'Worked out from intake answers' },
+    standard: { cls: 'standard', text: 'TNI standard', title: 'A TNI standard answer, not a fact from the intake' },
+    edited: { cls: 'you', text: 'Your edit', title: 'From your correction in the panel' },
+    page: row.standard ? { cls: 'standard', text: 'TNI standard', title: 'The page already had the TNI standard answer' } : { cls: 'page', text: 'On the page', title: 'The page already had it' },
+    clicked: { cls: 'clicked', text: 'Clicked', title: 'Clicked for you' },
+    yours: { cls: 'you', text: 'You', title: 'Your answer: no fill changes it' },
+  }[kind];
+  const fmt = (v) => (v === true ? 'Yes' : v === false ? 'No' : v == null || v === '' ? 'not on the intake' : String(v));
+  const said = (path) => `${fieldInfo(path).label}: ${fmt(get(state.intake?.record ?? {}, path))}`;
+  const [title, quote] = {
+    intake: [`Intake${place ? pdfPageSaid(place.page, ', page ') : ''}`, row.path ? said(row.path) : `Answer: ${row.value}`],
+    derived: ['Worked out from the intake', (row.from ?? []).map(said).join(' · ')],
+    standard: ['TNI standard answer', `Answer: ${row.value}`],
+    edited: ['Your correction in the panel', row.path ? said(row.path) : `Answer: ${row.value}`],
+    page: ['Already on the page', 'The fill left it as the page had it.'],
+    clicked: ['Clicked for you', `“${row.value}”`],
+    yours: ['Your answer', 'You changed it on the page, so no fill puts it back.'],
+  }[kind];
+  const item = h('div', { class: `row${{ page: ' page', clicked: ' clicked', yours: ' yours' }[kind] ?? ''}${row.fresh ? ' fresh' : ''}`,
+    dataset: row.key ? { key: row.key, field: row.field ?? '', value: row.value, step: row.stepId ?? '' } : {} },
+  h('button', { type: 'button', class: 'row-head', 'aria-expanded': 'false', onclick: () => toggleRow(item) },
+    h('span', { class: 'row-icon', 'aria-hidden': 'true' }, kind === 'page' || kind === 'yours' ? '•' : '✓'),
+    h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, row.label), h('span', { class: 'row-value' }, row.value),
+      row.key ? h('span', { class: 'kv-now', hidden: true }) : null),
+    // From the intake is the usual source: no tag to read past (said to screen readers), so the
+    // others stand out.
+    kind === 'intake' ? h('span', { class: 'sr-only' }, tag.title) : h('span', { class: `tag ${tag.cls}`, title: tag.title }, tag.text)),
+  h('div', { class: 'row-body', hidden: true },
+    h('div', { class: 'src-box' }, h('span', { class: 'src-title' }, title), quote ? h('span', { class: 'src-quote' }, quote) : null),
+    h('div', { class: 'change-slot' }),
+    row.answer && row.key || place ? h('div', { class: 'row-actions' },
+      row.answer && row.key ? h('button', { type: 'button', class: 'ghost change', 'aria-label': `Change answer: ${row.label}`, onclick: () => changeAnswer(item, row, { tabId, page, carrier }) }, 'Change answer') : null,
+      place ? h('button', { type: 'button', class: 'link small src',
+        title: kind === 'edited' ? 'Show what the intake said before your edit' : kind === 'derived' ? 'Show the intake answers this was worked out from' : 'Show where this came from in the intake',
+        onclick: () => openPdf({ path: row.path, from: row.from, label: row.label, kind: 'filled' }) }, 'See in intake') : null) : null,
+    row.key ? h('span', { class: 'need-where', hidden: true }) : null,
+    h('p', { class: 'need-note', hidden: true })));
+  return item;
+}
+
+// One item left for the agent (renderReport): why, and its choices where the panel may put the
+// agent's pick in (agentPickable; the AI's suggestion joins them, renderAi), with Show on page and
+// Mark done. `open`: the first one starts open.
+function needRow(x, { tabId, page, carrier }, open = false) {
+  const label = x.label || x.name;
+  const pickable = agentPickable(x, carrier, page);
+  const options = [...new Set(choicesOf(x.controlKind, x.options))];
+  const kind = x.mark === 'failed' ? 'failed' : pickable ? 'need' : 'yours';
+  const icon = { failed: '!', need: '?', yours: '•' }[kind];
+  const wait = { failed: 'Couldn’t fill', need: 'Needs your answer', yours: 'Left for you' }[kind];
+  const now = x.controlKind !== 'text' && x.current ? x.current : null;
+  // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
+  const show = x.key ? h('button', { class: 'link small show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
+    'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
+  const done = x.key ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page',
+    'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page, x) }, 'Mark done') : null;
+  const item = h('div', { class: `row need${kind === 'need' ? '' : ` ${kind}`}${open ? ' open' : ''}`, tabindex: '-1', dataset: { need: `${x.key}|${x.label}`, key: x.key ?? '', icon, wait } },
+    h('button', { type: 'button', class: 'row-head', 'aria-expanded': String(open), onclick: () => toggleRow(item) },
+      h('span', { class: 'row-icon', 'aria-hidden': 'true' }, icon),
+      h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, label), h('span', { class: 'row-value' }, wait))),
+    h('div', { class: 'row-body', hidden: !open },
+      h('p', { class: 'why' }, x.why, now ? ` On the page now: ${choiceSaid(now)}.` : ''),
+      h('div', { class: 'ai-slot' }),
+      pickable
+        ? choiceList(options, { current: now, onPick: (choice, button) => (item.aiAccept && choice === item.dataset.aiPick
+          ? item.aiAccept(button) : agentAnswer(item, x, choice, { tabId, page, carrier }, button)) })
+        : h('p', { class: 'row-say' }, 'Answer it on the rater page, then mark it done here.'),
+      !pickable && x.options?.length && x.mark === 'failed' ? h('div', { class: 'options' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null,
+      h('div', { class: 'row-actions' }, show, done),
+      show ? h('span', { class: 'need-where', hidden: true }) : null,
+      // Empty while the item is open: what settled it, once it is (settleNeed), or why the page
+      // didn't take a pick (agentAnswer).
+      h('p', { class: 'need-note', hidden: true })));
+  return item;
+}
+
+// Whether the panel may put the agent's own pick in for a question (agentAnswer): a choice the page
+// offers, never one TNI leaves to the agent on the page (report orders, exclusions, signatures,
+// payment: neverReason) or a lookup identity they must verify there (reviewOnly), and nothing on a
+// stop page, step or screen.
+function agentPickable(x, carrier = state.tab?.carrier, page = pageOf(state.tab?.url)) {
+  if (!x?.key || !['radio', 'select', 'checkbox'].includes(x.controlKind)) return false;
+  const options = choicesOf(x.controlKind, x.options);
+  return options.length > 0 && !x.reviewOnly && !neverReason(x) && !stopNoteFor(carrier, page);
+}
+
+// The choices a question offers the agent: a checkbox's two states, or the options the page lists.
+function choicesOf(kind, options) {
+  return kind === 'checkbox' ? ['checked', 'unchecked'] : options ?? [];
+}
+
+// A choice as the agent reads it (a checkbox's two states named).
+function choiceSaid(choice) {
+  return choice === 'checked' ? 'Checked' : choice === 'unchecked' ? 'Unchecked' : String(choice);
+}
+
+// The choices the panel may put in for the agent: buttons, or a list past six; the page's answer now
+// pressed. `onPick(choice, button)`.
+function choiceList(options, { current = null, onPick }) {
+  if (options.length <= 6) {
+    return h('div', { class: 'opts', role: 'group', 'aria-label': 'Answers' }, options.map((o) => h('button', { type: 'button', class: 'opt-btn',
+      'aria-pressed': String(o === current), dataset: { choice: o }, onclick: (e) => onPick(o, e.currentTarget) }, h('span', {}, choiceSaid(o)))));
+  }
+  const select = h('select', { 'aria-label': 'Answer' }, h('option', { value: '' }, 'Choose…'),
+    options.map((o) => h('option', { value: o, selected: o === current }, choiceSaid(o))));
+  return h('div', { class: 'opt-select' }, select,
+    h('button', { type: 'button', class: 'ghost', onclick: (e) => { if (select.value) onPick(select.value, e.currentTarget); } }, 'Put it in'));
+}
+
+// Opens a row of the page's list in place (closing the one open before), or closes it.
+function toggleRow(item, open = !item.classList.contains('open')) {
+  if (open) for (const other of item.parentNode?.querySelectorAll(':scope > .row.open') ?? []) if (other !== item) toggleRow(other, false);
+  item.classList.toggle('open', open);
+  item.querySelector('.row-head')?.setAttribute('aria-expanded', String(open));
+  const body = item.querySelector('.row-body');
+  if (body) body.hidden = !open;
+  renderDock();
+}
+
+// The dock's Show the next one: the next question still needing the agent after the one open now
+// (the first when none is), opened in the whole list and brought into view.
+function showNextNeed() {
+  if (state.view !== 'page' || state.filter !== 'all' || state.pastKey) {
+    state.view = 'page';
+    state.filter = 'all';
+    state.pastKey = null;
+    showScreen();
+    renderSteps();
+  }
+  const open = [...$('report').querySelectorAll('.row.need:not(.resolved)')];
+  if (!open.length) return;
+  const now = $('report').querySelector('.row.open');
+  const next = (now && open.find((n) => n !== now && (now.compareDocumentPosition(n) & Node.DOCUMENT_POSITION_FOLLOWING))) || open.find((n) => n !== now) || open[0];
+  toggleRow(next, true);
+  next.scrollIntoView({ block: 'nearest', behavior: scrollBehavior() });
+  next.querySelector('.row-head')?.focus({ preventScroll: true });
+}
+
+// Change answer on a row that went in: the choices the page offers now, put in for the agent from
+// the row (agentAnswer); a typed answer, or one the panel may not answer, is shown on the page for
+// the agent to change there (showOnPage), where their answer then stays theirs.
+async function changeAnswer(item, row, { tabId, page, carrier }) {
+  if (state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
+  const slot = item.querySelector('.change-slot');
+  if (slot.childElementCount) { slot.replaceChildren(); return; }
+  let frames = null;
+  try { frames = await runKit(tabId, carrier, () => globalThis.__raterKit.decisionSnapshot()); } catch { /* the page is navigating */ }
+  if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
+  const matches = aiSnapshotFieldMatches(frames, { key: row.key, label: row.field });
+  const field = matches.length === 1 ? matches[0].field : null;
+  const x = field ? { key: field.key, label: field.label, section: field.section, controlKind: field.kind, q: row.q ?? null, current: field.current,
+    options: choicesOf(field.kind, field.options) } : null;
+  if (!x || !agentPickable(x, carrier, page)) {
+    const note = item.querySelector('.need-note');
+    note.hidden = false;
+    note.classList.remove('bad');
+    note.textContent = 'Change it on the rater page. Your answer there stays: no fill puts this one back.';
+    showOnPage(item, { key: row.key, label: row.field }, tabId, page, carrier);
+    return;
+  }
+  slot.replaceChildren(h('p', { class: 'why' }, 'Pick the answer to put in instead:'),
+    choiceList(x.options, { current: x.current, onPick: (choice, button) => agentAnswer(item, x, choice, { tabId, page, carrier }, button) }));
+  slot.querySelector('button, select')?.focus();
+}
+
+// The agent's pick for a question, from its row (an item left for them, or Change answer): put in
+// through the same guarded path as an AI answer (pagekit answerEdits and answer, `by: 'agent'`),
+// only while the page still shows the question and the choice as the row read them, never on a
+// stop step. The field then joins the agent's on this page, as their own edit there does: no fill
+// changes it and Continue no longer waits on it. Logged as the agent's field change.
+async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = null) {
+  if (state.filling || state.closing || !state.intake || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || !agentPickable(x, carrier, page)) return;
+  const note = item.querySelector('.need-note');
+  const say = (text) => { note.hidden = false; note.classList.add('bad'); note.replaceChildren(text); };
+  const intake = state.intake;
+  const revision = state.intakeRevision;
+  const scope = usage.currentSession()?.intakeId;
+  const editOrigin = { scope, tabId, page: editScope(page, carrier), keys: state.agentKeys, epoch: state.agentKeysEpochs?.get(scope) ?? 0 };
+  const current = () => state.tab?.id === tabId && pageOf(state.tab?.url) === page && state.intake === intake && state.intakeRevision === revision;
+  const token = crypto.randomUUID();
+  let field = null;
+  let result = null;
+  let guarding = false;
+  let edited = [];
+  state.filling = true;
+  if (button) button.disabled = true;
+  // Our own answer isn't the agent's change on the page: the recorder is paused, as for a fill.
+  await tellRecorder('pause', tabId);
+  try {
+    guarding = true;
+    await runKit(tabId, carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [token]);
+    if (!current()) return;
+    const frames = await runKit(tabId, carrier, () => globalThis.__raterKit.decisionSnapshot());
+    if (!current()) return;
+    const matches = aiSnapshotFieldMatches(frames, x);
+    if (matches.length !== 1) { say('The page changed: answer it on the page.'); return; }
+    const [{ frame }] = matches;
+    field = matches[0].field;
+    const options = choicesOf(field.kind, field.options);
+    if (!options.includes(choice) || !agentPickable({ ...x, controlKind: field.kind, section: field.section, options }, carrier, page)) {
+      say('The page doesn’t offer that answer now: answer it on the page.');
+      return;
+    }
+    const answered = await runKit(tabId, carrier, (a, t, o) => globalThis.__raterKit.answer(a, null, t, o),
+      [[{ key: field.key, label: field.label, value: choice, expected: { kind: field.kind, section: field.section, options, current: field.current } }],
+        token, { stopSteps: Object.keys(carrier.stopSteps ?? {}), by: 'agent' }], [frame.frameId]);
+    result = answered.flatMap((f) => f.result ?? []).find((r) => r?.key === field.key) ?? null;
+  } catch {
+    result = null;
+  } finally {
+    if (guarding) {
+      try {
+        const frames = await runKit(tabId, carrier, (t) => globalThis.__raterKit.answerEdits('end', t), [token]);
+        // The agent's own edits while the answer went in stay theirs, as after a fill.
+        edited = frames.flatMap((f) => f.result ?? []).filter((r) => r?.protected).map((r) => r.key);
+      } catch { /* a removed or navigating frame no longer has live listeners */ }
+    }
+    await persistGuardedEdits(editOrigin, edited);
+    await tellRecorder('resume', tabId);
+    state.filling = false;
+    if (button) button.disabled = false;
+    // The recorder was paused: the questions the answer revealed or hid are read here.
+    if (field && state.tab?.id === tabId) scheduleLayout(page, 'changed');
+  }
+  if (!field) return;
+  if (!result?.ok) {
+    if (current()) say(result?.reason ? `The page didn’t take it (${result.reason}). Answer it on the page.` : 'Couldn’t reach the page. Answer it on the page.');
+    return;
+  }
+  const shown = result.shown || choice;
+  // In on the page, so the agent's from now on where it went in (no fill changes it) and logged with
+  // the quote it went into, also when they moved to another tab, page or intake meanwhile.
+  await persistGuardedEdits(editOrigin, [x.key]);
+  if (!carrier.practice && usage.currentSession()?.intakeId === scope) {
+    const maps = tabMaps(tabId);
+    const ctx = { record: intake.record, filled: maps.filled, labels: maps.labels, choices: maps.choices,
+      redact: redactor(redactionTerms(intake.record)), keySalt: usage.currentSession()?.keySalt, step: knownStep(carrier, tabStep(carrier, tabId)) };
+    usage.log({ carrier: carrier.id, page, view: viewOf(tabId, page, carrier),
+      ...fieldChangeEvent({ key: field.key, q: x.q ?? null, label: field.label, kind: field.kind, before: field.current ?? '', after: shown, agent: true }, ctx) });
+  }
+  if (!current()) return;
+  // The AI's word on it, if any: a suggestion the agent answered otherwise is dismissed (logged);
+  // a pick it put in that waits for approval is the agent's answer now, as after an edit there.
+  const sugg = item.aiSuggestion;
+  if (sugg && [...state.aiCache.values()].includes(sugg)) {
+    if (sugg.done === 'auto' && !sugg.approved && !sugg.manual) {
+      sugg.manual = true;
+      persistAiPending();
+      syncAiBanner({ tabId, page, carrier });
+    } else if (!sugg.done && !sugg.dismissed) {
+      sugg.dismissed = true;
+      if (!carrier.practice) usage.log(aiDecisionEvent(sugg, { carrier, page }, 'dismissed'));
+    }
+  }
+  item.querySelector('.ai-slot')?.replaceChildren();
+  for (const b of item.querySelectorAll('.opt-btn')) b.setAttribute('aria-pressed', String(b.dataset.choice === choice));
+  // The question's other row too: a filled answer with a check shows as an answer and as a check.
+  const label = x.label ?? field.label ?? '';
+  const same = [...(item.closest?.('#report')?.querySelectorAll('.row[data-key]') ?? [])]
+    .filter((r) => r.dataset.key === x.key && (r.dataset.need ?? `|${r.dataset.field ?? ''}`).endsWith(`|${label}`));
+  for (const row of new Set([item, ...same])) {
+    if (row.classList.contains('need')) { settleNeed(row, 'picked', null, choiceSaid(shown)); continue; }
+    row.dataset.value = shown;
+    row.classList.remove('changed');
+    setRowHead(row, { icon: '✓', value: choiceSaid(shown), tag: { kind: 'you', text: 'You', title: 'Your answer, put in from the panel' } });
+    row.querySelector('.change-slot')?.replaceChildren();
+    const n = row.querySelector('.need-note');
+    if (!n) continue;
+    n.hidden = false;
+    n.classList.remove('bad');
+    n.replaceChildren('✓ Put in for you. No fill changes it now.');
+  }
+  // Questions the answer revealed are filled as after an edit on the page.
+  scheduleAutoFill(page);
 }
 
 async function clearMarks() {
@@ -3431,9 +3982,12 @@ async function nextCaptureNumber(scenario) {
 }
 
 // Alt+Shift+C reaches the side panel of every window: only the one in the focused window captures.
+// Popped out, the panel is the only copy and captures the tab it follows, wherever focus is.
 async function captureFromShortcut() {
-  const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
-  if (mine && focused && mine.id !== focused.id) return;
+  if (!popped) {
+    const [mine, focused] = await Promise.all([chrome.windows.getCurrent(), chrome.windows.getLastFocused()]).catch(() => [null, null]);
+    if (mine && focused && mine.id !== focused.id) return;
+  }
   capturePage();
 }
 
@@ -3741,7 +4295,8 @@ async function runAssist(frames, ctx) {
   }
   if (head) head.before(holder); else $('report').append(holder);
   if (!cfg.apiKey) {
-    holder.append(h('p', { class: 'muted small' }, `${provider.name} needs an OpenAI API key. Add it in Agent options.`));
+    holder.append(h('p', { class: 'note-line' }, `${provider.name} needs an ${provider.keyLabel}. `,
+      h('button', { type: 'button', class: 'link small', onclick: () => openSettings('ai-openai-key') }, 'Add the key')));
     return;
   }
   const run = ++state.aiRun;
@@ -3851,7 +4406,7 @@ async function syncAiBanner(ctx) {
 // Puts AI answers into the page through the fill engine, which checks the page kept each one.
 // decision: 'accepted' (the agent clicked Accept) or 'auto' (the auto-select setting).
 async function applyAi(list, ctx, decision) {
-  if (state.filling) return false;
+  if (state.filling || state.closing) return false;
   if (state.tab?.id !== ctx.tabId || pageOf(state.tab?.url) !== ctx.page) return false;
   if (ctx.contextKey !== assistContextKey(state.intake?.record, state.active)) return false;
   if (ctx.run !== undefined && ctx.run !== state.aiRun) return false;
@@ -4031,13 +4586,14 @@ function aiDecisionEvent(x, ctx, decision) {
   };
 }
 
-// Each suggestion goes on its item in "Needs you on this page" (AI suggests …, Use this answer /
-// No thanks). Above the list: the approval card for answers the AI picked itself, Accept all,
-// and any suggestion whose item isn't on the list.
+// Each suggestion goes on its question's row (AI suggests …, Use this answer / No thanks; its pick
+// marked among the row's own choices), and each pick the AI put in itself says so there, purple,
+// with Approve and Reject; the dock approves them all. Above the list: Use all, and any suggestion
+// whose question has no row.
 function renderAi(holder, suggestions, ctx) {
   const rerender = () => { if (holder.isConnected) renderAi(holder, suggestions, ctx); };
   const act = async (list, decision, button) => {
-    if (state.filling) { $('ai-note').textContent = 'Wait for the fill to finish, then try again.'; return; }
+    if (state.filling) { announce('Wait for the fill to finish, then try again.'); return; }
     if (button) { button.disabled = true; button.textContent = 'Putting it in…'; }
     await applyAi(list, ctx, decision);
     rerender();
@@ -4131,13 +4687,28 @@ function renderAi(holder, suggestions, ctx) {
     'Evidence checked · needs your review',
   ].filter(Boolean).join(' · ');
   const answer = (x) => (x.controlKind === 'text' ? `typing “${x.choice}”` : `“${x.choice}”`);
-  // What goes on an item: the suggestion and its buttons, or what happened to it.
+  // Said of a pick waiting for approval that came from before a change, or a retired assistant.
+  const notes = (x) => [x.retired ? 'From a retired assistant: review the page answer.' : null,
+    (x.contextKey ? x.contextKey !== current : x.contextHash !== currentHash) ? 'Picked before the intake or unit changed.' : null].filter(Boolean);
+  // What goes on a row: the suggestion and its buttons, or what happened to it.
   const box = (x) => {
     // The agent's own answer is protected: no fill or AI answer replaces it (agentKeys).
     if (x.manual) return h('div', { class: 'ai-done mine' }, h('b', {}, '✓'), h('span', { class: 'grow' }, 'You changed this answer on the page.'), h('span', { class: 'note' }, 'Won’t be refilled'));
-    if (x.rejected) return h('div', { class: 'ai-done bad' }, x.confirmError ?? (x.retired ? 'From a retired assistant: review the page answer.' : 'AI answer rejected: answer it on the page.'));
+    if (x.rejected) {
+      return h('div', { class: 'ai-done bad' }, h('span', { class: 'grow' }, x.confirmError ?? (x.retired ? 'From a retired assistant: review the page answer.' : 'AI answer rejected: answer it on the page.')),
+        rejectedPending.includes(x) ? h('button', { type: 'button', class: 'link small ai-reject', onclick: () => confirmRejected([x]) }, 'Confirm the current page answer') : null);
+    }
     if (x.error) return h('div', { class: 'ai-done bad' }, `The page didn't take the AI answer (${x.error}). Answer it on the page.`);
-    if (x.done === 'auto' && !x.approved) return h('div', { class: 'ai-box' }, h('div', { class: 'ai-says' }, 'Picked by the AI: ', h('b', {}, x.choice)), h('div', { class: 'ai-tip' }, 'Approve or reject it above.'));
+    if (x.done === 'auto' && !x.approved) {
+      return h('div', { class: 'ai-box' },
+        h('div', { class: 'ai-says' }, 'Picked by the AI: ', h('b', {}, x.choice)),
+        x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null,
+        ...notes(x).map((n) => h('div', { class: 'ai-tip' }, n)),
+        h('div', { class: 'ai-why' }, 'Purple on the page. Continue waits until you approve or reject it.'),
+        h('div', { class: 'ai-actions' },
+          h('button', { type: 'button', class: 'primary accept', onclick: () => decide([x], 'approved') }, 'Approve'),
+          h('button', { type: 'button', class: 'link ai-reject', onclick: () => decide([x], 'rejected') }, 'Reject')));
+    }
     if (x.done) return h('div', { class: 'ai-done' }, h('b', {}, '✓'), h('span', { class: 'grow' }, `Put in ${answer(x)} (purple on the page).`));
     if (x.dismissed) return null;
     if (x.leave || !x.applyable) {
@@ -4152,70 +4723,53 @@ function renderAi(holder, suggestions, ctx) {
         h('button', { type: 'button', class: 'primary accept', onclick: (e) => act([x], 'accepted', e.target) }, 'Use this answer'),
         h('button', { type: 'button', class: 'ghost', onclick: () => { x.dismissed = true; if (!ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, 'dismissed')); rerender(); } }, 'No thanks')));
   };
-  const report = $('report');
+  const rows = [...$('report').querySelectorAll('.row.need')];
   const orphans = [];
-  for (const x of suggestions) {
-    const item = [...report.querySelectorAll('.need')].find((n) => n.dataset.need === `${x.key}|${x.label}`);
-    const slot = item?.querySelector('.ai-slot');
+  for (const x of new Set([...suggestions, ...pending])) {
+    const item = rows.find((n) => n.dataset.need === `${x.key}|${x.label}`);
     const content = box(x);
-    if (slot) {
-      slot.replaceChildren(...(content ? [content] : []));
-      const byAgent = ['answered', 'marked'].includes(item.dataset.settled);
-      // The note under an item says only what the agent settled (answered on the page, marked
-      // done): the AI's word is in its slot, and "Answer these on the page" is said once above.
-      if (!byAgent) item.querySelector('.need-note').hidden = true;
-      // An AI answer the agent accepted or approved settles the item; one waiting for approval
-      // (or rejected, or not taken by the page) is still theirs.
-      if (!byAgent) {
-        const settled = !!x.manual || (!!x.done && !x.rejected && !x.error && (x.done !== 'auto' || !!x.approved));
-        item.classList.toggle('resolved', settled);
-        if (settled) item.dataset.settled = 'ai'; else delete item.dataset.settled;
-      }
-    } else if (content) orphans.push(h('div', { class: 'need' }, h('div', { class: 'row-text' }, h('b', {}, x.label)), content));
+    if (!item) {
+      if (content) orphans.push(h('div', { class: 'ai-orphan' }, h('b', {}, x.label), content));
+      continue;
+    }
+    item.aiSuggestion = x;
+    item.querySelector('.ai-slot').replaceChildren(...(content ? [content] : []));
+    // The AI's choice among the row's own: picking it there is accepting it (applyAi).
+    const offered = !x.done && !x.dismissed && !x.leave && x.applyable && x.controlKind !== 'text' ? x.choice : null;
+    item.aiAccept = offered ? () => act([x], 'accepted') : null;
+    if (offered) item.dataset.aiPick = offered; else delete item.dataset.aiPick;
+    for (const b of item.querySelectorAll('.opt-btn')) {
+      const pick = b.dataset.choice === offered;
+      b.classList.toggle('ai-pick', pick);
+      b.querySelector('.ai-badge')?.remove();
+      if (pick) b.append(h('span', { class: 'ai-badge' }, 'AI pick'));
+    }
+    for (const o of item.querySelectorAll('.opt-select option')) if (o.value) o.textContent = `${choiceSaid(o.value)}${o.value === offered ? ' (AI pick)' : ''}`;
+    // The row says only what the agent settled (answered on the page or here, marked done), else
+    // the AI's word: an answer the agent accepted or approved settles it; one waiting for approval
+    // (or rejected, or not taken by the page) is still theirs.
+    if (['answered', 'marked', 'picked'].includes(item.dataset.settled)) continue;
+    item.querySelector('.need-note').hidden = true;
+    const settled = !!x.manual || (!!x.done && !x.rejected && !x.error && (x.done !== 'auto' || !!x.approved));
+    const waiting = !settled && x.done === 'auto' && !x.rejected && !x.error;
+    item.classList.toggle('resolved', settled);
+    item.classList.toggle('pending', waiting);
+    if (settled) item.dataset.settled = 'ai'; else delete item.dataset.settled;
+    setRowHead(item, settled
+      ? { icon: '✓', value: x.manual ? 'Your answer on the page' : x.choice, tag: x.manual ? { kind: 'you', text: 'You' }
+        : { kind: 'ai', text: x.done === 'auto' ? 'AI · approved' : 'AI · you chose', title: 'AI suggestion, chosen by you' } }
+      : waiting ? { icon: '?', value: x.choice, tag: { kind: 'ai', text: 'AI picked · approve', title: 'Picked by the AI: approve or reject it' } }
+        : { icon: item.dataset.icon, value: item.dataset.wait });
   }
-  recount();
   holder.replaceChildren(...[
-    pending.length ? h('div', { class: 'ai-approve' },
-      h('p', { class: 'ai-approve-title' }, `The AI picked ${pending.length} answer${pending.length === 1 ? '' : 's'} on this page`),
-      h('p', { class: 'ai-approve-sub' }, rejectedPending.length
-        ? 'Continue waits until you confirm the page answer or change it.'
-        : canContinue ? 'Continue waits until you approve them.' : 'Check them (purple on the page), then approve.'),
-      h('ul', {}, pending.map((x) => h('li', {},
-        h('span', {}, h('b', {}, x.label), ' ← ', x.choice,
-          x.retired ? h('span', { class: 'small muted' }, ' (retired assistant; review the page answer)') : null,
-          (x.contextKey ? x.contextKey !== current : x.contextHash !== currentHash) ? h('span', { class: 'small muted' }, ' (picked before the intake or unit changed)') : null),
-        x.rejected
-          ? h('button', { type: 'button', class: 'link ai-reject', onclick: () => confirmRejected([x]) }, 'Confirm the current page answer')
-          : h('button', { type: 'button', class: 'link ai-reject', onclick: () => decide([x], 'rejected') }, 'Reject')))),
-      h('div', { class: 'ai-actions' },
-        awaiting.length ? h('button', { type: 'button', class: 'primary accept', onclick: () => decide(awaiting, 'approved') }, canContinue ? 'Approve and continue' : `Approve ${awaiting.length === 1 ? 'it' : `all ${awaiting.length}`}`) : null,
-        rejectedPending.length ? h('button', { type: 'button', class: 'ghost', onclick: () => confirmRejected(rejectedPending) }, canContinue ? 'Confirm and continue' : 'Confirm the current page answer') : null)) : null,
     sure.length > 1 ? h('div', { class: 'ai-actions' }, h('button', { type: 'button', class: 'ghost', onclick: (e) => act(sure, 'accepted', e.target) }, `Use all ${sure.length} AI answers`)) : null,
     ...orphans,
   ].filter(Boolean));
-}
-
-function wireAgentPopover() {
-  const button = $('agent-btn');
-  const popover = $('agent-popover');
-  const settingsTrigger = $('settings-agent');
-  button.addEventListener('click', (e) => {
-    if (state.agentPopoverOpen) closeAgentPopover();
-    else openAgentPopover({ trigger: e.currentTarget });
-  });
-  $('close-agent').addEventListener('click', () => closeAgentPopover());
-  settingsTrigger.addEventListener('click', (e) => openAgentPopover({ trigger: e.currentTarget }));
-  const outside = target => !popover.contains(target) && !button.contains(target) && !settingsTrigger.contains(target);
-  for (const event of ['pointerdown', 'focusin']) {
-    document.addEventListener(event, (e) => {
-      if (state.agentPopoverOpen && outside(e.target)) closeAgentPopover({ restore: false });
-    });
-  }
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || !state.agentPopoverOpen) return;
-    e.preventDefault();
-    closeAgentPopover();
-  });
+  // The dock's Approve (dockFor): every pick waiting on this page, or the rejected ones confirmed.
+  if (pending.length) state.aiDocks.set(`${ctx.tabId}|${ctx.page}`, { canContinue, go: () => (awaiting.length ? decide(awaiting, 'approved') : confirmRejected(rejectedPending)) });
+  else state.aiDocks.delete(`${ctx.tabId}|${ctx.page}`);
+  recount();
+  renderSteps();
 }
 
 function wireAi() {
@@ -4233,33 +4787,41 @@ function wireAi() {
   };
   $('ai-on').addEventListener('change', (e) => save({ aiOn: e.target.checked }));
   $('ai-auto').addEventListener('change', (e) => save({ lunaAuto: e.target.checked }));
-  $('ai-openai-key').addEventListener('change', (e) => save({ lunaKey: e.target.value.trim() }));
+  // The key is saved with Save (or Enter), never while it is typed.
+  const saveKey = async () => {
+    await save({ lunaKey: $('ai-openai-key').value.trim() });
+    $('ai-openai-key').value = '';
+    await openKeyForm(false);
+    $('key-edit').focus();
+  };
+  $('key-edit').addEventListener('click', () => openKeyForm($('key-form').hidden));
+  $('key-save').addEventListener('click', saveKey);
+  $('ai-openai-key').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); saveKey(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); $('ai-openai-key').value = ''; openKeyForm(false).then(() => $('key-edit').focus()); }
+  });
 }
 
 async function renderAiSettings() {
   const cfg = await aiSettings();
   const provider = PROVIDERS[cfg.provider];
-  const saved = await usage.settings();
   $('ai-on').checked = cfg.on;
   $('ai-auto').checked = cfg.auto;
   $('ai-auto').disabled = !cfg.on || !provider.automatic;
   $('ai-auto-option').hidden = !provider.automatic;
-  if (document.activeElement !== $('ai-openai-key')) $('ai-openai-key').value = saved.lunaKey || '';
-  $('ai-model').disabled = true;
-  $('ai-model').placeholder = provider.defaultModel;
-  if (document.activeElement !== $('ai-model')) $('ai-model').value = cfg.model;
-  $('agent-btn').dataset.on = String(cfg.on);
-  // On without a key: it can't help yet.
-  $('agent-dot').hidden = !(cfg.on && !cfg.apiKey);
-  $('agent-btn').title = cfg.on
-    ? (cfg.apiKey ? `${provider.name} assistant on · ${cfg.model}` : `${provider.name} assistant on · ${provider.keyLabel} needed`)
-    : `${provider.name} assistant off`;
-  $('settings-agent-name').textContent = `${provider.name} assistant`;
   $('agent-name').textContent = provider.name;
-  $('agent-provider').textContent = provider.company;
-  $('agent-model').textContent = cfg.model;
-  $('agent-status').dataset.on = String(cfg.on);
-  $('ai-note').textContent = !cfg.on ? 'Off' : !cfg.apiKey ? `On, but needs ${provider.keyLabel}.` : `On · ${cfg.model}${cfg.auto ? ' · picks answers, you approve before Continue' : ' · suggestions only'}`;
+  $('key-status').textContent = cfg.apiKey ? 'Saved on this computer' : 'Not added yet';
+  $('key-status').className = cfg.apiKey ? 'ok' : 'warn';
+  if ($('key-form').hidden) $('key-edit').textContent = cfg.apiKey ? 'Change' : 'Add key';
+  // On without a key: it can't help yet, said on its card and with a dot on the brain button.
+  $('agent-card').classList.toggle('warn', cfg.on && !cfg.apiKey);
+  $('agent-btn').dataset.on = String(cfg.on);
+  $('agent-dot').hidden = !(cfg.on && !cfg.apiKey);
+  $('agent-btn').title = !cfg.on ? 'Assistant off'
+    : cfg.apiKey ? `${provider.name} assistant on · ${cfg.model}` : `Assistant needs an ${provider.keyLabel}`;
+  $('ai-note').textContent = !cfg.on ? 'Off. Questions are left for you.' : !cfg.apiKey ? 'On, but it needs a key to work.'
+    : cfg.auto ? 'On. Picks answers; you approve them.' : 'On. Suggests answers; you choose.';
+  $('ai-note').className = !cfg.on ? 'off' : !cfg.apiKey ? 'warn' : 'on';
   $('ai-privacy').textContent = `Sent to ${provider.company} with your key: the questions left for you, TNI's rules, and the intake with client names, birth dates, address, contact and ID numbers replaced by [client]. Written differently in the claims box or notes, they may still go. Business, coverage, vehicle, driver and prior-insurance details are sent. Missing facts stay unanswered. Report orders, exclusions, signatures and payment stay with you. Key saved on this device.`;
   renderUsage();
 }
@@ -4272,57 +4834,52 @@ async function renderUsage() {
   const { agent = '', serverToken = '' } = await usage.settings();
   const { serverUrl } = await usage.serverConfig();
   $('usage-count').textContent = (n
-    ? `${n.toLocaleString()} event${n === 1 ? '' : 's'} waiting on this computer`
+    ? `${n.toLocaleString()} event${n === 1 ? '' : 's'} waiting on this computer.`
     : 'Nothing waiting on this computer.')
     + (state.layoutErrors ? ` ${state.layoutErrors} page layout${state.layoutErrors === 1 ? '' : 's'} couldn't be read (logged).` : '');
   const up = usage.lastUpload();
   const when = up.at ? new Date(up.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
   $('upload-status').textContent = {
     ok: `Uploaded to the server at ${when}.`,
-    error: `Upload failed at ${when}: ${up.message}. Retrying every minute.`,
+    error: `Upload failed at ${when}: ${up.message}. Saved here and retried every minute.`,
     off: 'No server set. Use Export log to hand it in.',
     idle: serverUrl ? `Uploads to ${serverUrl} every minute.` : '',
   }[up.state] ?? '';
-  $('upload-status').className = `small${up.state === 'ok' ? ' ok' : up.state === 'error' ? ' bad' : ''}`;
+  $('upload-status').className = `status-line${up.state === 'ok' ? ' ok' : up.state === 'error' || up.state === 'off' ? ' warn' : ''}`;
   for (const [id, v] of [['agent', agent], ['server-url', serverUrl], ['server-token', serverToken]]) {
     if (document.activeElement !== $(id)) $(id).value = v;
   }
-  $('recording').hidden = !state.intake;
-  $('foot-version').hidden = !!state.intake;
+  $('recording').hidden = !state.intake || !!state.tab?.carrier?.practice;
   renderHealth({ n, agent, serverUrl, up });
 }
 
 // The version this browser is running, and setup problems that otherwise go unnoticed until a
-// review shows missing data: an old build, the usage server down, no initials, no AI key.
-async function renderHealth({ n, agent, serverUrl, up }) {
+// review shows missing data: no initials, no AI key, no usage server (said in Settings, with a dot
+// on its button), and a usage log that can't be saved (said on the main screen: nothing is recorded).
+async function renderHealth({ up }) {
   const version = inExtension ? chrome.runtime.getManifest().version : 'dev';
   $('version').textContent = `Version ${version}`;
   $('foot-version').textContent = `v${version}`;
+  const { agent = '' } = await usage.settings();
   const ai = await aiSettings();
-  // Things the agent fixes (one card, a button each) and things that need nothing from them.
   const setup = [
-    !agent && { title: 'Add your initials', text: 'So your quotes count as yours.', button: 'Add', go: () => openSettings('agent') },
-    ai.on && !ai.apiKey && { title: 'The assistant needs a key', text: `No ${PROVIDERS[ai.provider].keyLabel} set.`, button: 'Add key', go: () => openSettings('ai-openai-key') },
-    up.state === 'off' && { title: 'Usage log has no server', text: 'Export log only.', button: 'Set up', go: () => openSettings('server-url') },
+    !agent && 'add your initials',
+    ai.on && !ai.apiKey && `add the ${PROVIDERS[ai.provider].keyLabel}`,
+    up.state === 'off' && 'set the usage server (Advanced)',
   ].filter(Boolean);
-  // Events that can't even be saved here are lost: that comes first.
-  const saved = usage.lastSave();
-  const info = saved.state === 'error'
-    ? { title: "Usage log can't be saved on this computer", text: `Nothing is recorded now (${saved.message}). Export the log (Settings, Advanced) and tell TNI.` }
-    : up.state === 'error'
-      ? { title: "Usage log can't upload right now", text: `Nothing to do. ${n ? `${n.toLocaleString()} event${n === 1 ? '' : 's'} saved here,` : 'Saved here,'} sent when the server is back.` }
-      : null;
-  const cards = () => [
-    setup.length ? h('div', { class: 'setup' },
-      h('div', { class: 'setup-head' }, `Finish setting up (${setup.length})`),
-      setup.map((x) => h('div', { class: 'setup-row' },
-        h('div', { class: 'row-text' }, h('b', {}, x.title), h('span', {}, x.text)),
-        h('button', { type: 'button', class: 'ghost', onclick: x.go }, x.button)))) : null,
-    info ? h('div', { class: 'notice' }, h('div', { class: 'row-text' }, h('b', {}, info.title), h('span', {}, info.text))) : null,
-  ].filter(Boolean);
-  $('home-notices').replaceChildren(...cards());
-  $('quote-notices').replaceChildren(...cards());
+  $('setup-note').hidden = !setup.length;
+  $('setup-text').textContent = `To finish setting up, ${joinAnd(setup)}. Filling still works without ${setup.length === 1 ? 'it' : 'them'}.`;
   $('settings-dot').hidden = !setup.length;
+  $('agent').classList.toggle('missing', !agent);
+  // Events that can't even be saved here are lost: that is said where the agent works.
+  const saved = usage.lastSave();
+  $('notices').replaceChildren(...(saved.state === 'error' ? [issueCard({ tone: 'warn', role: 'alert', title: "Usage log can't be saved on this computer",
+    text: `Nothing is recorded now (${saved.message}). Export the log (Settings, Advanced) and tell TNI.` })] : []));
+}
+
+// "a", "a and b", "a, b and c".
+function joinAnd(list) {
+  return list.length > 1 ? `${list.slice(0, -1).join(', ')} and ${list.at(-1)}` : list[0] ?? '';
 }
 
 async function uploadNow() {
@@ -4336,8 +4893,8 @@ function wireUsage() {
   $('auto-advance').addEventListener('change', async (e) => { const saving = usage.saveSettings({ autoAdvance: e.target.checked }); renderSite(); await saving; logSettings('changed', 'autoAdvance'); });
   $('overwrite').addEventListener('change', () => logSettings('changed', 'overwrite'));
   // Saved with the other switches but never logged (fillContext's settings are the four the
-  // usage server knows).
-  $('check-continue').addEventListener('change', (e) => usage.saveSettings({ checkBeforeContinue: e.target.checked }));
+  // usage server knows). The dock follows it (Looks right, continue).
+  $('check-continue').addEventListener('change', (e) => { usage.saveSettings({ checkBeforeContinue: e.target.checked }); renderSteps(); });
   $('server-url').addEventListener('change', async (e) => {
     const v = e.target.value.trim();
     // Blank means "no server" (export only); anything else must be an http(s) URL.
@@ -4368,11 +4925,13 @@ function wireUsage() {
     $('usage-note').textContent = 'Usage log cleared.';
     renderUsage();
   });
+  // Report a problem opens its box above the footer, and says so (aria-expanded).
+  const problemOpen = (open) => { $('problem-form').hidden = !open; $('report-problem').setAttribute('aria-expanded', String(open)); };
   $('report-problem').addEventListener('click', () => {
-    $('problem-form').hidden = !$('problem-form').hidden;
+    problemOpen($('problem-form').hidden);
     if (!$('problem-form').hidden) $('problem-text').focus();
   });
-  $('cancel-problem').addEventListener('click', () => { $('problem-text').value = ''; $('problem-form').hidden = true; });
+  $('cancel-problem').addEventListener('click', () => { $('problem-text').value = ''; problemOpen(false); $('report-problem').focus(); });
   $('send-problem').addEventListener('click', () => {
     const text = $('problem-text').value.trim();
     if (!text) return;
@@ -4380,7 +4939,8 @@ function wireUsage() {
     const page = state.tab?.url ? pageOf(state.tab.url) : null;
     usage.log({ type: 'problem_report', carrier: state.tab?.carrier?.id ?? null, page, text: redact(text).slice(0, 1000), ...problemContext(state.tab, page) });
     $('problem-text').value = '';
-    $('problem-form').hidden = true;
+    problemOpen(false);
+    announce('Thanks — saved with the usage log.');
     $('usage-note').textContent = 'Thanks — saved with the usage log.';
     // Sent now rather than on the minute: the panel is often closed right after (audit 2026-10-08).
     uploadNow();
@@ -4402,6 +4962,11 @@ const PDF_ZOOMS = [1, 1.5, 2, 3, 4];
 const PDF_OPEN_ZOOM = 2;
 // An item opens at 200%: 300% showed too little around it (2026-10-10).
 const PDF_FOCUS_ZOOM = 2;
+
+// Whether the intake PDF can be shown (this panel read it, or it is kept for the session).
+function pdfAvailable() {
+  return !!(state.pdfBytes || state.intake?.pdfKept);
+}
 
 // "page 2" for an intake of several pages; nothing for a one-page intake (TNI's is one page).
 function pdfPageSaid(page, before) {
@@ -4452,31 +5017,55 @@ async function intakePdfDocument() {
 
 // `target`: { path, from, label, kind: 'check' | 'filled' }, the record path to mark, or for a
 // derived answer the paths it was worked out from (`from`, plan.js; intake-source.js); none for
-// the whole PDF from its first page.
+// the whole PDF from its first page. Shown in a sheet over the panel; Back (or Escape) returns to
+// where the agent was.
 async function openPdf(target = null) {
   const paths = [].concat(target?.from ?? target?.path ?? []);
   const place = target ? sourcePlace(paths, state.intake) : null;
   // An answer the agent corrected in the panel: the PDF still shows what the client wrote.
   const kind = target?.kind === 'filled' && paths.some((p) => state.intake?.agentEdited?.includes(p)) ? 'edited'
     : target?.kind === 'filled' && target.from ? 'derived' : target?.kind;
+  if (!state.pdf) state.pdfReturn = document.activeElement;
   state.pdf = { page: place?.page ?? 0, zoom: place ? PDF_FOCUS_ZOOM : PDF_OPEN_ZOOM, pages: state.pdf?.pages ?? null, mark: place ? { ...target, kind, place } : null };
   state.fileMenuOpen = false;
-  closeAgentPopover({ restore: false });
   render();
-  $('pdf-name').textContent = state.intake?.fileName ?? 'Intake PDF';
+  $('pdf-title').textContent = place ? target.label : 'Intake PDF';
+  $('pdf-name').textContent = place ? `Intake${pdfPageSaid(place.page, ', page ')} · marked` : state.intake?.fileName ?? 'Intake PDF';
   // The last PDF drawn stays hidden until this one is.
   $('pdf-sheet').hidden = true;
   $('pdf-error').hidden = true;
   $('pdf-loading').hidden = false;
   $('pdf-scroll').scrollTo(0, 0);
-  await drawPdf({ focus: !!place });
   $('pdf-back').focus();
+  await drawPdf({ focus: !!place });
+}
+
+// All client details: the drawer over the panel, from the button by the client's name or the row
+// under the checks. Focus goes into it and back where it was when it closes.
+function openDetails() {
+  if (!state.intake) return;
+  if (!state.detailsOpen) state.detailsReturn = document.activeElement;
+  state.detailsOpen = true;
+  state.fileMenuOpen = false;
+  render();
+  if (!$('details-view').contains(document.activeElement)) $('details-close').focus();
+}
+function closeDetails() {
+  if (!state.detailsOpen) return;
+  state.detailsOpen = false;
+  showScreen();
+  const back = state.detailsReturn;
+  state.detailsReturn = null;
+  (back?.isConnected ? back : $(state.view === 'check' ? 'step-check' : 'step-fill'))?.focus();
 }
 
 function closePdf() {
   state.pdf = null;
   state.pdfTask?.cancel();
   render();
+  const back = state.pdfReturn;
+  state.pdfReturn = null;
+  (back?.isConnected ? back : $(state.view === 'check' ? 'step-check' : 'step-fill'))?.focus();
 }
 
 async function drawPdf({ focus = false } = {}) {
@@ -4674,6 +5263,11 @@ async function clearClient() {
   state.intake = null;
   state.fileMenuOpen = false;
   state.fileConfirm = null;
+  state.view = 'check';
+  state.filter = 'all';
+  state.aiDocks = new Map();
+  state.pastKey = null;
+  state.detailsOpen = false;
   dropReports();
   clientNote(null);
   usage.restoreSession(null);
@@ -4687,18 +5281,150 @@ async function clearClient() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Its own window (Pop out) and back to the side panel (Dock)
+
+// Pop out: the panel in a window of its own, which the agent can move anywhere (another monitor),
+// where they last left it (panelWindow); this copy then gives way to it (onPanelMessage). Not while
+// a fill runs: its report would have no panel to come back to. A place no screen shows now (a
+// monitor unplugged) is left to Chrome.
+async function popOut() {
+  if (!inExtension || popped) return;
+  // An answer going in (a fill, a pick from a row, an AI answer) may not have rendered the button
+  // disabled: said rather than nothing done.
+  if (state.filling) { windowProblem('Wait for the answers going in to finish, then try again.'); return; }
+  windowProblem(null);
+  const { panelWindow: was = {} } = await chrome.storage.local.get('panelWindow').catch(() => ({}));
+  const size = (k, min, fallback) => (Number.isInteger(was[k]) && was[k] >= min ? was[k] : fallback);
+  const opts = { url: chrome.runtime.getURL('sidepanel/sidepanel.html?window=popup'), type: 'popup', focused: true, width: size('width', 320, 420), height: size('height', 480, 860) };
+  const place = Number.isInteger(was.left) && Number.isInteger(was.top) ? { left: was.left, top: was.top } : null;
+  try {
+    await chrome.windows.create(place ? { ...opts, ...place } : opts);
+  } catch {
+    try { await chrome.windows.create(opts); } catch { windowProblem('The panel couldn’t open in its own window.'); }
+  }
+}
+
+// Dock: back to Chrome's side panel, in the browser window of the quote, and this window closes.
+// sidePanel.open needs the click's own gesture: it is called before anything is awaited. The side
+// panel says it opened and this window gives way to it, handing over (giveWay); closed here if
+// that hasn't happened in 5 s.
+function dock() {
+  if (!popped) return;
+  const windowId = state.tab?.windowId ?? state.browserWindow;
+  if (state.filling) { windowProblem('Wait for the answers going in to finish, then try again.'); return; }
+  if (!Number.isInteger(windowId)) { windowProblem('Click into the quote’s Chrome window, then try again.'); return; }
+  windowProblem(null);
+  chrome.sidePanel.open({ windowId }).then(() => setTimeout(() => { if (!state.closing) closeSelf(); }, 5000),
+    () => windowProblem('The side panel couldn’t open here. Use the extension’s icon in the toolbar.'));
+}
+
+// A Pop out or Dock that didn't work, said at the top of the panel (and to screen readers); the
+// next try clears it.
+function windowProblem(text) {
+  $('window-note').replaceChildren(...(text ? [issueCard({ tone: 'warn', role: 'alert', title: text })] : []));
+  $('window-note').hidden = !text;
+}
+
+// The panel in its own window is the only copy, so no page is filled from two: it follows the tab
+// a side panel shows. Each copy says when it opens, and where one of the two is in its own window,
+// the older gives way. Side panels of two browser windows each follow their own tab, as before. A
+// copy that hears from an older one says so again, for one that opened before it listened.
+function announceCopy() {
+  if (inExtension) chrome.runtime.sendMessage({ ra: 'panel', event: 'opened', ...panelCopy, popped }).catch(() => {});
+}
+function onPanelMessage(msg) {
+  if (msg?.ra !== 'panel' || msg.id === panelCopy.id) return;
+  if (msg.event === 'handoff') { if (msg.to === panelCopy.id) takeOver(msg); return; }
+  if (msg.event !== 'opened' || !(popped || msg.popped)) return;
+  const newer = msg.at > panelCopy.at || (msg.at === panelCopy.at && msg.id > panelCopy.id);
+  if (newer) giveWay(msg.id); else announceCopy();
+}
+
+// This copy gives way to a newer one (`to`): a fill it runs is stopped first (the answer going in
+// finishes; nothing more is filled or clicked), and what is underway (that fill's end, an answer
+// the agent picked, an AI answer) finishes, for up to 15 s, nothing new starting (state.closing).
+// It then hands over what it knows of the tabs and closes.
+async function giveWay(to) {
+  if (state.closing) return;
+  state.closing = true;
+  if (state.fillingFor && !state.fillingFor.stopping) await stopFill();
+  for (const end = Date.now() + 15000; state.filling && Date.now() < end;) await new Promise((r) => setTimeout(r, 100));
+  await handOver(to);
+  closeSelf();
+}
+
+// What this copy knows of the quote's tabs that only its memory holds, for the copy taking over:
+// each tab's step, a stop screen read there (GEICO's USDOT screen), its quote's state, and that
+// its layouts may be taken. The new copy keeps what it learned itself, for the same intake only.
+function handOver(to) {
+  if (!inExtension) return Promise.resolve();
+  return chrome.runtime.sendMessage({ ra: 'panel', event: 'handoff', id: panelCopy.id, to, intakeId: usage.currentSession()?.intakeId ?? null,
+    tabSteps: [...state.tabSteps], stopScreens: [...state.stopScreens], quoteStates: [...state.quoteStates], layoutReadyTabs: [...state.layoutReadyTabs] }).catch(() => {});
+}
+function takeOver(msg) {
+  const intakeId = usage.currentSession()?.intakeId;
+  if (!intakeId || msg.intakeId !== intakeId) return;
+  for (const name of ['tabSteps', 'stopScreens', 'quoteStates']) {
+    for (const [tabId, value] of msg[name] ?? []) if (!state[name].has(tabId)) state[name].set(tabId, value);
+  }
+  for (const tabId of msg.layoutReadyTabs ?? []) state.layoutReadyTabs.add(tabId);
+  if (state.tab) renderSite();
+}
+
+// Closes this copy of the panel: its own window, the tab it was opened in (a harness opens it as a
+// page), or Chrome's side panel (sidePanel.close from Chrome 141; before it, the page closes itself).
+async function closeSelf() {
+  const mine = await chrome.windows.getCurrent().catch(() => null);
+  if (popped) {
+    if (mine) chrome.windows.remove(mine.id).catch(() => {});
+    return;
+  }
+  const tab = await chrome.tabs.getCurrent().catch(() => null);
+  if (tab?.id) chrome.tabs.remove(tab.id).catch(() => {});
+  else if (mine && chrome.sidePanel?.close) chrome.sidePanel.close({ windowId: mine.id }).catch(() => window.close());
+  else window.close();
+}
+
+// Popped out: where the agent leaves the window and its size, for the next Pop out. Maximized,
+// minimized or full screen, it isn't kept: the next one opens as the window was before.
+async function keepPlace() {
+  const mine = await chrome.windows.getCurrent().catch(() => null);
+  if (!mine) return;
+  chrome.windows.onBoundsChanged?.addListener((win) => {
+    if (win.id === mine.id && (win.state ?? 'normal') === 'normal') chrome.storage.local.set({ panelWindow: { left: win.left, top: win.top, width: win.width, height: win.height } }).catch(() => {});
+  });
+}
+
+// ---------------------------------------------------------------------------------------------
 // Wiring
 
 function wire() {
   const drop = $('load');
   $('choose').addEventListener('click', (e) => { e.stopPropagation(); $('file').click(); });
   drop.addEventListener('click', () => $('file').click());
-  $('settings-btn').addEventListener('click', () => { closeAgentPopover({ restore: false }); state.settingsOpen = !state.settingsOpen; showScreen(); });
-  $('settings-done').addEventListener('click', () => { closeAgentPopover({ restore: false }); state.settingsOpen = false; showScreen(); });
-  $('check-head').addEventListener('click', () => { state.checkOpen = !state.checkOpen; renderSteps(); });
+  $('settings-btn').addEventListener('click', () => { if (state.settingsOpen) { state.settingsOpen = false; showScreen(); } else openSettings(); });
+  $('pop-out').addEventListener('click', popOut);
+  $('dock-back').addEventListener('click', dock);
+  $('settings-done').addEventListener('click', () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); });
+  // The brain button: the assistant's settings, at its key when it is on without one.
+  $('agent-btn').addEventListener('click', async () => { const cfg = await aiSettings(); openSettings(cfg.on && !cfg.apiKey ? 'ai-openai-key' : 'ai-on'); });
+  $('step-check').addEventListener('click', () => setView('check'));
+  $('step-fill').addEventListener('click', () => setView('page'));
+  $('step-confirm').addEventListener('click', () => { setView('page'); refreshAnswers(); });
+  for (const b of $('filters').querySelectorAll('button')) b.addEventListener('click', () => setFilter(b.dataset.filter));
   $('file-menu-btn').addEventListener('click', () => { state.fileMenuOpen = !state.fileMenuOpen; state.fileConfirm = null; render(); });
   $('open-pdf').addEventListener('click', () => openPdf());
+  $('details-btn').addEventListener('click', () => (state.detailsOpen ? closeDetails() : openDetails()));
+  $('details-row').addEventListener('click', () => openDetails());
+  $('details-close').addEventListener('click', closeDetails);
+  $('details-scrim').addEventListener('click', closeDetails);
+  // An earlier page's answers on this tab (read-only), and back to this page's.
+  $('page-menu').addEventListener('change', (e) => showPast(e.target.value || null));
+  $('past-back').addEventListener('click', () => { showPast(null); $('page-menu').focus(); });
+  $('key-btn').addEventListener('click', () => { state.keyOpen = !state.keyOpen; renderSteps(); });
   $('pdf-back').addEventListener('click', closePdf);
+  $('pdf-close').addEventListener('click', closePdf);
+  $('pdf-scrim').addEventListener('click', closePdf);
   $('pdf-tab').addEventListener('click', openPdfInTab);
   $('pdf-focus').addEventListener('click', () => pdfZoom(Math.max(state.pdf?.zoom ?? 1, PDF_FOCUS_ZOOM), { focus: true }));
   $('pdf-prev').addEventListener('click', () => pdfPage(-1));
@@ -4713,6 +5439,21 @@ function wire() {
     if (w !== width && state.pdf && width) drawPdf();
     width = w;
   }).observe($('pdf-scroll'));
+  // Escape closes the PDF sheet, the client details drawer, then Settings; the sheet or the drawer
+  // keeps keyboard focus while it's open.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && state.pdf && !$('pdf-view').hidden) { e.preventDefault(); closePdf(); return; }
+    if (e.key === 'Escape' && state.detailsOpen && !$('details-view').hidden) { e.preventDefault(); closeDetails(); return; }
+    if (e.key === 'Escape' && state.settingsOpen) { e.preventDefault(); state.settingsOpen = false; showScreen(); $('settings-btn').focus(); return; }
+    const modal = state.pdf && !$('pdf-view').hidden ? $('pdf-view') : state.detailsOpen && !$('details-view').hidden ? $('details-view') : null;
+    if (e.key !== 'Tab' || !modal) return;
+    const stops = [...modal.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled)')].filter((n) => n.offsetParent !== null);
+    if (!stops.length) return;
+    const [first, last] = [stops[0], stops.at(-1)];
+    if (!modal.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+    else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
   $('file').addEventListener('change', (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); e.target.value = ''; });
   drop.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); $('file').click(); } });
   for (const t of [document.body]) {
@@ -4742,19 +5483,27 @@ function wire() {
     if (what === 'replace') $('file').click();
     if (what === 'clear') clearClient();
   });
-  $('fill-stop').addEventListener('click', stopFill);
+  // The dock: its one button and its alternative.
   $('fill').addEventListener('click', () => fillPage());
+  $('fill-stop').addEventListener('click', stopFill);
+  $('dock-next').addEventListener('click', showNextNeed);
+  $('look-right').addEventListener('click', function () { this.disabled = true; lookRight(state.tab?.id, pageOf(state.tab?.url), state.tab?.carrier, this); });
+  $('ai-approve').addEventListener('click', () => state.aiDocks.get(`${state.tab?.id}|${pageOf(state.tab?.url)}`)?.go());
+  $('dock-alt').addEventListener('click', () => {
+    if ($('dock-alt').dataset.go === 'fill-anyway') dismissState();
+    fillPage();
+  });
   $('unmark').addEventListener('click', clearMarks);
   $('capture').addEventListener('click', capturePage);
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
   if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') captureFromShortcut(); });
-  wireAgentPopover();
   wireUsage();
   wireAi();
   if (inExtension) {
     // The step first: a field change or new question is scoped by the step it came with.
     chrome.runtime.onMessage.addListener(noteStep);
     chrome.runtime.onMessage.addListener(onRecorderMessage);
+    chrome.runtime.onMessage.addListener(onPanelMessage);
     chrome.tabs.onActivated.addListener(refreshTab);
     chrome.tabs.onCreated.addListener((tab) => { if (state.layoutHold) state.layoutNewTabs.add(tab.id); inheritQuoteState(tab); });
     chrome.tabs.onUpdated.addListener(onTabUpdated);
@@ -4765,14 +5514,19 @@ function wire() {
 
 async function init() {
   wire();
+  if (inExtension && popped) keepPlace();
   // An intake saved by an earlier panel: while the panel was closed the tabs may have moved to
   // another client's quote, so their layouts wait as after loading one (holdLayouts).
   holdLayouts();
   state.intake = (await store.get('intake')) ?? null;
+  if (state.intake) state.view = firstView(state.intake);
   state.active = (await store.get('active')) ?? state.active;
   usage.restoreSession((await store.get('session')) ?? null);
   const views = await store.get('views');
   if (views?.session && views.session === usage.currentSession()?.id) state.viewTabs = new Map(views.tabs);
+  // With the panel in its own window, the newest copy is the one that stays (onPanelMessage); said
+  // once its intake is known, for the copy giving way to hand over to (takeOver).
+  announceCopy();
   await restoreAiPending();
   const saved = await usage.migrateAssistantSettings();
   $('auto-followups').checked = saved.autoFollowUps ?? true;

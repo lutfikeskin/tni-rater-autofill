@@ -14,7 +14,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 83 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 84 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -27,10 +27,11 @@
   const ADDRESS_SEARCH = 'input[type=search][aria-autocomplete=list][aria-controls]:not(.select2-search__field)';
   // filled: an intake answer (or one worked out from it); standard: a TNI standard answer (plan
   // step `standard`: an assumption such as gender MALE, not a fact from the intake); ai: an answer
-  // the AI assistant chose (accepted by the agent or auto-selected); check it. The side panel's key
-  // uses the same colors (sidepanel.css --mark-*).
-  const COLORS = { filled: '#16a34a', standard: '#2f6fd6', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed' };
-  const SOLID_MARKS = new Set(['filled', 'standard', 'ai']);
+  // the AI assistant chose (accepted by the agent or auto-selected); check it; agent: a choice the
+  // agent picked in the side panel (answer `by: 'agent'`). The side panel's key uses the same colors
+  // (sidepanel.css --mark-*).
+  const COLORS = { filled: '#16a34a', standard: '#2f6fd6', needs: '#d97706', failed: '#dc2626', ai: '#7c3aed', agent: '#475569' };
+  const SOLID_MARKS = new Set(['filled', 'standard', 'ai', 'agent']);
   const STATE_NAMES = {
     AL: 'alabama', AK: 'alaska', AZ: 'arizona', AR: 'arkansas', CA: 'california', CO: 'colorado', CT: 'connecticut',
     DE: 'delaware', DC: 'district of columbia', FL: 'florida', GA: 'georgia', HI: 'hawaii', ID: 'idaho', IL: 'illinois',
@@ -1545,13 +1546,31 @@
   // recorder when one is drawn.
   const knownUnitLists = [];
 
-  // The fill running in this frame (its report and how to halt it): the side panel reads how many
-  // answers are in so far, and its Stop halts it the way an agent edit does (no Continue after).
+  // The fill running in this frame (its report and how to halt it): the side panel reads the
+  // answers in so far, each as a row of its list while the fill runs, and its Stop halts it the
+  // way an agent edit does (no Continue after).
   let running = null;
   // Fills the agent stopped before they began here (`run`: the panel's id for the fill; Stop can
   // come while the panel still prepares, before fill() starts): such a fill halts as it starts.
   const stoppedRuns = new Set();
-  function progress() { return running ? { filled: running.report.filled.length } : null; }
+  // This frame's kit and the filled lists it has sent rows of (progress).
+  const FRAME = Math.random().toString(36).slice(2);
+  const listIds = new WeakMap();
+  let lastListId = 0;
+  // `seen`: how many rows the panel has, by list (`list`: this frame's id and the filled list's
+  // own, which a rewrite of the list, an answer given again, changes). Only the rows after those
+  // are sent (`since`); a list the panel hasn't seen, whole.
+  function progress(seen = null) {
+    if (!running) return null;
+    const all = running.report.filled;
+    if (!listIds.has(all)) listIds.set(all, ++lastListId);
+    const list = `${FRAME}:${listIds.get(all)}`;
+    const had = Number(seen?.[list]) || 0;
+    const since = had > 0 && had <= all.length ? had : 0;
+    const rows = all.slice(since).map((x) => ({ key: x.key ?? null, label: x.label || x.name || '', shown: x.shown ?? '', standard: !!x.standard,
+      stepId: x.stepId ?? null, path: x.path ?? null, otherStep: !!x.otherStep }));
+    return { frame: FRAME, list, filled: all.length, since, rows };
+  }
   function stop(run = null) {
     if (run != null && (!running || running.run !== run)) stoppedRuns.add(run);
     if (!running) return false;
@@ -2870,7 +2889,8 @@
       if (!placeOf.has(`${key}|${c.label}`)) placeOf.set(`${key}|${c.label}`, i);
       if (!placeOf.has(key)) placeOf.set(key, i);
     });
-    for (const x of [report.unknown, report.failed, report.noData, report.leftRequired, report.kept, report.checks].flat()) {
+    // Answers filled too: the panel lists the whole page in one list, in this order.
+    for (const x of [report.filled, report.unknown, report.failed, report.noData, report.leftRequired, report.kept, report.checks].flat()) {
       // Rows of one question share a key; their labels tell them apart.
       const at = x.key == null ? undefined : placeOf.get(`${x.key}|${x.label}`) ?? placeOf.get(x.key);
       if (at !== undefined) x.order = at;
@@ -2989,8 +3009,10 @@
   // of its own after them (`protected: true`, `ok: false`): the panel protects those keys, and a
   // protected item means the apply halted. Only the items survive the trip to the panel.
   // `stopSteps`: as fill's (by default those fills in this document were given): on a step that is
-  // the agent's, nothing is put in.
-  async function answer(answers, expectedSnapshots, guardToken, { stopSteps = knownStopSteps } = {}) {
+  // the agent's, nothing is put in. `by`: 'agent' for a choice the agent picked in the side panel
+  // (marked as theirs, slate: neither the intake's green nor the AI's purple).
+  async function answer(answers, expectedSnapshots, guardToken, { stopSteps = knownStopSteps, by = 'ai' } = {}) {
+    const agent = by === 'agent';
     if (stopStepOn(stopSteps)) return answers.map((a) => ({ key: a.key, label: a.label, ok: false, reason: STOP_STEP_HALT }));
     // A frameId can be reused after navigation. Only the document guarded for this apply may
     // receive its later answers, even after earlier answers changed the original snapshot.
@@ -3032,9 +3054,11 @@
           continue;
         }
       }
+      const id = `${agent ? 'agent' : 'ai'}:${a.key}`;
+      const name = agent ? 'Your answer' : 'AI suggestion';
       const step = c.kind === 'checkbox'
-        ? { id: `ai:${a.key}`, name: 'AI suggestion', kind: 'bool', value: /^(checked|yes|true)$/i.test(String(a.value)) }
-        : { id: `ai:${a.key}`, name: 'AI suggestion', value: String(a.value) };
+        ? { id, name, kind: 'bool', value: /^(checked|yes|true)$/i.test(String(a.value)) }
+        : { id, name, value: String(a.value) };
       let result;
       try { result = await apply(step, c); } catch (e) { result = { ok: false, reason: String(e?.message ?? e) }; }
       if (result.ok) {
@@ -3045,9 +3069,9 @@
         else if (!settled) result = { ok: false, reason: 'the page did not settle after the answer' };
         else if (!fresh) result = { ok: false, reason: 'the field disappeared after the answer; check the page' };
         else if (invalidControl(fresh) || !agreesWith(step, fresh)) result = { ok: false, reason: 'the page did not keep the answer; check it' };
-        else mark(fresh, 'ai', a.note ?? 'answer suggested by the AI assistant — check it');
+        else mark(fresh, agent ? 'agent' : 'ai', a.note ?? (agent ? 'your answer, from the side panel' : 'answer suggested by the AI assistant — check it'));
       }
-      if (!result.ok && !edited(a.key)) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `AI answer not accepted: ${result.reason}`); }
+      if (!result.ok && !edited(a.key)) { const now = find(a.key, a.label); if (now) mark(now, 'failed', `${agent ? 'Your answer' : 'AI answer'} not accepted: ${result.reason}`); }
       results.push({ key: a.key, label: a.label, ok: result.ok, shown: result.shown ?? null, reason: result.reason ?? null });
     }
     for (const r of results) if (edited(r.key)) r.protected = true;
@@ -3417,5 +3441,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 83, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 84, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

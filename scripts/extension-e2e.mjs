@@ -43,6 +43,8 @@ const mock = await ctx.newPage();
 await mock.goto('http://localhost:8792/test/fixtures/amwins/application.html');
 const panel = await ctx.newPage();
 panel.on('console', (m) => { if (m.type() === 'error') console.log('PANEL', m.text()); });
+// A script that doesn't run at all (a syntax error) shows only here.
+panel.on('pageerror', (e) => console.log('PANEL ERROR', e.message));
 await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
 await mock.bringToFront();
 await panel.waitForTimeout(1000);
@@ -56,9 +58,17 @@ await panel.waitForTimeout(500);
 // is then a client fact the intake leaves blank (amwins.js `clientFact`), the agent's to answer.
 const CLEARED = 'drivers[1].maritalStatus';
 await panel.bringToFront();
-if (await panel.locator('#check-body').isHidden()) await panel.click('#check-head');
-if (!await panel.locator('#details').evaluate(el => el.open)) await panel.click('#details > summary');
-if (!await panel.locator('details.section[data-id="drivers"]').evaluate(el => el.open)) await panel.click('details.section[data-id="drivers"] > summary');
+if (await panel.locator('#check-view').isHidden()) await panel.click('#step-check');
+// All client details opens in a drawer from the right (the row under the checks).
+await panel.click('#details-row');
+await panel.locator('#details-view').waitFor({ state: 'visible' });
+if (process.argv[2]) {
+  await panel.screenshot({ path: path.join(process.argv[2], 'client-details.png'), animations: 'disabled' });
+  const size = panel.viewportSize();
+  await panel.setViewportSize({ width: 380, height: 860 });
+  await panel.screenshot({ path: path.join(process.argv[2], 'client-details-narrow.png'), animations: 'disabled' });
+  await panel.setViewportSize(size);
+}
 const clearedBox = panel.locator(`#f-${CLEARED.replace(/[^\w]/g, '_')}`);
 if (!await clearedBox.inputValue()) throw new Error(`The sample intake no longer answers ${CLEARED}.`);
 await clearedBox.click();
@@ -73,7 +83,9 @@ try {
 } catch (error) {
   throw new Error(`The panel did not save the cleared ${CLEARED}.`, { cause: error });
 }
-console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#fill-hint'));
+await panel.click('#details-close');
+await panel.locator('#details-view').waitFor({ state: 'hidden' });
+console.log('fill btn:', await panel.textContent('#fill'), 'hint:', await panel.textContent('#dock-sub'));
 await panel.bringToFront();
 await panel.click('#fill');
 // These are explicit synthetic agent answers for this workflow test, not facts inferred from
@@ -92,7 +104,13 @@ const manualFailures = [], agentAnswered = new Set();
 const answeredSteps = new Map();
 let reachedDeclaration = false;
 const atStep = () => mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), saves: window.__amwinsMock.saves }));
-const idlePanel = () => panel.waitForFunction(() => !document.querySelector('#fill').disabled && document.querySelector('#report .continue-note'), null, { timeout: 20000, polling: 100 });
+// Idle: no fill running on the tab (the dock's phase), and a fill's report in front (its time).
+const idlePanel = () => panel.waitForFunction(() => {
+  const dock = document.querySelector('#dock');
+  return dock.dataset.phase !== 'filling' && !!dock.dataset.report;
+}, null, { timeout: 20000, polling: 100 });
+// The dock's way to fill the page again: its button, or its alternative while questions remain.
+const fillAgain = () => panel.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first();
 const recorderContext = await sw.evaluate(async url => {
   const tab = (await chrome.tabs.query({})).find(tab => tab.url === url);
   const { session } = await chrome.storage.session.get('session');
@@ -122,33 +140,32 @@ const resumeFromPanel = async () => {
   // in front on Windows, just as the agent would focus the real side panel to resume.
   await panel.bringToFront();
   await idlePanel();
-  const oldSummary = await panel.locator('#report .continue-note').elementHandle();
+  const oldReport = await panel.locator('#dock').getAttribute('data-report');
   const deadline = Date.now() + 15000;
   let lastTimeout;
-  try {
-    // Automatic follow-ups do not always disable Fill or replace the report. A click while
-    // one is running is ignored. An accepted ordinary Fill removes this summary before it
-    // runs; observing that removal also catches a fill that starts and finishes very quickly.
-    while (await oldSummary.evaluate(node => node.isConnected)) {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) throw new Error('The panel did not accept Fill after the recorder acknowledged the agent answers.', { cause: lastTimeout });
-      try {
-        await panel.click('#fill', { timeout: Math.min(1000, remaining) });
-        await panel.waitForFunction(node => !node.isConnected, oldSummary, { timeout: Math.min(250, Math.max(1, deadline - Date.now())), polling: 50 });
-      } catch (error) {
-        if (error.name !== 'TimeoutError') throw error;
-        lastTimeout = error;
-      }
+  // Automatic follow-ups do not always replace the report. A click while one is running is
+  // ignored. An accepted ordinary Fill starts a new report (the dock's data-report changes);
+  // observing that also catches a fill that starts and finishes very quickly.
+  const replaced = () => panel.locator('#dock').evaluate((dock, old) => dock.dataset.phase === 'filling' || dock.dataset.report !== old, oldReport);
+  while (!await replaced()) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error('The panel did not accept Fill after the recorder acknowledged the agent answers.', { cause: lastTimeout });
+    try {
+      await fillAgain().click({ timeout: Math.min(1000, remaining) });
+      await panel.waitForFunction(old => { const dock = document.querySelector('#dock'); return dock.dataset.phase === 'filling' || dock.dataset.report !== old; }, oldReport, { timeout: Math.min(250, Math.max(1, deadline - Date.now())), polling: 50 });
+    } catch (error) {
+      if (error.name !== 'TimeoutError') throw error;
+      lastTimeout = error;
     }
-    await idlePanel();
-  } finally { await oldSummary.dispose(); }
+  }
+  await idlePanel();
 };
 for (let round = 0; round < 20; round++) {
   await idlePanel();
   await mock.waitForTimeout(1500); // the carrier's background save/reload and next-page fill
-  if (await panel.locator('#fill').isDisabled()) continue;
+  if (await panel.locator('#dock').getAttribute('data-phase') === 'filling') continue;
   const before = await atStep();
-  const needs = await panel.locator('#report > .need:not(.resolved) .row-text b').allTextContents();
+  const needs = await panel.locator('#report .row.need:not(.resolved) .row-label').allTextContents();
   const unresolved = needs.filter(label => !/i declare/i.test(label));
   console.log('Step:', before.step, 'saves:', before.saves, 'needs:', unresolved.join(', '));
   if (before.step === 'Underwriting' && needs.some(label => /i declare/i.test(label))
@@ -226,7 +243,7 @@ for (let round = 0; round < 20; round++) {
   // ordinary resume action and must preserve every correction the recorder just observed.
   await resumeFromPanel();
   const afterResume = await atStep();
-  const freshNeeds = await panel.locator('#report > .need:not(.resolved) .row-text b').allTextContents();
+  const freshNeeds = await panel.locator('#report .row.need:not(.resolved) .row-label').allTextContents();
   if (afterResume.step === before.step && freshNeeds.some(label => answers.some(([, re]) => re.test(label)))) {
     manualFailures.push(`The fresh report still needs acknowledged agent answers on ${before.step}: ${freshNeeds.join(', ')}`);
     break;
@@ -276,9 +293,94 @@ const lastMock = await mock.evaluate(() => JSON.stringify(window.__amwinsMock));
 console.log('MOCK', lastMock);
 console.log('REPORT', (await panel.textContent('#report')).replace(/\s+/g, ' ').slice(0, 1500));
 if (process.argv[2]) await panel.screenshot({ path: path.join(process.argv[2], 'panel.png'), fullPage: true });
+// An earlier step's answers from the list's page menu: shown read-only (nothing to change there),
+// then back to this step's.
+const earlierPages = await panel.locator('#page-menu option').allTextContents();
+console.log('Earlier pages:', earlierPages.join(', '));
+let earlierOk = earlierPages[0] === 'This page' && earlierPages.includes('Insured Info');
+if (earlierOk) {
+  await panel.locator('#page-menu').selectOption({ label: 'Insured Info' });
+  const firstRow = panel.locator('#past .row').first();
+  await firstRow.waitFor({ timeout: 5000 });
+  await firstRow.locator('.row-head').click();
+  if (process.argv[2]) {
+    await panel.click('#key-btn');
+    await panel.screenshot({ path: path.join(process.argv[2], 'earlier-page.png'), fullPage: true, animations: 'disabled' });
+    // As wide as a side panel.
+    const size = panel.viewportSize();
+    await panel.setViewportSize({ width: 380, height: 860 });
+    await panel.screenshot({ path: path.join(process.argv[2], 'earlier-page-narrow.png'), animations: 'disabled' });
+    await panel.setViewportSize(size);
+    await panel.click('#key-btn');
+  }
+  earlierOk = await panel.locator('#report').isHidden() && !await firstRow.locator('.change, .mark-done, .show-on-page').evaluateAll((els) => els.some((e) => e.offsetParent !== null));
+  await panel.click('#past-back');
+  earlierOk &&= await panel.locator('#past').isHidden() && await panel.locator('#report').isVisible();
+}
+if (!earlierOk) console.log('EARLIER PAGES: the page menu did not show Insured Info read-only and come back to this step.');
 // The events the panel uploaded (it sends right after the intake loads, then every minute).
 await panel.evaluate(() => document.getElementById('upload-usage')?.click()).catch(() => {});
 await panel.waitForTimeout(1500);
+// Pop out: the panel in a window of its own follows the quote's tab (the browser window the agent
+// last used) and fills it, and the copy that was open gives way, so one copy fills at a time.
+// Back to the side panel opens Chrome's side panel and closes the window; a window popped out
+// again closes that side panel. Nothing is declared or submitted.
+let poppedOk = false;
+const panelPages = () => ctx.pages().filter((p) => p.url().includes('/sidepanel/sidepanel.html'));
+// Chrome's side panel isn't a page Playwright shows: the extension's own count of them.
+const sidePanels = () => sw.evaluate(async () => (await chrome.runtime.getContexts({ contextTypes: ['SIDE_PANEL'] })).length);
+const within = async (ms, check) => {
+  for (const end = Date.now() + ms; Date.now() < end; await mock.waitForTimeout(200)) if (await check()) return true;
+  return false;
+};
+try {
+  await panel.bringToFront();
+  const opened = ctx.waitForEvent('page', { timeout: 10000 });
+  const gaveWay = panel.waitForEvent('close', { timeout: 10000 });
+  // Either can fail while the other is awaited: the catch below reports it.
+  opened.catch(() => {});
+  gaveWay.catch(() => {});
+  await panel.click('#pop-out');
+  const popup = await opened;
+  popup.on('pageerror', (e) => console.log('POPUP ERROR', e.message));
+  await popup.waitForURL(/sidepanel\.html\?window=popup$/, { timeout: 10000 });
+  await gaveWay;
+  await mock.bringToFront();
+  await popup.waitForFunction(() => /^AmWINS/.test(document.querySelector('#site')?.textContent ?? ''), null, { timeout: 10000 });
+  // Native clicks need the panel's surface in front on Windows; the quote's window stays the last used.
+  await popup.bringToFront();
+  const before = await popup.locator('#dock').getAttribute('data-report');
+  await popup.locator('#fill:not([hidden]):not(:disabled), #dock-alt[data-go="fill-again"]:not([hidden])').first().click({ timeout: 10000 });
+  await popup.waitForFunction((old) => {
+    const dock = document.querySelector('#dock');
+    return dock.dataset.phase !== 'filling' && !!dock.dataset.report && dock.dataset.report !== old;
+  }, before, { timeout: 30000, polling: 100 });
+  await mock.waitForTimeout(1500);
+  const after = await mock.evaluate(() => ({ step: window.__amwinsMock.steps.at(-1), submitted: window.__amwinsMock.submitted, declared: document.querySelector('#accept')?.checked }));
+  const buttons = { dock: await popup.locator('#dock-back').isVisible(), popOut: await popup.locator('#pop-out').isVisible() };
+  console.log('Popped out:', JSON.stringify({ panels: panelPages().length, ...after, ...buttons }), (await popup.textContent('#report')).replace(/\s+/g, ' ').slice(0, 300));
+  if (process.argv[2]) {
+    await popup.setViewportSize({ width: 420, height: 860 });
+    await popup.screenshot({ path: path.join(process.argv[2], 'popped.png'), animations: 'disabled' });
+  }
+  poppedOk = panelPages().length === 1 && panelPages()[0] === popup && !after.submitted && !after.declared && buttons.dock && !buttons.popOut;
+  const docked = popup.waitForEvent('close', { timeout: 10000 });
+  docked.catch(() => {});
+  await popup.click('#dock-back');
+  await docked;
+  const dockedOk = await within(5000, async () => await sidePanels() === 1);
+  const reopened = ctx.waitForEvent('page', { timeout: 10000 });
+  reopened.catch(() => {});
+  await sw.evaluate(() => chrome.windows.create({ url: chrome.runtime.getURL('sidepanel/sidepanel.html?window=popup'), type: 'popup' }));
+  await reopened;
+  const gaveWayOk = await within(5000, async () => await sidePanels() === 0);
+  const still = await mock.evaluate(() => ({ submitted: window.__amwinsMock.submitted, declared: document.querySelector('#accept')?.checked }));
+  console.log('Back to the side panel:', JSON.stringify({ dockedOk, gaveWayOk, ...still }));
+  poppedOk &&= dockedOk && gaveWayOk && !still.submitted && !still.declared;
+} catch (error) {
+  console.log('POP OUT:', error.message);
+}
+if (!poppedOk) console.log('POP OUT: the panel in its own window did not replace the open one, follow the quote tab and fill it, go back to the side panel, or give way to a new window, or something was declared or submitted.');
 await ctx.close();
 await new Promise((resolve) => usageServer.close(resolve));
 const received = fs.readdirSync(path.join(usageDir, 'events')).flatMap((f) => fs.readFileSync(path.join(usageDir, 'events', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).type));
@@ -287,6 +389,6 @@ console.log(`Usage: ${received.length} events to the local server (${[...new Set
 if (toProduction.length) console.log('TO PRODUCTION:', toProduction.join('; '));
 const usageOk = !toProduction.length && received.includes('intake_loaded');
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = usageOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, declaration and Submit stayed untouched, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one.' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, or Prev did not stay put.');
+const ok = usageOk && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone, filled and went back to the side panel, declaration and Submit stayed untouched, and usage went only to the local server.' : !usageOk ? 'FAILED: usage events went to the production server, or did not reach the local one.' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
 process.exit(ok ? 0 : 1);
