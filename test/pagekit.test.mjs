@@ -6687,3 +6687,129 @@ test('GEICO select2 lists: the option typed in its search box and its one result
   assert.deepEqual(plain([geicoSide.took, picked(commodities)]), [[], []]);
   assert.match(report.failed[0]?.reason ?? '', /didn't show "Consumer Goods - Other Consumer Goods" when it was typed/);
 });
+
+// W43-37, Progressive Add Driver (FL, 2026-10-22): the form for the driver Progressive already had
+// ("Questions about <first driver>") got the second driver's license state, CDL and number, the one
+// the panel still had selected from another quote tab.
+test('a driver form that names its driver is filled only for that driver', async () => {
+  const unitName = (active) => ({ list: 'drivers', text: '^questions about (.+)$', names: [['JORDAN', 'SAMPLE'], ['CASEY', 'EXAMPLE']], active, label: ['Jordan Sample', 'Casey Example'][active] });
+  const page = (heading) => {
+    const h = harness();
+    const license = makeInput({ id: 'license', ariaLabel: 'License number' });
+    h.document.body.append(license);
+    if (heading != null) h.document.body.innerText = `Driver\n${heading}\nLicense number`;
+    return { h, license };
+  };
+  const plan = (i) => [{ id: 'license-step', selector: '#license', path: `drivers[${i}].license`, kind: 'text', value: `D${i}` }];
+
+  let { h, license } = page('Questions about Jordan A. Sample');
+  let report = await h.kit.fill(plan(1), { formUnit: unitName(1), maxRounds: 3 });
+  assert.equal(report.halted, true);
+  assert.equal(report.unitMismatch, true);
+  assert.match(report.reason, /This form is for Jordan A\. Sample, not Casey Example: nothing was filled\. Pick Jordan A\. Sample in the panel/);
+  assert.equal(license.value, '', 'nothing filled');
+  assert.deepEqual(plain(report.unitNamed), { list: 'drivers', index: 0 });
+
+  ({ h, license } = page('Questions about Jordan A. Sample'));
+  report = await h.kit.fill(plan(0), { formUnit: unitName(0), maxRounds: 3 });
+  assert.equal(report.halted, false);
+  assert.equal(license.value, 'D0');
+  assert.deepEqual(plain(report.unitNamed), { list: 'drivers', index: 0 }, 'the driver the form named, for the entered mark');
+
+  ({ h, license } = page('Questions about Morgan Placeholder'));
+  report = await h.kit.fill(plan(0), { formUnit: unitName(0), maxRounds: 3 });
+  assert.equal(report.halted, true);
+  assert.match(report.reason, /The intake has no driver by that name: fill the form yourself\./);
+  assert.equal(license.value, '');
+  assert.deepEqual(plain(report.unitNamed), { list: 'drivers', index: null });
+
+  // A new driver's blank form names no one.
+  ({ h, license } = page(null));
+  report = await h.kit.fill(plan(1), { formUnit: unitName(1), maxRounds: 3 });
+  assert.equal(report.halted, false);
+  assert.equal(license.value, 'D1');
+  assert.equal(report.unitNamed, undefined);
+});
+
+// W43-38, Progressive Add Driver (2026-10-22): the second driver's form still showed the first
+// driver's name and date of birth, which the fill had given; they were kept as differing.
+test('an answer the fill gave for another unit is replaced with this unit\'s, never the agent\'s or the page\'s', async () => {
+  const h = harness();
+  const first = makeInput({ id: 'first', ariaLabel: 'First name', value: 'Jordan' });
+  const birth = makeInput({ id: 'birth', ariaLabel: 'Date of birth', value: '01/02/1970' });
+  const city = makeInput({ id: 'city', ariaLabel: 'City', value: 'Springfield' });
+  const last = makeInput({ id: 'last', ariaLabel: 'Last name', value: 'Sample' });
+  h.document.body.append(first, birth, city, last);
+  const report = await h.kit.fill([
+    { id: 'first-step', selector: '#first', path: 'drivers[1].first', kind: 'text', value: 'Casey' },
+    { id: 'birth-step', selector: '#birth', path: 'drivers[1].dob', kind: 'text', value: '03/04/1980' },
+    { id: 'city-step', selector: '#city', path: 'drivers[1].city', kind: 'text', value: 'Shelbyville' },
+    { id: 'last-step', selector: '#last', path: 'drivers[1].last', kind: 'text', value: 'Example' },
+  ], {
+    maxRounds: 3,
+    skip: ['last'],
+    // A form that names its unit (`unitNames`), here a new driver's not named yet: elsewhere the
+    // answer is kept and flagged.
+    formUnit: { list: 'drivers', text: '^questions about (.+)$', names: [], active: 1, label: 'Casey Example' },
+    givenBefore: {
+      first: { path: 'drivers[0].first', shown: 'Jordan' },
+      // The agent changed it after the fill gave it.
+      birth: { path: 'drivers[0].dob', shown: '05/06/1975' },
+      // Another list's answer.
+      city: { path: 'vehicles[0].city', shown: 'Springfield' },
+      // The agent's edit on this page.
+      last: { path: 'drivers[0].last', shown: 'Sample' },
+    },
+  });
+  assert.equal(first.value, 'Casey', 'the first driver\'s answer, as the fill gave it, is replaced');
+  assert.equal(birth.value, '01/02/1970', 'not what the fill gave: kept');
+  assert.equal(city.value, 'Springfield', 'another list: kept');
+  assert.equal(last.value, 'Sample', 'the agent\'s: kept');
+  assert.ok(report.filled.some((x) => x.path === 'drivers[1].first'));
+  assert.ok(!report.filled.some((x) => x.path !== 'drivers[1].first'));
+});
+
+
+
+
+// W43-40, Progressive Vehicle Summary (2026-10-22, every vehicle added): the fill clicked nothing,
+// held nothing, and said nothing; the agent clicked Continue.
+test('a page with nothing left but no Continue to click says Continue is due; the next fill clicks the one drawn since', async () => {
+  const addVehicle = { id: 'action:addVehicle:0', kind: 'action', action: 'addVehicle:2', baseAction: 'addVehicle', path: 'action.addVehicle', name: 'Click addVehicle', pages: ['VehicleSummary'], text: '^add vehicle$' };
+  const h = harness({ ext: true, search: '?pageName=VehicleSummary' });
+  let report = await h.kit.fill([addVehicle], { maxRounds: 2, advance: { text: '^continue$' }, doneActions: ['addVehicle:2'] });
+  assert.equal(report.advanced, undefined);
+  assert.equal(report.advanceDue, 'none');
+  assert.equal(report.notDrawn, undefined, 'a page only a helper is for has no questions to wait for');
+  assert.equal(report.blockers.length, 0);
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  report = await h.kit.fill([addVehicle], { maxRounds: 2, advance: { text: '^continue$' }, doneActions: ['addVehicle:2'] });
+  assert.equal(report.advanced, 'Continue');
+  assert.equal(report.advanceDue, undefined);
+  // Held for the agent's check (Let me look before Continue): found, not due.
+  const held = harness({ ext: true, search: '?pageName=VehicleSummary' });
+  addButton(held, 'Continue');
+  report = await held.kit.fill([], { maxRounds: 2, advance: { text: '^continue$' }, hold: true });
+  assert.equal(report.held, 'check');
+  assert.equal(report.advanceDue, undefined);
+  // Held by something left for the agent: not due.
+  const left = harness({ ext: true, search: '?pageName=VehicleSummary' });
+  left.document.body.append(new SelectNode([{ text: '', value: '' }, { text: 'Yes', value: 'y' }], { id: 'odd', ariaLabel: 'Some new question', required: true }));
+  report = await left.kit.fill([], { maxRounds: 2, advance: { text: '^continue$' } });
+  assert.ok(report.blockers.length);
+  assert.equal(report.advanceDue, undefined);
+});
+
+// W43-42, Progressive Business Owner Info (2026-10-22): the arrival fill ran before the page drew
+// its questions and the panel said "No questions found on this page."
+test('a page the plan has questions for that shows none yet is reported not drawn, and never continued', async () => {
+  const h = harness({ ext: true, search: '?pageName=BusinessOwnerInfo' });
+  const next = addButton(h, 'Continue');
+  next.onclick = () => { next._clicked = true; };
+  const report = await h.kit.fill([{ id: 'name', path: 'applicant.name', kind: 'text', value: 'Sample Freight', pages: ['BusinessOwnerInfo'], label: '^business name$' }], { maxRounds: 2, advance: { text: '^continue$' } });
+  assert.equal(report.fields, 0);
+  assert.equal(report.notDrawn, true);
+  assert.equal(!!next._clicked, false);
+  assert.equal(report.advanceDue, undefined);
+});

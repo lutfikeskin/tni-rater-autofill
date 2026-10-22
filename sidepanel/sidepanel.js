@@ -31,8 +31,9 @@ const store = inExtension
       get: async (k) => (await chrome.storage.session.get(k))[k],
       set: (k, v) => chrome.storage.session.set({ [k]: v }),
       remove: (k) => chrome.storage.session.remove(k),
+      keys: () => storedKeys(chrome.storage.session),
     }
-  : { get: async (k) => memory[k], set: async (k, v) => { memory[k] = v; }, remove: async (k) => { delete memory[k]; } };
+  : { get: async (k) => memory[k], set: async (k, v) => { memory[k] = v; }, remove: async (k) => { delete memory[k]; }, keys: async () => Object.keys(memory) };
 
 // Automatic AI decisions must still be awaiting approval after the panel document reloads. Keep
 // only opaque fingerprints plus the small page-level decision needed to show and approve them;
@@ -295,6 +296,9 @@ const state = {
   // An automatic fill that found a step it couldn't read (pagekit stepUnread) is tried once more;
   // per tab, until a fill reads a step again (rememberFill).
   unreadRetried: false,
+  // The page and step a fill found still drawing, or done with no Continue to click yet, was
+  // filled once more for (rememberFill): not again until a fill there finds neither.
+  triedAgain: null,
   pagePending: null, // a page the tab moved to while a fill ran: filled when that fill ends (runPendingPage)
   // Page layouts: the last one logged per quote and page (or vehicle/driver on its page), the
   // chain that logs them one at a time, the capture waiting for the page to be quiet, failures.
@@ -632,6 +636,65 @@ function persistUnitForms(tabId = state.tab?.id, unitForms = state.unitForms) {
 // panel's own set, which may have dropped a button to run again (Print / Send on a return). The
 // tab's unit forms come back with them; a form the panel has bound since keeps its own unit.
 const doneRestored = new Set();
+// The reports of a quote tab's pages, kept for the browser session (`store`, storage.session: gone
+// when the browser closes), so the panel opened again shows what it showed (W43-39, 2026-10-22:
+// opened again three times on one quote, it came back empty each time). Each is kept as the fill
+// results it was made from (`REPORT_PARTS` of each frame), the last REPORTS_KEPT per tab and intake
+// within about REPORTS_BYTES (the store's 10 MB also holds the intake and its PDF), and made again from them when the panel opens on that tab, marked as from its fill's time
+// (`restoredAt`). The answers of the one in front are read back from the page (refreshAnswers).
+const REPORTS_PREFIX = 'reports:';
+const REPORTS_KEPT = 30;
+const REPORTS_BYTES = 512 * 1024;
+const REPORT_PARTS = ['fields', 'filled', 'kept', 'failed', 'noData', 'leftRequired', 'unknown', 'checks', 'actions', 'blocked', 'skipped',
+  'halted', 'reason', 'stepUnread', 'stepKey', 'notDrawn', 'advanced', 'held', 'covered', 'coveredHelpers', 'renamed', 'pageChanged'];
+const reportsRestored = new Set();
+let reportsQueue = Promise.resolve();
+function keepReport(tabId, saved) {
+  const scope = usage.currentSession()?.intakeId;
+  if (!scope || !Number.isInteger(tabId)) return;
+  const frames = saved.frames.map((f) => Object.fromEntries(REPORT_PARTS.filter((k) => f[k] !== undefined).map((k) => [k, f[k]])));
+  reportsQueue = reportsQueue.then(async () => {
+    const was = await store.get(`${REPORTS_PREFIX}${tabId}`);
+    const entries = [...(was?.scope === scope && Array.isArray(was.entries) ? was.entries : []).filter((e) => e.key !== saved.key), { ...saved, frames }].slice(-REPORTS_KEPT);
+    // The oldest go first; the newest stays.
+    let size = entries.reduce((n, e) => n + JSON.stringify(e).length, 0);
+    while (entries.length > 1 && size > REPORTS_BYTES) size -= JSON.stringify(entries.shift()).length;
+    await store.set(`${REPORTS_PREFIX}${tabId}`, { scope, entries });
+  }).catch(() => {});
+}
+// Forgets kept reports as dropReports forgets shown ones (`drop` gets each with its tabId): a new
+// or cleared client, a closed tab, one page's.
+function forgetKeptReports(drop) {
+  reportsQueue = reportsQueue.then(async () => {
+    for (const k of (await store.keys()).filter((key) => key.startsWith(REPORTS_PREFIX))) {
+      const was = await store.get(k);
+      const tabId = Number(k.slice(REPORTS_PREFIX.length));
+      const entries = (Array.isArray(was?.entries) ? was.entries : []).filter((e) => !drop({ ...e, tabId }));
+      await (entries.length ? store.set(k, { ...was, entries }) : store.remove(k));
+    }
+  }).catch(() => {});
+}
+async function restoreReports(tabId) {
+  const scope = usage.currentSession()?.intakeId;
+  const done = `${scope}|${tabId}`;
+  if (!scope || !Number.isInteger(tabId) || reportsRestored.has(done)) return;
+  const was = await store.get(`${REPORTS_PREFIX}${tabId}`).catch(() => null);
+  const carrier = state.tab?.carrier;
+  // Once, and only once the tab shows a rater for this intake: one opened elsewhere first gets its
+  // reports when it comes to the rater.
+  if (reportsRestored.has(done) || state.tab?.id !== tabId || !carrier || !state.intake || usage.currentSession()?.intakeId !== scope) return;
+  reportsRestored.add(done);
+  if (was?.scope !== scope || !Array.isArray(was.entries)) return;
+  // A report a fill made since the panel opened is newer: kept. Each keeps its key, which holds
+  // its step on a one-address application (GEICO, AmWINS): the tab's step may not be known yet.
+  for (const e of was.entries) {
+    if (!e?.key || !String(e.key).startsWith(`${tabId}|`) || state.reports.has(e.key) || !Array.isArray(e.frames)) continue;
+    const active = { ...firstUnits(), ...(e.active ?? {}) };
+    renderReport(e.frames, { tabId, page: e.page, carrier, active, plan: buildPlan(state.intake.record, carrier, active), stopped: !!e.stopped, keptKey: e.key, restoredAt: e.at ?? Date.now(), filledBefore: e.filledBefore });
+  }
+  refreshAnswers();
+}
+
 async function restoreDoneActions(tabId) {
   const scope = usage.currentSession()?.intakeId;
   if (!scope || !Number.isInteger(tabId) || doneRestored.has(`${scope}|${tabId}`)) return;
@@ -824,12 +887,15 @@ async function loadFile(file) {
   const work = same ? workSaid(same.agentEdited?.length ?? 0, same.done?.length ?? 0) : '';
   clientNote(same ? `Same intake${work ? `: you ${work}, and that stays` : ''}.` : null);
   await keepPdf(bytes);
-  state.active = { drivers: 0, vehicles: 0, trailers: 0 };
+  state.active = firstUnits();
+  state.activeTab = null;
   state.filled = new Map();
   state.doneActions = new Set();
   state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
+  state.unitNamed = null;
   state.unitShown = null;
   state.unreadRetried = false;
+  state.triedAgain = null;
   doneRestored.clear(); // every tab set was reset; retained helpers must rehydrate for this intake
   discardAiSuggestions();
   await store.set('session', usage.startSession(summary.intakeId));
@@ -903,6 +969,12 @@ function showLoadError(msg, name = '') {
 async function save() {
   await store.set('intake', state.intake);
   await store.set('active', state.active);
+  await store.set('activeTab', state.tab?.id ?? null);
+}
+
+// Vehicle 1, driver 1, trailer 1: where an intake, and a quote tab, starts.
+function firstUnits() {
+  return { drivers: 0, vehicles: 0, trailers: 0 };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1273,13 +1345,18 @@ async function refreshTab() {
   }
   if (tab?.id !== state.tab?.id) {
     // `active`: each quote tab is on its own vehicle and driver (Continue is remembered per vehicle).
-    const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'unreadRetried', 'agentKeys', 'doneActions', 'unitForms', 'unitShown', 'visitedPages', 'doneSteps', 'assistPage', 'active'];
+    const keys = ['filled', 'labels', 'choices', 'autoPages', 'autoPaused', 'unreadRetried', 'triedAgain', 'agentKeys', 'doneActions', 'unitForms', 'unitShown', 'visitedPages', 'doneSteps', 'assistPage', 'unitNamed', 'active'];
     if (state.tab?.id) state.tabSessions.set(state.tab.id, Object.fromEntries(keys.map((key) => [key, state[key]])));
     const previous = state.tabSessions.get(tab?.id);
+    // A quote tab the panel has no record for starts on vehicle 1 and driver 1, never on the tab it
+    // was on before (W43-37, 2026-10-22: Progressive's first driver form got the second driver's
+    // details, the one last picked on GEICO). The panel's first tab after it opens keeps the
+    // selection saved for that tab.
+    const restored = !previous && state.activeTab === tab?.id;
     Object.assign(state, previous ?? {
-      filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false,
+      filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false, triedAgain: null,
       agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null,
-      active: { ...state.active },
+      unitNamed: null, active: restored ? { ...(state.savedActive ?? state.active) } : firstUnits(),
     });
     if (state.intake) renderPickers();
     clearTimeout(state.autoTimer);
@@ -1289,6 +1366,7 @@ async function refreshTab() {
   state.tab = tab ? { id: tab.id, url: tab.url, carrier: tab.url ? carrierForUrl(tab.url) : null, background: false, windowId: tab.windowId } : null;
   await restoreAgentKeys(state.tab?.id);
   await restoreDoneActions(state.tab?.id);
+  await restoreReports(state.tab?.id);
   if (state.tab?.carrier && !state.filling) await retireAiOrigins({ tabId: state.tab.id, tabUrl: state.tab.url, intake: state.intake, carrier: state.tab.carrier });
   renderSite();
   ensureRecorder();
@@ -1656,10 +1734,28 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
     count: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, state.intake?.record?.[list]?.length ?? 0])),
     bound: Object.fromEntries(['vehicles', 'drivers', 'trailers'].map((list) => [list, { ...state.unitForms?.[list] }])),
   },
+  // A form that names its driver (carrier.unitNames: Progressive's "Questions about <name>") is
+  // filled only for the driver the plan is for (W43-37).
+  formUnit: unitNameFor(carrier, extra.expectPage ?? pageOf(state.tab?.url), active, state.intake?.record),
+  // What this tab's fills gave, by field key, with the unit each was for: a field still showing
+  // another unit's answer gets this unit's (W43-38).
+  givenBefore: Object.fromEntries([...(state.filled ?? [])].map(([key, x]) => [key, { path: x.path ?? null, shown: x.shown ?? null }])),
   // Never change what the agent changed on this page, whether the fill is manual or automatic.
   skip: [...(state.agentKeys.get(editScope(pageOf(state.tab?.url))) ?? [])],
   ...extra,
 });
+
+// For the kit (fill `formUnit`) on a page whose form names its unit (carrier.unitNames): the
+// pattern, each intake unit's name words (first and last, 2 letters or more), the plan's unit and
+// its name as the panel shows it.
+function unitNameFor(carrier, page, active, record) {
+  const spec = (carrier?.unitNames ?? []).find((s) => s.page === page);
+  if (!spec || !record) return null;
+  const units = record[spec.list] ?? [];
+  const words = (d) => [d?.first, d?.last].flatMap((n) => String(n ?? '').toUpperCase().split(/[^A-Z0-9]+/)).filter((w) => w.length >= 2);
+  const i = active?.[spec.list] ?? 0;
+  return { list: spec.list, text: spec.text, names: units.map(words), active: i, label: [units[i]?.first, units[i]?.last].filter(Boolean).join(' ') || 'the selected driver' };
+}
 
 // Which rules this copy fills with: the rule files' fingerprint (src/usage.js rulesHash), read
 // from the extension's own package when the panel starts, on every fill_run. Null outside the
@@ -1787,7 +1883,7 @@ function watchFill(ctx) {
 function renderLive() {
   const f = state.fillingFor;
   const live = $('live');
-  const on = !!f && state.filling && f.tabId === state.tab?.id;
+  const on = !!f && state.filling && f.tabId === state.tab?.id && (!f.auto || !!f.rows?.length);
   live.hidden = !on;
   if (!on) { live.replaceChildren(); delete live.dataset.count; live.drawn = []; return; }
   const rows = f.rows ?? [];
@@ -1855,7 +1951,8 @@ function logFill(ctx, frames, results, started) {
   const redact = redactor(redactionTerms(ctx.intake.record));
   state.lastRuns?.set(`${ctx.tabId}|${ctx.page}`, { run: ctx.run, at: Date.now(), step: stepOfResults(ctx.carrier, results),
     blockers: frames.flatMap((f) => f.blockers ?? []).slice(0, 6).map((b) => redact(String(b)).slice(0, 120)) });
-  usage.log(...fillEvents(frames, {
+  // Why a unit list's Looks Good wasn't among the buttons (pickUnitToAdd), with the kit's blockers.
+  usage.log(...fillEvents(ctx.listNote ? [...frames, { blockers: [ctx.listNote] }] : frames, {
     carrier: ctx.carrier.id, page: ctx.page, view: ctx.view, overwrite: ctx.overwrite, auto: ctx.auto, ms: Date.now() - started,
     redact: redactor(redactionTerms(ctx.intake.record)), keySalt: usage.currentSession()?.keySalt,
     run: ctx.run, rules: rulesVersion ?? undefined, settings: ctx.settings, step: stepOfResults(ctx.carrier, results),
@@ -1911,6 +2008,7 @@ async function autoFill(page) {
   let followUp = false;
   // The page moved on before the fill began (pageMoved): the page in front gets its fill after this.
   let moved = false;
+  let unwatch = () => {};
   try {
     await tellRecorder('pause', tabId);
     await retireAiOrigins({ tabId, tabUrl: ctx.tabUrl, intake: ctx.intake, carrier });
@@ -1931,6 +2029,11 @@ async function autoFill(page) {
     // The tab moved on to another page meanwhile: that one gets its own fill (fillPage).
     if (await pageMoved(ctx)) { moved = true; notePageMoved(ctx); return; }
     const options = fillOptions(carrier, { overwrite: false, skip, ...(skipBy ? { skipBy } : {}), keepMarks: true, expectPage: ctx.page }, ctx.settings.autoAdvance, ctx.active, ctx.unitsListed);
+    // Its answers listed as they go in, as a fill the agent asked for, from the first one in (`auto`:
+    // a follow-up that answers nothing never replaces the report; W43-42, 2026-10-22: a 29-second
+    // automatic fill showed nothing until it ended).
+    state.fillingFor = { run: ctx.run, tabId, carrier, key: reportKey(tabId, page, carrier, ctx.active), filled: 0, rows: [], stopping: false, auto: true };
+    unwatch = watchFill(ctx);
     const results = await runKit(tabId, carrier, (p, o) => globalThis.__raterKit.fill(p, o), [plan, options]);
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
@@ -1938,7 +2041,7 @@ async function autoFill(page) {
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
-    rememberFill(frames, ctx);
+    const retrying = rememberFill(frames, ctx);
     followUp = afterFill(frames, ctx);
     const hasWarnings = frames.some((f) => f.unknown?.length);
     // Held for the agent's check (Check answers before Continue): Looks right is in its report. A
@@ -1948,6 +2051,8 @@ async function autoFill(page) {
     // Continue or a helper not clicked for something open over it on the page (pagekit `covered`,
     // `coveredHelpers`): said in the report, which a quiet follow-up wouldn't show.
     const covered = frames.some((f) => f.covered || f.coveredHelpers?.length);
+    // Stopped by the agent: said as a stop, not as an error (as fillPage does).
+    const stopped = state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted);
     const current = fillCurrent(ctx);
     // The page showed another step than the panel knew (the recorder's step came late): a new
     // step, with a report of its own, as above.
@@ -1955,7 +2060,7 @@ async function autoFill(page) {
     const newStep = !!step && step !== stepBefore && !state.reports.has(reportKey(tabId, page, carrier, ctx.active, step));
     // The fill whose helper this follows up held Luna back for it.
     const rendered = current && (newStep || unseen || held || covered || state.autoPaused || hasWarnings || state.assistPage === page);
-    if (rendered) { renderReport(frames, { ...ctx, plan }); assistFrames = frames; }
+    if (rendered) { renderReport(frames, { ...ctx, plan, retrying, stopped }); assistFrames = frames; }
     if (current && (newStep || unseen || held || covered)) showFinish({ auto: true });
     // This step's answers only: another step's hidden fields filled again (otherStep) aren't its.
     const added = frames.flatMap((f) => f.filled).filter((x) => !x.otherStep);
@@ -1978,7 +2083,7 @@ async function autoFill(page) {
         announce(`Filled ${n} follow-up question${n === 1 ? '' : 's'} automatically.`);
       }
       if (current) recordLayout(page);
-    }
+    } else if (ctx.listNote || frames.some((f) => f.advanceDue || f.held)) logFill(ctx, frames, results, started);
   } catch (e) {
     if (staleFill(ctx)) { noteStaleFill(ctx); return; }
     tabMaps(tabId).autoPaused = true;
@@ -1986,8 +2091,11 @@ async function autoFill(page) {
     logFillError(ctx, e);
     fillProblem(ctx, 'Automatic filling paused after an error. Check the page, then fill again.');
   } finally {
+    unwatch();
+    if (state.fillingFor?.run === ctx.run) state.fillingFor = null;
     await tellRecorder('resume', tabId);
     state.filling = false;
+    renderSteps();
     if (fillCurrent(ctx) && state.autoPending) scheduleAutoFill(page);
     // The page in front, which this fill wasn't for: its stop card, or its own fill.
     if (moved && fillCurrent(ctx)) {
@@ -2281,8 +2389,8 @@ function tabMaps(tabId) {
   if (!Number.isInteger(tabId) || state.tab?.id === tabId) return state;
   let saved = state.tabSessions.get(tabId);
   if (!saved) {
-    saved = { filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false,
-      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null, active: { ...state.active } };
+    saved = { filled: new Map(), labels: new Map(), choices: new Map(), autoPages: new Set(), autoPaused: false, unreadRetried: false, triedAgain: null,
+      agentKeys: new Map(), doneActions: new Set(), unitForms: { vehicles: {}, drivers: {}, trailers: {} }, unitShown: null, visitedPages: new Set(), doneSteps: new Set(), assistPage: null, unitNamed: null, active: firstUnits() };
     state.tabSessions.set(tabId, saved);
   }
   return saved;
@@ -2299,6 +2407,9 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
     state.intake.ntlAdded = true;
     save();
   }
+  // The intake unit the form named (pagekit unitNamed), for the mark once its list comes back.
+  const named = frames.find((f) => f.unitNamed)?.unitNamed;
+  maps.unitNamed = named ? { ...named, page } : null;
   const unitOk = (u) => ['vehicles', 'drivers', 'trailers'].includes(u?.list) && typeof u.id === 'string' && u.id;
   // Where one address holds every step and unit form (formScoped: GEICO): the form the page shows
   // now, held (pagekit unitHeld, the one the agent has to look at) or else filled (unitForm), with
@@ -2343,6 +2454,21 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
       if (fillCurrent({ tabId, intake, revision }) && pageOf(state.tab?.url) === page && state.unreadRetried) scheduleAutoFill(page);
     }, 1500);
   }
+  // A page the fill found still drawing (pagekit notDrawn: no question yet where the plan has
+  // some, W43-42: Progressive's Business Owner Info, 0 fields, "No questions found", then a
+  // 29-second fill), or done with no Continue to click yet (advanceDue, W43-40: a list page still
+  // loading as the fill ended), is filled once more in a moment, once per page and step. Its
+  // report says nothing until then (`retrying`, renderReport).
+  const where = `${page}|${knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey) ?? ''}`;
+  const due = !frames.some((f) => f.halted || f.advanced) && frames.some((f) => f.notDrawn || f.advanceDue);
+  let retrying = false;
+  if (due && maps.triedAgain !== where && $('auto-followups').checked && !maps.autoPaused) {
+    maps.triedAgain = where;
+    retrying = true;
+    setTimeout(() => {
+      if (fillCurrent({ tabId, intake, revision }) && pageOf(state.tab?.url) === page) scheduleAutoFill(page);
+    }, 1500);
+  } else if (!due) maps.triedAgain = null;
   for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) maps.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) maps.doneActions.add(a.id);
   persistDoneActions(tabId, maps.doneActions);
@@ -2381,6 +2507,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
     for (const o of options) seen.add(o);
     maps.choices.set(key, seen);
   }
+  return retrying;
 }
 
 function renderSite() {
@@ -2524,6 +2651,7 @@ function putReport(entry, nodes) {
 // Forgets the reports `drop` picks (all: a new or cleared client; a closed tab's; one page's).
 function dropReports(drop = () => true) {
   for (const [key, entry] of state.reports) if (drop(entry)) state.reports.delete(key);
+  forgetKeptReports(drop);
   if (state.reportFor && state.reports.get(state.reportFor.key) !== state.reportFor) {
     state.reportFor = null;
     $('report').replaceChildren();
@@ -2587,7 +2715,8 @@ function renderSteps() {
   const stopped = !!stopNoteFor(carrier, page);
   const report = showReport();
   // The fill running on this tab: its answers in so far, in place of the report.
-  const filling = state.filling && !!state.fillingFor && state.fillingFor.tabId === state.tab?.id;
+  // A quiet automatic fill (no rows yet) leaves the report in place, as the live list and the dock do.
+  const filling = state.filling && !!state.fillingFor && state.fillingFor.tabId === state.tab?.id && (!state.fillingFor.auto || !!state.fillingFor.rows?.length);
   const filled = !filling && !!report?.fields;
   // Why the last fill didn't finish, or what it found instead of questions (a portal page).
   const error = filling ? null : report?.error ?? null;
@@ -2687,7 +2816,9 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
   const check = autoAdvance && !!$('check-continue')?.checked;
   const looks = { button: 'look-right', label: 'Looks right, continue' };
   const again = { alt: 'fill-again', altLabel: 'Fill this page again' };
-  if (advanced) return { phase: 'done', tone: 'good', eyebrow: 'Continued', title: 'Continue clicked', sub: `Clicked “${advanced}” for you. Nothing is submitted or bound.` };
+  // Seen again once the agent went back to the page, or in a panel opened again (W43-39): it can be
+  // filled again.
+  if (advanced) return { phase: 'done', tone: 'good', eyebrow: 'Continued', title: 'Continue clicked', sub: `Clicked “${advanced}” for you. Nothing is submitted or bound.`, ...again };
   if (holding) {
     const then = check ? 'Then check the answers and click Looks right. Never Bind or Submit.'
       : offSteps ? 'Then moving on is yours: nothing on this step is clicked for you.'
@@ -2712,7 +2843,9 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
       sub: carrier?.advance && $('auto-advance').checked ? 'Click Continue on this page yourself. Nothing is submitted or bound.' : 'Click Continue yourself, then Fill this page on the next one.' };
   }
   if (settled) return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', sub: 'Fill again to click Continue, or click it yourself. Nothing is submitted or bound.', button: 'fill', label: 'Fill again and continue' };
-  return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', sub: 'If the page doesn’t move on, click Continue. Nothing is submitted or bound.', ...again };
+  // Nothing left and the page not moved on: the main button continues (a fill, which clicks the
+  // page's Continue once nothing is left: W43-40).
+  return { phase: 'ready-continue', tone: 'good', eyebrow: 'All answered', title: 'Ready for Continue', sub: 'Continue clicks the page’s Continue for you. Nothing is submitted or bound.', button: 'fill', label: 'Continue', go: 'continue', ...again };
 }
 
 // The dock: the one next thing to do, always in the same place under the panel, and its button.
@@ -2730,7 +2863,7 @@ function dockFor() {
       : { phase: 'off', eyebrow: 'Next', title: 'Open the client’s quote on a rater', sub: checksSaid ?? 'Progressive, GEICO or AmWINS. Filling starts on its page.' };
   }
   const f = state.fillingFor;
-  if (state.filling && f?.tabId === state.tab.id) {
+  if (state.filling && f?.tabId === state.tab.id && (!f.auto || !!f.rows?.length)) {
     const last = f.rows?.at(-1);
     // The page hasn't answered for a while (watchFill): a message box open on it waits for the agent.
     if (f.unanswered) {
@@ -2764,6 +2897,9 @@ function dockFor() {
   const filledBefore = carrier.layoutSteps ? !!report?.fields : state.autoPages.has(page);
   const fill = { button: 'fill', label: filledBefore || report?.fields ? 'Fill this page again' : 'Fill this page' };
   if (report?.error) return { phase: 'error', tone: 'bad', eyebrow: 'Didn’t finish', title: 'Check the page, then fill again', sub: 'What went in stays; your changes are kept.', ...fill };
+  // A page the fill had no question for and left nothing on (a unit list with every unit on it):
+  // Continue is next (W43-40: the dock offered Fill this page again on finished vehicle lists).
+  if (report?.empty) return continueSaid({ ...report, tabId: state.tab.id }, carrier);
   if (report?.fields) {
     if (report.stopped) return { phase: 'stopped-fill', tone: 'warn', eyebrow: 'Stopped', title: `${report.filled} filled before you stopped`, sub: 'What went in stays. Fill again to finish the rest; your changes are kept.', button: 'fill', label: 'Fill this page again' };
     // AI picks waiting for approval hold Continue: approved (or confirmed) from here or their rows.
@@ -2807,6 +2943,8 @@ function renderDock() {
   $('dock-title').textContent = d.title;
   $('dock-sub').textContent = d.sub ?? '';
   $('dock-sub').hidden = !d.sub;
+  // The dock's Continue is a fill that replaces nothing (`go`: fillPage `continuing`).
+  $('fill').dataset.go = d.go ?? '';
   for (const id of ['fill', 'fill-stop', 'dock-next', 'look-right', 'ai-approve']) {
     const button = $(id);
     button.hidden = d.button !== id;
@@ -3017,7 +3155,7 @@ async function runKit(tabId, carrier, func, args = [], frameIds) {
 
 // `auto`: 'page' when started because a new page opened (setting "Fill each new page").
 // `confirmed`: the page's receipt the agent approved with Looks right (lookRight).
-async function fillPage({ auto = false, confirmed = null } = {}) {
+async function fillPage({ auto = false, confirmed = null, continuing = false } = {}) {
   // The carrier stopped the quote on this page: nothing is filled or clicked, even on request.
   if (state.intake && stopNoteFor(state.tab?.carrier, pageOf(state.tab.url))) { showStopPage(); return; }
   // The tab's quote is for another state than the intake's: nothing is filled until the agent says
@@ -3042,8 +3180,9 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
   state.autoDrawn = null;
   const { id: tabId, carrier } = state.tab;
   const page = pageOf(state.tab.url);
-  // Looks right never replaces anything: the page is continued as the agent approved it.
-  const overwrite = auto || confirmed ? false : $('overwrite').checked;
+  // Looks right never replaces anything: the page is continued as the agent approved it. Nor does
+  // the dock's Continue (W43-40).
+  const overwrite = auto || confirmed || continuing ? false : $('overwrite').checked;
   // Before any waiting: the agent may pick another vehicle or tab, or load another intake, while
   // the carrier works (fillContext; the view is taken there).
   const ctx = fillContext({ tabId, carrier, page, tabUrl: state.tab.url, auto, overwrite, asked: !auto && !confirmed });
@@ -3097,14 +3236,14 @@ async function fillPage({ auto = false, confirmed = null } = {}) {
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
     const frames = results.map((r) => r.result).filter(Boolean);
-    rememberFill(frames, ctx);
+    const retrying = rememberFill(frames, ctx);
     tabMaps(tabId).autoPages.add(page);
     followUp = afterFill(frames, ctx);
     logFill(ctx, frames, results, started);
     // The report is its own tab's: kept for it when the agent has moved to another tab meanwhile.
     // Stopped by the agent before the kit was done (a frame halted): said so, and the dock offers to
     // fill the rest.
-    renderReport(frames, { ...ctx, plan, stopped: state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted) });
+    renderReport(frames, { ...ctx, plan, retrying, stopped: state.fillingFor?.run === ctx.run && !!state.fillingFor.stopping && frames.some((f) => f.halted) });
     if (!fillCurrent(ctx)) return;
     recordLayout(page);
     assistFrames = frames;
@@ -3229,8 +3368,12 @@ async function pickUnitToAdd(carrier, ctx) {
   if (!seen || !fillCurrent(ctx)) return;
   const next = unitToAdd(carrier, record, knownStep(carrier, seen.step), seen, { unitForms: state.unitForms, done: state.doneActions });
   if (!next) return;
-  // Every intake unit on the list on screen: its Looks Good may be clicked (advanceFor).
+  // Every intake unit on the list on screen: its Looks Good may be clicked (advanceFor). A list
+  // holding as many rows as the intake that isn't read as complete is said in the usage log, in
+  // counts only (W43-40: GEICO's Looks Good never clicked on a list that needed a VIN or name read).
   ctx.unitsListed = !!next.complete;
+  const read = next.read;
+  ctx.listNote = !next.complete && read && read.rows >= read.units ? `list: ${read.rows} rows for ${read.units} units, ${read.shown} shown, ${read.saved} saved by a fill` : null;
   if (next.marks.some((id) => !state.doneActions.has(id))) {
     next.marks.forEach((id) => state.doneActions.add(id));
     persistDoneActions(ctx.tabId, state.doneActions);
@@ -3316,7 +3459,11 @@ async function verifyDrivers(carrier, ctx = { tabId: state.tab?.id, intake: stat
 function unitArrival(carrier, from, page) {
   for (const [unitPage, listPage, list, marker] of [[carrier?.driverPage, carrier?.driverList, 'drivers', 'driverEntered'], [carrier?.trailerPage, carrier?.trailerList, 'trailers', 'trailerEntered']]) {
     if (!unitPage || from !== unitPage || page !== listPage) continue;
-    state.doneActions.add(`${marker}:${state.active[list] ?? 0}`);
+    // The unit the form named, when it named one (W43-37): a form for no intake driver marks none.
+    const named = state.unitNamed?.list === list && state.unitNamed.page === unitPage ? state.unitNamed : null;
+    const index = named ? named.index : state.active[list] ?? 0;
+    if (index != null) state.doneActions.add(`${marker}:${index}`);
+    if (named) state.unitNamed = null;
     persistDoneActions();
   }
   // Back on the vehicle list from the active vehicle's pages: only a mark that it may be on the
@@ -3609,18 +3756,34 @@ function renderReport(frames, ctx = {}) {
   const maps = tabMaps(tabId);
   // The one-address application's step this fill was on, for the page strip and the report's key.
   const step = knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey);
-  if (step) state.tabSteps.set(tabId, step);
-  const key = reportKey(tabId, page, carrier, ctx.active ?? state.active);
+  // A report made again on reopen (restoreReports) is an earlier step's: the tab's step stays.
+  if (step && !ctx.restoredAt) state.tabSteps.set(tabId, step);
+  const key = ctx.keptKey ?? reportKey(tabId, page, carrier, ctx.active ?? state.active);
+  // Kept for the panel opened again (keepReport); one made again from what was kept isn't, nor
+  // one that says nothing while its page is filled again.
+  const keep = () => { if (!ctx.restoredAt) keepReport(tabId, { key, page, active: { ...(ctx.active ?? state.active) }, at: Date.now(), stopped: !!ctx.stopped,
+    // What earlier passes on this page filled, for the report shown again (restoreReports).
+    filledBefore: Object.fromEntries(frames.flatMap((fr) => fr.kept ?? []).filter((x) => maps.filled?.get?.(x.key)).map((x) => [x.key, maps.filled.get(x.key)])), frames }); };
   // A page of tiles only (Most Common Vehicles) has no fields but may still need the agent.
   if (!fields && !all('actions').length && !all('noData').length) {
     // A step the kit couldn't read pauses nothing (rememberFill): its reason alone.
     const halted = frames.find((f) => f.halted && !f.stepUnread) ?? frames.find((f) => f.halted);
-    putReport({ key, tabId, page, at: Date.now(), ...(halted
-      ? { error: `${halted.stepUnread ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
-      : { notice: 'No questions found on this page.' }) }, []);
+    // Still drawing, or Continue not there yet: filled again in a moment (rememberFill), nothing
+    // said until then (W43-40, W43-42).
+    if (!halted && ctx.retrying) { renderSteps(); return; }
+    keep();
+    // A page with no question for the fill (a unit list, every unit on it) is done: its dock offers
+    // Continue (`empty`, W43-40). One that should have some (notDrawn) still has none.
+    putReport({ key, tabId, page, at: ctx.restoredAt ?? Date.now(), ...(ctx.restoredAt ? { restored: true } : {}), ...(halted
+      // A panel opened again doesn't keep the pause: a report made again doesn't say it.
+      ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
+      : frames.some((f) => f.notDrawn) ? { notice: 'No questions found on this page.' }
+        : { notice: 'Nothing to fill on this page.', empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null,
+          held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
     renderSteps();
     return;
   }
+  keep();
   const unknownKeys = new Set(all('unknown').map((x) => x.key));
   // Each item with its frame's place among the page's frames (pagekit's `order` counts within one).
   // A field of another step (pagekit otherStep: AmWINS' prior carriers, filled again while hidden)
@@ -3649,14 +3812,15 @@ function renderReport(frames, ctx = {}) {
   const agentPage = typeof pageNote === 'function' ? pageNote(state.intake?.record ?? {}) : pageNote;
   // Answers an earlier pass on this page filled (a follow-up pass, after the VIN lookup or a
   // redraw, finds them already there): still ours, shown as filled.
-  const earlier = kept.filter((x) => !x.differs && maps.filled?.get?.(x.key));
+  const before = ctx.filledBefore ? new Map(Object.entries(ctx.filledBefore)) : maps.filled;
+  const earlier = kept.filter((x) => !x.differs && before?.get?.(x.key));
   const { fromOf, groupOf, ticks, editedBy } = answerSources(ctx.plan);
   const doneRows = groupRows([
     // `key`/`field`: the field and its label on the page, for checking the answer is still there
     // (checkAnswers) and changing it (changeAnswer); `kind`: what it is when it's no answer of ours.
     ...filled.map((x) => ({ label: x.label || x.name, value: x.shown ?? '', standard: !!x.standard, path: x.path, from: fromOf.get(x.stepId), edited: editedBy(x.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: x.key, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order })),
     ...earlier.map((x) => {
-      const was = maps.filled.get(x.key);
+      const was = before.get(x.key);
       return { label: x.label || x.name, value: was.shown || 'filled', standard: !!(x.standard || was.standard), path: was.path, from: fromOf.get(x.stepId), edited: editedBy(was.path, fromOf.get(x.stepId)), group: groupOf.get(x.stepId), stepId: x.stepId, answer: true, key: was.shown ? x.key : null, field: x.label ?? null, q: x.q ?? null, frame: x.frame, order: x.order };
     }),
     ...all('actions').map((x) => ({ label: 'Clicked', value: x.text || x.id, kind: 'clicked' })),
@@ -3675,7 +3839,8 @@ function renderReport(frames, ctx = {}) {
   // Held for the agent's check (Let me look before Continue): the top frame's word.
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
-  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: Date.now(), auto: !!ctx.auto, stopped };
+  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
+    ...(ctx.restoredAt ? { restored: true } : {}) };
   // The answers and the items in one list, by their place on the page: an item without a field on
   // the page (a helper, a unit without its row) after them, then answers without one (a click).
   const listed = [...doneRows.map((row) => ({ row, at: row })), ...needs.map((x) => ({ x, at: x }))];
@@ -3708,7 +3873,7 @@ function renderReport(frames, ctx = {}) {
   if (key === currentReportKey()) state.filter = 'all';
   putReport(entry, nodes);
   renderSteps();
-  if (state.reportFor !== entry) return;
+  if (state.reportFor !== entry || ctx.restoredAt) return;
   announce(`Filled ${count} answer${count === 1 ? '' : 's'}. ${needs.length ? `${needs.length} left for you.` : held ? 'Check the answers, then click Looks right.' : 'Nothing is left for you.'}`);
   if (held) refreshAnswers();
 }
@@ -5313,6 +5478,8 @@ function noteStep(msg, sender) {
   const screenOver = !!state.stopScreens?.has(sender.tab.id) && (moved || msg.event === 'page_view');
   if (screenOver) state.stopScreens.delete(sender.tab.id);
   if (moved || screenOver) renderSite();
+  // A report shown again for this step is read back from the page (read only).
+  if (moved && state.reportFor?.restored) refreshAnswers();
 }
 
 // What the agent did on this intake, for the file menu's question and the same-file note:
@@ -5567,7 +5734,7 @@ function wire() {
     if (what === 'clear') clearClient();
   });
   // The dock: its one button and its alternative.
-  $('fill').addEventListener('click', () => fillPage());
+  $('fill').addEventListener('click', () => fillPage({ continuing: $('fill').dataset.go === 'continue' }));
   $('fill-stop').addEventListener('click', stopFill);
   $('dock-next').addEventListener('click', showNextNeed);
   $('look-right').addEventListener('click', function () { this.disabled = true; lookRight(state.tab?.id, pageOf(state.tab?.url), state.tab?.carrier, this); });
@@ -5606,6 +5773,9 @@ async function init() {
   state.intake = (await store.get('intake')) ?? null;
   if (state.intake) state.view = firstView(state.intake);
   state.active = (await store.get('active')) ?? state.active;
+  // The selection saved for that tab, kept should the panel reach another tab first.
+  state.savedActive = state.active;
+  state.activeTab = (await store.get('activeTab')) ?? null;
   usage.restoreSession((await store.get('session')) ?? null);
   const views = await store.get('views');
   if (views?.session && views.session === usage.currentSession()?.id) state.viewTabs = new Map(views.tabs);

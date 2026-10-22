@@ -104,12 +104,17 @@ function extractFunction(name) {
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards and row heads (issueCard, setRowHead) come along as they are.
-        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved']) {
+        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
         // the harness gives one.
         if (name !== 'stateIssue' && /\bstateIssue\(/.test(source) && !/function stateIssue\(/.test(source)) source += '\nvar stateIssue = globalThis.stateIssue ?? (() => null);';
+        // Reports kept for a reopened panel (keepReport, forgetKeptReports) have their own tests:
+        // elsewhere nothing is kept, unless the harness gives a store.
+        for (const kept of ['keepReport', 'forgetKeptReports']) {
+          if (name !== kept && new RegExp(`\\b${kept}\\(`).test(source) && !new RegExp(`function ${kept}\\(`).test(source)) source += `\nvar ${kept} = globalThis.${kept} ?? (() => {});`;
+        }
         return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
       }
     }
@@ -159,7 +164,7 @@ function harness() {
     },
     clearTimeout: (handle) => cleared.push(handle),
     renderSite: () => rendered.push(state.tab?.id ?? null), renderPickers: () => {}, save: () => {},
-    ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {}, restoreDoneActions: async () => {}, persistDoneActions: async () => {},
+    ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {}, restoreDoneActions: async () => {}, persistDoneActions: async () => {}, restoreReports: async () => {},
     seedQuoteState: () => {}, noteQuoteState: () => {}, knownStep, popped: false,
     dropReports() {}, clientNote() {}, fillProblem() {}, answeredOnPage() {},
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
@@ -299,6 +304,73 @@ test('switching tabs stores and restores agent keys and the persistent pause', a
   assert.notEqual(h.state.agentKeys, secondTabKeys);
   assert.deepEqual([...h.state.agentKeys.get('BusinessOwnerInfo')], ['agent-key']);
   assert.equal(h.state.agentKeys.has('AddVehicle'), false);
+});
+
+// W43-37 (FL, 2026-10-22): a Progressive quote opened after a GEICO quote on its second driver
+// filled Progressive's first driver form with the second driver's answers.
+test('a quote tab the panel has no record for starts on vehicle 1 and driver 1; the reopened panel keeps its tab\'s', async () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1), carrier: { id: 'progressive' } };
+  h.state.active = { drivers: 1, vehicles: 2, trailers: 0 };
+  h.setActiveTab(quoteTab(2, 'AddDriver'));
+  await h.refreshTab();
+  assert.deepEqual({ ...h.state.active }, { drivers: 0, vehicles: 0, trailers: 0 });
+  h.state.active.drivers = 1;
+  h.setActiveTab(quoteTab(1));
+  await h.refreshTab();
+  assert.deepEqual({ ...h.state.active }, { drivers: 1, vehicles: 2, trailers: 0 }, 'its own tab keeps its selection');
+
+  // The panel opened again: the selection saved is that tab's, and only that tab's.
+  for (const [saved, front, drivers] of [[5, 5, 1], [4, 5, 0], [null, 5, 0]]) {
+    const r = harness();
+    r.state.active = { drivers: 1, vehicles: 0, trailers: 0 };
+    r.state.activeTab = saved;
+    r.setActiveTab(quoteTab(front, 'AddDriver'));
+    await r.refreshTab();
+    assert.equal(r.state.active.drivers, drivers, `saved for tab ${saved}`);
+  }
+});
+
+test('the driver a form named is the one entered once the list comes back; a form for no intake driver marks none', () => {
+  const progressive = { driverPage: 'AddDriver', driverList: 'DriverSummary' };
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'AddDriver'), carrier: progressive };
+  h.state.active = { drivers: 1, vehicles: 0, trailers: 0 };
+  h.rememberFill([{ filled: [], halted: true, reason: 'This form is for Jordan Sample, not Casey Example', unitNamed: { list: 'drivers', index: 0 } }], { page: 'AddDriver' });
+  assert.deepEqual({ ...h.state.unitNamed }, { list: 'drivers', index: 0, page: 'AddDriver' });
+
+  const context = { state: h.state, persistDoneActions: () => {} };
+  vm.runInNewContext(extractFunction('unitArrival'), context);
+  context.unitArrival(progressive, 'AddDriver', 'DriverSummary');
+  assert.deepEqual([...h.state.doneActions], ['driverEntered:0'], 'the named driver, not the selected one');
+  assert.equal(h.state.unitNamed, null);
+
+  h.state.unitNamed = { list: 'drivers', index: null, page: 'AddDriver' };
+  context.unitArrival(progressive, 'AddDriver', 'DriverSummary');
+  assert.deepEqual([...h.state.doneActions], ['driverEntered:0'], 'no intake driver: none marked');
+  // A blank form named no one: the selected driver, as before.
+  context.unitArrival(progressive, 'AddDriver', 'DriverSummary');
+  assert.deepEqual([...h.state.doneActions].sort(), ['driverEntered:0', 'driverEntered:1']);
+});
+
+test('the fill hands the kit the named-form check and what this tab\'s fills gave', () => {
+  const context = {};
+  vm.runInNewContext(`${extractFunction('unitNameFor')}\nglobalThis.unitNameFor = unitNameFor;`, context);
+  const record = { drivers: [{ first: 'Jordan', last: 'Sample-Smith' }, { first: 'Casey', last: 'Example' }, { first: null, last: null }] };
+  const spec = { unitNames: [{ page: 'AddDriver', list: 'drivers', text: '^questions about (.+)$' }] };
+  assert.deepEqual(JSON.parse(JSON.stringify(context.unitNameFor(spec, 'AddDriver', { drivers: 1 }, record))), {
+    list: 'drivers', text: '^questions about (.+)$', names: [['JORDAN', 'SAMPLE', 'SMITH'], ['CASEY', 'EXAMPLE'], []], active: 1, label: 'Casey Example',
+  });
+  assert.equal(context.unitNameFor(spec, 'BusinessOwnerInfo', { drivers: 1 }, record), null, 'another page');
+  assert.equal(context.unitNameFor({}, 'AddDriver', { drivers: 1 }, record), null, 'a carrier whose forms name no one');
+  assert.equal(context.unitNameFor(spec, 'AddDriver', { drivers: 2 }, record).label, 'the selected driver');
+  assert.equal(progressive.unitNames[0].page, progressive.driverPage);
+  assert.ok(new RegExp(progressive.unitNames[0].text, 'i').test('Questions about Jordan Sample'));
+
+  const start = SIDEPANEL.indexOf('const fillOptions =');
+  const body = SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start));
+  assert.match(body, /formUnit: unitNameFor\(carrier, extra\.expectPage \?\? pageOf\(state\.tab\?\.url\), active, state\.intake\?\.record\)/);
+  assert.match(body, /givenBefore: Object\.fromEntries\(\[\.\.\.\(state\.filled \?\? \[\]\)\]\.map\(\(\[key, x\]\) => \[key, \{ path: x\.path \?\? null, shown: x\.shown \?\? null \}\]\)\)/);
 });
 
 
@@ -756,10 +828,11 @@ test('an automatic follow-up on a step without a report fills it as a new page, 
   const fills = [];
   const state = { tab: { id: 1, url: 'Quote', carrier: { id: 'amwins', layoutSteps: ['Insured Info', 'Vehicles'] } }, intake: { record: {} }, autoPaused: false, filling: false,
     reports: new Map([['1|Insured Info', { fields: 9 }]]), tabSteps: new Map([[1, 'Vehicles']]) };
-  const context = { state, pageOf: (u) => u, fillPage: (o) => fills.push(o), reportKey: (tabId) => `${tabId}|${state.tabSteps.get(tabId)}`,
+  const context = { watchFill: () => () => {}, state, pageOf: (u) => u, fillPage: (o) => fills.push(o), reportKey: (tabId) => `${tabId}|${state.tabSteps.get(tabId)}`,
     fillContext: () => { throw new Error('no follow-up fill'); }, stateIssue: () => null };
   // autoFill alone: its helpers (fillContext and the rest) are the stubs above; its stop check is
   // the panel's own (no stop here).
+  context.renderSteps ??= () => {};
   vm.runInNewContext(`${extractFunction('autoFill').split('\nfunction ')[0]}\n${extractFunction('stopNoteFor')}`, context);
   await context.autoFill('Quote');
   assert.deepEqual(JSON.parse(JSON.stringify(fills)), [{ auto: 'page' }]);
@@ -956,7 +1029,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
   const frames = [{ fields: 1, filled: [], actions: [], unknown: [{ key: 'new', label: 'New question' }], halted: false }];
   const logged = [], rendered = [], layouts = [], assisted = [];
   const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
-  const context = {
+  const context = { watchFill: () => () => {},
     state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: (page) => layouts.push(page),
@@ -968,6 +1041,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     runPendingPage: () => {}, fillProblem() {}, reportShown: () => true,
   };
   context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
+  context.renderSteps ??= () => {};
   vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
   await context.autoFill('Rates');
   assert.equal(state.autoPaused, false);
@@ -994,7 +1068,7 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
   // The page's list on the report shown, where a follow-up's answers join it.
   const appended = [];
   const list = { append: (...rows) => appended.push(...rows) };
-  const context = {
+  const context = { watchFill: () => () => {},
     state, Date, crypto, rulesVersion: null, $: () => ({ checked: false, append() {}, querySelector: (sel) => (sel === ':scope > .rows' ? list : null) }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options, viewOf: () => 't1',
     runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {},
     renderReport: (result) => rendered.push(result), recordLayout: () => {}, renderSteps: () => {}, announce: () => {}, h: () => ({}), answerRow: (row) => row,
@@ -1005,6 +1079,7 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
     pickListItem: async () => { state.active.vehicles = next; },
     reportKey: (tabId, page, carrier, active = state.active) => `v${active.vehicles}`,
   };
+  context.renderSteps ??= () => {};
   vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
   await context.autoFill('/quote');
   assert.equal(rendered.length, 1, 'vehicle 2 has no report yet: shown');
@@ -1946,6 +2021,145 @@ test('done actions are kept per intake and tab, restored once after a reload', a
   assert.deepEqual([...back.state.doneActions].sort(), ['lookupVin:0', 'trailerEntered:0'], 'tab 7 kept');
 });
 
+// W43-39 (2026-10-22): opened again three times on one quote, the panel came back with no report.
+// Each tab's reports are kept in storage.session (the panel's `store`) as the fill results they were
+// made from, and made again from them on reopen. `memory`: the store's contents.
+function keptReportsHarness(memory, { session = { intakeId: 'intake-a' }, state = {} } = {}) {
+  const rendered = [];
+  const context = {
+    state: { tab: { id: 7, carrier: { id: 'progressive' } }, intake: { record: {} }, reports: new Map(), ...state },
+    usage: { currentSession: () => session },
+    store: { get: async (k) => structuredClone(memory[k]), set: async (k, v) => { memory[k] = structuredClone(v); }, remove: async (k) => { delete memory[k]; }, keys: async () => Object.keys(memory) },
+    firstUnits: () => ({ vehicles: 0, drivers: 0, trailers: 0 }),
+    buildPlan: (record, carrier, active) => [{ drivers: active.drivers }],
+    renderReport: (frames, ctx) => rendered.push({ frames, ctx }), refreshAnswers: () => rendered.push('refreshAnswers'),
+  };
+  const block = SIDEPANEL.slice(SIDEPANEL.indexOf("const REPORTS_PREFIX = 'reports:';"), SIDEPANEL.indexOf('let reportsQueue = Promise.resolve();'));
+  vm.runInNewContext(`${block}\nvar reportsQueue = Promise.resolve();\n${['keepReport', 'forgetKeptReports', 'restoreReports'].map(extractFunction).join('\n')}\nglobalThis.kept = () => reportsQueue;`, context);
+  return { context, rendered };
+}
+
+test('each quote tab keeps its last reports for the intake, as the fill results they were made from (W43-39)', async () => {
+  const memory = {};
+  const session = { intakeId: 'intake-a' };
+  const { context } = keptReportsHarness(memory, { session });
+  const frame = { fields: 2, filled: [{ label: 'First name', shown: 'A' }], kept: [], stepKey: 'Drivers', layout: { fields: [] }, progress: 3 };
+  context.keepReport(7, { key: '7|AddDriver|d1', page: 'AddDriver', active: { drivers: 1 }, at: 100, stopped: false, frames: [frame] });
+  await context.kept();
+  assert.deepEqual(memory['reports:7'], { scope: 'intake-a', entries: [{ key: '7|AddDriver|d1', page: 'AddDriver', active: { drivers: 1 }, at: 100, stopped: false,
+    frames: [{ fields: 2, filled: [{ label: 'First name', shown: 'A' }], kept: [], stepKey: 'Drivers' }] }] }, 'only the parts a report is made from');
+  // A page filled again replaces its report, now the newest; the last 30 are kept.
+  for (let i = 0; i < 31; i++) context.keepReport(7, { key: `7|Page${i}`, page: `Page${i}`, active: {}, at: 200 + i, stopped: false, frames: [{ fields: 1 }] });
+  context.keepReport(7, { key: '7|Page30', page: 'Page30', active: {}, at: 300, stopped: true, frames: [{ fields: 1 }] });
+  await context.kept();
+  const entries = memory['reports:7'].entries;
+  assert.equal(entries.length, 30);
+  assert.deepEqual([entries[0].key, entries.at(-2).key, entries.at(-1).key, entries.at(-1).at, entries.at(-1).stopped], ['7|Page1', '7|Page29', '7|Page30', 300, true]);
+  // Another tab keeps its own; another intake's start over; no intake or no tab keeps nothing.
+  context.keepReport(8, { key: '8|Drivers', page: 'Drivers', active: {}, at: 400, stopped: false, frames: [{ fields: 1 }] });
+  await context.kept();
+  assert.equal(memory['reports:7'].entries.length, 30);
+  assert.deepEqual(memory['reports:8'].entries.map((e) => e.key), ['8|Drivers']);
+  session.intakeId = 'intake-b';
+  context.keepReport(7, { key: '7|Drivers', page: 'Drivers', active: {}, at: 500, stopped: false, frames: [{ fields: 1 }] });
+  await context.kept();
+  assert.deepEqual([memory['reports:7'].scope, memory['reports:7'].entries.map((e) => e.key)], ['intake-b', ['7|Drivers']]);
+  session.intakeId = null;
+  context.keepReport(7, { key: '7|Other', page: 'Other', active: {}, at: 600, stopped: false, frames: [{ fields: 1 }] });
+  session.intakeId = 'intake-b';
+  context.keepReport(undefined, { key: 'x', page: 'Other', active: {}, at: 600, stopped: false, frames: [{ fields: 1 }] });
+  await context.kept();
+  assert.deepEqual(Object.keys(memory).sort(), ['reports:7', 'reports:8']);
+  assert.equal(memory['reports:7'].entries.length, 1);
+  // Within about 512 KB a tab (the store also holds the intake and its PDF): the oldest go first.
+  const big = (i) => ({ key: `7|Big${i}`, page: `Big${i}`, active: {}, at: 700 + i, stopped: false, frames: [{ fields: 1, filled: [{ label: 'Note', shown: 'x'.repeat(200 * 1024) }] }] });
+  for (let i = 0; i < 4; i++) context.keepReport(7, big(i));
+  await context.kept();
+  assert.deepEqual(memory['reports:7'].entries.map((e) => e.key), ['7|Big2', '7|Big3']);
+  context.keepReport(7, { ...big(4), frames: [{ fields: 1, filled: [{ label: 'Note', shown: 'x'.repeat(600 * 1024) }] }] });
+  await context.kept();
+  assert.deepEqual(memory['reports:7'].entries.map((e) => e.key), ['7|Big4'], 'the newest stays');
+});
+
+test('the panel opened again makes the tab\'s kept reports again, as of their fill, then checks the one in front against the page (W43-39)', async () => {
+  const memory = { 'reports:7': { scope: 'intake-a', entries: [
+    { key: '7|Drivers', page: 'Drivers', active: { drivers: 0 }, at: 100, stopped: false, frames: [{ fields: 1 }] },
+    { key: '7|AddDriver|d1', page: 'AddDriver', active: { drivers: 1 }, at: 200, stopped: true, frames: [{ fields: 2 }] },
+    { key: '7|Shown', page: 'Shown', at: 300, frames: [{ fields: 1 }] },
+    { key: '8|Elsewhere', page: 'Elsewhere', at: 400, frames: [{ fields: 1 }] },
+  ] } };
+  const { context, rendered } = keptReportsHarness(memory, { state: { reports: new Map([['7|Shown', { key: '7|Shown' }]]) } });
+  await context.restoreReports(7);
+  const said = () => rendered.map((r) => (r === 'refreshAnswers' ? r : [r.ctx.keptKey, r.ctx.page, r.ctx.restoredAt, r.ctx.stopped, r.ctx.active.drivers, r.ctx.active.vehicles, r.ctx.plan[0].drivers, r.frames[0].fields]));
+  assert.deepEqual(said(), [
+    ['7|Drivers', 'Drivers', 100, false, 0, 0, 0, 1],
+    ['7|AddDriver|d1', 'AddDriver', 200, true, 1, 0, 1, 2],
+    'refreshAnswers',
+  ], 'a report made since the panel opened is newer, and another tab\'s is never this one\'s');
+  await context.restoreReports(7);
+  assert.equal(rendered.length, 3, 'made again once: a later visit keeps what the panel has');
+  // Another intake's, or a tab no longer in front: nothing.
+  const other = keptReportsHarness(memory, { session: { intakeId: 'intake-b' } });
+  await other.context.restoreReports(7);
+  const moved = keptReportsHarness(memory, { state: { tab: { id: 9, carrier: { id: 'progressive' } } } });
+  await moved.context.restoreReports(7);
+  const none = keptReportsHarness({});
+  await none.context.restoreReports(7);
+  assert.deepEqual([other.rendered.length, moved.rendered.length, none.rendered.length], [0, 0, 0]);
+  // A tab first shown off the rater gets them once it shows the rater.
+  const later = keptReportsHarness(memory, { state: { tab: { id: 7, carrier: null } } });
+  await later.context.restoreReports(7);
+  assert.equal(later.rendered.length, 0);
+  later.context.state.tab.carrier = { id: 'progressive' };
+  await later.context.restoreReports(7);
+  assert.equal(later.rendered.length, 4, 'all three reports, then the check against the page');
+  // The panel's tab switch makes them again after the tab's other records.
+  assert.match(extractFunction('refreshTab'), /await restoreDoneActions\(state\.tab\?\.id\);\n\s+await restoreReports\(state\.tab\?\.id\);/);
+});
+
+test('kept reports go with the shown ones: a closed tab\'s, a cleared page\'s, all for a new or cleared client (W43-39)', async () => {
+  const memory = { intake: { kept: true },
+    'reports:7': { scope: 'intake-a', entries: [{ key: '7|A', page: 'A' }, { key: '7|B', page: 'B' }] },
+    'reports:8': { scope: 'intake-a', entries: [{ key: '8|A', page: 'A' }] } };
+  const { context } = keptReportsHarness(memory);
+  context.forgetKeptReports((e) => e.tabId === 8);
+  await context.kept();
+  assert.deepEqual(Object.keys(memory).sort(), ['intake', 'reports:7']);
+  context.forgetKeptReports((e) => e.key === '7|A');
+  await context.kept();
+  assert.deepEqual(memory['reports:7'].entries.map((e) => e.key), ['7|B']);
+  context.forgetKeptReports(() => true);
+  await context.kept();
+  assert.deepEqual(Object.keys(memory), ['intake'], 'the intake itself stays');
+  assert.match(extractFunction('dropReports'), /forgetKeptReports\(drop\);/);
+});
+
+test('a fill\'s report is kept for the panel opened again; one made again from it keeps its key and time and moves no step (W43-39)', () => {
+  const kept = [];
+  const state = { tab: { id: 7, url: 'AddDriver' }, active: { drivers: 1 }, tabSteps: new Map() };
+  const { context } = reportHarness(state, { keepReport: (tabId, saved) => kept.push({ tabId, saved }), knownStep: (carrier, key) => key ?? null });
+  const frame = { fields: 1, filled: [{ label: 'Zip Code', shown: '21000' }], kept: [], failed: [], noData: [], leftRequired: [], actions: [] };
+  context.renderReport([frame], { tabId: 7, page: 'AddDriver' });
+  assert.equal(kept.length, 1);
+  assert.deepEqual([kept[0].tabId, kept[0].saved.key, kept[0].saved.page, kept[0].saved.active.drivers, kept[0].saved.stopped], [7, '7|AddDriver', 'AddDriver', 1, false]);
+  assert.equal(kept[0].saved.frames[0], frame);
+  assert.ok(!state.reportFor.restored);
+  // Answers filled while Continue is tried again in a moment: kept too. The silent one isn't.
+  context.renderReport([frame], { tabId: 7, page: 'AddDriver', retrying: true });
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], notDrawn: true }], { tabId: 7, page: 'AddDriver', retrying: true });
+  assert.equal(kept.length, 2);
+  context.renderReport([{ ...frame, stepKey: 'Drivers' }], { tabId: 7, page: 'AddDriver', keptKey: '7|AddDriver|Drivers', restoredAt: 1234 });
+  assert.equal(kept.length, 2, 'one made again from what was kept isn\'t kept again');
+  assert.deepEqual([state.reportFor.key, state.reportFor.at, state.reportFor.restored], ['7|AddDriver|Drivers', 1234, true]);
+  assert.equal(state.tabSteps.size, 0, 'an earlier step\'s report leaves the tab\'s step');
+  // A panel opened again doesn't keep the pause, so a stop made again doesn't say it.
+  const halted = { fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], halted: true, reason: 'The page changed.' };
+  context.renderReport([halted], { tabId: 7, page: 'AddDriver' });
+  assert.equal(state.reportFor.error, 'Automatic filling and helpers paused. The page changed.');
+  context.renderReport([halted], { tabId: 7, page: 'AddDriver', keptKey: '7|AddDriver', restoredAt: 1234 });
+  assert.equal(state.reportFor.error, 'The page changed.');
+});
+
 test('a Luna request waiting for a follow-up fill belongs to its tab', async () => {
   const h = harness();
   h.state.tab = { ...quoteTab(1, 'CoveragesRates'), carrier: { id: 'progressive' } };
@@ -1984,8 +2198,14 @@ test('a page without form fields still shows what needs the agent', () => {
   assert.match(text, /Vehicle type/);
   assert.match(text, /pick the vehicle yourself/);
   assert.equal(state.reportFor.notice, undefined);
-  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [] }]);
+  // A page that should have questions and has none yet (pagekit notDrawn), filled again: said empty.
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], notDrawn: true }]);
   assert.match(state.reportFor.notice, /No questions found on this page/, 'an empty page is still said to be empty (in step 2)');
+  assert.equal(state.reportFor.empty, undefined);
+  // One with no question for the fill (a unit list, every unit on it) is done (W43-40).
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [] }]);
+  assert.equal(state.reportFor.notice, 'Nothing to fill on this page.');
+  assert.equal(state.reportFor.empty, true);
 });
 
 function assistHarness({ suggest, cfg = {} } = {}) {
@@ -2066,7 +2286,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
     const rendered = [], assisted = [];
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), layoutReadyTabs: new Set(),
       autoPaused: false, filling: false, assistPage: 'Rates' };
-    const context = {
+    const context = { watchFill: () => () => {},
       state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
       recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
@@ -2074,6 +2294,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
       afterFill: () => followUp, runPendingPage: () => {}, viewOf: () => 't1',
     };
     context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
+  context.renderSteps ??= () => {};
   vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
     await context.autoFill('Rates');
     return { rendered: rendered.length, assisted, assistPage: state.assistPage };
@@ -2955,7 +3176,7 @@ test('a queued page-change capture waits again when a fill starts before it read
 test('an automatic fill readies its tab for layouts only when it went through', async () => {
   const run = async (runKit) => {
     const state = { tab: { id: 1, url: 'Rates', carrier: { id: 'progressive' } }, intake: { record: {} }, active: {}, agentKeys: new Map(), autoPaused: false, filling: false, layoutReadyTabs: new Set() };
-    const context = {
+    const context = { watchFill: () => () => {},
       state, Date, crypto, rulesVersion: null, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
       redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
@@ -2963,6 +3184,7 @@ test('an automatic fill readies its tab for layouts only when it went through', 
       $: () => ({ checked: false, append() {} }), h: () => ({}), viewOf: () => 't1', fillProblem() {}, reportShown: () => true,
     };
     context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
+  context.renderSteps ??= () => {};
   vm.runInNewContext(extractFunction('assistAfterFill') + extractFunction('autoFill'), context);
     await context.autoFill('Rates');
     return state.layoutReadyTabs.has(1);
@@ -3529,7 +3751,7 @@ test('fills take their view before waiting, stop pages log theirs, and a reopene
     assert.match(body, /logFill\(ctx, frames, results, started\)/, `${name} logs that view`);
   }
   assert.match(extractFunction('fillContext'), /view: viewOf\(tabId, page, carrier\)/);
-  assert.match(extractFunction('logFill'), /fillEvents\(frames, \{[^}]*\bview: ctx\.view\b/);
+  assert.match(extractFunction('logFill'), /fillEvents\(ctx\.listNote \? \[\.\.\.frames, \{ blockers: \[ctx\.listNote\] \}\] : frames, \{[^}]*\bview: ctx\.view\b/);
   assert.match(extractFunction('onRecorderMessage'), /auto: 'stop'/);
   assert.match(extractFunction('onRecorderMessage'), /page: stopPage, view: viewOf\(sender\.tab\.id, stopPage\)/);
   assert.match(extractFunction('init'), /usage\.restoreSession\([\s\S]{0,80}\);\s+const views = await store\.get\('views'\);\s+if \(views\?\.session && views\.session === usage\.currentSession\(\)\?\.id\) state\.viewTabs = new Map\(views\.tabs\);/);
@@ -4381,7 +4603,7 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
   for (const auto of [false, true]) for (const waitAt of ['pickListItem', 'retireAiOrigins']) for (const enabled of [false, true]) {
     const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/, layoutSteps: amwins.layoutSteps } });
     const start = SIDEPANEL.indexOf('const fillOptions =');
-    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+    vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
     t.ui['auto-advance'].checked = !enabled;
     t.context[waitAt] = async () => { await Promise.resolve(); t.ui['auto-advance'].checked = enabled; };
     const run = auto ? t.context.autoFill('/quote-A') : t.context.fillPage();
@@ -4393,7 +4615,7 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
   }
   const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
   t.context.pendingAi = () => [{ approved: false }];
   const run = t.context.fillPage();
   await t.started;
@@ -4409,7 +4631,7 @@ test('manual and automatic fills log the Auto-advance switch used after async pr
 test('Check answers before Continue reaches the kit as hold and is never logged', async () => {
   const t = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', t.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, t.context);
   t.ui['check-continue'] = { checked: true };
   t.ui.overwrite.checked = true;
   let run = t.context.fillPage();
@@ -4541,7 +4763,7 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   // The kit found another page as it began (pagekit `pageMoved`): nothing is remembered from it.
   const u = fillHarness();
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', u.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, u.context);
   u.context.chrome = { tabs: { get: async (id) => ({ id, url: 'https://carrier.test/quote-A' }) } };
   const run = u.context.fillPage();
   await u.started;
@@ -4549,9 +4771,9 @@ test('a fill whose page moved on before it began fills nothing, and only the age
   u.release([{ frameId: 0, result: { ...u.results[0].result, pageMoved: '/quote-B' } }]);
   await run;
   assert.deepEqual([u.seen.rendered, u.state.layoutReadyTabs.size, u.seen.problems.length], [0, 0, 1]);
-  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,400}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
+  assert.match(extractFunction('autoFill'), /if \(await pageMoved\(ctx\)\) \{ moved = true; notePageMoved\(ctx\); return; \}[\s\S]{0,400}expectPage: ctx\.page[\s\S]{0,800}if \(results\.some\(\(r\) => r\.result\?\.pageMoved\)\) \{ moved = true; notePageMoved\(ctx\); return; \}/);
   // autoFill too: once it is over, the page in front gets its stop card or its own fill.
-  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,300}if \(moved && fillCurrent\(ctx\)\) \{\s+if \(stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);/);
+  assert.match(extractFunction('autoFill'), /finally \{[\s\S]{0,400}if \(moved && fillCurrent\(ctx\)\) \{\s+if \(stopNoteFor\([^\n]*\) showStopPage\(\);\s+runPendingPage\(ctx\);/);
 });
 
 // Review 2026-10-22: rows a follow-up fill added had no source or group, so a worked-out answer or
@@ -4585,7 +4807,7 @@ test('Stop pressed before the kit is asked to fill means no fill at all', async 
   // The fill's run id goes to the kit, so a Stop that reaches a frame first still counts.
   const u = fillHarness({ carrier: { id: 'amwins', advance: /Continue/ } });
   const start = SIDEPANEL.indexOf('const fillOptions =');
-  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + '\nglobalThis.fillOptions = fillOptions;', u.context);
+  vm.runInContext(SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4) + `\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, u.context);
   const run = u.context.fillPage();
   await u.started;
   assert.match(u.seen.options.run, /^[0-9a-f-]{36}$/);
@@ -4613,7 +4835,7 @@ function continueHarness(switches = {}) {
   const carrier = { advance: { text: 'Continue' } };
   const said = (entry, c = carrier) => {
     const d = context.continueSaid({ page: 'Quote', tabId: 7, left: 0, waiting: 0, ...entry }, c);
-    return { phase: d.phase, title: d.title, sub: d.sub, button: d.button ?? null, label: d.label ?? null, alt: d.alt ?? null, altLabel: d.altLabel ?? null };
+    return { phase: d.phase, title: d.title, sub: d.sub, button: d.button ?? null, label: d.label ?? null, go: d.go ?? null, alt: d.alt ?? null, altLabel: d.altLabel ?? null };
   };
   return { said, ui, state, carrier };
 }
@@ -4631,14 +4853,16 @@ test('Continue\'s word asks for Looks right while Continue waits for the agent\'
   const settled = said({ settled: true });
   assert.deepEqual([settled.phase, settled.button, settled.label], ['check', 'look-right', 'Looks right, continue']);
   const advanced = said({ advanced: 'Continue', held: null });
-  assert.deepEqual([advanced.phase, advanced.title, advanced.button, advanced.alt], ['done', 'Continue clicked', null, null]);
+  // A page gone back to, or a report made again in a panel opened again, can be filled again (W43-39).
+  assert.deepEqual([advanced.phase, advanced.title, advanced.button, advanced.alt, advanced.altLabel], ['done', 'Continue clicked', null, 'fill-again', 'Fill this page again']);
   assert.match(advanced.sub, /^Clicked “Continue” for you\. Nothing is submitted or bound\.$/);
   // Switch off: Fill again and continue, as before.
   ui['check-continue'].checked = false;
   const off = said({ settled: true });
   assert.deepEqual([off.phase, off.title, off.button, off.label], ['ready-continue', 'Ready for Continue', 'fill', 'Fill again and continue']);
+  // Nothing left and the page not moved on: the main button continues, replacing nothing (W43-40).
   const nothing = said({});
-  assert.deepEqual([nothing.phase, nothing.button, nothing.alt, nothing.altLabel], ['ready-continue', null, 'fill-again', 'Fill this page again']);
+  assert.deepEqual([nothing.phase, nothing.button, nothing.label, nothing.go, nothing.alt, nothing.altLabel], ['ready-continue', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
 });
 
 // Coordinator on the v5 dock: a word that can tell the agent to "Fill this page again to continue"
@@ -5891,7 +6115,7 @@ test('a GEICO unit list drawn gets a follow-up fill with either switch on', () =
 function fillOptionsOf(state, carrier, active, { autoAdvance = false, unitsListed = false } = {}) {
   const start = SIDEPANEL.indexOf('const fillOptions =');
   const context = { state, URL, knownStep, advanceFor, $: () => ({ checked: false }), pageOf: (url) => new URL(url).pathname, pendingAi: () => [] };
-  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\nglobalThis.fillOptions = fillOptions;`, context);
+  vm.runInNewContext(`${extractFunction('editScope')}\n${SIDEPANEL.slice(start, SIDEPANEL.indexOf('\n});', start) + 4)}\n${extractFunction('unitNameFor')}\nglobalThis.fillOptions = fillOptions;`, context);
   return context.fillOptions(carrier, {}, autoAdvance, active, unitsListed);
 }
 
@@ -6809,4 +7033,100 @@ test('"<state> is right" lets the quote state stand for this intake only, and fo
   session.intakeId = 'intake-1';
   pick.code = 'VA';
   assert.equal(context.stateIssue()?.picked, 'Virginia');
+});
+
+// W43-40 (a list page with nothing left and no Continue to click yet) and W43-42 (Progressive's
+// Business Owner Info filled before it drew its questions, "No questions found on this page."):
+// the page is filled once more in a moment, once per page and step, and its report says nothing
+// until then.
+test('a page still drawing, or done with no Continue to click yet, is filled once more and said nothing of until then', () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'VehicleSummary'), carrier: { id: 'progressive' } };
+  h.state.intake = { record: {} };
+  h.state.autoPages.add('VehicleSummary');
+  const opts = { page: 'VehicleSummary', auto: 'page', intake: h.state.intake, revision: undefined };
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], advanceDue: 'none' }], opts), true);
+  assert.equal(h.scheduled.length, 1);
+  assert.equal(h.scheduled[0].ms, 1500);
+  // Due again on the same page: not tried a third time.
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], advanceDue: 'none' }], opts), false);
+  assert.equal(h.scheduled.length, 1);
+  // A fill there that found neither lets a later one try again.
+  assert.equal(h.rememberFill([{ fields: 0, filled: [] }], opts), false);
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], notDrawn: true }], opts), true);
+  // Halted or continued: never.
+  assert.equal(h.rememberFill([{ fields: 0, filled: [] }], opts), false);
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], notDrawn: true, halted: true, reason: 'x' }], opts), false);
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], advanceDue: 'none', advanced: 'Continue' }], opts), false);
+
+  // The report: nothing while it is tried again; a page still empty after that says so.
+  const state = { tab: { id: 7, url: 'BusinessOwnerInfo' } };
+  const { context } = reportHarness(state);
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], notDrawn: true }], { retrying: true });
+  assert.equal(state.reportFor, undefined);
+  context.renderReport([{ fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [], notDrawn: true }], { retrying: false });
+  assert.match(state.reportFor.notice, /No questions found on this page/);
+});
+
+test('a page with nothing to fill and nothing left offers Continue, a fill that replaces nothing', () => {
+  const dock = extractFunction('dockFor');
+  assert.match(dock, /if \(report\?\.empty\) return continueSaid\(\{ \.\.\.report, tabId: state\.tab\.id \}, carrier\);/);
+  assert.ok(dock.indexOf('report?.empty') < dock.indexOf('if (report?.fields)'), 'before the page-with-questions word');
+  assert.match(SIDEPANEL, /\$\('fill'\)\.addEventListener\('click', \(\) => fillPage\(\{ continuing: \$\('fill'\)\.dataset\.go === 'continue' \}\)\);/);
+  assert.match(extractFunction('fillPage'), /const overwrite = auto \|\| confirmed \|\| continuing \? false : \$\('overwrite'\)\.checked;/);
+  assert.match(extractFunction('renderDock'), /\$\('fill'\)\.dataset\.go = d\.go \?\? '';/);
+});
+
+// W43-40: GEICO's Looks Good was never clicked on a list that needed a VIN or name read; the log
+// says, in counts, what the list showed when it isn't read as complete.
+test('a unit list not read as complete is said in counts in the usage log', async () => {
+  const run = async (lists, unitForms = {}) => {
+    const record = { vehicles: [{ vin: '1FTBR3X80MKA12341' }, { vin: '1FTBR3X80MKA12342' }], trailers: [], drivers: [] };
+    const state = { tab: { id: 4 }, intake: { record }, intakeRevision: 1, active: { vehicles: 1, drivers: 0, trailers: 0 },
+      unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms }, doneActions: new Set() };
+    const context = { state, knownStep, runKit: async () => [{ result: { step: 'Vehicles', forms: [], lists } }], fillCurrent: () => true,
+      persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs };
+    vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
+    const ctx = { tabId: 4, intake: state.intake, revision: 1, settings: { autoAdvance: true } };
+    await context.pickUnitToAdd(geico, ctx);
+    return [ctx.unitsListed, ctx.listNote];
+  };
+  assert.deepEqual(await run([{ rows: 2, shown: [true, false] }, null]), [false, 'list: 2 rows for 2 units, 1 shown, 0 saved by a fill']);
+  assert.deepEqual(await run([{ rows: 2, shown: [true, false] }, null], { vehicles: { B: 1 } }), [true, null], 'vehicle 2 saved by a fill');
+  assert.deepEqual(await run([{ rows: 1, shown: [true, false] }, null]), [false, null], 'a unit still to add: no word');
+  // Logged with the fill's own blockers, nothing else added.
+  const logged = [];
+  const context = { usage: { log: (...e) => logged.push(...e), currentSession: () => null }, state: {}, redactor: () => (t) => t, redactionTerms: () => [], rulesVersion: null, fillEvents, knownStep };
+  vm.runInNewContext(extractFunction('logFill'), context);
+  context.logFill({ carrier: { id: 'geico' }, intake: { record: {} }, page: '/quote', view: 't1', run: 'r', settings: {}, listNote: 'list: 2 rows for 2 units, 1 shown, 0 saved by a fill' },
+    [{ fields: 0, filled: [], blockers: [], advanceDue: 'none' }], [{ frameId: 0, result: { stepKey: 'Vehicles' } }], Date.now());
+  const run_ = logged.find((e) => e.type === 'fill_run');
+  assert.deepEqual([...run_.blockerList], ['list: 2 rows for 2 units, 1 shown, 0 saved by a fill', 'continue: none to click']);
+  assert.equal(run_.blockers, 1);
+  assert.equal(run_.fields, 0);
+});
+
+// W43-42 (Progressive, 2026-10-22): a 29-second automatic follow-up fill showed no rows until it
+// ended. An automatic fill is watched as the agent's is; its rows show from the first answer in.
+test('an automatic fill lists its answers as they go in, from the first one', async () => {
+  const t = fillHarness();
+  let watched = null;
+  t.context.watchFill = (ctx) => { watched = ctx.run; return () => { watched = `${watched}:stopped`; }; };
+  const run = t.context.autoFill('/quote-A');
+  await t.started;
+  const f = t.state.fillingFor;
+  assert.deepEqual([f?.auto, f?.tabId, watched === f?.run], [true, 7, true]);
+  t.release(t.results);
+  await run;
+  assert.equal(t.state.fillingFor, null);
+  assert.match(watched, /:stopped$/);
+  // Shown once a row is in, never for a follow-up that has answered nothing yet.
+  const ui = { live: { hidden: true, dataset: {}, replaceChildren() {}, drawn: [] } };
+  const state = { filling: true, tab: { id: 7 }, fillingFor: { auto: true, tabId: 7, rows: [] } };
+  const context = { state, $: (id) => ui[id] };
+  vm.runInNewContext(extractFunction('renderLive'), context);
+  context.renderLive();
+  assert.equal(ui.live.hidden, true);
+  assert.match(extractFunction('renderLive'), /const on = !!f && state\.filling && f\.tabId === state\.tab\?\.id && \(!f\.auto \|\| !!f\.rows\?\.length\);/);
+  assert.match(extractFunction('dockFor'), /if \(state\.filling && f\?\.tabId === state\.tab\.id && \(!f\.auto \|\| !!f\.rows\?\.length\)\) \{/);
 });

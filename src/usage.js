@@ -276,8 +276,13 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     unknown: all('unknown').length,
     clicked: all('actions').filter((a) => !a.alreadyShown).map((a) => a.id),
     blockers: all('blockers').length,
-    // Why the page wasn't continued: "differs: Zip code", "button: recalculate", … (no values).
-    blockerList: all('blockers').slice(0, 12).map((b) => redact(String(b)).slice(0, 120)),
+    // Why the page wasn't continued: "differs: Zip code", "button: recalculate", … (no values); and
+    // where nothing on the page held it (W43-40), "continue: none to click" or "continue: page
+    // busy" (pagekit advanceDue), or "continue: held for your check" (Let me look before Continue).
+    blockerList: [...all('blockers'), ...frames.flatMap((f) => [
+      ...(f.advanceDue ? [`continue: ${f.advanceDue === 'busy' ? 'page busy' : 'none to click'}`] : []),
+      ...(f.held ? ['continue: held for your check'] : []),
+    ])].slice(0, 12).map((b) => redact(String(b)).slice(0, 120)),
     advanced: frames.find((f) => f.advanced)?.advanced ?? null,
     // The carrier probably changed the page (pagekit fill): known fields reworded or renamed.
     pageChanged: frames.some((f) => f.pageChanged),
