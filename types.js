@@ -203,7 +203,7 @@
  * @property {string[]} [exceptPages]  never on these pages
  * @property {string} [notWithin]  never a button inside this
  * @property {boolean} [byForm]  continued per form and button
- * @property {number} [quietMs]  how long the page is quiet first
+ * @property {number} [quietMs]  how long the page is quiet first; a fill that gave answers waits for that before it ends and answers what was drawn meanwhile
  */
 
 /**

@@ -1840,7 +1840,8 @@
   // per form and button, not once a step: `report.advanceKey` is the step, the button's words and the
   // unit form on screen ("Vehicles@next@Id_YesNoPreQuoteHaveFullVinActivity_63452"), which
   // `doneSteps` then holds. `quietMs`: on a page that isn't ExtJS, the page is quiet this long
-  // before Continue, and a question drawn meanwhile without an answer holds it.
+  // before Continue: a fill that gave answers waits for that before it ends (on `steps`) and answers
+  // what the page drew meanwhile, and a question drawn after that without an answer holds Continue.
   // `batch`: for pages whose answers never wait on a server (AmWINS): every answer the round can
   // see is given in one pass and checked on the spot, with one wait for the page per round
   // instead of one per answer. What an answer reveals or redraws is picked up next round, and
@@ -1963,6 +1964,13 @@
     // above) once taken.
     let waitShown = false;
     let lastLook = false;
+    // Where Continue waits for a quiet page (`advance.quietMs`: GEICO), a fill that gave answers waits
+    // for it before it ends and answers what the page drew meanwhile (the end of a round): `given`,
+    // the answers this fill gave; `quietAt`, how many it had given at its last such wait; `quietSig`,
+    // the questions on screen once the page was quiet then.
+    let given = 0;
+    let quietAt = 0;
+    let quietSig = null;
     // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
     let ajaxCount = 0;
     const countAjax = () => { ajaxCount++; };
@@ -2439,6 +2447,7 @@
           // An option picked in place of one never offered (`orMost`) is named in the report.
           const instead = substituted.get(step.id);
           report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}) });
+          given++;
           unoffered.delete(step.id);
           // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
           handled.set(step.id, step.standard
@@ -2515,6 +2524,20 @@
         if (!lastLook && waitShown && report.filled.length && window === window.top) {
           lastLook = true;
           await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS });
+          continue;
+        }
+        // GEICO draws some questions a moment after the answer that asks them, once that answer's
+        // wait is over (team driving and the hazmat placard after "more about the business": FL live
+        // run, 2026-10-23). Drawn during the wait before Continue, the fill never read them, the
+        // recorder took them as the fill's when it resumed, and nobody answered them until the agent
+        // did. Where Continue waits for a quiet page (`advance.quietMs`), a fill that gave answers waits
+        // for it here, before it ends, and answers what was drawn, again after each later answer. (A
+        // fill that gave none has drawn nothing: one the agent's answer drew, the recorder reports.)
+        if (advance?.quietMs && !serverBacked && window === window.top && quietAt < given && currentPage() === startPage && !stepChanged()
+          && (!advance.steps?.length || stepIs(advance.steps, stepKey()))) {
+          quietAt = given;
+          await settle({ quietMs: advance.quietMs, maxMs: 6000 });
+          quietSig = signature();
           continue;
         }
         break;
@@ -3240,9 +3263,10 @@
       && (!advance.steps?.length || (!!report.stepKey && stepIs(advance.steps, report.stepKey)))) {
       // The last answer may still be redrawing part of the page (a new payment method reloads the
       // plan list): a Continue clicked meanwhile is lost. Let it finish first. `quietMs`: a page that
-      // draws a question a moment after an answer (GEICO's USDOT record check) is waited for too.
+      // draws a question a moment after an answer (GEICO's USDOT record check) is waited for too,
+      // unless the fill's own wait at the end of its rounds left it as it is now.
       if (serverBacked) await settle({ quietMs: 500, maxMs: 6000 });
-      else if (advance.quietMs) await settle({ quietMs: advance.quietMs, maxMs: 6000 });
+      else if (advance.quietMs && quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000 });
       // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
       // the report says why. (Reproduced 2026-10-08: halted, and Continue clicked all the same.)
       if (report.halted) {
@@ -3273,7 +3297,8 @@
           report.blockers.push(`needs you: ${called(item)}`);
         }
         // A question drawn during that wait without an answer (`quietMs`) holds Continue: the fill
-        // never read it, and the follow-up fill for it decides.
+        // never read it, so it is the agent's. (What the page drew during the fill's own wait at the
+        // end of its rounds, the fill read and answered.)
         const readKeys = new Set(finalControls.map((c) => fieldKey(c)));
         const drawn = advance.quietMs ? now.filter((c) => !readKeys.has(fieldKey(c)) && !hasValue(c)) : [];
         const found = !changed.length && !moved.length && !drawn.length && !pageBusy() && currentPage() === startPage && !stepChanged() ? findAdvanceButton(advance.text, advance) : null;

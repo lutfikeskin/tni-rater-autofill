@@ -456,6 +456,9 @@
   const CUSTOMIZATION = ['GiveTotalCustomizationValue', 'GiveCostExcludingPermanentlyAttachedEquipment', 'GiveStatedAmount'];
   const MTC = ['GiveMtcRequireCoverageForMobileHomesYesNo', 'GiveMtcRequireCoverageForBusinessDocumentYesNo', 'GiveMtcHaulingCommoditiesCollect'];
   const GL = ['GiveIncomeOnlyFromTruckingOperation', 'GiveOperateFromWarehouseOrOtherAccessiblePremises', 'GiveInvolvedInAnySetupOrInstallation', 'GiveOperateOrInvolvedInAnyWayForOilGasProduction'];
+  // Drawn a moment after "more about the business" is answered (FL live run, 2026-10-23: after the
+  // fill's wait for that answer, during its wait before Next).
+  const OPERATIONS = ['TeamDrivingOrSlipSeatingYesNo', 'GiveAnyVehicleNeedHazardousMaterialPlacardYesNo'];
   function answered(stem, value, { sync = false } = {}) {
     if (stem === 'YesNoPreQuoteHaveFullVinActivity') setShown('GiveVinPreQuote', value === 'Yes');
     if (stem === 'GiveDepartmentOfTransportationNumberStatus' && slot('usdot-number')) {
@@ -476,6 +479,10 @@
   function react(el, { sync = false } = {}) {
     const stem = stemOf(el);
     if (el.classList.contains('select2-hidden-accessible')) paintSelect2(el);
+    if (stem === 'GiveSecondaryBusinessDescription') {
+      const show = () => { for (const s of OPERATIONS) setShown(s, !!el.value); };
+      if (sync) show(); else later(delay, show);
+    }
     if (stem === 'GiveDepartmentOfTransportationNumber') {
       const ok = /^\d{5,8}$/.test(el.value);
       if (sync) setShown('GiveExtendUsDotVerifyBusinessAddress', ok); else later(delay / 2, () => setShown('GiveExtendUsDotVerifyBusinessAddress', ok));
@@ -739,6 +746,7 @@
     if (street && b.GiveStreet) street.value = b.GiveStreet;
     if (zip && b.GiveZip) { zip.value = b.GiveZip; cityFor(zip, { sync: true }); }
   }
+  ENTER['business-class'] = () => { if (!byStem('GiveSecondaryBusinessDescription')?.value) for (const s of OPERATIONS) setShown(s, false); };
   ENTER['usdot-ask'] = () => { document.title = 'GEICO USDOT Number'; };
   ENTER['vehicle-form'] = prefillAddress;
   ENTER['trailer-form'] = prefillAddress;

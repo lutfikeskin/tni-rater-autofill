@@ -6051,8 +6051,8 @@ test('a Continue kept to steps, never inside the chooser, and continued per form
 });
 
 // GEICO draws a question a moment after an answer (the USDOT record's address check, after the
-// USDOT number): with `quietMs`, Continue waits for the page to be quiet, and a question drawn
-// meanwhile without an answer holds it (the follow-up fill for that question decides).
+// USDOT number): with `quietMs`, the fill waits for the page to be quiet before it ends, and a
+// question drawn meanwhile that no rule answers holds Continue (the agent's).
 test('a Continue with quietMs waits for the page, and a question drawn meanwhile without an answer holds it', async () => {
   const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
   const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
@@ -6074,6 +6074,45 @@ test('a Continue with quietMs waits for the page, and a question drawn meanwhile
   p = page(false);
   report = await p.h.kit.fill(plan, { maxRounds: 6, advance });
   assert.deepEqual(plain([p.clicks, report.advanced]), [['Next'], 'Next']);
+});
+
+// FL live run, 2026-10-23: GEICO drew team driving and the hazmat placard a moment after "more about
+// the business" was answered, during the wait before Next. The fill never read them, the recorder
+// took them as the fill's, and the agent answered them by hand.
+test('questions drawn while the fill waits for a quiet page are answered before Continue, with one wait', async () => {
+  const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
+  const plan = [
+    { id: 'more', field: 'GiveSecondaryBusinessDescription', path: 'x.more', name: 'More about the business', kind: 'text', value: 'Other For-Hire Trucking' },
+    { id: 'team', field: 'TeamDrivingOrSlipSeatingYesNo', path: 'operations.teamDriving', name: 'Team driving', kind: 'bool', value: false },
+    { id: 'placard', field: 'GiveAnyVehicleNeedHazardousMaterialPlacardYesNo', path: 'operations.hazPlacard', name: 'Hazmat placard', kind: 'bool', value: false },
+  ];
+  const run = async (draws) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Business Class & USDOT');
+    const more = geicoBox('GiveSecondaryBusinessDescription', 57011, 'Please give us a little more information about what the customer\'s business does.');
+    const section = new FakeNode('div');
+    const clicks = [];
+    const next = gdsButton('Next');
+    next.button.onclick = () => clicks.push('Next');
+    h.document.body.append(more, section, next.host);
+    const drawn = [
+      gdsRadios('TeamDrivingOrSlipSeatingYesNo', 56811, 'Do any of your customer\'s vehicles require team driving or slip seating?', [['Yes', 'Yes'], ['No', 'No']]),
+      gdsRadios('GiveAnyVehicleNeedHazardousMaterialPlacardYesNo', 36353, 'Do any of the customer\'s vehicles or loads require a hazardous material placard?', [['Yes', 'Yes'], ['No', 'No']]),
+    ];
+    // Drawn 400 ms after the answer, once its own wait is over.
+    if (draws) more.addEventListener('change', () => setTimeout(() => section.append(...drawn.map((d) => d.group)), 400));
+    const started = clock.Date.now();
+    const report = await h.kit.fill(plan, { maxRounds: 10, advance });
+    return { report, clicks, drawn, ms: clock.Date.now() - started };
+  };
+  const late = await run(true);
+  assert.deepEqual(plain(late.report.filled.map((x) => x.stepId)), ['more', 'team', 'placard']);
+  assert.deepEqual(late.drawn.map((d) => d.hosts[1].hasAttribute('checked')), [true, true], 'No for both');
+  assert.deepEqual(plain([late.clicks, late.report.advanced]), [['Next'], 'Next']);
+  // Nothing drawn: the fill's wait for the quiet page is the one before Continue, not a second.
+  const quiet = await run(false);
+  assert.deepEqual(plain([quiet.clicks, quiet.report.advanced]), [['Next'], 'Next']);
+  assert.ok(quiet.ms < 2 * advance.quietMs + 600, `${quiet.ms} ms`);
 });
 
 // FL live run 4, 2026-10-21 (W43-13): the agent clicked Next while GEICO still worked, and a fill

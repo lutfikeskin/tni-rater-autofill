@@ -681,7 +681,14 @@ const filledOn = (form, key) => fills.some((f) => f.form === form && f.report.fi
 async function scenario() {
   // Business Class & USDOT: filled; the agent changes team driving, the page redraws (new render
   // numbers, as after a validation reload), and the next fill leaves the agent's answer.
+  const firstFill = fills.length;
   await fillAll('Business Class & USDOT');
+  // Team driving and the placard are drawn during the first fill's wait before Next (FL live run,
+  // 2026-10-23). The panel fills again only for questions the recorder reports, and it takes those
+  // drawn during a fill as the fill's: the first fill answers them itself.
+  for (const key of ['ref:TeamDrivingOrSlipSeatingYesNo', 'ref:GiveAnyVehicleNeedHazardousMaterialPlacardYesNo']) {
+    if (!fills[firstFill]?.report.filled.some((x) => x.key === key)) fail(`Business Class & USDOT: the first fill didn't answer ${key}, drawn after "more about the business" (no later fill would)`);
+  }
   await agent.radio('TeamDrivingOrSlipSeatingYesNo', 'Yes');
   await page.evaluate(() => window.__geicoMock.redraw());
   await settled();
