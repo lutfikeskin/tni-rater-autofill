@@ -12,5 +12,5 @@
     "strict": false,
     "skipLibCheck": true
   },
-  "include": ["src", "sidepanel", "scripts", "test"]
+  "include": ["background.js", "src", "sidepanel", "server", "scripts", "test"]
 }

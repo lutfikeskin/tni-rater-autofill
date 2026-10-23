@@ -300,6 +300,7 @@ const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.exp
 // for under Requested coverage (coverage.gl) alone keeps the standard (TNI, 2026-10-19, after an
 // AR run: "None of the above if it's not mentioned in the notes").
 const hasGl = (r) => r.coverage?.hasGl === true;
+/** @param {CarrierRule} rule @param {boolean | string} standard @param {string} note @returns {CarrierRule} */
 const otherCoverage = (rule, standard, note) => ({ ...rule, source: (r) => (hasGl(r) ? 'fact' : 'standard'),
   value: () => standard, note: (r) => (hasGl(r) ? `You marked that the client has general liability: ${note}` : null) });
 const OTHER_GROUP = { AA: 'Other business coverages', A7: 'Other business coverages', A8: 'Other business coverages', A9: 'Other business coverages',
@@ -730,7 +731,7 @@ export const progressive = {
       { q: '2BCB', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (from VIN lookup)', ignore: true },
       // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
       // a box the lookup leaves empty goes to the agent.
-      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(([q, name, ask, field]) => ({
+      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
         q, field, ask, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
       })),
       // Asked only when the VIN lookup decodes a vehicle other than the tile picked from the intake's
@@ -753,7 +754,7 @@ export const progressive = {
       { q: '2C97', source: 'fact', ask: 'Vehicle Registrant?', name: 'Vehicle registrant', kind: 'choice', note: 'Who the vehicle is registered to isn\'t on the intake: answer it yourself.' },
       // NJ safety equipment boxes: the VIN lookup ticks what the vehicle has; left as Progressive set them.
       ...[['2C2C', 'Anti-Lock Brakes'], ['2C2D', 'Traction Control'], ['2C2E', 'Five MPH Bumpers'], ['2C45', 'Anti-Theft Device 1'], ['2C46', 'Anti-Theft Device 2'], ['2C47', 'Anti-Theft Device 3'], ['2C48', 'Anti-Theft Device 4']]
-        .map(([q, ask]) => ({ q, ask, name: `${ask} (from VIN lookup)`, ignore: true })),
+        .map(/** @returns {CarrierRule} */ ([q, ask]) => ({ q, ask, name: `${ask} (from VIN lookup)`, ignore: true })),
       { q: '2CCC', source: 'standard', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this vehicle in an accident or loss?', name: 'Comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
       // Found by its text: its data-model name is the trailer's too (kept to the trailer pages).
       // Shown once the band says more than $2,000: the intake's equipment value.
@@ -842,7 +843,7 @@ export const progressive = {
       // expense, which PA requires (its lowest, $5,000).
       { q: '1E66', source: 'standard', ask: 'Medical Expense Benefits', name: 'PA medical expense benefits (required: lowest, $5,000)', kind: 'choice', value: () => '$5,000' },
       ...[['1E69', 'Extraordinary Medical Expense'], ['1E6E', 'Income Loss'], ['1E71', 'Funeral Expense'], ['1E74', 'Accidental Death']]
-        .map(([q, what]) => ({ q, source: 'standard', ask: `${what} Benefits`, name: `PA ${what.toLowerCase()} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
+        .map(/** @returns {CarrierRule} */ ([q, what]) => ({ q, source: 'standard', ask: `${what} Benefits`, name: `PA ${what.toLowerCase()} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
       // PIP's state choice (MD): its box has no question text and its fieldref isn't recorded yet; it's
       // the list offering "$2,500 Full PIP". Other states' (TX: plain amounts) stay the agent's.
       { q: '1E7C', withOption: '$2,500 Full PIP', name: 'PIP (preserve prefilled state choice)', ignore: true },

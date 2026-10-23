@@ -11,7 +11,8 @@
 //
 // Kept to what the code reads. A key a carrier, rule or action declares that isn't here fails the
 // check: either a misspelling, ignored at run time, or a new option to add here, with what it does.
-// Not in a list written in front of `.map(...)`, which a comment can't type (docs/testing.md).
+// In a `.map(...)` callback that builds one, only with `/** @returns {CarrierRule} */` on it; never in a
+// list written in front of `.map(...)`, which a comment can't type (docs/testing.md).
 
 // ---------------------------------------------------------------------------------------------
 // The client record and the plan's units

@@ -1,6 +1,7 @@
 // Pieces of scripts/package.mjs that are checked by tests.
 
 import crypto from 'node:crypto';
+import path from 'node:path';
 
 // The scripts injected into the carrier page's own JavaScript world stay there across an extension
 // reload or update; each names its build, and one from another build is replaced, not reused.
@@ -11,6 +12,9 @@ export const STAMPED = ['src/content/field-key.js', 'src/content/pagekit.js'];
 // Files of the type check only (npm run typecheck): JSDoc comments that nothing loads at run time,
 // left out of the package.
 export const TYPES_ONLY = ['src/types.js'];
+// Whether a file of the repository (`root`) goes into the package: by its path from the root, so
+// however the path is spelled (separators, the drive letter's case), a TYPES_ONLY file never does.
+export const packaged = (root, file) => !TYPES_ONLY.includes(path.relative(root, file).split(path.sep).join('/'));
 const PLACEHOLDER = "const BUILD = 'source';";
 
 export const buildId = (texts) => crypto.createHash('sha256').update(texts.join('\0')).digest('hex').slice(0, 12);

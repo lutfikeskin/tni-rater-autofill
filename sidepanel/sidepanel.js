@@ -1980,7 +1980,7 @@ function showFinish({ auto = false } = {}) {
 // only as one of the carrier's step names (knownStep).
 function stepOfResults(carrier, results) { return knownStep(carrier, results.find((r) => r.frameId === 0)?.result?.stepKey); }
 // The events of a fill, redacted with the intake it filled from.
-/** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {Partial<FillReport>[]} frames */
+/** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {FillReport[]} frames */
 function logFill(ctx, frames, results, started) {
   if (ctx.carrier.practice) return;
   const redact = redactor(redactionTerms(ctx.intake.record));

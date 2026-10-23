@@ -13,12 +13,11 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { zipDirectory } from './lib/zip.mjs';
-import { STAMPED, TYPES_ONLY, buildId, stampBuild, devManifest, PROVENANCE_FILE, stampProvenance } from './lib/package.mjs';
+import { STAMPED, TYPES_ONLY, packaged, buildId, stampBuild, devManifest, PROVENANCE_FILE, stampProvenance } from './lib/package.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
 const INCLUDE = ['manifest.json', 'background.js', 'icons', 'lib', 'sidepanel', 'src'];
-const LEFT_OUT = new Set(TYPES_ONLY.map((f) => path.join(root, f)));
 
 // Every file the manifest names must be in the package.
 const named = [manifest.background?.service_worker, manifest.side_panel?.default_path, ...Object.values(manifest.icons ?? {})].filter(Boolean);
@@ -27,13 +26,13 @@ for (const f of named) {
   if (!INCLUDE.some((p) => f === p || f.startsWith(`${p}/`))) throw new Error(`manifest names ${f}, which isn't packaged`);
 }
 
-// The commit the packaged files come from, +dirty when they have changes git doesn't have; none
-// when git can't say (the package is still built).
+// The commit the packaged files come from, +dirty when they have changes git doesn't have (the
+// type check's own files, never packaged, aside); none when git can't say (the package is still built).
 function packagedCommit() {
   try {
     const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
     const sha = git('rev-parse', '--short=10', 'HEAD');
-    return git('status', '--porcelain', '--', ...INCLUDE) ? `${sha}+dirty` : sha;
+    return git('status', '--porcelain', '--', ...INCLUDE, ...TYPES_ONLY.map((f) => `:(exclude)${f}`)) ? `${sha}+dirty` : sha;
   } catch {
     return null;
   }
@@ -42,7 +41,7 @@ const commit = packagedCommit();
 
 const copy = (to, channel) => {
   fs.rmSync(to, { recursive: true, force: true });
-  for (const p of INCLUDE) fs.cpSync(path.join(root, p), path.join(to, p), { recursive: true, filter: (src) => !src.endsWith('.DS_Store') && !LEFT_OUT.has(src) });
+  for (const p of INCLUDE) fs.cpSync(path.join(root, p), path.join(to, p), { recursive: true, filter: (src) => !src.endsWith('.DS_Store') && packaged(root, src) });
   const build = buildId(STAMPED.map((f) => fs.readFileSync(path.join(root, f), 'utf8')));
   for (const f of STAMPED) fs.writeFileSync(path.join(to, f), stampBuild(fs.readFileSync(path.join(to, f), 'utf8'), build));
   // Which copy logs the usage events, from which commit.

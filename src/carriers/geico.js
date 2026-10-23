@@ -1119,7 +1119,7 @@ export const geico = {
       // offered once View More Payment Plans was clicked (TX: Pay In Full, 4 Payments Bi-Monthly
       // Plan, 9 Payments): the plan with the most payments offered, Pay In Full counting one, named
       // in the report (TNI, 2026-10-21, W43-32).
-      ...[1, 2].map(() => ({ field: 'GivePayPlanV2', name: 'Payment plan (TNI: 11 Payments)', kind: 'choice', source: 'standard', value: () => PAY_PLAN,
+      ...[1, 2].map(/** @returns {CarrierRule} */ () => ({ field: 'GivePayPlanV2', name: 'Payment plan (TNI: 11 Payments)', kind: 'choice', source: 'standard', value: () => PAY_PLAN,
         each: true, whenOffered: true, orMost: { count: '^(\\d+)\\s+payments?\\b', one: '^pay\\s+in\\s+full\\b', after: 'morePayPlans', name: 'the plan with the most payments GEICO offers' } })),
       { q: 'LiabilityCoverage', ask: 'Liability Coverage', control: 'select', name: 'Liability coverage', kind: 'choice', source: 'derived', value: liabilityType, note: liabilityNote },
       // The intake's limit, by its amount ($1M CSL is "$1,000,000 Combined Single Limit"). A split
@@ -1150,7 +1150,7 @@ export const geico = {
       { q: 'ExcludedWorkLoss', ask: 'Excluded Work Loss', control: 'select', name: 'Excluded work loss', ...pipKept('excluded work loss') },
       // A vehicle's coverage rows: its year, make and model name them (scope 'vehicle'). TNI's
       // comprehensive and collision are $1,000 deductibles (physicalDamageSource); the rest are the agent's.
-      ...ROW_COVERAGES.map(([suffix, name]) => (['COMP', 'COLL'].includes(suffix)
+      ...ROW_COVERAGES.map(/** @returns {CarrierRule} */ ([suffix, name]) => (['COMP', 'COLL'].includes(suffix)
         ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name, kind: 'choice', source: physicalDamageSource, value: () => DEDUCTIBLE, note: physicalDamageNote(name.toLowerCase()) }
         : ['ERS', 'HVRS'].includes(suffix)
           ? { q: suffix, selector: `[id$="_${suffix}"]`, scope: 'vehicle', name: `${name} (TNI: accepted)`, kind: 'choice', source: 'standard', value: () => ROAD_SERVICE }

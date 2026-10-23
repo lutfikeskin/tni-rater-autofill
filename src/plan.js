@@ -64,11 +64,17 @@ const withIndex = (path, active) => {
 
 // Buttons to click (carrier.actions), resolved for this client. The page script clicks each at
 // most once per quote, on its page, once its `after` fields have values.
+/**
+ * @param {CarrierConfig|null} carrier
+ * @param {ClientRecord} record
+ * @param {ActiveUnits} active
+ * @returns {ActionStep[]}
+ */
 function actionSteps(carrier, record, active) {
   const resolve = (v) => (typeof v === 'function' ? v(record, active) : v);
   return (carrier?.actions ?? [])
     .filter((a) => !a.when || a.when(record, active))
-    .map((a, i) => ({
+    .map(/** @returns {ActionStep} */ (a, i) => ({
       id: `action:${a.id}:${i}`,
       kind: 'action',
       // Vehicle helpers must be tracked per active vehicle so one VIN lookup cannot satisfy a
@@ -185,7 +191,7 @@ function fieldSteps(rules, record, carrier, active) {
     }
     return [{ rule, active }];
   });
-  return expanded.map(({ rule, active, activeVehicle = null }, id) => {
+  return expanded.map(/** @returns {FieldStep} */ ({ rule, active, activeVehicle = null }, id) => {
     const list = rule.path ? listOf(rule.path) : null;
     const path = rule.path
       ? (list ? rule.path.replace('[]', `[${active[list] ?? 0}]`) : rule.path)
