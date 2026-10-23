@@ -838,6 +838,8 @@ export const progressive = {
       // States that ask UM and UIM separately (PA 1DCA/1DDE, IN and AR 1DBF/1DD8): the same $100k
       // CSL. Uninsured first: AR offers underinsured only up to the uninsured limit (live run
       // 2026-10-19: tried while uninsured was still $1 million, it offered only that, and failed).
+      // A fill answers down the page, not in this order: every captured page (IA, IN) lists
+      // uninsured above underinsured.
       ...[{ q: '1DCA', ask: 'Uninsured Motorist Bodily Injury' }, { q: '1DDE', ask: 'Underinsured Motorist Bodily Injury' }, { q: '1DBF', field: 'LineInput.UMBILimit' }, { q: '1DD8', field: 'LineInput.UIMBILimit' }]
         .map(/** @param {CarrierRule} which @returns {CarrierRule} */ (which) => ({ ...which, source: 'standard', name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
       // Pennsylvania first-party benefits: not on the intake means not bought, except medical
