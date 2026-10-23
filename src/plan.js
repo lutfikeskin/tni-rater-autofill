@@ -1,9 +1,12 @@
+// @ts-check
 // Builds the list of "put this value in the field that looks like this" steps that gets sent into
 // the rater page. Values are resolved here so the page script only has to match and type.
 
 import { GENERIC_RULES } from './rules.js';
 import { fieldInfo } from './schema.js';
 import { get, listOf } from './util.js';
+
+/** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, FieldStep, PlanStep } from './types.js' */
 
 // Where a rule's answer comes from (Contract 2, docs/intake-and-rules.md):
 //   intake       a record path, no computed value (the default for a rule with `path` only)
@@ -40,9 +43,10 @@ export function reviewWarn(record, carrier) {
 }
 
 /**
- * @param {object} record   client record from normalizeIntake()
- * @param {object|null} carrier  entry from CARRIERS
- * @param {{drivers?: number, vehicles?: number, trailers?: number}} active  which driver/vehicle/trailer this page is about
+ * @param {ClientRecord} record   client record from normalizeIntake()
+ * @param {CarrierConfig|null} carrier  entry from CARRIERS
+ * @param {ActiveUnits} active  which driver/vehicle/trailer this page is about
+ * @returns {PlanStep[]}
  */
 export function buildPlan(record, carrier, active = {}) {
   // A carrier's `rowSections`: repeating sections its own rules answer row by row, where a generic
@@ -157,6 +161,13 @@ function shownOn(cond, record, active) {
   return c?.field ? { field: c.field, label: c.label ?? null, unit: c.unit ?? null } : null;
 }
 
+/**
+ * @param {CarrierRule[]} rules
+ * @param {ClientRecord} record
+ * @param {CarrierConfig|null} carrier
+ * @param {ActiveUnits} active
+ * @returns {FieldStep[]}
+ */
 function fieldSteps(rules, record, carrier, active) {
   const review = !supportedClass(record, carrier);
   const reviewNote = review ? reviewWarn(record, carrier) : null;

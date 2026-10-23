@@ -16,6 +16,8 @@ import { migrateStorage } from '../src/storage-version.js';
 import { collectItems, AssistError, assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated, firstNameOf } from '../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../src/ai/providers.js';
+// Not type-checked yet; what it passes the page kit and reads back is typed in src/types.js.
+/** @import { CarrierConfig, FillOptions, FillReport } from '../src/types.js' */
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
 
@@ -1722,6 +1724,7 @@ function agentEdited(page, key) {
 // `active`: the vehicle, driver and trailer the fill's plan is for (fillContext), which the agent's
 // picker may have left since. `unitsListed`: the unit list on screen holds every intake unit
 // (pickUnitToAdd), so its Looks Good may be clicked (advanceFor).
+/** @type {(carrier: CarrierConfig, extra?: FillOptions, autoAdvance?: boolean, active?: object, unitsListed?: boolean) => FillOptions} */
 const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checked, active = state.active, unitsListed = false) => ({
   replaceChoices: !!carrier.replaceChoices,
   // Where the page takes an answer back (GEICO's Quote & Coverages: keepTakenBack), the field keys
@@ -1778,6 +1781,7 @@ const fillOptions = (carrier, extra = {}, autoAdvance = $('auto-advance').checke
 // For the kit (fill `formUnit`) on a page whose form names its unit (carrier.unitNames): the
 // pattern, each intake unit's name words (first and last, 2 letters or more), the plan's unit and
 // its name as the panel shows it.
+/** @returns {FillOptions['formUnit']} */
 function unitNameFor(carrier, page, active, record) {
   const spec = (carrier?.unitNames ?? []).find((s) => s.page === page);
   if (!spec || !record) return null;
@@ -1976,6 +1980,7 @@ function showFinish({ auto = false } = {}) {
 // only as one of the carrier's step names (knownStep).
 function stepOfResults(carrier, results) { return knownStep(carrier, results.find((r) => r.frameId === 0)?.result?.stepKey); }
 // The events of a fill, redacted with the intake it filled from.
+/** @param {{ carrier: CarrierConfig, [key: string]: any }} ctx @param {Partial<FillReport>[]} frames */
 function logFill(ctx, frames, results, started) {
   if (ctx.carrier.practice) return;
   const redact = redactor(redactionTerms(ctx.intake.record));
@@ -2437,6 +2442,7 @@ function tabMaps(tabId) {
 // `scope`: the page's edit scope as the fill saw it, `editScope`, except where one address holds
 // every step and form (formScoped); `active`: the vehicle, driver and trailer its plan was for;
 // `auto`: an automatic fill's), never the tab in front now.
+/** @param {FillReport[]} frames */
 function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carrier, page = pageOf(state.tab?.url), scope = editScope(page, carrier), active = state.active,
   intake = state.intake, revision = state.intakeRevision, auto = false } = {}) {
   const maps = tabMaps(tabId);
@@ -3177,14 +3183,23 @@ function stopPageIsOurs() {
 // Filling and capturing
 
 // Carriers whose widgets live in the page's own JavaScript (ExtJS) need the MAIN world.
+/** @param {CarrierConfig | null} carrier @returns {'MAIN' | 'ISOLATED'} */
 const worldFor = (carrier) => (carrier?.world === 'MAIN' ? 'MAIN' : 'ISOLATED');
 
+/** @param {number} tabId @param {CarrierConfig} carrier */
 async function injectKit(tabId, carrier) {
   // The buttons the kit presses, clicked from the page's own world (`pressInPage`: GEICO, W43-44).
   if (carrier?.pressInPage) await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: 'MAIN', files: ['src/content/page-press.js'] });
   await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, world: worldFor(carrier), files: ['src/content/field-key.js', 'src/content/pagekit.js'] });
 }
 
+/**
+ * @param {number} tabId
+ * @param {CarrierConfig} carrier
+ * @param {Function} func  run in each frame, after the kit is injected
+ * @param {any[]} [args]
+ * @param {number[]} [frameIds]
+ */
 async function runKit(tabId, carrier, func, args = [], frameIds) {
   await injectKit(tabId, carrier);
   return chrome.scripting.executeScript({ target: { tabId, ...(frameIds ? { frameIds } : { allFrames: true }) }, world: worldFor(carrier), func, args });
@@ -3514,6 +3529,7 @@ function unitArrival(carrier, from, page) {
 // Bookkeeping after a fill: a click that opens more
 // questions (cargo "+", Add a commodity) gets a follow-up fill once the page has drawn them.
 // Returns whether that follow-up fill is coming.
+/** @param {FillReport[]} frames */
 function afterFill(frames, { tabId = state.tab?.id, carrier, page, run = null, intake = state.intake, revision = state.intakeRevision, active = state.active }) {
   const ctx = { tabId, carrier, page, run, intake, revision };
   const maps = tabMaps(tabId);

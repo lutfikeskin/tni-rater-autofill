@@ -1,3 +1,4 @@
+// @ts-check
 // AmWINS Admitted Placement, Commercial Lines Business Auto
 // (myagency.amwinsadmittedplacement.com/application/businessauto).
 //
@@ -49,6 +50,8 @@
 import { owner, ownerDobNote } from './progressive.js';
 import { isLongHaul, otherNotes } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+
+/** @import { CarrierAction, CarrierConfig, CarrierRule } from '../types.js' */
 
 const street = (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null;
 const digits = (v) => (v ? String(v).replace(/\D/g, '') || null : null);
@@ -241,6 +244,7 @@ const vehicleValueNote = (r, a) => {
   return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
 };
 
+/** @type {CarrierConfig} */
 export const amwins = {
   id: 'amwins',
   name: 'AmWINS',
@@ -446,7 +450,7 @@ export const amwins = {
     { name: 'Disclosure details (from the intake)', label: '^disclosure details$', source: 'derived', value: disclosure },
     // The declaration is the agent's to make.
     { selector: '#accept', name: 'Declaration', kind: 'bool', source: 'attestation', note: 'The declaration is yours to confirm; never ticked. Then Submit (yours too).' },
-  ].map((rule) => {
+  ].map(/** @param {any} rule @returns {CarrierRule} */ (rule) => {
     // AmWINS shows several repeater rows on one page. Give every row its own values;
     // the active-driver picker is for carriers that show one driver page at a time.
     let panel = rule.selector?.startsWith(DRIVER) ? DRIVER : rule.selector?.startsWith(VEHICLE) || rule.selector === '#marketValue' ? VEHICLE

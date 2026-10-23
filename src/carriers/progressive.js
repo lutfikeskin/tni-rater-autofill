@@ -1,3 +1,4 @@
+// @ts-check
 // Progressive commercial auto, ForAgentsOnly (clpolicy.foragentsonly.com).
 //
 // The quote flow is an ExtJS 6 + Duck Creek ("DCT") single-page app. A rule finds its question by
@@ -31,6 +32,8 @@
 
 import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul } from '../normalize.js';
+
+/** @import { CarrierAction, CarrierConfig, CarrierRule } from '../types.js' */
 
 // Values that Progressive asks the agent to attest to must come from an explicit intake field.
 // Keep these helpers conservative: an absent value is a review item, not a reason to guess.
@@ -347,6 +350,7 @@ const NTL_HOLD = ['ntlStillAdded'];
 
 // A small, reviewed label fallback for practice layouts and carrier redraws that omit a Duck
 // Creek question id. Keep optional contact fields and unvalidated GL out of this list.
+/** @type {CarrierRule[]} */
 const SAFE_LABEL_RULES = [
   { path: 'drivers[].first', label: '^(driver )?first name$', not: 'business|company|agent|producer' },
   { path: 'drivers[].last', label: '^(driver )?last name$', not: 'business|company|agent|producer' },
@@ -426,8 +430,10 @@ const vehicleTypeNote = (r, a) => {
 
 // A page's questions (its pageName): each question is looked for on its own page only, so "City" on
 // Business Owner Info and on NoHit are two questions, and a page's label rules stay on it.
+/** @param {string | string[]} page @param {CarrierRule[]} rules @returns {CarrierRule[]} */
 const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
 
+/** @type {CarrierConfig} */
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
@@ -831,7 +837,7 @@ export const progressive = {
       // CSL. Uninsured first: AR offers underinsured only up to the uninsured limit (live run
       // 2026-10-19: tried while uninsured was still $1 million, it offered only that, and failed).
       ...[['1DCA', { ask: 'Uninsured Motorist Bodily Injury' }], ['1DDE', { ask: 'Underinsured Motorist Bodily Injury' }], ['1DBF', { field: 'LineInput.UMBILimit' }], ['1DD8', { field: 'LineInput.UIMBILimit' }]]
-        .map(([q, which]) => ({ q, source: 'standard', ...which, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
+        .map(/** @param {any[]} pair @returns {CarrierRule} */ ([q, which]) => ({ q, source: 'standard', ...which, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
       // Pennsylvania first-party benefits: not on the intake means not bought, except medical
       // expense, which PA requires (its lowest, $5,000).
       { q: '1E66', source: 'standard', ask: 'Medical Expense Benefits', name: 'PA medical expense benefits (required: lowest, $5,000)', kind: 'choice', value: () => '$5,000' },
@@ -875,7 +881,7 @@ export const progressive = {
         ['21ED', 'GeneralLiabilityTruckOtherPremises', 'Warehouse or premises customers visit (standard: No)', false],
         ['21EF', 'GeneralLiabilityTruckSetup', 'Set-up or installation (standard: No)', false],
         ['21F3', 'GeneralLiabilityTruckOtherBusiness', 'Other businesses than for-hire trucking (standard: No)', false]]
-        .map(([q, ref, name, answer]) => ({ q, source: (r) => (glRequested(r) ? 'standard' : 'fact'), gl: 'section', field: `GeneralLiabilityInput.${ref}`, name, kind: 'bool', value: () => answer, note: glUnrequested })),
+        .map(/** @param {any[]} row @returns {CarrierRule} */ ([q, ref, name, answer]) => ({ q, source: (r) => (glRequested(r) ? 'standard' : 'fact'), gl: 'section', field: `GeneralLiabilityInput.${ref}`, name, kind: 'bool', value: () => answer, note: glUnrequested })),
       { q: '21F1', source: (r) => (oilGasNote(r) ? 'fact' : 'standard'), gl: 'section', field: 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas', name: 'Oil and gas fields (standard: No unless the intake mentions them)', kind: 'bool', value: () => false, note: oilGasNote },
       { q: '21D1', source: glLimitSource, gl: 'limit', field: 'LineInput.GeneralLiabilityLimit', name: 'General liability limit (the intake\'s; none: TNI\'s default $1M/$2M)', kind: 'choice', value: glLimit, note: glLimitNote, warn: glLimitWarn },
       // Any other General Liability question on Rates stays the agent's (never the AI's), instead

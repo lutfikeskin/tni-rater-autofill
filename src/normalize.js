@@ -1,3 +1,4 @@
+// @ts-check
 // Turns the raw field map from the TNI "Commercial Insurance Quote Application" PDF into a clean
 // client record, plus a list of things the agent should double-check before quoting.
 //
@@ -5,6 +6,8 @@
 // client wrote it and gets a warning instead.
 
 import { STATES, noPriorInsurance, ownerIsDriver, set, companyName } from './util.js';
+
+/** @import { IntakeResult } from './types.js' */
 
 export const ROWS = [1, 2, 3, 4];
 // The marital-status dropdowns have odd hierarchical names; positions on the page put them on
@@ -51,6 +54,7 @@ export function parseRadius(v) {
   return read;
 }
 
+/** @returns {ReturnType<typeof parseRadius>} */
 function readMiles(s) {
   const digits = s.replace(/(\d),(?=\d{3}\b)/g, '$1');
   const m = digits.match(/^\D*?(\d+(?:\.\d+)?)\s*\+?\s*(?:-?\s*(?:(?:in[\s-]+state|interstate)[\s-]+)?(miles?|mi)\b\.?\s*)?(?:(?:-|–|—|to|through|thru|and)\s*(\d+(?:\.\d+)?))?\s*(?:-\s*)?([a-z]+)?/i);
@@ -327,7 +331,7 @@ const KNOWN_FIELDS = new Set([
 /**
  * @param {Record<string, string|boolean>} raw  field name -> value, from readIntakeFields()
  * @param {{ today?: Date }} [opts]
- * @returns {{ record: object, warnings: {path: string, level: 'check'|'info', msg: string}[], stats: object } | { error: string }}
+ * @returns {IntakeResult | { error: string }}
  */
 export function normalizeIntake(raw, { today = new Date() } = {}) {
   const present = Object.keys(raw).filter((k) => KNOWN_FIELDS.has(k));

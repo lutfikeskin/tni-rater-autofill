@@ -1,4 +1,4 @@
-# Lint, unit and package checks on Ubuntu, the cheapest runner. Windows and the browser checks run
+# Lint, type, unit and package checks on Ubuntu, the cheapest runner. Windows and the browser checks run
 # locally (`npm run ci`) or by hand (windows-smoke.yml).
 name: Checks
 
@@ -26,6 +26,8 @@ jobs:
       - run: npm ci
       - name: Lint
         run: npm run lint
+      - name: Type check
+        run: npm run typecheck
       - name: Unit tests
         run: npm test
       - name: Package

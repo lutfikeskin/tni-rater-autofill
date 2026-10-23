@@ -1,3 +1,4 @@
+// @ts-check
 // Usage log: what agents do with the extension, recorded so the mappings and rules can be
 // improved from real quotes. Recorded without client data:
 //  - the intake is identified by a SHA-256 fingerprint of the PDF, never by name or file name;
@@ -10,6 +11,8 @@
 import { toMoney, toDate } from './normalize.js';
 import { noPriorInsurance } from './util.js';
 
+/** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, IntakeProfileEvent, IntakeResult, IntakeSummary, UsageEvent } from './types.js' */
+
 export const LOG_KEY = 'usageLog';
 export const MAX_EVENTS = 20000;
 
@@ -20,6 +23,12 @@ export async function sha256Hex(data) {
 }
 
 // What kind of intake this was, without anything that identifies the client.
+/**
+ * @param {Uint8Array} pdfBytes
+ * @param {Record<string, string | boolean>} raw  the PDF's form fields (readIntakeFields)
+ * @param {IntakeResult} result  normalizeIntake's, for a TNI intake
+ * @returns {Promise<IntakeSummary>}
+ */
 export async function intakeSummary(pdfBytes, raw, result) {
   const { record, warnings, stats } = result;
   return {
@@ -83,6 +92,11 @@ const monthOf = (date) => { const m = MDY.exec(toDate(date) ?? ''); return m ? `
 // matching them as written, would miss.
 const looseVin = (vin) => new RegExp(String(vin).replace(/[\s-]/g, '').split('').join('[\\s-]*'), 'gi');
 
+/**
+ * @param {ClientRecord} record
+ * @param {{ redact?: (s: string) => string, today?: Date }} [opts]
+ * @returns {IntakeProfileEvent}
+ */
 export function intakeProfile(record, { redact = (s) => s, today = new Date() } = {}) {
   const r = record ?? {};
   const a = r.applicant ?? {};
@@ -209,6 +223,7 @@ export function redactor(terms) {
 // The computer's system and Chrome's major version, for problems seen on one platform only
 // (agents run Windows; the extension is built on a Mac). From navigator.userAgentData where Chrome
 // gives it, else the user agent string.
+/** @param {Navigator & { userAgentData?: { brands?: { brand: string, version: string }[], platform?: string } }} [nav] */
 export function platformOf(nav = globalThis.navigator) {
   const ua = String(nav?.userAgent ?? '');
   const data = nav?.userAgentData;
@@ -221,6 +236,11 @@ export function platformOf(nav = globalThis.navigator) {
 
 // The agent dismissed a "needs you" item (its ×: ignore this question and continue): which
 // question, why it needed them (`mark`: needs, failed, check, …), keyed like fill events.
+/**
+ * @param {{ q?: string | null, key?: string | null, label?: string | null, name?: string, mark?: string | null }} x
+ * @param {{ redact?: (s: string) => string, keySalt?: string }} [opts]
+ * @returns {CheckDismissedEvent}
+ */
 export function checkDismissedEvent(x, { redact = (v) => v, keySalt } = {}) {
   return { type: 'check_dismissed', q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label || x.name || ''), mark: x.mark ?? null };
 }
@@ -231,6 +251,11 @@ export function checkDismissedEvent(x, { redact = (v) => v, keySalt } = {}) {
 // choices automatically, whether a key is set: never the key), and where usage goes (`central`,
 // `other`: a test server, `off`). `reason`: intake (loaded), opened (the panel on a saved
 // intake) or changed (`changed` names the setting).
+/**
+ * @param {{ serverUrl?: string, autoFollowUps?: boolean, autoAdvance?: boolean, autoPages?: boolean, aiOn?: boolean, lunaAuto?: boolean, lunaKey?: string }} [saved]
+ * @param {{ overwrite?: boolean, reason?: string, changed?: string, centralServer?: string }} [opts]
+ * @returns {AgentSettingsEvent}
+ */
 export function agentSettingsEvent(saved = {}, { overwrite = false, reason, changed, centralServer } = {}) {
   const url = saved.serverUrl;
   return {
@@ -247,6 +272,11 @@ export function agentSettingsEvent(saved = {}, { overwrite = false, reason, chan
 // redacted and bounded, and where in the extension's own files it came from (paths inside the
 // extension only, never a page's).
 const OWN_FRAME = /chrome-extension:\/\/[^/]+\/([\w./-]+:\d+:\d+)/;
+/**
+ * @param {any} err
+ * @param {{ where?: string, redact?: (s: string) => string }} [opts]
+ * @returns {ClientErrorEvent}
+ */
 export function clientErrorEvent(err, { where, redact = (x) => x } = {}) {
   const message = err?.message ?? (typeof err === 'string' ? err : String(err ?? 'unknown error'));
   const stack = String(err?.stack ?? '').split('\n').map((line) => line.match(OWN_FRAME)?.[1]).filter(Boolean).slice(0, 4);
@@ -301,12 +331,14 @@ function isComboPick(change, choices) {
  *   engine read it (more reliable than the recorder's guess); choices: field key -> Set of a combo's
  *   options as the fill engine saw them; keySalt: the session's (see fieldKeyOf); step: the
  *   step of a one-address application (AmWINS, GEICO) the recorder read, one of its names (see knownStep)
+ * @returns {FieldChangeEvent}
  */
 export function fieldChangeEvent(change, { record, filled, redact, labels, choices, keySalt, step }) {
   const ours = filled.get(change.key) ?? null;
   const typed = (change.combo && !isComboPick(change, choices))
     || LOOKS_TYPED.test(redact(change.before ?? '')) || LOOKS_TYPED.test(redact(change.after ?? ''));
   const kind = change.kind !== 'text' && typed ? 'text' : change.kind;
+  /** @type {FieldChangeEvent} */
   const base = {
     type: 'field_change',
     q: change.q ?? null,
@@ -369,10 +401,16 @@ export async function rulesHash(texts) {
 //   run: one fill invocation's id, shared by its fill_run and fill_field events (and a fill_error);
 //   rules: the rule files' fingerprint (rulesHash); settings: the panel's filling switches in force
 //   ({ autoAdvance, autoFollowUps, autoPages, overwrite }); step: a known step name (knownStep).
+/**
+ * @param {Partial<FillReport>[]} frames  the page kit's fill reports, one per frame (a stop page's: its blockers only)
+ * @param {{ carrier: string, page: string, view: string, overwrite: boolean, auto?: boolean | string, ms: number, redact: (s: string) => string, keySalt?: string, run?: string, rules?: string, settings?: object, step?: string }} ctx
+ * @returns {UsageEvent[]}
+ */
 export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step }) {
   const all = (k) => frames.flatMap((f) => f[k] ?? []);
   const isChoice = (x) => x.controlKind && x.controlKind !== 'text';
   const stepField = stepOf(step, redact);
+  /** @type {UsageEvent[]} */
   const events = [{
     type: 'fill_run', carrier, page, view, overwrite, auto, ms,
     ...(run ? { run } : {}), ...(rules ? { rules } : {}), ...(settings ? { settings } : {}), ...stepField,
@@ -396,6 +434,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
     reworded: all('reworded').length,
     renamed: all('renamed').slice(0, 12).map((x) => ({ name: redact(x.name), field: x.field ?? null, now: x.now ?? null })),
   }];
+  /** @type {(result: FillFieldEvent['result']) => (x: FillItem) => FillFieldEvent} */
   const item = (result) => (x) => ({
     type: 'fill_field', carrier, page, view, ...(run ? { run } : {}), ...stepField, result, q: x.q ?? null, key: fieldKeyOf(x.key, redact, keySalt), label: redact(x.label), path: x.path ?? null, controlKind: x.controlKind ?? null,
     how: x.how ?? undefined,

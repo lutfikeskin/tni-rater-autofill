@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance } from '../scripts/lib/package.mjs';
+import { STAMPED, TYPES_ONLY, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance } from '../scripts/lib/package.mjs';
 
 const read = (f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 
@@ -39,4 +39,25 @@ test('the unpacked copy has a fixed extension ID; the store manifest stays witho
   assert.equal(dev.key, DEV_KEY);
   assert.equal(manifest.key, undefined, 'the original is left as it is');
   assert.equal(dev.version, manifest.version);
+});
+
+// The type check's types (src/types.js) are left out of the package: code put there, or a module
+// importing it as code rather than in a JSDoc type, would be missing from the extension.
+test('the type check\'s files hold comments only, and no module imports them', () => {
+  const commentsOnly = (text) => {
+    for (let i = 0; i < text.length;) {
+      if (/\s/.test(text[i])) i++;
+      else if (text.startsWith('//', i)) i = text.includes('\n', i) ? text.indexOf('\n', i) : text.length;
+      else if (text.startsWith('/*', i) && text.includes('*/', i + 2)) i = text.indexOf('*/', i + 2) + 2;
+      else return false;
+    }
+    return true;
+  };
+  for (const f of TYPES_ONLY) assert.ok(commentsOnly(read(f)), `${f} holds code`);
+  assert.ok(!commentsOnly('/** @typedef {object} T */\nexport {};'));
+  const modules = (dir) => fs.readdirSync(new URL(`../${dir}/`, import.meta.url), { recursive: true })
+    .filter((f) => /\.m?js$/.test(f)).map((f) => `${dir}/${f.replaceAll('\\', '/')}`);
+  for (const f of ['background.js', ...modules('src'), ...modules('sidepanel')]) {
+    assert.doesNotMatch(read(f), /^\s*import\s[^;]*'[^']*types\.js'|\bawait import\(\s*'[^']*types\.js'/m, `${f} imports the types as code`);
+  }
 });

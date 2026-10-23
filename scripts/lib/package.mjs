@@ -7,6 +7,10 @@ import crypto from 'node:crypto';
 // The build is the scripts' content hash, stamped into the packaged copies ('source' when the
 // repository's files run as they are: tests, the replay pages).
 export const STAMPED = ['src/content/field-key.js', 'src/content/pagekit.js'];
+
+// Files of the type check only (npm run typecheck): JSDoc comments that nothing loads at run time,
+// left out of the package.
+export const TYPES_ONLY = ['src/types.js'];
 const PLACEHOLDER = "const BUILD = 'source';";
 
 export const buildId = (texts) => crypto.createHash('sha256').update(texts.join('\0')).digest('hex').slice(0, 12);

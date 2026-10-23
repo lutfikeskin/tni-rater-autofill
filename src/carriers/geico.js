@@ -1,3 +1,4 @@
+// @ts-check
 // GEICO commercial auto (sales.geico.com/quote), opened from the agents' gateway
 // (gateway2.geico.com), where only the Start New Quote window (ZIP) and the USDOT check are filled.
 //
@@ -51,6 +52,8 @@ import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
+/** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../types.js' */
+
 const STEPS = ['Business Class & USDOT', 'Business & Owner Info', 'Vehicles', 'Drivers & Incidents',
   'Additional Business Info', 'Quote & Coverages', 'Final Quote Details', 'MVR & CLUE', 'Payment Information'];
 const [BUSINESS_CLASS, BUSINESS_OWNER, VEHICLES, DRIVERS, MORE_BUSINESS, COVERAGES] = STEPS;
@@ -70,15 +73,20 @@ const STOP_AT_QUOTE = 'TNI stops GEICO quotes at Quote & Coverages: go back ther
 // The forms of one step, by a question only that form asks.
 // - The vehicle form's first question, on all four FL vehicle forms and the NE one (absent on the
 //   trailer form): its id's render number is also the form's identity.
+/** @type {ShownCondition} */
 const VEHICLE_FORM = { field: 'YesNoPreQuoteHaveFullVinActivity', unit: 'vehicles' };
 // - The trailer form's type list ("Which of the following best describes the customer's trailer?",
 //   NE); the vehicle form's reads "…vehicle?". On 2026-10 NE the truck's year went into it.
+/** @type {ShownCondition} */
 const TRAILER_FORM = { field: 'GiveOtherVehicleType', label: '\\btrailer\\b', unit: 'trailers' };
 // - Add Driver's relationship question; the form GEICO adds for an owner who drives doesn't ask it.
+/** @type {ShownCondition} */
 const ADD_DRIVER_FORM = { field: 'GiveDriverRelationshipToBusiness', unit: 'drivers' };
+/** @type {ShownCondition} */
 const OWNER_DRIVER_FORM = { field: 'GiveDriverRelationshipToBusiness' };
 // - The owner's identity again, with their Social Security number (FL capture 007, after Business
 //   & Owner Info's Next, under the title of Vehicles).
+/** @type {ShownCondition} */
 const OWNER_CHECK = { field: 'GiveSocialSecurityNumber' };
 
 // The lists of the units on the quote (NE Vehicles2, Drivers & Incidents2): one row per unit, a
@@ -91,9 +99,16 @@ const DRIVER_LIST = '#summaryPage-AddDriver';
 const CHOOSER_BUTTONS = '[id^="Id_VehicleOrTrailerCollectAdaptiveActionSet_Container_"]';
 
 // A step's rules (the whole step, or one form of it with `form`).
+/**
+ * @param {string | string[]} steps
+ * @param {CarrierRule} form
+ * @param {CarrierRule[]} rules
+ * @returns {CarrierRule[]}
+ */
 const on = (steps, form, rules) => rules.map((rule) => ({ steps: [].concat(steps), ...form, ...rule }));
 // Facts the intake doesn't supply are the agent's (plan.js: `source: 'fact'` is never filled); with
 // no note the panel says "<name> isn't on the intake: answer it yourself."
+/** @param {string} field @param {string} name @param {CarrierRule} [more] @returns {CarrierRule} */
 const fact = (field, name, more = {}) => ({ field, name, source: 'fact', ...more });
 const quote = (v, n = 60) => `"${String(v).trim().slice(0, n)}"`;
 
@@ -331,6 +346,7 @@ const unitTypeNote = (r) => {
 };
 
 // Shown on Business & Owner Info, and again with the owner's Social Security number (OWNER_CHECK).
+/** @type {CarrierRule[]} */
 const OWNER_IDENTITY = [
   { field: 'GiveBusinessName', ask: 'What is the customer\'s business name?', path: 'applicant.name', name: 'Business name (company, else the owner)', source: 'derived', value: businessName },
   { field: 'GiveFirstName', ask: 'Business Owner First Name', name: 'Owner first name', source: 'derived', value: ownerFirst, note: (r) => (ownerFirst(r)?.length > MAX_NAME ? nameNote(ownerFirst(r), 'owner\'s first name') : null) },
@@ -459,6 +475,7 @@ const personalUseNote = (r) => (r.operations.personalUse === true && (r.vehicles
 // has it (the box offers GEICO's own suggestions, never recorded open) and is the agent's only
 // when empty; the ZIP and city are the intake's garaging ones, a different ZIP on the page kept
 // and flagged.
+/** @returns {CarrierRule[]} */
 const parking = (unit) => [
   { field: 'GiveStreet', q: `GiveStreet.${unit}`, ask: `Where does the customer usually park their ${unit} when not in use?`, name: `Where the ${unit} is parked: street (as GEICO has it)`, ignore: true,
     emptyNote: (r) => `GEICO left where the ${unit} is parked empty: enter it yourself${r.garaging?.street ? ` (the intake's garaging street is ${quote(r.garaging.street)})` : ''}.` },
@@ -706,6 +723,7 @@ const UNIT = { vehicles: ['vehicle', 'Vehicle'], trailers: ['trailer', 'Trailer'
 // added twice. The "+" counts once a question shows (the chooser, Add Driver's form), the chooser's
 // Next once the unit's form does. A "+" clicked for a unit that got no form, and isn't on the list
 // (the chooser cancelled), is the agent's: the list says so (`unfinished`).
+/** @returns {CarrierAction} */
 const addUnit = (list, listSelector, how) => ({
   id: `add${UNIT[list][1]}`, steps: [list === 'drivers' ? DRIVERS : VEHICLES], token: 'addIcon', within: `${listSelector} > li.add-state`,
   loads: true, verify: 'revealed', scope: UNIT[list][0], label: list === 'drivers' ? 'Add Driver' : 'Add Vehicle or Trailer',
@@ -716,12 +734,14 @@ const addUnit = (list, listSelector, how) => ({
 // The chooser's Next, once its answer is in, whoever clicked "+" (W43-14, TNI 2026-10-21: after the
 // agent's own "+", the fill answered the chooser and held its Next for a "+" of its own that never
 // came). An answer the agent changed there is theirs, and stays (the fill skips their edits).
+/** @returns {CarrierAction} */
 const chooseUnit = (list) => ({
   id: `choose${UNIT[list][1]}`, steps: [VEHICLES], text: '^next$', within: CHOOSER_BUTTONS, moveOn: true,
   loads: true, verify: 'revealed', after: ['geico.qGiveVehicleOrTrailer'],
   scope: UNIT[list][0], when: adds(list),
 });
 
+/** @type {CarrierConfig} */
 export const geico = {
   id: 'geico',
   name: 'GEICO',
@@ -896,7 +916,7 @@ export const geico = {
     ...[['input[name="header-search-type"]', 'Gateway: policy or quote search'], ['#search-input-id', 'Gateway: search box'],
       [PRODUCT, 'Gateway: another product (never ticked)', true],
       ['[id^="alerts-pref"]', 'Gateway: alerts settings']]
-      .map(([selector, name, every = false]) => ({ notPages: GATEWAY_OFF, selector, name, q: 'gatewayDashboard', ignore: true, every })),
+      .map(/** @param {any[]} row @returns {CarrierRule} */ ([selector, name, every = false]) => ({ notPages: GATEWAY_OFF, selector, name, q: 'gatewayDashboard', ignore: true, every })),
     // --- Business Class & USDOT ----------------------------------------------------------------
     ...on(BUSINESS_CLASS, {}, [
       { field: 'GiveInitialZipCode', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'ZIP code (the garaging ZIP)', source: 'derived', value: zip5, note: zipNote },
@@ -1188,5 +1208,5 @@ export const geico = {
     ]),
   // A rule without a record path is named by its data-model name (its path geico.q<name>, which
   // logs and reviews read), with a suffix where one name is two questions.
-  ].map((rule) => (rule.path || rule.q || !rule.field ? rule : { ...rule, q: rule.field })),
+  ].map(/** @param {any} rule @returns {CarrierRule} */ (rule) => (rule.path || rule.q || !rule.field ? rule : { ...rule, q: rule.field })),
 };

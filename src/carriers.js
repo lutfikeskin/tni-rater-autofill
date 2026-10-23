@@ -1,3 +1,4 @@
+// @ts-check
 // Per-carrier settings. `rules` are exact mappings for that carrier's pages and always win over
 // the generic label rules in rules.js. A rule targets a field by one of:
 //   q        the carrier's own question id (Duck Creek sites like Progressive)
@@ -41,6 +42,9 @@ import { progressive } from './carriers/progressive.js';
 import { amwins } from './carriers/amwins.js';
 import { geico } from './carriers/geico.js';
 
+/** @import { CarrierConfig } from './types.js' */
+
+/** @type {CarrierConfig[]} */
 export const CARRIERS = [
   progressive,
   geico,
