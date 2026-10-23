@@ -7,6 +7,7 @@
   "description": "Chrome extension that fills Progressive and GEICO rater pages from a TNI quote application PDF",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
+    "prepare": "git config core.hooksPath .githooks",
     "test": "node --test \"test/*.test.mjs\"",
     "lint": "oxlint",
     "typecheck": "tsc -p .",
