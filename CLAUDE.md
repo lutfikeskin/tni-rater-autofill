@@ -25,6 +25,7 @@ Start with the relevant source. Read the matching document when the task affects
 | Intake parsing, mappings, defaults, applicability, or state/vehicle/coverage exceptions | [Intake and rules](docs/intake-and-rules.md) |
 | Live controls, page changes, helper actions, navigation, or fill verification | [Browser filling](docs/browser-filling.md) |
 | Learning from new fields, corrections, exceptions, layouts, or usage events | [Learning](docs/learning.md) |
+| The developer recording of a quote: its trace, the panel's store, `npm run recording` | [Developer recording](docs/developer-recording.md) |
 | The weekly review of agents' runs, or implementing the fixes it approved | Skills [weekly-review](.claude/skills/weekly-review/SKILL.md), then [apply-review-fixes](.claude/skills/apply-review-fixes/SKILL.md) |
 | Reviewing a pull request and reporting its findings, alone or with a Cursor `/thermos` second opinion | Skill [pr-review](.bb/skills/pr-review/SKILL.md) |
 | Fixing a pull request's review findings, or getting it ready to merge | Skill [ship-pr](.claude/skills/ship-pr/SKILL.md) |

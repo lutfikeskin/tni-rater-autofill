@@ -7211,3 +7211,119 @@ test('a profile still waiting when another intake is loaded goes to its own quot
   ]);
   assert.equal(timers.size, 0, 'no timer outlives the switch');
 });
+
+// Developer recording (docs/developer-recording.md): the trace goes into the recorded tab only, with
+// the recorder whose readers it uses, and not once the recording is stopping.
+test('the developer recording\'s trace is injected with the recorder, into the recorded tab only', async () => {
+  const injected = [];
+  const state = { intake: {}, tab: { id: 4, carrier: { id: 'geico' } }, filling: false, recording: null };
+  const context = { state, inExtension: true, tellRecorder: async () => {},
+    chrome: { scripting: { executeScript: async ({ target, files }) => { injected.push([target.tabId, files.map((f) => f.split('/').pop())]); } } } };
+  vm.runInNewContext(extractFunction('ensureRecorder'), context);
+  await context.ensureRecorder();
+  state.recording = { tabId: 4, stopping: false };
+  await context.ensureRecorder();
+  state.tab = { id: 5, carrier: { id: 'geico' } };
+  await context.ensureRecorder();
+  state.tab = { id: 4, carrier: { id: 'geico' } };
+  state.recording.stopping = true;
+  await context.ensureRecorder();
+  assert.deepEqual(JSON.parse(JSON.stringify(injected)), [
+    [4, ['field-key.js', 'recorder.js']],
+    [4, ['field-key.js', 'recorder.js', 'trace.js']],
+    [5, ['field-key.js', 'recorder.js']],
+    [4, ['field-key.js', 'recorder.js']],
+  ]);
+});
+
+test('the panel keeps only the recorded tab\'s trace events, redacted with their frame and a fill by their time, and says it took them', () => {
+  const kept = [];
+  const state = { filling: false, recording: null };
+  const steps = [];
+  const context = { state, knownStep: (carrier, s) => { steps.push([carrier.id, s]); return null; },
+    stampEvents: (events, opts) => events.map((e) => ({ ...e, frame: opts.frame, filling: opts.fillingAt(e.t), step: opts.stepName(e.step ?? ''), label: opts.redact(e.label) })) };
+  vm.runInNewContext(extractFunction('onTraceMessage'), context);
+  const replies = [];
+  const send = (msg, tabId, frameId = 0) => context.onTraceMessage(msg, { tab: { id: tabId }, frameId }, (r) => replies.push(r));
+  send({ ra: 'trace', events: [{ kind: 'click', t: 1, label: 'x' }] }, 4);
+  // A fill ran from 3 to 5: the panel gets the batch afterwards, and still dates each event.
+  state.recording = { tabId: 4, carrier: { id: 'progressive' }, fills: [{ start: 3, end: 5 }], redact: (s) => s.replace('Sam', '[client]'), store: { add: (events) => kept.push(...events) } };
+  send({ ra: 'trace', events: [{ kind: 'click', t: 2, label: 'Sam' }] }, 5);
+  send({ ra: 'usage', events: [{ kind: 'click', t: 3, label: 'Sam' }] }, 4);
+  send({ ra: 'trace', events: [{ kind: 'click', t: 4, label: 'Sam', step: 'About Sam' }, { kind: 'click', t: 6, label: 'x' }], dropped: 3 }, 4, 2);
+  assert.deepEqual(kept.map((e) => [e.kind, e.t < 10 ? e.t : 'now', e.frame, e.filling ?? null, e.label ?? null, e.dropped ?? null]), [
+    ['click', 4, 2, true, '[client]', null], ['click', 6, 2, false, 'x', null], ['gap', 'now', 2, null, null, 3],
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(steps.filter(([, s]) => s))), [['progressive', 'About Sam']], 'steps go through the carrier\'s step names');
+  assert.deepEqual(JSON.parse(JSON.stringify(replies)), [{ ok: true }], 'only the batch it kept is answered');
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.match(html, /<div id="devrec" class="devrec" hidden>/, 'hidden until the panel sees a build that may record');
+  assert.match(SIDEPANEL, /\$\('devrec'\)\.hidden = !inExtension \|\| !canRecord\(usage\.build\(\)\.channel\);/);
+});
+
+// Review of PR #166: the developer recording ends with its client and its panel, and starts clean.
+test('a panel that pops out or docks stops and saves its recording first', async () => {
+  const done = [];
+  const state = { closing: false, fillingFor: null, filling: false, recording: { tabId: 4 } };
+  const context = { state, stopFill: async () => {}, stopRecording: async (why) => { done.push(['stop', why]); state.recording = null; },
+    handOver: async () => done.push(['handOver']), closeSelf: () => done.push(['close']), Date, setTimeout };
+  vm.runInNewContext(extractFunction('giveWay'), context);
+  await context.giveWay('window');
+  assert.deepEqual(done.map(([what]) => what), ['stop', 'handOver', 'close']);
+  assert.match(done[0][1], /recording stopped/);
+});
+
+test('a new recording first stops a trace a closed panel left in the tab', async () => {
+  const done = [];
+  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: false };
+  const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
+    usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => { done.push('store'); return {}; } },
+    setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => { done.push('inject'); },
+    chrome: { tabs: { sendMessage: async (tabId, msg) => { done.push(`${msg.ra}:${msg.cmd}:${tabId}`); } } } };
+  vm.runInNewContext(extractFunction('startRecording'), context);
+  await context.startRecording();
+  assert.deepEqual(done, ['trace:stop:4', 'store', 'inject']);
+});
+
+test('a recording kept in memory only that could not be saved is said to be lost, not kept', async () => {
+  const said = [];
+  const store = { durable: false, manifest: { id: 'progressive-x' }, zip: async () => { throw new Error('no space'); } };
+  const context = { devrecSaid: (s) => said.push(s), renderUnfinished: async () => {} };
+  vm.runInNewContext(extractFunction('saveRecording'), context);
+  await context.saveRecording(store);
+  assert.doesNotMatch(said[0], /stays in the browser/);
+  assert.match(said[0], /lost/);
+});
+
+test('loading another client\'s intake stops and saves the recording, redacted with the first client\'s', async () => {
+  const { redactor } = await import('../src/usage.js');
+  const { redactionTerms } = await import('../src/plan.js');
+  const records = { a: { garaging: { state: 'TX' }, drivers: [], vehicles: [], trailers: [] }, b: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] } };
+  let loading = 'a', session = null, n = 0;
+  const stopped = [];
+  const state = { intake: null, tabSessions: new Map(), layoutPending: null, aiCache: new Map(), recording: null };
+  const context = { state, doneRestored: new Set(), DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
+    aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
+    aiPendingStore: { get: async () => [], set: async () => {} },
+    usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: `s${++n}`, intakeId }), log() {} },
+    $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
+    normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+    store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
+    save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
+    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile: () => null, redactor, redactionTerms, logProfile() {}, profileLater() {},
+    stopRecording: async (why) => { stopped.push([why, state.intake?.record.garaging.state]); state.recording = null; },
+    setTimeout: () => 1, clearTimeout() {} };
+  vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks', 'persistAiPending', 'restoreAiPending',
+    'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid', 'firstView'].map(extractFunction).join('\n'), context);
+  const pdf = { name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) };
+  await context.loadFile(pdf);
+  state.recording = { tabId: 4 };
+  // The same PDF again keeps the recording: the same client.
+  await context.loadFile(pdf);
+  assert.deepEqual(stopped, []);
+  loading = 'b';
+  await context.loadFile(pdf);
+  assert.equal(stopped.length, 1);
+  assert.match(stopped[0][0], /recording stopped/);
+  assert.equal(stopped[0][1], 'TX', 'stopped while the first client was still the intake');
+});

@@ -269,6 +269,18 @@
             <button type="button" id="clear-usage" class="ghost small-btn danger">Clear log</button>
           </div>
           <p id="capture-status" class="fine" role="status" hidden></p>
+          <!-- Developer recording (docs/developer-recording.md): unpacked builds only. -->
+          <div id="devrec" class="devrec" hidden>
+            <p class="eyebrow">Developer recording</p>
+            <p class="fine">Records this quote's clicks, keys, scrolling and page changes with their times, as one zip in Downloads. Nothing is uploaded. It records only the tab it starts on: start it on the quoting page itself. It uses the Scenario above; Note adds the Note box to the timeline.</p>
+            <div class="actions wrap">
+              <button type="button" id="devrec-start" class="ghost small-btn">Record this quote</button>
+              <button type="button" id="devrec-note" class="ghost small-btn" hidden>Note</button>
+              <button type="button" id="devrec-stop" class="ghost small-btn" hidden>Stop and save</button>
+              <button type="button" id="devrec-recover" class="ghost small-btn" hidden>Save the unfinished recording</button>
+            </div>
+            <p id="devrec-status" class="fine" role="status" hidden></p>
+          </div>
         </div>
       </details>
       <p id="version" class="eyebrow"></p>

@@ -685,3 +685,67 @@
  * The events src/usage.js builds. The panel logs others of its own (sidepanel.js).
  * @typedef {IntakeProfileEvent | CheckDismissedEvent | AgentSettingsEvent | ClientErrorEvent | FieldChangeEvent | FillRunEvent | FillFieldEvent | RecalcLayoutEvent} UsageEvent
  */
+
+// ---------------------------------------------------------------------------------------------
+// The developer recording (docs/developer-recording.md)
+
+/**
+ * One event of a recording's timeline: what src/content/trace.js saw in a frame, as the panel keeps
+ * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
+ * @typedef {object} TraceEvent
+ * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the panel's: fill, note, gap
+ * @property {boolean} [on]  a fill starting (true) or ending (fill)
+ * @property {number} t  wall-clock ms when it happened, on the page's own clock (a fraction kept)
+ * @property {number} [seq]  the frame's counter: the order of two events in one millisecond
+ * @property {number} [frame]  the frame it came from (0: the top frame)
+ * @property {true} [filling]  a fill was under way when it happened (by its own time, from the fills the panel notes)
+ * @property {boolean} [trusted]  the browser's isTrusted: a person's action, not a script's
+ * @property {number | null} [gestureMs]  ms since the last trusted gesture on that control (input, change)
+ * @property {{ key: string | null, q: string | null, kind: string | null, label: string, rect: object | null }} [field]  the question, as the recorder names it (label redacted)
+ * @property {{ text: string, rect: object | null }} [button]  the button, by its words (redacted)
+ * @property {string | null} [value]  a choice's words after the change (redacted)
+ * @property {number} [len]  a text box's length after the change; its text is never kept
+ * @property {string} [key]  a named key (Enter, Tab, Space, arrows…); a typed character never
+ * @property {boolean} [printable]  a key that types a character, which isn't kept
+ * @property {string} [page]  the page as the usage log names it (page, step)
+ * @property {string | null} [step]  the step on screen (null: none, or unreadable mid-redraw)
+ * @property {string} [title]  the document's title (redacted)
+ * @property {string} [text]  a note's words (redacted)
+ * @property {number} [dropped]  events the trace couldn't keep while no panel took them (gap)
+ * @property {number | null} [x]  pointer, click: where, in the viewport; scroll of the window: its position
+ * @property {number | null} [y]  as x
+ * @property {string[]} [mods]  key: the modifiers held (ctrl, alt, meta, shift)
+ * @property {{ tag: string | null }} [other]  what a pointer, click or key was on when it was no question or button
+ * @property {string} [path]  page: the URL's path, its ids as `:id` (as `page`)
+ * @property {boolean | number | null} [top]  page: from the top frame (true); scroll of an element: its offset
+ * @property {string | null} [from]  page, step: the one before
+ * @property {{ w: number | null, h: number | null, dpr: number | null }} [viewport]  page: the viewport (resize: as w, h, dpr)
+ * @property {{ x: number | null, y: number | null }} [scroll]  page: the window's scroll
+ * @property {number | null} [height]  scroll of the window: the page's height
+ * @property {{ tag: string, id: string | null }} [el]  scroll of an element: which
+ * @property {number | null} [left]  scroll of an element: its offset (with top)
+ * @property {number | null} [w]  resize: the viewport's width
+ * @property {number | null} [h]  resize: the viewport's height
+ * @property {number | null} [dpr]  resize: devicePixelRatio
+ * @property {string} [state]  visible: the document's visibilityState
+ * @property {string} [why]  visible: pageshow or pagehide, when it came from one
+ * @property {number} [ms]  fill, in the report only: how long the fill ran (on its end)
+ */
+
+/**
+ * A recording's recording.json.
+ * @typedef {object} RecordingManifest
+ * @property {'tni-rater-autofill'} tool
+ * @property {'recording'} kind
+ * @property {number} version  the format's version
+ * @property {string} id  <carrier>-<scenario>-<yyyymmdd-hhmm>-<4 hex>
+ * @property {string} carrier
+ * @property {string} scenario  as typed in the panel's Scenario box (redacted)
+ * @property {string} started  ISO time
+ * @property {string | null} ended  ISO time; null while recording, or for one cut short
+ * @property {{ version: string, channel: string, commit: string | null }} build
+ * @property {string | null} intake  the intake's fingerprint (no client data)
+ * @property {boolean} test  marked as a test run, not a client
+ * @property {number} events  how many events were kept
+ * @property {number} dropped  how many the trace couldn't keep
+ */

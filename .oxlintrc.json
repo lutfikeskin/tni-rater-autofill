@@ -2,7 +2,7 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "categories": { "correctness": "error" },
   "env": { "browser": true, "node": true, "webextensions": true, "es2024": true },
-  "ignorePatterns": ["lib/pdf.min.mjs", "lib/pdf.worker.min.mjs"],
+  "ignorePatterns": ["lib/pdf.min.mjs", "lib/pdf.worker.min.mjs", "lib/fflate.mjs"],
   "rules": {
     "no-unused-vars": ["error", { "args": "none", "caughtErrors": "none", "ignoreRestSiblings": true }],
     "no-unused-expressions": ["error", { "allowShortCircuit": true, "allowTernary": true }],
