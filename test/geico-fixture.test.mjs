@@ -36,7 +36,10 @@ test('the GEICO fixture runs no script but mock.js and loads nothing else', () =
   assert.deepEqual(tags('(?:link|iframe|img|object|embed|base|meta http-equiv)'), []);
   assert.deepEqual([...html.matchAll(/\ssrc="([^"]*)"/g)].map((m) => m[1]), ['mock.js']);
   assert.doesNotMatch(html, /\son[a-z]+="/i, 'no inline event handler');
-  assert.doesNotMatch(mock, /\bfetch\(|XMLHttpRequest|WebSocket|sendBeacon|location\.(?:href|assign|replace)\s*=|window\.open\(/, 'mock.js reaches nothing outside the page');
+  // Its one request (?beat: GEICO's request every 2.0 s) is to its own address, where the runner
+  // answers it.
+  assert.equal([...mock.matchAll(/\bfetch\(([^)]*)\)/g)].map((m) => m[1]).join(), '\'/api/session/check\'', 'mock.js fetches only its beat, from its own address');
+  assert.doesNotMatch(mock.replace("fetch('/api/session/check')", ''), /\bfetch\(|XMLHttpRequest|WebSocket|sendBeacon|location\.(?:href|assign|replace)\s*=|window\.open\(/, 'mock.js reaches nothing outside the page');
 });
 
 test('text inputs carry no value but the synthetic prefills', () => {

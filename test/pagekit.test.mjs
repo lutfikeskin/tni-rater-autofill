@@ -4977,6 +4977,51 @@ test('GEICO\'s Recalculate waits until the page\'s own requests stop finishing, 
   assert.ok(stopped.ended < 6000, `ended ${stopped.ended} ms in`);
 });
 
+// 2026-10-23 (every Recalculate trace, and the live recording): GEICO asks its server every 2.0 s,
+// about 0.3 s each, the whole time a quote is open. Recalculate's 2 s without a request finishing
+// came only when a beat ran a few ms late: clicked 18.3 s after the last answer. A request on that
+// steady beat isn't waited for; the page's other requests are, and so is one between two beats at
+// the beat's own address (a save).
+test('GEICO\'s Recalculate doesn\'t wait out the page\'s steady 2 s beat, only its other requests (2026-10-23)', async () => {
+  const run = async ({ saves = [] } = {}) => {
+    const p = recalcPage();
+    // The quote has been open 10 s when the fill starts (performance time 10000).
+    const t0 = clock.Date.now() - 10000;
+    const now = () => clock.Date.now() - t0;
+    p.h.context.performance = { now };
+    const entry = (path, start, end) => ({ initiatorType: 'xmlhttprequest', name: `https://synthetic.example${path}?t=${Math.round(start)}`, startTime: start, responseEnd: end });
+    const BEAT = '/api/session/check';
+    const past = [];
+    let next = 1000;
+    for (; next + 300 <= now(); next += 2003) past.push(entry(BEAT, next, next + 300));
+    let observer = null;
+    p.h.context.PerformanceObserver = class { constructor(fn) { this.fn = fn; observer = this; } observe() { this.fn({ getEntries: () => past }); } };
+    let done = false;
+    const beat = (s) => setTimeout(() => { if (done || p.recalcs) return; observer?.fn({ getEntries: () => [entry(BEAT, s, s + 300)] }); beat(s + 2003); }, s + 300 - now());
+    beat(next);
+    const started = clock.Date.now();
+    let lastSave = null;
+    for (const { path, at } of saves) {
+      setTimeout(() => { observer?.fn({ getEntries: () => [entry(path, now() - 200, now())] }); lastSave = clock.Date.now(); }, at);
+    }
+    const report = await p.h.kit.fill(p.plan, { maxRounds: 12 });
+    done = true;
+    return { recalcs: p.recalcs, sinceStart: p.clickedAt - started, sinceSave: lastSave == null ? null : p.clickedAt - lastSave, trace: plain(report.recalcTrace) };
+  };
+  // The beat alone: clicked once the page is quiet (2 s), not after 18 s or 30 s.
+  const beat = await run();
+  assert.equal(beat.recalcs, 1);
+  assert.ok(beat.sinceStart >= 2000 && beat.sinceStart < 5000, `clicked ${beat.sinceStart} ms in`);
+  // The trace marks the beat's requests, from the fourth on (three alike make the beat).
+  assert.deepEqual(beat.trace.requests.map((r) => r[2] ?? 0), [0, 0, 1, 1, 1]);
+  // Two coverage saves: clicked 2 s after the last, as before.
+  const saves = await run({ saves: [{ path: '/api/coverage/save', at: 500 }, { path: '/api/coverage/save', at: 1500 }] });
+  assert.ok(saves.sinceSave >= 2000 && saves.sinceSave < 3000, `clicked ${saves.sinceSave} ms after the last save`);
+  // A request at the beat's own address between two beats still counts.
+  const between = await run({ saves: [{ path: '/api/session/check', at: 1500 }] });
+  assert.ok(between.sinceSave >= 2000 && between.sinceSave < 3000, `clicked ${between.sinceSave} ms after the request between beats`);
+});
+
 // W43-44 (TNI, 2026-10-22; W43-41 again on the build with its fix): after the fill's Recalculate,
 // GEICO drew its own liability, UM, heavy-vehicle road service and cargo, though the request carried
 // the fill's values; the agent's own Recalculate kept them. GEICO's button sets its own part of the
@@ -5064,6 +5109,25 @@ test('Continue is pressed from the page\'s own world where it takes the press (W
     assert.equal(report.advanced, 'Continue');
     assert.deepEqual(clicks, [`next by ${taker ?? 'kit'}`]);
   }
+});
+
+// GEICO's Print Quote Proposal (2026-10-23): pressed from the page's own world, it opened nothing on
+// four runs (one left 12 minutes); a kit's click opened the proposal on all 11 runs before that press.
+// It is clicked by the kit (`kitClick`), while the page's world presses the step's other buttons.
+test('GEICO\'s Print Quote Proposal is clicked by the kit, View More Payment Plans pressed from the page\'s own world (2026-10-23)', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Quote & Coverages');
+  h.document.body.append(new SelectNode(['9 Payments', '11 Payments'], { id: `Id_${randomUUID()}_11114_PAY`, value: '11 Payments' }));
+  h.document.body.innerText = RATED;
+  const more = addButton(h, 'View More Payment Plans');
+  const print = addButton(h, 'Print Quote Proposal');
+  const clicks = pressTaker(h, { more, print }, 'page');
+  const rules = [{ q: 'GivePayPlanV2', selector: '[id$="_PAY"]', steps: ['Quote & Coverages'], name: 'pay plan', kind: 'choice', source: 'standard', value: () => '11 Payments' }];
+  const plan = buildPlan(geicoRecord(), { id: 'geico', useGenericRules: false, rules, actions: geico.actions.filter((a) => ['morePayPlans', 'printProposal'].includes(a.id)) });
+  const report = await h.kit.fill(plan, { maxRounds: 8 });
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(plain(report.actions.map((x) => x.id)), ['morePayPlans', 'printProposal']);
+  assert.deepEqual(clicks, ['more by page', 'print by kit']);
 });
 
 // The page's own world (src/content/page-press.js): a `rater-press` is taken, and the button is

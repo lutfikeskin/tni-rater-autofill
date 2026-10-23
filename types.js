@@ -185,6 +185,7 @@
  * @property {boolean} [whenClear]  only once nothing on the page is left for the agent
  * @property {boolean} [once]  once a quote
  * @property {boolean} [keepAnswers]  answers checked once its result shows (GEICO's Recalculate)
+ * @property {boolean} [kitClick]  clicked by the kit even where the carrier presses its buttons from the page's own world (`pressInPage`): GEICO's Print Quote Proposal
  */
 
 /**
@@ -386,6 +387,7 @@
  * @property {number | null} quietMs
  * @property {boolean} once
  * @property {boolean} keepAnswers
+ * @property {boolean} kitClick
  * @property {string | null} unfinished
  * @property {string[]} unlessActions
  * @property {string[]} afterActions
@@ -489,7 +491,7 @@
  * @property {number} ms
  * @property {'page' | 'late' | 'kit' | null} press  from the page's own world, there without the browser's event, or a script's click
  * @property {number | null} premiumMs
- * @property {[number, number][]} requests  [start, end]
+ * @property {([number, number] | [number, number, 1])[]} requests  [start, end], and 1 for a request on the page's steady beat (pagekit isBeat), which no wait counts
  * @property {{ label: string, key: string | null, shown: string, agents: boolean, seen: [number, string][], putBack: boolean }[]} answers
  */
 
@@ -677,7 +679,7 @@
  * @property {string} view
  * @property {string} [step]
  * @property {'recalculate'} reason
- * @property {{ action: string | null, ms: number | null, press: 'page' | 'late' | 'kit' | null, premiumMs: number | null, requests: [number, number][] }} context
+ * @property {{ action: string | null, ms: number | null, press: 'page' | 'late' | 'kit' | null, premiumMs: number | null, requests: ([number, number] | [number, number, 1])[] }} context
  * @property {{ label: string, key: string | null, selected: string, agents: boolean, seen: [number, string][], putBack: boolean }[]} fields
  */
 

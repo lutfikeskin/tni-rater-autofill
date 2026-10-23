@@ -136,6 +136,9 @@ function actionSteps(carrier, record, active) {
       // The answers on the page are read as it is clicked and checked once its result shows: one
       // the fill gave that changed is given back once, and every change is the agent's (W43-31).
       keepAnswers: !!a.keepAnswers,
+      // Clicked by the kit itself where the carrier's buttons are pressed from the page's own world
+      // (`pressInPage`): GEICO's Print Quote Proposal opened nothing pressed from there (2026-10-23).
+      kitClick: !!a.kitClick,
       unfinished: resolve(a.unfinished) ?? null,
       unlessActions: (resolve(a.unlessActions) ?? []).map((id) => (/:driver$/.test(id) || (a.scope === 'driver' && !/:/.test(id))
         ? `${id.replace(/:driver$/, '')}:${active.drivers ?? 0}`

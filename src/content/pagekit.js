@@ -335,10 +335,31 @@
   // request still running: GEICO's button sent its request without its own part (W43-44, pressButton).
   // Watched from a fill's start in the top frame.
   let requestWatch = null;
-  // The last of them (start and end, performance time); the last one's end is when the page's own
-  // requests last finished.
+  // The last of them (start and end, performance time; `poll`: a beat, below); the last one's end,
+  // beats left out, is when the page's own requests last finished.
   const recentRequests = [];
-  const lastRequestEnd = () => recentRequests.reduce((m, r) => Math.max(m, r.end), -Infinity);
+  const lastRequestEnd = () => recentRequests.reduce((m, r) => (r.poll ? m : Math.max(m, r.end)), -Infinity);
+  // A request the page sends on a steady beat is no sign of it working: GEICO asks its server every
+  // 2.0 s (about 0.3 s each) the whole time a quote is open (2026-10-23, every Recalculate trace), so
+  // Recalculate's 2 s without one finishing came only when a beat ran a few ms late (18 s after the
+  // last answer on the live recording), or at REQUESTS_MS. An address (its query left out) whose
+  // requests started three times running at the same interval, 1.5 s or more give or take
+  // POLL_SLACK_MS, beats at that interval; a later request there at least three quarters of an
+  // interval after the one before it is a beat. Another one there (a save between two beats) still
+  // counts.
+  const POLL_SLACK_MS = 40;
+  const beats = new Map();
+  function isBeat(address, start) {
+    const b = beats.get(address) ?? { starts: [], period: null };
+    beats.set(address, b);
+    const prev = b.starts.at(-1);
+    b.starts = [...b.starts, start].slice(-4);
+    if (b.period != null) return prev != null && start - prev >= b.period * 0.75;
+    const gaps = b.starts.slice(1).map((s, i) => s - b.starts[i]);
+    if (gaps.length < 3 || gaps[0] < 1500 || gaps.some((g) => Math.abs(g - gaps[0]) > POLL_SLACK_MS)) return false;
+    b.period = (gaps[0] + gaps[1] + gaps[2]) / 3;
+    return true;
+  }
   // The time the page's requests are timed in (Date.now where a page has no performance clock).
   const perfNow = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
   function watchRequests() {
@@ -347,7 +368,8 @@
       requestWatch = new PerformanceObserver((list) => {
         for (const e of list.getEntries()) {
           if ((e.initiatorType === 'fetch' || e.initiatorType === 'xmlhttprequest') && String(e.name).startsWith(`${location.origin}/`)) {
-            recentRequests.push({ start: e.startTime ?? e.responseEnd, end: e.responseEnd });
+            const start = e.startTime ?? e.responseEnd;
+            recentRequests.push({ start, end: e.responseEnd, poll: isBeat(String(e.name).split(/[?#]/)[0], start) });
             if (recentRequests.length > 200) recentRequests.shift();
           }
         }
@@ -1594,9 +1616,13 @@
   // asked of it with a `rater-press` event on the button, and it clicks a moment later, inside an
   // event the browser dispatches; elsewhere, clicked here. Returns how: 'page' or 'kit'. `late`:
   // called if the page's world clicked only once its wait for that event ran out (a script's click).
-  function pressButton(el, { late = null } = {}) {
+  // `kit`: clicked here all the same (a helper's `kitClick`: GEICO's Print Quote Proposal, which
+  // opened nothing pressed from the page's world, 2026-10-23).
+  function pressButton(el, { late = null, kit = false } = {}) {
     let taken = false;
-    try { taken = !el.dispatchEvent(new CustomEvent('rater-press', { bubbles: true, composed: true, cancelable: true })); } catch { /* no CustomEvent */ }
+    if (!kit) {
+      try { taken = !el.dispatchEvent(new CustomEvent('rater-press', { bubbles: true, composed: true, cancelable: true })); } catch { /* no CustomEvent */ }
+    }
     if (!taken) {
       el.click();
       return 'kit';
@@ -2812,7 +2838,7 @@
         ms: rel(perfNow()),
         press: t.press,
         premiumMs: t.premiumMs,
-        requests: recentRequests.filter((r) => r.end >= t.at - 10000).slice(-40).map((r) => [rel(r.start), rel(r.end)]),
+        requests: recentRequests.filter((r) => r.end >= t.at - 10000).slice(-40).map((r) => (r.poll ? [rel(r.start), rel(r.end), 1] : [rel(r.start), rel(r.end)])),
         answers: a.kept.filter((k) => k.kind !== 'text').map((k) => ({
           label: k.label, key: k.key, shown: k.shown, agents: k.stepId == null,
           seen: t.seen.filter((s) => s.at === k.at).slice(0, 10).map((s) => [s.ms, s.value]),
@@ -3086,7 +3112,7 @@
           : a.verify?.appears ? { ...a, before: deepQueryAll(document, a.verify.appears).length }
             : a.keepAnswers ? { ...a, kept: answersNow(), clickedAt: Date.now(), trace: traceStart() } : a;
         const trace = pendingAction.trace;
-        const how = pressButton(button, { late: trace ? () => { trace.press = 'late'; } : null });
+        const how = pressButton(button, { late: trace ? () => { trace.press = 'late'; } : null, kit: a.kitClick });
         if (trace) trace.press = how;
         return true;
       }
