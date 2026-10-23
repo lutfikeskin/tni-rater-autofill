@@ -6,7 +6,7 @@ import { GENERIC_RULES } from './rules.js';
 import { fieldInfo } from './schema.js';
 import { get, listOf } from './util.js';
 
-/** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, FieldStep, PlanStep } from './types.js' */
+/** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, PlanStep } from './types.js' */
 
 // Where a rule's answer comes from (Contract 2, docs/intake-and-rules.md):
 //   intake       a record path, no computed value (the default for a rule with `path` only)
@@ -71,7 +71,9 @@ const withIndex = (path, active) => {
  * @returns {ActionStep[]}
  */
 function actionSteps(carrier, record, active) {
-  const resolve = (v) => (typeof v === 'function' ? v(record, active) : v);
+  // Typed for what it gives each field (the body takes any value or function).
+  /** @type {<T>(v: ClientValue<T>) => T} */
+  const resolve = /** @param {any} v @returns {any} */ (v) => (typeof v === 'function' ? v(record, active) : v);
   return (carrier?.actions ?? [])
     .filter((a) => !a.when || a.when(record, active))
     .map(/** @returns {ActionStep} */ (a, i) => ({

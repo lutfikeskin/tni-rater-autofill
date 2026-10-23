@@ -741,6 +741,11 @@ const chooseUnit = (list) => ({
   scope: UNIT[list][0], when: adds(list),
 });
 
+// A rule without a record path is named by its data-model name (its path geico.q<name>, which
+// logs and reviews read), with a suffix where one name is two questions.
+/** @param {CarrierRule[]} rules @returns {CarrierRule[]} */
+const named = (rules) => rules.map(/** @returns {CarrierRule} */ (rule) => (rule.path || rule.q || !rule.field ? rule : { ...rule, q: rule.field }));
+
 /** @type {CarrierConfig} */
 export const geico = {
   id: 'geico',
@@ -892,7 +897,8 @@ export const geico = {
   // may still be working on it, with or without its spinner (FL live run 4, 2026-10-21, W43-13).
   continueRetry: false,
   keepTakenBack: [COVERAGES],
-  rules: [
+  // Each named by its data-model name where it has no record path (named).
+  rules: named([
     // --- The gateway (gateway2.geico.com) --------------------------------------------------------
     // The quote starts with the ZIP in the Start New Quote window, over any gateway page (and the
     // USDOT check beside it on the dashboard); the gateway's own controls (search, coverage boxes,
@@ -1206,7 +1212,5 @@ export const geico = {
       fact('GiveOperateOrInvolvedInAnyWayForOilGasProduction', 'GL: oil and gas production'),
       { q: 'GeneralLiabilityLimit', ask: 'Motor Truck General Liability', control: 'select', name: 'Motor truck general liability limit', kind: 'choice', source: 'derived', value: glLimit, note: glLimitNote },
     ]),
-  // A rule without a record path is named by its data-model name (its path geico.q<name>, which
-  // logs and reviews read), with a suffix where one name is two questions.
-  ].map(/** @param {any} rule @returns {CarrierRule} */ (rule) => (rule.path || rule.q || !rule.field ? rule : { ...rule, q: rule.field })),
+  ]),
 };

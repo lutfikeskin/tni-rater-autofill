@@ -1,4 +1,5 @@
 /* oxlint-disable unicorn/no-empty-file -- JSDoc types only, by design: nothing loads this file. */
+// @ts-check
 // The shapes passed between the extension's parts, as JSDoc types for the type check (`npm run
 // typecheck`, tsconfig.json; docs/testing.md). Comments only: nothing loads this file at run time,
 // and scripts/package.mjs leaves it out of the package.
@@ -12,7 +13,8 @@
 // Kept to what the code reads. A key a carrier, rule or action declares that isn't here fails the
 // check: either a misspelling, ignored at run time, or a new option to add here, with what it does.
 // In a `.map(...)` callback that builds one, only with `/** @returns {CarrierRule} */` on it; never in a
-// list written in front of `.map(...)`, which a comment can't type (docs/testing.md).
+// list written in front of `.map(...)`, which a comment can't type: a list of rules goes to a helper
+// typed `@param {CarrierRule[]}` instead (docs/testing.md).
 
 // ---------------------------------------------------------------------------------------------
 // The client record and the plan's units
@@ -151,7 +153,7 @@
  * @property {string | string[]} [page]
  * @property {string | string[]} [steps]
  * @property {(record: ClientRecord, active: ActiveUnits) => boolean} [when]  clicked only for these clients
- * @property {ClientValue<'vehicle' | 'driver' | 'trailer' | null>} [scope]  tracked per unit
+ * @property {'vehicle' | 'driver' | 'trailer' | null} [scope]  tracked per unit; a value, never a function (src/plan.js names the action by it)
  * @property {ClientValue<number | null>} [scopeIndex]
  * @property {string} [label]  what the panel calls it
  * @property {ClientValue<string | null>} [missing]  what the panel says when it can't be clicked
@@ -267,7 +269,7 @@
  * @property {UnitListSpec[]} [unitLists]
  * @property {UnitNameSpec[]} [unitNames]
  * @property {(record: ClientRecord) => number} [listedDriver]  the intake driver the carrier lists itself, -1 for none
- * @property {{ [page: string]: ClientValue<string | null> }} [agentPages]
+ * @property {{ [page: string]: string | null | ((record: ClientRecord) => string | null) }} [agentPages]
  * @property {{ [page: string]: string }} [stopPages]
  * @property {{ [step: string]: string }} [stopSteps]
  * @property {{ [name: string]: { button: string, note: string | ((record: ClientRecord) => string) } }} [stopButtons]

@@ -13,8 +13,8 @@ npm run package          # -> dist/tni-rater-autofill-<version>.zip
 ```
 
 The zip holds only what the extension runs: `manifest.json`, `background.js`, `icons/`, `lib/`,
-`sidepanel/`, `src/`. Raise `version` in `manifest.json` (and `package.json`) for every upload:
-the store refuses a version it already has.
+`sidepanel/`, `src/` (without `src/types.js`, the type check's comments). Raise `version` in
+`manifest.json` (and `package.json`) for every upload: the store refuses a version it already has.
 
 ## 2. One-time setup
 
@@ -74,8 +74,8 @@ pin the extension → click it to open the side panel. Then, once each:
 ## 5. Updates
 
 Raise the version, `npm run package` from a clean, committed tree (the usage events name the
-commit they were packaged from, `+dirty` otherwise), upload the new zip on the item's **Package**
-tab, submit.
+commit they were packaged from, `+dirty` otherwise; an uncommitted `src/types.js` alone doesn't
+count, as it isn't packaged), upload the new zip on the item's **Package** tab, submit.
 Chrome updates installed copies by itself within a few hours of approval.
 
 ## API keys for the pilot

@@ -144,6 +144,7 @@ const trailerValueNote = (r, a) => {
 // The trailer's pages carry the vehicle's data-model names (RiskInput.VIN, RiskInput.Radius…):
 // the vehicle's questions are never looked for there, and the trailer's only there.
 const TRAILER_PAGES = ['MostCommonTrailers', 'AddTrailer'];
+/** @param {CarrierRule} rule @returns {CarrierRule} */
 const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
@@ -786,7 +787,7 @@ export const progressive = {
       { q: '2AFF', source: trailerEquipmentSource, field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard when the intake gives no value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: '2AFC', source: 'derived', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },
       { q: '2B04', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
-    ]).map((rule) => ({ ...rule, pageOnly: true })),
+    ]).map(/** @returns {CarrierRule} */ (rule) => ({ ...rule, pageOnly: true })),
 
     // --- Add driver (AddDriver) ------------------------------------------------------------------
     ...onPage('AddDriver', [
@@ -837,8 +838,8 @@ export const progressive = {
       // States that ask UM and UIM separately (PA 1DCA/1DDE, IN and AR 1DBF/1DD8): the same $100k
       // CSL. Uninsured first: AR offers underinsured only up to the uninsured limit (live run
       // 2026-10-19: tried while uninsured was still $1 million, it offered only that, and failed).
-      ...[['1DCA', { ask: 'Uninsured Motorist Bodily Injury' }], ['1DDE', { ask: 'Underinsured Motorist Bodily Injury' }], ['1DBF', { field: 'LineInput.UMBILimit' }], ['1DD8', { field: 'LineInput.UIMBILimit' }]]
-        .map(/** @param {any[]} pair @returns {CarrierRule} */ ([q, which]) => ({ q, source: 'standard', ...which, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
+      ...[{ q: '1DCA', ask: 'Uninsured Motorist Bodily Injury' }, { q: '1DDE', ask: 'Underinsured Motorist Bodily Injury' }, { q: '1DBF', field: 'LineInput.UMBILimit' }, { q: '1DD8', field: 'LineInput.UIMBILimit' }]
+        .map(/** @param {CarrierRule} which @returns {CarrierRule} */ (which) => ({ ...which, source: 'standard', name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
       // Pennsylvania first-party benefits: not on the intake means not bought, except medical
       // expense, which PA requires (its lowest, $5,000).
       { q: '1E66', source: 'standard', ask: 'Medical Expense Benefits', name: 'PA medical expense benefits (required: lowest, $5,000)', kind: 'choice', value: () => '$5,000' },
@@ -901,7 +902,7 @@ export const progressive = {
       { q: 'TR2CE0', source: 'derived', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },
       { q: 'TR2CE3', source: trailerEquipmentSource, field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard when the intake gives no value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: 'TR2CE8', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
-    ]).map((rule) => ({ ...rule, scope: 'trailer', pageOnly: true })),
+    ]).map(/** @returns {CarrierRule} */ (rule) => ({ ...rule, scope: 'trailer', pageOnly: true })),
 
     // --- Bill plan options (ChangePaymentPlan) ---------------------------------------------------
     ...onPage('ChangePaymentPlan', [

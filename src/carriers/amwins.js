@@ -244,6 +244,30 @@ const vehicleValueNote = (r, a) => {
   return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
 };
 
+// AmWINS shows several repeater rows on one page. Give every row its own values;
+// the active-driver picker is for carriers that show one driver page at a time.
+/** @param {CarrierRule[]} rules @returns {CarrierRule[]} */
+const perRow = (rules) => rules.map(/** @returns {CarrierRule} */ (rule) => {
+  let panel = rule.selector?.startsWith(DRIVER) ? DRIVER : rule.selector?.startsWith(VEHICLE) || rule.selector === '#marketValue' ? VEHICLE
+    : rule.selector?.startsWith(VEHICLE_COVERAGES) ? VEHICLE_COVERAGES : null;
+  if (rule.label === '^permanently attached equipment') panel = VEHICLE;
+  if (!panel) return rule;
+  const list = panel === DRIVER ? 'drivers' : 'vehicles';
+  const selector = rule.selector === '#marketValue' ? `${VEHICLE} [data-id="costNew"]`
+    : rule.label === '^permanently attached equipment' ? `${VEHICLE} [data-id="permanentlyAttachedEquipment"] input[type="radio"]` : rule.selector;
+  // A vehicle's row is the one showing its VIN (the witness), whatever its position: Import
+  // Valid Records draws the rows in its own order, and a VIN it rejected has no row (that
+  // vehicle's answers stay the agent's). Until the import lands the rows show no VIN, so
+  // nothing is typed into a row before it. Drivers and the coverage rows have no VIN: theirs
+  // are still the row at the unit's position.
+  if (panel === VEHICLE) {
+    return { ...rule, repeat: list, witness: { selector: '[data-id="vin"]', path: 'vehicles[].vin' },
+      repeatSelector: (r) => (r[list].length > 1 ? selector.replace(panel, `${panel} .app-rp-section`) : selector) };
+  }
+  return { ...rule, repeat: list, repeatSelector: (r, a) => r[list].length > 1
+    ? selector.replace(panel, `${panel} > .app-rp-section[data-id="${a[list]}"]`) : rule.selector || selector };
+});
+
 /** @type {CarrierConfig} */
 export const amwins = {
   id: 'amwins',
@@ -298,7 +322,8 @@ export const amwins = {
   // Each step ends with Save & Continue (saves the draft, opens the next step) once nothing is
   // left for the agent. The declaration step never gets there: the declaration is the agent's.
   advance: { text: '^save\\s*(&|and)\\s*continue$' },
-  rules: [
+  // Every rule of a repeating section is repeated per row (perRow).
+  rules: perRow([
     // --- Start (/commerciallines) --------------------------------------------------------------
     { name: 'Risk state', label: 'select a risk state', path: 'amwins.riskState', kind: 'state', source: 'derived', value: (r) => r.garaging?.state ?? null },
 
@@ -450,26 +475,5 @@ export const amwins = {
     { name: 'Disclosure details (from the intake)', label: '^disclosure details$', source: 'derived', value: disclosure },
     // The declaration is the agent's to make.
     { selector: '#accept', name: 'Declaration', kind: 'bool', source: 'attestation', note: 'The declaration is yours to confirm; never ticked. Then Submit (yours too).' },
-  ].map(/** @param {any} rule @returns {CarrierRule} */ (rule) => {
-    // AmWINS shows several repeater rows on one page. Give every row its own values;
-    // the active-driver picker is for carriers that show one driver page at a time.
-    let panel = rule.selector?.startsWith(DRIVER) ? DRIVER : rule.selector?.startsWith(VEHICLE) || rule.selector === '#marketValue' ? VEHICLE
-      : rule.selector?.startsWith(VEHICLE_COVERAGES) ? VEHICLE_COVERAGES : null;
-    if (rule.label === '^permanently attached equipment') panel = VEHICLE;
-    if (!panel) return rule;
-    const list = panel === DRIVER ? 'drivers' : 'vehicles';
-    const selector = rule.selector === '#marketValue' ? `${VEHICLE} [data-id="costNew"]`
-      : rule.label === '^permanently attached equipment' ? `${VEHICLE} [data-id="permanentlyAttachedEquipment"] input[type="radio"]` : rule.selector;
-    // A vehicle's row is the one showing its VIN (the witness), whatever its position: Import
-    // Valid Records draws the rows in its own order, and a VIN it rejected has no row (that
-    // vehicle's answers stay the agent's). Until the import lands the rows show no VIN, so
-    // nothing is typed into a row before it. Drivers and the coverage rows have no VIN: theirs
-    // are still the row at the unit's position.
-    if (panel === VEHICLE) {
-      return { ...rule, repeat: list, witness: { selector: '[data-id="vin"]', path: 'vehicles[].vin' },
-        repeatSelector: (r) => (r[list].length > 1 ? selector.replace(panel, `${panel} .app-rp-section`) : selector) };
-    }
-    return { ...rule, repeat: list, repeatSelector: (r, a) => r[list].length > 1
-      ? selector.replace(panel, `${panel} > .app-rp-section[data-id="${a[list]}"]`) : rule.selector || selector };
-  }),
+  ]),
 };

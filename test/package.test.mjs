@@ -59,13 +59,16 @@ test('the type check\'s files hold comments only, no module imports them, and th
   assert.ok(!commentsOnly('/** @typedef {object} T */\nexport {};'));
   const modules = (dir) => fs.readdirSync(new URL(`../${dir}/`, import.meta.url), { recursive: true })
     .filter((f) => /\.m?js$/.test(f)).map((f) => `${dir}/${f.replaceAll('\\', '/')}`);
-  // A static import or re-export, a bare import, or import() as code; a JSDoc `@import` or
-  // `import('./types.js').SomeType` is a comment.
-  const IMPORTS_TYPES = /^\s*(?:import|export)\b[^;'"]*?\bfrom\s*'[^']*types\.js'|^\s*import\s*'[^']*types\.js'|\bimport\(\s*'[^']*types\.js'\s*\)(?!\.[A-Z])/m;
-  for (const code of ["export * from './types.js';", "export {\n  A,\n} from '../types.js';", "import x from './types.js';", "import './types.js';", "import('./types.js').then((m) => m);", "await import('./types.js');"]) {
+  // A static import or re-export, a bare import, or import() as code, in any quotes; a JSDoc
+  // `@import` or `import('./types.js').SomeType` is a comment. The file is `types.js` itself, not a
+  // module whose name ends in it.
+  const IMPORTS_TYPES = /^\s*(?:import|export)\b[^;'"]*?\bfrom\s*(['"])(?:[^'"\n]*\/)?types\.js\1|^\s*import\s*(['"])(?:[^'"\n]*\/)?types\.js\2|\bimport\(\s*(['"`])(?:[^'"`\n]*\/)?types\.js\3\s*\)(?!\.[A-Z])/m;
+  for (const code of ["export * from './types.js';", "export {\n  A,\n} from '../types.js';", "import x from './types.js';", "import './types.js';", "import('./types.js').then((m) => m);", "await import('./types.js');",
+    'import x from "./types.js";', 'import "../types.js";', 'await import("./types.js");', 'await import(`../types.js`);']) {
     assert.match(code, IMPORTS_TYPES, code);
   }
-  for (const doc of ["/** @import { A, B } from './types.js' */", " * @param {import('../types.js').FillReport} r", "/** @type {import('./types.js').CarrierConfig} */"]) {
+  for (const doc of ["/** @import { A, B } from './types.js' */", " * @param {import('../types.js').FillReport} r", "/** @type {import('./types.js').CarrierConfig} */",
+    "import { list } from './unit-types.js';", 'import x from "./prototypes.js";', "await import('./unit-types.js');"]) {
     assert.doesNotMatch(doc, IMPORTS_TYPES, doc);
   }
   for (const f of ['background.js', ...modules('src'), ...modules('sidepanel')]) assert.doesNotMatch(read(f), IMPORTS_TYPES, `${f} imports the types as code`);

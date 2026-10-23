@@ -407,7 +407,9 @@ export async function rulesHash(texts) {
  * @returns {UsageEvent[]}
  */
 export function fillEvents(frames, { carrier, page, view, overwrite, auto = false, ms, redact, keySalt, run, rules, settings, step }) {
-  const all = (k) => frames.flatMap((f) => f[k] ?? []);
+  // Typed for the report list it reads (the body takes any key).
+  /** @type {<K extends keyof FillReport>(k: K) => NonNullable<FillReport[K]>} */
+  const all = /** @param {any} k @returns {any} */ (k) => frames.flatMap((f) => f[k] ?? []);
   const isChoice = (x) => x.controlKind && x.controlKind !== 'text';
   const stepField = stepOf(step, redact);
   /** @type {UsageEvent[]} */
