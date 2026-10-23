@@ -1965,11 +1965,10 @@
     let waitShown = false;
     let lastLook = false;
     // Where Continue waits for a quiet page (`advance.quietMs`: GEICO), a fill that gave answers waits
-    // for it before it ends and answers what the page drew meanwhile (the end of a round): `given`,
-    // the answers this fill gave; `quietAt`, how many it had given at its last such wait; `quietSig`,
-    // the questions on screen once the page was quiet then.
-    let given = 0;
-    let quietAt = 0;
+    // for it before it ends and answers what the page drew meanwhile (the end of a round): `quietDue`,
+    // an answer was given since the last such wait; `quietSig`, the questions on screen once the page
+    // was quiet then.
+    let quietDue = false;
     let quietSig = null;
     // Server requests the page sends (ExtJS pages), counted for the per-answer timing.
     let ajaxCount = 0;
@@ -2021,7 +2020,7 @@
     // the page it was quiet on (`quiet`: its action and signature).
     let loadDue = null;
     let quiet = null;
-    let progressed = false; // did the last round fill or click anything?
+    let progressed = false; // did the last round fill or click anything, or wait for what an answer draws?
     // The questions the last round read (in document order): where the items are on the page
     // when a helper has opened the next page by the end of the fill.
     let roundControls = [];
@@ -2447,7 +2446,7 @@
           // An option picked in place of one never offered (`orMost`) is named in the report.
           const instead = substituted.get(step.id);
           report.filled.push({ ...item, shown: result.shown, ...(instead ? { said: instead } : {}) });
-          given++;
+          quietDue = true;
           unoffered.delete(step.id);
           // A TNI standard is marked apart from intake answers, so the agent sees the assumptions.
           handled.set(step.id, step.standard
@@ -2533,9 +2532,13 @@
         // did. Where Continue waits for a quiet page (`advance.quietMs`), a fill that gave answers waits
         // for it here, before it ends, and answers what was drawn, again after each later answer. (A
         // fill that gave none has drawn nothing: one the agent's answer drew, the recorder reports.)
-        if (advance?.quietMs && !serverBacked && window === window.top && quietAt < given && currentPage() === startPage && !stepChanged()
+        // Not after the agent's own Next: the step's move is theirs, and no Continue follows. The
+        // wait counts as progress: a fill whose rounds run out on it, with what it drew unread, stops
+        // at its round limit and doesn't continue.
+        if (quietDue && !agentPressed && advance?.quietMs && !serverBacked && window === window.top && currentPage() === startPage && !stepChanged()
           && (!advance.steps?.length || stepIs(advance.steps, stepKey()))) {
-          quietAt = given;
+          quietDue = false;
+          progressed = true;
           await settle({ quietMs: advance.quietMs, maxMs: 6000 });
           quietSig = signature();
           continue;
