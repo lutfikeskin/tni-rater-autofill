@@ -1561,6 +1561,29 @@ function premiumHarness({ recalcResult = 'Total premium: $12,345.67', billDisabl
   return { h, recalc, bill };
 }
 
+// The maintainer's Rates order (2026-10-23, after two live TX recordings where the bill plan waited on
+// Recalculate and Recalculate on the bill plan): with the rates out of date, Recalculate first and
+// its new premium, then the bill plan. Listed bill plan first here: the order is the premium's.
+test('Rates: Recalculate first when the rates are out of date, then the bill plan once the new premium shows', async () => {
+  const plan = () => [
+    { id: 'limit', selector: '#liab-limit', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },
+    { id: 'bill', kind: 'action', action: 'billPlan', text: '^(view )?bill(ing)?( plan)? options?$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterAny: [], afterActions: [], afterPages: [], unless: [], needsPremium: true, waitRequired: true },
+    { id: 'recalc', kind: 'action', action: 'recalculate', text: '^recalculate$', pages: ['CoveragesRates'], after: ['coverage.autoLiabLimit'], afterAny: [], afterActions: [], afterPages: [], unless: [], needsRecalculation: true, verify: 'premium', waitRequired: true },
+  ];
+  const stale = premiumHarness({ recalcResult: 'Total premium amount $12,815.00 per year' });
+  const report = await stale.h.kit.fill(plan(), { maxRounds: 6 });
+  assert.equal(Array.from(report.actions, (x) => x.id).join(','), 'recalculate,billPlan');
+  // The rates already current: no Recalculate, straight to the bill plan.
+  const current = premiumHarness();
+  current.h.document.body.innerText = 'Total premium amount $12,815.00 per year';
+  const direct = await current.h.kit.fill(plan(), { maxRounds: 6 });
+  assert.deepEqual([Array.from(direct.actions, (x) => x.id).join(','), current.recalc._clicked ?? false], ['billPlan', false]);
+  // A Recalculate that leaves the rates out of date: no bill plan.
+  const still = premiumHarness({ recalcResult: 'Rates changed **** — please recalculate' });
+  await still.h.kit.fill(plan(), { maxRounds: 6 });
+  assert.equal(still.bill._clicked, undefined);
+});
+
 // Live recording, 2026-10-23 (Progressive): an automatic fill ran on the payment plan page, the agent
 // clicked its Continue, and the same fill read Rates as its next round and clicked Print, Email, Fax
 // as the agent did: two presses, 0.2 s apart.
