@@ -1605,13 +1605,16 @@ function onRecorderMessage(msg, sender) {
 // markers of its own, and an Add Vehicle by hand may be another unit's. Not one its words alone don't
 // name (`near`, `token`, `within`, `opener`, `unique`: Progressive's cargo and general liability
 // "+" read the same), nor one that recalculates (needsRecalculation): whether that is due again
-// follows the rates on the page.
+// follows the rates on the page. Nor one the fill checks after its click (`verify`: cargo's and
+// general liability's Done with this coverage): on a quote asking for only one of them, the agent's
+// Done may be another coverage's, or one Progressive refused, and a fill's own counts only once the
+// check passes.
 function agentHelperDone(carrier, page, step, text) {
   const words = String(text ?? '').trim();
   if (!carrier?.actions?.length || !state.intake?.record || !words || words.length > 80) return;
   let plan;
   try { plan = buildPlan(state.intake.record, carrier, state.active); } catch { return; }
-  const done = plan.filter((s) => s.kind === 'action' && s.action === s.baseAction && !s.needsRecalculation && s.text
+  const done = plan.filter((s) => s.kind === 'action' && s.action === s.baseAction && !s.needsRecalculation && !s.verify && s.text
     && !s.near && !s.token && !s.within && !s.opener && !s.unique
     && (!s.pages?.length || s.pages.includes(page)) && (!s.steps?.length || (!!step && s.steps.includes(step)))
     && new RegExp(s.text, 'i').test(words));

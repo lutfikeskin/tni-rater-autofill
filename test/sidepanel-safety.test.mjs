@@ -7352,3 +7352,19 @@ test('a quote-wide helper the agent clicks themselves is done, as if the fill ha
     assert.deepEqual(run(page, text), [[], 0], `${page}: ${text}`);
   }
 });
+
+// A cargo-only quote has one Done with this coverage in its plan (general liability's isn't asked
+// for): the agent's click of another coverage's Done, or one Progressive refused, isn't cargo closed.
+// The fill's own click counts only once its check (`verify: cargoClosed`) passes.
+test('a helper the fill checks after its click is not done by the agent clicking its words', () => {
+  const plan = progressive.actions.filter((a) => !['openGl', 'doneGl'].includes(a.id)).map((a) => ({ kind: 'action', action: a.id, baseAction: a.id,
+    pages: [].concat(a.page ?? []), steps: null, text: typeof a.text === 'function' ? null : a.text ?? null, near: a.near ?? null, token: a.token ?? null,
+    within: a.within ?? null, opener: a.opener ?? null, unique: !!a.unique, needsRecalculation: !!a.needsRecalculation, verify: a.verify ?? null }));
+  const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set() };
+  const context = { state, buildPlan: () => plan, persistDoneActions: () => {} };
+  vm.runInNewContext(extractFunction('agentHelperDone'), context);
+  context.agentHelperDone(progressive, 'CoveragesRates', undefined, 'Done with this coverage');
+  assert.deepEqual([...state.doneActions], []);
+  context.agentHelperDone(progressive, 'CoveragesRates', undefined, 'View bill plan options');
+  assert.deepEqual([...state.doneActions], ['billPlan']);
+});
