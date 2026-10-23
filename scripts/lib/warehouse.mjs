@@ -119,6 +119,16 @@ export const TABLES = {
     ],
     key: ['session', 'carrier'],
   },
+  // The premium each carrier page quoted (src/premium.js; removable with it): every one logged.
+  quote_premiums: {
+    comment: 'One row per premium a carrier page quoted for a quote, each time it changed (quote_premium events); v_quote_premium keeps the last per quote and carrier',
+    columns: [
+      ['session', 'VARCHAR'], ['carrier', 'VARCHAR'], ['quoted_at', 'TIMESTAMPTZ', 'Read from the page'], ['page', 'VARCHAR'], ['step', 'VARCHAR'],
+      ['total', 'DOUBLE', 'Total premium for the term, dollars'], ['term_months', 'INTEGER', "12 for a year; null where the page doesn't say"],
+      ['due_today', 'DOUBLE', 'Down payment of the pay plan picked, dollars'], ['payments', 'INTEGER', 'Payments after today'], ['payment', 'DOUBLE', 'Each of those, dollars'],
+    ],
+    key: [],
+  },
   answers: {
     comment: "One row per question and unit a quote answered on a carrier: its final answer (finalAnswers). Typed text isn't logged, so its value is null",
     columns: [
@@ -149,6 +159,7 @@ export const TABLES = {
 
 export const VIEWS = {
   v_quotes: { comment: 'The quotes, without test runs: start here', sql: 'SELECT * FROM quotes WHERE NOT is_test' },
+  v_quote_premium: { comment: 'The last premium each carrier quoted for each quote, test runs left out', sql: 'SELECT p.* FROM quote_premiums p JOIN v_quotes q USING (session) QUALIFY row_number() OVER (PARTITION BY p.session, p.carrier ORDER BY p.quoted_at DESC) = 1' },
 };
 
 const sqlString = (s) => `'${String(s).replace(/'/g, "''")}'`;
@@ -197,7 +208,7 @@ export function eventRows(stored) {
  * The derived tables' rows, from the events the reviews read.
  * @param {object[]} events  loadEvents(): in time order, test page and blank pages left out
  * @param {{testIntakes?: Iterable<string>}} opts  the test-run list (readTestList().intakes)
- * @returns {{quotes: object[], quote_vehicles: object[], quote_drivers: object[], quote_prior_insurance: object[], quote_carriers: object[], answers: object[]}}
+ * @returns {{quotes: object[], quote_vehicles: object[], quote_drivers: object[], quote_prior_insurance: object[], quote_carriers: object[], quote_premiums: object[], answers: object[]}}
  */
 export function warehouseRows(events, { testIntakes = [] } = {}) {
   const quoted = quoteSessions(events);
@@ -213,7 +224,7 @@ export function warehouseRows(events, { testIntakes = [] } = {}) {
     if (e.type === 'intake_profile') profiles.set(e.session, e);
   }
 
-  const rows = { quotes: [], quote_vehicles: [], quote_drivers: [], quote_prior_insurance: [], quote_carriers: [], answers: [] };
+  const rows = { quotes: [], quote_vehicles: [], quote_drivers: [], quote_prior_insurance: [], quote_carriers: [], quote_premiums: [], answers: [] };
   for (const [session, l] of loaded) {
     const p = profiles.get(session) ?? null;
     // A profile value when the profile has it (a group the server dropped doesn't), else `fallback`.
@@ -257,6 +268,14 @@ export function warehouseRows(events, { testIntakes = [] } = {}) {
     });
   }
 
+  // Premiums (src/premium.js), as logged.
+  const amount = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
+  for (const e of events) {
+    if (e.type !== 'quote_premium' || !quoted.has(e.session) || amount(e.total) === null) continue;
+    rows.quote_premiums.push({ session: e.session, carrier: str(e.carrier), quoted_at: iso(e.t), page: str(e.page), step: str(e.step),
+      total: e.total, term_months: int(e.termMonths), due_today: amount(e.dueToday), payments: int(e.payments), payment: amount(e.payment) });
+  }
+
   for (const [session, perSession] of finalAnswers(events)) {
     if (!quoted.has(session)) continue;
     for (const [k, a] of perSession) {
@@ -292,6 +311,7 @@ export async function writeWarehouse(file, tables) {
           if (v === null || v === undefined) appender.appendNull();
           else if (types[i].typeId === DuckDBTypeId.BOOLEAN) appender.appendBoolean(v);
           else if (types[i].typeId === DuckDBTypeId.INTEGER) appender.appendInteger(v);
+          else if (types[i].typeId === DuckDBTypeId.DOUBLE) appender.appendDouble(v);
           else if (types[i].typeId === DuckDBTypeId.LIST) appender.appendList(v, types[i]);
           // VARCHAR and JSON as text; TIMESTAMPTZ from its ISO text.
           else appender.appendVarchar(typeof v === 'string' ? v : JSON.stringify(v));

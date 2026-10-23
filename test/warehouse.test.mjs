@@ -50,9 +50,13 @@ function history() {
   e('client', { type: 'intake_profile', ...profile({ business: { ...profile().business, dot: 'given', dotWithin60Days: false }, coverage: undefined, dropped: ['coverage'] }) });
   e('client', { type: 'page_view', carrier: 'progressive', page: 'Quote', from: 'BusinessOwnerInfo' });
   e('client', { type: 'fill_run', carrier: 'progressive', page: 'Quote', blockers: 0, blockerList: [] });
+  // Rated, then rated again after a coverage change: the last is the quote's.
+  e('client', { type: 'quote_premium', carrier: 'progressive', page: 'CoveragesRates', step: null, total: 12000, termMonths: 12, dueToday: null, payments: null, payment: null });
+  e('client', { type: 'quote_premium', carrier: 'progressive', page: 'CoveragesRates', step: null, total: 12815, termMonths: 12, dueToday: null, payments: null, payment: null });
 
   e('marked', { type: 'intake_loaded', test: true, state: 'FL', businessClass: 'Towing', vehicleTypes: ['Tow Truck'], counts: { drivers: 2, vehicles: 1, trailers: 0 }, coverages: [] });
   e('marked', { type: 'page_view', carrier: 'geico', page: 'quote', step: 'Vehicles' });
+  e('marked', { type: 'quote_premium', carrier: 'geico', page: 'quote', step: 'Quote & Coverages', total: 101287, termMonths: 12, dueToday: 16908.71, payments: 10, payment: 8437.83 });
   e('listed', { type: 'intake_loaded', state: 'GA', vehicleTypes: [], counts: { drivers: 1, vehicles: 1, trailers: 0 }, coverages: [] });
   e('listed', { type: 'page_view', carrier: 'amwins', page: 'application', step: 'Coverages' });
   // Loaded, never taken to a carrier: no quote.
@@ -165,6 +169,9 @@ test('writeWarehouse builds a DuckDB file whose tables, views and comments follo
   assert.deepEqual(loaded, { state: 'TX', t: 'TIMESTAMP WITH TIME ZONE' });
   const [answer] = await query(file, "SELECT answered_by, rule_source, corrected FROM answers WHERE label = 'Prior carrier?'");
   assert.deepEqual(answer, { answered_by: 'agent', rule_source: 'standard', corrected: true });
+  // Every premium logged; the last per quote and carrier in v_quote_premium, test runs left out.
+  assert.equal((await query(file, 'SELECT count(*) AS n FROM quote_premiums'))[0].n, 3n);
+  assert.deepEqual(await query(file, 'SELECT session, carrier, total, term_months FROM v_quote_premium'), [{ session: 'client', carrier: 'progressive', total: 12815, term_months: 12 }]);
   const [profileJson] = await query(file, "SELECT profile->>'$.business.dot' AS dot FROM quotes WHERE session = 'client'");
   assert.equal(profileJson.dot, 'given');
   fs.rmSync(dir, { recursive: true, force: true });

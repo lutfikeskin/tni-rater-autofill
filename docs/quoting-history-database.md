@@ -132,6 +132,8 @@ Four rules shape it.
 | `quote_drivers` | driver on the profile | `intake_profile.drivers` |
 | `quote_prior_insurance` | prior policy on the profile | `intake_profile.priorInsurance` |
 | `quote_carriers` | quote and carrier it was worked on | `quoteOutcomes` |
+| `quote_premiums` | premium a carrier page quoted, each time it changed | `quote_premium` events ([Premiums](#premiums)) |
+| `v_quote_premium` (view) | quote and carrier: its last premium, test runs left out | `quote_premiums` |
 | `answers` | question and unit a quote answered on a carrier | `finalAnswers` |
 | `build_info` | the run that built the file | the commit, whether it had uncommitted changes, the sources, the test-run list, counts, the first and last event |
 
@@ -363,35 +365,22 @@ SELECT built_at, commit, dirty, events, quotes, test_quotes, test_list, first_ev
 FROM build_info;
 ```
 
-## Premiums: a separate, optional step
+## Premiums
 
-No event carries a premium today. The fill engine only checks that one is on screen: `premiumReady()` in [pagekit.js](../src/content/pagekit.js) reads the page text for Progressive's "Total premium amount $… per year" and GEICO's "Quote $… Due Today $… Total", and refuses while the page is busy or asks for a recalculation (`ratesStale()`). The result decides whether an action that needs a current premium may run. The amount is never logged.
-
-A `quote_premium` event could carry it:
+The panel logs the premium a carrier page quotes as a `quote_premium` event ([premium.js](../src/premium.js)). Each time it reads a page's layout (`captureLayout`: after a fill, and as the agent changes the page), on the pages where a carrier quotes its premium (`premiumHere`: GEICO's Quote & Coverages, Progressive's CoveragesRates) it reads the page's text and, when a current premium is shown and differs from the last one logged for that quote, tab and carrier, logs it. Stop steps (GEICO's Final Quote Details, MVR & CLUE, Payment Information) are never read. Nothing about the client is in it.
 
 | Field | Shape |
 | --- | --- |
-| `carrier`, `page`, `step`, `view`, `run` | As on fill events. |
-| `amount` | A number in dollars, greater than 0 and below 10,000,000, at most two decimals. |
-| `term` | `annual`, `6 months`, or null when the page doesn't say. |
-| `wording` | Which pattern matched: `total premium` (Progressive) or `quote total` (GEICO). |
-| `dueToday` | GEICO's Due Today amount, same shape as `amount`, when shown. |
+| `carrier`, `page`, `view`, `step` | As on fill events (`step` only on one-address carriers). |
+| `total` | The premium for the term, dollars, above 0 and below 100,000,000. |
+| `termMonths` | 12 for a year, 6 for six months; null when the page doesn't say. |
+| `dueToday`, `payments`, `payment` | GEICO's down payment for the plan picked, the payments after today and each one; null elsewhere. |
 
-The panel would send it when pagekit reads a current premium on a carrier's rating page, and again each time the amount changes after a Recalculate. The last one before the quote leaves the page is the quote's final quoted premium. GEICO's stop steps (Final Quote Details, MVR & CLUE, Payment Information) stay unlogged as today. The server would keep these fields in exactly these shapes and drop anything else. The warehouse would add a `quote_premiums` table (session, carrier, amount, term, at, final).
+The wording read: GEICO's "12 Month Total Premium: $… Due Today $… 10 Additional Payments of $…", Progressive's "Total premium amount $… per year", else any "total/annual/policy/estimated premium $…" (its term unknown). Nothing is read while the page asks for a recalculation or shows "$ --.--" or "****". Whether AmWINS shows a premium before submission is not known. The server keeps these fields in these shapes, drops anything else, and refuses a reading without its total.
 
-**It is a quoted premium, never a bound one.** It is the carrier's figure on screen at that moment, before underwriting. On GEICO it comes before the MVR and CLUE reports, since TNI stops the quote at Quote & Coverages. A Recalculate or a report can change it, and it is not what the client paid. The tables and reports would call it `quoted_premium`.
+The warehouse has every reading in `quote_premiums`, and the last per quote and carrier, test runs left out, in `v_quote_premium`. **It is a quoted premium, never a bound one:** the carrier's figure on screen, before underwriting (on GEICO before the MVR and CLUE reports). Compare it with the printed quote on a few real quotes per carrier before trusting it.
 
-With the profile, premiums become comparable across fleets, for example the median quoted premium per power unit by state, class and carrier.
-
-The maintainer decides these before anyone writes the event:
-
-1. **Purpose and disclosure.** See the first decision at the end; premiums are a new kind of data on top of it.
-2. **Which figure.** The total for the term only, or also per vehicle, per coverage, the down payment and the installments.
-3. **Term.** Keep the term as quoted, or convert six-month premiums to annual for comparison.
-4. **Which reading counts.** The last one before the agent leaves the rating page, or the one on screen when the agent prints.
-5. **Carriers.** `premiumReady` knows Progressive's and GEICO's wording. Whether AmWINS shows a premium before submission is not known.
-6. **A check before trusting it.** The amount comes from a pattern on page text. Compare it with the printed quote for some real quotes on each carrier first, so a Due Today amount is never read as the total.
-7. **Retention and readers.** How long premiums are kept, and who besides the maintainer may see them per quote rather than in totals.
+The whole feature can be removed as one piece: `src/premium.js`, its import and one call in `sidepanel.js` (`captureLayout`), `quote_premium` in `server/index.mjs`, and `quote_premiums` with `v_quote_premium` in [warehouse.mjs](../scripts/lib/warehouse.mjs).
 
 ## Limits
 
@@ -416,7 +405,7 @@ The maintainer decides these before anyone writes the event:
 4. **Which tool reads it.** The DuckDB command line for now. A reporting tool on the same computer can open the file; one that runs elsewhere needs Postgres.
 5. **Agents' initials.** They are in `quotes.agent` and `events.agent`, as in the log. Nobody but the maintainer reads the file today; decide whether others see initials or only totals before anyone else does.
 6. **The backfill.** Whether to build profiles for older quotes from the PDFs on the maintainer's computer.
-7. **Premiums,** with the decisions in their section, if and when they are wanted.
+7. **Premiums:** built (2026-10-22): the total, term and payments, every change kept. Still to do: compare readings with printed quotes per carrier.
 
 ## Steps, each its own pull request
 
@@ -430,7 +419,7 @@ The profile goes first: the warehouse can load all history whenever it arrives, 
 3. The coverage map with its tests, checked against recorded layouts of each carrier's coverage page.
 4. Optional: the backfill from local PDFs.
 5. Optional: Postgres, if several people need to query the history. Having the server write each event on receipt comes after it.
-6. Optional: `quote_premium`, after the premium decisions. Server first, then the extension.
+6. `quote_premium` (built). Deploy the server before releasing the extension.
 
 ## Related code
 
