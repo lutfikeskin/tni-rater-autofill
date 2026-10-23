@@ -347,6 +347,32 @@ test('fill events say why an answer was given; a dismissed check is keyed like t
     { type: 'check_dismissed', q: null, key: checkDismissedEvent({ key: 'owner_Ann' }, { redact: redactor(['Ann']), keySalt: 's' }).key, label: 'Owner [client]', mark: 'needs' });
 });
 
+// W43-44: what the page did after the fill's Recalculate, logged as a layout the review scripts
+// don't read as the page's (reason 'recalculate'), without client data.
+test('a Recalculate trace is logged as a page_layout the layouts leave out, without client data', async () => {
+  const { buildLayouts } = await import('../scripts/lib/layouts.mjs');
+  const recalcTrace = { action: 'recalculate', ms: 4680, press: 'page', premiumMs: 300, requests: [[-2500, -2000]], answers: [
+    { label: 'Jordan Casey 1FTBR3X87MKA12345 Coverage', key: 'cov:COMP#1', shown: '$1,000 deductible', agents: false, seen: [[300, '$500 deductible'], [4680, '$1,000 deductible']], putBack: true },
+    { label: 'Liability', key: 'cov:liability#1', shown: '$1,000,000 Combined Single Limit', agents: true, seen: [], putBack: false },
+  ] };
+  const events = fillEvents([{ filled: [], recalcTrace }], { carrier: 'geico', page: '/quote', overwrite: false, ms: 1, redact, step: 'Quote & Coverages' });
+  const trace = events.find((e) => e.type === 'page_layout');
+  assert.deepEqual([trace.reason, trace.step, trace.context.premiumMs, trace.context.press, trace.context.requests], ['recalculate', 'Quote & Coverages', 300, 'page', [[-2500, -2000]]]);
+  // How it was pressed is one of three words, nothing else.
+  const odd = fillEvents([{ filled: [], recalcTrace: { ...recalcTrace, press: 'Jordan Casey' } }], { carrier: 'geico', page: '/quote', overwrite: false, ms: 1, redact, step: 'Quote & Coverages' });
+  assert.equal(odd.find((e) => e.type === 'page_layout').context.press, null);
+  assert.deepEqual(trace.fields.map((f) => [f.key, f.selected, f.seen, f.putBack, f.agents]), [
+    ['cov:COMP#1', '$1,000 deductible', [[300, '$500 deductible'], [4680, '$1,000 deductible']], true, false],
+    ['cov:liability#1', '$1,000,000 Combined Single Limit', [], false, true],
+  ]);
+  assertNoClientData(trace);
+  assert.equal(events.filter((e) => e.type === 'page_layout').length, 1);
+  // Not a layout of the page.
+  assert.deepEqual(buildLayouts([{ ...trace, session: 's', t: '2026-10-22T00:00:00Z' }]), []);
+  // No trace, no event.
+  assert.ok(!fillEvents([{ filled: [] }], { carrier: 'geico', page: '/quote', overwrite: false, ms: 1, redact }).some((e) => e.type === 'page_layout'));
+});
+
 test('the business profile describes the intake without identifying the client', () => {
   const p = intakeProfile(record, { redact, today: new Date('2026-09-30') });
   assertNoClientData(p);
@@ -413,29 +439,4 @@ test('profile: punctuated identifiers and the intake\'s spaced VINs go; ID boxes
   assert.equal(p.drivers[0].age, null, 'no age from an impossible date of birth');
   assert.deepEqual([p.coverage.autoLiabLimit, p.coverage.glLimit], ['$1000000 CSL', '1000000']);
   assert.deepEqual(p.priorInsurance.map((x) => [x.limit, x.expires]), [['25/50/25', null], ['100/300/100', '2026-11'], [null, null]], 'no month 13; an SSN is no limit');
-
-// W43-44: what the page did after the fill's Recalculate, logged as a layout the review scripts
-// don't read as the page's (reason 'recalculate'), without client data.
-test('a Recalculate trace is logged as a page_layout the layouts leave out, without client data', async () => {
-  const { buildLayouts } = await import('../scripts/lib/layouts.mjs');
-  const recalcTrace = { action: 'recalculate', ms: 4680, press: 'page', premiumMs: 300, requests: [[-2500, -2000]], answers: [
-    { label: 'Jordan Casey 1FTBR3X87MKA12345 Coverage', key: 'cov:COMP#1', shown: '$1,000 deductible', agents: false, seen: [[300, '$500 deductible'], [4680, '$1,000 deductible']], putBack: true },
-    { label: 'Liability', key: 'cov:liability#1', shown: '$1,000,000 Combined Single Limit', agents: true, seen: [], putBack: false },
-  ] };
-  const events = fillEvents([{ filled: [], recalcTrace }], { carrier: 'geico', page: '/quote', overwrite: false, ms: 1, redact, step: 'Quote & Coverages' });
-  const trace = events.find((e) => e.type === 'page_layout');
-  assert.deepEqual([trace.reason, trace.step, trace.context.premiumMs, trace.context.press, trace.context.requests], ['recalculate', 'Quote & Coverages', 300, 'page', [[-2500, -2000]]]);
-  // How it was pressed is one of three words, nothing else.
-  const odd = fillEvents([{ filled: [], recalcTrace: { ...recalcTrace, press: 'Jordan Casey' } }], { carrier: 'geico', page: '/quote', overwrite: false, ms: 1, redact, step: 'Quote & Coverages' });
-  assert.equal(odd.find((e) => e.type === 'page_layout').context.press, null);
-  assert.deepEqual(trace.fields.map((f) => [f.key, f.selected, f.seen, f.putBack, f.agents]), [
-    ['cov:COMP#1', '$1,000 deductible', [[300, '$500 deductible'], [4680, '$1,000 deductible']], true, false],
-    ['cov:liability#1', '$1,000,000 Combined Single Limit', [], false, true],
-  ]);
-  assertNoClientData(trace);
-  assert.equal(events.filter((e) => e.type === 'page_layout').length, 1);
-  // Not a layout of the page.
-  assert.deepEqual(buildLayouts([{ ...trace, session: 's', t: '2026-10-22T00:00:00Z' }]), []);
-  // No trace, no event.
-  assert.ok(!fillEvents([{ filled: [] }], { carrier: 'geico', page: '/quote', overwrite: false, ms: 1, redact }).some((e) => e.type === 'page_layout'));
 });
