@@ -155,7 +155,7 @@ export const PROFILE = {
     yearsInBusiness: whole(0, 200), yearsExperience: whole(0, 100), ownerDrives: yesNo,
   },
   operations: {
-    whatHaul: text(120), radiusMiles: whole(0, 10_000), vehicleOwnership: text(40), personalUse: yesNo, usesEld: yesNo,
+    whatHaul: text(120), radius: text(40), radiusMiles: whole(0, 10_000), vehicleOwnership: text(40), personalUse: yesNo, usesEld: yesNo,
     eldBrand: text(60), needSr22: yesNo, filingsRequired: yesNo, filingsWhich: text(60), hazmat: yesNo, hazPlacard: yesNo,
     movingState: yesNo, teamDriving: yesNo, canadaLoads: yesNo, equipVehicle: dollars,
   },

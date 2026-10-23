@@ -7,7 +7,7 @@ import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
 import { carrierForUrl, quoteProgress, stopScreen } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
-import { intakeSummary, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
+import { intakeSummary, intakeProfile, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 import * as usage from './usage-log.js';
 import { migrateStorage } from '../src/storage-version.js';
@@ -851,6 +851,7 @@ async function loadFile(file) {
   const places = await readIntakePlaces(pdfjs, bytes.slice()).catch(() => null);
   // The same PDF again (to see it in the panel again, or by mistake): the agent's work on it stays.
   const same = state.intake && usage.currentSession()?.intakeId === summary.intakeId ? state.intake : null;
+  if (profileTimer) logProfile();
   if (state.intake) usage.log({ type: 'intake_closed', reason: 'replaced' });
   clearTimeout(state.autoTimer);
   state.autoDrawn = null;
@@ -906,6 +907,7 @@ async function loadFile(file) {
   await pruneAgentRecords(summary.intakeId);
   usage.log({ type: 'intake_loaded', ...summary, ...(test ? { test: true } : {}), platform: platformOf() });
   await logSettings('intake');
+  logProfile();
   uploadNow();
   await save();
   render();
@@ -937,6 +939,31 @@ async function logSettings(reason, changed) {
     const saved = await usage.settings();
     usage.log(agentSettingsEvent(saved, { overwrite: !!$('overwrite')?.checked, reason, changed, centralServer: usage.DEFAULT_SERVER }));
   } catch { /* the settings log is best effort */ }
+}
+
+// The client's business as the intake and the agent's corrections describe it, never who the
+// client is (intakeProfile): logged when the intake is loaded, PROFILE_DELAY after the agent's last
+// correction, and when the panel opens on a saved intake, each time only when it differs from the
+// one last logged for this intake (`profileLogged`, saved with it). One still waiting is logged
+// before the intake is replaced or cleared, so it stays with its own quote. True when it logged one.
+const PROFILE_DELAY = 15_000;
+let profileTimer = null;
+function logProfile() {
+  clearTimeout(profileTimer);
+  profileTimer = null;
+  if (!state.intake || !usage.currentSession()) return false;
+  try {
+    const event = intakeProfile(state.intake.record, { redact: redactor(redactionTerms(state.intake.record)) });
+    const json = JSON.stringify(event);
+    if (json === state.intake.profileLogged) return false;
+    state.intake.profileLogged = json;
+    usage.log(event);
+    return true;
+  } catch { return false; /* the profile is best effort */ }
+}
+function profileLater() {
+  clearTimeout(profileTimer);
+  profileTimer = setTimeout(() => { if (logProfile()) save(); }, PROFILE_DELAY);
 }
 
 // The agent marks (or unmarks) the loaded intake as a test run: remembered for this PDF on this
@@ -1218,6 +1245,7 @@ async function agentEdit(path, after, kind) {
   // Log that the agent corrected the intake here (and whether it was flagged), not the value.
   const flaggedCodes = state.intake.warnings.filter((w) => w.path === path).map((w) => w.code);
   usage.log({ type: 'intake_edit', path, kind, change: before == null ? 'added' : after == null ? 'cleared' : 'changed', warnings: flaggedCodes });
+  profileLater();
   await save();
   // Luna read the claims box against the form's coverages (NTL and GL are its own questions):
   // an edit to either is read again; a driver's first name, for the gender check, likewise.
@@ -5506,6 +5534,7 @@ function clientNote(text) {
 
 async function clearClient() {
   const scope = usage.currentSession()?.intakeId;
+  if (profileTimer) logProfile();
   usage.log({ type: 'intake_closed', reason: 'cleared' });
   cancelLayouts();
   holdLayouts();
@@ -5789,6 +5818,8 @@ async function init() {
   $('auto-advance').checked = saved.autoAdvance ?? true;
   // The panel opened on a saved intake: the settings in force for the rest of its quote.
   if (state.intake && usage.currentSession()) logSettings('opened');
+  // A correction's profile the panel closed before logging (or an intake loaded by an earlier version).
+  if (logProfile()) save();
   $('check-continue').checked = saved.checkBeforeContinue ?? false;
   uploadNow();
   render();

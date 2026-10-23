@@ -22,6 +22,7 @@ const PROFILE_COLUMNS = [
   ['years_experience', 'business', 'yearsExperience', 'INTEGER', 'Years under its own authority'],
   ['owner_drives', 'business', 'ownerDrives', 'BOOLEAN', null],
   ['what_haul', 'operations', 'whatHaul', 'VARCHAR', 'What they haul, as written after cleaning'],
+  ['radius', 'operations', 'radius', 'VARCHAR', 'As written: Unlimited, OTR, Local'],
   ['radius_miles', 'operations', 'radiusMiles', 'INTEGER', null],
   ['vehicle_ownership', 'operations', 'vehicleOwnership', 'VARCHAR', null],
   ['personal_use', 'operations', 'personalUse', 'BOOLEAN', 'Vehicle for personal use'],

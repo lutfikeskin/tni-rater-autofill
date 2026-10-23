@@ -8,10 +8,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { EVENT_FIELDS, COMMON, RUN_FIELDS } from '../server/index.mjs';
+import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { EVENT_FIELDS, COMMON, RUN_FIELDS, PROFILE, PROFILE_UNITS, ID_LIKE, LIMIT } from '../server/index.mjs';
+import { readIntakeFields } from '../src/intake.js';
+import { normalizeIntake } from '../src/normalize.js';
+import { redactionTerms } from '../src/plan.js';
 import { CARRIERS } from '../src/carriers.js';
 import { DEFAULT_SERVER } from '../sidepanel/usage-log.js';
-import { fillEvents, fieldChangeEvent } from '../src/usage.js';
+import { fillEvents, fieldChangeEvent, intakeProfile, redactor, ID_LIKE as EXTENSION_ID_LIKE, LIMIT as EXTENSION_LIMIT, PROFILE_UNITS as EXTENSION_UNITS } from '../src/usage.js';
 import { findPii } from '../scripts/lib/privacy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -58,6 +62,67 @@ test('field change events carry only fields the server keeps', () => {
     const keep = new Set([...COMMON, ...EVENT_FIELDS[e.type]]);
     const dropped = Object.keys(e).filter((k) => !keep.has(k) && e[k] !== undefined);
     assert.deepEqual(dropped, [], `${c.kind}: the server drops ${dropped.join(', ')}`);
+  }
+});
+
+// The business profile: every value the extension sends fits the server's shape for it, and each
+// side knows the other's fields, so nothing is dropped on the way and nothing is sent unchecked.
+const profileFits = (v, spec, where) => {
+  if (typeof spec === 'function') return assert.ok(spec(v), `${where}: the server would leave out ${JSON.stringify(v)}`);
+  if (Array.isArray(spec)) {
+    assert.ok(Array.isArray(v) && v.length <= PROFILE_UNITS, `${where}: not a list of at most ${PROFILE_UNITS}`);
+    return v.forEach((x, i) => profileFits(x, spec[0], `${where}[${i}]`));
+  }
+  assert.deepEqual(Object.keys(v).sort(), Object.keys(spec).sort(), `${where}: the extension sends every field the server has a shape for, and no other`);
+  for (const k of Object.keys(v)) profileFits(v[k], spec[k], `${where}.${k}`);
+};
+const keptWhole = (p, label) => { for (const group of EVENT_FIELDS.intake_profile) profileFits(p[group], PROFILE[group], `${label}: ${group}`); };
+
+test('the business profile the extension builds is one the server keeps whole', () => {
+  const unit = { type: 'Semi Truck', year: 2019, make: 'Freightliner', model: 'Cascadia', vin: 'x', value: 65000 };
+  const record = {
+    applicant: { dot: '1234567', mc: '654321', fein: '12-3456789', mcDotWithin60Days: false, yearsInBusiness: 4, yearsExperience: 6, ownerDrives: true },
+    garaging: { state: 'TX' },
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight', radius: '500 miles', radiusMiles: 500, vehicleOwnership: 'Owned', personalUse: false, usesEld: true, eldBrand: 'Motive',
+      needSr22: false, filingsRequired: true, filingsWhich: 'MCS-90', hazmat: false, hazPlacard: false, movingState: false, teamDriving: false, canadaLoads: false, equipVehicle: 5000 },
+    vehicles: Array(PROFILE_UNITS + 1).fill(unit), trailers: [{ ...unit, type: 'Dry Van' }],
+    trailerInfo: { ownership: 'Owned', hitch: 'Fifth wheel', interchange: true, interchangeLimit: '$20,000', equipTrailer: 2000 },
+    drivers: [{ dob: '02/03/1985', licenseState: 'TX', cdl: true, cdlYear: 2010, excluded: false, maritalStatus: 'Married', gender: 'FEMALE' }],
+    coverage: { autoLiability: 'Yes', autoLiabLimit: '$1M CSL', cargo: true, cargoLimit: 100000, cargoDeductible: 1000, gl: true, hasGl: false, glLimit: '$1M/$2M', reeferBreakdown: false, ntl: false },
+    priorInsurance: [{ type: 'Commercial Auto', carrier: 'Progressive', limit: '$1M CSL', expiration: '11/30/2026' }],
+    claims: { hasClaims: false },
+  };
+  const p = intakeProfile(record, { today: new Date('2026-10-22') });
+  assert.deepEqual(Object.keys(p).filter((k) => k !== 'type'), EVENT_FIELDS.intake_profile);
+  assert.equal(EXTENSION_UNITS, PROFILE_UNITS);
+  assert.equal(String(EXTENSION_ID_LIKE), String(ID_LIKE), 'the extension and the server refuse the same text');
+  assert.equal(String(EXTENSION_LIMIT), String(LIMIT), 'and take the same limits as written');
+  keptWhole(p, 'synthetic');
+  assert.deepEqual([p.business.dot, p.business.mc, p.business.fein], ['given', 'given', 'given']);
+  // The record above fills every value, so a value the extension can't send in its shape shows.
+  const leaves = (v) => (v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [v]);
+  assert.ok(!leaves(p).includes(null), `a value came out null: ${JSON.stringify(p)}`);
+});
+
+// Real intakes as normalizeIntake reads them, with what agents' intakes hold: an invalid date kept
+// as written, "Pending" in an ID box, limits typed by hand, identifiers in free text. A hand-built
+// record missed the invalid expiry month (review of PR #149).
+test('profiles of real intakes, odd values included, are ones the server keeps whole', async () => {
+  const fixtures = ['test/fixtures/sample-intake.pdf', 'test/fixtures/sample-intake-2026-10.pdf'];
+  const odd = [
+    {},
+    { ins_exp_1: '13/01/2026', ins_limit_1: '25/50/25', dot_number: 'Pending', mc_number: 'applied for', fein: '12345', auto_liab_limit: '$1000000 CSL', gen_liab_limit: '1000000' },
+    { what_haul: 'Steel, call 312-555-0142 or (312) 555-0142', eld_brand: 'Motive 123-45-6789', filings_which: 'MCS-90, BMC-91 policy CA-0193-4471', ins_carrier_1: 'Progressive S123-4567-8901', ins_limit_1: '100/300/100' },
+    { drv_dob_1: '01-05-1980', ins_exp_1: '02/30/2026', veh_make_1: 'Ford 01.05.1980', ins_limit_1: '123-45-6789', ins_carrier_1: 'None' },
+  ];
+  for (const file of fixtures) {
+    const raw = await readIntakeFields(pdfjs, new Uint8Array(fs.readFileSync(path.join(root, file))));
+    for (const [i, over] of odd.entries()) {
+      const { record } = normalizeIntake({ ...raw, ...over }, { today: new Date('2026-10-22') });
+      const p = intakeProfile(record, { redact: redactor(redactionTerms(record)), today: new Date('2026-10-22') });
+      keptWhole(p, `${file} #${i}`);
+      for (const leak of ['555-0142', '123-45-6789', '01-05-1980', '01.05.1980', 'S123-4567', 'CA-0193']) assert.ok(!JSON.stringify(p).includes(leak), `${file} #${i} leaks ${leak}`);
+    }
   }
 });
 

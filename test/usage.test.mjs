@@ -9,7 +9,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { redactionTerms } from '../src/plan.js';
-import { intakeSummary, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent } from '../src/usage.js';
+import { intakeSummary, intakeProfile, sha256Hex, matchIntake, compareText, fieldChangeEvent, fillEvents, redactor, rulesHash, RULE_FILES, STEP_MAX, knownStep, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent } from '../src/usage.js';
 
 const bytes = new Uint8Array(fs.readFileSync(new URL('./fixtures/sample-intake.pdf', import.meta.url)));
 const raw = await readIntakeFields(pdfjs, bytes.slice());
@@ -371,4 +371,72 @@ test('a Recalculate trace is logged as a page_layout the layouts leave out, with
   assert.deepEqual(buildLayouts([{ ...trace, session: 's', t: '2026-10-22T00:00:00Z' }]), []);
   // No trace, no event.
   assert.ok(!fillEvents([{ filled: [] }], { carrier: 'geico', page: '/quote', overwrite: false, ms: 1, redact }).some((e) => e.type === 'page_layout'));
+});
+
+test('the business profile describes the intake without identifying the client', () => {
+  const p = intakeProfile(record, { redact, today: new Date('2026-09-30') });
+  assertNoClientData(p);
+  assert.equal(p.type, 'intake_profile');
+  assert.deepEqual([p.business.state, p.business.dot, p.business.mc, p.business.fein], ['IL', 'given', 'given', 'blank'], 'whether a number was given, never the number');
+  assert.equal(p.vehicles.length, record.vehicles.length);
+  assert.deepEqual(Object.keys(p.vehicles[0]), ['type', 'year', 'make', 'model', 'value'], 'no VIN');
+  assert.deepEqual(p.drivers.map((d) => d.age), [38, 31], 'ages on the day, not dates of birth');
+  assert.deepEqual(Object.keys(p.drivers[0]), ['age', 'licenseState', 'cdl', 'cdlYear', 'excluded', 'maritalStatus', 'gender'], 'no name or license number');
+  assert.equal(p.coverage.autoLiabLimit, '$1M CSL', 'the limits asked for');
+  assert.equal(p.priorInsurance[0].expires, '2026-10', 'a month, not the date');
+});
+
+test('profile text loses what could identify the client; numbers, yes/no and gender keep their shapes', () => {
+  const synthetic = {
+    applicant: { dot: null, mc: '  ', fein: '12-3456789', mcDotWithin60Days: true, yearsInBusiness: 0, yearsExperience: null, ownerDrives: null },
+    garaging: { state: 'tx' },
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'Steel coils 40000 lbs, call owner@example.com', radiusMiles: 250.4, teamDriving: false, canadaLoads: null, equipVehicle: '5k?' },
+    vehicles: [{ type: 'Semi Truck', year: '19', make: 'Freightliner 1FUJGLDR0CLBP8834', model: '579', vin: '1FUJGLDR0CLBP8834', value: 65000 }],
+    trailers: [],
+    trailerInfo: { interchangeLimit: '$20,000' },
+    drivers: [
+      { first: 'Ann', dob: '10/01/1980', licenseNumber: 'A1234567', gender: 'MALE' },
+      { dob: '1980-10-01', gender: 'M' },
+      ...Array(60).fill({}),
+    ],
+    coverage: { autoLiability: 'Yes' },
+    priorInsurance: [{ carrier: 'None', expiration: null }, { carrier: 'Sample Mutual', expiration: '11/30/2026' }],
+    claims: { hasClaims: null },
+  };
+  const p = intakeProfile(synthetic, { redact: redactor(['Ann', 'Sample']), today: new Date('2026-09-30') });
+  assert.deepEqual([p.business.dot, p.business.mc, p.business.fein, p.business.state], ['blank', 'blank', 'given', 'TX']);
+  assert.deepEqual([p.business.dotWithin60Days, p.business.yearsInBusiness, p.business.ownerDrives], [true, 0, null], 'zero years is an answer; unanswered stays null');
+  assert.equal(p.operations.whatHaul, 'Steel coils # lbs, call #', 'five digits and an email address taken out');
+  assert.deepEqual([p.operations.radiusMiles, p.operations.teamDriving, p.operations.canadaLoads, p.operations.equipVehicle], [250, false, null, null]);
+  assert.deepEqual(p.vehicles, [{ type: 'Semi Truck', year: null, make: 'Freightliner #', model: '579', value: 65000 }], 'a VIN inside a make goes; an unreadable year is no year');
+  assert.equal(p.trailerInfo.interchangeLimit, 20000);
+  assert.equal(p.drivers.length, 50, 'at most 50 units');
+  assert.deepEqual([p.drivers[0].age, p.drivers[0].gender, p.drivers[1].age, p.drivers[1].gender], [45, 'MALE', null, 'MALE'], 'the birthday not yet reached; gender as typed in the panel (M, Female) read as MALE or FEMALE');
+  assert.deepEqual(p.priorInsurance.map((x) => [x.carrier, x.expires]), [['None', 'none'], ['[client] Mutual', '2026-11']]);
+  assert.equal(p.hasClaims, null);
+  for (const leak of ['Ann', '1FUJ', 'A1234567', '10/01/1980', 'example.com', '12-3456789', '40000']) assert.ok(!JSON.stringify(p).includes(leak), leak);
+});
+
+// Review of PR #149: identifiers written with punctuation, ID boxes holding words, impossible dates
+// and limits typed with digits.
+test('profile: punctuated identifiers and the intake\'s spaced VINs go; ID boxes, expiry months and limits keep their meaning', () => {
+  const synthetic = {
+    applicant: { dot: 'Pending', mc: '0', fein: '123456789' },
+    operations: { whatHaul: 'Produce; call (312) 555-0142, SSN 123-45-6789, born 01-05-1980 or 01.05.1980, licence S123-4567-8901, policy CA-0193-4471, truck 1FUJ GLDR 0CLB P8834' },
+    vehicles: [{ make: 'Freightliner', model: 'Cascadia 126', vin: '1FUJGLDR0CLBP8834' }],
+    drivers: [{ dob: '02/30/1980' }],
+    coverage: { autoLiabLimit: '$1000000 CSL', glLimit: '1000000' },
+    priorInsurance: [
+      { carrier: 'Progressive', limit: '25/50/25', expiration: '13/01/2026' },
+      { limit: '100/300/100', expiration: '11/30/2026' },
+      { limit: '123-45-6789' },
+    ],
+  };
+  const p = intakeProfile(synthetic, { today: new Date('2026-10-22') });
+  assert.equal(p.operations.whatHaul, 'Produce; call (#, SSN #, born # or #, licence S#, policy CA-#, truck #');
+  assert.deepEqual([p.business.dot, p.business.mc, p.business.fein], ['other', 'other', 'given'], 'a word or a zero is something written, not a number');
+  assert.equal(p.vehicles[0].model, 'Cascadia 126', 'a model number stays');
+  assert.equal(p.drivers[0].age, null, 'no age from an impossible date of birth');
+  assert.deepEqual([p.coverage.autoLiabLimit, p.coverage.glLimit], ['$1000000 CSL', '1000000']);
+  assert.deepEqual(p.priorInsurance.map((x) => [x.limit, x.expires]), [['25/50/25', null], ['100/300/100', '2026-11'], [null, null]], 'no month 13; an SSN is no limit');
 });

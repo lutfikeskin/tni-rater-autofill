@@ -8,7 +8,8 @@
 // Usage events go to a throwaway local usage server (server/index.mjs on a temporary folder), set
 // as the panel's Server before it opens. The run fails if any request leaves the machine (a host
 // other than localhost: the production usage server, an AI provider, a CDN), if the intake_loaded
-// event doesn't reach the local server, or on any console error or uncaught exception in the panel,
+// event, or the intake_profile event whole (nothing in it out of the server's shapes), doesn't reach
+// the local server, or on any console error or uncaught exception in the panel,
 // the mock tab or the extension's service worker that isn't on BENIGN. It waits on what the mock
 // and the panel do (quiet), never a fixed time, except where it watches that nothing happens.
 //
@@ -448,11 +449,13 @@ if (!poppedOk) console.log('POP OUT: the panel in its own window did not replace
 await ctx.close();
 await new Promise((resolve) => usageServer.close(resolve));
 const received = eventsIn();
+const stored = fs.readdirSync(path.join(usageDir, 'events')).flatMap((f) => fs.readFileSync(path.join(usageDir, 'events', f), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)));
+const profileWhole = stored.some((e) => e.type === 'intake_profile' && !e.dropped);
 fs.rmSync(usageDir, { recursive: true, force: true });
 const toProduction = outside.filter((r) => r.includes(`//${PRODUCTION_HOST}/`));
 console.log(`Usage: ${received.length} events to the local server (${[...new Set(received)].join(', ')}), ${outside.length} requests off this machine (${toProduction.length} to production)`);
 if (outside.length) console.log('OFF THIS MACHINE:', outside.join('; '));
-const usageOk = !outside.length && received.includes('intake_loaded');
+const usageOk = !outside.length && received.includes('intake_loaded') && profileWhole;
 console.log(`Errors: ${errors.length}${errors.length ? ` (${errors.join('; ')})` : ''}`);
 const result = JSON.parse(await Promise.resolve(lastMock));
 const ok = usageOk && !errors.length && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;

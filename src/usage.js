@@ -7,6 +7,9 @@
 //  - text typed into boxes is never logged. It is compared with the intake on this computer and
 //    only the result is kept ("matches drivers[0].dob", "same as autofill except formatting").
 
+import { toMoney, toDate } from './normalize.js';
+import { noPriorInsurance } from './util.js';
+
 export const LOG_KEY = 'usageLog';
 export const MAX_EVENTS = 20000;
 
@@ -30,6 +33,110 @@ export async function intakeSummary(pdfBytes, raw, result) {
     counts: { drivers: record.drivers.length, vehicles: record.vehicles.length, trailers: record.trailers.length },
     coverages: Object.entries(record.coverage).filter(([, v]) => v === true || v === 'Yes').map(([k]) => k),
     warnings: warnings.map((w) => ({ code: w.code, path: w.path, level: w.level })),
+  };
+}
+
+// What the client's business looks like, without names, numbers or addresses (intake_profile, for
+// TNI's analysis of its quoting): no name, contact, address, identification number, date of birth,
+// VIN or plate. It is pseudonymous, not anonymous: state, fleet and years together can still point
+// to one carrier. Where an identifier matters, a fact about it instead: whether a USDOT, MC or FEIN
+// number was given (`given`: a valid one; `other`: something else written, such as "Pending"), a
+// driver's age on `today`, the month a policy expires. A yes/no keeps null (unanswered, never No).
+// Gender is the panel's (the intake doesn't ask it): null is not set, filled Male by TNI's
+// standard. The intake's own words (what they haul, makes and models, the insurer) are redacted like
+// a label, the intake's VINs however they are spaced, and anything that could identify the client
+// becomes # (ID_LIKE: an @; a date with /, - or . between its parts; seven or more digits, even with
+// spaces, dashes, dots, slashes or brackets between them, as in a phone, SSN, licence or policy
+// number; five digits in a row; a word of eight or more letters and digits mixed, as in a VIN). A
+// limit as written is kept as it is (LIMIT: $1M CSL, $1,000,000, 1000000, 25/50/25). The server
+// keeps each value only in the same shapes (PROFILE, ID_LIKE and LIMIT in server/index.mjs).
+export const ID_LIKE = /@|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d(?:[\s()./-]{0,2}\d){6,}|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/i;
+const ID_PARTS = /\S*@\S*|\d{1,4}[/.-]\d{1,2}[/.-]\d{1,4}|\d(?:[\s()./-]{0,2}\d){6,}|\d{5,}|\b(?=[a-z]*\d)(?=\d*[a-z])[a-z\d]{8,}\b/gi;
+// An amount: with thousands commas, round thousands written plainly, or up to four digits with an
+// optional K or M; a pair of amounts with a slash ($1M/$2M); a split limit (25/50/25, 100/300/100,
+// whose first part is 15 or more, so a date isn't one); a word; & + -.
+const MONEY = String.raw`\$?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$?\d{1,6}000|\$?\d{1,4}(?:\.\d+)?[km]?`;
+const LIMIT_PART = String.raw`(?:1[5-9]|[2-9]\d|[1-9]\d{2})(?:\/\d{1,3}){1,2}|(?:${MONEY})(?:\s*\/\s*(?:${MONEY}))?|[a-z]+\.?|[&+-]`;
+// Two numbers with only a space, &, + or - between them aren't a limit (an SSN or a phone written
+// with spaces: 123 45 6789).
+export const LIMIT = new RegExp(String.raw`^(?![\s\S]*\d[\s&+-]+\$?\d)(?:${LIMIT_PART})(?:\s+(?:${LIMIT_PART}))*$`, 'i');
+export const PROFILE_UNITS = 50;
+const MAX_DOLLARS = 99_999_999;
+const yesNo = (v) => (typeof v === 'boolean' ? v : null);
+// USDOT and MC as normalizeIntake keeps a valid one (digits, not all zero); FEIN 12-3456789.
+const idFact = (v, valid) => { const s = String(v ?? '').trim(); return !s ? 'blank' : valid.test(s) ? 'given' : 'other'; };
+const DOT_OR_MC = /^(?=\d*[1-9])\d{1,8}$/;
+const FEIN = /^\d{2}-?\d{7}$/;
+const whole = (v, min, max) => (typeof v === 'number' && Number.isFinite(v) && Math.round(v) >= min && Math.round(v) <= max ? Math.round(v) : null);
+const usState = (v) => { const s = String(v ?? '').trim().toUpperCase(); return /^[A-Z]{2}$/.test(s) ? s : null; };
+// A real calendar date only (toDate): "13/01/2026" is no date, so no month.
+const MDY = /^(\d{2})\/(\d{2})\/(\d{4})$/;
+function ageOn(dob, today) {
+  const m = MDY.exec(toDate(dob) ?? '');
+  if (!m) return null;
+  const [month, day, year] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const birthdayPassed = today.getMonth() + 1 > month || (today.getMonth() + 1 === month && today.getDate() >= day);
+  return whole(today.getFullYear() - year - (birthdayPassed ? 0 : 1), 0, 120);
+}
+const monthOf = (date) => { const m = MDY.exec(toDate(date) ?? ''); return m ? `${m[3]}-${m[1]}` : null; };
+// The intake's own VINs written with spaces or dashes ("1FUJ GLDR 0CLB P8834"), which the redactor,
+// matching them as written, would miss.
+const looseVin = (vin) => new RegExp(String(vin).replace(/[\s-]/g, '').split('').join('[\\s-]*'), 'gi');
+
+export function intakeProfile(record, { redact = (s) => s, today = new Date() } = {}) {
+  const r = record ?? {};
+  const a = r.applicant ?? {};
+  const o = r.operations ?? {};
+  const t = r.trailerInfo ?? {};
+  const c = r.coverage ?? {};
+  const vins = [...(r.vehicles ?? []), ...(r.trailers ?? [])].map((u) => String(u?.vin ?? '').replace(/[\s-]/g, ''))
+    .filter((v) => /^[a-z\d]{11,17}$/i.test(v)).map(looseVin);
+  const words = (v, max) => {
+    if (v == null || typeof v === 'object') return null;
+    const s = vins.reduce((acc, re) => acc.replace(re, '#'), redact(String(v))).replace(ID_PARTS, '#').replace(/\s+/g, ' ').trim().slice(0, max).trim();
+    return /[a-z\d]/i.test(s.replace(/#/g, '')) && !ID_LIKE.test(s) ? s : null;
+  };
+  // A limit as written ($1M CSL, 25/50/25), else words like any other text.
+  const limit = (v, max) => {
+    const s = v == null || typeof v === 'object' ? '' : redact(String(v)).replace(/\s+/g, ' ').trim();
+    return s && s.length <= max && LIMIT.test(s) ? s : words(v, max);
+  };
+  const dollars = (v) => whole(v, 0, MAX_DOLLARS);
+  const year = (v) => whole(v, 1900, 2100);
+  const unit = (u) => ({ type: words(u.type, 40), year: year(u.year), make: words(u.make, 40), model: words(u.model, 40), value: dollars(u.value) });
+  const list = (k) => (Array.isArray(r[k]) ? r[k].slice(0, PROFILE_UNITS) : []);
+  return {
+    type: 'intake_profile',
+    business: {
+      state: usState(r.garaging?.state), businessClass: words(o.businessClass, 80), dot: idFact(a.dot, DOT_OR_MC), mc: idFact(a.mc, DOT_OR_MC), fein: idFact(a.fein, FEIN),
+      dotWithin60Days: yesNo(a.mcDotWithin60Days), yearsInBusiness: whole(a.yearsInBusiness, 0, 200), yearsExperience: whole(a.yearsExperience, 0, 100),
+      ownerDrives: yesNo(a.ownerDrives),
+    },
+    operations: {
+      whatHaul: words(o.whatHaul, 120), radius: words(o.radius, 40), radiusMiles: whole(o.radiusMiles, 0, 10_000), vehicleOwnership: words(o.vehicleOwnership, 40),
+      personalUse: yesNo(o.personalUse), usesEld: yesNo(o.usesEld), eldBrand: words(o.eldBrand, 60), needSr22: yesNo(o.needSr22),
+      filingsRequired: yesNo(o.filingsRequired), filingsWhich: words(o.filingsWhich, 60), hazmat: yesNo(o.hazmat), hazPlacard: yesNo(o.hazPlacard),
+      movingState: yesNo(o.movingState), teamDriving: yesNo(o.teamDriving), canadaLoads: yesNo(o.canadaLoads), equipVehicle: dollars(o.equipVehicle),
+    },
+    vehicles: list('vehicles').map(unit),
+    trailers: list('trailers').map(unit),
+    trailerInfo: {
+      ownership: words(t.ownership, 40), hitch: words(t.hitch, 40), interchange: yesNo(t.interchange),
+      interchangeLimit: dollars(toMoney(t.interchangeLimit)), equipTrailer: dollars(t.equipTrailer),
+    },
+    drivers: list('drivers').map((d) => ({
+      age: ageOn(d.dob, today), licenseState: usState(d.licenseState), cdl: yesNo(d.cdl), cdlYear: year(d.cdlYear), excluded: yesNo(d.excluded),
+      maritalStatus: words(d.maritalStatus, 30), gender: /^f(emale)?$/i.test(String(d.gender ?? '').trim()) ? 'FEMALE' : /^m(ale)?$/i.test(String(d.gender ?? '').trim()) ? 'MALE' : null,
+    })),
+    coverage: {
+      autoLiability: words(c.autoLiability, 20), autoLiabLimit: limit(c.autoLiabLimit, 40), cargo: yesNo(c.cargo), cargoLimit: dollars(c.cargoLimit),
+      cargoDeductible: dollars(c.cargoDeductible), gl: yesNo(c.gl), hasGl: yesNo(c.hasGl), glLimit: limit(c.glLimit, 40),
+      reeferBreakdown: yesNo(c.reeferBreakdown), ntl: yesNo(c.ntl),
+    },
+    priorInsurance: list('priorInsurance').map((p) => ({
+      type: words(p.type, 40), carrier: words(p.carrier, 60), limit: limit(p.limit, 40), expires: noPriorInsurance(p) ? 'none' : monthOf(p.expiration),
+    })),
+    hasClaims: yesNo(r.claims?.hasClaims),
   };
 }
 
