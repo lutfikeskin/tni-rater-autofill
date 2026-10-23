@@ -48,6 +48,7 @@ Measure automatic-answer accuracy, the share automated, and whole-quote correctn
 
 - [intake.js](../src/intake.js), [normalize.js](../src/normalize.js), [schema.js](../src/schema.js): extraction and record.
 - [plan.js](../src/plan.js), [carriers.js](../src/carriers.js): plans and carrier registration.
+- [types.js](../types.js), at the root: the carrier config, plan steps, fill report and usage events as JSDoc types, checked by `npm run typecheck` in the files that opt in ([testing](testing.md)).
 - [sidepanel.js](../sidepanel/sidepanel.js), [pagekit.js](../src/content/pagekit.js): orchestration and browser execution.
 
 For changes to answer semantics, continue to [intake and rules](intake-and-rules.md). For feedback behavior, use [learning](learning.md).

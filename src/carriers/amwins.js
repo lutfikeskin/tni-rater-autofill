@@ -1,3 +1,4 @@
+// @ts-check
 // AmWINS Admitted Placement, Commercial Lines Business Auto
 // (myagency.amwinsadmittedplacement.com/application/businessauto).
 //
@@ -49,6 +50,8 @@
 import { owner, ownerDobNote } from './progressive.js';
 import { isLongHaul, otherNotes } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+
+/** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
 const street = (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null;
 const digits = (v) => (v ? String(v).replace(/\D/g, '') || null : null);
@@ -241,6 +244,31 @@ const vehicleValueNote = (r, a) => {
   return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
 };
 
+// AmWINS shows several repeater rows on one page. Give every row its own values;
+// the active-driver picker is for carriers that show one driver page at a time.
+/** @param {CarrierRule[]} rules @returns {CarrierRule[]} */
+const perRow = (rules) => rules.map(/** @returns {CarrierRule} */ (rule) => {
+  let panel = rule.selector?.startsWith(DRIVER) ? DRIVER : rule.selector?.startsWith(VEHICLE) || rule.selector === '#marketValue' ? VEHICLE
+    : rule.selector?.startsWith(VEHICLE_COVERAGES) ? VEHICLE_COVERAGES : null;
+  if (rule.label === '^permanently attached equipment') panel = VEHICLE;
+  if (!panel) return rule;
+  const list = panel === DRIVER ? 'drivers' : 'vehicles';
+  const selector = rule.selector === '#marketValue' ? `${VEHICLE} [data-id="costNew"]`
+    : rule.label === '^permanently attached equipment' ? `${VEHICLE} [data-id="permanentlyAttachedEquipment"] input[type="radio"]` : rule.selector;
+  // A vehicle's row is the one showing its VIN (the witness), whatever its position: Import
+  // Valid Records draws the rows in its own order, and a VIN it rejected has no row (that
+  // vehicle's answers stay the agent's). Until the import lands the rows show no VIN, so
+  // nothing is typed into a row before it. Drivers and the coverage rows have no VIN: theirs
+  // are still the row at the unit's position.
+  if (panel === VEHICLE) {
+    return { ...rule, repeat: list, witness: { selector: '[data-id="vin"]', path: 'vehicles[].vin' },
+      repeatSelector: (r) => (r[list].length > 1 ? selector.replace(panel, `${panel} .app-rp-section`) : selector) };
+  }
+  return { ...rule, repeat: list, repeatSelector: (r, a) => r[list].length > 1
+    ? selector.replace(panel, `${panel} > .app-rp-section[data-id="${a[list]}"]`) : rule.selector || selector };
+});
+
+/** @type {CarrierConfig} */
 export const amwins = {
   id: 'amwins',
   name: 'AmWINS',
@@ -272,7 +300,7 @@ export const amwins = {
   supportedClasses: [{ re: FREIGHT, whatHaul: true }],
   // Import Data right after the VIN list is filled, before the vehicle boxes, which it fills.
   actions: [
-    ...[1, 2, 3].map((index) => ({ id: `addDriver${index}`, text: '^add driver$',
+    ...[1, 2, 3].map(/** @returns {CarrierAction} */ (index) => ({ id: `addDriver${index}`, text: '^add driver$',
       // The previous driver's row is in and filled (any of its intake answers on the page); not
       // just its license number, which a driver can be missing and would then block every later row.
       when: (r) => r.drivers.length > index, afterAny: ['first', 'last', 'dob', 'licenseNumber'].map((f) => `drivers[${index - 1}].${f}`),
@@ -294,7 +322,8 @@ export const amwins = {
   // Each step ends with Save & Continue (saves the draft, opens the next step) once nothing is
   // left for the agent. The declaration step never gets there: the declaration is the agent's.
   advance: { text: '^save\\s*(&|and)\\s*continue$' },
-  rules: [
+  // Every rule of a repeating section is repeated per row (perRow).
+  rules: perRow([
     // --- Start (/commerciallines) --------------------------------------------------------------
     { name: 'Risk state', label: 'select a risk state', path: 'amwins.riskState', kind: 'state', source: 'derived', value: (r) => r.garaging?.state ?? null },
 
@@ -304,7 +333,7 @@ export const amwins = {
     // DBA and policy dates stay as the page has them.
     ...['#agnecyName', '#contactName', '#phone', '#email', '#website', '#effectiveDate', '#expirationDate', '#dba',
       '#inspectionContactEmail', '#inspectionContactMobilePhone']
-      .map((selector) => ({ selector, name: `Left as the page has it (${selector.slice(1)})`, ignore: true })),
+      .map(/** @returns {CarrierRule} */ (selector) => ({ selector, name: `Left as the page has it (${selector.slice(1)})`, ignore: true })),
     // Contact Information: the client, name and phone only; single contact stays Yes.
     { selector: '#inspectionContactName', name: 'Contact name (the owner)', source: 'derived', value: ownerFull },
     { selector: '#inspectionContactOfficePhone', name: 'Contact phone', source: 'derived', value: (r) => digits(r.applicant.phone) },
@@ -336,7 +365,7 @@ export const amwins = {
     { name: 'Additional interest (standard: No)', label: '^has additional interest$', kind: 'bool', source: 'standard', value: () => false },
     { selector: '#waiverType', name: 'Waiver type (standard: NONE)', kind: 'choice', source: 'standard', value: () => 'NONE' },
     // Filing counts: skipped (TNI).
-    ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map((selector) => ({ selector, name: 'Filing count (skipped)', ignore: true })),
+    ...['#stateFillings', '#stateCargoFillings', '#otherFillings'].map(/** @returns {CarrierRule} */ (selector) => ({ selector, name: 'Filing count (skipped)', ignore: true })),
     // Prior insurance section only: every carrier dropdown is NO PRIOR (the proof of prior insurance goes in the disclosure).
     // AmWINS rebuilds the year panels when Years in Business changes and on the reload after
     // Save & Continue, collapses them all when there is more than one, and a year can have more
@@ -426,9 +455,9 @@ export const amwins = {
     { name: 'Personal Injury Protection (standard: No, Medical Payments is offered)', label: '^personal injury protection$', kind: 'bool', source: 'standard', value: () => false, replace: true },
     { selector: '#personalInjuryProtectionLimit', name: 'Personal Injury Protection limit (only with PIP Yes)', ignore: true },
     // Liability auto symbol: 6 only.
-    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => ({ selector: `#autoSymbol${n}`, name: `Auto symbol ${n}${n === 6 ? ' (standard: 6)' : ' (standard: unticked)'}`, group: 'Liability coverage auto symbol', kind: 'bool', source: 'standard', value: () => n === 6 })),
+    ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(/** @returns {CarrierRule} */ (n) => ({ selector: `#autoSymbol${n}`, name: `Auto symbol ${n}${n === 6 ? ' (standard: 6)' : ' (standard: unticked)'}`, group: 'Liability coverage auto symbol', kind: 'bool', source: 'standard', value: () => n === 6 })),
     // Nothing is excluded, on every vehicle's row: one rule per box, repeated per vehicle below.
-    ...EXCLUSIONS.map(([id, title, topic]) => ({ selector: dataId(id, VEHICLE_COVERAGES), name: `Exclude ${title} (standard: No, not excluded)`,
+    ...EXCLUSIONS.map(/** @returns {CarrierRule} */ ([id, title, topic]) => ({ selector: dataId(id, VEHICLE_COVERAGES), name: `Exclude ${title} (standard: No, not excluded)`,
       label: `^ex\\w*de\\b.*(${topic})`, not: 'waiver', kind: 'bool', source: 'standard', value: () => false })),
 
     // --- Underwriting questions --------------------------------------------------------------------
@@ -440,32 +469,11 @@ export const amwins = {
     { name: 'Owned unscheduled vehicles (standard: No)', label: '^owned unscheduled vehicle$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Convictions / moving violations (standard: No)', label: '^convictions moving violations$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Hazardous material', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat' },
-    ...UNDERWRITING_NO.map((q) => ({ name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
+    ...UNDERWRITING_NO.map(/** @returns {CarrierRule} */ (q) => ({ name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
     // Yes again after "Default all answers to No".
     { name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', source: 'standard', value: () => true, replace: true },
     { name: 'Disclosure details (from the intake)', label: '^disclosure details$', source: 'derived', value: disclosure },
     // The declaration is the agent's to make.
     { selector: '#accept', name: 'Declaration', kind: 'bool', source: 'attestation', note: 'The declaration is yours to confirm; never ticked. Then Submit (yours too).' },
-  ].map((rule) => {
-    // AmWINS shows several repeater rows on one page. Give every row its own values;
-    // the active-driver picker is for carriers that show one driver page at a time.
-    let panel = rule.selector?.startsWith(DRIVER) ? DRIVER : rule.selector?.startsWith(VEHICLE) || rule.selector === '#marketValue' ? VEHICLE
-      : rule.selector?.startsWith(VEHICLE_COVERAGES) ? VEHICLE_COVERAGES : null;
-    if (rule.label === '^permanently attached equipment') panel = VEHICLE;
-    if (!panel) return rule;
-    const list = panel === DRIVER ? 'drivers' : 'vehicles';
-    const selector = rule.selector === '#marketValue' ? `${VEHICLE} [data-id="costNew"]`
-      : rule.label === '^permanently attached equipment' ? `${VEHICLE} [data-id="permanentlyAttachedEquipment"] input[type="radio"]` : rule.selector;
-    // A vehicle's row is the one showing its VIN (the witness), whatever its position: Import
-    // Valid Records draws the rows in its own order, and a VIN it rejected has no row (that
-    // vehicle's answers stay the agent's). Until the import lands the rows show no VIN, so
-    // nothing is typed into a row before it. Drivers and the coverage rows have no VIN: theirs
-    // are still the row at the unit's position.
-    if (panel === VEHICLE) {
-      return { ...rule, repeat: list, witness: { selector: '[data-id="vin"]', path: 'vehicles[].vin' },
-        repeatSelector: (r) => (r[list].length > 1 ? selector.replace(panel, `${panel} .app-rp-section`) : selector) };
-    }
-    return { ...rule, repeat: list, repeatSelector: (r, a) => r[list].length > 1
-      ? selector.replace(panel, `${panel} > .app-rp-section[data-id="${a[list]}"]`) : rule.selector || selector };
-  }),
+  ]),
 };

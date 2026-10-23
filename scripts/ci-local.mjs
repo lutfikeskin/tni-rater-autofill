@@ -2,10 +2,10 @@
 // The pull-request checks (checks.yml, windows-smoke.yml) on this computer, in the same order,
 // before a push spends paid GitHub minutes on them. Stops at the first failure.
 //
-//   npm run ci           -> lint, unit tests, package, store ZIP check, packaged-extension E2E with the
-//                           replay server, AmWINS (normal and reversed), GEICO mock, Progressive
-//                           fixture replays, Luna mock
-//   npm run ci -- --quick -> lint, unit tests and package only (checks.yml)
+//   npm run ci           -> lint, type check, unit tests, package, store ZIP check, packaged-extension
+//                           E2E with the replay server, AmWINS (normal and reversed), GEICO mock,
+//                           Progressive fixture replays, Luna mock
+//   npm run ci -- --quick -> lint, type check, unit tests and package only (checks.yml)
 //
 // Uses the installed node_modules (no `npm ci`) and Playwright's Chromium (`npx playwright install
 // chromium` once). A replay server already serving port 8792 is used as it is; otherwise one is
@@ -66,6 +66,7 @@ async function withReplay(fn) {
 
 try {
   run('Lint', ['run', 'lint']);
+  run('Type check', ['run', 'typecheck']);
   run('Unit tests', ['test']);
   run('Package', ['run', 'package']);
   if (!quick) {

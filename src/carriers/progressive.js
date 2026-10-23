@@ -1,3 +1,4 @@
+// @ts-check
 // Progressive commercial auto, ForAgentsOnly (clpolicy.foragentsonly.com).
 //
 // The quote flow is an ExtJS 6 + Duck Creek ("DCT") single-page app. A rule finds its question by
@@ -31,6 +32,8 @@
 
 import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul } from '../normalize.js';
+
+/** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
 // Values that Progressive asks the agent to attest to must come from an explicit intake field.
 // Keep these helpers conservative: an absent value is a review item, not a reason to guess.
@@ -141,6 +144,7 @@ const trailerValueNote = (r, a) => {
 // The trailer's pages carry the vehicle's data-model names (RiskInput.VIN, RiskInput.Radius…):
 // the vehicle's questions are never looked for there, and the trailer's only there.
 const TRAILER_PAGES = ['MostCommonTrailers', 'AddTrailer'];
+/** @param {CarrierRule} rule @returns {CarrierRule} */
 const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 
 // The quote's state is the garaging state (as the quote on Progressive's home page is started).
@@ -297,6 +301,7 @@ const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.exp
 // for under Requested coverage (coverage.gl) alone keeps the standard (TNI, 2026-10-19, after an
 // AR run: "None of the above if it's not mentioned in the notes").
 const hasGl = (r) => r.coverage?.hasGl === true;
+/** @param {CarrierRule} rule @param {boolean | string} standard @param {string} note @returns {CarrierRule} */
 const otherCoverage = (rule, standard, note) => ({ ...rule, source: (r) => (hasGl(r) ? 'fact' : 'standard'),
   value: () => standard, note: (r) => (hasGl(r) ? `You marked that the client has general liability: ${note}` : null) });
 const OTHER_GROUP = { AA: 'Other business coverages', A7: 'Other business coverages', A8: 'Other business coverages', A9: 'Other business coverages',
@@ -347,6 +352,7 @@ const NTL_HOLD = ['ntlStillAdded'];
 
 // A small, reviewed label fallback for practice layouts and carrier redraws that omit a Duck
 // Creek question id. Keep optional contact fields and unvalidated GL out of this list.
+/** @type {CarrierRule[]} */
 const SAFE_LABEL_RULES = [
   { path: 'drivers[].first', label: '^(driver )?first name$', not: 'business|company|agent|producer' },
   { path: 'drivers[].last', label: '^(driver )?last name$', not: 'business|company|agent|producer' },
@@ -426,8 +432,10 @@ const vehicleTypeNote = (r, a) => {
 
 // A page's questions (its pageName): each question is looked for on its own page only, so "City" on
 // Business Owner Info and on NoHit are two questions, and a page's label rules stay on it.
+/** @param {string | string[]} page @param {CarrierRule[]} rules @returns {CarrierRule[]} */
 const onPage = (page, rules) => rules.map((rule) => ({ page, ...rule }));
 
+/** @type {CarrierConfig} */
 export const progressive = {
   id: 'progressive',
   name: 'Progressive',
@@ -724,7 +732,7 @@ export const progressive = {
       { q: '2BCB', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (from VIN lookup)', ignore: true },
       // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
       // a box the lookup leaves empty goes to the agent.
-      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(([q, name, ask, field]) => ({
+      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
         q, field, ask, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
       })),
       // Asked only when the VIN lookup decodes a vehicle other than the tile picked from the intake's
@@ -747,7 +755,7 @@ export const progressive = {
       { q: '2C97', source: 'fact', ask: 'Vehicle Registrant?', name: 'Vehicle registrant', kind: 'choice', note: 'Who the vehicle is registered to isn\'t on the intake: answer it yourself.' },
       // NJ safety equipment boxes: the VIN lookup ticks what the vehicle has; left as Progressive set them.
       ...[['2C2C', 'Anti-Lock Brakes'], ['2C2D', 'Traction Control'], ['2C2E', 'Five MPH Bumpers'], ['2C45', 'Anti-Theft Device 1'], ['2C46', 'Anti-Theft Device 2'], ['2C47', 'Anti-Theft Device 3'], ['2C48', 'Anti-Theft Device 4']]
-        .map(([q, ask]) => ({ q, ask, name: `${ask} (from VIN lookup)`, ignore: true })),
+        .map(/** @returns {CarrierRule} */ ([q, ask]) => ({ q, ask, name: `${ask} (from VIN lookup)`, ignore: true })),
       { q: '2CCC', source: 'standard', field: 'RiskInput.CompCollIndicator', ask: 'Does the customer need Comprehensive or Collision coverage to protect this vehicle in an accident or loss?', name: 'Comprehensive / collision (standard: Yes)', kind: 'bool', value: () => true },
       // Found by its text: its data-model name is the trailer's too (kept to the trailer pages).
       // Shown once the band says more than $2,000: the intake's equipment value.
@@ -779,7 +787,7 @@ export const progressive = {
       { q: '2AFF', source: trailerEquipmentSource, field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard when the intake gives no value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: '2AFC', source: 'derived', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },
       { q: '2B04', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
-    ]).map((rule) => ({ ...rule, pageOnly: true })),
+    ]).map(/** @returns {CarrierRule} */ (rule) => ({ ...rule, pageOnly: true })),
 
     // --- Add driver (AddDriver) ------------------------------------------------------------------
     ...onPage('AddDriver', [
@@ -830,13 +838,13 @@ export const progressive = {
       // States that ask UM and UIM separately (PA 1DCA/1DDE, IN and AR 1DBF/1DD8): the same $100k
       // CSL. Uninsured first: AR offers underinsured only up to the uninsured limit (live run
       // 2026-10-19: tried while uninsured was still $1 million, it offered only that, and failed).
-      ...[['1DCA', { ask: 'Uninsured Motorist Bodily Injury' }], ['1DDE', { ask: 'Underinsured Motorist Bodily Injury' }], ['1DBF', { field: 'LineInput.UMBILimit' }], ['1DD8', { field: 'LineInput.UIMBILimit' }]]
-        .map(([q, which]) => ({ q, source: 'standard', ...which, name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
+      ...[{ q: '1DCA', ask: 'Uninsured Motorist Bodily Injury' }, { q: '1DDE', ask: 'Underinsured Motorist Bodily Injury' }, { q: '1DBF', field: 'LineInput.UMBILimit' }, { q: '1DD8', field: 'LineInput.UIMBILimit' }]
+        .map(/** @param {CarrierRule} which @returns {CarrierRule} */ (which) => ({ ...which, source: 'standard', name: 'Uninsured / underinsured motorist (standard: $100k CSL)', kind: 'choice', value: () => '$100k CSL' })),
       // Pennsylvania first-party benefits: not on the intake means not bought, except medical
       // expense, which PA requires (its lowest, $5,000).
       { q: '1E66', source: 'standard', ask: 'Medical Expense Benefits', name: 'PA medical expense benefits (required: lowest, $5,000)', kind: 'choice', value: () => '$5,000' },
       ...[['1E69', 'Extraordinary Medical Expense'], ['1E6E', 'Income Loss'], ['1E71', 'Funeral Expense'], ['1E74', 'Accidental Death']]
-        .map(([q, what]) => ({ q, source: 'standard', ask: `${what} Benefits`, name: `PA ${what.toLowerCase()} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
+        .map(/** @returns {CarrierRule} */ ([q, what]) => ({ q, source: 'standard', ask: `${what} Benefits`, name: `PA ${what.toLowerCase()} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
       // PIP's state choice (MD): its box has no question text and its fieldref isn't recorded yet; it's
       // the list offering "$2,500 Full PIP". Other states' (TX: plain amounts) stay the agent's.
       { q: '1E7C', withOption: '$2,500 Full PIP', name: 'PIP (preserve prefilled state choice)', ignore: true },
@@ -875,7 +883,7 @@ export const progressive = {
         ['21ED', 'GeneralLiabilityTruckOtherPremises', 'Warehouse or premises customers visit (standard: No)', false],
         ['21EF', 'GeneralLiabilityTruckSetup', 'Set-up or installation (standard: No)', false],
         ['21F3', 'GeneralLiabilityTruckOtherBusiness', 'Other businesses than for-hire trucking (standard: No)', false]]
-        .map(([q, ref, name, answer]) => ({ q, source: (r) => (glRequested(r) ? 'standard' : 'fact'), gl: 'section', field: `GeneralLiabilityInput.${ref}`, name, kind: 'bool', value: () => answer, note: glUnrequested })),
+        .map(/** @param {any[]} row @returns {CarrierRule} */ ([q, ref, name, answer]) => ({ q, source: (r) => (glRequested(r) ? 'standard' : 'fact'), gl: 'section', field: `GeneralLiabilityInput.${ref}`, name, kind: 'bool', value: () => answer, note: glUnrequested })),
       { q: '21F1', source: (r) => (oilGasNote(r) ? 'fact' : 'standard'), gl: 'section', field: 'GeneralLiabilityInput.GeneralLiabilityTruckOilAndGas', name: 'Oil and gas fields (standard: No unless the intake mentions them)', kind: 'bool', value: () => false, note: oilGasNote },
       { q: '21D1', source: glLimitSource, gl: 'limit', field: 'LineInput.GeneralLiabilityLimit', name: 'General liability limit (the intake\'s; none: TNI\'s default $1M/$2M)', kind: 'choice', value: glLimit, note: glLimitNote, warn: glLimitWarn },
       // Any other General Liability question on Rates stays the agent's (never the AI's), instead
@@ -894,7 +902,7 @@ export const progressive = {
       { q: 'TR2CE0', source: 'derived', field: 'RiskInput.PAValue', ask: 'What is the value of the permanently attached equipment?', name: 'Trailer equipment value (from the intake)', kind: 'money', value: trailerEquipment, ignore: (r) => trailerEquipment(r) == null },
       { q: 'TR2CE3', source: trailerEquipmentSource, field: 'RiskInput.PAValueIndicator', ask: 'Trailer has no equipment', name: 'Trailer has no equipment (standard when the intake gives no value)', kind: 'bool', value: (r) => trailerEquipment(r) == null },
       { q: 'TR2CE8', field: 'RiskInput.NonPAValue', ask: 'If this trailer was sold today, how much would it be worth (excluding any permanently attached equipment)?', path: 'trailers[].value', name: 'Trailer value if sold today', note: trailerValueNote },
-    ]).map((rule) => ({ ...rule, scope: 'trailer', pageOnly: true })),
+    ]).map(/** @returns {CarrierRule} */ (rule) => ({ ...rule, scope: 'trailer', pageOnly: true })),
 
     // --- Bill plan options (ChangePaymentPlan) ---------------------------------------------------
     ...onPage('ChangePaymentPlan', [

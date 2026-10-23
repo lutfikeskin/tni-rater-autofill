@@ -1,9 +1,12 @@
+// @ts-check
 // Builds the list of "put this value in the field that looks like this" steps that gets sent into
 // the rater page. Values are resolved here so the page script only has to match and type.
 
 import { GENERIC_RULES } from './rules.js';
 import { fieldInfo } from './schema.js';
 import { get, listOf } from './util.js';
+
+/** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, PlanStep } from '../types.js' */
 
 // Where a rule's answer comes from (Contract 2, docs/intake-and-rules.md):
 //   intake       a record path, no computed value (the default for a rule with `path` only)
@@ -40,9 +43,10 @@ export function reviewWarn(record, carrier) {
 }
 
 /**
- * @param {object} record   client record from normalizeIntake()
- * @param {object|null} carrier  entry from CARRIERS
- * @param {{drivers?: number, vehicles?: number, trailers?: number}} active  which driver/vehicle/trailer this page is about
+ * @param {ClientRecord} record   client record from normalizeIntake()
+ * @param {CarrierConfig|null} carrier  entry from CARRIERS
+ * @param {ActiveUnits} active  which driver/vehicle/trailer this page is about
+ * @returns {PlanStep[]}
  */
 export function buildPlan(record, carrier, active = {}) {
   // A carrier's `rowSections`: repeating sections its own rules answer row by row, where a generic
@@ -60,11 +64,19 @@ const withIndex = (path, active) => {
 
 // Buttons to click (carrier.actions), resolved for this client. The page script clicks each at
 // most once per quote, on its page, once its `after` fields have values.
+/**
+ * @param {CarrierConfig|null} carrier
+ * @param {ClientRecord} record
+ * @param {ActiveUnits} active
+ * @returns {ActionStep[]}
+ */
 function actionSteps(carrier, record, active) {
-  const resolve = (v) => (typeof v === 'function' ? v(record, active) : v);
+  // Typed for what it gives each field (the body takes any value or function).
+  /** @type {<T>(v: ClientValue<T>) => T} */
+  const resolve = /** @param {any} v @returns {any} */ (v) => (typeof v === 'function' ? v(record, active) : v);
   return (carrier?.actions ?? [])
     .filter((a) => !a.when || a.when(record, active))
-    .map((a, i) => ({
+    .map(/** @returns {ActionStep} */ (a, i) => ({
       id: `action:${a.id}:${i}`,
       kind: 'action',
       // Vehicle helpers must be tracked per active vehicle so one VIN lookup cannot satisfy a
@@ -157,6 +169,13 @@ function shownOn(cond, record, active) {
   return c?.field ? { field: c.field, label: c.label ?? null, unit: c.unit ?? null } : null;
 }
 
+/**
+ * @param {CarrierRule[]} rules
+ * @param {ClientRecord} record
+ * @param {CarrierConfig|null} carrier
+ * @param {ActiveUnits} active
+ * @returns {FieldStep[]}
+ */
 function fieldSteps(rules, record, carrier, active) {
   const review = !supportedClass(record, carrier);
   const reviewNote = review ? reviewWarn(record, carrier) : null;
@@ -174,7 +193,7 @@ function fieldSteps(rules, record, carrier, active) {
     }
     return [{ rule, active }];
   });
-  return expanded.map(({ rule, active, activeVehicle = null }, id) => {
+  return expanded.map(/** @returns {FieldStep} */ ({ rule, active, activeVehicle = null }, id) => {
     const list = rule.path ? listOf(rule.path) : null;
     const path = rule.path
       ? (list ? rule.path.replace('[]', `[${active[list] ?? 0}]`) : rule.path)

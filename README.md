@@ -216,6 +216,7 @@ Updates reach agents through the Chrome Web Store; their usage logs go to TNI's 
 | `src/rules.js` | Generic label → field rules |
 | `src/carriers.js`, `src/carriers/` | Per-carrier domains and exact mappings (`carriers/progressive.js`, `carriers/amwins.js`, `carriers/geico.js`) |
 | `src/plan.js` | Resolves values into fill steps; builds the capture redaction list |
+| `types.js` | The shapes passed between parts (carrier config, plan steps, fill report, usage events) as JSDoc types for `npm run typecheck`; comments only, at the root so it is never packaged |
 | `src/content/pagekit.js` | Runs inside the rater page: find fields, fill, put in AI answers, highlight, capture |
 | `src/content/page-press.js` | On GEICO, presses the buttons the fill clicks from the page's own world, as a mouse click would |
 | `src/ai/` | AI assistant: Luna request/response checks and TNI's rules as the model reads them (`tni-rules.js`) |
@@ -233,6 +234,7 @@ Updates reach agents through the Chrome Web Store; their usage logs go to TNI's 
 ```bash
 npm ci
 npm test
+npm run typecheck
 npm run package
 ```
 
