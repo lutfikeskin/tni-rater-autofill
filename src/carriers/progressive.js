@@ -546,6 +546,12 @@ export const progressive = {
   // Same for drivers: the AddDriver page marks its driver entered once filled.
   driverList: 'DriverSummary',
   driverPage: 'AddDriver',
+  // A driver form Progressive already has a driver for (the first, from Business Owner Info) names
+  // them: "Questions about <name>". It is filled only when it names the driver the panel has
+  // selected, and the driver it names is the one marked entered (W43-37, FL, 2026-10-22: the first
+  // form got the second driver's license state, CDL and number, and the first driver was added
+  // again twice). A new driver's blank form names no one.
+  unitNames: [{ page: 'AddDriver', list: 'drivers', text: '^questions about (.+)$' }],
   // The quote's steps in order, for the side panel's page strip ("Step 3 of 7"), each with its
   // pages: the 2026-10-01 walkthrough (docs/progressive-live-observations.md) and the carrier
   // notes above. Filings shows only when filings are asked for. A page in none of them (SaveQuote,

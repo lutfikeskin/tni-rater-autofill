@@ -30,24 +30,29 @@ function readFile(file) {
   return (data.events ?? []).map((e) => ({ ...e, agent: e.agent ?? data.agent ?? null }));
 }
 
-export function loadEvents(paths) {
+// Every event in the files once per id, as stored: the quoting history warehouse keeps them all
+// (scripts/lib/warehouse.mjs).
+export function readEvents(paths) {
   const byId = new Map();
   const noId = [];
   for (const p of paths) {
     for (const f of files(p)) {
       for (const e of readFile(f)) {
-        const ev = { ...e, page: e.page ? e.page.replace(/-Reload$/, '') : e.page };
-        if (ev.page === 'blank') continue;
         // The same event from the server and from an export: keep when the server received it.
-        const prev = ev.id ? byId.get(ev.id) : null;
-        if (ev.id) byId.set(ev.id, prev?.receivedAt && !ev.receivedAt ? { ...ev, receivedAt: prev.receivedAt } : ev); else noId.push(ev);
+        const prev = e.id ? byId.get(e.id) : null;
+        if (e.id) byId.set(e.id, prev?.receivedAt && !e.receivedAt ? { ...e, receivedAt: prev.receivedAt } : e); else noId.push(e);
       }
     }
   }
+  return [...byId.values(), ...noId];
+}
+
+// `stored`: readEvents(paths), when the caller already read them.
+export function loadEvents(paths, stored = readEvents(paths)) {
+  const all = stored.map((e) => ({ ...e, page: e.page ? e.page.replace(/-Reload$/, '') : e.page })).filter((e) => e.page !== 'blank');
   // The local test page (stored before the server refused it) is no agent's work: its events, and a
   // quote that only ever filled it whole (its intake events have no carrier). A quote that also
   // worked on a carrier keeps everything else.
-  const all = [...byId.values(), ...noId];
   const onTest = new Set(all.filter((e) => e.carrier === 'test' && e.session).map((e) => e.session));
   const onCarrier = new Set(all.filter((e) => isCarrierEvent(e) && e.session).map((e) => e.session));
   return all.filter((e) => e.carrier !== 'test' && !(onTest.has(e.session) && !onCarrier.has(e.session)))
@@ -56,6 +61,10 @@ export function loadEvents(paths) {
 
 // An event on a real carrier's page (not the local test page).
 export const isCarrierEvent = (e) => !!e.carrier && e.carrier !== 'test';
+
+// A layout of a page's questions. A Recalculate's trace (page_layout, reason 'recalculate', W43-44)
+// holds the kept answers over time instead, and isn't one.
+export const isPageLayout = (e) => e.type === 'page_layout' && e.reason !== 'recalculate';
 
 // The quotes: intakes loaded in a session that worked on a carrier's page. A PDF loaded and never
 // taken to a carrier (a sample retried, a test-page session whose test events the server refused)

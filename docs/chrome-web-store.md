@@ -60,9 +60,10 @@ the store refuses a version it already has.
 Send them the listing link (dashboard → *Store listing* → view). In Chrome: **Add to Chrome** →
 pin the extension → click it to open the side panel. Then, once each:
 
-- **Usage log → Your initials**. The usage log goes to TNI's server by itself (see hosting.md).
-- **Agent options** → enter the agent's OpenAI API key, then tick *Assistant enabled*. Leave
-  *Apply verified choices automatically* off for the first weeks of the pilot.
+- **Settings → You → Your initials** (the gear at the top of the panel). The usage log goes to TNI's server by itself (see hosting.md).
+- **Settings → Assistant** (the brain button opens it) → **Add key**, paste the agent's OpenAI API
+  key and **Save**, then turn on *Suggest answers*. Leave *Put checked picks in for me* off for the
+  first weeks of the pilot.
 
 ## 5. Updates
 
@@ -73,7 +74,7 @@ Chrome updates installed copies by itself within a few hours of approval.
 
 ## API keys for the pilot
 
-Configure OpenAI access through TNI's account and enter the agent's key under **Agent options**.
+Configure OpenAI access through TNI's account and enter the agent's key under **Settings → Assistant**.
 Check available account controls for access and spending before a wider rollout. Live quality and
 latency testing requires an OpenAI key and explicit evaluation approval.
 

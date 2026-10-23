@@ -9,7 +9,7 @@
 //   pageAnswer a question left to the agent where they let the page's own answer stand
 // Suggestions are for a person to review; nothing is changed automatically.
 
-import { sessionContexts } from './events.mjs';
+import { isPageLayout, sessionContexts } from './events.mjs';
 import { fieldIdentities, ENTITY_PAGES } from './layouts.mjs';
 import { fieldStatus } from './coverage.mjs';
 
@@ -76,6 +76,8 @@ export function finalAnswers(events, ids = fieldIdentities(events)) {
       if (e.result === 'filled') {
         a.source = 'autofill';
         a.autofilled = true;
+        // Where the fill's answer came from (intake, derived, standard, fact, attestation).
+        if (e.source) a.ruleSource = e.source;
         if (e.shown !== undefined) { a.value = e.shown; a.filledValue = e.shown; }
       }
     } else if (e.type === 'field_change') {
@@ -131,7 +133,7 @@ function pageLeftAnswers(events, out, get, ids) {
   for (const e of events) {
     if (!e.session || !e.carrier) continue;
     const at = (p) => `${e.session}|${tabOf(e)}|${page(p)}`;
-    if (e.type === 'page_layout' && !e.step) lastLayout.set(at(e.page), e);
+    if (isPageLayout(e) && !e.step) lastLayout.set(at(e.page), e);
     if (e.type === 'layout_error') lastLayout.delete(at(e.page));
     if (e.type === 'ai_decision' && e.q && ['accepted', 'approved', 'auto'].includes(e.decision)) aiChosen.add(`${e.session}|${identify(e, ids).key}`);
     if (e.type !== 'page_view') continue;

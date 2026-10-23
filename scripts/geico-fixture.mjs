@@ -64,8 +64,6 @@ body{font:14px/1.4 system-ui,sans-serif;margin:0 16px}
 `.trim();
 
 // Views: id, saved page (or how it is made), step. The order is GEICO's flow.
-const STEPS = ['Business Class & USDOT', 'Business & Owner Info', 'Vehicles', 'Drivers & Incidents', 'Additional Business Info',
-  'Quote & Coverages', 'Final Quote Details', 'MVR & CLUE', 'Payment Information'];
 const VIEWS = [
   ['business-class', 'GEICO Business Class & USDOT.html', 'Business Class & USDOT'],
   ['business-owner', 'FL 004, 005', 'Business & Owner Info'],
