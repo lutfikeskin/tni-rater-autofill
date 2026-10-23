@@ -2232,6 +2232,16 @@
         continue;
       }
       const pairs = assign(controls, plan).filter(({ step, control }) => !handled.has(step.id) && !skippedField(control));
+      // Answers given one at a time go down the page, as the agent works it: what an answer draws
+      // under its question comes before the questions further down. In rule order a fill went up and
+      // down the page (GEICO mock, Business & Owner Info: the business name, 14th of 16, first, then
+      // the owner's name at the top). A batch round keeps the rules' order: its answers land
+      // together, and AmWINS' driver names and license number come before gender, marital status
+      // and the license year, which sit between them on the page.
+      if (!batch) {
+        const place = new Map(controls.map((c, i) => [c, i]));
+        pairs.sort((a, b) => place.get(a.control) - place.get(b.control));
+      }
       let changed = false;
       // A failed answer may still have redrawn the page (new questions): look again next round.
       let retry = false;

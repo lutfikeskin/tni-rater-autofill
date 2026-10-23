@@ -399,7 +399,8 @@ export const amwins = {
 
     // --- Drivers ---------------------------------------------------------------------------------
     // Names and license number first: they retitle the driver panel; gender, marital status and
-    // license year after them.
+    // license year after them. Gender and marital status sit between them on the page: a batch
+    // round keeps this order, while answers given one at a time go down the page.
     { selector: dataId('firstName', DRIVER), path: 'drivers[].first' },
     { selector: dataId('middleName', DRIVER), name: 'Middle name (only when the intake has one)', path: 'drivers[].middle', ignore: (r, a) => !r.drivers?.[a.drivers ?? 0]?.middle },
     { selector: dataId('lastName', DRIVER), path: 'drivers[].last' },
