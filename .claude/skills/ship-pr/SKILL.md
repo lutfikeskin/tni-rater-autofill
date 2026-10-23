@@ -1,6 +1,6 @@
 ---
 name: ship-pr
-description: Take named TNI Rater Autofill pull requests to ready-to-merge - review only their diffs (with the Claude GitHub review and any Cursor or second-session reviews), verify each finding against the code, fix the real ones with tests that fail on the old code, run the full local CI, push, post a review comment, and hand back a verified / not-verified checklist. Use when asked to review a PR, fix its review findings, or get PRs ready to merge. It never merges, bumps the version, releases or deploys until the maintainer confirms that step in chat.
+description: Take named TNI Rater Autofill pull requests to ready-to-merge - review only their diffs (with the Claude GitHub review, a pr-review report, and any Cursor or second-session reviews), verify each finding against the code, fix the real ones with tests that fail on the old code, run the full local CI, push, post a review comment, and hand back a verified / not-verified checklist. Use when asked to fix a PR's review findings or get PRs ready to merge; a review that only reports, with or without a Cursor /thermos second opinion, is the pr-review skill's. It never merges, bumps the version, releases or deploys until the maintainer confirms that step in chat.
 ---
 
 # Getting a pull request ready to merge
@@ -24,8 +24,19 @@ git status --short          # no tracked changes before you start
 
 - Read the PR: `gh pr view <n> --json title,body,baseRefName` and `gh pr diff <n>`. Review only that diff and the code it calls.
 - Collect the other reviews: the Claude GitHub review and any Cursor or second-session reviews (`gh api --paginate repos/{owner}/{repo}/pulls/<n>/comments`, `gh pr view <n> --comments`). Skip resolved threads.
+- A pr-review report on the PR (in the chat, or the `pr-<n>-review.md` its thread saved) is one of them, with its Cursor child's answer. Its findings were verified at the head it names: at that same head, carry its verdicts into step 2; at a later one, verify them again.
+- When the maintainer asks for a Cursor or `/thermos` second opinion that no pr-review report already holds, start the Cursor child as step 3 of pr-review (`.bb/skills/pr-review/SKILL.md`) says, with this checkout as its `--environment`, and wait for its whole answer (`bb thread output <id>`) before step 2: no file changes while it reads.
 - Add your own independent pass: the code-review skill or a subagent given the diff, not your conclusions.
-- Look especially for: a filled field treated as a correct answer, an invented client fact or insurance answer, agent edits or retained-value checks weakened, `NEVER_CLICK` / `NEVER_ADVANCE` widened, client data in code, fixtures or the PR body, POSIX-only code (Windows is the main platform), and documents left stale.
+- Look especially for:
+  - a filled field treated as a correct answer, or an invented client fact or insurance answer (one the intake doesn't support, unless it is a `standard` rule `docs/intake-and-rules.md` records as TNI's), and missing information, an explicit No and not applicable treated as one;
+  - agent edits, retained-value checks or review blockers weakened, `NEVER_CLICK` / `NEVER_ADVANCE` widened, or anything that binds, purchases, submits, orders reports or signs;
+  - client data in code, fixtures or the PR body, credentials in code or logs, or raw carrier HTML or PDFs outside the ignored `layouts/`;
+  - an exact mapping or calculation handed to the model, or provider request validation, manual review or safe failure removed;
+  - a carrier option, plan step, report or event field not declared in `types.js`;
+  - POSIX-only code (Windows is the main platform);
+  - documents left stale, or `AGENTS.md` and `CLAUDE.md` no longer identical;
+  - a test loosened, skipped or rewritten to mirror the change, or a baseline accepted (`npm run e2e -- --update`) without the changed pages explained;
+  - lint turned off instead of fixed: a new `oxlint-disable` comment without `-- <why>` or with a reason that doesn't hold, or `.oxlintrc.json` rules weakened or files added to its `ignorePatterns`.
 
 ## 2. Verify each finding
 
