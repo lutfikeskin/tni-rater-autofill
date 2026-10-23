@@ -268,7 +268,7 @@ const aiRetiredSignatures = new Set();
 const $ = (id) => document.getElementById(id);
 const state = {
   intake: null, // { record, warnings, stats, fileName, done: number[] }
-  // The developer recording under way (startRecording): { store, tabId, redact, started, timer, stopping }.
+  // The developer recording under way (startRecording): { store, tabId, carrier, redact, started, timer, stopping }.
   recording: null,
   active: { drivers: 0, vehicles: 0, trailers: 0 },
   tab: null, // { id, url, carrier }
@@ -391,6 +391,25 @@ const state = {
   browserWindow: null,
   closing: false,
 };
+
+// A fill starting and ending, noted for the developer recording: its events count as during a fill
+// by their own time, not by when their batch reached the panel (a fill's last click, its Continue,
+// arrived once the fill had ended: live recording, 2026-10-23), and the timeline shows each fill.
+// One place for the eight that set `state.filling`.
+let fillingNow = state.filling;
+Object.defineProperty(state, 'filling', {
+  enumerable: true,
+  get: () => fillingNow,
+  set: (on) => {
+    const rec = state.recording;
+    if (!!on !== fillingNow && rec && !rec.stopping) {
+      const t = Date.now();
+      if (on) rec.fills.push({ start: t, end: null }); else if (rec.fills.at(-1)) rec.fills.at(-1).end = t;
+      rec.store.add([{ kind: 'fill', t, frame: 0, on: !!on }]);
+    }
+    fillingNow = !!on;
+  },
+});
 
 // Crashes nothing in the panel caught (an exception, a promise nobody awaited) go in the usage log,
 // so a review sees what the agent only saw as a panel that stopped: each message once while the
@@ -4401,7 +4420,8 @@ async function startRecording() {
   const manifest = newManifest({ id: recordingId(carrier.id, scenario, started), carrier: carrier.id, scenario, started,
     build: usage.build(), intake: usage.currentSession()?.intakeId ?? null, test: !!state.intake.test });
   const store = await RecordingStore.start(manifest);
-  state.recording = { store, tabId, redact, started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false };
+  // `fills`: when fills ran ({ start, end }), noted by state.filling's setter.
+  state.recording = { store, tabId, carrier, redact, fills: state.filling ? [{ start: started.getTime(), end: null }] : [], started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false };
   renderDevrec();
   await ensureRecorder();
 }
@@ -4411,7 +4431,8 @@ function onTraceMessage(msg, sender, sendResponse) {
   const rec = state.recording;
   if (msg?.ra !== 'trace' || !rec || sender.tab?.id !== rec.tabId) return;
   const frame = sender.frameId ?? 0;
-  const events = stampEvents(msg.events, { frame, filling: !!state.filling, redact: rec.redact });
+  const fillingAt = (t) => rec.fills.some((f) => t >= f.start && (f.end == null || t <= f.end));
+  const events = stampEvents(msg.events, { frame, fillingAt, redact: rec.redact, stepName: (s) => knownStep(rec.carrier, s) ?? null });
   // What the trace couldn't keep while no panel took its events (closed, reloading).
   if (msg.dropped > 0) events.push({ kind: 'gap', t: Date.now(), frame, dropped: msg.dropped });
   rec.store.add(events);

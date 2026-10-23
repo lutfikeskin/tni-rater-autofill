@@ -693,7 +693,8 @@
  * One event of a recording's timeline: what src/content/trace.js saw in a frame, as the panel keeps
  * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
  * @typedef {object} TraceEvent
- * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize, note, gap
+ * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize; the panel's: fill, note, gap
+ * @property {boolean} [on]  a fill starting (true) or ending (fill)
  * @property {number} t  wall-clock ms when it happened, on the page's own clock (a fraction kept)
  * @property {number} [seq]  the frame's counter: the order of two events in one millisecond
  * @property {number} [frame]  the frame it came from (0: the top frame)

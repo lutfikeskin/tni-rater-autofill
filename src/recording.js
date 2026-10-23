@@ -35,22 +35,30 @@ export function recordingId(carrier, scenario, date = new Date(), random = Math.
 
 /**
  * A batch of the trace's events as the recording keeps them: the frame it came from, whether a
- * fill was under way, and the words that may hold a client's name or number redacted (labels,
+ * fill was under way when it happened (`fillingAt`, by its own time), and the words that may hold a
+ * client's name or number redacted (labels,
  * button words, a choice's words, the title). Keys are the data-model names the usage log keeps.
+ * A step is kept only as one of the carrier's step names (`stepName`: the usage log's knownStep),
+ * redacted too: the trace reads a page's headings, which on Progressive are no steps and name the
+ * drivers ("A few more questions about …", live recording, 2026-10-23). A step event that names no
+ * new step then goes.
  * @param {any[]} events
- * @param {{ frame?: number, filling?: boolean, redact?: (s: string) => string }} where
+ * @param {{ frame?: number, fillingAt?: (t: number) => boolean, redact?: (s: string) => string, stepName?: (headings: string) => string | null }} where
  * @returns {TraceEvent[]}
  */
-export function stampEvents(events, { frame = 0, filling = false, redact = (s) => s } = {}) {
+export function stampEvents(events, { frame = 0, fillingAt = () => false, redact = (s) => s, stepName = () => null } = {}) {
   const words = (s) => (typeof s === 'string' ? redact(s) : s);
+  const step = (s) => { const name = s == null ? null : stepName(String(s)); return name == null ? null : redact(String(name)); };
   return (Array.isArray(events) ? events : []).filter((e) => e && typeof e.kind === 'string' && typeof e.t === 'number').map((e) => {
     const out = { ...e, frame };
-    if (filling) out.filling = true;
+    if (fillingAt(e.t)) out.filling = true;
     if (out.field) out.field = { ...out.field, label: words(out.field.label ?? '') };
     if (out.button) out.button = { ...out.button, text: words(out.button.text ?? '') };
     for (const k of ['value', 'title', 'text']) if (typeof out[k] === 'string') out[k] = words(out[k]);
+    if ('step' in out) out.step = step(out.step);
+    if (out.kind === 'step') out.from = step(out.from);
     return out;
-  });
+  }).filter((e) => !(e.kind === 'step' && e.step === e.from));
 }
 
 /**

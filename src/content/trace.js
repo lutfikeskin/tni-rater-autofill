@@ -171,11 +171,19 @@
     }, 100));
   });
 
-  listen(document, 'visibilitychange', (e) => push('visible', { state: document.visibilityState }, e));
+  // The tab shown or hidden: once, from its top frame (every frame of it sees the same).
+  if (isTop) listen(document, 'visibilitychange', (e) => push('visible', { state: document.visibilityState }, e));
   for (const type of ['pageshow', 'pagehide']) {
     listen(window, type, (e) => {
-      push('visible', { state: type === 'pagehide' ? 'hidden' : document.visibilityState, why: type }, e);
+      if (isTop) push('visible', { state: type === 'pagehide' ? 'hidden' : document.visibilityState, why: type }, e);
       if (type === 'pagehide') flush();
+    });
+  }
+  // Pasting or dropping into a box is the person's too (as the recorder counts gestures).
+  for (const type of ['paste', 'drop']) {
+    listen(window, type, (e) => {
+      const target = targetOf(e);
+      if (e.isTrusted && target.control && !target.password) gestures.set(target.control, when(e));
     });
   }
   let resizing = null;

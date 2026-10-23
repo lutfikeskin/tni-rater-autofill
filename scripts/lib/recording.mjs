@@ -2,7 +2,8 @@
 // steps in order with how long each was on screen and what left it, then each step's actions with
 // their times and the time since the one before. Typing on one question is one line (its keys and
 // final length, never its text); an answer above the previous one on the step is marked ↑; a pause
-// over 3 s is named. What isn't trusted (the page's or the extension's own events) says so.
+// over 3 s is named. What wasn't the person's says whose it may be: "not you, during a fill" (the
+// extension's, or the page's own script while a fill ran), else "the page".
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,6 +36,15 @@ const secs = (ms) => `${(ms / 1000).toFixed(1)} s`;
 const quote = (s) => `"${String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)}"`;
 const fieldName = (e) => quote(e.field?.label || e.field?.key || 'a question');
 const docY = (e) => e.field?.rect?.docY ?? null;
+
+// Whether the person did it, as the recorder decides: a click or a key as the browser says (a
+// script's isn't trusted); a change only when trusted and within 2 s of their own gesture on that
+// control (`gestureMs`), since a script's click on a radio or a box fires trusted input and change
+// events too (live recording, 2026-10-23: every radio the fill picked read as the agent's).
+const GESTURE_MS = 2000;
+const yours = (e) => (e.kind === 'click' || e.kind === 'pointer' || e.kind === 'key' ? e.trusted !== false
+  : e.trusted !== false && typeof e.gestureMs === 'number' && e.gestureMs >= 0 && e.gestureMs <= GESTURE_MS);
+const whose = (e) => (e.filling ? ' (not you, during a fill)' : ' (the page)');
 
 /**
  * `npm run recording -- <zip or folder> [--out file.md]`: the source, and where the report goes
@@ -71,10 +81,14 @@ function actions(events) {
   const lines = [];
   let typing = null;
   let scrolling = null;
+  // Typed by the person (their keys), or set by a script: "set X", whose it may be.
   const endTyping = () => {
     if (!typing) return;
     const span = typing.last - typing.first;
-    lines.push({ t: typing.first, answer: typing.y, text: `typed into ${typing.name}: ${typing.keys} key${typing.keys === 1 ? '' : 's'}${typing.len != null ? `, length ${typing.len}` : ''}${span > 0 ? ` over ${secs(span)}` : ''}${typing.trusted ? '' : ' (not trusted: the page or the extension)'}` });
+    const length = typing.len != null ? `length ${typing.len}` : '';
+    lines.push({ t: typing.first, answer: typing.y, text: typing.keys || typing.yours
+      ? `typed into ${typing.name}: ${typing.keys} key${typing.keys === 1 ? '' : 's'}${length ? `, ${length}` : ''}${span > 0 ? ` over ${secs(span)}` : ''}${typing.filling ? ' [during a fill]' : ''}`
+      : `set ${typing.name}${length ? ` (${length})` : ''}${whose(typing)}` });
     typing = null;
   };
   const endScroll = () => {
@@ -88,10 +102,11 @@ function actions(events) {
     if (isTyping && key) {
       endScroll();
       if (typing && typing.key !== key) endTyping();
-      typing ??= { key, name: fieldName(e), first: e.t, keys: 0, len: null, y: docY(e), trusted: true };
+      typing ??= { key, name: fieldName(e), first: e.t, keys: 0, len: null, y: docY(e), yours: false, filling: false };
       typing.last = e.t;
+      typing.filling ||= !!e.filling;
       if (e.kind === 'key') typing.keys++;
-      if (e.kind === 'input') { typing.len = e.len; typing.trusted &&= e.trusted !== false; }
+      if (e.kind === 'input') { typing.len = e.len; typing.yours ||= yours(e); }
       continue;
     }
     if (e.kind === 'focus' || e.kind === 'blur' || e.kind === 'pointer' || e.kind === 'resize' || (e.kind === 'change' && e.len != null)) continue;
@@ -102,16 +117,18 @@ function actions(events) {
     }
     endTyping();
     endScroll();
-    const who = e.trusted === false ? ' (not trusted: the page or the extension)' : '';
-    const during = e.filling ? ' [during a fill]' : '';
-    if (e.kind === 'click') lines.push({ t: e.t, text: `clicked ${e.button ? `the ${quote(e.button.text)} button` : e.field ? `on ${fieldName(e)}` : `a ${e.other?.tag ?? 'page'} element`}${who}${during}` });
+    // Yours during a fill says so; another's says whose it may be.
+    const who = yours(e) ? (e.filling ? ' [yours, during a fill]' : '') : whose(e);
+    if (e.kind === 'click') lines.push({ t: e.t, text: `clicked ${e.button ? `the ${quote(e.button.text)} button` : e.field ? `on ${fieldName(e)}` : `a ${e.other?.tag ?? 'page'} element`}${who}` });
     else if (e.kind === 'change' || e.kind === 'input') {
       const prev = lines.at(-1);
       // A choice fires input and change together: one line.
       if (prev?.key === key && prev.value === e.value && e.t - prev.t < 100) continue;
-      lines.push({ t: e.t, key, value: e.value, answer: docY(e), text: `picked ${quote(e.value)} for ${fieldName(e)}${who}${during}` });
+      lines.push({ t: e.t, key, value: e.value, answer: docY(e), text: `${yours(e) ? 'picked' : 'set'} ${quote(e.value)} for ${fieldName(e)}${who}` });
     } else if (e.kind === 'key') lines.push({ t: e.t, text: `pressed ${e.key}${e.mods ? ` with ${e.mods.join('+')}` : ''}${e.field ? ` in ${fieldName(e)}` : ''}` });
-    else if (e.kind === 'visible') lines.push({ t: e.t, text: `the tab became ${e.state}` });
+    // Once per tab: an older recording has one from each of its frames.
+    else if (e.kind === 'visible' && (e.frame ?? 0) === 0) lines.push({ t: e.t, text: `the tab became ${e.state}` });
+    else if (e.kind === 'fill') lines.push({ t: e.t, text: e.on ? 'a fill started' : `the fill ended${e.ms != null ? ` (it ran ${secs(e.ms)})` : ''}` });
     else if (e.kind === 'note') lines.push({ t: e.t, text: `NOTE: ${e.text}` });
     else if (e.kind === 'gap') lines.push({ t: e.t, text: `GAP: ${e.dropped} event(s) lost while no panel took them` });
     else if (e.kind === 'page' && (e.frame ?? 0) !== 0) lines.push({ t: e.t, text: `a frame loaded ${quote(e.page)}` });
@@ -124,6 +141,13 @@ function actions(events) {
 /** The report, as Markdown. */
 export function recordingReport({ manifest, events }) {
   const ordered = [...events].sort((a, b) => a.t - b.t || (a.frame ?? 0) - (b.frame ?? 0) || (a.seq ?? 0) - (b.seq ?? 0));
+  // How long each fill ran, on its end.
+  let began = null;
+  for (const e of ordered) {
+    if (e.kind !== 'fill') continue;
+    if (e.on) began = e.t;
+    else if (began != null) { e.ms = e.t - began; began = null; }
+  }
   const t0 = Date.parse(manifest.started) || ordered[0]?.t || 0;
   const end = Date.parse(manifest.ended) || ordered.at(-1)?.t || t0;
   const segs = segments(ordered);

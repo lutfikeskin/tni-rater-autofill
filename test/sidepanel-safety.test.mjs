@@ -7236,21 +7236,25 @@ test('the developer recording\'s trace is injected with the recorder, into the r
   ]);
 });
 
-test('the panel keeps only the recorded tab\'s trace events, redacted with their frame, and says it took them', () => {
+test('the panel keeps only the recorded tab\'s trace events, redacted with their frame and a fill by their time, and says it took them', () => {
   const kept = [];
-  const state = { filling: true, recording: null };
-  const context = { state, stampEvents: (events, opts) => events.map((e) => ({ ...e, frame: opts.frame, filling: opts.filling, label: opts.redact(e.label) })) };
+  const state = { filling: false, recording: null };
+  const steps = [];
+  const context = { state, knownStep: (carrier, s) => { steps.push([carrier.id, s]); return null; },
+    stampEvents: (events, opts) => events.map((e) => ({ ...e, frame: opts.frame, filling: opts.fillingAt(e.t), step: opts.stepName(e.step ?? ''), label: opts.redact(e.label) })) };
   vm.runInNewContext(extractFunction('onTraceMessage'), context);
   const replies = [];
   const send = (msg, tabId, frameId = 0) => context.onTraceMessage(msg, { tab: { id: tabId }, frameId }, (r) => replies.push(r));
   send({ ra: 'trace', events: [{ kind: 'click', t: 1, label: 'x' }] }, 4);
-  state.recording = { tabId: 4, redact: (s) => s.replace('Sam', '[client]'), store: { add: (events) => kept.push(...events) } };
+  // A fill ran from 3 to 5: the panel gets the batch afterwards, and still dates each event.
+  state.recording = { tabId: 4, carrier: { id: 'progressive' }, fills: [{ start: 3, end: 5 }], redact: (s) => s.replace('Sam', '[client]'), store: { add: (events) => kept.push(...events) } };
   send({ ra: 'trace', events: [{ kind: 'click', t: 2, label: 'Sam' }] }, 5);
   send({ ra: 'usage', events: [{ kind: 'click', t: 3, label: 'Sam' }] }, 4);
-  send({ ra: 'trace', events: [{ kind: 'click', t: 4, label: 'Sam' }], dropped: 3 }, 4, 2);
-  assert.deepEqual(kept.map((e) => [e.kind, e.t === 4 ? 4 : 'now', e.frame, e.label ?? null, e.dropped ?? null]), [
-    ['click', 4, 2, '[client]', null], ['gap', 'now', 2, null, 3],
+  send({ ra: 'trace', events: [{ kind: 'click', t: 4, label: 'Sam', step: 'About Sam' }, { kind: 'click', t: 6, label: 'x' }], dropped: 3 }, 4, 2);
+  assert.deepEqual(kept.map((e) => [e.kind, e.t < 10 ? e.t : 'now', e.frame, e.filling ?? null, e.label ?? null, e.dropped ?? null]), [
+    ['click', 4, 2, true, '[client]', null], ['click', 6, 2, false, 'x', null], ['gap', 'now', 2, null, null, 3],
   ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(steps.filter(([, s]) => s))), [['progressive', 'About Sam']], 'steps go through the carrier\'s step names');
   assert.deepEqual(JSON.parse(JSON.stringify(replies)), [{ ok: true }], 'only the batch it kept is answered');
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
   assert.match(html, /<div id="devrec" class="devrec" hidden>/, 'hidden until the panel sees a build that may record');

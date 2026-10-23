@@ -32,18 +32,35 @@ test('a recording is named by carrier, scenario, local time and four hex digits'
   assert.equal(recordingId('amwins', '', new Date(2026, 0, 2, 3, 4), () => 0), 'amwins-unnamed-20260102-0304-0000');
 });
 
-test('the panel stamps the trace\'s events with their frame and a fill, and redacts the words', () => {
+test('the panel stamps the trace\'s events with their frame and a fill by their own time, and redacts the words', () => {
   const redact = (s) => s.replace(/Sam Smith/g, '[client]');
   const events = stampEvents([
     { kind: 'change', t: 1, seq: 1, field: { key: 'ref:GiveOwner', label: 'Is Sam Smith a driver?', rect: null }, value: 'Sam Smith' },
     { kind: 'click', t: 2, seq: 2, button: { text: 'Save Sam Smith', rect: null } },
     { kind: 'page', t: 3, seq: 3, page: '/quote', title: 'Quote for Sam Smith' },
     { nonsense: true },
-  ], { frame: 2, filling: true, redact });
+  ], { frame: 2, fillingAt: (t) => t >= 2, redact });
   assert.equal(events.length, 3, 'one without a kind or a time is dropped');
-  assert.deepEqual(events.map((e) => [e.frame, e.filling]), [[2, true], [2, true], [2, true]]);
+  assert.deepEqual(events.map((e) => [e.frame, e.filling ?? false]), [[2, false], [2, true], [2, true]]);
   assert.deepEqual([events[0].field.label, events[0].value, events[0].field.key, events[1].button.text, events[2].title],
     ['Is [client] a driver?', '[client]', 'ref:GiveOwner', 'Save [client]', 'Quote for [client]']);
+});
+
+// Live recording, 2026-10-23: Progressive's page headings were kept as steps, splitting its pages
+// and naming the drivers ("A few more questions about …").
+test('a step is kept only as one of the carrier\'s step names, redacted; a step event naming none goes', () => {
+  const steps = ['Business Class & USDOT', 'Vehicles'];
+  const stepName = (headings) => headings.split(' / ').find((h) => steps.includes(h)) ?? null;
+  const events = stampEvents([
+    { kind: 'page', t: 1, page: 'AddDriver', step: 'A few more questions about SAM / Driving History' },
+    { kind: 'step', t: 2, step: 'A few more questions about SAM: / Driving History', from: 'A few more questions about SAM / Driving History' },
+    { kind: 'page', t: 3, page: '/quote', step: 'Dashboard / Business Class & USDOT' },
+    { kind: 'step', t: 4, step: 'Vehicles', from: 'Business Class & USDOT' },
+  ], { stepName, redact: (s) => s.replace('SAM', '[client]') });
+  assert.deepEqual(events.map((e) => [e.kind, e.step, e.from ?? null]), [
+    ['page', null, null], ['page', 'Business Class & USDOT', null], ['step', 'Vehicles', 'Business Class & USDOT'],
+  ]);
+  assert.ok(!JSON.stringify(events).includes('SAM'), 'no heading with a name in it is kept');
 });
 
 test('a saved recording is its manifest and its events in the order they happened', () => {
@@ -115,20 +132,28 @@ test('without the file system the recording is kept in memory, and still saved',
   assert.deepEqual(await RecordingStore.unfinished(), []);
 });
 
-test('the report tells the flow and each step\'s actions: typing as one line, an answer above the last one, a pause', () => {
+// Live recording, 2026-10-23: the fill's radio picks read as the agent's (a script's click on a radio
+// fires trusted events), its typing as "0 keys", and each frame said the tab was hidden.
+test('the report tells the flow and each step\'s actions: whose each is, typing as one line, an answer above the last one, a pause', () => {
   const t0 = Date.parse('2026-10-23T14:12:00.000Z');
   const field = (key, label, docY) => ({ key, q: null, kind: 'text', label, rect: { x: 0, y: 0, w: 100, h: 20, docY } });
   const choice = (key, label, docY) => ({ ...field(key, label, docY), kind: 'radio' });
   const events = [
     { kind: 'page', t: t0 + 100, seq: 1, frame: 0, page: '/quote', step: 'Business Class & USDOT', top: true },
-    { kind: 'change', t: t0 + 1000, seq: 2, frame: 0, trusted: true, field: choice('ref:Team', 'Team driving?', 600), value: 'No' },
-    { kind: 'input', t: t0 + 1001, seq: 3, frame: 0, trusted: true, field: choice('ref:Team', 'Team driving?', 600), value: 'No' },
-    { kind: 'key', t: t0 + 1500, seq: 4, frame: 0, printable: true, field: field('ref:Dot', 'USDOT number', 300) },
-    { kind: 'key', t: t0 + 1600, seq: 5, frame: 0, printable: true, field: field('ref:Dot', 'USDOT number', 300) },
-    { kind: 'input', t: t0 + 1610, seq: 6, frame: 0, trusted: true, len: 2, field: field('ref:Dot', 'USDOT number', 300) },
+    { kind: 'change', t: t0 + 1000, seq: 2, frame: 0, trusted: true, gestureMs: 120, field: choice('ref:Team', 'Team driving?', 600), value: 'No' },
+    { kind: 'input', t: t0 + 1001, seq: 3, frame: 0, trusted: true, gestureMs: 121, field: choice('ref:Team', 'Team driving?', 600), value: 'No' },
+    { kind: 'fill', t: t0 + 1100, frame: 0, on: true },
+    { kind: 'change', t: t0 + 1200, seq: 4, frame: 0, trusted: true, gestureMs: null, filling: true, field: choice('ref:Haz', 'Hazmat placard?', 700), value: 'No' },
+    { kind: 'input', t: t0 + 1250, seq: 5, frame: 0, trusted: false, gestureMs: null, filling: true, len: 7, field: field('ref:Name', 'Business name', 650) },
+    { kind: 'fill', t: t0 + 1400, frame: 0, on: false },
+    { kind: 'key', t: t0 + 1500, seq: 6, frame: 0, printable: true, field: field('ref:Dot', 'USDOT number', 300) },
+    { kind: 'key', t: t0 + 1600, seq: 7, frame: 0, printable: true, field: field('ref:Dot', 'USDOT number', 300) },
+    { kind: 'input', t: t0 + 1610, seq: 8, frame: 0, trusted: true, gestureMs: 10, len: 2, field: field('ref:Dot', 'USDOT number', 300) },
     { kind: 'note', t: t0 + 6000, frame: 0, text: 'waiting too long' },
-    { kind: 'click', t: t0 + 6500, seq: 7, frame: 0, trusted: true, button: { text: 'Next', rect: null } },
-    { kind: 'click', t: t0 + 6600, seq: 8, frame: 0, trusted: false, button: { text: 'Recalculate', rect: null } },
+    { kind: 'click', t: t0 + 6500, seq: 9, frame: 0, trusted: true, button: { text: 'Next', rect: null } },
+    { kind: 'click', t: t0 + 6600, seq: 10, frame: 0, trusted: false, button: { text: 'Recalculate', rect: null } },
+    { kind: 'visible', t: t0 + 6700, seq: 11, frame: 0, state: 'hidden' },
+    { kind: 'visible', t: t0 + 6700, seq: 1, frame: 3, state: 'hidden' },
     { kind: 'step', t: t0 + 7000, seq: 9, frame: 0, step: 'Business & Owner Info', from: 'Business Class & USDOT' },
     { kind: 'scroll', t: t0 + 7100, seq: 10, frame: 0, x: 0, y: 400, height: 2400 },
     { kind: 'scroll', t: t0 + 7200, seq: 11, frame: 0, x: 0, y: 800, height: 2400 },
@@ -144,12 +169,15 @@ test('the report tells the flow and each step\'s actions: typing as one line, an
   assert.equal(recordingReport(readRecording(dir)), report);
   fs.rmSync(dir, { recursive: true, force: true });
 
-  assert.match(report, /\| 1 \| \/quote · Business Class & USDOT \| 0:00\.1 \| 6\.9 s \| 5 \| "Next" \|/);
+  assert.match(report, /\| 1 \| \/quote · Business Class & USDOT \| 0:00\.1 \| 6\.9 s \| 10 \| "Next" \|/);
   assert.match(report, /\| 2 \| \/quote · Business & Owner Info \| 0:07\.0 \| 2\.0 s \| 1 \| — \|/);
-  assert.match(report, /0:01\.0 \(\+0\.9 s\) picked "No" for "Team driving\?"\n/, 'input and change of one pick: one line');
-  assert.match(report, /0:01\.5 \(\+0\.5 s\) ↑ typed into "USDOT number": 2 keys, length 2 over 0\.1 s/, 'above the answer before it');
+  assert.match(report, /0:01\.0 \(\+0\.9 s\) picked "No" for "Team driving\?"\n/, 'yours, with your gesture; input and change of one pick: one line');
+  assert.match(report, /0:01\.1 \(\+0\.1 s\) a fill started\n.*set "No" for "Hazmat placard\?" \(not you, during a fill\)\n.*↑ set "Business name" \(length 7\) \(not you, during a fill\)\n.*the fill ended \(it ran 0\.3 s\)/,
+    'a trusted pick with no gesture of yours is not yours; typing with no keys is set');
+  assert.match(report, /0:01\.5 \(\+0\.1 s\) ↑ typed into "USDOT number": 2 keys, length 2 over 0\.1 s/, 'above the answer before it');
   assert.match(report, /0:06\.0 \(\+4\.5 s, a pause\) NOTE: waiting too long/);
-  assert.match(report, /clicked the "Recalculate" button \(not trusted: the page or the extension\)/);
+  assert.match(report, /clicked the "Next" button\n.*clicked the "Recalculate" button \(the page\)/);
+  assert.equal(report.match(/the tab became hidden/g)?.length, 1, 'once, from the top frame');
   assert.match(report, /scrolled to y=800 of 2400/);
   assert.ok(!/scrolled to y=400/.test(report), 'a scroll run is one line, where it ended');
 });
