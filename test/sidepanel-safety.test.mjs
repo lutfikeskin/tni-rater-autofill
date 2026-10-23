@@ -7193,7 +7193,7 @@ test('a profile still waiting when another intake is loaded goes to its own quot
     PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile, redactor, redactionTerms,
     setTimeout: (fn) => { timers.set(timers.size + 1, fn); return timers.size; }, clearTimeout: (id) => timers.delete(id) };
   vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks', 'persistAiPending', 'restoreAiPending',
-    'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid', 'logProfile', 'profileLater'].map(extractFunction).join('\n'), context);
+    'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid', 'logProfile', 'profileLater', 'firstView'].map(extractFunction).join('\n'), context);
   const pdf = { name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) };
   await context.loadFile(pdf);
   records.a.garaging.state = 'OK';

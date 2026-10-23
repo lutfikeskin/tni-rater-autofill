@@ -83,7 +83,7 @@ test('the business profile the extension builds is one the server keeps whole', 
   const record = {
     applicant: { dot: '1234567', mc: '654321', fein: '12-3456789', mcDotWithin60Days: false, yearsInBusiness: 4, yearsExperience: 6, ownerDrives: true },
     garaging: { state: 'TX' },
-    operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight', radiusMiles: 500, vehicleOwnership: 'Owned', personalUse: false, usesEld: true, eldBrand: 'Motive',
+    operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight', radius: '500 miles', radiusMiles: 500, vehicleOwnership: 'Owned', personalUse: false, usesEld: true, eldBrand: 'Motive',
       needSr22: false, filingsRequired: true, filingsWhich: 'MCS-90', hazmat: false, hazPlacard: false, movingState: false, teamDriving: false, canadaLoads: false, equipVehicle: 5000 },
     vehicles: Array(PROFILE_UNITS + 1).fill(unit), trailers: [{ ...unit, type: 'Dry Van' }],
     trailerInfo: { ownership: 'Owned', hitch: 'Fifth wheel', interchange: true, interchangeLimit: '$20,000', equipTrailer: 2000 },

@@ -411,7 +411,7 @@ test('profile text loses what could identify the client; numbers, yes/no and gen
   assert.deepEqual(p.vehicles, [{ type: 'Semi Truck', year: null, make: 'Freightliner #', model: '579', value: 65000 }], 'a VIN inside a make goes; an unreadable year is no year');
   assert.equal(p.trailerInfo.interchangeLimit, 20000);
   assert.equal(p.drivers.length, 50, 'at most 50 units');
-  assert.deepEqual([p.drivers[0].age, p.drivers[0].gender, p.drivers[1].age, p.drivers[1].gender], [45, 'MALE', null, null], 'the birthday not yet reached; only MALE or FEMALE as set in the panel');
+  assert.deepEqual([p.drivers[0].age, p.drivers[0].gender, p.drivers[1].age, p.drivers[1].gender], [45, 'MALE', null, 'MALE'], 'the birthday not yet reached; gender as typed in the panel (M, Female) read as MALE or FEMALE');
   assert.deepEqual(p.priorInsurance.map((x) => [x.carrier, x.expires]), [['None', 'none'], ['[client] Mutual', '2026-11']]);
   assert.equal(p.hasClaims, null);
   for (const leak of ['Ann', '1FUJ', 'A1234567', '10/01/1980', 'example.com', '12-3456789', '40000']) assert.ok(!JSON.stringify(p).includes(leak), leak);

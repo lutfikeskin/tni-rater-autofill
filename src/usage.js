@@ -113,7 +113,7 @@ export function intakeProfile(record, { redact = (s) => s, today = new Date() } 
       ownerDrives: yesNo(a.ownerDrives),
     },
     operations: {
-      whatHaul: words(o.whatHaul, 120), radiusMiles: whole(o.radiusMiles, 0, 10_000), vehicleOwnership: words(o.vehicleOwnership, 40),
+      whatHaul: words(o.whatHaul, 120), radius: words(o.radius, 40), radiusMiles: whole(o.radiusMiles, 0, 10_000), vehicleOwnership: words(o.vehicleOwnership, 40),
       personalUse: yesNo(o.personalUse), usesEld: yesNo(o.usesEld), eldBrand: words(o.eldBrand, 60), needSr22: yesNo(o.needSr22),
       filingsRequired: yesNo(o.filingsRequired), filingsWhich: words(o.filingsWhich, 60), hazmat: yesNo(o.hazmat), hazPlacard: yesNo(o.hazPlacard),
       movingState: yesNo(o.movingState), teamDriving: yesNo(o.teamDriving), canadaLoads: yesNo(o.canadaLoads), equipVehicle: dollars(o.equipVehicle),
@@ -126,7 +126,7 @@ export function intakeProfile(record, { redact = (s) => s, today = new Date() } 
     },
     drivers: list('drivers').map((d) => ({
       age: ageOn(d.dob, today), licenseState: usState(d.licenseState), cdl: yesNo(d.cdl), cdlYear: year(d.cdlYear), excluded: yesNo(d.excluded),
-      maritalStatus: words(d.maritalStatus, 30), gender: ['MALE', 'FEMALE'].includes(d.gender) ? d.gender : null,
+      maritalStatus: words(d.maritalStatus, 30), gender: /^f(emale)?$/i.test(String(d.gender ?? '').trim()) ? 'FEMALE' : /^m(ale)?$/i.test(String(d.gender ?? '').trim()) ? 'MALE' : null,
     })),
     coverage: {
       autoLiability: words(c.autoLiability, 20), autoLiabLimit: limit(c.autoLiabLimit, 40), cargo: yesNo(c.cargo), cargoLimit: dollars(c.cargoLimit),
