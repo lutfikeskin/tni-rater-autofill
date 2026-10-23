@@ -2674,6 +2674,8 @@ function layoutHarness(controls, { session = 'quote-1' } = {}) {
     usage: { currentSession: () => (context.sessionId ? { id: context.sessionId } : null), log: (e) => logged.push(e) },
     store: { saved: {}, set(k, v) { this.saved[k] = v; return Promise.resolve(); } },
     LAYOUT_DELAY_MS: 0, setTimeout: (fn) => { context.pending = fn; return 1; }, clearTimeout: () => { context.pending = null; }, knownStep,
+    // The premium hook (src/premium.js), noted here: its own tests are test/premium.test.mjs.
+    premiumsSeen: new Map(), premiumCalls: [], notePremium: (o) => context.premiumCalls.push(o),
   };
   vm.runInNewContext(['viewOf', 'saveViews', 'resetViews', 'stepScope', 'recordLayout', 'layoutJob', 'jobCurrent', 'intakeEdited', 'sameLayoutScope', 'superseded', 'holdLayouts', 'captureLayout', 'noteStopScreen', 'waitForFill', 'layoutFailed', 'layoutErrorKind', 'scheduleLayout', 'cancelLayouts', 'layoutWhenQuiet']
     .map(extractFunction).join('\n'), context);

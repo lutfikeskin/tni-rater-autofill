@@ -632,3 +632,18 @@ test('profile text with a phone, SSN, date of birth, licence or policy number wr
   assert.equal(last.priorInsurance[0].limit, undefined, 'an SSN is no limit');
   assert.deepEqual([last.business.dot, last.business.mc, last.business.fein], ['other', 'other', 'blank'], 'something other than a number is said as such');
 });
+
+// The premium a carrier page quoted (src/premium.js): amounts, term and payments, nothing else.
+test('a quoted premium is kept in its shape; anything else in it is dropped', async () => {
+  const dataDir = tmp();
+  await withServer({ dataDir }, async ({ post }) => {
+    await post({ events: [
+      ev({ filled: undefined, type: 'quote_premium', carrier: 'geico', page: 'quote', step: 'Quote & Coverages', total: 101287, termMonths: 12, dueToday: 16908.71, payments: 10, payment: 8437.83 }),
+      ev({ filled: undefined, type: 'quote_premium', carrier: 'progressive', page: 'CoveragesRates', total: '12,815', termMonths: 120, dueToday: -1, payments: 1.5, payment: null, insured: 'Sample Co' }),
+    ] });
+  });
+  const [geico, odd] = stored(dataDir);
+  assert.deepEqual([geico.total, geico.termMonths, geico.dueToday, geico.payments, geico.payment, geico.dropped], [101287, 12, 16908.71, 10, 8437.83, undefined]);
+  for (const k of ['total', 'termMonths', 'dueToday', 'payments', 'insured']) assert.equal(odd[k], undefined, k);
+  assert.deepEqual([...odd.dropped].sort(), ['dueToday', 'insured', 'payments', 'termMonths', 'total']);
+});

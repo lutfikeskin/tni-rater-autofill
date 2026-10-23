@@ -75,6 +75,8 @@ export const EVENT_FIELDS = {
   page_view: ['from', 'fields'],
   // messages: what the page said about the answers (validation, errors, help), redacted by the panel.
   page_layout: ['context', 'fields', 'buttons', 'reason', 'step', 'messages'],
+  // The premium a carrier page quoted (src/premium.js): amounts, the term in months and the payments.
+  quote_premium: ['step', 'total', 'termMonths', 'dueToday', 'payments', 'payment'],
   // A page layout the panel couldn't record (why it was asked for, and the error's first words).
   layout_error: ['reason', 'error'],
   // pageChanged: the carrier probably changed the page; reworded: known fields whose question reads
@@ -277,6 +279,11 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
       if (out.where !== undefined && out.where !== 'panel') drop('where');
       if (out.error !== undefined && !(typeof out.error === 'string' && out.error.length <= 300)) drop('error');
       if (out.stack !== undefined && !(Array.isArray(out.stack) && out.stack.length <= 4 && out.stack.every((x) => typeof x === 'string' && x.length <= 160 && /^[\w./-]+:\d+:\d+$/.test(x)))) drop('stack');
+    }
+    if (out.type === 'quote_premium') {
+      const amount = (x) => x === null || (typeof x === 'number' && Number.isFinite(x) && x > 0 && x < 100_000_000);
+      const count = (max) => (x) => x === null || (Number.isSafeInteger(x) && x > 0 && x <= max);
+      for (const [k, ok] of [['total', amount], ['dueToday', amount], ['payment', amount], ['termMonths', count(36)], ['payments', count(60)]]) if (out[k] !== undefined && !ok(out[k])) drop(k);
     }
     if (out.type === 'intake_profile') {
       for (const group of Object.keys(PROFILE)) {
