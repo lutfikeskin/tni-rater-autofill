@@ -10,6 +10,9 @@
 // Uses the installed node_modules (no `npm ci`) and Playwright's Chromium (`npx playwright install
 // chromium` once). A replay server already serving port 8792 is used as it is; otherwise one is
 // started for the E2E step and stopped after it, as in CI.
+//
+// A pass with no uncommitted changes to tracked files is remembered for HEAD, so the pre-push hook
+// (.githooks/pre-push) doesn't run the same checks again before that commit is pushed.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -83,3 +86,10 @@ try {
   process.exit(1);
 }
 console.log(`\nLocal CI: all ${quick ? 'quick ' : ''}checks passed in ${Math.round((Date.now() - started) / 1000)} s.`);
+
+const git = (...args) => spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+if (git('status', '--porcelain', '--untracked-files=no').stdout === '') {
+  const head = git('rev-parse', 'HEAD').stdout.trim();
+  const stamp = path.resolve(root, git('rev-parse', '--git-path', 'tni-ci-passed').stdout.trim());
+  if (head) fs.writeFileSync(stamp, `${head} ${quick ? 'quick' : 'full'}\n`);
+}
