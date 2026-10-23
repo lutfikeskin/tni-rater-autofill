@@ -428,6 +428,9 @@
       }
       // A checkbox in a group ("Filings: [ ] Federal [ ] MCS-90") is named by its own box label.
       c.label = (c.kind === 'checkbox' && cmp?.boxLabel ? oneLine(String(cmp.boxLabel).replace(/<[^>]+>/g, ' ')) : null) ?? dctCaption(cmp) ?? labelFor(el);
+      // No caption or label of its own: its "label" is its name, which says nothing of its wording
+      // (assign's `reworded`). Progressive draws TX's PIP limit so (live recording, 2026-10-23).
+      c.nameOnly = !!c.label && (c.label === oneLine(humanize(el.name || el.id)) || (!!dataName(el) && c.label === oneLine(humanize(dataName(el)))));
       c.q = dctQuestionId(cmp?.id ?? el.id);
       c.ref = fieldRef(el);
       out.push(c);
@@ -707,7 +710,10 @@
         // A dropdown with no usable label, known by one of its options ("NO PRIOR").
         if (!c && s.withOption) { how = 'option'; c = controls.find((x) => !used.has(x) && optionsOf(x).some((o) => squash(o.text) === squash(s.withOption))); }
       }
-      if (c) take(s, c, how, !!s.field && worded(s) && !textIs(s, c));
+      // Reworded: found by its data-model name, its wording isn't the rule's. A field with no wording
+      // of its own (nameOnly) can't say so: it was taken for reworded, a check that held Progressive's
+      // Rates helpers on TX's caption-less PIP limit (live recording, 2026-10-23).
+      if (c) take(s, c, how, !!s.field && worded(s) && !c.nameOnly && !textIs(s, c));
     }
     // A held form's fields (its steps' and its marker question) that no live step took: nobody
     // else's, and not unfamiliar either. The form is one check for the agent (fill).
@@ -1071,9 +1077,10 @@
   // the address needs the agent; the ZIP/city rules then check the rest. GEICO's are
   // <gds-dropdown-list-item type="address">, in its address wrapper's shadow root, read as list items
   // (its script; FL live run 3, 2026-10-21).
-  // What the agent may click to move a page on (`notePress` in fill): a button or an add icon. A
-  // toggle (aria-expanded: GEICO's section headings, a menu) or a link moves nothing.
-  const AGENT_PRESS = 'button, gds-button, input[type=submit], input[type=button], [data-testid=addIcon]';
+  // What the agent may click to move a page on (`notePress` in fill): a button or an add icon, also
+  // ExtJS's (`.x-btn`: Progressive's Continue, whose press during a fill went unseen, live recording,
+  // 2026-10-23). A toggle (aria-expanded: GEICO's section headings, a menu) or a link moves nothing.
+  const AGENT_PRESS = 'button, gds-button, input[type=submit], input[type=button], [data-testid=addIcon], .x-btn';
   const SUGGESTION_SELECTOR = '[role=option], .x-boundlist-item, .pac-item, [class*="suggest"] li, [class*="Suggest"] li, [class*="autocomplete"] li, [class*="Autocomplete"] li, gds-dropdown-list-item[type=address]';
   // An address's house number (its leading number) and ZIP (after a state's two letters).
   const houseNumberOf = (text) => String(text ?? '').match(/^\s*(\d+)\b/)?.[1] ?? null;
@@ -2126,6 +2133,11 @@
       stoppedAt = stopStepOn(stopSteps);
       if (stoppedAt) { report.stopStep = stoppedAt; if (!report.halted) halt(STOP_STEP_HALT); break; }
       if (stepChanged()) break;
+      // The page moved on under the fill (the agent's Continue: Progressive draws the next page at
+      // the same document): this fill's page is gone, and the next page gets a fill of its own. The
+      // fill had read Rates as its next round and clicked Print, Email, Fax as the agent did (live
+      // recording, 2026-10-23).
+      if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
       // The step can't be read, and the fill began there (a step it began on that turns unreadable
       // is the agent's Next mid-redraw: the step changed, above). Nothing is done or read here.
       if (steppedPlan && stepBars().length && stepKey() === '') {
@@ -2495,7 +2507,9 @@
       // GEICO's pay plans after View More Payment Plans, W43-32): the option with the highest count
       // among its question's fields is its answer, given next round.
       if (!changed && substitute()) continue;
-      // Nothing left to type or pick: click the next button whose turn it is.
+      // Nothing left to type or pick: click the next button whose turn it is. Not on a page the agent
+      // moved to while this round answered (its answer's field gone with the old page).
+      if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
       let helperClicked = false;
       if (!changed && window === window.top && !agentPressed) {
         loadDue = null;

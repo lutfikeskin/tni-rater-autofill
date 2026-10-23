@@ -7327,3 +7327,44 @@ test('loading another client\'s intake stops and saves the recording, redacted w
   assert.match(stopped[0][0], /recording stopped/);
   assert.equal(stopped[0][1], 'TX', 'stopped while the first client was still the intake');
 });
+
+// Live recording, 2026-10-23 (Progressive): the agent clicked View bill plan options themselves, the
+// panel only logged it, and back on Rates the fill clicked it again: the payment plan page twice.
+test('a quote-wide helper the agent clicks themselves is done, as if the fill had clicked it', () => {
+  const plan = progressive.actions.map((a) => ({ kind: 'action', action: a.scope ? `${a.id}:0` : a.id, baseAction: a.id, pages: [].concat(a.page ?? []),
+    steps: a.steps ?? null, text: typeof a.text === 'function' ? null : a.text ?? null, near: a.near ?? null, token: a.token ?? null, within: a.within ?? null,
+    opener: a.opener ?? null, unique: !!a.unique, needsRecalculation: !!a.needsRecalculation }));
+  const run = (page, text) => {
+    const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set() };
+    let saved = 0;
+    const context = { state, buildPlan: () => plan, persistDoneActions: () => { saved++; } };
+    vm.runInNewContext(extractFunction('agentHelperDone'), context);
+    context.agentHelperDone(progressive, page, undefined, text);
+    return [[...state.doneActions], saved];
+  };
+  // The words of the live run's buttons.
+  assert.deepEqual(run('CoveragesRates', 'View bill plan options'), [['billPlan'], 1]);
+  assert.deepEqual(run('CoveragesRates', 'Print, Email, Fax'), [['print'], 1]);
+  // Recalculate is due by the rates on the page; "+" and Done with this coverage are cargo's or general
+  // liability's; Add Vehicle
+  // may be another vehicle's; another page's button reading the same is not this one.
+  for (const [page, text] of [['CoveragesRates', 'Recalculate'], ['CoveragesRates', '+'], ['CoveragesRates', 'Done with this coverage'], ['VehicleSummary', 'Add Vehicle'], ['ChangePaymentPlan', 'View bill plan options'], ['CoveragesRates', 'Continue']]) {
+    assert.deepEqual(run(page, text), [[], 0], `${page}: ${text}`);
+  }
+});
+
+// A cargo-only quote has one Done with this coverage in its plan (general liability's isn't asked
+// for): the agent's click of another coverage's Done, or one Progressive refused, isn't cargo closed.
+// The fill's own click counts only once its check (`verify: cargoClosed`) passes.
+test('a helper the fill checks after its click is not done by the agent clicking its words', () => {
+  const plan = progressive.actions.filter((a) => !['openGl', 'doneGl'].includes(a.id)).map((a) => ({ kind: 'action', action: a.id, baseAction: a.id,
+    pages: [].concat(a.page ?? []), steps: null, text: typeof a.text === 'function' ? null : a.text ?? null, near: a.near ?? null, token: a.token ?? null,
+    within: a.within ?? null, opener: a.opener ?? null, unique: !!a.unique, needsRecalculation: !!a.needsRecalculation, verify: a.verify ?? null }));
+  const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set() };
+  const context = { state, buildPlan: () => plan, persistDoneActions: () => {} };
+  vm.runInNewContext(extractFunction('agentHelperDone'), context);
+  context.agentHelperDone(progressive, 'CoveragesRates', undefined, 'Done with this coverage');
+  assert.deepEqual([...state.doneActions], []);
+  context.agentHelperDone(progressive, 'CoveragesRates', undefined, 'View bill plan options');
+  assert.deepEqual([...state.doneActions], ['billPlan']);
+});

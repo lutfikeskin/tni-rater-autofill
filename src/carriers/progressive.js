@@ -522,20 +522,26 @@ export const progressive = {
     // cargo's Done (the same text) is never clicked again (doneCargo's unlessActions).
     { id: 'openGl', page: 'CoveragesRates', heldBy: NTL_HOLD, text: '^\+$', near: 'general liability', unless: ['progressive.q21D1'], afterActions: (r) => (r.coverage.cargo ? ['doneCargo'] : []), label: 'General liability', missing: glAddNote, when: (r) => glRequested(r) && notNtl(r) },
     { id: 'doneGl', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openGl'], after: ['progressive.q21D1'], verify: 'glClosed', when: (r) => glRequested(r) && notNtl(r) },
-    // Rates, as TNI agents work it: once cargo and GL are added, open the bill plan options, pick
-    // automatic payments there, come back (Continue), then Recalculate, then Print, Email, Fax.
-    // With NTL they do the rates page by hand.
+    // Rates, as TNI agents work it (the maintainer, 2026-10-23): once cargo and GL are added,
+    // Recalculate and wait for the new premium, open the bill plan options and pick automatic
+    // payments there, come back (Continue), then Print, Email, Fax. With NTL they do the rates page
+    // by hand. (The bill plan used to come first and Recalculate after it; with the rates out of
+    // date Progressive lays something over View bill plan options, so each waited on the other and
+    // the agent clicked both: two live TX recordings, 2026-10-23.)
     // None of the rates helpers run while the liability limit is unresolved (missing, rejected or
     // different from the intake); a limit the agent set themselves counts as resolved.
-    { id: 'billPlan', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: notNtl },
-    // Back from the bill plan Progressive has usually recalculated already (Recalculate is gone,
-    // Print, Email, Fax is there): Recalculate only when the rates say they're out of date.
-    // Recalculate and Print follow the bill plan, which waited for a resolved liability limit.
-    // They don't re-check that field: back from the bill plan, the reloaded Rates page failed the
-    // same check on a limit that was fine (FL and NJ runs: Print, Email, Fax never ran).
-    { id: 'recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
+    // Recalculate only when the rates say they're out of date (needsRecalculation).
+    { id: 'recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', afterActions: (r) => [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], needsRecalculation: true, verify: 'premium', when: notNtl },
+    // The bill plan once the premium is current (needsPremium: Recalculate done, or not needed).
+    { id: 'billPlan', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, needsPremium: true, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: notNtl },
+    // Back from the bill plan, Recalculate again only if it's there (the rates out of date: the
+    // maintainer, 2026-10-23), else straight to Print, Email, Fax. It follows the bill plan, which
+    // waited for a resolved limit, and doesn't re-check it (as Print, below).
+    { id: 'recalculateAgain', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
-    // current, so back from the bill plan the button itself is the signal.
+    // current, so back from the bill plan the button itself is the signal. It doesn't re-check the
+    // liability limit: back from the bill plan, the reloaded Rates page failed that check on a
+    // limit that was fine (FL and NJ runs: Print, Email, Fax never ran).
     { id: 'print', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: PRINT_EMAIL_FAX, afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], when: notNtl },
     // Print/Send is the agent's (TNI 2026-10-07): Progressive opens the quote PDF in a new window
     // from that click, and Chrome only lets a page open one right after the person's own click, so

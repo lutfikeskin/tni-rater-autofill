@@ -154,15 +154,16 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const actions = plan.filter((step) => step.kind === 'action');
   const recalc = actions.find((step) => step.action === 'recalculate');
   const bill = actions.find((step) => step.action === 'billPlan');
-  // Cargo, then bill plan options (automatic payments), back to Rates, then Recalculate.
-  assert.deepEqual(recalc.afterActions, ['billPlan']);
-  assert.deepEqual(recalc.afterPages, ['ChangePaymentPlan']);
+  // The maintainer's order (2026-10-23): cargo, then Recalculate (only with the rates out of date)
+  // and its new premium, then bill plan options (automatic payments), back to Rates, then Print.
+  assert.deepEqual(recalc.afterActions, ['doneCargo']);
+  assert.deepEqual(recalc.afterPages, []);
   assert.equal(recalc.verify, 'premium');
-  assert.equal(bill.needsPremium, false);
+  assert.equal(recalc.needsRecalculation, true);
+  assert.equal(bill.needsPremium, true, 'the bill plan waits for a current premium: after Recalculate');
   assert.deepEqual(bill.afterActions, ['doneCargo']);
   assert.ok(new RegExp(bill.text, 'i').test('Billing Options'));
-  // Back from the bill plan, Recalculate only when the rates are stale; Print doesn't wait for it.
-  assert.equal(recalc.needsRecalculation, true);
+  // Print follows the bill plan and doesn't wait for Recalculate.
   const print = actions.find((step) => step.action === 'print');
   assert.deepEqual(print.afterActions, ['billPlan'], 'Print follows our bill plan; it does not wait for Recalculate');
   assert.deepEqual(print.afterPages, ['ChangePaymentPlan']);
@@ -184,8 +185,9 @@ test('Progressive coverage and helper ordering are conservative', () => {
   const doneGl = glActions.find((s) => s.action === 'doneGl');
   assert.deepEqual([doneGl.afterActions, doneGl.after, doneGl.verify, doneGl.waitRequired], [['openGl'], ['progressive.q21D1'], 'glClosed', true]);
   assert.ok(new RegExp(doneGl.text, 'i').test('Done with this coverage'));
-  assert.deepEqual(glActions.find((s) => s.action === 'billPlan').afterActions, ['doneCargo', 'doneGl']);
-  for (const id of ['recalculate', 'print']) assert.deepEqual(glActions.find((s) => s.action === id).afterActions, ['billPlan'], `${id} follows our bill plan`);
+  // With GL too: Recalculate once cargo and GL are done, then the bill plan, then Print.
+  for (const id of ['recalculate', 'billPlan']) assert.deepEqual(glActions.find((s) => s.action === id).afterActions, ['doneCargo', 'doneGl'], id);
+  assert.deepEqual(glActions.find((s) => s.action === 'print').afterActions, ['billPlan'], 'print follows our bill plan');
   assert.ok(!glActions.some((s) => s.action === 'glRates'), 'no "needs you" item any more');
   // GL without cargo: "+" waits for nothing.
   const glOnly = structuredClone(gl);
@@ -563,19 +565,16 @@ test('Progressive NJ run: vehicle registrant, VIN-lookup safety boxes kept, Rate
   for (const q of ['2C2C', '2C2D', '2C2E', '2C45', '2C46', '2C47', '2C48']) assert.equal(byQ(plan, q).ignore, true, q);
   assert.equal(byQ(plan, '2007').ignore, true);
   assert.match(byQ(plan, '2007').emptyNote, /carry over/, 'an empty carryover goes to the agent');
-  // The bill plan waits for the liability limit; Recalculate and Print follow the bill plan and
-  // don't re-check the limit on the reloaded Rates page (FL/NJ runs).
-  assert.deepEqual(plan.find((s) => s.action === 'billPlan').after, ['coverage.autoLiabLimit']);
-  for (const id of ['recalculate', 'print']) {
-    const step = plan.find((s) => s.action === id);
-    assert.deepEqual(step.after, [], id);
-    assert.deepEqual(step.afterActions, ['billPlan'], `${id} needs our bill plan click`);
-  }
+  // Recalculate and the bill plan wait for the liability limit; Print follows the bill plan and
+  // doesn't re-check the limit on the reloaded Rates page (FL/NJ runs).
+  for (const id of ['recalculate', 'billPlan']) assert.deepEqual(plan.find((s) => s.action === id).after, ['coverage.autoLiabLimit'], id);
+  const printStep = plan.find((s) => s.action === 'print');
+  assert.deepEqual([printStep.after, printStep.afterActions], [[], ['billPlan']], 'Print needs our bill plan click');
   const gl = structuredClone(baseRecord());
   gl.coverage.gl = true;
   const glPrint = buildPlan(gl, progressive, {}).find((s) => s.action === 'print');
   assert.deepEqual([glPrint.after, glPrint.afterActions], [[], ['billPlan']], 'with GL too, Print follows our bill plan, which checked the limit');
-  assert.deepEqual(plan.find((s) => s.action === 'recalculate').afterPages, ['ChangePaymentPlan']);
+  assert.deepEqual(plan.find((s) => s.action === 'print').afterPages, ['ChangePaymentPlan']);
 });
 
 test('the owner with a two-word surname is matched to their driver row (date of birth)', () => {
@@ -713,12 +712,12 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   assert.deepEqual([kept.text, kept.afterActions, kept.label], [null, ['addNtl'], 'Non-trucking liability']);
   assert.match(kept.missing, /remove it on this page yourself/);
   assert.ok(new RegExp(kept.resolvedBy, 'i').test('Add Non-Trucking Liability instead?'), 'settled when the page offers Add NTL again');
-  for (const id of ['openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print']) {
+  for (const id of ['openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'recalculateAgain', 'print']) {
     assert.deepEqual(actions(no).find((s) => s.action === id).heldBy, ['ntlStillAdded'], `${id} waits while NTL is still on the quote`);
   }
   // Codex on PR #22: an earlier bill plan visit must not let Recalculate or Print run while the
   // new NTL questions are open. Until the section has been seen live, the whole page is the agent's.
-  for (const id of ['billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} is the agent's`);
+  for (const id of ['billPlan', 'recalculate', 'recalculateAgain', 'print']) assert.ok(!ids(record).includes(id), `${id} is the agent's`);
   // Print/Send is always the agent's click (Chrome opens the PDF only for it); the panel says so.
   assert.ok(!ids(record).includes('printSend'));
   assert.match(progressive.agentPages.PrintEmailFax, /Click Print\/Send yourself/);
@@ -743,7 +742,7 @@ test('Rates waits for an unanswered NTL mention, and an NTL quote keeps Continue
   const step = (r, id) => buildPlan(r, progressive, {}).find((s) => s.action === id);
   record.claims = { text: 'No\nAsked about bobtail' };
   record.coverage.ntl = null;
-  for (const id of ['openCargo', 'billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} waits for the agent's NTL answer`);
+  for (const id of ['openCargo', 'billPlan', 'recalculate', 'recalculateAgain', 'print']) assert.ok(!ids(record).includes(id), `${id} waits for the agent's NTL answer`);
   assert.match(step(record, 'ntlDecide').missing, /set it to Yes or No/);
   assert.equal(step(record, 'ntlDecide').text, null, 'never clicked');
   record.coverage.ntl = false;
@@ -971,7 +970,7 @@ test('FL / UT / SC questions of 2026-10-07', () => {
   assert.ok(plan.filter((s) => s.q === '1FDD').every((s) => s.value === 'Not selected' && s.vehicleHint));
   assert.ok(byQ(plan, '1FCD').choiceAliases.includes('$1,000 Deductible w/ $0 Glass Deductible'));
   assert.deepEqual([byQ(plan, '1E68').value, byQ(plan, '1E6C').value], ['$100k CSL w/ $200 Deductible', '$100k CSL w/ $0 Deductible']);
-  for (const id of ['billPlan', 'recalculate', 'print']) {
+  for (const id of ['billPlan', 'recalculate', 'recalculateAgain', 'print']) {
     const a = plan.find((s) => s.action === id);
     if (a) assert.equal(a.waitRequired, true, id);
   }
