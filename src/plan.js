@@ -6,7 +6,7 @@ import { GENERIC_RULES } from './rules.js';
 import { fieldInfo } from './schema.js';
 import { get, listOf } from './util.js';
 
-/** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, PlanStep } from './types.js' */
+/** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, PlanStep } from '../types.js' */
 
 // Where a rule's answer comes from (Contract 2, docs/intake-and-rules.md):
 //   intake       a record path, no computed value (the default for a rule with `path` only)

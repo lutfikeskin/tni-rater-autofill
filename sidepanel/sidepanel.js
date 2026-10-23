@@ -16,8 +16,8 @@ import { migrateStorage } from '../src/storage-version.js';
 import { collectItems, AssistError, assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated, firstNameOf } from '../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../src/ai/providers.js';
-// Not type-checked yet; what it passes the page kit and reads back is typed in src/types.js.
-/** @import { CarrierConfig, FillOptions, FillReport } from '../src/types.js' */
+// Not type-checked yet; what it passes the page kit and reads back is typed in types.js, at the repository's root.
+/** @import { CarrierConfig, FillOptions, FillReport } from '../types.js' */
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('../lib/pdf.worker.min.mjs', import.meta.url).href;
 

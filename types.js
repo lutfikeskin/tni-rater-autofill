@@ -2,11 +2,11 @@
 // @ts-check
 // The shapes passed between the extension's parts, as JSDoc types for the type check (`npm run
 // typecheck`, tsconfig.json; docs/testing.md). Comments only: nothing loads this file at run time,
-// and scripts/package.mjs leaves it out of the package.
+// and it sits outside the folders scripts/package.mjs packages, so it is never in the package.
 //
 // A file checked with `// @ts-check` imports the shapes it names once, below its own imports (from
-// src/; `../types.js` from a folder below it):
-//   /** @import { CarrierConfig, CarrierRule } from './types.js' */
+// src/ or sidepanel/; `../../types.js` from a folder below them):
+//   /** @import { CarrierConfig, CarrierRule } from '../types.js' */
 // An unchecked file (pagekit.js, sidepanel.js) may name them too, on the functions that make or
 // read a shape: editors show it, and the check covers it once that file opts in.
 //

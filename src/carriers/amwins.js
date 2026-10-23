@@ -51,7 +51,7 @@ import { owner, ownerDobNote } from './progressive.js';
 import { isLongHaul, otherNotes } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
-/** @import { CarrierAction, CarrierConfig, CarrierRule } from '../types.js' */
+/** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
 const street = (r) => [r.garaging?.street, r.garaging?.unit].filter(Boolean).join(' ') || null;
 const digits = (v) => (v ? String(v).replace(/\D/g, '') || null : null);

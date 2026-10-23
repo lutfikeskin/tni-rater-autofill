@@ -7,7 +7,7 @@
 
 import { STATES, noPriorInsurance, ownerIsDriver, set, companyName } from './util.js';
 
-/** @import { IntakeResult } from './types.js' */
+/** @import { IntakeResult } from '../types.js' */
 
 export const ROWS = [1, 2, 3, 4];
 // The marital-status dropdowns have odd hierarchical names; positions on the page put them on

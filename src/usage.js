@@ -11,7 +11,7 @@
 import { toMoney, toDate } from './normalize.js';
 import { noPriorInsurance } from './util.js';
 
-/** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, IntakeProfileEvent, IntakeResult, IntakeSummary, UsageEvent } from './types.js' */
+/** @import { AgentSettingsEvent, CheckDismissedEvent, ClientErrorEvent, ClientRecord, FieldChangeEvent, FillFieldEvent, FillItem, FillReport, IntakeProfileEvent, IntakeResult, IntakeSummary, UsageEvent } from '../types.js' */
 
 export const LOG_KEY = 'usageLog';
 export const MAX_EVENTS = 20000;

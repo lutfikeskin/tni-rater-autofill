@@ -33,7 +33,7 @@
 import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul } from '../normalize.js';
 
-/** @import { CarrierAction, CarrierConfig, CarrierRule } from '../types.js' */
+/** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
 // Values that Progressive asks the agent to attest to must come from an explicit intake field.
 // Keep these helpers conservative: an absent value is a review item, not a reason to guess.

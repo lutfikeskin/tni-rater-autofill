@@ -11,8 +11,8 @@
 //    at a time and waits for the page to settle. Needs the page's own JS world (world: 'MAIN').
 //
 // Not type-checked yet; the plan it takes, the fill's options and the report it returns are typed
-// in src/types.js.
-/** @import { FillOptions, FillReport, PlanStep } from '../types.js' */
+// in types.js, at the repository's root.
+/** @import { FillOptions, FillReport, PlanStep } from '../../types.js' */
 
 (() => {
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,

@@ -42,7 +42,7 @@ import { progressive } from './carriers/progressive.js';
 import { amwins } from './carriers/amwins.js';
 import { geico } from './carriers/geico.js';
 
-/** @import { CarrierConfig } from './types.js' */
+/** @import { CarrierConfig } from '../types.js' */
 
 /** @type {CarrierConfig[]} */
 export const CARRIERS = [

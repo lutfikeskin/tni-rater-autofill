@@ -1,9 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { STAMPED, TYPES_ONLY, packaged, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance } from '../scripts/lib/package.mjs';
+import { STAMPED, buildId, stampBuild, DEV_KEY, DEV_EXTENSION_ID, devManifest, extensionId, PROVENANCE_FILE, stampProvenance } from '../scripts/lib/package.mjs';
 
 const read = (f) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
 
@@ -43,9 +41,9 @@ test('the unpacked copy has a fixed extension ID; the store manifest stays witho
   assert.equal(dev.version, manifest.version);
 });
 
-// The type check's types (src/types.js) are left out of the package: code put there, or a module
-// importing it as code rather than in a JSDoc type, would be missing from the extension.
-test('the type check\'s files hold comments only, no module imports them, and the package leaves them out', () => {
+// The type check's types (types.js, at the root) are outside the package: code put there, or a
+// module importing it as code rather than in a JSDoc type, would be missing from the extension.
+test('the type check\'s types hold comments only, and no module of the extension imports them', () => {
   const commentsOnly = (text) => {
     for (let i = 0; i < text.length;) {
       if (/\s/.test(text[i])) i++;
@@ -55,7 +53,7 @@ test('the type check\'s files hold comments only, no module imports them, and th
     }
     return true;
   };
-  for (const f of TYPES_ONLY) assert.ok(commentsOnly(read(f)), `${f} holds code`);
+  assert.ok(commentsOnly(read('types.js')), 'types.js holds code');
   assert.ok(!commentsOnly('/** @typedef {object} T */\nexport {};'));
   const modules = (dir) => fs.readdirSync(new URL(`../${dir}/`, import.meta.url), { recursive: true })
     .filter((f) => /\.m?js$/.test(f)).map((f) => `${dir}/${f.replaceAll('\\', '/')}`);
@@ -72,12 +70,4 @@ test('the type check\'s files hold comments only, no module imports them, and th
     assert.doesNotMatch(doc, IMPORTS_TYPES, doc);
   }
   for (const f of ['background.js', ...modules('src'), ...modules('sidepanel')]) assert.doesNotMatch(read(f), IMPORTS_TYPES, `${f} imports the types as code`);
-  // scripts/package.mjs copies only what `packaged` takes, by its path from the repository's root.
-  const root = fileURLToPath(new URL('..', import.meta.url));
-  for (const f of TYPES_ONLY) {
-    assert.equal(packaged(root, path.join(root, f)), false, f);
-    assert.equal(packaged(root, `${root}/${f}`), false, `${f}, spelled with /`);
-    if (process.platform === 'win32') assert.equal(packaged(root.toUpperCase(), path.join(root, f)), false, `${f}, another case`);
-  }
-  for (const f of ['src', 'src/plan.js', 'src/content/pagekit.js', 'manifest.json']) assert.equal(packaged(root, path.join(root, f)), true, f);
 });
