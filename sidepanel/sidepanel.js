@@ -10,7 +10,7 @@ import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, intakeProfile, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 // The premium a carrier page quotes (removable: src/premium.js says what goes with it).
-import { notePremium } from '../src/premium.js';
+import { notePremium, premiumHere } from '../src/premium.js';
 import * as usage from './usage-log.js';
 import { migrateStorage } from '../src/storage-version.js';
 import { collectItems, AssistError, assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
@@ -2204,11 +2204,11 @@ function superseded(job) {
   return true;
 }
 
-// `reason`: given for a fill's capture; one asked for by page changes says its reasons when it's
-// logged, since later changes may have handed it theirs.
 // The last premium logged per quote, tab and carrier (notePremium).
 const premiumsSeen = new Map();
 
+// `reason`: given for a fill's capture; one asked for by page changes says its reasons when it's
+// logged, since later changes may have handed it theirs.
 async function captureLayout(job, reason) {
   const why = () => reason ?? [...job.reasons].sort().join('+');
   job.waitsForFill = false;
@@ -2240,9 +2240,9 @@ async function captureLayout(job, reason) {
     const buttons = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.buttons ?? []))];
     noteStopScreen(job, step, buttons);
     // The premium the page quotes, logged when it changed (src/premium.js; not awaited).
-    notePremium({ key: `${job.session}|${tabId}|${carrier.id}`, step: step ?? null, seen: premiumsSeen,
+    if (premiumHere(carrier.id, page, step)) notePremium({ key: `${job.session}|${tabId}|${carrier.id}`, step: step ?? null, seen: premiumsSeen,
       read: async () => (await chrome.scripting.executeScript({ target: { tabId }, func: () => document.body?.innerText ?? '' }))[0]?.result,
-      log: (e) => { if (jobCurrent(job)) usage.log({ carrier: carrier.id, page, view: viewOf(tabId, page, carrier), ...e }); } });
+      log: (e) => { if (!jobCurrent(job)) return false; usage.log({ carrier: carrier.id, page, view: viewOf(tabId, page, carrier), ...e }); return true; } });
     // What the page said about the answers (validation, errors, help), as pagekit's capture reads
     // and redacts it: the carrier's own wording of a refusal, which no other event carries.
     const messages = [...new Set(results.map((r) => r.result).filter(Boolean).flatMap((f) => f.messages ?? []))].slice(0, 40);

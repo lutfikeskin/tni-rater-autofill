@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readPremium, notePremium, PREMIUM_EVENT } from '../src/premium.js';
+import { readPremium, notePremium, premiumHere, PREMIUM_EVENT } from '../src/premium.js';
 
 // The pages' own words (amounts made up): GEICO's summary beside its pay plans, Progressive's Rates.
 const GEICO = "View More Payment Plans\nDue Today $16,908.71\nMVR/CLUE Hasn't run\n12 Month Total Premium:  $101,287.00\nDue Today $16,908.71\n10 Additional Payments of $8,437.83\nInstallment fees will be assessed";
@@ -10,6 +10,8 @@ test('the premium a carrier page quotes is read with its term and payments', () 
   assert.deepEqual(readPremium(GEICO), { total: 101287, termMonths: 12, dueToday: 16908.71, payments: 10, payment: 8437.83 });
   assert.deepEqual(readPremium(PROGRESSIVE.replace(/\n/g, ' ')), { total: 12815, termMonths: 12, dueToday: null, payments: null, payment: null });
   assert.deepEqual(readPremium('Policy term\n$2,400.00 per 6 months'), null, 'no premium named');
+  // Words between the total, Due Today and the payments (a plan's label).
+  assert.deepEqual(readPremium('12 Month Total Premium: $9,000.00\nPay plan: Monthly\nDue Today $1,500.00\nThen\n10 Additional Payments of $750.00'), { total: 9000, termMonths: 12, dueToday: 1500, payments: 10, payment: 750 });
   assert.deepEqual(readPremium('Estimated premium: $3,100'), { total: 3100, termMonths: null, dueToday: null, payments: null, payment: null });
 });
 
@@ -35,5 +37,17 @@ test('a premium is logged once per change, per quote, tab and carrier; a failure
   // No step (Progressive's pages): none sent.
   await notePremium({ key: 'p', seen, read: async () => GEICO, log: (e) => assert.ok(!('step' in e)) });
   assert.deepEqual(logged.map((e) => [e.type, e.step, e.total]), [[PREMIUM_EVENT, 'Quote & Coverages', 101287], [PREMIUM_EVENT, 'Quote & Coverages', 101287], [PREMIUM_EVENT, 'Quote & Coverages', 99000]]);
+  // Not logged (the quote moved on as it was read): tried again next time.
+  const later = new Map();
+  assert.equal(await notePremium({ key: 'k', seen: later, read: async () => GEICO, log: () => false }), false);
+  assert.equal(await notePremium({ key: 'k', seen: later, read: async () => GEICO, log: () => true }), true);
   assert.equal(await notePremium({ key: 'k', seen, read: async () => { throw new Error('tab closed'); }, log: () => assert.fail('logged') }), false);
+});
+
+test('the page text is read only where a carrier quotes its premium', () => {
+  assert.equal(premiumHere('geico', 'quote', 'Quote & Coverages'), true);
+  assert.equal(premiumHere('geico', 'quote', 'Vehicles'), false);
+  assert.equal(premiumHere('progressive', 'CoveragesRates', undefined), true);
+  assert.equal(premiumHere('progressive', 'AddVehicle', undefined), false);
+  assert.equal(premiumHere('amwins', 'application', 'Coverages'), false);
 });

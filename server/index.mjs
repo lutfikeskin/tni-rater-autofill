@@ -281,6 +281,8 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
       if (out.stack !== undefined && !(Array.isArray(out.stack) && out.stack.length <= 4 && out.stack.every((x) => typeof x === 'string' && x.length <= 160 && /^[\w./-]+:\d+:\d+$/.test(x)))) drop('stack');
     }
     if (out.type === 'quote_premium') {
+      // A premium without its total says nothing: refused, so the loss is counted.
+      if (!(typeof out.total === 'number' && Number.isFinite(out.total) && out.total > 0 && out.total < 100_000_000)) return { error: 'quote_premium needs a total' };
       const amount = (x) => x === null || (typeof x === 'number' && Number.isFinite(x) && x > 0 && x < 100_000_000);
       const count = (max) => (x) => x === null || (Number.isSafeInteger(x) && x > 0 && x <= max);
       for (const [k, ok] of [['total', amount], ['dueToday', amount], ['payment', amount], ['termMonths', count(36)], ['payments', count(60)]]) if (out[k] !== undefined && !ok(out[k])) drop(k);

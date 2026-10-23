@@ -637,13 +637,18 @@ test('profile text with a phone, SSN, date of birth, licence or policy number wr
 test('a quoted premium is kept in its shape; anything else in it is dropped', async () => {
   const dataDir = tmp();
   await withServer({ dataDir }, async ({ post }) => {
-    await post({ events: [
+    const r = await (await post({ events: [
       ev({ filled: undefined, type: 'quote_premium', carrier: 'geico', page: 'quote', step: 'Quote & Coverages', total: 101287, termMonths: 12, dueToday: 16908.71, payments: 10, payment: 8437.83 }),
-      ev({ filled: undefined, type: 'quote_premium', carrier: 'progressive', page: 'CoveragesRates', total: '12,815', termMonths: 120, dueToday: -1, payments: 1.5, payment: null, insured: 'Sample Co' }),
-    ] });
+      ev({ filled: undefined, type: 'quote_premium', carrier: 'progressive', page: 'CoveragesRates', total: 12815, termMonths: 120, dueToday: -1, payments: 1.5, payment: null, insured: 'Sample Co' }),
+      // No total: refused, so the loss is counted.
+      ev({ filled: undefined, type: 'quote_premium', carrier: 'progressive', page: 'CoveragesRates', total: '12,815' }),
+    ] })).json();
+    assert.deepEqual(r.rejected, [{ index: 2, error: 'quote_premium needs a total' }]);
   });
-  const [geico, odd] = stored(dataDir);
+  const [geico, odd, ...more] = stored(dataDir);
+  assert.equal(more.length, 0);
   assert.deepEqual([geico.total, geico.termMonths, geico.dueToday, geico.payments, geico.payment, geico.dropped], [101287, 12, 16908.71, 10, 8437.83, undefined]);
-  for (const k of ['total', 'termMonths', 'dueToday', 'payments', 'insured']) assert.equal(odd[k], undefined, k);
-  assert.deepEqual([...odd.dropped].sort(), ['dueToday', 'insured', 'payments', 'termMonths', 'total']);
+  assert.equal(odd.total, 12815);
+  for (const k of ['termMonths', 'dueToday', 'payments', 'insured']) assert.equal(odd[k], undefined, k);
+  assert.deepEqual([...odd.dropped].sort(), ['dueToday', 'insured', 'payments', 'termMonths']);
 });

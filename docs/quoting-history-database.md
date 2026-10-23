@@ -367,7 +367,7 @@ FROM build_info;
 
 ## Premiums
 
-The panel logs the premium a carrier page quotes as a `quote_premium` event ([premium.js](../src/premium.js)). Each time it reads a page's layout (`captureLayout`: after a fill, and as the agent changes the page), it reads the page's text and, when a current premium is shown and differs from the last one logged for that quote, tab and carrier, logs it. Stop steps (GEICO's Final Quote Details, MVR & CLUE, Payment Information) are never read. Nothing about the client is in it.
+The panel logs the premium a carrier page quotes as a `quote_premium` event ([premium.js](../src/premium.js)). Each time it reads a page's layout (`captureLayout`: after a fill, and as the agent changes the page), on the pages where a carrier quotes its premium (`premiumHere`: GEICO's Quote & Coverages, Progressive's CoveragesRates) it reads the page's text and, when a current premium is shown and differs from the last one logged for that quote, tab and carrier, logs it. Stop steps (GEICO's Final Quote Details, MVR & CLUE, Payment Information) are never read. Nothing about the client is in it.
 
 | Field | Shape |
 | --- | --- |
@@ -376,7 +376,7 @@ The panel logs the premium a carrier page quotes as a `quote_premium` event ([pr
 | `termMonths` | 12 for a year, 6 for six months; null when the page doesn't say. |
 | `dueToday`, `payments`, `payment` | GEICO's down payment for the plan picked, the payments after today and each one; null elsewhere. |
 
-The wording read: GEICO's "12 Month Total Premium: $… Due Today $… 10 Additional Payments of $…", Progressive's "Total premium amount $… per year", else any "total/annual/policy/estimated premium $…" (its term unknown). Nothing is read while the page asks for a recalculation or shows "$ --.--" or "****". Whether AmWINS shows a premium before submission is not known. The server keeps these fields in these shapes and drops anything else.
+The wording read: GEICO's "12 Month Total Premium: $… Due Today $… 10 Additional Payments of $…", Progressive's "Total premium amount $… per year", else any "total/annual/policy/estimated premium $…" (its term unknown). Nothing is read while the page asks for a recalculation or shows "$ --.--" or "****". Whether AmWINS shows a premium before submission is not known. The server keeps these fields in these shapes, drops anything else, and refuses a reading without its total.
 
 The warehouse has every reading in `quote_premiums`, and the last per quote and carrier, test runs left out, in `v_quote_premium`. **It is a quoted premium, never a bound one:** the carrier's figure on screen, before underwriting (on GEICO before the MVR and CLUE reports). Compare it with the printed quote on a few real quotes per carrier before trusting it.
 

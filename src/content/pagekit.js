@@ -1521,6 +1521,7 @@
   const pageAt = (loc) => (new URLSearchParams(loc.search).get('pageName') || (loc.pathname + ((loc.hash ?? '').startsWith('#/') ? loc.hash.slice(1).split('?')[0] : '')).replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id')).replace(/-Reload$/, '');
   const currentPage = () => pageAt(location);
 
+  // src/premium.js keeps a copy of this test (STALE): change both together.
   function ratesStale() {
     const text = document.body.innerText ?? '';
     // "The coverages have changed, please "recalculate" to see your rate." / "Recalculate to see
