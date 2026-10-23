@@ -534,6 +534,10 @@ export const progressive = {
     { id: 'recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', afterActions: (r) => [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], needsRecalculation: true, verify: 'premium', when: notNtl },
     // The bill plan once the premium is current (needsPremium: Recalculate done, or not needed).
     { id: 'billPlan', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, needsPremium: true, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: notNtl },
+    // Back from the bill plan, Recalculate again only if it's there (the rates out of date: the
+    // maintainer, 2026-10-23), else straight to Print, Email, Fax. It follows the bill plan, which
+    // waited for a resolved limit, and doesn't re-check it (as Print, below).
+    { id: 'recalculateAgain', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal. It doesn't re-check the
     // liability limit: back from the bill plan, the reloaded Rates page failed that check on a

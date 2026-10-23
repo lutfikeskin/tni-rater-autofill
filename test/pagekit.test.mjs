@@ -1584,6 +1584,36 @@ test('Rates: Recalculate first when the rates are out of date, then the bill pla
   assert.equal(still.bill._clicked, undefined);
 });
 
+// Review of PR #167 (the maintainer, 2026-10-23): back from the bill plan, Recalculate again only if
+// it's there (the rates out of date), else straight to Print, Email, Fax. Progressive's own helpers;
+// the liability limit isn't re-checked there (the reloaded Rates page failed that check, FL and NJ).
+test('back from the bill plan: Recalculate again only when the rates are out of date, then Print', async () => {
+  const record = { applicant: {}, garaging: {}, operations: {}, drivers: [], vehicles: [], priorInsurance: [], coverage: {}, claims: {} };
+  const rates = () => buildPlan(record, progressive).filter((s) => s.kind === 'action' && s.pages.includes('CoveragesRates') && /^(recalculate|billPlan|print)/.test(s.action));
+  const back = (stale) => {
+    const { h, recalc } = premiumHarness({ recalcResult: 'Total premium amount $12,815.00 per year' });
+    // Print, Email, Fax shows in place of Recalculate once the rates are current.
+    const out = { h, recalc, print: null };
+    const showPrint = () => { out.print = addButton(h, 'Print, Email, Fax'); out.print.onclick = () => { out.print._clicked = true; }; };
+    if (stale) {
+      const recalculated = recalc.onclick;
+      recalc.onclick = () => { recalculated(); showPrint(); };
+    } else {
+      h.document.body.innerText = 'Total premium amount $12,815.00 per year';
+      showPrint();
+    }
+    return out;
+  };
+  const options = { maxRounds: 6, doneActions: ['recalculate', 'billPlan'], visitedPages: ['ChangePaymentPlan'] };
+  const stale = back(true);
+  const report = await stale.h.kit.fill(rates(), options);
+  assert.deepEqual([stale.recalc._clicked ?? false, stale.print?._clicked ?? false], [true, true]);
+  assert.match(Array.from(report.actions, (x) => x.id).join(','), /^recalculate\w*,print$/);
+  const current = back(false);
+  await current.h.kit.fill(rates(), options);
+  assert.deepEqual([current.recalc._clicked ?? false, current.print._clicked ?? false], [false, true]);
+});
+
 // Live recording, 2026-10-23 (Progressive): an automatic fill ran on the payment plan page, the agent
 // clicked its Continue, and the same fill read Rates as its next round and clicked Print, Email, Fax
 // as the agent did: two presses, 0.2 s apart.

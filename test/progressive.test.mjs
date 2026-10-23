@@ -712,12 +712,12 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   assert.deepEqual([kept.text, kept.afterActions, kept.label], [null, ['addNtl'], 'Non-trucking liability']);
   assert.match(kept.missing, /remove it on this page yourself/);
   assert.ok(new RegExp(kept.resolvedBy, 'i').test('Add Non-Trucking Liability instead?'), 'settled when the page offers Add NTL again');
-  for (const id of ['openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'print']) {
+  for (const id of ['openCargo', 'addCargoCommodity', 'doneCargo', 'billPlan', 'recalculate', 'recalculateAgain', 'print']) {
     assert.deepEqual(actions(no).find((s) => s.action === id).heldBy, ['ntlStillAdded'], `${id} waits while NTL is still on the quote`);
   }
   // Codex on PR #22: an earlier bill plan visit must not let Recalculate or Print run while the
   // new NTL questions are open. Until the section has been seen live, the whole page is the agent's.
-  for (const id of ['billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} is the agent's`);
+  for (const id of ['billPlan', 'recalculate', 'recalculateAgain', 'print']) assert.ok(!ids(record).includes(id), `${id} is the agent's`);
   // Print/Send is always the agent's click (Chrome opens the PDF only for it); the panel says so.
   assert.ok(!ids(record).includes('printSend'));
   assert.match(progressive.agentPages.PrintEmailFax, /Click Print\/Send yourself/);
@@ -742,7 +742,7 @@ test('Rates waits for an unanswered NTL mention, and an NTL quote keeps Continue
   const step = (r, id) => buildPlan(r, progressive, {}).find((s) => s.action === id);
   record.claims = { text: 'No\nAsked about bobtail' };
   record.coverage.ntl = null;
-  for (const id of ['openCargo', 'billPlan', 'recalculate', 'print']) assert.ok(!ids(record).includes(id), `${id} waits for the agent's NTL answer`);
+  for (const id of ['openCargo', 'billPlan', 'recalculate', 'recalculateAgain', 'print']) assert.ok(!ids(record).includes(id), `${id} waits for the agent's NTL answer`);
   assert.match(step(record, 'ntlDecide').missing, /set it to Yes or No/);
   assert.equal(step(record, 'ntlDecide').text, null, 'never clicked');
   record.coverage.ntl = false;
@@ -970,7 +970,7 @@ test('FL / UT / SC questions of 2026-10-07', () => {
   assert.ok(plan.filter((s) => s.q === '1FDD').every((s) => s.value === 'Not selected' && s.vehicleHint));
   assert.ok(byQ(plan, '1FCD').choiceAliases.includes('$1,000 Deductible w/ $0 Glass Deductible'));
   assert.deepEqual([byQ(plan, '1E68').value, byQ(plan, '1E6C').value], ['$100k CSL w/ $200 Deductible', '$100k CSL w/ $0 Deductible']);
-  for (const id of ['billPlan', 'recalculate', 'print']) {
+  for (const id of ['billPlan', 'recalculate', 'recalculateAgain', 'print']) {
     const a = plan.find((s) => s.action === id);
     if (a) assert.equal(a.waitRequired, true, id);
   }
