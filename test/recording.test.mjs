@@ -6,13 +6,22 @@ import path from 'node:path';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import { canRecord, recordingId, stampEvents, newManifest, recordingFiles } from '../src/recording.js';
 import { RecordingStore, fileSystem } from '../sidepanel/recording.js';
-import { readRecording, recordingReport } from '../scripts/lib/recording.mjs';
+import { cliArgs, readRecording, recordingReport } from '../scripts/lib/recording.mjs';
 
 // The developer recording's plain parts, the panel's store on a stand-in for the browser's origin
 // private file system, and the report (docs/developer-recording.md).
 
 const build = { version: '0.9.22', channel: 'unpacked', commit: 'abc1234567' };
 const manifestFor = (id = 'geico-fl-van-20261023-1412-ab12') => newManifest({ id, carrier: 'geico', scenario: 'FL van', started: '2026-10-23T14:12:00.000Z', build, intake: 'f00d', test: true });
+
+// Live recording, 2026-10-23: `npm run recording -- <zip>` said "Usage" (the first argument was
+// skipped when there was no --out).
+test('npm run recording takes the recording as the first argument, with or without --out', () => {
+  assert.deepEqual(cliArgs(['a.zip']), { source: 'a.zip', out: null });
+  assert.deepEqual(cliArgs(['a.zip', '--out', 'r.md']), { source: 'a.zip', out: 'r.md' });
+  assert.deepEqual(cliArgs(['--out', 'r.md', 'a.zip']), { source: 'a.zip', out: 'r.md' });
+  assert.deepEqual(cliArgs([]), { source: null, out: null });
+});
 
 test('only builds that aren\'t the store\'s may record', () => {
   assert.deepEqual(['source', 'unpacked', 'store', null, undefined].map(canRecord), [true, true, false, false, false]);

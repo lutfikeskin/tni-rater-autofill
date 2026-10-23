@@ -16,7 +16,8 @@
   previous?.dispose?.();
   // The recorder (version 12 on) is injected with this file, before it, in the same world.
   const read = globalThis.__raterRecorder?.read;
-  if (!read) return;
+  // An empty frame (about:blank, as the agents' site has two of) has nothing to record.
+  if (!read || /^about:/.test(location.href ?? '')) return;
 
   const isTop = window === window.top;
   const round = (n) => Math.round(n * 10) / 10;
@@ -88,6 +89,11 @@
     const el = path[0];
     let control = null;
     try { control = read.controlForEvent(el); } catch { /* not a control */ }
+    // An input that is a button (Progressive's Select Product(s), Add Products to Quote) is named
+    // by its words, as a button.
+    if (control && /^(button|submit|reset|image)$/i.test(control.type ?? '')) {
+      return { button: { text: String(control.value || control.alt || control.getAttribute?.('aria-label') || '').trim().slice(0, 60), rect: box(control) } };
+    }
     if (control) {
       if (isPassword(control)) return { password: true };
       let field;

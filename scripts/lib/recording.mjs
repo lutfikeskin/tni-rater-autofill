@@ -36,6 +36,18 @@ const quote = (s) => `"${String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 80
 const fieldName = (e) => quote(e.field?.label || e.field?.key || 'a question');
 const docY = (e) => e.field?.rect?.docY ?? null;
 
+/**
+ * `npm run recording -- <zip or folder> [--out file.md]`: the source, and where the report goes
+ * (null: the default). Without --out the source is the first argument (it was skipped: live
+ * recording, 2026-10-23).
+ */
+export function cliArgs(argv) {
+  const outAt = argv.indexOf('--out');
+  const out = outAt >= 0 ? argv[outAt + 1] ?? null : null;
+  const source = argv.find((a, i) => !a.startsWith('--') && (outAt < 0 || i !== outAt + 1)) ?? null;
+  return { source, out };
+}
+
 /** The top frame's pages and steps, in order, each with its events. */
 function segments(events) {
   const out = [];

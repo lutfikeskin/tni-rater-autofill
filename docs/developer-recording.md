@@ -302,6 +302,7 @@ The maintainer's answers, 2026-10-23:
 2. **Saved pages:** raw, credentials removed (DR-4).
 3. **Where recordings go:** one zip in Downloads (DR-3), moved into `layouts/recordings/`.
 4. **Every agent's version:** after the maintainer's own developer recordings; nothing new is sent until then, and TNI's privacy wording comes first.
+5. **One tab:** a recording records the tab it was started on, and only that one; start it on the quoting page itself, as agents will (2026-10-23, after the first live recording: Progressive's quote opened in a tab of its own from the agents' site, and the recording, started on the agents' site, kept only its first 9 s). It doesn't follow the panel to another tab: an unrelated carrier tab open beside the quote must never end up in it.
 
 ## Open questions for the maintainer
 

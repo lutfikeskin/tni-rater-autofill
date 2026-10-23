@@ -41,7 +41,7 @@ class Button {
   getBoundingClientRect() { return { left: 10, top: 700, width: 80, height: 30 }; }
 }
 
-function harness({ reply = () => ({ ok: true }) } = {}) {
+function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.example/quote' } = {}) {
   const controls = [];
   const listeners = new Map();
   const on = (target) => (type, fn) => { const key = `${target}:${type}`; (listeners.get(key) ?? (listeners.set(key, new Set()), listeners.get(key))).add(fn); };
@@ -63,7 +63,7 @@ function harness({ reply = () => ({ ok: true }) } = {}) {
   };
   const context = {
     document,
-    location: { pathname: '/quote', search: '' },
+    location: { href, pathname: '/quote', search: '' },
     URLSearchParams,
     NodeFilter: { SHOW_TEXT: 4 },
     getComputedStyle: () => ({ visibility: 'visible' }),
@@ -206,6 +206,22 @@ test('stop sends what is held and ends the trace; a button is named by its words
   h.emit('click', new Button('Next'));
   await h.advance(1000);
   assert.equal(h.trace().length, before, 'nothing after stop');
+});
+
+// Live recording, 2026-10-23 (Progressive's agents' site): its Select Product(s) and Add Products to
+// Quote are input buttons, logged as unnamed text boxes; its two about:blank frames each sent events.
+test('an input that is a button is named by its words, and an empty frame records nothing', async () => {
+  const h = harness();
+  const add = new Control('input', { name: 'quoteActionSelectButton', type: 'button', value: 'Add Products to Quote', label: 'EPLI, NPDO, Cyber and More' });
+  h.controls.push(add);
+  h.emit('click', add);
+  await h.advance(400);
+  const click = h.events().find((e) => e.kind === 'click');
+  assert.deepEqual([click.button?.text, click.field], ['Add Products to Quote', undefined]);
+  const blank = harness({ href: 'about:blank' });
+  blank.emit('click', new Button('Next'));
+  await blank.advance(400);
+  assert.deepEqual([blank.trace().length, blank.context.__raterTrace], [0, undefined]);
 });
 
 test('the trace only watches: nothing in it clicks, types, scrolls or dispatches', () => {

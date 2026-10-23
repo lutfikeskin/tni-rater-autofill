@@ -8,13 +8,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readRecording, recordingReport } from './lib/recording.mjs';
+import { cliArgs, readRecording, recordingReport } from './lib/recording.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const args = process.argv.slice(2);
-const outAt = args.indexOf('--out');
-const out = outAt >= 0 ? args[outAt + 1] : null;
-const source = args.find((a, i) => !a.startsWith('--') && i !== outAt + 1);
+const { source, out } = cliArgs(process.argv.slice(2));
 if (!source) {
   console.error('Usage: npm run recording -- <recording zip or folder> [--out file.md]');
   process.exit(1);
