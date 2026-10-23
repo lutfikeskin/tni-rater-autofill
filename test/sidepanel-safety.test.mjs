@@ -7211,3 +7211,48 @@ test('a profile still waiting when another intake is loaded goes to its own quot
   ]);
   assert.equal(timers.size, 0, 'no timer outlives the switch');
 });
+
+// Developer recording (docs/developer-recording.md): the trace goes into the recorded tab only, with
+// the recorder whose readers it uses, and not once the recording is stopping.
+test('the developer recording\'s trace is injected with the recorder, into the recorded tab only', async () => {
+  const injected = [];
+  const state = { intake: {}, tab: { id: 4, carrier: { id: 'geico' } }, filling: false, recording: null };
+  const context = { state, inExtension: true, tellRecorder: async () => {},
+    chrome: { scripting: { executeScript: async ({ target, files }) => { injected.push([target.tabId, files.map((f) => f.split('/').pop())]); } } } };
+  vm.runInNewContext(extractFunction('ensureRecorder'), context);
+  await context.ensureRecorder();
+  state.recording = { tabId: 4, stopping: false };
+  await context.ensureRecorder();
+  state.tab = { id: 5, carrier: { id: 'geico' } };
+  await context.ensureRecorder();
+  state.tab = { id: 4, carrier: { id: 'geico' } };
+  state.recording.stopping = true;
+  await context.ensureRecorder();
+  assert.deepEqual(JSON.parse(JSON.stringify(injected)), [
+    [4, ['field-key.js', 'recorder.js']],
+    [4, ['field-key.js', 'recorder.js', 'trace.js']],
+    [5, ['field-key.js', 'recorder.js']],
+    [4, ['field-key.js', 'recorder.js']],
+  ]);
+});
+
+test('the panel keeps only the recorded tab\'s trace events, redacted with their frame, and says it took them', () => {
+  const kept = [];
+  const state = { filling: true, recording: null };
+  const context = { state, stampEvents: (events, opts) => events.map((e) => ({ ...e, frame: opts.frame, filling: opts.filling, label: opts.redact(e.label) })) };
+  vm.runInNewContext(extractFunction('onTraceMessage'), context);
+  const replies = [];
+  const send = (msg, tabId, frameId = 0) => context.onTraceMessage(msg, { tab: { id: tabId }, frameId }, (r) => replies.push(r));
+  send({ ra: 'trace', events: [{ kind: 'click', t: 1, label: 'x' }] }, 4);
+  state.recording = { tabId: 4, redact: (s) => s.replace('Sam', '[client]'), store: { add: (events) => kept.push(...events) } };
+  send({ ra: 'trace', events: [{ kind: 'click', t: 2, label: 'Sam' }] }, 5);
+  send({ ra: 'usage', events: [{ kind: 'click', t: 3, label: 'Sam' }] }, 4);
+  send({ ra: 'trace', events: [{ kind: 'click', t: 4, label: 'Sam' }], dropped: 3 }, 4, 2);
+  assert.deepEqual(kept.map((e) => [e.kind, e.t === 4 ? 4 : 'now', e.frame, e.label ?? null, e.dropped ?? null]), [
+    ['click', 4, 2, '[client]', null], ['gap', 'now', 2, null, 3],
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(replies)), [{ ok: true }], 'only the batch it kept is answered');
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.match(html, /<div id="devrec" class="devrec" hidden>/, 'hidden until the panel sees a build that may record');
+  assert.match(SIDEPANEL, /\$\('devrec'\)\.hidden = !inExtension \|\| !canRecord\(usage\.build\(\)\.channel\);/);
+});

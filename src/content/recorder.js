@@ -14,7 +14,7 @@
 // at the shadow host it reaches the window as.
 
 (() => {
-  const VERSION = 11;
+  const VERSION = 12;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
@@ -609,6 +609,28 @@
     chrome.runtime.onMessage.removeListener?.(onMessage);
   }
 
+  // A control as the snapshot names it (its key, question id, kind and label), and the words of the
+  // choice it shows (null for a text box): for the developer recording's trace (trace.js), so a
+  // recording names a question exactly as this recorder and the usage log do.
+  const describe = (el) => {
+    const type = (el.type || el.tagName).toLowerCase();
+    const q = questionId(el);
+    if (type === 'radio') {
+      const key = fieldKey(el, q, true);
+      return { key, q, kind: 'radio', label: labelFor(key, el.closest?.('[role=radiogroup], fieldset') ?? el, el) };
+    }
+    const key = fieldKey(el, q, false);
+    const kind = el.tagName === 'SELECT' || isCombo(el) ? 'select' : type === 'checkbox' ? 'checkbox' : 'text';
+    return { key, q, kind, label: labelFor(key, el) };
+  };
+  const choiceText = (el) => {
+    const type = (el.type || el.tagName).toLowerCase();
+    if (type === 'radio') return radioOn(el) ? oneLine([...(el.labels ?? [])].map((l) => l.textContent).join(' ')) || slotText(radioHost(el), 'label') || el.value : null;
+    if (type === 'checkbox') return el.checked ? 'checked' : 'unchecked';
+    if (el.tagName === 'SELECT') { const o = el.selectedOptions?.[0]; return o && o.value !== '' ? oneLine(o.text) : ''; }
+    return null;
+  };
+
   api = {
     version: VERSION,
     rebaseline,
@@ -616,6 +638,8 @@
     poll: tick,
     dispose,
     alive: () => !!chrome.runtime?.id,
+    // Reading only (docs/developer-recording.md).
+    read: { controlForEvent, describe, choiceText, stepKey, pageKey, buttonText, BUTTONS },
   };
   globalThis.__raterRecorder = api;
 

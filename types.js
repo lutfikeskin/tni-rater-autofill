@@ -685,3 +685,48 @@
  * The events src/usage.js builds. The panel logs others of its own (sidepanel.js).
  * @typedef {IntakeProfileEvent | CheckDismissedEvent | AgentSettingsEvent | ClientErrorEvent | FieldChangeEvent | FillRunEvent | FillFieldEvent | RecalcLayoutEvent} UsageEvent
  */
+
+// ---------------------------------------------------------------------------------------------
+// The developer recording (docs/developer-recording.md)
+
+/**
+ * One event of a recording's timeline: what src/content/trace.js saw in a frame, as the panel keeps
+ * it (src/recording.js stampEvents), or a mark of the panel's own (`note`, `gap`).
+ * @typedef {object} TraceEvent
+ * @property {string} kind  page, step, pointer, click, key, input, change, focus, blur, scroll, visible, resize, note, gap
+ * @property {number} t  wall-clock ms when it happened, on the page's own clock (a fraction kept)
+ * @property {number} [seq]  the frame's counter: the order of two events in one millisecond
+ * @property {number} [frame]  the frame it came from (0: the top frame)
+ * @property {true} [filling]  a fill was under way when the panel got it
+ * @property {boolean} [trusted]  the browser's isTrusted: a person's action, not a script's
+ * @property {number | null} [gestureMs]  ms since the last trusted gesture on that control (input, change)
+ * @property {{ key: string | null, q: string | null, kind: string | null, label: string, rect: object | null }} [field]  the question, as the recorder names it (label redacted)
+ * @property {{ text: string, rect: object | null }} [button]  the button, by its words (redacted)
+ * @property {string | null} [value]  a choice's words after the change (redacted)
+ * @property {number} [len]  a text box's length after the change; its text is never kept
+ * @property {string} [key]  a named key (Enter, Tab, Space, arrows…); a typed character never
+ * @property {boolean} [printable]  a key that types a character, which isn't kept
+ * @property {string} [page]  the page as the usage log names it (page, step)
+ * @property {string | null} [step]  the step on screen (null: none, or unreadable mid-redraw)
+ * @property {string} [title]  the document's title (redacted)
+ * @property {string} [text]  a note's words (redacted)
+ * @property {number} [dropped]  events the trace couldn't keep while no panel took them (gap)
+ */
+
+/**
+ * A recording's recording.json.
+ * @typedef {object} RecordingManifest
+ * @property {'tni-rater-autofill'} tool
+ * @property {'recording'} kind
+ * @property {number} version  the format's version
+ * @property {string} id  <carrier>-<scenario>-<yyyymmdd-hhmm>-<4 hex>
+ * @property {string} carrier
+ * @property {string} scenario  as typed in the panel's Scenario box (redacted)
+ * @property {string} started  ISO time
+ * @property {string | null} ended  ISO time; null while recording, or for one cut short
+ * @property {{ version: string, channel: string, commit: string | null }} build
+ * @property {string | null} intake  the intake's fingerprint (no client data)
+ * @property {boolean} test  marked as a test run, not a client
+ * @property {number} events  how many events were kept
+ * @property {number} dropped  how many the trace couldn't keep
+ */

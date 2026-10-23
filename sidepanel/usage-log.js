@@ -14,6 +14,8 @@ const version = hasChrome ? chrome.runtime.getManifest().version : 'dev';
 // Stamped by scripts/package.mjs: the store zip or the unpacked copy, and its commit. A version
 // number alone can't tell a development copy from the release (audit 2026-10-08).
 const PROVENANCE = { channel: 'source', commit: null };
+// This build: its version, channel and commit (the developer recording's manifest; whether it may record).
+export const build = () => ({ version, channel: PROVENANCE.channel, commit: PROVENANCE.commit });
 
 let session = null; // { id, intakeId } for the intake currently loaded
 let queue = Promise.resolve();

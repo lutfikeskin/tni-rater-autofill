@@ -12,6 +12,8 @@ import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js'
 // The premium a carrier page quotes (removable: src/premium.js says what goes with it).
 import { notePremium, premiumHere } from '../src/premium.js';
 import * as usage from './usage-log.js';
+import { canRecord, recordingId, stampEvents, newManifest } from '../src/recording.js';
+import { RecordingStore } from './recording.js';
 import { migrateStorage } from '../src/storage-version.js';
 import { collectItems, AssistError, assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated, firstNameOf } from '../src/ai/luna.js';
@@ -266,6 +268,8 @@ const aiRetiredSignatures = new Set();
 const $ = (id) => document.getElementById(id);
 const state = {
   intake: null, // { record, warnings, stats, fileName, done: number[] }
+  // The developer recording under way (startRecording): { store, tabId, redact, started, timer, stopping }.
+  recording: null,
   active: { drivers: 0, vehicles: 0, trailers: 0 },
   tab: null, // { id, url, carrier }
   // The state each tab's quote was picked for on the carrier's page (tab id -> { carrier, code,
@@ -1429,8 +1433,11 @@ const pageOf = (url) => {
 async function ensureRecorder() {
   if (!inExtension || !state.intake || !state.tab?.carrier) return;
   const tabId = state.tab.id;
+  // The developer recording's trace goes in with the recorder, whose readers it uses, into the tab
+  // being recorded only (again after each page load).
+  const trace = state.recording?.tabId === tabId && !state.recording.stopping ? ['src/content/trace.js'] : [];
   try {
-    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['src/content/field-key.js', 'src/content/recorder.js'] });
+    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['src/content/field-key.js', 'src/content/recorder.js', ...trace] });
   } catch { return; /* page not ready or not allowed; tried again on the next tab update */ }
   if (!state.filling) await tellRecorder('resume', tabId);
 }
@@ -4360,6 +4367,109 @@ async function capturePage() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Developer recording (docs/developer-recording.md): unpacked builds only. While it runs, the trace
+// (src/content/trace.js) goes into the recorded tab with the recorder, and its events are stamped,
+// redacted (labels, button words, choices, titles) and kept (sidepanel/recording.js) until Stop and
+// save writes one zip to Downloads. Nothing of it is uploaded or logged.
+
+function devrecSaid(text) {
+  $('devrec-status').hidden = !text;
+  $('devrec-status').textContent = text ?? '';
+}
+
+function renderDevrec() {
+  const rec = state.recording;
+  $('devrec-start').hidden = !!rec;
+  $('devrec-note').hidden = !rec;
+  $('devrec-stop').hidden = !rec;
+  // Seen with Advanced folded too.
+  $('advanced').querySelector('summary').textContent = rec ? 'Advanced, for setup only · Recording' : 'Advanced, for setup only';
+  if (!rec || rec.stopping) return;
+  const s = Math.floor((Date.now() - rec.started) / 1000);
+  devrecSaid(`Recording ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')} · ${rec.store.count} events${rec.store.durable ? '' : '. Kept in memory only: closing the panel loses it'}.`);
+}
+
+async function startRecording() {
+  if (state.recording) return;
+  if (!state.tab?.carrier) { devrecSaid('Open a carrier page to record.'); return; }
+  // Labels and choices are redacted with the loaded intake's names and numbers, as captures are.
+  if (!state.intake?.record) { devrecSaid('Load the intake first, so client details can be redacted from the timeline.'); return; }
+  const { id: tabId, carrier } = state.tab;
+  const redact = redactor(redactionTerms(state.intake.record));
+  const scenario = redact($('capture-scenario').value.trim()).slice(0, 60) || 'unnamed';
+  const started = new Date();
+  const manifest = newManifest({ id: recordingId(carrier.id, scenario, started), carrier: carrier.id, scenario, started,
+    build: usage.build(), intake: usage.currentSession()?.intakeId ?? null, test: !!state.intake.test });
+  const store = await RecordingStore.start(manifest);
+  state.recording = { store, tabId, redact, started: started.getTime(), timer: setInterval(renderDevrec, 1000), stopping: false };
+  renderDevrec();
+  await ensureRecorder();
+}
+
+// Answered, so the trace knows the batch was taken: one it can't deliver it keeps and sends again.
+function onTraceMessage(msg, sender, sendResponse) {
+  const rec = state.recording;
+  if (msg?.ra !== 'trace' || !rec || sender.tab?.id !== rec.tabId) return;
+  const frame = sender.frameId ?? 0;
+  const events = stampEvents(msg.events, { frame, filling: !!state.filling, redact: rec.redact });
+  // What the trace couldn't keep while no panel took its events (closed, reloading).
+  if (msg.dropped > 0) events.push({ kind: 'gap', t: Date.now(), frame, dropped: msg.dropped });
+  rec.store.add(events);
+  sendResponse({ ok: true });
+}
+
+// The Note box, as a moment of the timeline ("waiting too long", "this is wrong").
+function noteRecording() {
+  const rec = state.recording;
+  const text = rec?.redact($('capture-note').value.trim()).slice(0, 200);
+  if (!rec || !text) return;
+  rec.store.add([{ kind: 'note', t: Date.now(), frame: 0, text }]);
+  $('capture-note').value = '';
+}
+
+async function stopRecording(why = '') {
+  const rec = state.recording;
+  if (!rec || rec.stopping) return;
+  rec.stopping = true;
+  clearInterval(rec.timer);
+  devrecSaid('Saving the recording…');
+  // The trace sends what it holds, then stops; its last batch is taken before the store closes.
+  await chrome.tabs.sendMessage(rec.tabId, { ra: 'trace', cmd: 'stop' }).catch(() => {});
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  state.recording = null;
+  renderDevrec();
+  await saveRecording(rec.store, why);
+}
+
+async function saveRecording(store, why = '') {
+  try {
+    const { blob, events } = await store.zip();
+    const url = URL.createObjectURL(blob);
+    h('a', { href: url, download: `recording-${store.manifest.id}.zip` }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    await store.discard();
+    devrecSaid(`${why ? `${why} ` : ''}Saved recording-${store.manifest.id}.zip (${events} events) to Downloads. It shows the client as the page did: keep it in layouts/recordings/, never in git.`);
+  } catch (e) {
+    devrecSaid(`Couldn't save the recording: ${e.message}. It stays in the browser: save it from here later.`);
+  }
+  await renderUnfinished();
+}
+
+// A recording a closed or reloaded panel left unsaved: saved from here, newest first.
+async function renderUnfinished() {
+  const left = (await RecordingStore.unfinished().catch(() => [])).filter((m) => m.id !== state.recording?.store.manifest.id);
+  $('devrec-recover').hidden = !left.length;
+  $('devrec-recover').dataset.id = left[0]?.id ?? '';
+  $('devrec-recover').textContent = left.length > 1 ? `Save ${left.length} unfinished recordings, one by one` : 'Save the unfinished recording';
+}
+
+async function recoverRecording() {
+  const id = $('devrec-recover').dataset.id;
+  if (!id) return;
+  try { await saveRecording(await RecordingStore.reopen(id), 'From a panel closed while recording:'); } catch (e) { devrecSaid(`Couldn't open it: ${e.message}`); }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Luna assistant: after a fill, suggests answers for the questions left for the agent.
 // Verified choices can be applied automatically, but Continue waits for explicit agent review.
 
@@ -5559,6 +5669,8 @@ function clientNote(text) {
 
 async function clearClient() {
   const scope = usage.currentSession()?.intakeId;
+  // A recording ends with its client, saved as it is.
+  if (state.recording) await stopRecording('The client was cleared, so the recording stopped.');
   if (profileTimer) logProfile();
   usage.log({ type: 'intake_closed', reason: 'cleared' });
   cancelLayouts();
@@ -5801,6 +5913,16 @@ function wire() {
   $('capture').addEventListener('click', capturePage);
   // Alt+Shift+C (manifest "commands"): a capture without leaving the page, e.g. with a list open.
   if (inExtension) chrome.commands?.onCommand.addListener((command) => { if (command === 'capture-page') captureFromShortcut(); });
+  // Developer recording: shown in unpacked builds only (canRecord), never in the store's.
+  $('devrec').hidden = !inExtension || !canRecord(usage.build().channel);
+  if (!$('devrec').hidden) {
+    $('devrec-start').addEventListener('click', startRecording);
+    $('devrec-note').addEventListener('click', noteRecording);
+    $('devrec-stop').addEventListener('click', () => stopRecording());
+    $('devrec-recover').addEventListener('click', recoverRecording);
+    chrome.runtime.onMessage.addListener(onTraceMessage);
+    renderUnfinished();
+  }
   wireUsage();
   wireAi();
   if (inExtension) {

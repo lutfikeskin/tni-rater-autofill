@@ -16,6 +16,7 @@
     "layouts": "node scripts/build-layouts.mjs server-data",
     "transitions": "node scripts/transitions.mjs server-data",
     "captures": "node scripts/captures.mjs layouts",
+    "recording": "node scripts/recording.mjs",
     "summary": "node scripts/summarize-usage.mjs server-data",
     "signals": "node scripts/weekly-signals.mjs server-data",
     "ledger": "node scripts/ledger.mjs",
