@@ -1678,7 +1678,8 @@ test('during a fill, a trusted change counts as an agent edit only when the gest
     const notes = makeInput({ id: 'notes', ariaLabel: 'Notes' });
     const box = makeInput({ id: 'cb', type: 'checkbox', ariaLabel: 'Hauls hazmat' });
     const label = new FakeNode('label', { textContent: 'Hauls hazmat', attrs: { for: 'cb' } });
-    h.document.body.append(notes, label, box);
+    // The notes come after the checkbox on the page: answered after it, unless its change halted the fill.
+    h.document.body.append(label, box, notes);
     box.addEventListener('click', () => {
       gesture({ notes, label, box }).dispatchEvent({ type: 'pointerdown', isTrusted: true });
       box.dispatchEvent({ type: 'change', target: box, isTrusted: true });
@@ -2491,6 +2492,45 @@ test('batch mode answers every visible question in one round and still checks ea
   assert.equal(report.filled.length, 2);
   assert.equal(report.failed.length, 1, 'a page that rejects an answer is still reported');
   assert.ok(report.rounds <= 4, `rounds: ${report.rounds}`);
+});
+
+// The rules' order jumped up and down the page (GEICO mock, Business & Owner Info: the business
+// name, 14th on the page, first, then the owner's name at the top). A rule found by its wording
+// (the label pass) came after every other, wherever its question was.
+test('answers given one at a time go down the page, and what an answer reveals under it comes next', async () => {
+  const h = harness();
+  const topRow = new FakeNode('div');
+  const top = makeInput({ id: 'top', ariaLabel: 'Top' });
+  topRow.append(top);
+  const middle = makeInput({ id: 'middle', ariaLabel: 'Middle' });
+  const bottom = makeInput({ id: 'bottom', ariaLabel: 'Bottom' });
+  h.document.body.append(topRow, middle, bottom);
+  // The top answer draws a follow-up right under its question, above the middle one.
+  const follow = makeInput({ id: 'follow', ariaLabel: 'Follow-up' });
+  top.addEventListener('change', () => { if (!follow.parentElement) topRow.append(follow); });
+  const report = await h.kit.fill([
+    { id: 'bottom', selector: '#bottom', path: 'x.bottom', kind: 'text', value: 'three' },
+    { id: 'middle', re: '^middle$', path: 'x.middle', kind: 'text', value: 'two' },
+    { id: 'follow', selector: '#follow', path: 'x.follow', kind: 'text', value: 'revealed' },
+    { id: 'top', selector: '#top', path: 'x.top', kind: 'text', value: 'one' },
+  ], { maxRounds: 10 });
+  assert.deepEqual(plain(report.filled.map((x) => x.path)), ['x.top', 'x.follow', 'x.middle', 'x.bottom']);
+  assert.deepEqual([top.value, follow.value, middle.value, bottom.value], ['one', 'revealed', 'two', 'three']);
+});
+
+// AmWINS' driver rules give the names and license number before gender, marital status and the
+// license year, which sit between them on the page: a batch round's answers land together, so it
+// keeps the order its rules are written in.
+test('a batch round keeps the order its rules are written in', async () => {
+  const h = harness();
+  const gender = makeInput({ id: 'gender', ariaLabel: 'Gender' });
+  const license = makeInput({ id: 'license', ariaLabel: 'License number' });
+  h.document.body.append(gender, license);
+  const report = await h.kit.fill([
+    { id: 'license', selector: '#license', path: 'x.license', kind: 'text', value: 'H0000000' },
+    { id: 'gender', selector: '#gender', path: 'x.gender', kind: 'text', value: 'MALE' },
+  ], { maxRounds: 4, batch: true });
+  assert.deepEqual(plain(report.filled.map((x) => x.path)), ['x.license', 'x.gender']);
 });
 
 test('an answer the page marks invalid after another change is picked again, then left to the agent if it stays invalid', async () => {
