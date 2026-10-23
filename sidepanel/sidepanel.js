@@ -1592,9 +1592,34 @@ function onRecorderMessage(msg, sender) {
     const page = samePage(msg.page);
     const step = state.tab.carrier?.layoutSteps ? knownStep(state.tab.carrier, msg.step) : undefined;
     log({ type: 'agent_click', carrier, page, view: viewOf(sender.tab.id, page), ...(step ? { step } : {}), text: redactor(redactionTerms(state.intake.record))(String(msg.text ?? '')).slice(0, 60) });
+    agentHelperDone(state.tab.carrier, page, step, msg.text);
   }
   // An error or validation message appeared (a refused Continue): the layout carries the messages.
   if (msg.event === 'new_messages') scheduleLayout(layoutPage, 'messages');
+}
+
+// A helper the agent clicked themselves is done, as one a fill clicked: a later fill doesn't click
+// it again (live recording, 2026-10-23: the agent's View bill plan options, then the fill's on the
+// way back, so the payment plan page came up twice). Matched as the kit matches a helper (its
+// words, on its page or step), and only a quote-wide one: a vehicle's, driver's or trailer's has
+// markers of its own, and an Add Vehicle by hand may be another unit's. Not one its words alone don't
+// name (`near`, `token`, `within`, `opener`, `unique`: Progressive's cargo and general liability
+// "+" read the same), nor one that recalculates (needsRecalculation): whether that is due again
+// follows the rates on the page.
+function agentHelperDone(carrier, page, step, text) {
+  const words = String(text ?? '').trim();
+  if (!carrier?.actions?.length || !state.intake?.record || !words || words.length > 80) return;
+  let plan;
+  try { plan = buildPlan(state.intake.record, carrier, state.active); } catch { return; }
+  const done = plan.filter((s) => s.kind === 'action' && s.action === s.baseAction && !s.needsRecalculation && s.text
+    && !s.near && !s.token && !s.within && !s.opener && !s.unique
+    && (!s.pages?.length || s.pages.includes(page)) && (!s.steps?.length || (!!step && s.steps.includes(step)))
+    && new RegExp(s.text, 'i').test(words));
+  // Two helpers reading the same (cargo's and general liability's Done with this coverage): the words
+  // can't say which was clicked, so neither is done.
+  if (done.length !== 1) return;
+  state.doneActions.add(done[0].action);
+  persistDoneActions();
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -1297,6 +1297,29 @@ test('a left-alone question whose wording changed is a check for the agent', asy
   assert.equal(same.checks.length, 0);
 });
 
+// Live recording, 2026-10-23 (TX): Progressive draws the PIP limit with no caption, so its label is
+// its element's name; that read as reworded, a check that held the Rates helpers (bill plan,
+// Recalculate) until the agent clicked them.
+test('a field with no caption of its own, found by its data-model name, is not taken for reworded', async () => {
+  // TX's list, as the layout of that quote has it.
+  const asCombo = (cmp) => Object.assign(cmp, { displayField: 'label', valueField: 'label',
+    store: { getRange: () => ['Not Selected', '$2,500', '$5,000', '$10,000', '$25,000'].map((label) => ({ get: () => label })), isLoading: () => false } });
+  const h = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const id = `f_l${'F4CB3D00CAFC496AAFE0D74DB4994FD2'}1EBC_8_1`;
+  const input = makeInput({ id: `${id}-inputEl`, name: `${id}-inputEl`, value: 'Not Selected', attrs: { fieldref: 'LineInput.PIPLimit' } });
+  h.context.Ext._components.set(id, asCombo(extCmp(id, input, { caption: null, value: 'Not Selected' })));
+  h.document.body.append(input);
+  const pip = { id: 'pip', q: '1E8D', field: 'LineInput.PIPLimit', ask: ['Personal Injury Protection'], path: 'progressive.q1E8D', name: 'Personal injury protection', kind: 'choice', ignore: true, value: null };
+  const report = await h.kit.fill([pip], { maxRounds: 2 });
+  assert.deepEqual(plain([report.checks.length, report.reworded.length, report.blockers]), [0, 0, []], 'left as Progressive set it, nothing to check');
+  // A caption of its own that reads otherwise still is (the test above).
+  const h2 = harness({ ext: true, search: '?pageName=CoveragesRates' });
+  const field = addExtText(h2, 'l', '1EBC', { caption: 'PIP (stacked)', ref: 'LineInput.PIPLimit', value: 'Not Selected' });
+  asCombo(field.cmp);
+  const reworded = await h2.kit.fill([pip], { maxRounds: 2 });
+  assert.deepEqual(plain([reworded.checks.length, reworded.reworded.length]), [1, 1]);
+});
+
 test('listed() says which VINs the page shows, as whole runs', () => {
   const h = harness();
   h.document.body.innerText = 'Vehicles on the quote:\nVehicle 1\n2013\nPETERBILT 388\n1XPWD40X1DD000001\nEdit\nRemove';
@@ -1537,6 +1560,51 @@ function premiumHarness({ recalcResult = 'Total premium: $12,345.67', billDisabl
   bill.onclick = () => { bill._clicked = true; };
   return { h, recalc, bill };
 }
+
+// Live recording, 2026-10-23 (Progressive): an automatic fill ran on the payment plan page, the agent
+// clicked its Continue, and the same fill read Rates as its next round and clicked Print, Email, Fax
+// as the agent did: two presses, 0.2 s apart.
+test('a fill whose page the agent moved on stops there, and clicks nothing on the next page', async () => {
+  const h = harness({ search: '?pageName=ChangePaymentPlan' });
+  const method = makeInput({ id: 'method', ariaLabel: 'Payment method' });
+  h.document.body.append(method);
+  let print = null;
+  // Rates drawn at the same address a moment after the fill's answer, as after the agent's Continue.
+  method.addEventListener('change', () => setTimeout(() => {
+    h.context.location.search = '?pageName=CoveragesRates';
+    method.remove();
+    print = addButton(h, 'Print, Email, Fax');
+    print.onclick = () => { print._clicked = true; };
+  }, 100));
+  const report = await h.kit.fill([
+    { id: 'method', selector: '#method', path: 'billing.method', kind: 'text', value: 'Automatic payments' },
+    { id: 'print', kind: 'action', action: 'print', text: '^print, email, fax$', pages: ['CoveragesRates'], after: [], afterActions: [], afterPages: [], unless: [] },
+  ], { maxRounds: 6 });
+  assert.ok(print, 'Rates was drawn');
+  assert.equal(print._clicked, undefined, 'nothing clicked on the page the agent moved to');
+  assert.equal(report.navigatedTo, 'CoveragesRates');
+});
+
+// Progressive's buttons are ExtJS's (<a class="x-btn">): one the agent clicks during a fill is their
+// move, as GEICO's is (W43-13), and the fill clicks no helper or Continue after it.
+test('an ExtJS button the agent clicks during a fill is theirs: the fill clicks nothing after it', async () => {
+  const run = async (press) => {
+    const h = harness({ search: '?pageName=CoveragesRates' });
+    const limit = makeInput({ id: 'limit', ariaLabel: 'Liability limit' });
+    const cont = new FakeNode('a', { className: 'x-btn', textContent: 'Continue' });
+    h.document.body.append(limit, cont);
+    const print = addButton(h, 'Print, Email, Fax');
+    print.onclick = () => { print._clicked = true; };
+    if (press) limit.addEventListener('change', () => setTimeout(() => cont.dispatchEvent({ type: 'click', target: cont, isTrusted: true, composedPath: () => [cont] }), 50));
+    const report = await h.kit.fill([
+      { id: 'l', selector: '#limit', path: 'x.limit', kind: 'text', value: '1M CSL' },
+      { id: 'print', kind: 'action', action: 'print', text: '^print, email, fax$', pages: ['CoveragesRates'], after: ['x.limit'], afterActions: [], afterPages: [], unless: [] },
+    ], { maxRounds: 6 });
+    return [print._clicked ?? false, report.agentPressed ?? false];
+  };
+  assert.deepEqual(await run(true), [false, true], 'the agent pressed: nothing more from the fill');
+  assert.deepEqual(await run(false), [true, false], 'no press: the fill clicks its helper');
+});
 
 test('bill plans wait for recalculate and a fresh visible premium', async () => {
   const good = premiumHarness();
