@@ -845,8 +845,9 @@ export const geico = {
   // panel has read the list and every intake unit is on it (`listed`, sidepanel pickUnitToAdd:
   // `unitsListed`). Continued per form and button (`byForm`): Vehicles is left by a Next on each
   // unit's form and then by Looks Good. GEICO draws some questions a moment after an answer (the
-  // USDOT record's address check after the USDOT number): the page is quiet first, and a question
-  // drawn meanwhile holds Continue (`quietMs`).
+  // USDOT record's address check after the USDOT number; team driving and the hazmat placard after
+  // "more about the business"): a fill that gave answers waits for a quiet page before it ends and
+  // answers what was drawn, and a question drawn after that holds Continue (`quietMs`).
   advance: {
     text: '^(next|save and continue)$',
     listed: '^looks good$',

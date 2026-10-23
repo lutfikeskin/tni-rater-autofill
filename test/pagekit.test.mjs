@@ -6051,8 +6051,8 @@ test('a Continue kept to steps, never inside the chooser, and continued per form
 });
 
 // GEICO draws a question a moment after an answer (the USDOT record's address check, after the
-// USDOT number): with `quietMs`, Continue waits for the page to be quiet, and a question drawn
-// meanwhile without an answer holds it (the follow-up fill for that question decides).
+// USDOT number): with `quietMs`, the fill waits for the page to be quiet before it ends, and a
+// question drawn meanwhile that no rule answers holds Continue (the agent's).
 test('a Continue with quietMs waits for the page, and a question drawn meanwhile without an answer holds it', async () => {
   const advance = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
   const plan = [{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }];
@@ -6070,10 +6070,114 @@ test('a Continue with quietMs waits for the page, and a question drawn meanwhile
   let p = page(true);
   let report = await p.h.kit.fill(plan, { maxRounds: 6, advance });
   assert.deepEqual(plain([p.clicks, report.advanced ?? null, report.filled.length]), [[], null, 1]);
+  assert.ok(report.blockers.some((x) => x.startsWith('unfamiliar: ')), plain(report.blockers).join(' | '));
   // Nothing drawn after the answer: Continue.
   p = page(false);
   report = await p.h.kit.fill(plan, { maxRounds: 6, advance });
   assert.deepEqual(plain([p.clicks, report.advanced]), [['Next'], 'Next']);
+});
+
+// FL live run, 2026-10-23: GEICO drew team driving and the hazmat placard a moment after "more about
+// the business" was answered, during the wait before Next. The fill never read them, the recorder
+// took them as the fill's, and the agent answered them by hand.
+const LATE_ADVANCE = { text: '^next$', steps: ['Business Class & USDOT'], byForm: true, quietMs: 800 };
+const LATE_PLAN = [
+  { id: 'more', field: 'GiveSecondaryBusinessDescription', path: 'x.more', name: 'More about the business', kind: 'text', value: 'Other For-Hire Trucking' },
+  { id: 'team', field: 'TeamDrivingOrSlipSeatingYesNo', path: 'operations.teamDriving', name: 'Team driving', kind: 'bool', value: false },
+  { id: 'placard', field: 'GiveAnyVehicleNeedHazardousMaterialPlacardYesNo', path: 'operations.hazPlacard', name: 'Hazmat placard', kind: 'bool', value: false },
+];
+// Business Class & USDOT, where team driving and the placard are drawn 400 ms after "more about the
+// business" is answered (with `draws`), once that answer's own wait is over.
+async function lateQuestionsFill(draws, { maxRounds = 10 } = {}) {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Business Class & USDOT');
+  const more = geicoBox('GiveSecondaryBusinessDescription', 57011, 'Please give us a little more information about what the customer\'s business does.');
+  const section = new FakeNode('div');
+  const clicks = [];
+  const next = gdsButton('Next');
+  next.button.onclick = () => clicks.push('Next');
+  h.document.body.append(more, section, next.host);
+  const drawn = [
+    gdsRadios('TeamDrivingOrSlipSeatingYesNo', 56811, 'Do any of your customer\'s vehicles require team driving or slip seating?', [['Yes', 'Yes'], ['No', 'No']]),
+    gdsRadios('GiveAnyVehicleNeedHazardousMaterialPlacardYesNo', 36353, 'Do any of the customer\'s vehicles or loads require a hazardous material placard?', [['Yes', 'Yes'], ['No', 'No']]),
+  ];
+  if (draws) more.addEventListener('change', () => setTimeout(() => section.append(...drawn.map((d) => d.group)), 400));
+  const started = clock.Date.now();
+  const report = await h.kit.fill(LATE_PLAN, { maxRounds, advance: LATE_ADVANCE });
+  return { report, clicks, drawn, ms: clock.Date.now() - started };
+}
+
+test('questions drawn while the fill waits for a quiet page are answered before Continue, with one wait', async () => {
+  const late = await lateQuestionsFill(true);
+  assert.deepEqual(plain(late.report.filled.map((x) => x.stepId)), ['more', 'team', 'placard']);
+  assert.deepEqual(late.drawn.map((d) => d.hosts[1].hasAttribute('checked')), [true, true], 'No for both');
+  assert.deepEqual(plain([late.clicks, late.report.advanced]), [['Next'], 'Next']);
+  // Nothing drawn: the fill's wait for the quiet page is the one before Continue, not a second
+  // (1440 ms here with one wait, 2280 ms with two).
+  const quiet = await lateQuestionsFill(false);
+  assert.deepEqual(plain([quiet.clicks, quiet.report.advanced]), [['Next'], 'Next']);
+  assert.ok(quiet.ms < 2 * LATE_ADVANCE.quietMs + 200, `${quiet.ms} ms`);
+});
+
+// Review of #162: a fill whose last round was that wait ended without reading what the wait drew,
+// and clicked Next with team driving and the placard unanswered. It stops at its round limit, as
+// one still answering does, and Continue isn't clicked.
+test('a fill whose rounds run out on its wait for a quiet page stops at the round limit, with no Continue', async () => {
+  const { report, clicks } = await lateQuestionsFill(true, { maxRounds: 2 });
+  assert.deepEqual(plain(report.filled.map((x) => x.stepId)), ['more']);
+  assert.deepEqual(plain([clicks, report.advanced ?? null, report.halted, report.reason]),
+    [[], null, true, 'Filling reached its round limit. Check the page before retrying.']);
+});
+
+// What the fill doesn't wait for itself, Continue's wait still watches: a fill that gave no answers
+// (the USDOT number was there already) waits before Continue, and a question drawn meanwhile (the
+// agent's own answer just before the fill drew it), which the fill never read, holds Continue.
+test('a fill that gave no answers waits before Continue, and a question drawn meanwhile without an answer holds it', async () => {
+  const run = async (draws) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Business Class & USDOT');
+    const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?', { value: '1234567' });
+    const clicks = [];
+    const next = gdsButton('Next');
+    next.button.onclick = () => clicks.push('Next');
+    h.document.body.append(dot, next.host);
+    // Drawn 0.7 s into the fill: after it read the page, during the wait before Continue.
+    if (draws) setTimeout(() => h.document.body.append(gdsRadios('GiveExtendUsDotVerifyBusinessAddress', 12, 'Is this the customer\'s business?', [['Yes', 'Yes'], ['No', 'No']]).group), 700);
+    const report = await h.kit.fill([{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }], { maxRounds: 6, advance: LATE_ADVANCE });
+    return plain([clicks, report.advanced ?? null, report.filled.length, report.kept.length]);
+  };
+  assert.deepEqual(await run(true), [[], null, 0, 1]);
+  assert.deepEqual(await run(false), [['Next'], 'Next', 0, 1]);
+});
+
+// Review of #162: after the agent's own Next (W43-13) the fill clicks no Continue, so it doesn't wait
+// for a quiet page either. GEICO's spinner while it works on their Next kept the fill waiting up to
+// 6 s, and the panel's fill for the next step waited on it.
+test('after the agent\'s own Next, the fill doesn\'t wait for a quiet page before it ends', async () => {
+  const h = harness({ pathname: '/quote' });
+  geicoBar(h, 'Business Class & USDOT');
+  const dot = geicoBox('GiveDepartmentOfTransportationNumber', 11, 'What is the customer\'s USDOT number?');
+  const clicks = [];
+  const next = gdsButton('Next');
+  next.button.onclick = (e) => clicks.push(e?.isTrusted ? 'agent' : 'fill');
+  const loader = new FakeNode('div', { id: 'page-load', className: 'loader-container' });
+  loader._visible = false;
+  h.document.body.append(dot, next.host, loader);
+  // The agent's Next a moment after the answer, and GEICO's spinner a moment later while it works on it.
+  dot.addEventListener('change', () => {
+    setTimeout(() => {
+      const event = { type: 'click', target: next.button, isTrusted: true, composedPath: () => [next.button, next.host] };
+      next.button.dispatchEvent(event);
+      next.button.onclick(event);
+    }, 100);
+    setTimeout(() => { loader._visible = true; }, 400);
+    setTimeout(() => { loader._visible = false; }, 5000);
+  });
+  const started = clock.Date.now();
+  const report = await h.kit.fill([{ id: 'dot', field: 'GiveDepartmentOfTransportationNumber', path: 'applicant.dot', name: 'USDOT number', kind: 'text', value: '1234567' }], { maxRounds: 6, advance: LATE_ADVANCE });
+  const ms = clock.Date.now() - started;
+  assert.deepEqual(plain([clicks, report.advanced ?? null, report.agentPressed]), [['agent'], null, true]);
+  assert.ok(ms < 2000, `${ms} ms`);
 });
 
 // FL live run 4, 2026-10-21 (W43-13): the agent clicked Next while GEICO still worked, and a fill
