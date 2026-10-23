@@ -698,7 +698,7 @@
  * @property {number} t  wall-clock ms when it happened, on the page's own clock (a fraction kept)
  * @property {number} [seq]  the frame's counter: the order of two events in one millisecond
  * @property {number} [frame]  the frame it came from (0: the top frame)
- * @property {true} [filling]  a fill was under way when the panel got it
+ * @property {true} [filling]  a fill was under way when it happened (by its own time, from the fills the panel notes)
  * @property {boolean} [trusted]  the browser's isTrusted: a person's action, not a script's
  * @property {number | null} [gestureMs]  ms since the last trusted gesture on that control (input, change)
  * @property {{ key: string | null, q: string | null, kind: string | null, label: string, rect: object | null }} [field]  the question, as the recorder names it (label redacted)
@@ -712,6 +712,24 @@
  * @property {string} [title]  the document's title (redacted)
  * @property {string} [text]  a note's words (redacted)
  * @property {number} [dropped]  events the trace couldn't keep while no panel took them (gap)
+ * @property {number | null} [x]  pointer, click: where, in the viewport; scroll of the window: its position
+ * @property {number | null} [y]  as x
+ * @property {string[]} [mods]  key: the modifiers held (ctrl, alt, meta, shift)
+ * @property {{ tag: string | null }} [other]  what a pointer, click or key was on when it was no question or button
+ * @property {string} [path]  page: the URL's path, its ids as `:id` (as `page`)
+ * @property {boolean | number | null} [top]  page: from the top frame (true); scroll of an element: its offset
+ * @property {string | null} [from]  page, step: the one before
+ * @property {{ w: number | null, h: number | null, dpr: number | null }} [viewport]  page: the viewport (resize: as w, h, dpr)
+ * @property {{ x: number | null, y: number | null }} [scroll]  page: the window's scroll
+ * @property {number | null} [height]  scroll of the window: the page's height
+ * @property {{ tag: string, id: string | null }} [el]  scroll of an element: which
+ * @property {number | null} [left]  scroll of an element: its offset (with top)
+ * @property {number | null} [w]  resize: the viewport's width
+ * @property {number | null} [h]  resize: the viewport's height
+ * @property {number | null} [dpr]  resize: devicePixelRatio
+ * @property {string} [state]  visible: the document's visibilityState
+ * @property {string} [why]  visible: pageshow or pagehide, when it came from one
+ * @property {number} [ms]  fill, in the report only: how long the fill ran (on its end)
  */
 
 /**

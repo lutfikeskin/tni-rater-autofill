@@ -7260,3 +7260,70 @@ test('the panel keeps only the recorded tab\'s trace events, redacted with their
   assert.match(html, /<div id="devrec" class="devrec" hidden>/, 'hidden until the panel sees a build that may record');
   assert.match(SIDEPANEL, /\$\('devrec'\)\.hidden = !inExtension \|\| !canRecord\(usage\.build\(\)\.channel\);/);
 });
+
+// Review of PR #166: the developer recording ends with its client and its panel, and starts clean.
+test('a panel that pops out or docks stops and saves its recording first', async () => {
+  const done = [];
+  const state = { closing: false, fillingFor: null, filling: false, recording: { tabId: 4 } };
+  const context = { state, stopFill: async () => {}, stopRecording: async (why) => { done.push(['stop', why]); state.recording = null; },
+    handOver: async () => done.push(['handOver']), closeSelf: () => done.push(['close']), Date, setTimeout };
+  vm.runInNewContext(extractFunction('giveWay'), context);
+  await context.giveWay('window');
+  assert.deepEqual(done.map(([what]) => what), ['stop', 'handOver', 'close']);
+  assert.match(done[0][1], /recording stopped/);
+});
+
+test('a new recording first stops a trace a closed panel left in the tab', async () => {
+  const done = [];
+  const state = { recording: null, tab: { id: 4, carrier: { id: 'progressive' } }, intake: { record: {}, test: false }, filling: false };
+  const context = { state, $: () => ({ value: '' }), redactor: () => (s) => s, redactionTerms: () => [], recordingId: () => 'progressive-x', newManifest: (m) => m,
+    usage: { build: () => ({}), currentSession: () => null }, RecordingStore: { start: async () => { done.push('store'); return {}; } },
+    setInterval: () => 1, renderDevrec() {}, devrecSaid() {}, ensureRecorder: async () => { done.push('inject'); },
+    chrome: { tabs: { sendMessage: async (tabId, msg) => { done.push(`${msg.ra}:${msg.cmd}:${tabId}`); } } } };
+  vm.runInNewContext(extractFunction('startRecording'), context);
+  await context.startRecording();
+  assert.deepEqual(done, ['trace:stop:4', 'store', 'inject']);
+});
+
+test('a recording kept in memory only that could not be saved is said to be lost, not kept', async () => {
+  const said = [];
+  const store = { durable: false, manifest: { id: 'progressive-x' }, zip: async () => { throw new Error('no space'); } };
+  const context = { devrecSaid: (s) => said.push(s), renderUnfinished: async () => {} };
+  vm.runInNewContext(extractFunction('saveRecording'), context);
+  await context.saveRecording(store);
+  assert.doesNotMatch(said[0], /stays in the browser/);
+  assert.match(said[0], /lost/);
+});
+
+test('loading another client\'s intake stops and saves the recording, redacted with the first client\'s', async () => {
+  const { redactor } = await import('../src/usage.js');
+  const { redactionTerms } = await import('../src/plan.js');
+  const records = { a: { garaging: { state: 'TX' }, drivers: [], vehicles: [], trailers: [] }, b: { garaging: { state: 'FL' }, drivers: [], vehicles: [], trailers: [] } };
+  let loading = 'a', session = null, n = 0;
+  const stopped = [];
+  const state = { intake: null, tabSessions: new Map(), layoutPending: null, aiCache: new Map(), recording: null };
+  const context = { state, doneRestored: new Set(), DEFAULT_MODEL: 'gpt-6-luna', POLICY_VERSION: 'policy',
+    aiFingerprint: JSON.stringify, aiSafeText: String, aiPersistQueue: Promise.resolve(), aiRetiredSignatures: new Set(),
+    aiPendingStore: { get: async () => [], set: async () => {} },
+    usage: { currentSession: () => session, startSession: (intakeId) => (session = { id: `s${++n}`, intakeId }), log() {} },
+    $: () => ({}), pdfjs: {}, readIntakeFields: async () => ({ synthetic: true }), readIntakePlaces: async () => null, keepPdf: async () => {},
+    normalizeIntake: () => ({ record: records[loading], warnings: [] }), intakeSummary: async () => ({ intakeId: loading }),
+    store: { set: async () => {} }, pruneAgentRecords: async () => [], testIntakes: { get: async () => [] }, logSettings: async () => {}, platformOf: () => ({ os: null, chrome: null }), uploadNow() {},
+    save: async () => {}, render() {}, refreshTab() {}, reviewClaimsBox() {}, reviewIntake() {}, dropReports() {}, clientNote() {},
+    PROFILE_DELAY: 15_000, profileTimer: null, intakeProfile: () => null, redactor, redactionTerms, logProfile() {}, profileLater() {},
+    stopRecording: async (why) => { stopped.push([why, state.intake?.record.garaging.state]); state.recording = null; },
+    setTimeout: () => 1, clearTimeout() {} };
+  vm.runInNewContext(['aiOriginRecord', 'aiCacheSignature', 'aiPendingRecord', 'aiDecisionBlocks', 'persistAiPending', 'restoreAiPending',
+    'discardAiSuggestions', 'cancelLayouts', 'holdLayouts', 'resetViews', 'saveViews', 'loadFile', 'keepWork', 'workSaid', 'firstView'].map(extractFunction).join('\n'), context);
+  const pdf = { name: 'synthetic.pdf', arrayBuffer: async () => new ArrayBuffer(1) };
+  await context.loadFile(pdf);
+  state.recording = { tabId: 4 };
+  // The same PDF again keeps the recording: the same client.
+  await context.loadFile(pdf);
+  assert.deepEqual(stopped, []);
+  loading = 'b';
+  await context.loadFile(pdf);
+  assert.equal(stopped.length, 1);
+  assert.match(stopped[0][0], /recording stopped/);
+  assert.equal(stopped[0][1], 'TX', 'stopped while the first client was still the intake');
+});

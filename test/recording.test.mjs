@@ -123,6 +123,20 @@ test('a panel closed mid-recording leaves what it wrote, which the next panel sa
   assert.equal(events, 250);
 });
 
+// Review of PR #166: a recording saved the next day from a panel closed mid-recording said it ran a
+// day. Its end isn't known: none in its manifest, and the report says it was cut short.
+test('a recording saved from a closed panel has no end, and the report says it was cut short', async () => {
+  const root = new FakeDir();
+  fileSystem.root = async () => root;
+  const store = await RecordingStore.start(manifestFor('amwins-x-20261023-0900-0002'));
+  await store.add(clicks(250));
+  const again = await RecordingStore.reopen('amwins-x-20261023-0900-0002');
+  const files = await unzipText((await again.zip()).blob);
+  const manifest = JSON.parse(files['amwins-x-20261023-0900-0002/recording.json']);
+  assert.equal(manifest.ended, null);
+  assert.match(recordingReport({ manifest, events: [] }), /cut short \(no end\)/);
+});
+
 test('without the file system the recording is kept in memory, and still saved', async () => {
   fileSystem.root = async () => { throw new Error('no OPFS here'); };
   const store = await RecordingStore.start(manifestFor());
@@ -180,4 +194,12 @@ test('the report tells the flow and each step\'s actions: whose each is, typing 
   assert.equal(report.match(/the tab became hidden/g)?.length, 1, 'once, from the top frame');
   assert.match(report, /scrolled to y=800 of 2400/);
   assert.ok(!/scrolled to y=400/.test(report), 'a scroll run is one line, where it ended');
+});
+
+// Review of PR #166: the store ZIP ships lib/, and MIT asks that a copy keep its notice.
+test('the vendored fflate keeps its MIT copyright and permission notice', () => {
+  const vendored = fs.readFileSync(new URL('../lib/fflate.mjs', import.meta.url), 'utf8');
+  const license = fs.readFileSync(new URL('../node_modules/fflate/LICENSE', import.meta.url), 'utf8');
+  const head = vendored.slice(0, 2000);
+  for (const line of [license.match(/^Copyright.*$/m)[0], 'Permission is hereby granted, free of charge']) assert.ok(head.includes(line), line);
 });

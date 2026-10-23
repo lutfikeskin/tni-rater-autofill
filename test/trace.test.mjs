@@ -41,7 +41,7 @@ class Button {
   getBoundingClientRect() { return { left: 10, top: 700, width: 80, height: 30 }; }
 }
 
-function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.example/quote' } = {}) {
+function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.example/quote', pathname = '/quote' } = {}) {
   const controls = [];
   const listeners = new Map();
   const on = (target) => (type, fn) => { const key = `${target}:${type}`; (listeners.get(key) ?? (listeners.set(key, new Set()), listeners.get(key))).add(fn); };
@@ -63,7 +63,7 @@ function harness({ reply = () => ({ ok: true }), href = 'https://synthetic.examp
   };
   const context = {
     document,
-    location: { href, pathname: '/quote', search: '' },
+    location: { href, pathname, search: '' },
     URLSearchParams,
     NodeFilter: { SHOW_TEXT: 4 },
     getComputedStyle: () => ({ visibility: 'visible' }),
@@ -141,6 +141,14 @@ test('a change is stamped with the page clock, its question named as the recorde
   assert.deepEqual([change.field.key, change.field.label, change.field.kind, change.value, change.trusted, change.gestureMs], ['field:hazmat', 'Hauls hazmat', 'select', 'No', true, 250]);
   assert.equal(change.field.rect.docY, 350, 'its height on the page: its box plus the scroll');
   assert.deepEqual([events[0].page, events[0].title, events[0].top], ['/quote', 'Synthetic quote', true]);
+});
+
+// Review of PR #166: the page was named without its ids (pageKey), but its path kept them.
+test('a page path keeps no ids, as its name does not', async () => {
+  const h = harness({ pathname: '/applications/123456789012/vehicles' });
+  await h.advance(400);
+  const page = h.events().find((e) => e.kind === 'page');
+  assert.deepEqual([page.page, page.path], ['/applications/:id/vehicles', '/applications/:id/vehicles']);
 });
 
 test('typed text is never kept: keys by name or as printable, a text box by its length, a password box not at all', async () => {

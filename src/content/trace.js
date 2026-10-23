@@ -195,14 +195,16 @@
   // The page and, in the top frame, the step on screen (GEICO's progress bar, AmWINS' headings; null
   // while they can't be read, as mid-redraw), looked at twice a second.
   const stepNow = () => { try { return isTop ? read.stepKey() ?? null : null; } catch { return null; } };
+  // The path without its ids, as the page key has none (an application's number).
+  const pathOf = () => String(location.pathname ?? '').replace(/\/(?:[0-9a-f]{8}-[0-9a-f-]{27,}|\d{3,})(?=\/|$)/gi, '/:id');
   let page = read.pageKey();
   let step = stepNow();
-  push('page', { page, path: location.pathname, title: document.title, step, top: isTop, viewport: viewport(), scroll: scroll() });
+  push('page', { page, path: pathOf(), title: document.title, step, top: isTop, viewport: viewport(), scroll: scroll() });
   const watch = setInterval(() => {
     if (!chrome.runtime?.id) { dispose(); return; }
     const nowPage = read.pageKey();
     if (nowPage !== page) {
-      push('page', { page: nowPage, from: page, path: location.pathname, title: document.title, step: stepNow(), top: isTop });
+      push('page', { page: nowPage, from: page, path: pathOf(), title: document.title, step: stepNow(), top: isTop });
       page = nowPage;
     }
     const nowStep = stepNow();

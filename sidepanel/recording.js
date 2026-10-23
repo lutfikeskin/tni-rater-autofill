@@ -52,6 +52,8 @@ export class RecordingStore {
     /** @type {TraceEvent[]} */
     this.memory = [];
     this.chunks = 0;
+    // Reopened from a closed panel: its end is not known (zip).
+    this.cutShort = false;
     this.count = 0;
     this.lastWrite = Date.now();
     this.chain = Promise.resolve();
@@ -89,6 +91,8 @@ export class RecordingStore {
     const dir = await parent.getDirectoryHandle(id);
     const store = new RecordingStore(JSON.parse(await readText(dir, 'recording.json')), dir);
     store.chunks = (await names(dir)).filter((n) => n.startsWith('events-')).length;
+    // Its end isn't known (the panel closed): saved with none, it reads as cut short.
+    store.cutShort = true;
     return store;
   }
 
@@ -131,9 +135,9 @@ export class RecordingStore {
   }
 
   /** The recording as one zip: a folder named by its id holding recording.json and events.jsonl. */
-  async zip(ended = new Date()) {
+  async zip(ended = this.cutShort ? null : new Date()) {
     const events = await this.events();
-    const files = recordingFiles({ ...this.manifest, ended: ended.toISOString() }, events);
+    const files = recordingFiles({ ...this.manifest, ended: ended ? ended.toISOString() : null }, events);
     const zipped = zipSync(Object.fromEntries(Object.entries(files).map(([name, text]) => [`${this.manifest.id}/${name}`, strToU8(text)])));
     return { blob: new Blob([zipped], { type: 'application/zip' }), events: events.length };
   }

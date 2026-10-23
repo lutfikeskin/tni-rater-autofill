@@ -880,6 +880,8 @@ async function loadFile(file) {
   const same = state.intake && usage.currentSession()?.intakeId === summary.intakeId ? state.intake : null;
   if (profileTimer) logProfile();
   if (state.intake) usage.log({ type: 'intake_closed', reason: 'replaced' });
+  // A recording ends with its client (redacted with that client's names), as on clearing it.
+  if (state.recording && !same) await stopRecording('Another client was loaded, so the recording stopped.');
   clearTimeout(state.autoTimer);
   state.autoDrawn = null;
   state.autoPending = false;
@@ -4414,6 +4416,9 @@ async function startRecording() {
   // Labels and choices are redacted with the loaded intake's names and numbers, as captures are.
   if (!state.intake?.record) { devrecSaid('Load the intake first, so client details can be redacted from the timeline.'); return; }
   const { id: tabId, carrier } = state.tab;
+  // A trace a closed panel left in the tab (alive for up to a minute) would be taken up as this
+  // recording's, without its opening page and with events from before it: stopped first.
+  await chrome.tabs.sendMessage(tabId, { ra: 'trace', cmd: 'stop' }).catch(() => {});
   const redact = redactor(redactionTerms(state.intake.record));
   const scenario = redact($('capture-scenario').value.trim()).slice(0, 60) || 'unnamed';
   const started = new Date();
@@ -4471,7 +4476,7 @@ async function saveRecording(store, why = '') {
     await store.discard();
     devrecSaid(`${why ? `${why} ` : ''}Saved recording-${store.manifest.id}.zip (${events} events) to Downloads. It shows the client as the page did: keep it in layouts/recordings/, never in git.`);
   } catch (e) {
-    devrecSaid(`Couldn't save the recording: ${e.message}. It stays in the browser: save it from here later.`);
+    devrecSaid(`Couldn't save the recording: ${e.message}. ${store.durable ? 'It stays in the browser: save it from here later.' : 'It was kept in memory only, so it is lost.'}`);
   }
   await renderUnfinished();
 }
@@ -5786,6 +5791,8 @@ async function giveWay(to) {
   state.closing = true;
   if (state.fillingFor && !state.fillingFor.stopping) await stopFill();
   for (const end = Date.now() + 15000; state.filling && Date.now() < end;) await new Promise((r) => setTimeout(r, 100));
+  // The copy taking over doesn't take up a recording: this one saves it, with its last events.
+  if (state.recording) await stopRecording('The panel moved, so the recording stopped.');
   await handOver(to);
   closeSelf();
 }
