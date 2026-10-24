@@ -7117,3 +7117,25 @@ test('a page the plan has questions for that shows none yet is reported not draw
   assert.equal(!!next._clicked, false);
   assert.equal(report.advanceDue, undefined);
 });
+
+// The panel's live list said "Working…" through every wait (the maintainer, 2026-10-23). progress()
+// says what the fill waits on (`phase`): null while it answers; 'reading' the page as it begins,
+// 'waiting' for the page after an answer, a 'helper' it clicked, the 'premium', or 'continue'.
+test('progress says what the fill waits on, and nothing while it answers', async () => {
+  const h = harness();
+  const a = makeInput({ id: 'a', ariaLabel: 'A' });
+  h.document.body.append(a);
+  const seen = [];
+  a.addEventListener('change', () => seen.push(JSON.parse(JSON.stringify(h.kit.progress()))));
+  await h.kit.fill([{ id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'a' }], { maxRounds: 3 });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].phase, null, 'answering');
+  assert.equal(h.kit.progress(), null, 'the fill is over');
+  // Each long wait names itself before it begins.
+  assert.match(PAGEKIT, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000 \}\);\s+phase\(null\);/);
+  assert.match(PAGEKIT, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
+  assert.match(PAGEKIT, /phase\('continue'\);\s+if \(serverBacked\) await settle/);
+  assert.match(PAGEKIT, /if \(helperClicked\) phase\('helper', pendingAction\?\.label \?\? report\.actions\.at\(-1\)\?\.text \?\? null\);/);
+  assert.match(PAGEKIT, /report\.rounds = round \+ 1;\s+phase\(null\);/, 'a new round answers again');
+  assert.match(PAGEKIT, /phase: running\.phase \?\? null \};/);
+});

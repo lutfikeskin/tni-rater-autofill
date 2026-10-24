@@ -20,6 +20,10 @@
     <symbol id="new-window" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-8 8"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></symbol>
     <symbol id="dock-in" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16M6 12h6M10 9.5l2.5 2.5-2.5 2.5"/></symbol>
     <symbol id="card" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><circle cx="8.5" cy="11" r="2"/><path d="M5.5 16a3.2 3.2 0 0 1 6 0M14 10h4.5M14 13.5h3"/></symbol>
+    <!-- The client strip's tools: Change file, New quote with this intake, Clear this client. -->
+    <symbol id="file-in" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5M12 11v7M9 15l3 3 3-3"/></symbol>
+    <symbol id="restart" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.6-5.9"/><path d="M20 4v5h-5"/></symbol>
+    <symbol id="trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
   </svg>
 
   <h1 class="sr-only">TNI Rater Autofill</h1>
@@ -49,36 +53,36 @@
     </span>
   </header>
 
-  <!-- The client: their name, the intake, its file menu, and the three steps as a strip -->
+  <!-- The client: their name (a button to every answer on the intake), the intake PDF, the file tools
+       always in view (no menu to open first), and the three steps as a strip -->
   <section id="quote" class="client" hidden>
     <div class="client-head">
-      <div class="client-title">
+      <button type="button" id="client-card" class="client-title" aria-controls="details-view" aria-expanded="false" title="Client details: every answer on the intake, to read or correct">
         <h2 id="client-name"></h2>
         <p id="client-meta" class="client-meta"></p>
+      </button>
+      <div class="client-tools">
+        <button type="button" id="open-pdf" class="ghost intake-btn" title="Show the intake PDF"><span class="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
+        <button type="button" id="replace" class="ghost tool-btn" aria-label="Change file" title="Change file: load another intake PDF"><svg aria-hidden="true"><use href="#file-in"/></svg></button>
+        <button type="button" id="new-quote" class="ghost tool-btn" aria-label="New quote with this intake" title="New quote with this intake: forgets this quote’s fills, marks and clicks; keeps the intake, your corrections and checks"><svg aria-hidden="true"><use href="#restart"/></svg></button>
+        <button type="button" id="clear-client" class="ghost tool-btn danger" aria-label="Clear this client" title="Clear this client"><svg aria-hidden="true"><use href="#trash"/></svg></button>
       </div>
-      <button type="button" id="open-pdf" class="ghost intake-btn" title="Show the intake PDF"><span class="pdf-icon" aria-hidden="true">PDF</span>Intake</button>
-      <button type="button" id="details-btn" class="ghost more-btn details-btn" aria-label="Client details" title="Client details" aria-controls="details-view" aria-expanded="false"><svg aria-hidden="true"><use href="#card"/></svg></button>
-      <button type="button" id="file-menu-btn" class="ghost more-btn" aria-label="File options" aria-expanded="false" aria-controls="file-menu">⋯</button>
     </div>
-    <div id="file-menu" class="file-menu" hidden>
-      <div id="file-menu-items" class="actions">
-        <button type="button" id="replace" class="ghost">Change file</button>
-        <button type="button" id="clear-client" class="ghost danger">Clear this client</button>
-      </div>
-      <!-- Asked before work the agent did on this intake would go (askFile). -->
-      <div id="file-confirm" class="file-confirm" role="group" aria-labelledby="file-confirm-text" hidden>
-        <p id="file-confirm-text" class="small"></p>
-        <div class="actions">
-          <button type="button" id="file-confirm-yes" class="ghost danger"></button>
-          <button type="button" id="file-confirm-no" class="ghost">Cancel</button>
-        </div>
+    <!-- Asked before work the agent did on this intake would go (askFile). -->
+    <div id="file-confirm" class="file-confirm" role="group" aria-labelledby="file-confirm-text" hidden>
+      <p id="file-confirm-text" class="small"></p>
+      <div class="actions">
+        <button type="button" id="file-confirm-yes" class="ghost danger"></button>
+        <button type="button" id="file-confirm-no" class="ghost">Cancel</button>
       </div>
     </div>
     <p id="client-note" class="client-note small" role="status" hidden></p>
+    <!-- The intake, then the page in front: filled, then reviewed. Each page has its own 2 and 3;
+         the header's "Step n of m" is the quote's place. -->
     <nav class="steps" aria-label="Steps">
       <button type="button" id="step-check" class="step" aria-controls="check-view">
         <span class="step-bar"></span>
-        <span class="step-line"><span id="check-num" class="step-num">1</span><span class="step-label">Check intake</span></span>
+        <span class="step-line"><span id="check-num" class="step-num">1</span><span class="step-label">Intake</span></span>
         <span id="check-summary" class="step-note"></span>
       </button>
       <button type="button" id="step-fill" class="step" aria-controls="page-view">
@@ -88,7 +92,7 @@
       </button>
       <button type="button" id="step-confirm" class="step" aria-controls="page-view">
         <span class="step-bar"></span>
-        <span class="step-line"><span id="finish-num" class="step-num">3</span><span class="step-label">Confirm</span></span>
+        <span class="step-line"><span id="finish-num" class="step-num">3</span><span class="step-label">Review page</span></span>
         <span id="finish-summary" class="step-note"></span>
       </button>
     </nav>
@@ -325,6 +329,8 @@
     <section class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="details-title" aria-describedby="details-sub">
       <div class="sheet-head">
         <div class="grow"><h2 id="details-title">Client details</h2><p id="details-sub" class="sheet-sub">Your edits are what gets filled.</p></div>
+        <!-- Fields the intake leaves blank are hidden unless flagged, to keep the list short (showEmpty). -->
+        <button type="button" id="details-empty" class="link small subtle" aria-pressed="false"></button>
         <button type="button" id="details-close" class="icon-btn" aria-label="Close client details"><svg aria-hidden="true"><use href="#close"/></svg></button>
       </div>
       <div id="sections" class="drawer-body"></div>

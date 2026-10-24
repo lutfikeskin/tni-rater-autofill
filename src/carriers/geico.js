@@ -878,6 +878,9 @@ export const geico = {
     'MVR & CLUE': `MVR & CLUE orders driving and claims reports, which cost the agency: that is yours. Nothing is filled or clicked on this step. ${STOP_AT_QUOTE}`,
     'Payment Information': 'Payment Information is yours: nothing is filled or clicked on this step.',
   },
+  // The quote ends at Quote & Coverages with the proposal printed (TNI, 2026-10-21): the panel says
+  // "Quote done" once Print Quote Proposal was clicked there and nothing is left for the agent.
+  finishedBy: 'printProposal',
   // What the panel says on a step the fill still answers.
   stepNotes: {
     [COVERAGES]: 'Answer what is left for you here (or mark it done) and click Fill this page, which also puts back any of its answers GEICO changed back. With nothing left, the fill clicks Recalculate once and checks every answer afterwards; if GEICO changed one, it is marked red and Recalculate is yours from then on. With the premium current, the fill picks 11 Payments (or the plan with the most payments GEICO offers) under View More Payment Plans and clicks Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',

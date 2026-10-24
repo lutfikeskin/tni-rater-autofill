@@ -3271,7 +3271,7 @@ test('the page menu lists the other pages filled on this tab, by name, and shows
 // to read): focus goes into it, Escape or Close closes it, and focus goes back where it was.
 test('client details open in a drawer that takes focus and gives it back', () => {
   const nodes = {};
-  const context = { state: { intake: {}, detailsOpen: false, detailsReturn: null, fileMenuOpen: true }, document: { activeElement: null },
+  const context = { state: { intake: {}, detailsOpen: false, detailsReturn: null }, document: { activeElement: null },
     render() {}, showScreen() {} };
   const el = (id) => (nodes[id] ??= { id, isConnected: true, focus() { context.document.activeElement = this; }, contains: (n) => n === nodes['details-close'] });
   context.$ = el;
@@ -3280,7 +3280,6 @@ test('client details open in a drawer that takes focus and gives it back', () =>
   opener.focus();
   context.openDetails();
   assert.equal(context.state.detailsOpen, true);
-  assert.equal(context.state.fileMenuOpen, false);
   assert.equal(context.document.activeElement, el('details-close'));
   context.closeDetails();
   assert.equal(context.state.detailsOpen, false);
@@ -4740,7 +4739,7 @@ test('a fill whose page stops answering is said in the dock, and the word goes w
   const word = d.dock();
   assert.deepEqual([word.phase, word.tone, word.title, word.sub, word.button, word.label],
     ['filling', 'warn', 'The page isn’t answering', 'If it shows a message box, answer it there. The fill goes on after.', 'fill-stop', 'Stop']);
-  assert.match(extractFunction('renderLive'), /f\.unanswered \? 'Waiting for the page'/);
+  assert.match(extractFunction('renderLive'), /f\.unanswered \? \['Waiting for the page'/);
 });
 
 // Bitwarden comparison (2026-10-22): a fill went on with the page it was asked for while the panel
@@ -4859,10 +4858,11 @@ test('Continue\'s word asks for Looks right while Continue waits for the agent\'
   // A page gone back to, or a report made again in a panel opened again, can be filled again (W43-39).
   assert.deepEqual([advanced.phase, advanced.title, advanced.button, advanced.alt, advanced.altLabel], ['done', 'Continue clicked', null, 'fill-again', 'Fill this page again']);
   assert.match(advanced.sub, /^Clicked “Continue” for you\. Nothing is submitted or bound\.$/);
-  // Switch off: Fill again and continue, as before.
+  // Switch off, what was left settled by the agent (on the page or here): Continue, the same fill
+  // that replaces nothing as below (it read "Fill again and continue": the maintainer, 2026-10-23).
   ui['check-continue'].checked = false;
   const off = said({ settled: true });
-  assert.deepEqual([off.phase, off.title, off.button, off.label], ['ready-continue', 'Ready for Continue', 'fill', 'Fill again and continue']);
+  assert.deepEqual([off.phase, off.title, off.button, off.label, off.go], ['ready-continue', 'Ready for Continue', 'fill', 'Continue', 'continue']);
   // Nothing left and the page not moved on: the main button continues, replacing nothing (W43-40).
   const nothing = said({});
   assert.deepEqual([nothing.phase, nothing.button, nothing.label, nothing.go, nothing.alt, nothing.altLabel], ['ready-continue', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
@@ -4875,9 +4875,16 @@ test('Continue\'s word offers Fill this page again wherever it may tell the agen
   const needs = said({ left: 1, filled: 3 });
   assert.deepEqual([needs.phase, needs.title, needs.button, needs.alt, needs.altLabel], ['needs', 'Answer the last question', 'dock-next', 'fill-again', 'Fill this page again']);
   assert.equal(needs.sub, 'Then Fill this page again to continue. Never Bind or Submit.');
+  // Only buttons left: the main button is the fill that clicks them in turn (nothing clicks them by
+  // itself; it read "The fill clicks the rest in turn" with no button: the maintainer, 2026-10-23).
   const waiting = said({ waiting: 2, filled: 3 });
-  assert.deepEqual([waiting.phase, waiting.button, waiting.alt, waiting.altLabel], ['waiting', null, 'fill-again', 'Fill this page again']);
-  assert.equal(waiting.sub, 'Then Fill this page again to continue. Never Bind or Submit.');
+  assert.deepEqual([waiting.phase, waiting.title, waiting.button, waiting.label, waiting.go, waiting.alt, waiting.altLabel], ['waiting', 'Buttons left to click', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
+  assert.equal(waiting.sub, 'Continue clicks them in turn, then the page’s Continue. Never Bind or Submit.');
+  // Where the panel may not click Continue, the button only clicks the buttons.
+  ui['auto-advance'].checked = false;
+  const own = said({ waiting: 2, filled: 3 });
+  assert.deepEqual([own.button, own.label, own.sub], ['fill', 'Click them for me', 'Then click Continue yourself, and Fill this page on the next one.']);
+  ui['auto-advance'].checked = true;
   // With follow-ups on, the panel continues by itself; the alternative stays.
   ui['auto-followups'].checked = true;
   assert.equal(said({ left: 1 }).sub, 'Then the panel continues to the next page. Never Bind or Submit.');
@@ -4918,7 +4925,7 @@ test('Continue\'s word leaves Continue to the agent where the panel may not clic
 // the agent only while that setting is on and the carrier has an advance pattern.
 function dockHarness({ carrier, switches = {}, background = false, issue = null, url = 'Quote', step = null, extra = {} } = {}) {
   const ui = { 'auto-advance': { checked: true }, 'check-continue': { checked: false }, 'auto-followups': { checked: true }, report: { querySelector: () => null }, ...switches };
-  const state = { intake: { warnings: [], done: [] }, view: 'page', tab: { id: 7, url, carrier, background }, tabSteps: new Map(step ? [[7, step]] : []), autoPages: new Set(), filling: false, fillingFor: null };
+  const state = { intake: { warnings: [], done: [] }, view: 'page', tab: { id: 7, url, carrier, background }, tabSteps: new Map(step ? [[7, step]] : []), autoPages: new Set(), aiDocks: new Map(), filling: false, fillingFor: null };
   const context = { state, $: (id) => ui[id], inExtension: true, pageOf: (u) => u, onQuotePage: () => true, showReport: () => null, quoteProgress: () => null,
     stateIssue: () => issue, pendingAi: () => [], ...extra };
   vm.runInNewContext(['dockFor', 'continueSaid'].map(extractFunction).join('\n'), context);
@@ -7166,7 +7173,7 @@ test('the business profile is logged on load, after a correction settles, and on
   assert.equal(sandbox.logProfile(), false, 'no quote session, nothing logged');
 
   // One still waiting stays with its own quote: logged before the intake is replaced or cleared.
-  assert.match(extractFunction('loadFile'), /if \(profileTimer\) logProfile\(\);\n\s+if \(state\.intake\) usage\.log\(\{ type: 'intake_closed', reason: 'replaced' \}\);/);
+  assert.match(extractFunction('loadFile'), /if \(profileTimer\) logProfile\(\);\n\s+if \(state\.intake\) usage\.log\(\{ type: 'intake_closed', reason: reset \? 'reset' : 'replaced' \}\);/);
   assert.match(extractFunction('loadFile'), /await logSettings\('intake'\);\n\s+logProfile\(\);/);
   assert.match(extractFunction('clearClient'), /if \(profileTimer\) logProfile\(\);\n\s+usage\.log\(\{ type: 'intake_closed', reason: 'cleared' \}\);/);
   assert.match(extractFunction('agentEdit'), /usage\.log\(\{ type: 'intake_edit'[^\n]*\n\s+profileLater\(\);/);
@@ -7367,4 +7374,175 @@ test('a helper the fill checks after its click is not done by the agent clicking
   assert.deepEqual([...state.doneActions], []);
   context.agentHelperDone(progressive, 'CoveragesRates', undefined, 'View bill plan options');
   assert.deepEqual([...state.doneActions], ['billPlan']);
+});
+
+// The maintainer, 2026-10-23: on GEICO's last steps, in a short popped-out window, the header and the
+// client strip went out of view, and the panel began at the answers. A hidden overflow is still a
+// scroll container, and a focus() or scrollIntoView() scrolled the body once the header, the client
+// strip and the dock outgrew the window. The body is clipped, so nothing can scroll it; the dock
+// gives way (and scrolls) instead, and the middle keeps a minimum.
+test('nothing scrolls the panel\'s body: it is clipped, and the dock shrinks before the header goes', () => {
+  const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
+  const start = css.indexOf('\nbody {');
+  const body = css.slice(start, css.indexOf('\n}', start));
+  assert.match(body, /overflow: clip;/);
+  assert.doesNotMatch(body, /overflow: hidden/);
+  assert.match(css, /\.foot \{ flex: 0 1 auto; min-height: 0; overflow-y: auto;/);
+  assert.match(css, /\.view \{ flex: 1; min-height: 96px;/);
+  // The PDF sheet is a column: its hint row comes and goes with a marked item, and with fixed grid
+  // rows the whole-PDF view (no hint) had the footer over the page controls (zoom unreachable).
+  assert.match(css, /\.sheet-panel \{[^}]*display: flex; flex-direction: column;/);
+  assert.doesNotMatch(css, /grid-template-rows: auto auto minmax\(0, 1fr\) auto auto/);
+  assert.match(css, /\.pdf-scroll \{ flex: 1 1 auto; min-height: 0; overflow: auto;/);
+});
+
+// The intake PDF opened at 200%, and at a side panel's width the agent scrolled sideways to find
+// anything (the maintainer, 2026-10-23). It opens at the panel's width; a marked item still at 200%;
+// the page drags with the mouse and zooms with Ctrl + wheel.
+test('the PDF opens at the panel\'s width, a marked item at 200%, and drags or zooms with the wheel', () => {
+  assert.match(SIDEPANEL, /const PDF_OPEN_ZOOM = 1;/);
+  assert.match(SIDEPANEL, /const PDF_FOCUS_ZOOM = 2;/);
+  const pan = extractFunction('pdfPan');
+  assert.match(pan, /addEventListener\('pointerdown'/);
+  assert.match(pan, /scroll\.scrollLeft = drag\.left - \(e\.clientX - drag\.x\);/);
+  assert.match(pan, /addEventListener\('wheel', \(e\) => \{\s+if \(!\(e\.ctrlKey \|\| e\.metaKey\) \|\| !state\.pdf\) return;\s+e\.preventDefault\(\);/);
+  assert.match(extractFunction('wire'), /pdfPan\(\$\('pdf-scroll'\)\);/);
+});
+
+// The client strip (the maintainer, 2026-10-23): Change file and Clear were behind a ⋯ menu (three
+// clicks to start the next client); the name card opens the client details, and the file tools are
+// buttons in view, with New quote with this intake beside them. The steps name the intake, then the
+// page in front filled and reviewed: "Confirm" read as the quote's end on every page.
+test('the client strip: the name opens client details, and Change file, New quote and Clear are buttons in view, no menu', () => {
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.match(html, /<button type="button" id="client-card" class="client-title" aria-controls="details-view"/);
+  const toolsAt = html.indexOf('<div class="client-tools">');
+  const tools = html.slice(toolsAt, html.indexOf('</div>', toolsAt));
+  for (const id of ['open-pdf', 'replace', 'new-quote', 'clear-client']) assert.match(tools, new RegExp(`id="${id}"`), id);
+  assert.doesNotMatch(html, /file-menu-btn|details-btn|⋯/);
+  assert.match(extractFunction('wire'), /\$\('client-card'\)\.addEventListener\('click', \(\) => \(state\.detailsOpen \? closeDetails\(\) : openDetails\(\)\)\);/);
+  assert.match(extractFunction('showScreen'), /\['client-card', 'details-row'\]/);
+  assert.match(extractFunction('askFile'), /state\.fileConfirmFrom = from;/, 'Cancel gives focus back to the button that asked');
+  assert.match(extractFunction('renderSteps'), /\$\('new-quote'\)\.disabled = !!state\.filling;/);
+  assert.match(html, /<span class="step-label">Intake<\/span>[\s\S]*<span class="step-label">Fill page<\/span>[\s\S]*<span class="step-label">Review page<\/span>/);
+});
+
+// New quote with this intake: the agent quotes the same client on the next carrier, or again, and
+// this quote's fills, marks and clicks must not carry over (a report "from the fill at 10:12" on a
+// page reached again in the same tab, a vehicle taken as already added), while the intake and their
+// corrections stay. The kept PDF is loaded again as the same file (loadFile keeps the work on the
+// same intake), after the page's marks and this intake's per-tab records go.
+test('New quote with this intake loads the kept PDF again as the same file, after the page marks and this intake\'s tab records go', async () => {
+  const calls = [];
+  const state = { intake: { fileName: 'client.pdf', ntlAdded: true }, filling: false, tab: { id: 4, carrier: { id: 'geico' } } };
+  const context = { state, inExtension: true, File: class { constructor(parts, name, opts) { Object.assign(this, { parts, name, type: opts?.type }); } },
+    intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
+    runKit: async (tabId) => { calls.push(['clear', tabId]); return []; }, clearAgentKeys: async (scope) => { calls.push(['keys', scope]); },
+    loadFile: async (file, opts) => { calls.push(['load', file.name, file.type, opts]); }, clientNote: (t) => calls.push(['note', t]) };
+  vm.runInNewContext(extractFunction('newQuote'), context);
+  await context.newQuote();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['clear', 4], ['keys', 'abc'], ['load', 'client.pdf', 'application/pdf', { reset: true }]]);
+  assert.equal(state.intake.ntlAdded, false, 'NTL is added again on the new quote');
+  // While answers go in: nothing. Without the PDF kept: said, nothing done.
+  calls.length = 0;
+  state.filling = true;
+  await context.newQuote();
+  state.filling = false;
+  context.intakePdfBytes = async () => null;
+  await context.newQuote();
+  assert.deepEqual(calls.map((c) => c[0]), ['note']);
+  // Asked first, under the client's name; loadFile says what stays and logs the reset.
+  assert.match(extractFunction('wire'), /\$\('new-quote'\)\.addEventListener\('click', \(\) => \{\s+if \(state\.filling\) return;\s+askFile\('new-quote'/);
+  assert.match(extractFunction('wire'), /if \(what === 'new-quote'\) newQuote\(\);/);
+  assert.match(extractFunction('loadFile'), /reset \? 'New quote with the same intake' : 'Same intake'/);
+});
+
+// Client details: 96 fields on the sample intake, 44 px each, a third of them blank; the drawer was
+// too long to scroll (the maintainer, 2026-10-23). Dense rows, sections that fold, and the blank
+// fields hidden unless flagged, behind "Show N empty fields"; Show in client details brings one out.
+test('client details hide the fields the intake leaves blank unless flagged, fold by section, and a jump brings a hidden field out', () => {
+  const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
+  assert.match(css, /\.drawer\[data-empty="hidden"\] \.field\.empty:not\(\.flagged\) \{ display: none; \}/);
+  assert.match(css, /\.field \{[^}]*min-height: 30px;/);
+  const sections = extractFunction('renderSections');
+  assert.match(sections, /h\('details', \{ class: `section\$\{allEmpty \? ' all-empty' : ''\}`, open: !state\.detailsClosed\.has\(section\.id\)/);
+  assert.match(sections, /\$\('details-view'\)\.dataset\.empty = state\.showEmpty \? 'shown' : 'hidden';/);
+  assert.match(sections, /`Show \$\{hidden\} empty field\$\{hidden === 1 \? '' : 's'\}`/);
+  assert.match(extractFunction('jumpTo'), /if \(!state\.showEmpty && row\.classList\.contains\('empty'\) && !row\.classList\.contains\('flagged'\)\) \{\s+state\.showEmpty = true;\s+renderSections\(\);/);
+  assert.match(extractFunction('jumpTo'), /if \(section instanceof HTMLDetailsElement\) section\.open = true;/);
+});
+
+// The end of a GEICO quote read like every other page: "Ready", "Moving on is yours" (the maintainer,
+// 2026-10-23). Where TNI stops on a rater (the carrier's `finishedBy` action clicked on its step, nothing
+// left for the agent), the dock and the strip say the quote is done.
+test('the quote is done where TNI stops on the rater: the finishing action clicked on its step, nothing left', () => {
+  const geicoLike = { name: 'GEICO', finishedBy: 'printProposal', actions: [{ id: 'printProposal', steps: ['Quote & Coverages'] }], advance: { text: 'Next', steps: ['Vehicles'] }, layoutSteps: ['Vehicles', 'Quote & Coverages'] };
+  const done = new Set(['recalculate', 'printProposal']);
+  // extractFunction brings the panel's own tabStep along: the step comes from state.tabSteps.
+  const context = { state: { tab: { id: 7, url: 'quote' }, doneActions: done, tabSteps: new Map([[7, 'Quote & Coverages']]) }, pageOf: (u) => u };
+  vm.runInNewContext(extractFunction('quoteFinished'), context);
+  const report = { fields: 12, filled: 12, left: 0, waiting: 0 };
+  assert.equal(context.quoteFinished(geicoLike, report), true);
+  assert.equal(context.quoteFinished(geicoLike, { ...report, left: 1 }), false, 'something left for the agent');
+  assert.equal(context.quoteFinished(geicoLike, { ...report, waiting: 1 }), false, 'a button left to click');
+  assert.equal(context.quoteFinished(geicoLike, report, 'quote', 'Vehicles'), false, 'another step\'s report');
+  assert.equal(context.quoteFinished(geicoLike, report, 'quote', 'Quote & Coverages', new Set(['recalculate'])), false, 'not printed yet');
+  assert.equal(context.quoteFinished({ name: 'Progressive', actions: [] }, report), false, 'no finishing action on this rater');
+  const prog = { name: 'Progressive', finishedBy: 'print', actions: [{ id: 'print', page: 'CoveragesRates' }] };
+  assert.equal(context.quoteFinished(prog, report, 'CoveragesRates', undefined, new Set(['print'])), true);
+  assert.equal(context.quoteFinished(prog, report, 'Drivers', undefined, new Set(['print'])), false, 'another page\'s report');
+  // The dock says so, with Fill this page again beside it; the strip's Review page says Quote done.
+  const d = dockHarness({ carrier: geicoLike, step: 'Quote & Coverages', extra: { showReport: () => report, quoteFinished: context.quoteFinished } });
+  d.state.doneActions = done;
+  const word = d.dock();
+  assert.deepEqual([word.phase, word.eyebrow, word.title, word.button ?? null, word.alt], ['finished', 'Quote done', 'The quote proposal is printed', null, 'fill-again']);
+  assert.equal(word.sub, 'This is where TNI stops on GEICO. Nothing is submitted or bound.');
+  // (quoteFinished reads the done actions of the state it was extracted with: the same Set.)
+  done.delete('printProposal');
+  assert.equal(d.dock().phase, 'yours', 'not printed: moving on is the agent\'s, as before');
+  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\);[\s\S]*note: !filled \? 'After the fill' : finished \? 'Quote done'/);
+  assert.equal(geico.finishedBy, 'printProposal');
+  assert.ok(geico.actions.some((a) => a.id === 'printProposal' && a.steps.includes('Quote & Coverages')));
+});
+
+// A fill waiting on GEICO's Recalculate, the premium or a quiet page read as stuck on "Working…"
+// (the maintainer, 2026-10-23). The kit says what it waits on (`phase`), the live list's last row
+// says it, and the dock names the long waits.
+test('the live list and the dock say what the kit waits on (its phase), and a phase alone redraws them', async () => {
+  const context = {};
+  vm.runInNewContext(extractFunction('phaseSaid'), context);
+  const said = (phase, n) => [...context.phaseSaid(phase, n)];
+  assert.deepEqual(said(null, 0), ['Reading the page', 'Working…']);
+  assert.deepEqual(said(null, 3), ['Next answer', 'Working…']);
+  assert.deepEqual(said({ name: 'premium' }), ['Waiting for the premium', 'The rater is rating the quote…']);
+  assert.equal(context.phaseSaid({ name: 'helper', what: 'Recalculate' })[0], 'Clicked: Recalculate');
+  assert.equal(context.phaseSaid({ name: 'waiting' })[0], 'Waiting for the page');
+  assert.equal(context.phaseSaid({ name: 'continue' })[0], 'Clicking Continue');
+  // watchFill keeps the phase with the rows, and a changed phase alone is a change.
+  let tick = null;
+  let reply = [];
+  let renders = 0;
+  const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
+  const wctx = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+    chrome: { scripting: { executeScript: async () => reply } } };
+  vm.runInNewContext(extractFunction('watchFill'), wctx);
+  wctx.watchFill({ run: 'r1', tabId: 3, carrier: {} });
+  reply = [{ result: { frame: 'f', list: 'f:1', since: 0, rows: [], phase: { name: 'reading', what: null } } }];
+  await tick();
+  assert.deepEqual([JSON.parse(JSON.stringify(state.fillingFor.phase)), renders], [{ name: 'reading', what: null }, 1]);
+  await tick();
+  assert.equal(renders, 1, 'the same phase: nothing redrawn');
+  reply = [{ result: { frame: 'f', list: 'f:1', since: 0, rows: [], phase: { name: 'premium', what: null } } }];
+  await tick();
+  assert.deepEqual([state.fillingFor.phase.name, renders], ['premium', 2]);
+  // The dock names the long waits; the wait after each answer keeps "Just filled" (no flicker).
+  assert.match(SIDEPANEL, /const DOCK_PHASES = new Set\(\['reading', 'helper', 'premium', 'continue'\]\);/);
+  const d = dockHarness({ carrier: { name: 'GEICO', advance: { text: 'Next' } }, extra: { phaseSaid: context.phaseSaid, DOCK_PHASES: new Set(['reading', 'helper', 'premium', 'continue']) } });
+  Object.assign(d.state, { filling: true, fillingFor: { tabId: 7, filled: 3, rows: [{ label: 'Liability' }], phase: { name: 'premium' } } });
+  assert.equal(d.dock().title, 'Waiting for the premium…');
+  d.state.fillingFor.phase = { name: 'waiting' };
+  assert.equal(d.dock().title, 'Just filled: Liability');
+  // The live list follows its last row only while the agent is at its end.
+  assert.match(extractFunction('renderLive'), /const follow = !\(live\.drawn \?\? \[\]\)\.length \|\| view\.scrollHeight - view\.scrollTop - view\.clientHeight < 80;/);
+  assert.match(extractFunction('renderLive'), /if \(follow\) live\.lastElementChild\?\.scrollIntoView\?\.\(\{ block: 'nearest' \}\);/);
 });
