@@ -1130,7 +1130,7 @@ function setFilter(filter) {
   if (filter === 'done') refreshAnswers();
 }
 
-// Step 1, Check intake: one card per thing that looked wrong or missing, with its field to fix,
+// Step 1, Intake: one card per thing that looked wrong or missing, with its field to fix,
 // Looks right now and where it is on the PDF; then the cleanup notes, and All client details below.
 function renderWarnings() {
   const { warnings, done } = state.intake;
@@ -1200,9 +1200,10 @@ function openFlags(prefix) {
 
 // All client details, one card per section (the drawer), every field editable. Built again after
 // an edit: the drawer keeps its place and the field in focus. Each section folds (state.detailsClosed),
-// and fields the intake leaves blank are hidden unless flagged, behind "Show N empty fields"
-// (state.showEmpty): the sample intake has 96 fields, a third of them blank, and the drawer was too
-// long to scroll (the maintainer, 2026-10-23). A section says how many it hides.
+// and fields the intake leaves blank are hidden unless flagged or the agent's own (`agentEdited`,
+// also one they emptied), behind "Show N empty fields" (state.showEmpty): the sample intake has 96
+// fields, a third of them blank, and the drawer was too long to scroll (the maintainer, 2026-10-23).
+// A section says how many it hides.
 function renderSections() {
   const { record } = state.intake;
   const box = $('sections');
@@ -1279,7 +1280,8 @@ function fieldRow(path, label, kind, flagged, layout = 'row') {
     if (layout === 'input') { input.setAttribute('aria-label', label); return input; }
     return h('label', { class: 'field-stack' }, label, input);
   }
-  return h('div', { class: `field${flagged ? ' flagged' : ''}${value == null ? ' empty' : ''}`, dataset: { path } },
+  const empty = value == null && !state.intake.agentEdited?.includes(path);
+  return h('div', { class: `field${flagged ? ' flagged' : ''}${empty ? ' empty' : ''}`, dataset: { path } },
     h('label', { for: id }, label), input);
 }
 
@@ -1299,7 +1301,9 @@ async function agentEdit(path, after, kind) {
     if (!row) continue;
     const value = get(state.intake.record, derived);
     row.value = value ?? '';
-    row.closest('.field')?.classList.toggle('empty', value == null);
+    // Shown as it fills in; one that empties stays until the drawer is built again (it would go
+    // under the agent's eyes as they typed).
+    if (value != null) row.closest('.field')?.classList.remove('empty');
   }
   intakeEdited();
   // Log that the agent corrected the intake here (and whether it was flagged), not the value.
@@ -1577,6 +1581,7 @@ function onRecorderMessage(msg, sender) {
     const byAgent = msg.changes.filter((c) => c.agent);
     if (byAgent.length) {
       const page = samePage(msg.page);
+      if (noteChangedAfterDone(state.tab.carrier, page, step, sender.tab.id)) renderSteps();
       // On GEICO, by the unit forms on screen as the recorder saw them (changeScopes).
       for (const scope of changeScopes(page, state.tab.carrier, step, msg.forms)) {
         const keys = state.agentKeys.get(scope) ?? new Set();
@@ -2637,7 +2642,7 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
     }, 1500);
   } else if (!due) maps.triedAgain = null;
   for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) maps.doneActions.delete(id);
-  for (const a of frames.flatMap((f) => f.actions ?? [])) maps.doneActions.add(a.id);
+  for (const a of frames.flatMap((f) => f.actions ?? [])) { maps.doneActions.add(a.id); maps.doneActions.delete(`${a.id}:changed`); }
   persistDoneActions(tabId, maps.doneActions);
   // The unit form this fill answered (pagekit unitForm: its marker's element name, new with every
   // form GEICO draws) is now that vehicle's, driver's or trailer's: a follow-up fill never types
@@ -2909,7 +2914,7 @@ function renderSteps() {
   });
   // 3. Review page: what's left for the agent on it, and Continue; "Quote done" where the quote
   // ends (quoteFinished).
-  const finished = filled && quoteFinished(carrier, report, page);
+  const finished = filled && quoteFinished(carrier, report, page) && !pendingAi(state.tab.id, page).length;
   step('confirm', 'finish', '3', {
     tone: !filled ? '' : finished || report.advanced ? 'done' : 'active',
     note: !filled ? 'After the fill' : finished ? 'Quote done' : report.advanced ? 'Continued' : left ? `${left} need${left === 1 ? 's' : ''} you` : 'All answered',
@@ -3007,7 +3012,7 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
     // clicks the rest in turn" with no button for it).
     if (!left) {
       return { phase: 'waiting', tone: 'blue', eyebrow: `${filled} filled`, title: 'Buttons left to click',
-        sub: autoAdvance ? 'Continue clicks them in turn, then the page’s Continue. Never Bind or Submit.' : then,
+        sub: autoAdvance ? 'Continue clicks them in turn, then the page’s Continue; a button it can’t click says why in its row. Never Bind or Submit.' : then,
         button: 'fill', label: autoAdvance ? 'Continue' : 'Click them for me', go: 'continue', ...again };
     }
     return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled · ${left} need${left === 1 ? 's' : ''} you`,
@@ -3035,10 +3040,26 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
 // 2026-10-23: the end of a GEICO quote read like every other page).
 function quoteFinished(carrier, report, page = pageOf(state.tab?.url), step = tabStep(carrier), doneActions = state.doneActions) {
   const id = carrier?.finishedBy;
-  if (!id || !report || report.error || !doneActions?.has(id) || (report.left ?? 0) > 0 || (report.waiting ?? 0) > 0) return false;
+  if (!id || !report || report.error || report.stopped || !doneActions?.has(id) || doneActions.has(`${id}:changed`) || (report.left ?? 0) > 0 || (report.waiting ?? 0) > 0) return false;
   const action = carrier.actions?.find((a) => a.id === id);
   if (action?.steps?.length && !action.steps.includes(step)) return false;
   if (action?.page && action.page !== page) return false;
+  return true;
+}
+
+// The agent changed the page on the finishing step after the action was clicked (a limit on GEICO's
+// Quote & Coverages after Print Quote Proposal; its Recalculate is clicked once a quote, so no fill
+// re-rates or re-prints): the printed proposal is no longer the quote on the page, so it isn't "Quote
+// done" (the review of PR #170). Marked with the tab's done actions (`<id>:changed`, kept with them;
+// a fill that clicks the action again lifts it). True when newly marked.
+function noteChangedAfterDone(carrier, page, step, tabId = state.tab?.id) {
+  const id = carrier?.finishedBy;
+  if (!id || !state.doneActions?.has(id) || state.doneActions.has(`${id}:changed`)) return false;
+  const action = carrier.actions?.find((a) => a.id === id);
+  if (action?.steps?.length && !action.steps.includes(step)) return false;
+  if (action?.page && action.page !== page) return false;
+  state.doneActions.add(`${id}:changed`);
+  persistDoneActions(tabId);
   return true;
 }
 
@@ -4091,7 +4112,7 @@ function renderReport(frames, ctx = {}) {
 // Where a fill's answers came from, by their plan step (plan.js): `fromOf`, the intake answers a
 // derived one was worked out from; `groupOf`, the question several boxes answer together; `ticks`,
 // the boxes our answer ticks. `editedBy`: an answer filled from a field the agent set or corrected
-// in the panel (client details, a Check intake button such as Use Female) is the agent's, not the
+// in the panel (client details, an Intake check card's button such as Use Female) is the agent's, not the
 // client's (also openPdf's `edited`).
 function answerSources(plan) {
   const steps = plan ?? [];
@@ -4634,9 +4655,9 @@ async function aiSettings() {
 
 // Luna reads the claims box once per intake (reviewNotes in src/ai/luna.js): lines that may name
 // non-trucking liability, ask for a coverage change or say how long the business has run (when
-// that differs from the intake) become Check intake items, and the tab
+// that differs from the intake) become Intake check items, and the tab
 // count goes up (the panel doesn't switch steps under the agent). Flags only; the agent decides.
-// Logged as counts, never the text. A review that failed says so on Check intake and is tried
+// Logged as counts, never the text. A review that failed says so on the Intake step and is tried
 // again when the assistant settings change (`retry`), not on every panel reload. What it read
 // (the claims box and the form's coverages) must still be the intake's when Luna answers;
 // otherwise the answer is dropped and the box read again.
@@ -4746,7 +4767,7 @@ async function reviewClaimsBox({ retry = false } = {}) {
 // Driver gender is filled MALE (TNI standard) unless drivers[i].gender is set. Once per intake,
 // with the assistant on, Luna is asked whether each such driver's first name is more often a
 // woman's (reviewDriverNames in src/ai/luna.js: only the first names are sent, nothing else).
-// likely_female becomes a Check intake item with Use Female / Keep Male (applyCheckChoice: the
+// likely_female becomes an Intake check item with Use Female / Keep Male (applyCheckChoice: the
 // agent's edit). A failure is an info note: the TNI standard stands. What it read (the drivers'
 // first names) must still be the intake's when Luna answers; an edit to a first name afterwards
 // retires its items (info notes, in place) and reads the names again. Logged as counts only.
@@ -5764,18 +5785,22 @@ function pdfPan(scroll) {
     scroll.setPointerCapture?.(e.pointerId);
     scroll.classList.add('panning');
   });
-  scroll.addEventListener('pointermove', (e) => {
-    if (!drag || e.pointerId !== drag.id) return;
-    scroll.scrollLeft = drag.left - (e.clientX - drag.x);
-    scroll.scrollTop = drag.top - (e.clientY - drag.y);
-  });
   const end = (e) => {
     if (!drag || e.pointerId !== drag.id) return;
     drag = null;
     scroll.classList.remove('panning');
   };
+  scroll.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    // The button went up where the panel didn't hear it (on the scrollbar, in another window):
+    // the drag is over, not carried on under a free mouse.
+    if (!(e.buttons & 1)) return end(e);
+    scroll.scrollLeft = drag.left - (e.clientX - drag.x);
+    scroll.scrollTop = drag.top - (e.clientY - drag.y);
+  });
   scroll.addEventListener('pointerup', end);
   scroll.addEventListener('pointercancel', end);
+  scroll.addEventListener('lostpointercapture', end);
   let wheelAt = 0;
   scroll.addEventListener('wheel', (e) => {
     if (!(e.ctrlKey || e.metaKey) || !state.pdf) return;

@@ -111,8 +111,9 @@ function extractFunction(name) {
         // the harness gives one.
         if (name !== 'stateIssue' && /\bstateIssue\(/.test(source) && !/function stateIssue\(/.test(source)) source += '\nvar stateIssue = globalThis.stateIssue ?? (() => null);';
         // Reports kept for a reopened panel (keepReport, forgetKeptReports) have their own tests:
-        // elsewhere nothing is kept, unless the harness gives a store.
-        for (const kept of ['keepReport', 'forgetKeptReports']) {
+        // elsewhere nothing is kept, unless the harness gives a store. So has the agent's change
+        // after the quote's finishing action (noteChangedAfterDone): elsewhere nothing is marked.
+        for (const kept of ['keepReport', 'forgetKeptReports', 'noteChangedAfterDone']) {
           if (name !== kept && new RegExp(`\\b${kept}\\(`).test(source) && !new RegExp(`function ${kept}\\(`).test(source)) source += `\nvar ${kept} = globalThis.${kept} ?? (() => {});`;
         }
         return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
@@ -4879,7 +4880,7 @@ test('Continue\'s word offers Fill this page again wherever it may tell the agen
   // itself; it read "The fill clicks the rest in turn" with no button: the maintainer, 2026-10-23).
   const waiting = said({ waiting: 2, filled: 3 });
   assert.deepEqual([waiting.phase, waiting.title, waiting.button, waiting.label, waiting.go, waiting.alt, waiting.altLabel], ['waiting', 'Buttons left to click', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
-  assert.equal(waiting.sub, 'Continue clicks them in turn, then the page’s Continue. Never Bind or Submit.');
+  assert.equal(waiting.sub, 'Continue clicks them in turn, then the page’s Continue; a button it can’t click says why in its row. Never Bind or Submit.');
   // Where the panel may not click Continue, the button only clicks the buttons.
   ui['auto-advance'].checked = false;
   const own = said({ waiting: 2, filled: 3 });
@@ -5016,7 +5017,7 @@ test('editing a source field in the panel recomputes what derives from it and re
     inputs.push(el);
     return el;
   };
-  const milesRow = { classList: { toggle: (cls, on) => calls.push(['toggle', cls, on]) } };
+  const milesRow = { classList: { remove: (cls) => calls.push(['remove', cls]) } };
   const milesInput = { value: '100', closest: () => milesRow };
   const yearsInput = { value: '', closest: () => milesRow };
   const sandbox = {
@@ -5038,7 +5039,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   assert.equal(record.operations.radius, 'Unlimited');
   assert.equal(record.operations.radiusMiles, null, 'the miles follow the edit');
   assert.equal(milesInput.value, '', 'the miles row on screen shows it');
-  assert.deepEqual(calls, [['toggle', 'empty', true], ['intakeEdited', null], ['log', 'intake_edit', 'operations.radius'], ['save']], 'recomputed before the revision moves on; one edit logged');
+  assert.deepEqual(calls, [['intakeEdited', null], ['log', 'intake_edit', 'operations.radius'], ['save']], 'recomputed before the revision moves on; one edit logged');
   // The agent's own miles are theirs: nothing else is recomputed from them.
   calls.length = 0;
   sandbox.fieldRow('operations.radiusMiles', 'Radius (miles)', 'int', false);
@@ -7416,6 +7417,7 @@ test('the PDF opens at the panel\'s width, a marked item at 200%, and drags or z
 test('the client strip: the name opens client details, and Change file, New quote and Clear are buttons in view, no menu', () => {
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
   assert.match(html, /<button type="button" id="client-card" class="client-title" aria-controls="details-view"/);
+  assert.match(html, /<span id="client-name" class="client-name"><\/span>\s+<span id="client-meta" class="client-meta"><\/span>\s+<\/button>/, 'phrasing content in the button, not a heading');
   const toolsAt = html.indexOf('<div class="client-tools">');
   const tools = html.slice(toolsAt, html.indexOf('</div>', toolsAt));
   for (const id of ['open-pdf', 'replace', 'new-quote', 'clear-client']) assert.match(tools, new RegExp(`id="${id}"`), id);
@@ -7500,7 +7502,7 @@ test('the quote is done where TNI stops on the rater: the finishing action click
   // (quoteFinished reads the done actions of the state it was extracted with: the same Set.)
   done.delete('printProposal');
   assert.equal(d.dock().phase, 'yours', 'not printed: moving on is the agent\'s, as before');
-  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\);[\s\S]*note: !filled \? 'After the fill' : finished \? 'Quote done'/);
+  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;[\s\S]*note: !filled \? 'After the fill' : finished \? 'Quote done'/);
   assert.equal(geico.finishedBy, 'printProposal');
   assert.ok(geico.actions.some((a) => a.id === 'printProposal' && a.steps.includes('Quote & Coverages')));
 });
@@ -7545,4 +7547,86 @@ test('the live list and the dock say what the kit waits on (its phase), and a ph
   // The live list follows its last row only while the agent is at its end.
   assert.match(extractFunction('renderLive'), /const follow = !\(live\.drawn \?\? \[\]\)\.length \|\| view\.scrollHeight - view\.scrollTop - view\.clientHeight < 80;/);
   assert.match(extractFunction('renderLive'), /if \(follow\) live\.lastElementChild\?\.scrollIntoView\?\.\(\{ block: 'nearest' \}\);/);
+});
+
+// Review of PR #170: "Quote done" stayed after the agent changed the quote on the page once the
+// proposal was printed (GEICO's Recalculate is clicked once a quote, so no fill re-rates or
+// re-prints), and a fill the agent stopped after the print read as done too. The agent's change
+// on the finishing step is marked with the done actions (`printProposal:changed`), until a fill
+// clicks the action again.
+test('an agent change on the finishing step after the print, or a stopped fill, is not "Quote done"', () => {
+  const geicoLike = { name: 'GEICO', finishedBy: 'printProposal', actions: [{ id: 'printProposal', steps: ['Quote & Coverages'] }], layoutSteps: ['Vehicles', 'Quote & Coverages'] };
+  const persisted = [];
+  const state = { tab: { id: 7, url: 'quote' }, doneActions: new Set(['printProposal']), tabSteps: new Map([[7, 'Quote & Coverages']]) };
+  const context = { state, pageOf: (u) => u, persistDoneActions: (tabId) => persisted.push(tabId) };
+  vm.runInNewContext(['quoteFinished', 'noteChangedAfterDone'].map(extractFunction).join('\n'), context);
+  const report = { fields: 12, filled: 12, left: 0, waiting: 0 };
+  assert.equal(context.quoteFinished(geicoLike, report), true);
+  assert.equal(context.quoteFinished(geicoLike, { ...report, stopped: true }), false, 'a fill the agent stopped');
+  // A change on another step, or on a rater without a finishing action, marks nothing.
+  assert.equal(context.noteChangedAfterDone(geicoLike, 'quote', 'Vehicles', 7), false);
+  assert.equal(context.noteChangedAfterDone({ name: 'Progressive', actions: [] }, 'quote', 'Quote & Coverages', 7), false);
+  assert.deepEqual([...state.doneActions], ['printProposal']);
+  assert.equal(persisted.length, 0);
+  // The agent changed a limit on Quote & Coverages after the print: marked, kept, not done.
+  assert.equal(context.noteChangedAfterDone(geicoLike, 'quote', 'Quote & Coverages', 7), true);
+  assert.deepEqual([...state.doneActions], ['printProposal', 'printProposal:changed']);
+  assert.deepEqual(persisted, [7]);
+  assert.equal(context.quoteFinished(geicoLike, report), false, 'the printed proposal is no longer the quote on the page');
+  assert.equal(context.noteChangedAfterDone(geicoLike, 'quote', 'Quote & Coverages', 7), false, 'marked once');
+  // Before the print, a change marks nothing.
+  state.doneActions = new Set();
+  assert.equal(context.noteChangedAfterDone(geicoLike, 'quote', 'Quote & Coverages', 7), false);
+  // Wired: the recorder's field_changes by the agent on the tab in front; a fill that clicks the
+  // action again lifts the mark; the strip asks about pending AI picks as the dock does.
+  assert.match(SIDEPANEL, /const byAgent = msg\.changes\.filter\(\(c\) => c\.agent\);\s+if \(byAgent\.length\) \{\s+const page = samePage\(msg\.page\);\s+if \(noteChangedAfterDone\(state\.tab\.carrier, page, step, sender\.tab\.id\)\) renderSteps\(\);/);
+  assert.match(SIDEPANEL, /for \(const a of frames\.flatMap\(\(f\) => f\.actions \?\? \[\]\)\) \{ maps\.doneActions\.add\(a\.id\); maps\.doneActions\.delete\(`\$\{a\.id\}:changed`\); \}/);
+  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;/);
+});
+
+// Review of PR #170: a field the agent emptied in the drawer went with the blank ones (hidden at the
+// next render, its focus with it), and a derived row vanished as the agent typed. The agent's own
+// fields are never hidden, and a derived row that empties waits for the next render.
+test('client details never hide a field the agent edited, and a derived row that empties stays until the next render', () => {
+  const made = [];
+  const fake = (tag, props = {}, ...children) => { const el = { tag, props, children, addEventListener() {}, removeAttribute() {}, setAttribute() {} }; made.push(el); return el; };
+  const context = { state: { intake: { record: { x: { a: null, b: null, c: 'kept' } }, agentEdited: ['x.a'] } }, get: (o, p) => p.split('.').reduce((v, k) => v?.[k], o), h: fake, agentEdit() {}, parseEdit: (k, v) => v };
+  vm.runInNewContext(extractFunction('fieldRow'), context);
+  const row = (path) => context.fieldRow(path, path, 'text', false).props.class;
+  assert.equal(row('x.a'), 'field', 'emptied by the agent: shown');
+  assert.equal(row('x.b'), 'field empty', 'blank on the intake: hidden unless flagged');
+  assert.equal(row('x.c'), 'field');
+  assert.match(extractFunction('agentEdit'), /if \(value != null\) row\.closest\('\.field'\)\?\.classList\.remove\('empty'\);/);
+});
+
+// Review of PR #170: a drag whose pointerup the panel never heard (the button went up on the
+// scrollbar, or in another window) left the page panning under a free mouse. The next move with
+// no button held ends it, as does losing the pointer capture.
+test('a PDF drag ends when the button is no longer held, or the capture is lost', () => {
+  const listeners = {};
+  const cls = new Set();
+  const scroll = { addEventListener: (type, fn) => { listeners[type] = fn; }, setPointerCapture() {}, classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c) }, scrollLeft: 100, scrollTop: 100 };
+  const zooms = [];
+  const context = { state: { pdf: { zoom: 1 } }, PDF_ZOOMS: [1, 1.5, 2], pdfZoom: (z) => zooms.push(z), Date };
+  vm.runInNewContext(extractFunction('pdfPan'), context);
+  context.pdfPan(scroll);
+  listeners.pointerdown({ button: 0, pointerId: 1, clientX: 50, clientY: 50 });
+  listeners.pointermove({ pointerId: 1, clientX: 40, clientY: 45, buttons: 1 });
+  assert.deepEqual([scroll.scrollLeft, scroll.scrollTop, cls.has('panning')], [110, 105, true]);
+  listeners.pointermove({ pointerId: 1, clientX: 0, clientY: 0, buttons: 0 });
+  assert.deepEqual([scroll.scrollLeft, scroll.scrollTop, cls.has('panning')], [110, 105, false], 'the button is up: the drag is over');
+  listeners.pointermove({ pointerId: 1, clientX: 0, clientY: 0, buttons: 1 });
+  assert.equal(scroll.scrollLeft, 110, 'and stays over');
+  listeners.pointerdown({ button: 0, pointerId: 2, clientX: 0, clientY: 0 });
+  assert.equal(cls.has('panning'), true);
+  listeners.lostpointercapture({ pointerId: 2 });
+  assert.equal(cls.has('panning'), false);
+  // The right button, or no PDF, starts nothing; Ctrl + wheel zooms a step, once per gesture.
+  listeners.pointerdown({ button: 2, pointerId: 3, clientX: 0, clientY: 0 });
+  assert.equal(cls.has('panning'), false);
+  const prevented = [];
+  listeners.wheel({ ctrlKey: true, deltaY: -100, preventDefault: () => prevented.push(1) });
+  listeners.wheel({ ctrlKey: true, deltaY: -100, preventDefault: () => prevented.push(1) });
+  listeners.wheel({ ctrlKey: false, deltaY: -100, preventDefault: () => prevented.push(1) });
+  assert.deepEqual([zooms, prevented.length], [[1.5], 2]);
 });

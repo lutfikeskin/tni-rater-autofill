@@ -7139,3 +7139,17 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.match(PAGEKIT, /report\.rounds = round \+ 1;\s+phase\(null\);/, 'a new round answers again');
   assert.match(PAGEKIT, /phase: running\.phase \?\? null \};/);
 });
+
+// Review of PR #170: the phase test read the kit's source. Run: as the fill begins, progress() says
+// it is reading the page; once it is over, nothing.
+test('progress says the fill is reading the page as it begins', async () => {
+  const h = harness();
+  const a = makeInput({ id: 'a', ariaLabel: 'A' });
+  h.document.body.append(a);
+  const fill = h.kit.fill([{ id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'a' }], { maxRounds: 3 });
+  const early = h.kit.progress();
+  assert.deepEqual(JSON.parse(JSON.stringify([early.filled, early.phase])), [0, { name: 'reading', what: null }]);
+  const report = await fill;
+  assert.equal(report.filled.length, 1);
+  assert.equal(h.kit.progress(), null);
+});

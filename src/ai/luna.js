@@ -251,14 +251,14 @@ export async function suggest(items, context, config, { call = callModel, isStal
 // Claims-box review. Clients also write coverage wishes in the claims box, which the form's
 // coverage boxes don't show. Code splits it into lines; one Luna call says, per line, whether it
 // names non-trucking liability (NTL / bobtail) and whether it asks for coverage the form doesn't
-// have ticked. Flags only, for the agent (Check intake items): nothing is filled or ticked.
+// have ticked. Flags only, for the agent (Intake check items): nothing is filled or ticked.
 // Since 2026-10-09 it also reads how long the business has run ("in Biz for 3+ years"), which the
 // form's year-established box often lacks: Luna copies the number of years or the start year the
 // line states, code works out the years and says so when they differ from the intake's (a blank
 // there quotes as a new venture).
 // Since 2026-10-10 it also says whether a line mentions general liability (GL): Progressive's other
 // business coverages are None of the above unless the notes say the client has GL, so the first
-// such line becomes a Check intake item whose button sets coverage.hasGl (the agent's edit; not
+// such line becomes an Intake check item whose button sets coverage.hasGl (the agent's edit; not
 // coverage.gl, which asks for a GL quote). Also when the form asks for GL (TNI, 2026-10-19: the
 // request alone keeps None of the above, so only the notes can say they have it).
 // The evidence is the line itself, code-split from the box: Luna only flags it.
@@ -330,7 +330,7 @@ export function parseNotesReview(json, { lines, ids, year = new Date().getFullYe
 // The years in business a line states: its years, else the years since its start year.
 const statedYears = (x, year) => x.businessYears ?? (x.businessSince != null ? year - x.businessSince : null);
 
-// Check intake items for the flagged lines: NTL, and coverage changes other than NTL. The NTL of the
+// Intake check items for the flagged lines: NTL, and coverage changes other than NTL. The NTL of the
 // line the intake's own NTL item already quotes (`quoted`) isn't repeated; another NTL line still
 // is ("does not want bobtail" quoted, then "needs NTL off dispatch"), and so is any other request,
 // also in the quoted line ("Needs NTL. Also needs physical damage.", "Needs NTL and physical damage").
