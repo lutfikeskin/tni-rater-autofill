@@ -21,7 +21,9 @@
 //   stale .checked), property (.checked set), redraw (the options are replaced by fresh copies after each
 //   answer, so a held reference is detached);
 // - gds-button: a click anywhere on the host or in its shadow root presses it; the host's disabled is
-//   mirrored on the inner button (and blocks the press); Print Quote Proposal never navigates;
+//   mirrored on the inner button (and blocks the press); Print Quote Proposal never navigates, and
+//   opens the proposal (log `print`, `opened`) after a mouse click or a script's click, never after a
+//   press from the page's own world (as live, 2026-10-23);
 // - answers that draw or show questions, where a save or capture shows it:
 //   DOT status Yes draws the USDOT number box (FL 001), a number of 5-8 digits shows the USDOT verify radio;
 //   current insurance Yes draws years with insurer and BI limits (…InfoAlt, FL 039-040); filings Yes draws
@@ -71,11 +73,14 @@
 //   waits for components a page hasn't defined yet;
 // Start options: ?view=<id> (a view, at its step), ?delay=<ms> (page loads, default 400; lookups take
 // half, Recalculate ten times), ?radio=attribute|property|redraw, ?ssn=0 (skip the owner/SSN sub-form),
-// ?plans=no11 (no 11 Payments among the plans).
+// ?plans=no11 (no 11 Payments among the plans), ?beat=<ms> (a page served from an http address only: a
+// request to /api/session/check every <ms>, as GEICO asks its server every 2.0 s; beats counts them).
 //
 // What happened is kept in window.__geicoMock for the runner (scripts/geico-mock.mjs):
-//   log          [{ type, view, step, target, text, isTrusted }]; type is view | click | change | input
-//                | disabled (a press on a disabled button) | recalculate | decode. Clicks name
+//   log          [{ type, view, step, target, text, isTrusted, at }] (at: performance time); type is
+//                view | click | change | input | disabled (a press on a disabled button) | recalculate
+//                | decode | print (after a
+//                press of Print Quote Proposal: `opened`, whether the proposal opened). Clicks name
 //                their target: button (text), radio (stem=value), progress, addIcon, editIcon (a row's
 //                or an add-on panel's), edit-icon (reopen a unit), link, checkbox, option, other.
 //                Changes name the control's key (below) and its value; the SSN's value is never logged.
@@ -90,7 +95,7 @@
 //   business     Business & Owner Info as left (null before);
 //   editing      { list, index } while a saved unit's form is reopened, else null;
 //   stopActions  [{ type, view, step, target, text, isTrusted }] on stop steps (must stay empty);
-//   recalcs, premium   Recalculates done and the rated premium shown ('' while stale);
+//   recalcs, premium   Recalculates done and the rated premium shown ('' while stale); beats (?beat);
 //   decodes, cities    VIN -> { year, make, model } and ZIP -> city tables (change them before use);
 //   options      { radio, delay, ssn };
 //   values()     the current form's answers; go(view, { keep }) draws a view; redraw() redraws the
@@ -109,7 +114,7 @@
   const STOP_VIEWS = ['final-quote-details', 'mvr-and-clue', 'payment-information'];
   const state = (window.__geicoMock = {
     log: [], view: null, step: null, renders: 0, saved: [], units: { vehicles: [], trailers: [], drivers: [] }, business: null, editing: null,
-    stopActions: [], recalcs: 0, premium: '', recalcResets: null,
+    stopActions: [], recalcs: 0, premium: '', recalcResets: null, beats: 0,
     decodes: { '1FTBR3X80MKA12345': { year: '2019', make: 'RAM', model: '1500' }, '1FTBR3X87MKA12399': { year: '2021', make: 'RAM', model: '2500' },
       '54DC4W1B5KS800000': { year: '2019', make: 'RAM', model: 'PROMASTER' } },
     cities: { 68102: 'OMAHA' },
@@ -126,7 +131,7 @@
   const stemOf = (el) => String(el?.getAttribute?.('name') || el?.id || '').match(/^Id_([A-Za-z][A-Za-z0-9]*)_\d+/)?.[1] ?? null;
   const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
   const record = (entry) => {
-    const e = { view: state.view, step: state.step, ...entry };
+    const e = { view: state.view, step: state.step, at: Math.round(performance.now()), ...entry };
     state.log.push(e);
     if (STOP_VIEWS.includes(state.view) && e.type !== 'view') state.stopActions.push(e);
     return e;
@@ -584,7 +589,15 @@
     // time only while an event of a discrete type is still being dispatched then: a mouse click, or a
     // click made inside such an event the browser dispatches; never a script's click (W43-44).
     Promise.resolve().then(() => { logged.ownEvent = window.event?.type ?? null; logged.ownEntry = DISCRETE.has(logged.ownEvent); });
-    if (/^print quote proposal$/i.test(text) || host.hasAttribute('href')) { e.preventDefault(); return; }
+    // Print Quote Proposal opens the proposal (a new tab live) after a mouse click or a script's click
+    // (the kit's: all 11 runs, 2026-10-21 and 22), never after a press from the page's own world inside
+    // the browser's event (none of 4 runs, 2026-10-23). Why is not known; the mock opens it as seen.
+    if (/^print quote proposal$/i.test(text)) {
+      Promise.resolve().then(() => record({ type: 'print', target: 'button', text, isTrusted: e.isTrusted, opened: e.isTrusted || !logged.ownEntry }));
+      e.preventDefault();
+      return;
+    }
+    if (host.hasAttribute('href')) { e.preventDefault(); return; }
     const v = state.view;
     // The USDOT screen: Skip goes on as Business & Owner Info's Next does; Add USDOT Number is only recorded.
     if (v === 'usdot-ask') { if (/^skip$/i.test(text)) go(state.options.ssn ? 'owner-verification' : 'vehicle-form', { button: host }); return; }
@@ -909,6 +922,20 @@
     zip.setAttribute('aria-label', 'Zip Code');
     box.append(zip);
     document.body.prepend(box);
+  }
+
+  // ?beat=<ms>, on a page served from an http address: GEICO's request on a steady beat, as it asks its
+  // server every 2.0 s the whole time a quote is open (2026-10-23, every Recalculate trace): a fetch
+  // of /api/session/check every <ms> from the page's load, on a fixed schedule (beats counts them).
+  const beat = Number(params.get('beat') ?? 0);
+  if (beat > 0 && /^https?:$/.test(location.protocol)) {
+    const first = performance.now();
+    const tick = (n) => setTimeout(() => {
+      state.beats++;
+      fetch('/api/session/check').catch(() => {});
+      tick(n + 1);
+    }, Math.max(0, first + n * beat - performance.now()));
+    tick(1);
   }
 
   const start = params.get('view');

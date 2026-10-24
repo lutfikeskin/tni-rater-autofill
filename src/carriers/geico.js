@@ -823,7 +823,8 @@ export const geico = {
     // entries, the agent's 172) and was rated 13 to 19 s later with GEICO's liability, UM, road
     // service and cargo, the agent's in about 2 s with every answer kept (2026-10-22, W43-44). It is
     // pressed from the page's own world now (`pressInPage`). It waits for a page quiet for 2 s
-    // (`quietMs`), with none of GEICO's own requests finishing for 2 s either. It waits for the
+    // (`quietMs`), with none of GEICO's own requests finishing for 2 s either (its request every 2.0 s
+    // left out: pagekit isBeat, 2026-10-23). It waits for the
     // premium up to a minute (GEICO's loader shows only 3 s in), and after GEICO's redraw every
     // answer is checked (`keepAnswers`): one of the fill's that GEICO changed is put back once, the
     // agent's is left, and each is a red item; it is never clicked again (`once`), so the agent
@@ -831,10 +832,14 @@ export const geico = {
     // for TNI's 11 Payments (picked by its rule, or the plan with the most payments offered: W43-32),
     // and Print Quote Proposal once a plan is picked. Next stays the agent's: it leads to MVR & CLUE,
     // whose reports cost the agency.
+    // Print Quote Proposal is clicked by the kit (`kitClick`), not pressed from the page's world: it
+    // opens the proposal in a new tab, which a kit's click opened in 1 to 4 s on all 11 runs before
+    // the page's-world press (2026-10-21 and 22), and that press on none of 4 (2026-10-23: one left 12
+    // minutes, the agent's click opened it at once). Why is not known.
     { id: 'recalculate', steps: [COVERAGES], text: '^recalculate$', waitRequired: true, needsRecalculation: true, verify: 'premium', whenClear: true,
       quietMs: 2000, once: true, keepAnswers: true },
     { id: 'morePayPlans', steps: [COVERAGES], text: '^view more payment plans$', needsPremium: true, whenClear: true },
-    { id: 'printProposal', steps: [COVERAGES], text: '^print quote proposal$', needsPremium: true, whenClear: true, after: ['geico.qGivePayPlanV2'] },
+    { id: 'printProposal', steps: [COVERAGES], text: '^print quote proposal$', needsPremium: true, whenClear: true, after: ['geico.qGivePayPlanV2'], kitClick: true },
   ],
   // Continue, with "Click Continue when the page is done" on, once nothing is left for the agent
   // (TNI, FL live run 3, 2026-10-21: "with Click Continue when its done on, GEICO's should click
