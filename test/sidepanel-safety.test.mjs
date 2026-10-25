@@ -7630,3 +7630,34 @@ test('a PDF drag ends when the button is no longer held, or the capture is lost'
   listeners.wheel({ ctrlKey: false, deltaY: -100, preventDefault: () => prevented.push(1) });
   assert.deepEqual([zooms, prevented.length], [[1.5], 2]);
 });
+
+// Live recording, 2026-10-24 (Progressive, Let me look before Continue on, one vehicle): on the vehicle
+// list with the vehicle on it, the top frame held Continue for the agent's check, and a hidden frame
+// that found none of the page's questions said the page wasn't drawn yet. The panel said "No questions
+// found on this page", offered only Fill this page again, and filled the page once more; the agent had
+// to turn the switch off. A frame with no question doesn't speak for a page the top frame has judged:
+// Continue held, clicked or due.
+test('a frame with no question doesn\'t override the top frame\'s Continue: held stays held, and no fill again', () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'VehicleSummary'), carrier: { id: 'progressive' } };
+  h.state.intake = { record: {} };
+  h.state.autoPages.add('VehicleSummary');
+  const opts = { page: 'VehicleSummary', auto: 'page', intake: h.state.intake, revision: undefined };
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], held: 'check' }, { fields: 0, filled: [], notDrawn: true }], opts), false, 'held: not filled again');
+  assert.equal(h.scheduled.length, 0);
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], notDrawn: true }], opts), true, 'the top frame itself still drawing: filled again, as before');
+
+  const state = { tab: { id: 7, url: 'VehicleSummary', carrier: { name: 'Progressive', advance: { text: 'Continue' } } } };
+  const { context } = reportHarness(state);
+  const empty = { fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [] };
+  context.renderReport([{ ...empty, held: 'check' }, { ...empty, notDrawn: true }]);
+  assert.deepEqual([state.reportFor.empty, state.reportFor.held, state.reportFor.notice], [true, 'check', 'Nothing to fill on this page.']);
+  const dock = dockHarness({ carrier: state.tab.carrier, switches: { 'check-continue': { checked: true } }, url: 'VehicleSummary', extra: { showReport: () => state.reportFor, quoteFinished: () => false } });
+  dock.state.autoPages.add('VehicleSummary');
+  const d = dock.dock();
+  assert.deepEqual([d.phase, d.button, d.label], ['check', 'look-right', 'Looks right, continue']);
+  context.renderReport([{ ...empty, advanced: 'Continue' }, { ...empty, notDrawn: true }]);
+  assert.deepEqual([state.reportFor.empty, state.reportFor.advanced], [true, 'Continue']);
+  context.renderReport([{ ...empty, advanceDue: 'none' }, { ...empty, notDrawn: true }], { retrying: false });
+  assert.equal(state.reportFor.empty, true, 'Continue due: the page is drawn, with no Continue to click yet');
+});

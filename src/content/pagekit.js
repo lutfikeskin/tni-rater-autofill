@@ -18,7 +18,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 86 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 87 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -3313,8 +3313,12 @@
     report.stepKey = stepChanged() ? startStep : stepKey();
     // A page the plan expects questions on that shows none yet, with nothing done on it, is still
     // drawing (Business Owner Info right after the state is picked, OK 2026-10-07): Continue there
-    // only gets "fields are empty" errors. (A tile page that was clicked continues.)
-    const notDrawn = !report.fields && !report.actions.length && plan.some((s) => s.pages?.includes(startPage));
+    // only gets "fields are empty" errors. (A tile page that was clicked continues.) Only a frame of
+    // the page in front says so: Progressive keeps a hidden frame loaded with Business Owner Info's
+    // address for the whole quote, and on every later page it found none of "its" questions and said
+    // the page wasn't drawn, so the panel took the top frame's held Continue for "No questions found"
+    // and filled the page once more (live recording, 2026-10-24).
+    const notDrawn = !report.fields && !report.actions.length && (topPage == null || topPage === startPage) && plan.some((s) => s.pages?.includes(startPage));
     // The panel tries such a page again in a moment, and says nothing of it yet (W43-42).
     if (notDrawn && !report.halted) report.notDrawn = true;
     if (advance && window === window.top && !report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
@@ -3847,5 +3851,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 86, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 87, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

@@ -2630,9 +2630,11 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   // some, W43-42: Progressive's Business Owner Info, 0 fields, "No questions found", then a
   // 29-second fill), or done with no Continue to click yet (advanceDue, W43-40: a list page still
   // loading as the fill ended), is filled once more in a moment, once per page and step. Its
-  // report says nothing until then (`retrying`, renderReport).
+  // report says nothing until then (`retrying`, renderReport). Not a page the top frame has judged:
+  // Continue held for the agent's check, with a frame that found none of the page's questions
+  // (Progressive's hidden frame; live recording, 2026-10-24: a fill again after every held fill).
   const where = `${page}|${knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey) ?? ''}`;
-  const due = !frames.some((f) => f.halted || f.advanced) && frames.some((f) => f.notDrawn || f.advanceDue);
+  const due = !frames.some((f) => f.halted || f.advanced || f.held) && frames.some((f) => f.notDrawn || f.advanceDue);
   let retrying = false;
   if (due && maps.triedAgain !== where && $('auto-followups').checked && !maps.autoPaused) {
     maps.triedAgain = where;
@@ -4004,11 +4006,16 @@ function renderReport(frames, ctx = {}) {
     if (!halted && ctx.retrying) { renderSteps(); return; }
     keep();
     // A page with no question for the fill (a unit list, every unit on it) is done: its dock offers
-    // Continue (`empty`, W43-40). One that should have some (notDrawn) still has none.
+    // Continue (`empty`, W43-40). One that should have some (notDrawn) still has none, unless a frame
+    // reached Continue (held, clicked, or due): a frame that found none of the page's questions
+    // (Progressive's hidden frame) doesn't speak for a page the top frame has judged (live recording,
+    // 2026-10-24: the vehicle list, every vehicle on it, read "No questions found" with only Fill this
+    // page again, where Looks right was due).
+    const judged = frames.some((f) => f.held || f.advanced || f.advanceDue);
     putReport({ key, tabId, page, at: ctx.restoredAt ?? Date.now(), ...(ctx.restoredAt ? { restored: true } : {}), ...(halted
       // A panel opened again doesn't keep the pause: a report made again doesn't say it.
       ? { error: `${halted.stepUnread || ctx.restoredAt ? '' : 'Automatic filling and helpers paused. '}${halted.reason ?? 'Review this page before retrying.'}` }
-      : frames.some((f) => f.notDrawn) ? { notice: 'No questions found on this page.' }
+      : frames.some((f) => f.notDrawn) && !judged ? { notice: 'No questions found on this page.' }
         : { notice: 'Nothing to fill on this page.', empty: true, advanced: frames.find((f) => f.advanced)?.advanced ?? null,
           held: frames.some((f) => f.advanced) ? null : frames.find((f) => f.held)?.held ?? null }) }, []);
     renderSteps();

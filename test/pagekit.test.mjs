@@ -7217,3 +7217,23 @@ test('progress says the fill is reading the page as it begins', async () => {
   assert.equal(report.filled.length, 1);
   assert.equal(h.kit.progress(), null);
 });
+
+// Live recording, 2026-10-24 (Progressive, Let me look before Continue on): Progressive keeps a hidden
+// frame loaded with Business Owner Info's address for the whole quote. On every later page the kit in
+// that frame found none of the page's questions and said the page wasn't drawn yet (notDrawn), and the
+// panel took the top frame's held Continue for "No questions found on this page" and filled the page
+// once more. A frame loaded with another page's address has none of this page's questions to wait for.
+test('a frame loaded with another page\'s address never says the page isn\'t drawn', async () => {
+  const plan = [{ id: 'name', selector: '#name', path: 'applicant.name', kind: 'text', value: 'X', pages: ['BusinessOwnerInfo'] }];
+  const frame = (topPage) => {
+    const h = harness({ search: '?pageName=BusinessOwnerInfo' });
+    h.context.top = { location: { origin: 'https://synthetic.example', pathname: '/rater', search: `?pageName=${topPage}`, hash: '' } };
+    return h;
+  };
+  const stale = await frame('VehicleSummary').kit.fill(plan, { maxRounds: 2 });
+  assert.equal(stale.notDrawn, undefined, 'the hidden frame keeps another page\'s address: not this page\'s questions');
+  const same = await frame('BusinessOwnerInfo').kit.fill(plan, { maxRounds: 2 });
+  assert.equal(same.notDrawn, true, 'a frame of the page itself, with none of its questions drawn yet');
+  const top = await harness({ search: '?pageName=BusinessOwnerInfo' }).kit.fill(plan, { maxRounds: 2 });
+  assert.equal(top.notDrawn, true, 'the top frame, as before');
+});
