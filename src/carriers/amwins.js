@@ -85,7 +85,7 @@ const ownerFull = (r) => {
 };
 
 // Years in business: the intake's years in business, else its years under own authority; neither
-// is TNI's standard 0, a new venture established this year (2026-10-09). Check intake warns
+// is TNI's standard 0, a new venture established this year (2026-10-09). The Intake step warns
 // (years-in-business.default), and Luna points out a claims-box line saying how long it has run.
 const businessYears = (r) => r.applicant.yearsInBusiness ?? r.applicant.yearsExperience ?? null;
 const yearsInBusiness = (r) => {
@@ -119,7 +119,7 @@ const moneyK = (n) => (n >= 1e6 ? `$${n / 1e6}M` : n >= 1e3 ? `$${n / 1e3}K` : `
 //   POP Commercial - Progressive - $1M CSL - Exp Date 12/01/2026
 // AmWINS has no trailer section, so each intake trailer is a line here, in TNI's format
 // (2026-10-08): year, make and type, its VIN and its value; a part the intake lacks is left out.
-// So is a year or value the intake couldn't read ("about 25k" stays text, flagged on Check intake):
+// So is a year or value the intake couldn't read ("about 25k" stays text, flagged on the Intake step):
 // never typed into the answer as it is.
 const number = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 const trailerLine = (t) => {

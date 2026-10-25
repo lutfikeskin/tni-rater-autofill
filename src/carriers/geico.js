@@ -451,7 +451,7 @@ const PAY_PLAN = '11 Payments';
 // OTR, 48 states) is 501 miles, "More than 500". The FL list starts at 101-200: a band the page
 // doesn't offer fails to the agent, never the lowest one offered. An open radius ("500+", "over
 // 300"; the reader keeps only its number) is a lower bound: from 500 up it is "More than 500", any
-// other is the agent's. Miles the agent entered on Check intake count as written.
+// other is the agent's. Miles the agent entered on the Intake step count as written.
 const miles = (r) => r.operations.radiusMiles ?? (isLongHaul(r.operations.radius) ? 501 : null);
 const OPEN_RADIUS = /\d\s*\+|\b(?:over|more than|greater than|at least|beyond|above)\s+\d/i;
 const openRadius = (r) => r.operations.radiusMiles != null && OPEN_RADIUS.test(String(r.operations.radius ?? ''))
@@ -599,7 +599,7 @@ const otherLiabilityNote = (r) => (r.coverage?.hasGl === true && !currentGl(r) ?
 // live). Either way GEICO's liability coverage and its limit are the agent's.
 const ntlUndecided = (r) => r.coverage?.ntl == null && (!!ntlMention(intakeNotes(r)) || r.claims?.aiNtl === true);
 const ntlNote = (r) => (r.coverage?.ntl === true ? 'Non-trucking liability quote: pick GEICO\'s liability coverage and limit yourself.'
-  : ntlUndecided(r) ? 'The claims box or notes mention non-trucking liability: set it to Yes or No on Check intake, then fill this page again.' : null);
+  : ntlUndecided(r) ? 'The claims box or notes mention non-trucking liability: set it to Yes or No on the Intake step, then fill this page again.' : null);
 // "Liability Coverage": Bodily Injury and Property Damage Liability for an intake asking for auto
 // liability (Yes, or a limit with the box blank). No, NTL, or nothing is the agent's; "I don't need
 // Liability Coverage" is never picked.
@@ -883,6 +883,9 @@ export const geico = {
     'MVR & CLUE': `MVR & CLUE orders driving and claims reports, which cost the agency: that is yours. Nothing is filled or clicked on this step. ${STOP_AT_QUOTE}`,
     'Payment Information': 'Payment Information is yours: nothing is filled or clicked on this step.',
   },
+  // The quote ends at Quote & Coverages with the proposal printed (TNI, 2026-10-21): the panel says
+  // "Quote done" once Print Quote Proposal was clicked there and nothing is left for the agent.
+  finishedBy: 'printProposal',
   // What the panel says on a step the fill still answers.
   stepNotes: {
     [COVERAGES]: 'Answer what is left for you here (or mark it done) and click Fill this page, which also puts back any of its answers GEICO changed back. With nothing left, the fill clicks Recalculate once and checks every answer afterwards; if GEICO changed one, it is marked red and Recalculate is yours from then on. With the premium current, the fill picks 11 Payments (or the plan with the most payments GEICO offers) under View More Payment Plans and clicks Print Quote Proposal. Stop here: Next leads to MVR & CLUE, whose reports cost the agency; run them only once the client is interested.',

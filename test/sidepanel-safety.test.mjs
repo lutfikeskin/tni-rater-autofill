@@ -104,15 +104,16 @@ function extractFunction(name) {
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards and row heads (issueCard, setRowHead) come along as they are.
-        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits']) {
+        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
         // the harness gives one.
         if (name !== 'stateIssue' && /\bstateIssue\(/.test(source) && !/function stateIssue\(/.test(source)) source += '\nvar stateIssue = globalThis.stateIssue ?? (() => null);';
         // Reports kept for a reopened panel (keepReport, forgetKeptReports) have their own tests:
-        // elsewhere nothing is kept, unless the harness gives a store.
-        for (const kept of ['keepReport', 'forgetKeptReports']) {
+        // elsewhere nothing is kept, unless the harness gives a store. So has the agent's change
+        // after the quote's finishing action (noteChangedAfterDone): elsewhere nothing is marked.
+        for (const kept of ['keepReport', 'forgetKeptReports', 'noteChangedAfterDone']) {
           if (name !== kept && new RegExp(`\\b${kept}\\(`).test(source) && !new RegExp(`function ${kept}\\(`).test(source)) source += `\nvar ${kept} = globalThis.${kept} ?? (() => {});`;
         }
         return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
@@ -3271,7 +3272,7 @@ test('the page menu lists the other pages filled on this tab, by name, and shows
 // to read): focus goes into it, Escape or Close closes it, and focus goes back where it was.
 test('client details open in a drawer that takes focus and gives it back', () => {
   const nodes = {};
-  const context = { state: { intake: {}, detailsOpen: false, detailsReturn: null, fileMenuOpen: true }, document: { activeElement: null },
+  const context = { state: { intake: {}, detailsOpen: false, detailsReturn: null }, document: { activeElement: null },
     render() {}, showScreen() {} };
   const el = (id) => (nodes[id] ??= { id, isConnected: true, focus() { context.document.activeElement = this; }, contains: (n) => n === nodes['details-close'] });
   context.$ = el;
@@ -3280,7 +3281,6 @@ test('client details open in a drawer that takes focus and gives it back', () =>
   opener.focus();
   context.openDetails();
   assert.equal(context.state.detailsOpen, true);
-  assert.equal(context.state.fileMenuOpen, false);
   assert.equal(context.document.activeElement, el('details-close'));
   context.closeDetails();
   assert.equal(context.state.detailsOpen, false);
@@ -4740,7 +4740,7 @@ test('a fill whose page stops answering is said in the dock, and the word goes w
   const word = d.dock();
   assert.deepEqual([word.phase, word.tone, word.title, word.sub, word.button, word.label],
     ['filling', 'warn', 'The page isn’t answering', 'If it shows a message box, answer it there. The fill goes on after.', 'fill-stop', 'Stop']);
-  assert.match(extractFunction('renderLive'), /f\.unanswered \? 'Waiting for the page'/);
+  assert.match(extractFunction('renderLive'), /f\.unanswered \? \['Waiting for the page'/);
 });
 
 // Bitwarden comparison (2026-10-22): a fill went on with the page it was asked for while the panel
@@ -4859,10 +4859,11 @@ test('Continue\'s word asks for Looks right while Continue waits for the agent\'
   // A page gone back to, or a report made again in a panel opened again, can be filled again (W43-39).
   assert.deepEqual([advanced.phase, advanced.title, advanced.button, advanced.alt, advanced.altLabel], ['done', 'Continue clicked', null, 'fill-again', 'Fill this page again']);
   assert.match(advanced.sub, /^Clicked “Continue” for you\. Nothing is submitted or bound\.$/);
-  // Switch off: Fill again and continue, as before.
+  // Switch off, what was left settled by the agent (on the page or here): Continue, the same fill
+  // that replaces nothing as below (it read "Fill again and continue": the maintainer, 2026-10-23).
   ui['check-continue'].checked = false;
   const off = said({ settled: true });
-  assert.deepEqual([off.phase, off.title, off.button, off.label], ['ready-continue', 'Ready for Continue', 'fill', 'Fill again and continue']);
+  assert.deepEqual([off.phase, off.title, off.button, off.label, off.go], ['ready-continue', 'Ready for Continue', 'fill', 'Continue', 'continue']);
   // Nothing left and the page not moved on: the main button continues, replacing nothing (W43-40).
   const nothing = said({});
   assert.deepEqual([nothing.phase, nothing.button, nothing.label, nothing.go, nothing.alt, nothing.altLabel], ['ready-continue', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
@@ -4875,9 +4876,16 @@ test('Continue\'s word offers Fill this page again wherever it may tell the agen
   const needs = said({ left: 1, filled: 3 });
   assert.deepEqual([needs.phase, needs.title, needs.button, needs.alt, needs.altLabel], ['needs', 'Answer the last question', 'dock-next', 'fill-again', 'Fill this page again']);
   assert.equal(needs.sub, 'Then Fill this page again to continue. Never Bind or Submit.');
+  // Only buttons left: the main button is the fill that clicks them in turn (nothing clicks them by
+  // itself; it read "The fill clicks the rest in turn" with no button: the maintainer, 2026-10-23).
   const waiting = said({ waiting: 2, filled: 3 });
-  assert.deepEqual([waiting.phase, waiting.button, waiting.alt, waiting.altLabel], ['waiting', null, 'fill-again', 'Fill this page again']);
-  assert.equal(waiting.sub, 'Then Fill this page again to continue. Never Bind or Submit.');
+  assert.deepEqual([waiting.phase, waiting.title, waiting.button, waiting.label, waiting.go, waiting.alt, waiting.altLabel], ['waiting', 'Buttons left to click', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
+  assert.equal(waiting.sub, 'Continue clicks the ones it can in turn, and the page’s Continue once none is left. Never Bind or Submit.');
+  // Where the panel may not click Continue, the button only clicks the buttons.
+  ui['auto-advance'].checked = false;
+  const own = said({ waiting: 2, filled: 3 });
+  assert.deepEqual([own.button, own.label, own.sub], ['fill', 'Click them for me', 'Then click Continue yourself, and Fill this page on the next one.']);
+  ui['auto-advance'].checked = true;
   // With follow-ups on, the panel continues by itself; the alternative stays.
   ui['auto-followups'].checked = true;
   assert.equal(said({ left: 1 }).sub, 'Then the panel continues to the next page. Never Bind or Submit.');
@@ -4918,7 +4926,7 @@ test('Continue\'s word leaves Continue to the agent where the panel may not clic
 // the agent only while that setting is on and the carrier has an advance pattern.
 function dockHarness({ carrier, switches = {}, background = false, issue = null, url = 'Quote', step = null, extra = {} } = {}) {
   const ui = { 'auto-advance': { checked: true }, 'check-continue': { checked: false }, 'auto-followups': { checked: true }, report: { querySelector: () => null }, ...switches };
-  const state = { intake: { warnings: [], done: [] }, view: 'page', tab: { id: 7, url, carrier, background }, tabSteps: new Map(step ? [[7, step]] : []), autoPages: new Set(), filling: false, fillingFor: null };
+  const state = { intake: { warnings: [], done: [] }, view: 'page', tab: { id: 7, url, carrier, background }, tabSteps: new Map(step ? [[7, step]] : []), autoPages: new Set(), aiDocks: new Map(), filling: false, fillingFor: null };
   const context = { state, $: (id) => ui[id], inExtension: true, pageOf: (u) => u, onQuotePage: () => true, showReport: () => null, quoteProgress: () => null,
     stateIssue: () => issue, pendingAi: () => [], ...extra };
   vm.runInNewContext(['dockFor', 'continueSaid'].map(extractFunction).join('\n'), context);
@@ -5009,7 +5017,7 @@ test('editing a source field in the panel recomputes what derives from it and re
     inputs.push(el);
     return el;
   };
-  const milesRow = { classList: { toggle: (cls, on) => calls.push(['toggle', cls, on]) } };
+  const milesRow = { classList: { remove: (cls) => calls.push(['remove', cls]) } };
   const milesInput = { value: '100', closest: () => milesRow };
   const yearsInput = { value: '', closest: () => milesRow };
   const sandbox = {
@@ -5031,7 +5039,7 @@ test('editing a source field in the panel recomputes what derives from it and re
   assert.equal(record.operations.radius, 'Unlimited');
   assert.equal(record.operations.radiusMiles, null, 'the miles follow the edit');
   assert.equal(milesInput.value, '', 'the miles row on screen shows it');
-  assert.deepEqual(calls, [['toggle', 'empty', true], ['intakeEdited', null], ['log', 'intake_edit', 'operations.radius'], ['save']], 'recomputed before the revision moves on; one edit logged');
+  assert.deepEqual(calls, [['intakeEdited', null], ['log', 'intake_edit', 'operations.radius'], ['save']], 'recomputed before the revision moves on; one edit logged');
   // The agent's own miles are theirs: nothing else is recomputed from them.
   calls.length = 0;
   sandbox.fieldRow('operations.radiusMiles', 'Radius (miles)', 'int', false);
@@ -6858,7 +6866,7 @@ test('the panel offers to put in the agent\'s pick only for a choice it may answ
 // The agent's pick from a row goes in through the same guarded path as an AI answer: only while
 // the page shows the question and the choice as the row read them, `by: 'agent'`, never on a stop
 // step; the field is the agent's then (agentKeys) and the change is logged as theirs.
-function agentAnswerHarness({ carrier = { id: 'progressive', stopSteps: { 'Payment Information': 'Yours.' } } } = {}) {
+function agentAnswerHarness({ carrier = { id: 'progressive', stopSteps: { 'Payment Information': 'Yours.' } }, extra = {} } = {}) {
   const field = { key: 'k1', label: 'Hauls hazardous materials', kind: 'radio', options: ['Yes', 'No'], current: 'Yes', section: 'Operations' };
   const frame = (fields, frameId = 0) => ({ frameId, documentId: `doc-${frameId}`, result: JSON.stringify(['Operations', fields]) });
   const t = {
@@ -6884,6 +6892,7 @@ function agentAnswerHarness({ carrier = { id: 'progressive', stopSteps: { 'Payme
       t.kit.push(['answer', JSON.parse(JSON.stringify(args)), frameIds]);
       return t.answer(args[0]);
     },
+    ...extra,
   };
   vm.runInNewContext(['agentAnswer', 'agentPickable', 'choiceSaid', 'aiSnapshotFieldMatches', 'aiSnapshotFields'].map(extractFunction).join('\n'), context);
   t.state = state;
@@ -7166,7 +7175,7 @@ test('the business profile is logged on load, after a correction settles, and on
   assert.equal(sandbox.logProfile(), false, 'no quote session, nothing logged');
 
   // One still waiting stays with its own quote: logged before the intake is replaced or cleared.
-  assert.match(extractFunction('loadFile'), /if \(profileTimer\) logProfile\(\);\n\s+if \(state\.intake\) usage\.log\(\{ type: 'intake_closed', reason: 'replaced' \}\);/);
+  assert.match(extractFunction('loadFile'), /if \(profileTimer\) logProfile\(\);\n\s+if \(state\.intake\) usage\.log\(\{ type: 'intake_closed', reason: reset \? 'reset' : 'replaced' \}\);/);
   assert.match(extractFunction('loadFile'), /await logSettings\('intake'\);\n\s+logProfile\(\);/);
   assert.match(extractFunction('clearClient'), /if \(profileTimer\) logProfile\(\);\n\s+usage\.log\(\{ type: 'intake_closed', reason: 'cleared' \}\);/);
   assert.match(extractFunction('agentEdit'), /usage\.log\(\{ type: 'intake_edit'[^\n]*\n\s+profileLater\(\);/);
@@ -7367,4 +7376,487 @@ test('a helper the fill checks after its click is not done by the agent clicking
   assert.deepEqual([...state.doneActions], []);
   context.agentHelperDone(progressive, 'CoveragesRates', undefined, 'View bill plan options');
   assert.deepEqual([...state.doneActions], ['billPlan']);
+});
+
+// The maintainer, 2026-10-23: on GEICO's last steps, in a short popped-out window, the header and the
+// client strip went out of view, and the panel began at the answers. A hidden overflow is still a
+// scroll container, and a focus() or scrollIntoView() scrolled the body once the header, the client
+// strip and the dock outgrew the window. The body is clipped, so nothing can scroll it; the dock
+// gives way (and scrolls) instead, and the middle keeps a minimum.
+test('nothing scrolls the panel\'s body: it is clipped, and the dock shrinks before the header goes', () => {
+  const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
+  const start = css.indexOf('\nbody {');
+  const body = css.slice(start, css.indexOf('\n}', start));
+  assert.match(body, /overflow: clip;/);
+  assert.doesNotMatch(body, /overflow: hidden/);
+  assert.match(css, /\.foot \{ flex: 0 1 auto; min-height: 0; overflow-y: auto;/);
+  assert.match(css, /\.view \{ flex: 1; min-height: 96px;/);
+  // The PDF sheet is a column: its hint row comes and goes with a marked item, and with fixed grid
+  // rows the whole-PDF view (no hint) had the footer over the page controls (zoom unreachable).
+  assert.match(css, /\.sheet-panel \{[^}]*display: flex; flex-direction: column;/);
+  assert.doesNotMatch(css, /grid-template-rows: auto auto minmax\(0, 1fr\) auto auto/);
+  assert.match(css, /\.pdf-scroll \{ flex: 1 1 auto; min-height: 0; overflow: auto;/);
+});
+
+// The intake PDF opened at 200%, and at a side panel's width the agent scrolled sideways to find
+// anything (the maintainer, 2026-10-23). It opens at the panel's width; a marked item still at 200%;
+// the page drags with the mouse and zooms with Ctrl + wheel.
+test('the PDF opens at the panel\'s width, a marked item at 200%, and drags or zooms with the wheel', () => {
+  assert.match(SIDEPANEL, /const PDF_OPEN_ZOOM = 1;/);
+  assert.match(SIDEPANEL, /const PDF_FOCUS_ZOOM = 2;/);
+  const pan = extractFunction('pdfPan');
+  assert.match(pan, /addEventListener\('pointerdown'/);
+  assert.match(pan, /scroll\.scrollLeft = drag\.left - \(e\.clientX - drag\.x\);/);
+  assert.match(pan, /addEventListener\('wheel', \(e\) => \{\s+if \(!\(e\.ctrlKey \|\| e\.metaKey\) \|\| !state\.pdf\) return;\s+e\.preventDefault\(\);/);
+  assert.match(extractFunction('wire'), /pdfPan\(\$\('pdf-scroll'\)\);/);
+});
+
+// The client strip (the maintainer, 2026-10-23): Change file and Clear were behind a ⋯ menu (three
+// clicks to start the next client); the name card opens the client details, and the file tools are
+// buttons in view, with New quote with this intake beside them. The steps name the intake, then the
+// page in front filled and reviewed: "Confirm" read as the quote's end on every page.
+test('the client strip: the name opens client details, and Change file, New quote and Clear are buttons in view, no menu', () => {
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.match(html, /<button type="button" id="client-card" class="client-title" aria-controls="details-view"/);
+  assert.match(html, /<span id="client-name" class="client-name"><\/span>\s+<span id="client-meta" class="client-meta"><\/span>\s+<\/button>/, 'phrasing content in the button, not a heading');
+  const toolsAt = html.indexOf('<div class="client-tools">');
+  const tools = html.slice(toolsAt, html.indexOf('</div>', toolsAt));
+  for (const id of ['open-pdf', 'replace', 'new-quote', 'clear-client']) assert.match(tools, new RegExp(`id="${id}"`), id);
+  assert.doesNotMatch(html, /file-menu-btn|details-btn|⋯/);
+  assert.match(extractFunction('wire'), /\$\('client-card'\)\.addEventListener\('click', \(\) => \(state\.detailsOpen \? closeDetails\(\) : openDetails\(\)\)\);/);
+  assert.match(extractFunction('showScreen'), /\['client-card', 'details-row'\]/);
+  assert.match(extractFunction('askFile'), /state\.fileConfirmFrom = from;/, 'Cancel gives focus back to the button that asked');
+  assert.match(extractFunction('renderSteps'), /\$\('new-quote'\)\.disabled = !!state\.filling;/);
+  assert.match(html, /<span class="step-label">Intake<\/span>[\s\S]*<span class="step-label">Fill page<\/span>[\s\S]*<span class="step-label">Review page<\/span>/);
+});
+
+// New quote with this intake: the agent quotes the same client on the next carrier, or again, and
+// this quote's fills, marks and clicks must not carry over (a report "from the fill at 10:12" on a
+// page reached again in the same tab, a vehicle taken as already added), while the intake and their
+// corrections stay. The kept PDF is loaded again as the same file (loadFile keeps the work on the
+// same intake), after the page's marks and this intake's per-tab records go.
+test('New quote with this intake loads the kept PDF again as the same file, after the page marks and this intake\'s tab records go', async () => {
+  const calls = [];
+  const state = { intake: { fileName: 'client.pdf', ntlAdded: true }, filling: false, tab: { id: 4, carrier: { id: 'geico' } }, tabSessions: new Map() };
+  const context = { state, inExtension: true, File: class { constructor(parts, name, opts) { Object.assign(this, { parts, name, type: opts?.type }); } },
+    intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
+    runKit: async (tabId) => { calls.push(['clear', tabId]); return []; }, clearAgentKeys: async (scope) => { calls.push(['keys', scope]); },
+    loadFile: async (file, opts) => { calls.push(['load', file.name, file.type, opts]); }, clientNote: (t) => calls.push(['note', t]) };
+  vm.runInNewContext(extractFunction('newQuote'), context);
+  await context.newQuote();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['clear', 4], ['keys', 'abc'], ['load', 'client.pdf', 'application/pdf', { reset: true }]]);
+  assert.equal(state.intake.ntlAdded, false, 'NTL is added again on the new quote');
+  // While answers go in, or without the PDF kept: said, nothing done.
+  calls.length = 0;
+  state.filling = true;
+  await context.newQuote();
+  state.filling = false;
+  context.intakePdfBytes = async () => null;
+  await context.newQuote();
+  assert.deepEqual(calls.map((c) => c[0]), ['note', 'note']);
+  // Asked first, under the client's name; loadFile says what stays and logs the reset.
+  assert.match(extractFunction('wire'), /\$\('new-quote'\)\.addEventListener\('click', \(\) => \{\s+if \(state\.filling\) return;\s+askFile\('new-quote'/);
+  assert.match(extractFunction('wire'), /if \(what === 'new-quote'\) newQuote\(\);/);
+  assert.match(extractFunction('loadFile'), /reset \? 'New quote with the same intake' : 'Same intake'/);
+});
+
+// Client details: 96 fields on the sample intake, 44 px each, a third of them blank; the drawer was
+// too long to scroll (the maintainer, 2026-10-23). Dense rows, sections that fold, and the blank
+// fields hidden unless flagged, behind "Show N empty fields"; Show in client details brings one out.
+test('client details hide the fields the intake leaves blank unless flagged, fold by section, and a jump brings a hidden field out', () => {
+  const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
+  assert.match(css, /\.drawer\[data-empty="hidden"\] \.field\.empty:not\(\.flagged\) \{ display: none; \}/);
+  assert.match(css, /\.field \{[^}]*min-height: 30px;/);
+  const sections = extractFunction('renderSections');
+  assert.match(sections, /h\('details', \{ class: `section\$\{allEmpty \? ' all-empty' : ''\}`, open: !state\.detailsClosed\.has\(section\.id\)/);
+  assert.match(sections, /\$\('details-view'\)\.dataset\.empty = state\.showEmpty \? 'shown' : 'hidden';/);
+  assert.match(sections, /`Show \$\{hidden\} empty field\$\{hidden === 1 \? '' : 's'\}`/);
+  assert.match(extractFunction('jumpTo'), /if \(!state\.showEmpty && row\.classList\.contains\('empty'\) && !row\.classList\.contains\('flagged'\)\) \{\s+state\.showEmpty = true;\s+renderSections\(\);/);
+  assert.match(extractFunction('jumpTo'), /if \(section instanceof HTMLDetailsElement\) section\.open = true;/);
+});
+
+// The end of a GEICO quote read like every other page: "Ready", "Moving on is yours" (the maintainer,
+// 2026-10-23). Where TNI stops on a rater (the carrier's `finishedBy` action clicked on its step, nothing
+// left for the agent), the dock and the strip say the quote is done.
+test('the quote is done where TNI stops on the rater: the finishing action clicked on its step, nothing left', () => {
+  const geicoLike = { name: 'GEICO', finishedBy: 'printProposal', actions: [{ id: 'printProposal', steps: ['Quote & Coverages'] }], advance: { text: 'Next', steps: ['Vehicles'] }, layoutSteps: ['Vehicles', 'Quote & Coverages'] };
+  const done = new Set(['recalculate', 'printProposal']);
+  // extractFunction brings the panel's own tabStep along: the step comes from state.tabSteps.
+  const context = { state: { tab: { id: 7, url: 'quote' }, doneActions: done, tabSteps: new Map([[7, 'Quote & Coverages']]) }, pageOf: (u) => u };
+  vm.runInNewContext(extractFunction('quoteFinished'), context);
+  const report = { fields: 12, filled: 12, left: 0, waiting: 0 };
+  assert.equal(context.quoteFinished(geicoLike, report), true);
+  assert.equal(context.quoteFinished(geicoLike, { ...report, left: 1 }), false, 'something left for the agent');
+  assert.equal(context.quoteFinished(geicoLike, { ...report, waiting: 1 }), false, 'a button left to click');
+  assert.equal(context.quoteFinished(geicoLike, report, 'quote', 'Vehicles'), false, 'another step\'s report');
+  assert.equal(context.quoteFinished(geicoLike, report, 'quote', 'Quote & Coverages', new Set(['recalculate'])), false, 'not printed yet');
+  assert.equal(context.quoteFinished({ name: 'Progressive', actions: [] }, report), false, 'no finishing action on this rater');
+  const prog = { name: 'Progressive', finishedBy: 'print', actions: [{ id: 'print', page: 'CoveragesRates' }] };
+  assert.equal(context.quoteFinished(prog, report, 'CoveragesRates', undefined, new Set(['print'])), true);
+  assert.equal(context.quoteFinished(prog, report, 'Drivers', undefined, new Set(['print'])), false, 'another page\'s report');
+  // The dock says so, with Fill this page again beside it; the strip's Review page says Quote done.
+  const d = dockHarness({ carrier: geicoLike, step: 'Quote & Coverages', extra: { showReport: () => report, quoteFinished: context.quoteFinished } });
+  d.state.doneActions = done;
+  const word = d.dock();
+  assert.deepEqual([word.phase, word.eyebrow, word.title, word.button ?? null, word.alt], ['finished', 'Quote done', 'The quote proposal is printed', null, 'fill-again']);
+  assert.equal(word.sub, 'This is where TNI stops on GEICO. Nothing is submitted or bound.');
+  // (quoteFinished reads the done actions of the state it was extracted with: the same Set.)
+  done.delete('printProposal');
+  assert.equal(d.dock().phase, 'yours', 'not printed: moving on is the agent\'s, as before');
+  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;[\s\S]*note: !filled \? 'After the fill' : finished \? 'Quote done'/);
+  assert.equal(geico.finishedBy, 'printProposal');
+  assert.ok(geico.actions.some((a) => a.id === 'printProposal' && a.steps.includes('Quote & Coverages')));
+});
+
+// A fill waiting on GEICO's Recalculate, the premium or a quiet page read as stuck on "Working…"
+// (the maintainer, 2026-10-23). The kit says what it waits on (`phase`), the live list's last row
+// says it, and the dock names the long waits.
+test('the live list and the dock say what the kit waits on (its phase), and a phase alone redraws them', async () => {
+  const context = {};
+  vm.runInNewContext(extractFunction('phaseSaid'), context);
+  const said = (phase, n) => [...context.phaseSaid(phase, n)];
+  assert.deepEqual(said(null, 0), ['Reading the page', 'Working…']);
+  assert.deepEqual(said(null, 3), ['Next answer', 'Working…']);
+  assert.deepEqual(said({ name: 'premium' }), ['Waiting for the premium', 'The rater is rating the quote…']);
+  assert.equal(context.phaseSaid({ name: 'helper', what: 'Recalculate' })[0], 'Clicked: Recalculate');
+  assert.equal(context.phaseSaid({ name: 'waiting' })[0], 'Waiting for the page');
+  assert.equal(context.phaseSaid({ name: 'continue' })[0], 'Clicking Continue');
+  // watchFill keeps the phase with the rows, and a changed phase alone is a change.
+  let tick = null;
+  let reply = [];
+  let renders = 0;
+  const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
+  const wctx = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => { renders++; }, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+    chrome: { scripting: { executeScript: async () => reply } } };
+  vm.runInNewContext(extractFunction('watchFill'), wctx);
+  wctx.watchFill({ run: 'r1', tabId: 3, carrier: {} });
+  reply = [{ result: { frame: 'f', list: 'f:1', since: 0, rows: [], phase: { name: 'reading', what: null } } }];
+  await tick();
+  assert.deepEqual([JSON.parse(JSON.stringify(state.fillingFor.phase)), renders], [{ name: 'reading', what: null }, 1]);
+  await tick();
+  assert.equal(renders, 1, 'the same phase: nothing redrawn');
+  reply = [{ result: { frame: 'f', list: 'f:1', since: 0, rows: [], phase: { name: 'premium', what: null } } }];
+  await tick();
+  assert.deepEqual([state.fillingFor.phase.name, renders], ['premium', 2]);
+  // The dock names the long waits; the wait after each answer keeps "Just filled" (no flicker).
+  assert.match(SIDEPANEL, /const DOCK_PHASES = new Set\(\['reading', 'helper', 'premium', 'continue'\]\);/);
+  const d = dockHarness({ carrier: { name: 'GEICO', advance: { text: 'Next' } }, extra: { phaseSaid: context.phaseSaid, DOCK_PHASES: new Set(['reading', 'helper', 'premium', 'continue']) } });
+  Object.assign(d.state, { filling: true, fillingFor: { tabId: 7, filled: 3, rows: [{ label: 'Liability' }], phase: { name: 'premium' } } });
+  assert.equal(d.dock().title, 'Waiting for the premium…');
+  d.state.fillingFor.phase = { name: 'waiting' };
+  assert.equal(d.dock().title, 'Just filled: Liability');
+  // The live list follows its last row only while the agent is at its end.
+  assert.match(extractFunction('renderLive'), /const follow = !\(live\.drawn \?\? \[\]\)\.length \|\| view\.scrollHeight - view\.scrollTop - view\.clientHeight < 80;/);
+  assert.match(extractFunction('renderLive'), /if \(follow\) live\.lastElementChild\?\.scrollIntoView\?\.\(\{ block: 'nearest' \}\);/);
+});
+
+// Review of PR #170: "Quote done" stayed after the agent changed the quote on the page once the
+// proposal was printed (GEICO's Recalculate is clicked once a quote, so no fill re-rates or
+// re-prints), and a fill the agent stopped after the print read as done too. The agent's change
+// on the finishing step is marked with the done actions (`printProposal:changed`), until a fill
+// clicks the action again.
+test('an agent change on the finishing step after the print, or a stopped fill, is not "Quote done"', () => {
+  const geicoLike = { name: 'GEICO', finishedBy: 'printProposal', actions: [{ id: 'printProposal', steps: ['Quote & Coverages'] }], layoutSteps: ['Vehicles', 'Quote & Coverages'] };
+  const persisted = [];
+  const state = { tab: { id: 7, url: 'quote' }, doneActions: new Set(['printProposal']), tabSteps: new Map([[7, 'Quote & Coverages']]) };
+  const context = { state, pageOf: (u) => u, persistDoneActions: (tabId) => persisted.push(tabId) };
+  vm.runInNewContext(['quoteFinished', 'noteChangedAfterDone'].map(extractFunction).join('\n'), context);
+  const report = { fields: 12, filled: 12, left: 0, waiting: 0 };
+  assert.equal(context.quoteFinished(geicoLike, report), true);
+  assert.equal(context.quoteFinished(geicoLike, { ...report, stopped: true }), false, 'a fill the agent stopped');
+  // A change on another step, or on a rater without a finishing action, marks nothing.
+  assert.equal(context.noteChangedAfterDone(geicoLike, 'quote', 'Vehicles', 7), false);
+  assert.equal(context.noteChangedAfterDone({ name: 'Progressive', actions: [] }, 'quote', 'Quote & Coverages', 7), false);
+  assert.deepEqual([...state.doneActions], ['printProposal']);
+  assert.equal(persisted.length, 0);
+  // The agent changed a limit on Quote & Coverages after the print: marked, kept, not done.
+  assert.equal(context.noteChangedAfterDone(geicoLike, 'quote', 'Quote & Coverages', 7), true);
+  assert.deepEqual([...state.doneActions], ['printProposal', 'printProposal:changed']);
+  assert.deepEqual(persisted, [7]);
+  assert.equal(context.quoteFinished(geicoLike, report), false, 'the printed proposal is no longer the quote on the page');
+  assert.equal(context.noteChangedAfterDone(geicoLike, 'quote', 'Quote & Coverages', 7), false, 'marked once');
+  // Before the print, a change marks nothing.
+  state.doneActions = new Set();
+  assert.equal(context.noteChangedAfterDone(geicoLike, 'quote', 'Quote & Coverages', 7), false);
+  // Wired: the recorder's field_changes by the agent on the tab in front; a fill that clicks the
+  // action again lifts the mark; the strip asks about pending AI picks as the dock does.
+  assert.match(SIDEPANEL, /const byAgent = msg\.changes\.filter\(\(c\) => c\.agent\);\s+if \(byAgent\.length\) \{\s+const page = samePage\(msg\.page\);\s+if \(noteChangedAfterDone\(state\.tab\.carrier, page, step, sender\.tab\.id\)\) renderSteps\(\);/);
+  assert.match(SIDEPANEL, /for \(const a of frames\.flatMap\(\(f\) => f\.actions \?\? \[\]\)\) \{ maps\.doneActions\.add\(a\.id\); maps\.doneActions\.delete\(`\$\{a\.id\}:changed`\); \}/);
+  assert.match(extractFunction('renderSteps'), /const finished = filled && quoteFinished\(carrier, report, page\) && !pendingAi\(state\.tab\.id, page\)\.length;/);
+});
+
+// Review of PR #170: a field the agent emptied in the drawer went with the blank ones (hidden at the
+// next render, its focus with it), and a derived row vanished as the agent typed. The agent's own
+// fields are never hidden, and a derived row that empties waits for the next render.
+test('client details never hide a field the agent edited, and a derived row that empties stays until the next render', () => {
+  const made = [];
+  const fake = (tag, props = {}, ...children) => { const el = { tag, props, children, addEventListener() {}, removeAttribute() {}, setAttribute() {} }; made.push(el); return el; };
+  const context = { state: { intake: { record: { x: { a: null, b: null, c: 'kept' } }, agentEdited: ['x.a'] } }, get: (o, p) => p.split('.').reduce((v, k) => v?.[k], o), h: fake, agentEdit() {}, parseEdit: (k, v) => v };
+  vm.runInNewContext(extractFunction('fieldRow'), context);
+  const row = (path) => context.fieldRow(path, path, 'text', false).props.class;
+  assert.equal(row('x.a'), 'field', 'emptied by the agent: shown');
+  assert.equal(row('x.b'), 'field empty', 'blank on the intake: hidden unless flagged');
+  assert.equal(row('x.c'), 'field');
+  assert.match(extractFunction('agentEdit'), /if \(value != null\) row\.closest\('\.field'\)\?\.classList\.remove\('empty'\);/);
+});
+
+// Review of PR #170: a drag whose pointerup the panel never heard (the button went up on the
+// scrollbar, or in another window) left the page panning under a free mouse. The next move with
+// no button held ends it, as does losing the pointer capture.
+test('a PDF drag ends when the button is no longer held, or the capture is lost', () => {
+  const listeners = {};
+  const cls = new Set();
+  const scroll = { addEventListener: (type, fn) => { listeners[type] = fn; }, setPointerCapture() {}, classList: { add: (c) => cls.add(c), remove: (c) => cls.delete(c) }, scrollLeft: 100, scrollTop: 100 };
+  const zooms = [];
+  const context = { state: { pdf: { zoom: 1 } }, PDF_ZOOMS: [1, 1.5, 2], pdfZoom: (z) => zooms.push(z), Date };
+  vm.runInNewContext(extractFunction('pdfPan'), context);
+  context.pdfPan(scroll);
+  listeners.pointerdown({ button: 0, pointerId: 1, clientX: 50, clientY: 50 });
+  listeners.pointermove({ pointerId: 1, clientX: 40, clientY: 45, buttons: 1 });
+  assert.deepEqual([scroll.scrollLeft, scroll.scrollTop, cls.has('panning')], [110, 105, true]);
+  listeners.pointermove({ pointerId: 1, clientX: 0, clientY: 0, buttons: 0 });
+  assert.deepEqual([scroll.scrollLeft, scroll.scrollTop, cls.has('panning')], [110, 105, false], 'the button is up: the drag is over');
+  listeners.pointermove({ pointerId: 1, clientX: 0, clientY: 0, buttons: 1 });
+  assert.equal(scroll.scrollLeft, 110, 'and stays over');
+  listeners.pointerdown({ button: 0, pointerId: 2, clientX: 0, clientY: 0 });
+  assert.equal(cls.has('panning'), true);
+  listeners.lostpointercapture({ pointerId: 2 });
+  assert.equal(cls.has('panning'), false);
+  // The right button, or no PDF, starts nothing; Ctrl + wheel zooms a step, once per gesture.
+  listeners.pointerdown({ button: 2, pointerId: 3, clientX: 0, clientY: 0 });
+  assert.equal(cls.has('panning'), false);
+  const prevented = [];
+  listeners.wheel({ ctrlKey: true, deltaY: -100, preventDefault: () => prevented.push(1) });
+  listeners.wheel({ ctrlKey: true, deltaY: -100, preventDefault: () => prevented.push(1) });
+  listeners.wheel({ ctrlKey: false, deltaY: -100, preventDefault: () => prevented.push(1) });
+  assert.deepEqual([zooms, prevented.length], [[1.5], 2]);
+});
+
+// Live recording, 2026-10-24 (Progressive, Let me look before Continue on, one vehicle): on the vehicle
+// list with the vehicle on it, the top frame held Continue for the agent's check, and a hidden frame
+// that found none of the page's questions said the page wasn't drawn yet. The panel said "No questions
+// found on this page", offered only Fill this page again, and filled the page once more; the agent had
+// to turn the switch off. A frame with no question doesn't speak for a page the top frame has judged:
+// Continue held, clicked or due.
+test('a frame with no question doesn\'t override the top frame\'s Continue: held stays held, and no fill again', () => {
+  const h = harness();
+  h.state.tab = { ...quoteTab(1, 'VehicleSummary'), carrier: { id: 'progressive' } };
+  h.state.intake = { record: {} };
+  h.state.autoPages.add('VehicleSummary');
+  const opts = { page: 'VehicleSummary', auto: 'page', intake: h.state.intake, revision: undefined };
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], held: 'check' }, { fields: 0, filled: [], notDrawn: true }], opts), false, 'held: not filled again');
+  assert.equal(h.scheduled.length, 0);
+  assert.equal(h.rememberFill([{ fields: 0, filled: [], notDrawn: true }], opts), true, 'the top frame itself still drawing: filled again, as before');
+
+  const state = { tab: { id: 7, url: 'VehicleSummary', carrier: { name: 'Progressive', advance: { text: 'Continue' } } } };
+  const { context } = reportHarness(state);
+  const empty = { fields: 0, filled: [], kept: [], failed: [], leftRequired: [], actions: [], noData: [] };
+  context.renderReport([{ ...empty, held: 'check' }, { ...empty, notDrawn: true }]);
+  assert.deepEqual([state.reportFor.empty, state.reportFor.held, state.reportFor.notice], [true, 'check', 'Nothing to fill on this page.']);
+  const dock = dockHarness({ carrier: state.tab.carrier, switches: { 'check-continue': { checked: true } }, url: 'VehicleSummary', extra: { showReport: () => state.reportFor, quoteFinished: () => false } });
+  dock.state.autoPages.add('VehicleSummary');
+  const d = dock.dock();
+  assert.deepEqual([d.phase, d.button, d.label], ['check', 'look-right', 'Looks right, continue']);
+  context.renderReport([{ ...empty, advanced: 'Continue' }, { ...empty, notDrawn: true }]);
+  assert.deepEqual([state.reportFor.empty, state.reportFor.advanced], [true, 'Continue']);
+  context.renderReport([{ ...empty, advanceDue: 'none' }, { ...empty, notDrawn: true }], { retrying: false });
+  assert.equal(state.reportFor.empty, true, 'Continue due: the page is drawn, with no Continue to click yet');
+});
+
+// Review of PR #170 (Cursor and Claude): with only buttons left to click and Let me look before Continue
+// on, the dock said Continue would click them and then the page's Continue, though the fill holds
+// Continue for Looks right; and that a button it can't click says why in its row, a row the report
+// never draws (buttons waiting on others aren't listed). It says what the fill does.
+test('Buttons left to click says Looks right comes after with Let me look on, and promises no row the report lacks', () => {
+  const { said, ui } = continueHarness({ 'check-continue': { checked: true } });
+  const held = said({ waiting: 2, filled: 3 });
+  assert.deepEqual([held.phase, held.title, held.button, held.label, held.go, held.alt], ['waiting', 'Buttons left to click', 'fill', 'Click them for me', 'continue', 'fill-again']);
+  assert.equal(held.sub, 'Then check the answers and click Looks right. Never Bind or Submit.');
+  ui['check-continue'].checked = false;
+  const goes = said({ waiting: 2, filled: 3 });
+  assert.deepEqual([goes.button, goes.label, goes.go], ['fill', 'Continue', 'continue']);
+  assert.equal(goes.sub, 'Continue clicks the ones it can in turn, and the page’s Continue once none is left. Never Bind or Submit.');
+});
+
+// Review of PR #170 (Claude): "Quote done" over a fill that halted (its list says "Filling stopped"),
+// and over a report that found no questions, where the strip said "After the fill"; and the finishing
+// action's `page` or `steps` read as one name only (CarrierAction: a name or a list).
+test('a halted fill, or a report without questions, is not "Quote done"; the action\'s page or steps may be a name or a list', () => {
+  const geicoLike = { name: 'GEICO', finishedBy: 'printProposal', actions: [{ id: 'printProposal', steps: ['Quote & Coverages'] }], layoutSteps: ['Vehicles', 'Quote & Coverages'] };
+  const context = { state: { tab: { id: 7, url: 'quote' }, doneActions: new Set(['printProposal']), tabSteps: new Map([[7, 'Quote & Coverages']]) }, pageOf: (u) => u };
+  vm.runInNewContext(extractFunction('quoteFinished'), context);
+  const report = { fields: 12, filled: 12, left: 0, waiting: 0 };
+  assert.equal(context.quoteFinished(geicoLike, report), true);
+  assert.equal(context.quoteFinished(geicoLike, { ...report, halted: true }), false, 'the fill halted');
+  assert.equal(context.quoteFinished(geicoLike, { notice: 'No questions found on this page.' }), false, 'no questions found');
+  const done = new Set(['print']);
+  const pages = { finishedBy: 'print', actions: [{ id: 'print', page: ['CoveragesRates', 'Rates'] }] };
+  assert.equal(context.quoteFinished(pages, report, 'Rates', undefined, done), true, 'one of its pages');
+  assert.equal(context.quoteFinished(pages, report, 'Drivers', undefined, done), false);
+  const named = { finishedBy: 'print', actions: [{ id: 'print', steps: 'Quote & Coverages' }], layoutSteps: ['Quote', 'Quote & Coverages'] };
+  assert.equal(context.quoteFinished(named, report, 'quote', 'Quote & Coverages', done), true, 'its step, named alone');
+  assert.equal(context.quoteFinished(named, report, 'quote', 'Quote', done), false, 'a step whose name is part of its name is another');
+  // The report says the fill halted (renderReport).
+  const state = { tab: { id: 7, url: 'quote', carrier: geicoLike } };
+  const { context: r } = reportHarness(state);
+  const frame = { fields: 3, filled: [{ key: 'k1', label: 'Liability', shown: '$1M', path: 'coverage.liability' }], kept: [], failed: [], leftRequired: [], actions: [], noData: [] };
+  r.renderReport([{ ...frame, halted: true, reason: 'the agent interrupted filling' }]);
+  assert.equal(state.reportFor.halted, true);
+  r.renderReport([frame]);
+  assert.equal(state.reportFor.halted, false);
+});
+
+// Review of PR #170 (Claude): after the print, Fill this page again on Quote & Coverages that put an
+// answer in (a limit the agent corrected in client details; GEICO's replaceChoices) clicked neither
+// Recalculate (once a quote) nor Print Quote Proposal again, and the dock said the printed proposal was
+// the quote. A fill on the finishing step that puts an answer in, or keeps an edit the agent made during
+// it, without clicking the action, marks it changed; the fill that clicks it lifts the mark.
+test('a fill that changes the finishing step after the print marks the quote changed; the fill that prints lifts it', () => {
+  const h = harness();
+  vm.runInContext(extractFunction('noteChangedAfterDone'), h.context);
+  const geicoLike = { id: 'geico', name: 'GEICO', finishedBy: 'printProposal', actions: [{ id: 'printProposal', steps: ['Quote & Coverages'] }], layoutSteps: ['Vehicles', 'Quote & Coverages'] };
+  h.state.tab = { id: 1, url: 'https://gateway.example/quote', carrier: geicoLike };
+  h.state.intake = { record: {} };
+  const opts = { page: 'quote', intake: h.state.intake, revision: undefined };
+  const fill = (extra = {}) => ({ fields: 12, filled: [], kept: [], actions: [], stepKey: 'Quote & Coverages', ...extra });
+  const answer = { key: 'k1', path: 'coverage.liability', shown: '$1M' };
+  h.state.doneActions = new Set(['recalculate', 'printProposal']);
+  h.rememberFill([fill()], opts);
+  assert.deepEqual([...h.state.doneActions], ['recalculate', 'printProposal'], 'nothing put in: the printed quote stands');
+  h.rememberFill([fill({ filled: [answer], stepKey: 'Vehicles' })], opts);
+  assert.deepEqual([...h.state.doneActions], ['recalculate', 'printProposal'], 'another step');
+  h.rememberFill([fill({ filled: [answer] })], opts);
+  assert.ok(h.state.doneActions.has('printProposal:changed'), 'an answer put in after the print');
+  h.rememberFill([fill({ filled: [answer], actions: [{ id: 'printProposal' }] })], opts);
+  assert.equal(h.state.doneActions.has('printProposal:changed'), false, 'printed again: lifted');
+  h.rememberFill([fill({ protectedKeys: ['k2'] })], opts);
+  assert.ok(h.state.doneActions.has('printProposal:changed'), 'the agent\'s edit during the fill');
+});
+
+// Review of PR #170 (Claude): the agent's pick from the panel (Change answer, an item's choices) goes in
+// with the recorder paused, so no field_changes came and "Quote done" outlived a limit changed after the
+// print. A pick that went in marks the finishing step changed, as the agent's change on the page does.
+test('the agent\'s pick from the panel marks the quote changed after its finishing action, as a change on the page does', async () => {
+  const marks = [];
+  const note = (...args) => { marks.push(args); return true; };
+  const t = agentAnswerHarness({ extra: { noteChangedAfterDone: note, renderSteps: () => marks.push('steps') } });
+  await t.pick('No');
+  assert.equal(marks.length, 2);
+  assert.equal(marks[0][0], t.carrier);
+  assert.deepEqual(marks[0].slice(1), ['Quote', undefined, 1]);
+  assert.equal(marks[1], 'steps');
+  // One the page didn't take changes nothing.
+  marks.length = 0;
+  const refused = agentAnswerHarness({ extra: { noteChangedAfterDone: note, renderSteps: () => marks.push('steps') } });
+  refused.answer = (items) => [{ frameId: 0, result: [{ key: items[0].key, ok: false, reason: 'the page did not keep the answer' }] }];
+  await refused.pick('No');
+  assert.deepEqual(marks, []);
+});
+
+// The same for an AI pick put in on the page (applyAi): it is on the page, approved or not.
+test('an AI pick put in on the page marks the quote changed after its finishing action', async () => {
+  const record = {}, intake = { record };
+  const x = { key: 'choice', label: 'Choice', controlKind: 'radio', choice: 'No', autoOk: true };
+  const field = { key: x.key, label: x.label, current: '' };
+  const pre = [{ frameId: 0, documentId: 'doc-0', result: JSON.stringify(['Quote', [field]]) }];
+  const post = [{ ...pre[0], result: JSON.stringify(['Quote', [{ ...field, current: 'No' }]]) }];
+  const responses = [pre, [{ frameId: 0, documentId: 'doc-0', result: [{ key: x.key, label: x.label, ok: true, shown: 'No' }] }], post];
+  const state = { filling: false, intake, active: {}, tab: { id: 1, url: 'https://example.test/quote' },
+    aiCache: new Map([['1\n/quote', x]]), agentKeys: new Map(), filled: new Map() };
+  const ctx = { tabId: 1, page: '/quote', tabUrl: state.tab.url, intake, carrier: { practice: true },
+    contextKey: assistContextKey(record, state.active), snapshots: pre };
+  const marks = [];
+  const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+    runKit: async (tabId, carrier, func) => /answerEdits/.test(String(func)) ? pre.map(frame => ({ ...frame, result: [] })) : responses.shift(), tellRecorder: async () => {}, persistAiPending: async () => {},
+    usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set(),
+    noteChangedAfterDone: (...args) => { marks.push(args); return false; } };
+  vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
+    'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
+    'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent',
+    'applyAi'].map(extractFunction).join('\n') + LAYOUT_STUB, context);
+  assert.equal(await context.applyAi([x], ctx, 'auto'), true);
+  assert.equal(marks.length, 1);
+  assert.equal(marks[0][0], ctx.carrier);
+  assert.deepEqual(marks[0].slice(1), ['/quote', undefined, 1]);
+});
+
+// Review of PR #170 (Claude): once marked changed, "Quote done" never came back on GEICO: the fill never
+// clicks Print Quote Proposal again (done once a quote), and the agent's own click of it, after their
+// Recalculate, left the mark. The agent's click of the finishing action lifts it, as a fill's does.
+test('the agent\'s own click of the finishing action lifts the changed mark', () => {
+  const plan = geico.actions.map((a) => ({ kind: 'action', action: a.id, baseAction: a.id, pages: [].concat(a.page ?? []), steps: a.steps ?? null,
+    text: typeof a.text === 'function' ? null : a.text ?? null, near: a.near ?? null, token: a.token ?? null, within: a.within ?? null,
+    opener: a.opener ?? null, unique: !!a.unique, needsRecalculation: !!a.needsRecalculation, verify: a.verify ?? null }));
+  const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set(['recalculate', 'printProposal', 'printProposal:changed']) };
+  let steps = 0;
+  const context = { state, buildPlan: () => plan, persistDoneActions: () => {}, renderSteps: () => { steps++; } };
+  vm.runInNewContext(extractFunction('agentHelperDone'), context);
+  context.agentHelperDone(geico, 'quote', 'Quote & Coverages', 'Print Quote Proposal');
+  assert.deepEqual([[...state.doneActions], steps], [['recalculate', 'printProposal'], 1], 'lifted, and the strip and the dock say so');
+});
+
+// Review of PR #170 (Claude): New quote cleared this intake's stored records, but the panel's own sets
+// (the tab's helpers clicked, the agent's edits on the page, unit forms) only went later, after the PDF
+// was read again: anything that saved them meanwhile (an edit on the page, a unit arrival) wrote the old
+// quote's back, and the new quote took vehicles as already added. They go first now. Nothing starts a
+// fill while it is under way, and a confirmed New quote while answers go in says so.
+test('New quote lets go of the panel\'s own records before the stored ones, starts no fill meanwhile, and says why it waits', async () => {
+  const seen = [];
+  const state = { intake: { fileName: 'client.pdf' }, filling: false, tab: { id: 4, carrier: { id: 'geico' } },
+    doneActions: new Set(['addVehicle:0', 'printProposal']), agentKeys: new Map([['quote|s:Drivers', new Set(['k1'])]]),
+    unitForms: { vehicles: { form1: 0 }, drivers: {}, trailers: {} }, tabSessions: new Map([[5, { doneActions: new Set(['addVehicle:1']) }]]) };
+  const snapshot = (what) => seen.push([what, [...state.doneActions], state.agentKeys.size, Object.keys(state.unitForms.vehicles).length, state.tabSessions.size, !!state.resetting]);
+  const notes = [];
+  const context = { state, inExtension: true, File: class { constructor(parts, name, opts) { Object.assign(this, { parts, name, type: opts?.type }); } },
+    intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
+    runKit: async () => [], clearAgentKeys: async () => snapshot('keys'), loadFile: async () => snapshot('load'), clientNote: (t) => notes.push(t) };
+  vm.runInNewContext(extractFunction('newQuote'), context);
+  await context.newQuote();
+  assert.deepEqual(JSON.parse(JSON.stringify(seen)), [['keys', [], 0, 0, 0, true], ['load', [], 0, 0, 0, true]]);
+  assert.equal(!!state.resetting, false, 'over');
+  // fillPage and autoFill start nothing while it is under way.
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /state\.resetting/, name);
+  // Over even when the PDF couldn't be read again.
+  context.loadFile = async () => { throw new Error('unreadable'); };
+  await assert.rejects(context.newQuote());
+  assert.equal(!!state.resetting, false);
+  // Confirmed while answers go in: said, nothing done.
+  state.filling = true;
+  seen.length = 0;
+  await context.newQuote();
+  assert.deepEqual([seen, notes], [[], ['Wait for the answers going in to finish, then start the new quote.']]);
+});
+
+// Review of PR #170 (Cursor and Claude): the live list took the first frame's phase that said one, so
+// Progressive's hidden frame reading its old page spoke over the top frame answering (null). The top
+// frame's word goes while its fill runs; another frame's once it is over there.
+test('the live list takes the top frame\'s phase while its fill runs', async () => {
+  let tick = null;
+  let reply = [];
+  const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
+  const context = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => {}, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+    chrome: { scripting: { executeScript: async () => reply } } };
+  vm.runInNewContext(extractFunction('watchFill'), context);
+  context.watchFill({ run: 'r1', tabId: 3, carrier: {} });
+  const progress = (frame, phase) => ({ frame, list: `${frame}:1`, since: 0, rows: [], phase });
+  reply = [{ frameId: 0, result: progress('top', { name: 'premium', what: null }) }, { frameId: 5, result: progress('hidden', { name: 'reading', what: null }) }];
+  await tick();
+  assert.equal(state.fillingFor.phase.name, 'premium');
+  reply = [{ frameId: 5, result: progress('hidden', { name: 'reading', what: null }) }, { frameId: 0, result: progress('top', null) }];
+  await tick();
+  assert.equal(state.fillingFor.phase, null, 'the top frame answering');
+  reply = [{ frameId: 0, result: null }, { frameId: 5, result: progress('hidden', { name: 'waiting', what: null }) }];
+  await tick();
+  assert.equal(state.fillingFor.phase?.name, 'waiting', 'the top frame\'s fill is over: the other\'s word');
+});
+
+// Review of PR #170 (Claude): a report made again on reopen judged the page without the frame's
+// Continue due (advanceDue wasn't kept), so a page the live report read "Nothing to fill" with
+// Continue on read "No questions found" once the panel opened again. It is kept with the other parts.
+test('a kept report keeps a frame\'s Continue due, which judges the page as it did live', async () => {
+  const memory = {};
+  const { context } = keptReportsHarness(memory);
+  context.keepReport(7, { key: '7|VehicleSummary', page: 'VehicleSummary', active: {}, at: 100, stopped: false, frames: [{ fields: 0, advanceDue: 'none' }, { fields: 0, notDrawn: true }] });
+  await context.kept();
+  assert.deepEqual(memory['reports:7'].entries[0].frames, [{ fields: 0, advanceDue: 'none' }, { fields: 0, notDrawn: true }]);
 });

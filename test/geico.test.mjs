@@ -981,7 +981,7 @@ test('liability coverage and its limit from the intake; NTL is the agent\'s', ()
   for (const changes of [{ 'claims.text': 'Client also wants NTL' }, { 'coverage.ntl': true }, { 'coverage.autoLiability': 'No' }, { 'coverage.autoLiability': null, 'coverage.autoLiabLimit': null }]) {
     for (const s of liab(changes)) agents(s);
   }
-  assert.match(liab({ 'notes.text': 'bobtail cover' })[0].note, /Check intake/);
+  assert.match(liab({ 'notes.text': 'bobtail cover' })[0].note, /the Intake step/);
   // Decided No on Check intake: the intake's liability.
   assert.equal(liab({ 'claims.text': 'Client also wants NTL', 'coverage.ntl': false })[0].value, 'Bodily Injury and Property Damage Liability');
   for (const name of ['Medical payments (FL: Not Included, PIP instead)', 'Policy term', 'Basic personal injury protection']) agents(one(plan(intake()), name));

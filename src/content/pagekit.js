@@ -18,7 +18,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 85 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 88 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -1744,7 +1744,7 @@
     const since = had > 0 && had <= all.length ? had : 0;
     const rows = all.slice(since).map((x) => ({ key: x.key ?? null, label: x.label || x.name || '', shown: x.shown ?? '', standard: !!x.standard,
       stepId: x.stepId ?? null, path: x.path ?? null, otherStep: !!x.otherStep }));
-    return { frame: FRAME, list, filled: all.length, since, rows };
+    return { frame: FRAME, list, filled: all.length, since, rows, phase: running.phase ?? null };
   }
   function stop(run = null) {
     if (run != null && (!running || running.run !== run)) stoppedRuns.add(run);
@@ -2072,11 +2072,18 @@
         return !pair || skippedField(pair.control) || agreesWith(pair.step, pair.control) || consumed.has(pair.step.path) ? [] : [{ previous, pair }];
       });
     };
-    const thisFill = { report, halt, run };
+    // `phase`: what the fill is doing between answers, for the panel's live list and dock (progress):
+    // null while it answers, else { name, what }: 'reading' the page as it begins, 'waiting' for the
+    // page after an answer, a 'helper' it clicked (`what`: the button), the 'premium' it rates, or
+    // 'continue'. Said so a fill waiting on GEICO's Recalculate doesn't read as stuck (2026-10-23).
+    const thisFill = { report, halt, run, phase: null };
+    const phase = (name, what = null) => { thisFill.phase = name ? { name, what } : null; };
     running = thisFill;
     // Stopped by the agent before it began (the panel was still preparing): nothing is done.
     if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
+    phase('reading');
     const settled = await settle({ quietMs: 400, maxMs: 15000 });
+    phase(null);
     // Stopped while the page settled: nothing was done.
     if (!settled || report.halted) {
       if (!settled) halt('The page is still waiting on its server. Review and retry.');
@@ -2154,6 +2161,7 @@
 
     for (let round = 0; round < maxRounds; round++) {
       report.rounds = round + 1;
+      phase(null);
       // The agent's Next changes the step without a new address: on a step that is the agent's the
       // fill does nothing more, and another step is left to a fill of its own.
       stoppedAt = stopStepOn(stopSteps);
@@ -2270,6 +2278,7 @@
       // Buttons that must come right after their field (Verify DOT, Lookup VIN) go first.
       if (window === window.top && clickNextAction(controls, true)) {
         // A lookup (Import Data) may wait on its server without changing the page for a while.
+        phase('helper', pendingAction?.label ?? report.actions.at(-1)?.text ?? null);
         if (!await settle(serverBacked ? {} : { quietMs: 800, maxMs: 8000 })) { halt('The helper response did not settle. Review before retrying.'); break; }
         if (!await verifyAction()) break;
         if (currentPage() !== startPage) { report.navigatedTo = currentPage(); break; }
@@ -2355,6 +2364,7 @@
             waitOver.add(step.id);
           } else if (waitingSince.has(step.id)) {
             waitOver.add(step.id);
+            phase('waiting');
             await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS });
             retry = true;
             waited = true;
@@ -2423,6 +2433,7 @@
         // before.
         if (isChoice && !resetWaited && !agreesWith(step, c) && (refill.has(step.id) || (!step.scope && filledKeys.has(fieldKey(c))))) {
           resetWaited = true;
+          phase('waiting');
           await settle({ quietMs: RESET_QUIET_MS, maxMs: 15000 });
           retry = true;
           break;
@@ -2549,6 +2560,7 @@
         if (loadDue) {
           const before = signature();
           const due = actions.find((x) => x.action === loadDue);
+          phase('waiting');
           if (!await settle({ quietMs: due?.quietMs ?? LOAD_QUIET_MS, maxMs: LOAD_MS, requests: due?.quietMs ? () => !report.halted : null })) { halt(LOAD_HALT); break; }
           quiet = !agentPressed && signature() === before ? { action: loadDue, sig: before } : null;
           continue;
@@ -2562,6 +2574,7 @@
         // (changedSinceFilled).
         if (!lastLook && waitShown && report.filled.length && window === window.top) {
           lastLook = true;
+          phase('waiting');
           await settle({ quietMs: AFTER_WAIT_QUIET_MS, maxMs: WAIT_MS });
           continue;
         }
@@ -2579,6 +2592,7 @@
           && (!advance.steps?.length || stepIs(advance.steps, stepKey()))) {
           quietDue = false;
           progressed = true;
+          phase('waiting');
           await settle({ quietMs: advance.quietMs, maxMs: 6000 });
           quietSig = signature();
           continue;
@@ -2597,6 +2611,7 @@
       // spinner up while it rates).
       const loads = helperClicked && !!pendingAction?.loads;
       const rates = helperClicked && pendingAction?.verify === 'premium';
+      if (helperClicked) phase('helper', pendingAction?.label ?? report.actions.at(-1)?.text ?? null);
       if ((helperClicked || batch) && !await settle(serverBacked ? {} : { quietMs: batch ? 150 : 250, maxMs: loads || rates ? LOAD_MS : 3000 })) {
         traceEnd(pendingAction);
         halt(loads ? LOAD_HALT : 'The page did not settle after the helper.');
@@ -2630,6 +2645,7 @@
       // premium showed, four answers the agent saw right the whole time were marked as changed by
       // GEICO.
       if (rates && !serverBacked) {
+        phase('premium');
         const until = Date.now() + LOAD_MS;
         while (Date.now() < until && !premiumReady() && !report.halted && currentPage() === startPage && !stepChanged()) { traceRead(pendingAction); await sleep(500); }
         if (pendingAction?.trace && premiumReady()) { pendingAction.trace.premiumMs = Math.round(perfNow() - pendingAction.trace.at); traceRead(pendingAction); }
@@ -3297,8 +3313,12 @@
     report.stepKey = stepChanged() ? startStep : stepKey();
     // A page the plan expects questions on that shows none yet, with nothing done on it, is still
     // drawing (Business Owner Info right after the state is picked, OK 2026-10-07): Continue there
-    // only gets "fields are empty" errors. (A tile page that was clicked continues.)
-    const notDrawn = !report.fields && !report.actions.length && plan.some((s) => s.pages?.includes(startPage));
+    // only gets "fields are empty" errors. (A tile page that was clicked continues.) Only a frame of
+    // the page in front says so: Progressive keeps a hidden frame loaded with Business Owner Info's
+    // address for the whole quote, and on every later page it found none of "its" questions and said
+    // the page wasn't drawn, so the panel took the top frame's held Continue for "No questions found"
+    // and filled the page once more (live recording, 2026-10-24).
+    const notDrawn = !report.fields && !report.actions.length && (topPage == null || topPage === startPage) && plan.some((s) => s.pages?.includes(startPage));
     // The panel tries such a page again in a moment, and says nothing of it yet (W43-42).
     if (notDrawn && !report.halted) report.notDrawn = true;
     if (advance && window === window.top && !report.blockers.length && !notDrawn && currentPage() === startPage && !stepChanged() && !pageBusy()
@@ -3307,7 +3327,10 @@
       // The last answer may still be redrawing part of the page (a new payment method reloads the
       // plan list): a Continue clicked meanwhile is lost. Let it finish first. `quietMs`: a page that
       // draws a question a moment after an answer (GEICO's USDOT record check) is waited for too,
-      // unless the fill's own wait at the end of its rounds left it as it is now.
+      // unless the fill's own wait at the end of its rounds left it as it is now. Held for the agent's
+      // check with nothing approved yet (`hold`), Continue isn't clicked: the wait is the page's, not
+      // Continue's (the panel's dock read "Clicking Continue…" there: the review of PR #170).
+      phase(hold && confirmed == null ? 'waiting' : 'continue');
       if (serverBacked) await settle({ quietMs: 500, maxMs: 6000 });
       else if (advance.quietMs && quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000 });
       // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
@@ -3830,5 +3853,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 85, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 88, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

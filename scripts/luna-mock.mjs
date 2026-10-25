@@ -137,7 +137,6 @@ try {
   const loadPdf = async ({ missingClaims = false } = {}) => {
     phase = 'load-pdf';
     if (await panel.locator('#quote').isVisible()) {
-      await panel.locator('#file-menu-btn').click();
       await panel.locator('#clear-client').click();
       // Clear asks first; the panel stays as it was until the agent confirms.
       await panel.locator('#file-confirm').waitFor({ state: 'visible' });
@@ -491,7 +490,6 @@ try {
   });
   await panel.reload();
   if (await panel.locator('#quote').isVisible()) {
-    await panel.locator('#file-menu-btn').click();
     await panel.locator('#clear-client').click();
     await panel.locator('#file-confirm-yes').click();
     await panel.locator('#home').waitFor({ state: 'visible' });

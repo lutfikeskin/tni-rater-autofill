@@ -257,7 +257,7 @@ const cargoNote = (r) => r.coverage.cargo === true && !r.coverage.cargoLimit
 // General liability the intake asks for (Requested coverage). TNI (2026-10-20, after an AR run
 // that recorded the open section): the "+" in the General Liability row adds it (openGl), its
 // questions get TNI's standard answers (glQuestion), the limit is the intake's, else TNI's
-// default $1M per occurrence / $2M aggregate (Check intake warns too: gl-limit.missing), and
+// default $1M per occurrence / $2M aggregate (the Intake step warns too: gl-limit.missing), and
 // Done with this coverage closes it (doneGl) before the bill plan.
 const GL_DEFAULT_LIMIT = '$1M/$2M';
 // The intake's limits Progressive offers (it lists $1M/$1M and $1M/$2M only).
@@ -504,7 +504,7 @@ export const progressive = {
     { id: 'ntlRates', page: 'CoveragesRates', label: 'Non-trucking liability', when: (r) => r.coverage.ntl === true,
       missing: () => 'NTL quote: the rest of this page is yours (the NTL section, cargo, the bill plan, Recalculate, Print). Continue yourself when it is done.' },
     { id: 'ntlDecide', page: 'CoveragesRates', label: 'Non-trucking liability', when: ntlUndecided,
-      missing: () => 'The claims box mentions NTL and Non-trucking liability isn\'t answered: set it to Yes or No on Check intake, then fill this page again.' },
+      missing: () => 'The claims box mentions NTL and Non-trucking liability isn\'t answered: set it to Yes or No on the Intake step, then fill this page again.' },
     { id: 'ntlStillAdded', page: 'CoveragesRates', afterActions: ['addNtl'], resolvedBy: ADD_NTL, label: 'Non-trucking liability', when: (r) => r.coverage.ntl !== true,
       missing: () => 'NTL was added on this quote, but Non-trucking liability is no longer Yes on the intake: remove it on this page yourself, or set it back to Yes.' },
     // The "+" in the Motor Truck Cargo row (every coverage has one).
