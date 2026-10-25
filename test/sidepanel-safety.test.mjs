@@ -104,7 +104,7 @@ function extractFunction(name) {
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards and row heads (issueCard, setRowHead) come along as they are.
-        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
+        for (const helper of ['itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -112,8 +112,9 @@ function extractFunction(name) {
         if (name !== 'stateIssue' && /\bstateIssue\(/.test(source) && !/function stateIssue\(/.test(source)) source += '\nvar stateIssue = globalThis.stateIssue ?? (() => null);';
         // Reports kept for a reopened panel (keepReport, forgetKeptReports) have their own tests:
         // elsewhere nothing is kept, unless the harness gives a store. So has the agent's change
-        // after the quote's finishing action (noteChangedAfterDone): elsewhere nothing is marked.
-        for (const kept of ['keepReport', 'forgetKeptReports', 'noteChangedAfterDone']) {
+        // after the quote's finishing action (noteChangedAfterDone): elsewhere nothing is marked. And
+        // the chime when the quote is done (noteQuoteDone): elsewhere nothing sounds.
+        for (const kept of ['keepReport', 'forgetKeptReports', 'noteChangedAfterDone', 'noteQuoteDone']) {
           if (name !== kept && new RegExp(`\\b${kept}\\(`).test(source) && !new RegExp(`function ${kept}\\(`).test(source)) source += `\nvar ${kept} = globalThis.${kept} ?? (() => {});`;
         }
         return name !== 'editScope' && /\beditScope\(/.test(source) ? `${source}\n${extractFunction('editScope')}` : name !== 'stepScope' && /\bstepScope\(/.test(source) && name === 'editScope' ? `${source}\n${extractFunction('stepScope')}` : source;
@@ -126,7 +127,7 @@ function extractFunction(name) {
 const HELPERS_START = SIDEPANEL.indexOf('const samePage =');
 const HELPERS_END = SIDEPANEL.indexOf('\n\n// Watch the rater tab', HELPERS_START);
 const PAGE_HELPERS = SIDEPANEL.slice(HELPERS_START, HELPERS_END);
-const FUNCTIONS = ['rememberFill', 'scheduleAutoFill', 'tabInView', 'refreshTab'].map(extractFunction).join('\n') + LAYOUT_STUB;
+const FUNCTIONS = ['rememberFill', 'scheduleAutoFill', 'tabInView', 'refreshTab', 'quoteFinished'].map(extractFunction).join('\n') + LAYOUT_STUB;
 
 function harness() {
   const state = {
@@ -168,6 +169,7 @@ function harness() {
     ensureRecorder: async () => {}, retireAiOrigins: async () => {}, restoreAgentKeys: async () => {}, persistAgentKeys: async () => {}, restoreDoneActions: async () => {}, persistDoneActions: async () => {}, restoreReports: async () => {},
     seedQuoteState: () => {}, noteQuoteState: () => {}, knownStep, popped: false,
     dropReports() {}, clientNote() {}, fillProblem() {}, answeredOnPage() {},
+    pendingAi: () => [],
     carrierForUrl: (url) => (/foragentsonly/.test(url) ? { id: 'progressive', practice: false } : null),
     chrome: {
       scripting: {},
@@ -7789,10 +7791,16 @@ test('the agent\'s own click of the finishing action lifts the changed mark', ()
     opener: a.opener ?? null, unique: !!a.unique, needsRecalculation: !!a.needsRecalculation, verify: a.verify ?? null }));
   const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set(['recalculate', 'printProposal', 'printProposal:changed']) };
   let steps = 0;
-  const context = { state, buildPlan: () => plan, persistDoneActions: () => {}, renderSteps: () => { steps++; } };
+  const chimes = [];
+  const context = { state, buildPlan: () => plan, persistDoneActions: () => {}, renderSteps: () => { steps++; }, noteQuoteDone: (tabId) => chimes.push(tabId ?? null) };
   vm.runInNewContext(extractFunction('agentHelperDone'), context);
   context.agentHelperDone(geico, 'quote', 'Quote & Coverages', 'Print Quote Proposal');
   assert.deepEqual([[...state.doneActions], steps], [['recalculate', 'printProposal'], 1], 'lifted, and the strip and the dock say so');
+  // The agent's own click of the finishing action is the quote done: the chime (noteQuoteDone).
+  assert.deepEqual(chimes, [null]);
+  state.doneActions.delete('recalculate');
+  context.agentHelperDone(geico, 'quote', 'Quote & Coverages', 'Recalculate');
+  assert.deepEqual(chimes, [null], 'another helper of the agent\'s: no chime');
 });
 
 // Review of PR #170 (Claude): New quote cleared this intake's stored records, but the panel's own sets
@@ -7859,4 +7867,154 @@ test('a kept report keeps a frame\'s Continue due, which judges the page as it d
   context.keepReport(7, { key: '7|VehicleSummary', page: 'VehicleSummary', active: {}, at: 100, stopped: false, frames: [{ fields: 0, advanceDue: 'none' }, { fields: 0, notDrawn: true }] });
   await context.kept();
   assert.deepEqual(memory['reports:7'].entries[0].frames, [{ fields: 0, advanceDue: 'none' }, { fields: 0, notDrawn: true }]);
+});
+
+
+/// The maintainer, 2026-10-25: "a ding when we finish the quote, not just one page". Their notification
+// sound (sidepanel/sounds/quote-done.mp3) when the quote's finishing action is clicked (noteQuoteDone:
+// the fill's click, rememberFill, or the agent's own, agentHelperDone; once a print, by the tab's done
+// actions: the tests after the review of PR #171 below). Never with Sound when the quote is done off
+// (Settings → Filling, `finish-sound`, saved as `finishSound`).
+test('the quote-done chime plays the maintainer\'s sound from the start, never with the switch off, and silently fails', () => {
+  const played = [];
+  let made = 0;
+  class FakeAudio {
+    constructor(src) { made++; this.src = src; this.currentTime = 0; this.preload = ''; }
+    play() { played.push([this.src, this.currentTime]); this.currentTime = 2; return Promise.reject(new Error('NotAllowedError')); }
+  }
+  const ui = { 'finish-sound': { checked: true } };
+  const state = { tab: { id: 7 }, audio: null };
+  const context = { state, $: (id) => ui[id], Audio: FakeAudio };
+  vm.runInNewContext(['noteQuoteDone', 'playChime', 'unlockAudio'].map(extractFunction).join('\n'), context);
+  // Refused (no click in the panel yet): the rejected play is caught, nothing thrown.
+  assert.equal(context.noteQuoteDone(), true);
+  assert.deepEqual(played, [['sounds/quote-done.mp3', 0]], 'the maintainer\'s sound, from the start');
+  assert.equal(state.audio.preload, 'auto');
+  assert.ok(fs.existsSync(new URL('../sidepanel/sounds/quote-done.mp3', import.meta.url)), 'the sound is in the panel\'s folder, so it is packaged');
+  assert.equal(context.noteQuoteDone(), true);
+  assert.deepEqual(played[1], ['sounds/quote-done.mp3', 0], 'rewound before playing again');
+  assert.equal(made, 1, 'one audio element, kept');
+  // The switch off: silent.
+  ui['finish-sound'].checked = false;
+  assert.equal(context.noteQuoteDone(), false);
+  assert.equal(played.length, 2);
+  // No audio here (a preview outside Chrome): nothing thrown.
+  ui['finish-sound'].checked = true;
+  context.Audio = undefined;
+  state.audio = null;
+  assert.equal(context.noteQuoteDone(), false);
+});
+
+test('the fill\'s click of the finishing action is the quote done: the chime, once', () => {
+  const h = harness();
+  const chimes = [];
+  h.context.noteQuoteDone = () => chimes.push(1);
+  h.state.tab = { ...quoteTab(3, 'CoveragesRates'), carrier: { id: 'progressive', finishedBy: 'print' } };
+  h.state.intake = { record: {} };
+  const opts = { page: 'CoveragesRates', auto: 'page', intake: h.state.intake, revision: undefined };
+  h.rememberFill([{ fields: 11, filled: [], actions: [{ id: 'recalculate', text: 'Recalculate' }] }], opts);
+  assert.deepEqual(chimes, [], 'another helper: not the end');
+  h.rememberFill([{ fields: 11, filled: [], actions: [{ id: 'billPlan', text: 'View bill plan options' }, { id: 'print', text: 'Print, Email, Fax' }] }], opts);
+  assert.deepEqual(chimes, [1]);
+  h.rememberFill([{ fields: 11, filled: [], actions: [{ id: 'print', text: 'already shown on the page', alreadyShown: true }] }], opts);
+  assert.deepEqual(chimes, [1], 'found done already: no click, no chime');
+  // Without a finishing action on the rater (AmWINS): never.
+  h.state.tab.carrier = { id: 'amwins' };
+  h.state.doneActions.clear();
+  h.rememberFill([{ fields: 11, filled: [], actions: [{ id: 'print', text: 'Print' }] }], opts);
+  assert.deepEqual(chimes, [1]);
+});
+
+// Progressive's quote ends, for the fill, at Print, Email, Fax on Rates (its `print` helper, clicked
+// after the bill plan): the print page it opens is the agent's. Review page says Quote done there, and
+// the dock says what was clicked (`finishedSaid`), not GEICO's printed proposal.
+test('Progressive\'s quote is done at Print, Email, Fax, and the dock says so in its own words', () => {
+  assert.equal(progressive.finishedBy, 'print');
+  assert.ok(progressive.actions.some((a) => a.id === 'print' && a.page === 'CoveragesRates'), 'the helper on Rates');
+  // Clicked by the fill or by the agent (agentHelperDone): the words say neither (the review of PR #171).
+  assert.equal(progressive.finishedSaid, 'Print, Email, Fax was clicked');
+  const report = { fields: 12, filled: 12, left: 0, waiting: 0 };
+  const prog = { name: 'Progressive', finishedBy: 'print', finishedSaid: 'Print, Email, Fax was clicked', actions: [{ id: 'print', page: 'CoveragesRates' }] };
+  const d = dockHarness({ carrier: prog, url: 'CoveragesRates', extra: { showReport: () => report, quoteFinished: () => true } });
+  const word = d.dock();
+  assert.deepEqual([word.phase, word.eyebrow, word.title, word.sub], ['finished', 'Quote done', 'Print, Email, Fax was clicked', 'This is where TNI stops on Progressive. Nothing is submitted or bound.']);
+  const g = dockHarness({ carrier: { name: 'GEICO', finishedBy: 'printProposal', actions: [] }, extra: { showReport: () => report, quoteFinished: () => true } });
+  assert.equal(g.dock().title, 'The quote proposal is printed', 'GEICO as before');
+});
+
+test('Sound when the quote is done is a Filling switch, on by default, kept on this computer and never logged', () => {
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.match(html, /<label class="opt"><span class="opt-text"><b>Sound when the quote is done<\/b><span>A short chime when the rater’s last step is clicked\.<\/span><\/span><input type="checkbox" role="switch" class="switch" id="finish-sound" checked><\/label>/);
+  assert.match(extractFunction('wireUsage'), /\$\('finish-sound'\)\.addEventListener\('change', \(e\) => \{ usage\.saveSettings\(\{ finishSound: e\.target\.checked \}\); \}\);/);
+  assert.match(extractFunction('wireUsage'), /document\.addEventListener\('pointerdown', unlockAudio, \{ once: true, capture: true \}\);/, 'the audio is unlocked by the agent\'s first click in the panel');
+  assert.match(extractFunction('init'), /\$\('finish-sound'\)\.checked = saved\.finishSound \?\? true;/);
+  assert.doesNotMatch(extractFunction('wireUsage'), /logSettings\('changed', 'finishSound'\)/, 'not in the usage log');
+});
+
+// Review of PR #171 (Claude, Cursor): the chime kept a record of its own (`chimed`, by tab and the
+// intake's PDF) beside the tab's done actions, and missed what they follow. It follows them now: a
+// click of the finishing action chimes where the action wasn't done, or was changed or re-armed since.
+// The panel's own chime functions here, on the fill bookkeeping's harness.
+function chimeHarness() {
+  const h = harness();
+  const played = [];
+  h.context.Audio = class { constructor(src) { this.src = src; this.currentTime = 0; } play() { played.push(this.src); return Promise.resolve(); } };
+  h.ui['finish-sound'] = { checked: true };
+  vm.runInContext(['noteQuoteDone', 'playChime', 'unlockAudio', 'noteChangedAfterDone'].map(extractFunction).join('\n'), h.context);
+  h.state.tab = { ...quoteTab(3, 'CoveragesRates'), carrier: { id: 'progressive', name: 'Progressive', finishedBy: 'print', actions: [{ id: 'print', page: 'CoveragesRates' }] } };
+  h.state.intake = { record: {} };
+  const opts = { page: 'CoveragesRates', auto: 'page', intake: h.state.intake, revision: undefined };
+  return { h, played, fill: (frame) => h.rememberFill([{ fields: 11, filled: [], actions: [], ...frame }], opts) };
+}
+const PRINT = { id: 'print', text: 'Print, Email, Fax' };
+const LIMIT = { key: 'limit', label: 'Liability limit', shown: '$1,000,000' };
+
+test('a fill\'s answer on Rates re-arms Print, Email, Fax: printed again, the quote chimes again', () => {
+  const { played, fill } = chimeHarness();
+  fill({ actions: [PRINT] });
+  assert.equal(played.length, 1, 'the fill printed the quote');
+  // The agent corrects the limit and a follow-up fill puts it in on Rates: pagekit re-arms Recalculate
+  // and Print, Email, Fax (invalidatedActions), and a later fill clicks it again.
+  fill({ filled: [LIMIT], invalidatedActions: ['recalculate', 'print'] });
+  fill({ actions: [PRINT] });
+  assert.equal(played.length, 2, 'the changed quote printed again');
+  // Re-armed and clicked again in the same fill: printed again too.
+  fill({ filled: [LIMIT], invalidatedActions: ['recalculate', 'print'], actions: [PRINT] });
+  assert.equal(played.length, 3);
+});
+
+test('New quote with this intake on the same tab: its print chimes', () => {
+  const { h, played, fill } = chimeHarness();
+  fill({ actions: [PRINT] });
+  assert.equal(played.length, 1);
+  // New quote with this intake (newQuote): the tab's done actions go, the same PDF (the same intake) stays.
+  h.state.doneActions = new Set();
+  fill({ actions: [PRINT] });
+  assert.equal(played.length, 2, 'the new quote\'s print');
+});
+
+test('a fill that prints with something left for the agent, or stopped short, is not the quote done: no chime', () => {
+  for (const left of [{ checks: [{ key: 'c', note: 'Check it' }] }, { noData: [{ key: 'n', note: 'Not on the intake.' }] }, { failed: [{ key: 'f', reason: 'not kept' }] },
+    { unknown: [{ key: 'u', label: 'New question' }] }, { blocked: [{ id: 'doneGl', why: 'waits' }] }, { halted: true, reason: 'You stopped the fill.' }]) {
+    const { played, fill } = chimeHarness();
+    fill({ actions: [PRINT], ...left });
+    assert.equal(played.length, 0, JSON.stringify(left));
+  }
+});
+
+test('the agent\'s own click of a finishing action already done and unchanged chimes no more, as in a panel opened again', () => {
+  const plan = geico.actions.map((a) => ({ kind: 'action', action: a.id, baseAction: a.id, pages: [].concat(a.page ?? []), steps: a.steps ?? null,
+    text: typeof a.text === 'function' ? null : a.text ?? null, near: a.near ?? null, token: a.token ?? null, within: a.within ?? null,
+    opener: a.opener ?? null, unique: !!a.unique, needsRecalculation: !!a.needsRecalculation, verify: a.verify ?? null }));
+  // The panel opened again (or moved into its own window): the tab's done actions are restored, the
+  // quote printed and nothing changed since.
+  const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set(['recalculate', 'printProposal']) };
+  const chimes = [];
+  const context = { state, buildPlan: () => plan, persistDoneActions: () => {}, renderSteps: () => {}, noteQuoteDone: () => chimes.push(1) };
+  vm.runInNewContext(extractFunction('agentHelperDone'), context);
+  context.agentHelperDone(geico, 'quote', 'Quote & Coverages', 'Print Quote Proposal');
+  assert.deepEqual(chimes, [], 'the same quote printed again');
+  state.doneActions.add('printProposal:changed');
+  context.agentHelperDone(geico, 'quote', 'Quote & Coverages', 'Print Quote Proposal');
+  assert.deepEqual(chimes, [1], 'changed since: the new quote printed');
 });
