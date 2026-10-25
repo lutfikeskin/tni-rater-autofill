@@ -355,8 +355,7 @@ const state = {
   fileConfirmFrom: null,
   // New quote with this intake under way (newQuote): no fill starts.
   resetting: false,
-  // The quotes (tab and intake) whose done was chimed (noteQuoteDone), and the chime's audio element.
-  chimed: new Set(),
+  // The quote-done chime's audio element (noteQuoteDone).
   audio: null,
   // Client details: whether fields the intake leaves blank are listed (showEmpty; the flagged ones
   // always are), and the sections the agent folded (by id).
@@ -1670,15 +1669,18 @@ function agentHelperDone(carrier, page, step, text) {
   // Two helpers reading the same (cargo's and general liability's Done with this coverage): the words
   // can't say which was clicked, so neither is done.
   if (done.length !== 1) return;
-  state.doneActions.add(done[0].action);
+  const id = done[0].action;
+  const doneBefore = state.doneActions.has(id) && !state.doneActions.has(`${id}:changed`);
+  state.doneActions.add(id);
   // The quote's finishing action clicked again (Print Quote Proposal after the agent's Recalculate):
   // the proposal is the quote on the page again (noteChangedAfterDone).
-  const lifted = state.doneActions.delete(`${done[0].action}:changed`);
+  const lifted = state.doneActions.delete(`${id}:changed`);
   persistDoneActions();
   if (lifted) renderSteps();
   // The agent's own click of the finishing action (GEICO's Print Quote Proposal after their own
-  // Recalculate): the quote is done, with its chime (noteQuoteDone).
-  if (done[0].action === carrier.finishedBy) noteQuoteDone();
+  // Recalculate): the quote is done, with its chime (noteQuoteDone). Not one done before and not
+  // changed since: the same quote printed again.
+  if (id === carrier.finishedBy && !doneBefore) noteQuoteDone();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2657,17 +2659,28 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
       if (fillCurrent({ tabId, intake, revision }) && pageOf(state.tab?.url) === page) scheduleAutoFill(page);
     }, 1500);
   } else if (!due) maps.triedAgain = null;
+  const finish = carrier?.finishedBy;
+  const finishStep = knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey);
+  const finishedBefore = !!finish && maps.doneActions.has(finish) && !maps.doneActions.has(`${finish}:changed`);
   for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) maps.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) { maps.doneActions.add(a.id); maps.doneActions.delete(`${a.id}:changed`); }
+  const finishClicks = finish ? frames.flatMap((f) => f.actions ?? []).filter((a) => a.id === finish) : [];
   // The quote's finishing action clicked by this fill (GEICO's Print Quote Proposal, Progressive's
-  // Print, Email, Fax): the quote is done, with its chime (noteQuoteDone), for the fill's tab.
-  if (carrier?.finishedBy && frames.some((f) => (f.actions ?? []).some((a) => a.id === carrier.finishedBy && !a.alreadyShown))) noteQuoteDone(tabId);
+  // Print, Email, Fax), not done before, or changed or re-armed since (`:changed`, or this fill's own
+  // answer on the step: pagekit invalidatedActions, Progressive's Rates), and the fill's report the
+  // quote done as Review page says it (quoteFinished: nothing left for the agent, not stopped short,
+  // no AI pick pending): the chime (noteQuoteDone). The tab's done actions say it, so New quote, Clear
+  // and a panel opened again follow (the review of PR #171).
+  if (finishClicks.some((a) => !a.alreadyShown) && (!finishedBefore || frames.some((f) => f.invalidatedActions?.includes(finish)))) {
+    const report = { fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0), left: itemsLeft(frames).length,
+      waiting: frames.reduce((n, f) => n + (f.blocked?.length ?? 0), 0), halted: frames.some((f) => !!f.halted) };
+    if (quoteFinished(carrier, report, page, finishStep, maps.doneActions) && !pendingAi(tabId, page).length) noteQuoteDone();
+  }
   // An answer this fill put in on the quote's finishing step, or an edit of the agent's it kept, after
   // the finishing action was clicked, and that action not clicked again: the printed proposal is no
   // longer the quote on the page (noteChangedAfterDone; GEICO's Recalculate and Print are clicked once).
-  if (carrier?.finishedBy && !frames.some((f) => (f.actions ?? []).some((a) => a.id === carrier.finishedBy))
-    && frames.some((f) => (f.filled ?? []).some((x) => !x.otherStep) || f.protectedKeys?.length)) {
-    noteChangedAfterDone(carrier, page, knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey), tabId);
+  if (finish && !finishClicks.length && frames.some((f) => (f.filled ?? []).some((x) => !x.otherStep) || f.protectedKeys?.length)) {
+    noteChangedAfterDone(carrier, page, finishStep, tabId);
   }
   persistDoneActions(tabId, maps.doneActions);
   // The unit form this fill answered (pagekit unitForm: its marker's element name, new with every
@@ -3101,24 +3114,21 @@ function noteChangedAfterDone(carrier, page, step, tabId = state.tab?.id) {
   if (!doneActions?.has(id) || doneActions.has(`${id}:changed`)) return false;
   doneActions.add(`${id}:changed`);
   persistDoneActions(tabId, doneActions);
-  // The next print is the quote done again, with its chime.
-  state.chimed.delete(quoteDoneKey(tabId));
   return true;
 }
 
 // A short chime when the quote is done where TNI stops on the rater (the maintainer, 2026-10-25: "a
-// ding when we finish the quote, not just one page"): the first time the finishing action is done on
-// a tab, by the fill's click (rememberFill) or the agent's own (agentHelperDone); again only after a
-// change on the finishing step (noteChangedAfterDone) and another print. Off with Sound when the
-// quote is done (Settings → Filling, `finish-sound`, saved on this computer as `finishSound`, never
-// logged). The sound is the maintainer's pick (2026-10-25), sidepanel/sounds/quote-done.mp3, played
-// with an audio element: no new permission. True when it was started.
-function quoteDoneKey(tabId = state.tab?.id) { return `${tabId}|${usage.currentSession()?.intakeId ?? ''}`; }
-function noteQuoteDone(tabId = state.tab?.id) {
+// ding when we finish the quote, not just one page"): when the finishing action is clicked on a tab
+// where it wasn't done, or was changed or re-armed since (the tab's done actions): by the fill, whose
+// report is then the quote done (rememberFill), or by the agent (agentHelperDone). So once a print:
+// again after a change on the finishing step and another print, and on a new quote (New quote, Clear:
+// the done actions go), not on the same quote printed again, in this panel or one opened again (they
+// are kept). Off with Sound when the quote is done (Settings → Filling, `finish-sound`, saved on this
+// computer as `finishSound`, never logged). The sound is the maintainer's pick (2026-10-25),
+// sidepanel/sounds/quote-done.mp3, played with an audio element: no new permission. True when it was
+// started.
+function noteQuoteDone() {
   if (!$('finish-sound')?.checked) return false;
-  const key = quoteDoneKey(tabId);
-  if (state.chimed.has(key)) return false;
-  state.chimed.add(key);
   return playChime();
 }
 // Chrome lets a page make sound once someone has clicked in it: the element is made and loaded on the
@@ -4048,6 +4058,26 @@ function refreshAnswers() {
   if (entry?.fields && entry.tabId === state.tab?.id) checkAnswers($('report'), entry.tabId, entry.page, entry.carrier ?? state.tab.carrier, entry.plan);
 }
 
+// What a fill left for the agent on its page: its report's items (renderReport), and none for the
+// quote done with its chime (rememberFill). Each item with its frame's place among the page's frames
+// (pagekit's `order` counts within one). A field of another step (pagekit otherStep: AmWINS' prior
+// carriers, filled again while hidden) isn't this step's: left out of its list and count (live run
+// 2026-10-09).
+/** @param {FillReport[]} frames */
+function itemsLeft(frames) {
+  const framed = (k) => frames.flatMap((f, frame) => (f[k] ?? []).map((x) => ({ ...x, frame })));
+  const unknownKeys = new Set(framed('unknown').map((x) => x.key));
+  return [
+    ...framed('unknown').map((x) => ({ ...x, mark: 'needs', why: `Unfamiliar question${x.required ? ' (required)' : ''}: no TNI rule for it yet.` })),
+    ...framed('failed').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'failed', why: `Couldn't fill: ${x.reason}` })),
+    ...framed('noData').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
+    ...framed('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
+    ...framed('kept').filter((x) => !x.otherStep && x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
+    // Defaults filled for the agent to confirm (e.g. marital status missing on the intake).
+    ...framed('checks').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: x.note })),
+  ];
+}
+
 // After a fill: the page's answers in one list, in the order of their fields on the page. Each
 // answer that went in says what and where it came from (the intake, worked out from it, a TNI
 // standard, the agent, the page) and opens to its source, Change answer and See in intake; each
@@ -4096,22 +4126,11 @@ function renderReport(frames, ctx = {}) {
     return;
   }
   keep();
-  const unknownKeys = new Set(all('unknown').map((x) => x.key));
-  // Each item with its frame's place among the page's frames (pagekit's `order` counts within one).
-  // A field of another step (pagekit otherStep: AmWINS' prior carriers, filled again while hidden)
-  // isn't this step's: left out of its list and count (live run 2026-10-09).
+  // Each answer with its frame's place among the page's frames, as each item (itemsLeft).
   const framed = (k) => frames.flatMap((f, frame) => (f[k] ?? []).map((x) => ({ ...x, frame })));
   const filled = framed('filled').filter((x) => !x.otherStep);
   const kept = framed('kept').filter((x) => !x.otherStep);
-  const items = [
-    ...framed('unknown').map((x) => ({ ...x, mark: 'needs', why: `Unfamiliar question${x.required ? ' (required)' : ''}: no TNI rule for it yet.` })),
-    ...framed('failed').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'failed', why: `Couldn't fill: ${x.reason}` })),
-    ...framed('noData').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: x.note ?? 'Not on the intake.' })),
-    ...framed('leftRequired').filter((x) => !unknownKeys.has(x.key)).map((x) => ({ ...x, mark: 'needs', why: 'Required, and not on the intake.' })),
-    ...kept.filter((x) => x.differs).map((x) => ({ ...x, mark: 'needs', why: 'The page already had a different value than the intake; it was kept.' })),
-    // Defaults filled for the agent to confirm (e.g. marital status missing on the intake).
-    ...framed('checks').filter((x) => !x.otherStep).map((x) => ({ ...x, mark: 'needs', why: x.note })),
-  ];
+  const items = itemsLeft(frames);
   const onPage = (x) => Number.isInteger(x.order);
   const needs = [...items.filter(onPage).sort((a, b) => a.frame - b.frame || a.order - b.order), ...items.filter((x) => !onPage(x))];
   const waiting = all('blocked');

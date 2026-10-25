@@ -552,10 +552,11 @@ export const progressive = {
   vehicleList: 'VehicleSummary',
   // Where the quote ends for the fill: Print, Email, Fax on Rates, clicked after the bill plan (its
   // `print` helper). The print page it opens is the agent's: they pick the documents' recipients and
-  // press Print/Send themselves. Review page says Quote done on Rates, the dock in these words
-  // (sidepanel quoteFinished, dockFor), and the quote-done chime sounds (noteQuoteDone).
+  // press Print/Send themselves. Clicked by the fill or by the agent, Review page says Quote done on
+  // Rates, the dock in these words (sidepanel quoteFinished, dockFor), and the quote-done chime sounds
+  // (noteQuoteDone). Not on an NTL quote: Rates is the agent's there, and `print` isn't in its plan.
   finishedBy: 'print',
-  finishedSaid: 'Print, Email, Fax was clicked for you',
+  finishedSaid: 'Print, Email, Fax was clicked',
   // The pages about one vehicle, repeated for each (their Continue is per vehicle).
   vehiclePages: ['MostCommonVehicles', 'AddVehicle'],
   // Trailers are added from the same list; their pages are per trailer, and Add Trailer marks its
