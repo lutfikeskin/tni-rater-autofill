@@ -353,6 +353,8 @@ const state = {
   // and the button that asked, for focus on Cancel.
   fileConfirm: null,
   fileConfirmFrom: null,
+  // New quote with this intake under way (newQuote): no fill starts.
+  resetting: false,
   // Client details: whether fields the intake leaves blank are listed (showEmpty; the flagged ones
   // always are), and the sections the agent folded (by id).
   showEmpty: false,
@@ -679,7 +681,7 @@ const REPORTS_PREFIX = 'reports:';
 const REPORTS_KEPT = 30;
 const REPORTS_BYTES = 512 * 1024;
 const REPORT_PARTS = ['fields', 'filled', 'kept', 'failed', 'noData', 'leftRequired', 'unknown', 'checks', 'actions', 'blocked', 'skipped',
-  'halted', 'reason', 'stepUnread', 'stepKey', 'notDrawn', 'advanced', 'held', 'covered', 'coveredHelpers', 'renamed', 'pageChanged'];
+  'halted', 'reason', 'stepUnread', 'stepKey', 'notDrawn', 'advanced', 'advanceDue', 'held', 'covered', 'coveredHelpers', 'renamed', 'pageChanged'];
 const reportsRestored = new Set();
 let reportsQueue = Promise.resolve();
 function keepReport(tabId, saved) {
@@ -1666,7 +1668,11 @@ function agentHelperDone(carrier, page, step, text) {
   // can't say which was clicked, so neither is done.
   if (done.length !== 1) return;
   state.doneActions.add(done[0].action);
+  // The quote's finishing action clicked again (Print Quote Proposal after the agent's Recalculate):
+  // the proposal is the quote on the page again (noteChangedAfterDone).
+  const lifted = state.doneActions.delete(`${done[0].action}:changed`);
   persistDoneActions();
+  if (lifted) renderSteps();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1995,10 +2001,12 @@ function watchFill(ctx) {
     const answered = !!f.unanswered;
     f.unanswered = false;
     // What the kit is doing between answers (pagekit `phase`: reading the page, waiting for it, a
-    // helper's response, the premium, Continue), the first frame's that says.
-    let phase = null;
+    // helper's response, the premium, Continue): the top frame's while its fill runs (null while it
+    // answers), else the first other frame's that says. Progressive's hidden frame, loaded with an
+    // earlier page, reads it as every fill begins (the review of PR #170).
+    const top = frames.find((x) => x.frameId === 0)?.result;
+    const phase = top ? top.phase ?? null : frames.find((x) => x.result?.phase)?.result.phase ?? null;
     for (const { result } of frames) {
-      if (result?.phase && !phase) phase = result.phase;
       if (!result?.list) continue;
       // A list the frame has rewritten (an answer given again) comes whole (`since` 0), as a new one.
       const had = result.since ? lists.get(result.list) ?? [] : [];
@@ -2146,7 +2154,7 @@ async function autoFill(page) {
   const drawn = state.autoDrawn === page;
   state.autoDrawn = null;
   // The client may have been cleared while this fill was waiting to run.
-  if (state.autoPaused || state.filling || state.closing || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
+  if (state.autoPaused || state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || pageOf(state.tab?.url) !== page) return;
   if (stopNoteFor(state.tab.carrier, page) || stateIssue()) return;
   const { id: tabId, carrier } = state.tab;
   // A page or step without a report yet is new, not a follow-up: the agent moved to AmWINS' next
@@ -2645,6 +2653,13 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   } else if (!due) maps.triedAgain = null;
   for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) maps.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) { maps.doneActions.add(a.id); maps.doneActions.delete(`${a.id}:changed`); }
+  // An answer this fill put in on the quote's finishing step, or an edit of the agent's it kept, after
+  // the finishing action was clicked, and that action not clicked again: the printed proposal is no
+  // longer the quote on the page (noteChangedAfterDone; GEICO's Recalculate and Print are clicked once).
+  if (carrier?.finishedBy && !frames.some((f) => (f.actions ?? []).some((a) => a.id === carrier.finishedBy))
+    && frames.some((f) => (f.filled ?? []).some((x) => !x.otherStep) || f.protectedKeys?.length)) {
+    noteChangedAfterDone(carrier, page, knownStep(carrier, frames.find((f) => f.stepKey)?.stepKey), tabId);
+  }
   persistDoneActions(tabId, maps.doneActions);
   // The unit form this fill answered (pagekit unitForm: its marker's element name, new with every
   // form GEICO draws) is now that vehicle's, driver's or trailer's: a follow-up fill never types
@@ -3011,11 +3026,13 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
     if (!left && covered) return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled`, title: 'Close what is open over the button', sub: 'Then fill this page again. Never Bind or Submit.', ...again };
     // Only buttons left: the main button is the fill that clicks them in turn (and the page's
     // Continue after them, where the panel may): nothing clicks them by itself (it read "The fill
-    // clicks the rest in turn" with no button for it).
+    // clicks the rest in turn" with no button for it). With Let me look before Continue on, the fill
+    // holds Continue for Looks right after them; a button it can't click isn't a row of the report.
     if (!left) {
+      const continues = autoAdvance && !check;
       return { phase: 'waiting', tone: 'blue', eyebrow: `${filled} filled`, title: 'Buttons left to click',
-        sub: autoAdvance ? 'Continue clicks them in turn, then the page’s Continue; a button it can’t click says why in its row. Never Bind or Submit.' : then,
-        button: 'fill', label: autoAdvance ? 'Continue' : 'Click them for me', go: 'continue', ...again };
+        sub: continues ? 'Continue clicks the ones it can in turn, and the page’s Continue once none is left. Never Bind or Submit.' : then,
+        button: 'fill', label: continues ? 'Continue' : 'Click them for me', go: 'continue', ...again };
     }
     return { phase: 'needs', tone: 'warn', eyebrow: `${filled} filled · ${left} need${left === 1 ? 's' : ''} you`,
       title: left === 1 ? 'Answer the last question' : `Answer ${left} questions`, sub: then, button: 'dock-next', label: 'Show the next one', ...again };
@@ -3040,28 +3057,41 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
 // page, and nothing on it is left for the agent. The strip's Review page says "Quote done" and the
 // dock says so (dockFor), where they said "Ready" and "Moving on is yours" before (the maintainer,
 // 2026-10-23: the end of a GEICO quote read like every other page).
+// A report whose fill halted, or that found no questions, isn't the quote done either.
 function quoteFinished(carrier, report, page = pageOf(state.tab?.url), step = tabStep(carrier), doneActions = state.doneActions) {
-  const id = carrier?.finishedBy;
-  if (!id || !report || report.error || report.stopped || !doneActions?.has(id) || doneActions.has(`${id}:changed`) || (report.left ?? 0) > 0 || (report.waiting ?? 0) > 0) return false;
-  const action = carrier.actions?.find((a) => a.id === id);
-  if (action?.steps?.length && !action.steps.includes(step)) return false;
-  if (action?.page && action.page !== page) return false;
-  return true;
+  const id = finishingAction(carrier, page, step);
+  return !!id && !!report?.fields && !report.error && !report.stopped && !report.halted && !!doneActions?.has(id) && !doneActions.has(`${id}:changed`)
+    && (report.left ?? 0) === 0 && (report.waiting ?? 0) === 0;
 }
 
-// The agent changed the page on the finishing step after the action was clicked (a limit on GEICO's
-// Quote & Coverages after Print Quote Proposal; its Recalculate is clicked once a quote, so no fill
-// re-rates or re-prints): the printed proposal is no longer the quote on the page, so it isn't "Quote
-// done" (the review of PR #170). Marked with the tab's done actions (`<id>:changed`, kept with them;
-// a fill that clicks the action again lifts it). True when newly marked.
-function noteChangedAfterDone(carrier, page, step, tabId = state.tab?.id) {
+// The carrier's finishing action (`finishedBy`) where the page and step are its own (its `page` and
+// `steps`, each a name or a list), else null.
+function finishingAction(carrier, page, step) {
   const id = carrier?.finishedBy;
-  if (!id || !state.doneActions?.has(id) || state.doneActions.has(`${id}:changed`)) return false;
+  if (!id) return null;
   const action = carrier.actions?.find((a) => a.id === id);
-  if (action?.steps?.length && !action.steps.includes(step)) return false;
-  if (action?.page && action.page !== page) return false;
-  state.doneActions.add(`${id}:changed`);
-  persistDoneActions(tabId);
+  const steps = [].concat(action?.steps ?? []);
+  const pages = [].concat(action?.page ?? []);
+  if (steps.length && !steps.includes(step)) return null;
+  if (pages.length && !pages.includes(page)) return null;
+  return id;
+}
+
+// The page changed on the finishing step after the action was clicked (a limit on GEICO's Quote &
+// Coverages after Print Quote Proposal; its Recalculate is clicked once a quote, so no fill re-rates or
+// re-prints): the printed proposal is no longer the quote on the page, so it isn't "Quote done" (the
+// review of PR #170). By the agent on the page (the recorder's field_changes), from the panel (their
+// pick, an AI pick: the recorder is paused then), or by a fill that put an answer in or kept the
+// agent's edit made during it without clicking the action (rememberFill). Marked with the tab's done
+// actions (`<id>:changed`, kept with them); the action clicked again, by a fill or by the agent
+// (agentHelperDone), lifts it. True when newly marked.
+function noteChangedAfterDone(carrier, page, step, tabId = state.tab?.id) {
+  const id = finishingAction(carrier, page, step);
+  if (!id) return false;
+  const { doneActions } = tabMaps(tabId);
+  if (!doneActions?.has(id) || doneActions.has(`${id}:changed`)) return false;
+  doneActions.add(`${id}:changed`);
+  persistDoneActions(tabId, doneActions);
   return true;
 }
 
@@ -3396,7 +3426,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
   // A new page that opens while the previous one is still finishing its fill is filled right
   // after it (it used to be skipped: "it stopped here").
   if (state.filling && auto === 'page') { state.pagePending = pageOf(state.tab?.url); return; }
-  if (state.filling || state.closing || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
+  if (state.filling || state.closing || state.resetting || !state.intake || !state.tab?.carrier || (auto && state.autoPaused)) return;
   // Back on a step that takes follow-ups only for new questions (newQuestionsOnlySteps) after its
   // fill: only the agent, or new questions, fill it again.
   if (auto && state.tab.carrier.newQuestionsOnlySteps?.includes(tabStep(state.tab.carrier)) && state.reports.get(currentReportKey())?.fields) return;
@@ -4077,7 +4107,9 @@ function renderReport(frames, ctx = {}) {
   // Held for the agent's check (Let me look before Continue): the top frame's word.
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
+  // `halted`: the fill stopped short ("Filling stopped" above the list, or the agent's Stop).
   const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
+    halted: frames.some((f) => !!f.halted),
     ...(ctx.restoredAt ? { restored: true } : {}) };
   // The answers and the items in one list, by their place on the page: an item without a field on
   // the page (a helper, a unit without its row) after them, then answers without one (a click).
@@ -4389,6 +4421,9 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
     return;
   }
   const shown = result.shown || choice;
+  // On the quote's finishing step after its action was clicked, the printed proposal is no longer the
+  // quote on the page (noteChangedAfterDone): the recorder was paused, so no field_changes says so.
+  if (noteChangedAfterDone(carrier, page, tabStep(carrier, tabId), tabId)) renderSteps();
   // In on the page, so the agent's from now on where it went in (no fill changes it) and logged with
   // the quote it went into, also when they moved to another tab, page or intake meanwhile.
   await persistGuardedEdits(editOrigin, [x.key]);
@@ -5123,6 +5158,9 @@ async function applyAi(list, ctx, decision) {
       if (sameContext && !ctx.carrier.practice) usage.log(aiDecisionEvent(x, ctx, ok ? decision : 'failed'));
     }
     if (sameContext) state.agentKeys.set(editOrigin.page, keys);
+    // On the quote's finishing step after its action was clicked: the printed proposal is no longer
+    // the quote on the page (noteChangedAfterDone), approved or not; so is an edit of the agent's meanwhile.
+    if (list.some((x) => x.done) || protectedKeys.length) noteChangedAfterDone(ctx.carrier, ctx.page, tabStep(ctx.carrier, ctx.tabId), ctx.tabId);
     await persistGuardedEdits(editOrigin, protectedKeys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
     const after = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
@@ -5890,16 +5928,29 @@ function askFile(what, text, yes, from = what === 'replace' ? 'replace' : what =
 // as already added, the page's marks), while the intake, their corrections and their checks stay
 // (the maintainer, 2026-10-23). The kept PDF is loaded again as the same file: loadFile keeps the
 // agent's work on the same intake and starts everything else over, after the page's marks and this
-// intake's per-tab records (edits on the page, helpers clicked, unit forms) are let go.
+// intake's per-tab records (edits on the page, helpers clicked, unit forms) are let go: the panel's own
+// first, then the stored ones, so nothing saving the panel's meanwhile (an edit on the page, a unit
+// arrival) writes the old quote's back (the review of PR #170). No fill starts while it is under way
+// (`resetting`: fillPage, autoFill).
 async function newQuote() {
-  if (!state.intake || state.filling) return;
-  const bytes = await intakePdfBytes();
-  if (!bytes) { clientNote('The PDF isn’t kept here: load it again with Change file to start a new quote.'); return; }
-  const scope = usage.currentSession()?.intakeId;
-  if (inExtension && state.tab?.carrier) await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit?.clear?.()).catch(() => {});
-  await clearAgentKeys(scope);
-  state.intake.ntlAdded = false;
-  await loadFile(new File([bytes], state.intake.fileName || 'intake.pdf', { type: 'application/pdf' }), { reset: true });
+  if (!state.intake) return;
+  if (state.filling) { clientNote('Wait for the answers going in to finish, then start the new quote.'); return; }
+  state.resetting = true;
+  try {
+    const bytes = await intakePdfBytes();
+    if (!bytes) { clientNote('The PDF isn’t kept here: load it again with Change file to start a new quote.'); return; }
+    const scope = usage.currentSession()?.intakeId;
+    if (inExtension && state.tab?.carrier) await runKit(state.tab.id, state.tab.carrier, () => globalThis.__raterKit?.clear?.()).catch(() => {});
+    state.tabSessions.clear();
+    state.agentKeys = new Map();
+    state.doneActions = new Set();
+    state.unitForms = { vehicles: {}, drivers: {}, trailers: {} };
+    await clearAgentKeys(scope);
+    state.intake.ntlAdded = false;
+    await loadFile(new File([bytes], state.intake.fileName || 'intake.pdf', { type: 'application/pdf' }), { reset: true });
+  } finally {
+    state.resetting = false;
+  }
 }
 
 // A line under the client's name about the file just loaded (null hides it).

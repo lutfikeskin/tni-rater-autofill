@@ -18,7 +18,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 87 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 88 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -3327,8 +3327,10 @@
       // The last answer may still be redrawing part of the page (a new payment method reloads the
       // plan list): a Continue clicked meanwhile is lost. Let it finish first. `quietMs`: a page that
       // draws a question a moment after an answer (GEICO's USDOT record check) is waited for too,
-      // unless the fill's own wait at the end of its rounds left it as it is now.
-      phase('continue');
+      // unless the fill's own wait at the end of its rounds left it as it is now. Held for the agent's
+      // check with nothing approved yet (`hold`), Continue isn't clicked: the wait is the page's, not
+      // Continue's (the panel's dock read "Clicking Continue…" there: the review of PR #170).
+      phase(hold && confirmed == null ? 'waiting' : 'continue');
       if (serverBacked) await settle({ quietMs: 500, maxMs: 6000 });
       else if (advance.quietMs && quietSig !== signature()) await settle({ quietMs: advance.quietMs, maxMs: 6000 });
       // An agent edit during that wait stopped the fill (the guard is still on): no Continue, and
@@ -3851,5 +3853,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 87, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 88, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

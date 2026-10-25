@@ -4268,7 +4268,7 @@ for (const scenario of ['future frame', 'finished frame', 'same frame without ed
     const source = fs.readFileSync(new URL('../sidepanel/sidepanel.js', import.meta.url), 'utf8');
     const functions = ['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
       'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
-      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'formScoped', 'stepScope', 'tabStep', 'stopNoteFor'];
+      'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent', 'applyAi', 'persistGuardedEdits', 'agentEdited', 'editScope', 'formScoped', 'stepScope', 'tabStep', 'stopNoteFor', 'noteChangedAfterDone', 'finishingAction'];
     vm.runInNewContext(functions.map(name => {
       const match = source.match(new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`));
       assert.ok(match, name);
@@ -7198,7 +7198,7 @@ test('progress says what the fill waits on, and nothing while it answers', async
   // Each long wait names itself before it begins.
   assert.match(PAGEKIT, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000 \}\);\s+phase\(null\);/);
   assert.match(PAGEKIT, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
-  assert.match(PAGEKIT, /phase\('continue'\);\s+if \(serverBacked\) await settle/);
+  assert.match(PAGEKIT, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
   assert.match(PAGEKIT, /if \(helperClicked\) phase\('helper', pendingAction\?\.label \?\? report\.actions\.at\(-1\)\?\.text \?\? null\);/);
   assert.match(PAGEKIT, /report\.rounds = round \+ 1;\s+phase\(null\);/, 'a new round answers again');
   assert.match(PAGEKIT, /phase: running\.phase \?\? null \};/);
@@ -7236,4 +7236,30 @@ test('a frame loaded with another page\'s address never says the page isn\'t dra
   assert.equal(same.notDrawn, true, 'a frame of the page itself, with none of its questions drawn yet');
   const top = await harness({ search: '?pageName=BusinessOwnerInfo' }).kit.fill(plan, { maxRounds: 2 });
   assert.equal(top.notDrawn, true, 'the top frame, as before');
+});
+
+// Review of PR #170 (Cursor): with Let me look before Continue on and nothing approved yet, the kit said
+// 'continue' through the wait before Continue, and the dock read "Clicking Continue…" though the fill
+// holds Continue for Looks right. That wait is the page's ('waiting'); 'continue' only where the fill
+// may click it.
+test('progress says continue only where the fill may click Continue', async () => {
+  const phases = async (options) => {
+    const h = harness({ ext: true, search: '?pageName=Synthetic' });
+    addExtText(h, 'a', '1234', { ref: 'Test.foo', caption: 'Synthetic question' });
+    addButton(h, 'Continue');
+    const plan = [{ id: 'field', q: '1234', field: 'Test.foo', path: 'test.answer', name: 'Synthetic question', ask: ['Synthetic question'], kind: 'text', value: 'wanted' }];
+    const seen = new Set();
+    let on = true;
+    const poll = () => { const p = h.kit.progress(); if (p?.phase) seen.add(p.phase.name); if (on) setTimeout(poll, 50); };
+    poll();
+    const report = await h.kit.fill(plan, { maxRounds: 3, advance: { text: 'Continue' }, ...options });
+    on = false;
+    return { seen: [...seen], report };
+  };
+  const held = await phases({ hold: true });
+  assert.equal(held.report.held, 'check');
+  assert.equal(held.seen.includes('continue'), false, `held: ${held.seen.join(', ')}`);
+  const clicked = await phases({});
+  assert.equal(clicked.report.advanced, 'Continue');
+  assert.ok(clicked.seen.includes('continue'), `continued: ${clicked.seen.join(', ')}`);
 });

@@ -104,7 +104,7 @@ function extractFunction(name) {
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards and row heads (issueCard, setRowHead) come along as they are.
-        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits']) {
+        for (const helper of ['tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -4880,7 +4880,7 @@ test('Continue\'s word offers Fill this page again wherever it may tell the agen
   // itself; it read "The fill clicks the rest in turn" with no button: the maintainer, 2026-10-23).
   const waiting = said({ waiting: 2, filled: 3 });
   assert.deepEqual([waiting.phase, waiting.title, waiting.button, waiting.label, waiting.go, waiting.alt, waiting.altLabel], ['waiting', 'Buttons left to click', 'fill', 'Continue', 'continue', 'fill-again', 'Fill this page again']);
-  assert.equal(waiting.sub, 'Continue clicks them in turn, then the page’s Continue; a button it can’t click says why in its row. Never Bind or Submit.');
+  assert.equal(waiting.sub, 'Continue clicks the ones it can in turn, and the page’s Continue once none is left. Never Bind or Submit.');
   // Where the panel may not click Continue, the button only clicks the buttons.
   ui['auto-advance'].checked = false;
   const own = said({ waiting: 2, filled: 3 });
@@ -6866,7 +6866,7 @@ test('the panel offers to put in the agent\'s pick only for a choice it may answ
 // The agent's pick from a row goes in through the same guarded path as an AI answer: only while
 // the page shows the question and the choice as the row read them, `by: 'agent'`, never on a stop
 // step; the field is the agent's then (agentKeys) and the change is logged as theirs.
-function agentAnswerHarness({ carrier = { id: 'progressive', stopSteps: { 'Payment Information': 'Yours.' } } } = {}) {
+function agentAnswerHarness({ carrier = { id: 'progressive', stopSteps: { 'Payment Information': 'Yours.' } }, extra = {} } = {}) {
   const field = { key: 'k1', label: 'Hauls hazardous materials', kind: 'radio', options: ['Yes', 'No'], current: 'Yes', section: 'Operations' };
   const frame = (fields, frameId = 0) => ({ frameId, documentId: `doc-${frameId}`, result: JSON.stringify(['Operations', fields]) });
   const t = {
@@ -6892,6 +6892,7 @@ function agentAnswerHarness({ carrier = { id: 'progressive', stopSteps: { 'Payme
       t.kit.push(['answer', JSON.parse(JSON.stringify(args)), frameIds]);
       return t.answer(args[0]);
     },
+    ...extra,
   };
   vm.runInNewContext(['agentAnswer', 'agentPickable', 'choiceSaid', 'aiSnapshotFieldMatches', 'aiSnapshotFields'].map(extractFunction).join('\n'), context);
   t.state = state;
@@ -7436,7 +7437,7 @@ test('the client strip: the name opens client details, and Change file, New quot
 // same intake), after the page's marks and this intake's per-tab records go.
 test('New quote with this intake loads the kept PDF again as the same file, after the page marks and this intake\'s tab records go', async () => {
   const calls = [];
-  const state = { intake: { fileName: 'client.pdf', ntlAdded: true }, filling: false, tab: { id: 4, carrier: { id: 'geico' } } };
+  const state = { intake: { fileName: 'client.pdf', ntlAdded: true }, filling: false, tab: { id: 4, carrier: { id: 'geico' } }, tabSessions: new Map() };
   const context = { state, inExtension: true, File: class { constructor(parts, name, opts) { Object.assign(this, { parts, name, type: opts?.type }); } },
     intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
     runKit: async (tabId) => { calls.push(['clear', tabId]); return []; }, clearAgentKeys: async (scope) => { calls.push(['keys', scope]); },
@@ -7445,14 +7446,14 @@ test('New quote with this intake loads the kept PDF again as the same file, afte
   await context.newQuote();
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [['clear', 4], ['keys', 'abc'], ['load', 'client.pdf', 'application/pdf', { reset: true }]]);
   assert.equal(state.intake.ntlAdded, false, 'NTL is added again on the new quote');
-  // While answers go in: nothing. Without the PDF kept: said, nothing done.
+  // While answers go in, or without the PDF kept: said, nothing done.
   calls.length = 0;
   state.filling = true;
   await context.newQuote();
   state.filling = false;
   context.intakePdfBytes = async () => null;
   await context.newQuote();
-  assert.deepEqual(calls.map((c) => c[0]), ['note']);
+  assert.deepEqual(calls.map((c) => c[0]), ['note', 'note']);
   // Asked first, under the client's name; loadFile says what stays and logs the reset.
   assert.match(extractFunction('wire'), /\$\('new-quote'\)\.addEventListener\('click', \(\) => \{\s+if \(state\.filling\) return;\s+askFile\('new-quote'/);
   assert.match(extractFunction('wire'), /if \(what === 'new-quote'\) newQuote\(\);/);
@@ -7660,4 +7661,202 @@ test('a frame with no question doesn\'t override the top frame\'s Continue: held
   assert.deepEqual([state.reportFor.empty, state.reportFor.advanced], [true, 'Continue']);
   context.renderReport([{ ...empty, advanceDue: 'none' }, { ...empty, notDrawn: true }], { retrying: false });
   assert.equal(state.reportFor.empty, true, 'Continue due: the page is drawn, with no Continue to click yet');
+});
+
+// Review of PR #170 (Cursor and Claude): with only buttons left to click and Let me look before Continue
+// on, the dock said Continue would click them and then the page's Continue, though the fill holds
+// Continue for Looks right; and that a button it can't click says why in its row, a row the report
+// never draws (buttons waiting on others aren't listed). It says what the fill does.
+test('Buttons left to click says Looks right comes after with Let me look on, and promises no row the report lacks', () => {
+  const { said, ui } = continueHarness({ 'check-continue': { checked: true } });
+  const held = said({ waiting: 2, filled: 3 });
+  assert.deepEqual([held.phase, held.title, held.button, held.label, held.go, held.alt], ['waiting', 'Buttons left to click', 'fill', 'Click them for me', 'continue', 'fill-again']);
+  assert.equal(held.sub, 'Then check the answers and click Looks right. Never Bind or Submit.');
+  ui['check-continue'].checked = false;
+  const goes = said({ waiting: 2, filled: 3 });
+  assert.deepEqual([goes.button, goes.label, goes.go], ['fill', 'Continue', 'continue']);
+  assert.equal(goes.sub, 'Continue clicks the ones it can in turn, and the page’s Continue once none is left. Never Bind or Submit.');
+});
+
+// Review of PR #170 (Claude): "Quote done" over a fill that halted (its list says "Filling stopped"),
+// and over a report that found no questions, where the strip said "After the fill"; and the finishing
+// action's `page` or `steps` read as one name only (CarrierAction: a name or a list).
+test('a halted fill, or a report without questions, is not "Quote done"; the action\'s page or steps may be a name or a list', () => {
+  const geicoLike = { name: 'GEICO', finishedBy: 'printProposal', actions: [{ id: 'printProposal', steps: ['Quote & Coverages'] }], layoutSteps: ['Vehicles', 'Quote & Coverages'] };
+  const context = { state: { tab: { id: 7, url: 'quote' }, doneActions: new Set(['printProposal']), tabSteps: new Map([[7, 'Quote & Coverages']]) }, pageOf: (u) => u };
+  vm.runInNewContext(extractFunction('quoteFinished'), context);
+  const report = { fields: 12, filled: 12, left: 0, waiting: 0 };
+  assert.equal(context.quoteFinished(geicoLike, report), true);
+  assert.equal(context.quoteFinished(geicoLike, { ...report, halted: true }), false, 'the fill halted');
+  assert.equal(context.quoteFinished(geicoLike, { notice: 'No questions found on this page.' }), false, 'no questions found');
+  const done = new Set(['print']);
+  const pages = { finishedBy: 'print', actions: [{ id: 'print', page: ['CoveragesRates', 'Rates'] }] };
+  assert.equal(context.quoteFinished(pages, report, 'Rates', undefined, done), true, 'one of its pages');
+  assert.equal(context.quoteFinished(pages, report, 'Drivers', undefined, done), false);
+  const named = { finishedBy: 'print', actions: [{ id: 'print', steps: 'Quote & Coverages' }], layoutSteps: ['Quote', 'Quote & Coverages'] };
+  assert.equal(context.quoteFinished(named, report, 'quote', 'Quote & Coverages', done), true, 'its step, named alone');
+  assert.equal(context.quoteFinished(named, report, 'quote', 'Quote', done), false, 'a step whose name is part of its name is another');
+  // The report says the fill halted (renderReport).
+  const state = { tab: { id: 7, url: 'quote', carrier: geicoLike } };
+  const { context: r } = reportHarness(state);
+  const frame = { fields: 3, filled: [{ key: 'k1', label: 'Liability', shown: '$1M', path: 'coverage.liability' }], kept: [], failed: [], leftRequired: [], actions: [], noData: [] };
+  r.renderReport([{ ...frame, halted: true, reason: 'the agent interrupted filling' }]);
+  assert.equal(state.reportFor.halted, true);
+  r.renderReport([frame]);
+  assert.equal(state.reportFor.halted, false);
+});
+
+// Review of PR #170 (Claude): after the print, Fill this page again on Quote & Coverages that put an
+// answer in (a limit the agent corrected in client details; GEICO's replaceChoices) clicked neither
+// Recalculate (once a quote) nor Print Quote Proposal again, and the dock said the printed proposal was
+// the quote. A fill on the finishing step that puts an answer in, or keeps an edit the agent made during
+// it, without clicking the action, marks it changed; the fill that clicks it lifts the mark.
+test('a fill that changes the finishing step after the print marks the quote changed; the fill that prints lifts it', () => {
+  const h = harness();
+  vm.runInContext(extractFunction('noteChangedAfterDone'), h.context);
+  const geicoLike = { id: 'geico', name: 'GEICO', finishedBy: 'printProposal', actions: [{ id: 'printProposal', steps: ['Quote & Coverages'] }], layoutSteps: ['Vehicles', 'Quote & Coverages'] };
+  h.state.tab = { id: 1, url: 'https://gateway.example/quote', carrier: geicoLike };
+  h.state.intake = { record: {} };
+  const opts = { page: 'quote', intake: h.state.intake, revision: undefined };
+  const fill = (extra = {}) => ({ fields: 12, filled: [], kept: [], actions: [], stepKey: 'Quote & Coverages', ...extra });
+  const answer = { key: 'k1', path: 'coverage.liability', shown: '$1M' };
+  h.state.doneActions = new Set(['recalculate', 'printProposal']);
+  h.rememberFill([fill()], opts);
+  assert.deepEqual([...h.state.doneActions], ['recalculate', 'printProposal'], 'nothing put in: the printed quote stands');
+  h.rememberFill([fill({ filled: [answer], stepKey: 'Vehicles' })], opts);
+  assert.deepEqual([...h.state.doneActions], ['recalculate', 'printProposal'], 'another step');
+  h.rememberFill([fill({ filled: [answer] })], opts);
+  assert.ok(h.state.doneActions.has('printProposal:changed'), 'an answer put in after the print');
+  h.rememberFill([fill({ filled: [answer], actions: [{ id: 'printProposal' }] })], opts);
+  assert.equal(h.state.doneActions.has('printProposal:changed'), false, 'printed again: lifted');
+  h.rememberFill([fill({ protectedKeys: ['k2'] })], opts);
+  assert.ok(h.state.doneActions.has('printProposal:changed'), 'the agent\'s edit during the fill');
+});
+
+// Review of PR #170 (Claude): the agent's pick from the panel (Change answer, an item's choices) goes in
+// with the recorder paused, so no field_changes came and "Quote done" outlived a limit changed after the
+// print. A pick that went in marks the finishing step changed, as the agent's change on the page does.
+test('the agent\'s pick from the panel marks the quote changed after its finishing action, as a change on the page does', async () => {
+  const marks = [];
+  const note = (...args) => { marks.push(args); return true; };
+  const t = agentAnswerHarness({ extra: { noteChangedAfterDone: note, renderSteps: () => marks.push('steps') } });
+  await t.pick('No');
+  assert.equal(marks.length, 2);
+  assert.equal(marks[0][0], t.carrier);
+  assert.deepEqual(marks[0].slice(1), ['Quote', undefined, 1]);
+  assert.equal(marks[1], 'steps');
+  // One the page didn't take changes nothing.
+  marks.length = 0;
+  const refused = agentAnswerHarness({ extra: { noteChangedAfterDone: note, renderSteps: () => marks.push('steps') } });
+  refused.answer = (items) => [{ frameId: 0, result: [{ key: items[0].key, ok: false, reason: 'the page did not keep the answer' }] }];
+  await refused.pick('No');
+  assert.deepEqual(marks, []);
+});
+
+// The same for an AI pick put in on the page (applyAi): it is on the page, approved or not.
+test('an AI pick put in on the page marks the quote changed after its finishing action', async () => {
+  const record = {}, intake = { record };
+  const x = { key: 'choice', label: 'Choice', controlKind: 'radio', choice: 'No', autoOk: true };
+  const field = { key: x.key, label: x.label, current: '' };
+  const pre = [{ frameId: 0, documentId: 'doc-0', result: JSON.stringify(['Quote', [field]]) }];
+  const post = [{ ...pre[0], result: JSON.stringify(['Quote', [{ ...field, current: 'No' }]]) }];
+  const responses = [pre, [{ frameId: 0, documentId: 'doc-0', result: [{ key: x.key, label: x.label, ok: true, shown: 'No' }] }], post];
+  const state = { filling: false, intake, active: {}, tab: { id: 1, url: 'https://example.test/quote' },
+    aiCache: new Map([['1\n/quote', x]]), agentKeys: new Map(), filled: new Map() };
+  const ctx = { tabId: 1, page: '/quote', tabUrl: state.tab.url, intake, carrier: { practice: true },
+    contextKey: assistContextKey(record, state.active), snapshots: pre };
+  const marks = [];
+  const context = { state, crypto: { randomUUID }, assistContextKey, aiFingerprint: JSON.stringify, pageOf: url => new URL(url).pathname,
+    runKit: async (tabId, carrier, func) => /answerEdits/.test(String(func)) ? pre.map(frame => ({ ...frame, result: [] })) : responses.shift(), tellRecorder: async () => {}, persistAiPending: async () => {},
+    usage: { currentSession: () => ({ intakeId: 'scope' }) }, aiSafeText: String, aiRetiredSignatures: new Set(),
+    noteChangedAfterDone: (...args) => { marks.push(args); return false; } };
+  vm.runInNewContext(['aiActionCurrent', 'canonicalSnapshotMetadata', 'canonicalSnapshotFrame', 'canonicalSnapshots',
+    'snapshotsEqual', 'snapshotFingerprint', 'snapshotHashMatches', 'aiSnapshotFields', 'aiSnapshotFieldMatches',
+    'aiQuestionHash', 'aiLiveFieldHash', 'aiOriginRecord', 'aiAnswerOrigin', 'aiCurrentAnswerPresent',
+    'applyAi'].map(extractFunction).join('\n') + LAYOUT_STUB, context);
+  assert.equal(await context.applyAi([x], ctx, 'auto'), true);
+  assert.equal(marks.length, 1);
+  assert.equal(marks[0][0], ctx.carrier);
+  assert.deepEqual(marks[0].slice(1), ['/quote', undefined, 1]);
+});
+
+// Review of PR #170 (Claude): once marked changed, "Quote done" never came back on GEICO: the fill never
+// clicks Print Quote Proposal again (done once a quote), and the agent's own click of it, after their
+// Recalculate, left the mark. The agent's click of the finishing action lifts it, as a fill's does.
+test('the agent\'s own click of the finishing action lifts the changed mark', () => {
+  const plan = geico.actions.map((a) => ({ kind: 'action', action: a.id, baseAction: a.id, pages: [].concat(a.page ?? []), steps: a.steps ?? null,
+    text: typeof a.text === 'function' ? null : a.text ?? null, near: a.near ?? null, token: a.token ?? null, within: a.within ?? null,
+    opener: a.opener ?? null, unique: !!a.unique, needsRecalculation: !!a.needsRecalculation, verify: a.verify ?? null }));
+  const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set(['recalculate', 'printProposal', 'printProposal:changed']) };
+  let steps = 0;
+  const context = { state, buildPlan: () => plan, persistDoneActions: () => {}, renderSteps: () => { steps++; } };
+  vm.runInNewContext(extractFunction('agentHelperDone'), context);
+  context.agentHelperDone(geico, 'quote', 'Quote & Coverages', 'Print Quote Proposal');
+  assert.deepEqual([[...state.doneActions], steps], [['recalculate', 'printProposal'], 1], 'lifted, and the strip and the dock say so');
+});
+
+// Review of PR #170 (Claude): New quote cleared this intake's stored records, but the panel's own sets
+// (the tab's helpers clicked, the agent's edits on the page, unit forms) only went later, after the PDF
+// was read again: anything that saved them meanwhile (an edit on the page, a unit arrival) wrote the old
+// quote's back, and the new quote took vehicles as already added. They go first now. Nothing starts a
+// fill while it is under way, and a confirmed New quote while answers go in says so.
+test('New quote lets go of the panel\'s own records before the stored ones, starts no fill meanwhile, and says why it waits', async () => {
+  const seen = [];
+  const state = { intake: { fileName: 'client.pdf' }, filling: false, tab: { id: 4, carrier: { id: 'geico' } },
+    doneActions: new Set(['addVehicle:0', 'printProposal']), agentKeys: new Map([['quote|s:Drivers', new Set(['k1'])]]),
+    unitForms: { vehicles: { form1: 0 }, drivers: {}, trailers: {} }, tabSessions: new Map([[5, { doneActions: new Set(['addVehicle:1']) }]]) };
+  const snapshot = (what) => seen.push([what, [...state.doneActions], state.agentKeys.size, Object.keys(state.unitForms.vehicles).length, state.tabSessions.size, !!state.resetting]);
+  const notes = [];
+  const context = { state, inExtension: true, File: class { constructor(parts, name, opts) { Object.assign(this, { parts, name, type: opts?.type }); } },
+    intakePdfBytes: async () => new Uint8Array([1, 2]), usage: { currentSession: () => ({ intakeId: 'abc' }) },
+    runKit: async () => [], clearAgentKeys: async () => snapshot('keys'), loadFile: async () => snapshot('load'), clientNote: (t) => notes.push(t) };
+  vm.runInNewContext(extractFunction('newQuote'), context);
+  await context.newQuote();
+  assert.deepEqual(JSON.parse(JSON.stringify(seen)), [['keys', [], 0, 0, 0, true], ['load', [], 0, 0, 0, true]]);
+  assert.equal(!!state.resetting, false, 'over');
+  // fillPage and autoFill start nothing while it is under way.
+  for (const name of ['fillPage', 'autoFill']) assert.match(extractFunction(name), /state\.resetting/, name);
+  // Over even when the PDF couldn't be read again.
+  context.loadFile = async () => { throw new Error('unreadable'); };
+  await assert.rejects(context.newQuote());
+  assert.equal(!!state.resetting, false);
+  // Confirmed while answers go in: said, nothing done.
+  state.filling = true;
+  seen.length = 0;
+  await context.newQuote();
+  assert.deepEqual([seen, notes], [[], ['Wait for the answers going in to finish, then start the new quote.']]);
+});
+
+// Review of PR #170 (Cursor and Claude): the live list took the first frame's phase that said one, so
+// Progressive's hidden frame reading its old page spoke over the top frame answering (null). The top
+// frame's word goes while its fill runs; another frame's once it is over there.
+test('the live list takes the top frame\'s phase while its fill runs', async () => {
+  let tick = null;
+  let reply = [];
+  const state = { fillingFor: { run: 'r1', filled: 0, rows: [] } };
+  const context = { inExtension: true, state, worldFor: () => 'MAIN', renderSteps: () => {}, setInterval: (fn) => { tick = fn; return 1; }, clearInterval() {},
+    chrome: { scripting: { executeScript: async () => reply } } };
+  vm.runInNewContext(extractFunction('watchFill'), context);
+  context.watchFill({ run: 'r1', tabId: 3, carrier: {} });
+  const progress = (frame, phase) => ({ frame, list: `${frame}:1`, since: 0, rows: [], phase });
+  reply = [{ frameId: 0, result: progress('top', { name: 'premium', what: null }) }, { frameId: 5, result: progress('hidden', { name: 'reading', what: null }) }];
+  await tick();
+  assert.equal(state.fillingFor.phase.name, 'premium');
+  reply = [{ frameId: 5, result: progress('hidden', { name: 'reading', what: null }) }, { frameId: 0, result: progress('top', null) }];
+  await tick();
+  assert.equal(state.fillingFor.phase, null, 'the top frame answering');
+  reply = [{ frameId: 0, result: null }, { frameId: 5, result: progress('hidden', { name: 'waiting', what: null }) }];
+  await tick();
+  assert.equal(state.fillingFor.phase?.name, 'waiting', 'the top frame\'s fill is over: the other\'s word');
+});
+
+// Review of PR #170 (Claude): a report made again on reopen judged the page without the frame's
+// Continue due (advanceDue wasn't kept), so a page the live report read "Nothing to fill" with
+// Continue on read "No questions found" once the panel opened again. It is kept with the other parts.
+test('a kept report keeps a frame\'s Continue due, which judges the page as it did live', async () => {
+  const memory = {};
+  const { context } = keptReportsHarness(memory);
+  context.keepReport(7, { key: '7|VehicleSummary', page: 'VehicleSummary', active: {}, at: 100, stopped: false, frames: [{ fields: 0, advanceDue: 'none' }, { fields: 0, notDrawn: true }] });
+  await context.kept();
+  assert.deepEqual(memory['reports:7'].entries[0].frames, [{ fields: 0, advanceDue: 'none' }, { fields: 0, notDrawn: true }]);
 });
