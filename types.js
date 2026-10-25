@@ -275,7 +275,8 @@
  * @property {{ [step: string]: string }} [stopSteps]
  * @property {{ [name: string]: { button: string, note: string | ((record: ClientRecord) => string) } }} [stopButtons]
  * @property {{ [step: string]: string }} [stepNotes]
- * @property {string} [finishedBy]  the action (its id) whose click ends the quote where TNI stops on this rater (GEICO's Print Quote Proposal): clicked, on its step or page, with nothing left for the agent, the panel says "Quote done" (sidepanel quoteFinished)
+ * @property {string} [finishedBy]  the action (its id) whose click ends the quote where TNI stops on this rater (GEICO's Print Quote Proposal, Progressive's Print, Email, Fax): clicked, on its step or page, with nothing left for the agent, the panel says "Quote done" (sidepanel quoteFinished) and chimes once (noteQuoteDone)
+ * @property {string} [finishedSaid]  the dock's title then, in place of "The quote proposal is printed" (Progressive: "Print, Email, Fax was clicked for you")
  * @property {string[]} [newQuestionsOnlySteps]
  * @property {string[]} [keepTakenBack]
  * @property {boolean} [continueRetry]

@@ -355,6 +355,9 @@ const state = {
   fileConfirmFrom: null,
   // New quote with this intake under way (newQuote): no fill starts.
   resetting: false,
+  // The quotes (tab and intake) whose done was chimed (noteQuoteDone), and the panel's audio context.
+  chimed: new Set(),
+  audio: null,
   // Client details: whether fields the intake leaves blank are listed (showEmpty; the flagged ones
   // always are), and the sections the agent folded (by id).
   showEmpty: false,
@@ -1673,6 +1676,9 @@ function agentHelperDone(carrier, page, step, text) {
   const lifted = state.doneActions.delete(`${done[0].action}:changed`);
   persistDoneActions();
   if (lifted) renderSteps();
+  // The agent's own click of the finishing action (GEICO's Print Quote Proposal after their own
+  // Recalculate): the quote is done, with its chime (noteQuoteDone).
+  if (done[0].action === carrier.finishedBy) noteQuoteDone();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -2653,6 +2659,9 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
   } else if (!due) maps.triedAgain = null;
   for (const id of frames.flatMap((f) => f.invalidatedActions ?? [])) maps.doneActions.delete(id);
   for (const a of frames.flatMap((f) => f.actions ?? [])) { maps.doneActions.add(a.id); maps.doneActions.delete(`${a.id}:changed`); }
+  // The quote's finishing action clicked by this fill (GEICO's Print Quote Proposal, Progressive's
+  // Print, Email, Fax): the quote is done, with its chime (noteQuoteDone), for the fill's tab.
+  if (carrier?.finishedBy && frames.some((f) => (f.actions ?? []).some((a) => a.id === carrier.finishedBy && !a.alreadyShown))) noteQuoteDone(tabId);
   // An answer this fill put in on the quote's finishing step, or an edit of the agent's it kept, after
   // the finishing action was clicked, and that action not clicked again: the printed proposal is no
   // longer the quote on the page (noteChangedAfterDone; GEICO's Recalculate and Print are clicked once).
@@ -3092,7 +3101,54 @@ function noteChangedAfterDone(carrier, page, step, tabId = state.tab?.id) {
   if (!doneActions?.has(id) || doneActions.has(`${id}:changed`)) return false;
   doneActions.add(`${id}:changed`);
   persistDoneActions(tabId, doneActions);
+  // The next print is the quote done again, with its chime.
+  state.chimed.delete(quoteDoneKey(tabId));
   return true;
+}
+
+// A short chime when the quote is done where TNI stops on the rater (the maintainer, 2026-10-25: "a
+// ding when we finish the quote, not just one page"): the first time the finishing action is done on
+// a tab, by the fill's click (rememberFill) or the agent's own (agentHelperDone); again only after a
+// change on the finishing step (noteChangedAfterDone) and another print. Off with Sound when the
+// quote is done (Settings → Filling, `finish-sound`, saved on this computer as `finishSound`, never
+// logged). Two rising sine notes made here with Web Audio: no sound file, no new permission. True
+// when it sounded.
+function quoteDoneKey(tabId = state.tab?.id) { return `${tabId}|${usage.currentSession()?.intakeId ?? ''}`; }
+function noteQuoteDone(tabId = state.tab?.id) {
+  if (!$('finish-sound')?.checked) return false;
+  const key = quoteDoneKey(tabId);
+  if (state.chimed.has(key)) return false;
+  state.chimed.add(key);
+  return playChime();
+}
+// Chrome lets a page make sound once someone has clicked in it: the context is made, and resumed, on
+// the agent's first click in the panel (wireUsage), and again here in case it was suspended since.
+function unlockAudio() {
+  try {
+    if (!state.audio && typeof AudioContext === 'function') state.audio = new AudioContext();
+    if (state.audio?.state === 'suspended') state.audio.resume().catch?.(() => {});
+  } catch { state.audio = null; }
+  return !!state.audio;
+}
+function playChime() {
+  if (!unlockAudio()) return false;
+  try {
+    const audio = state.audio;
+    const t = audio.currentTime;
+    for (const [freq, at] of [[660, 0], [880, 0.16]]) {
+      const osc = audio.createOscillator();
+      const gain = audio.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t + at);
+      gain.gain.exponentialRampToValueAtTime(0.18, t + at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.45);
+      osc.connect(gain).connect(audio.destination);
+      osc.start(t + at);
+      osc.stop(t + at + 0.5);
+    }
+    return true;
+  } catch { return false; }
 }
 
 // The dock: the one next thing to do, always in the same place under the panel, and its button.
@@ -3147,7 +3203,7 @@ function dockFor() {
   // The quote is done where TNI stops on this rater (quoteFinished): said, in place of "Moving on
   // is yours" or "Ready for Continue" on a page that is the end of the quote.
   if (report && quoteFinished(carrier, report, page, step) && !pendingAi(state.tab.id, page).length) {
-    return { phase: 'finished', tone: 'good', eyebrow: 'Quote done', title: 'The quote proposal is printed',
+    return { phase: 'finished', tone: 'good', eyebrow: 'Quote done', title: carrier.finishedSaid ?? 'The quote proposal is printed',
       sub: `This is where TNI stops on ${carrier.name}. Nothing is submitted or bound.`, alt: 'fill-again', altLabel: 'Fill this page again' };
   }
   // A page the fill had no question for and left nothing on (a unit list with every unit on it):
@@ -5527,6 +5583,9 @@ function wireUsage() {
   // Saved with the other switches but never logged (fillContext's settings are the four the
   // usage server knows). The dock follows it (Looks right, continue).
   $('check-continue').addEventListener('change', (e) => { usage.saveSettings({ checkBeforeContinue: e.target.checked }); renderSteps(); });
+  // Saved, never logged, like the one above. The chime needs a click in the panel first (unlockAudio).
+  $('finish-sound').addEventListener('change', (e) => { usage.saveSettings({ finishSound: e.target.checked }); });
+  document.addEventListener('pointerdown', unlockAudio, { once: true, capture: true });
   $('server-url').addEventListener('change', async (e) => {
     const v = e.target.value.trim();
     // Blank means "no server" (export only); anything else must be an http(s) URL.
@@ -6266,6 +6325,7 @@ async function init() {
   // A correction's profile the panel closed before logging (or an intake loaded by an earlier version).
   if (logProfile()) save();
   $('check-continue').checked = saved.checkBeforeContinue ?? false;
+  $('finish-sound').checked = saved.finishSound ?? true;
   uploadNow();
   render();
   renderUsage();

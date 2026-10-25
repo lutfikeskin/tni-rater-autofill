@@ -550,6 +550,12 @@ export const progressive = {
   // The page listing the quote's vehicles: the side panel works on the next intake vehicle not
   // added yet there, so Add Vehicle repeats until all are in, then Continue.
   vehicleList: 'VehicleSummary',
+  // Where the quote ends for the fill: Print, Email, Fax on Rates, clicked after the bill plan (its
+  // `print` helper). The print page it opens is the agent's: they pick the documents' recipients and
+  // press Print/Send themselves. Review page says Quote done on Rates, the dock in these words
+  // (sidepanel quoteFinished, dockFor), and the quote-done chime sounds (noteQuoteDone).
+  finishedBy: 'print',
+  finishedSaid: 'Print, Email, Fax was clicked for you',
   // The pages about one vehicle, repeated for each (their Continue is per vehicle).
   vehiclePages: ['MostCommonVehicles', 'AddVehicle'],
   // Trailers are added from the same list; their pages are per trailer, and Add Trailer marks its
