@@ -456,7 +456,7 @@ export function fillEvents(frames, { carrier, page, view, overwrite, auto = fals
   // page showed at the click (`selected`) and after it ([ms after the click, value]), whether the
   // fill put it back; in `context` how it was pressed ('page': from the page's own world, 'late': there
   // without the browser's event, 'kit': a script's click), when the premium showed, and the page's
-  // requests ([start, end] in ms after the click).
+  // requests ([start, end] in ms after the click, and 1 for one on the page's steady beat).
   for (const t of frames.map((f) => f.recalcTrace).filter(Boolean)) {
     events.push({
       type: 'page_layout', carrier, page, view, ...stepField, reason: 'recalculate',

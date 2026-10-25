@@ -883,6 +883,10 @@ async function scenario() {
   // the agent once).
   const clickedIds = done.actions?.map((a) => a.id) ?? [];
   if (JSON.stringify(clickedIds) !== JSON.stringify(['morePayPlans', 'printProposal'])) fail(`Quote & Coverages: the fill clicked [${clickedIds.join(', ')}], expected [morePayPlans, printProposal] after the agent's Recalculate`);
+  // Its Print Quote Proposal opened the proposal: clicked by the kit (`kitClick`); pressed from the
+  // page's own world it opened nothing live (2026-10-23).
+  const prints = (await mock()).log.filter((e) => e.type === 'print').map((e) => (e.isTrusted ? 'agent' : e.opened ? 'opened' : 'nothing'));
+  if (JSON.stringify(prints) !== '["opened"]') fail(`Quote & Coverages: the fill's Print Quote Proposal gave [${prints.join(', ')}], expected the proposal opened once`);
   if ((await mock()).recalcs !== 2) fail(`Quote & Coverages: Recalculate ran ${(await mock()).recalcs} time(s), expected twice (the fill's, then the agent's)`);
   if (!(await mock()).premium) fail('Quote & Coverages: the premium is out of date after the agent\'s Recalculate and the pay plan');
   if ((await values())['GivePayPlanV2#2'] !== 'GEICO_PP_11Pay') fail(`Quote & Coverages: the pay plan is ${JSON.stringify((await values())['GivePayPlanV2#2'])}, not 11 Payments`);
@@ -992,9 +996,12 @@ const agentRecalcs = final.log.filter((e) => e.isTrusted && e.type === 'click' &
 if (agentRecalcs !== 1) fail(`the agent's Recalculate clicks were ${agentRecalcs}, expected 1`);
 // W43-44: every button the extension pressed went out with the button's own part of the request, as
 // the agent's do: pressed from the page's own world (src/content/page-press.js), never a script's
-// click. Each Recalculate was rated with it.
-const kitPresses = final.log.filter((e) => !e.isTrusted && e.type === 'click' && e.target === 'button');
+// click. Each Recalculate was rated with it. Print Quote Proposal is the kit's click (`kitClick`,
+// 2026-10-23: pressed from the page's world it opened nothing), so it goes without.
+const isPrint = (e) => /^print quote proposal$/i.test(e.text ?? '');
+const kitPresses = final.log.filter((e) => !e.isTrusted && e.type === 'click' && e.target === 'button' && !isPrint(e));
 for (const e of kitPresses.filter((x) => x.ownEntry !== true)) fail(`${e.step}: the extension's ${e.text} went out without the button's own part (${e.ownEvent ?? 'no event'} in progress: W43-44)`);
+for (const e of final.log.filter((x) => !x.isTrusted && x.type === 'click' && isPrint(x) && x.ownEntry !== false)) fail(`${e.step}: the extension's ${e.text} was pressed from the page's own world (${e.ownEvent ?? 'no event'} in progress), not clicked by the kit`);
 for (const e of final.log.filter((x) => x.isTrusted && x.type === 'click' && x.target === 'button' && x.ownEntry !== true)) fail(`${e.step}: the agent's ${e.text} went out without the button's own part (the mock's reading is off)`);
 if (final.log.some((x) => x.type === 'recalculate' && x.ownEntry !== true)) fail(`a Recalculate was rated without the button's own part (W43-44)`);
 lines.push(`Buttons the extension pressed with the button's own part: ${kitPresses.length - kitPresses.filter((x) => x.ownEntry !== true).length} of ${kitPresses.length}`);
@@ -1057,10 +1064,78 @@ async function noElevenPayments() {
   if (!Object.values(await tx.evaluate(() => window.__geicoMock.values())).includes('GEICO_PP_9Pay')) fail('Quote & Coverages without 11 Payments, filled again: 9 Payments is no longer the plan picked');
   await tx.close();
 }
+// 2026-10-23: GEICO asks its server every 2.0 s the whole time a quote is open, and Recalculate's
+// wait for 2 s without one of the page's own requests finishing came only when a beat ran a few ms
+// late (18.3 s after the last answer on the live recording; REQUESTS_MS, 30 s, at most). The quote
+// view served from an http address (its requests are the page's own there) with a beat every 1.9 s,
+// a little under the 2 s, so the old wait never ends early by luck. A coverage changed, then a fill
+// with Recalculate only: it is clicked once the page is quiet, the beat marked in its trace.
+async function steadyBeat() {
+  const bp = await browser.newPage({ viewport: { width: 1400, height: 1000 } });
+  bp.on('pageerror', (e) => errors.push(String(e.message)));
+  const ORIGIN = 'https://quote.mock.example';
+  const FILES = { '/quote.html': 'text/html', '/mock.js': 'text/javascript' };
+  await bp.addInitScript({ content: PRESS });
+  await bp.route(/^(https?|wss?):/i, async (r) => {
+    const url = new URL(r.request().url());
+    if (url.origin === ORIGIN && url.pathname === '/api/session/check') {
+      await new Promise((done) => setTimeout(done, 300));
+      return r.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    }
+    if (url.origin === ORIGIN && FILES[url.pathname]) {
+      return r.fulfill({ status: 200, contentType: FILES[url.pathname], body: fs.readFileSync(path.join(root, 'test/fixtures/geico', url.pathname.slice(1)), 'utf8') });
+    }
+    refused.push(url.href);
+    return r.abort();
+  });
+  await bp.goto(`${ORIGIN}/quote.html?view=quote&beat=1900&delay=200`);
+  await bp.waitForFunction(() => window.__geicoMock?.view === 'quote' && window.__geicoMock.beats >= 4, null, { timeout: 20000 });
+  const cdp = await bp.context().newCDPSession(bp);
+  const { frameTree } = await cdp.send('Page.getFrameTree');
+  const { executionContextId } = await cdp.send('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'TNI Rater Autofill (mock, steady beat)' });
+  const run = async (expression) => {
+    const r = await cdp.send('Runtime.evaluate', { expression, contextId: executionContextId, awaitPromise: true, returnByValue: true });
+    if (r.exceptionDetails) throw new Error(`in the extension's world: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`);
+    return r.result.value;
+  };
+  await run(`globalThis.chrome = { runtime: { id: 'geico-mock', sendMessage() { return Promise.resolve(); }, onMessage: { addListener() {}, removeListener() {} } } }; true`);
+  await run(KIT);
+  // The agent's coverage change: the premium out of date.
+  const id = await bp.evaluate(() => [...document.querySelectorAll('#salesForm [for]')]
+    .find((l) => (l.querySelector('span')?.textContent ?? l.textContent).replace(/\s+/g, ' ').trim() === 'Bodily Injury or Combined Single Limit Liability')?.getAttribute('for'));
+  await bp.selectOption(`select[id="${id}"]`, { label: '$750,000 Combined Single Limit' });
+  await bp.waitForFunction(() => !window.__geicoMock.premium);
+  const carrier = { ...geico, rules: [], actions: geico.actions.filter((a) => a.id === 'recalculate') };
+  const plan = buildPlan(record, carrier, {});
+  const options = { replaceChoices: !!geico.replaceChoices, stopSteps: STOP_STEPS, maxRounds: 20 };
+  // The step's questions without a rule here that the fill lists for the agent are marked done, and
+  // the fill after that clicks (or the first, with none listed).
+  let startedAt = await bp.evaluate(() => performance.now());
+  let report = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify(options)})`);
+  if (!report.actions?.length) {
+    const skip = (report.unknown ?? []).map((x) => x.key);
+    startedAt = await bp.evaluate(() => performance.now());
+    report = await run(`__raterKit.fill(${JSON.stringify(plan)}, ${JSON.stringify({ ...options, skip })})`);
+  }
+  const m = await bp.evaluate(() => ({ log: window.__geicoMock.log, recalcs: window.__geicoMock.recalcs, beats: window.__geicoMock.beats }));
+  const press = m.log.find((e) => e.type === 'click' && e.target === 'button' && /^recalculate$/i.test(e.text ?? ''));
+  const after = press ? (press.at - startedAt) / 1000 : null;
+  const beats = (report.recalcTrace?.requests ?? []).filter((x) => x[2] === 1).length;
+  lines.push(`## Quote & Coverages with a 1.9 s beat · Recalculate ${press ? `clicked ${after.toFixed(1)} s into the fill` : 'not clicked'} · ${beats} of ${report.recalcTrace?.requests?.length ?? 0} traced requests on the beat (${m.beats} beats)`);
+  if (!press || m.recalcs !== 1) fail(`Quote & Coverages with a beat: Recalculate ${press ? `rated ${m.recalcs} time(s)` : 'never clicked'}, expected once`);
+  else if (after > 6) fail(`Quote & Coverages with a beat: Recalculate clicked ${after.toFixed(1)} s into the fill, expected once the page was quiet (about 2 s): the beat held it`);
+  if (!beats) fail('Quote & Coverages with a beat: no request in the Recalculate trace was taken for the beat');
+  await bp.close();
+}
 try {
   await noElevenPayments();
 } catch (e) {
   fail(`the no-11-Payments run stopped: ${String(e.message).split('\n')[0]}`);
+}
+try {
+  await steadyBeat();
+} catch (e) {
+  fail(`the steady beat run stopped: ${String(e.message).split('\n')[0]}`);
 }
 
 if (errors.length) fail(`page errors: ${errors.join(' | ')}`);
