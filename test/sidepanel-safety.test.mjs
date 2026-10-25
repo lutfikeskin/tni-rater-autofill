@@ -104,7 +104,7 @@ function extractFunction(name) {
         // keys a fill leaves alone (fillSkip, fillSkipBy, formScoped: GEICO's per step and form) or
         // an edit is filed under (changeScopes, unitScope: GEICO's by the forms on screen). The
         // panel's cards and row heads (issueCard, setRowHead) come along as they are.
-        for (const helper of ['itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
+        for (const helper of ['finishLeftOk', 'itemsLeft', 'tabMaps', 'fillContext', 'staleFill', 'fillCurrent', 'noteStaleFill', 'logFill', 'fillErrorText', 'fillErrorMessage', 'logFillError', 'stepOfResults', 'tabStep', 'stopNoteFor', 'fillSkip', 'fillSkipBy', 'formScoped', 'changeScopes', 'unitScope', 'issueCard', 'setRowHead', 'answerSources', 'groupRows', 'choicesOf', 'pdfAvailable', 'scrollBehavior', 'pageMoved', 'notePageMoved', 'firstUnits', 'finishingAction']) {
           if (name !== helper && new RegExp(`\\b${helper}\\(`).test(source) && !new RegExp(`function ${helper}\\(`).test(source)) source += `\n${extractFunction(helper)}`;
         }
         // The quote-state hold (stateIssue) has its own tests: elsewhere no state differs, unless
@@ -3839,7 +3839,7 @@ async function stateNoteHarness() {
     // The page's quote-state control as the page shows it (chrome.scripting in the extension).
     readQuoteState: async () => page.shown,
   };
-  vm.runInNewContext(`${PAGE_HELPERS}\n${['onRecorderMessage', 'showStateNote', 'stateIssue', 'dismissState', 'noteQuoteState', 'seedQuoteState', 'inheritQuoteState', 'rememberFill', 'intakeEdited', 'viewOf', 'saveViews', 'stepScope', 'editScope'].map(extractFunction).join('\n')}`, context);
+  vm.runInNewContext(`${PAGE_HELPERS}\n${['onRecorderMessage', 'showStateNote', 'stateIssue', 'dismissState', 'noteQuoteState', 'seedQuoteState', 'inheritQuoteState', 'rememberFill', 'quoteFinished', 'intakeEdited', 'viewOf', 'saveViews', 'stepScope', 'editScope'].map(extractFunction).join('\n')}`, context);
   const pick = (after, key = 'QuoteStateList', at = '/home/', tabId = 7) =>
     context.onRecorderMessage({ ra: 'usage', event: 'field_changes', page: at, changes: [{ key, after, agent: true }] }, { tab: { id: tabId }, frameId: 0 });
   const arrive = async (at, from = null, tabId = 7) => {
@@ -7944,7 +7944,7 @@ test('Progressive\'s quote is done at Print, Email, Fax, and the dock says so in
 
 test('Sound when the quote is done is a Filling switch, on by default, kept on this computer and never logged', () => {
   const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
-  assert.match(html, /<label class="opt"><span class="opt-text"><b>Sound when the quote is done<\/b><span>A short chime when the rater’s last step is clicked\.<\/span><\/span><input type="checkbox" role="switch" class="switch" id="finish-sound" checked><\/label>/);
+  assert.match(html, /<label class="opt"><span class="opt-text"><b>Sound when the quote is done<\/b><span>A short sound when the quote reaches its end\.<\/span><\/span><input type="checkbox" role="switch" class="switch" id="finish-sound" checked><\/label>/);
   assert.match(extractFunction('wireUsage'), /\$\('finish-sound'\)\.addEventListener\('change', \(e\) => \{ usage\.saveSettings\(\{ finishSound: e\.target\.checked \}\); \}\);/);
   assert.match(extractFunction('wireUsage'), /document\.addEventListener\('pointerdown', unlockAudio, \{ once: true, capture: true \}\);/, 'the audio is unlocked by the agent\'s first click in the panel');
   assert.match(extractFunction('init'), /\$\('finish-sound'\)\.checked = saved\.finishSound \?\? true;/);
@@ -8017,4 +8017,72 @@ test('the agent\'s own click of a finishing action already done and unchanged ch
   state.doneActions.add('printProposal:changed');
   context.agentHelperDone(geico, 'quote', 'Quote & Coverages', 'Print Quote Proposal');
   assert.deepEqual(chimes, [1], 'changed since: the new quote printed');
+});
+
+
+// The maintainer, 2026-10-25: on AmWINS the quote is done at the declaration ("I declare …") at the
+// end of Underwriting; the agent ticks it and clicks Submit. No button ends it for the fill, so its
+// end is a step (`finishedAt`): a fill there that leaves the agent nothing but the declaration. Then
+// the strip says Quote done, the dock says the declaration and Submit are the agent's, and the quote
+// chimes once. The declaration stays unticked and Submit unclicked.
+const DECLARATION = { name: 'Declaration', key: 'accept', label: 'I declare that the information provided is true', source: 'attestation', note: 'The declaration is yours to confirm; never ticked. Then Submit (yours too).' };
+test('AmWINS\'s quote is done at the declaration: Underwriting with nothing else left', () => {
+  assert.equal(amwins.finishedBy, undefined, 'no button ends it');
+  assert.deepEqual(JSON.parse(JSON.stringify(amwins.finishedAt)), { id: 'declaration', steps: ['Underwriting'], left: ['Declaration'],
+    said: 'Tick the declaration, then click Submit', sub: 'Both are yours on AmWINS. Nothing is ticked, submitted or bound for you.' });
+  assert.ok(amwins.rules.some((r) => r.selector === '#accept' && r.name === 'Declaration' && r.source === 'attestation' && !('value' in r)), 'the declaration is still never filled');
+  const context = { state: { tab: { id: 7, url: 'app' }, doneActions: new Set(), tabSteps: new Map([[7, 'Underwriting']]) }, pageOf: (u) => u };
+  vm.runInNewContext(extractFunction('quoteFinished'), context);
+  const report = { fields: 30, filled: 29, left: 1, otherLeft: 0, waiting: 0 };
+  assert.equal(context.quoteFinished(amwins, report), true, 'only the declaration left');
+  assert.equal(context.quoteFinished(amwins, { ...report, left: 0 }), true, 'the agent ticked it: still done');
+  assert.equal(context.quoteFinished(amwins, { ...report, left: 2, otherLeft: 1 }), false, 'another question left for the agent');
+  assert.equal(context.quoteFinished(amwins, { ...report, waiting: 1 }), false, 'a button left to click');
+  assert.equal(context.quoteFinished(amwins, { ...report, halted: true }), false, 'a fill stopped short');
+  assert.equal(context.quoteFinished(amwins, { ...report, fields: 0 }), false, 'no questions found');
+  assert.equal(context.quoteFinished(amwins, report, 'app', 'Coverages'), false, 'another step');
+  // The dock: the declaration and Submit are the agent's.
+  const d = dockHarness({ carrier: amwins, step: 'Underwriting', extra: { showReport: () => report, quoteFinished: context.quoteFinished } });
+  const word = d.dock();
+  assert.deepEqual([word.phase, word.eyebrow, word.title, word.sub, word.button ?? null, word.alt],
+    ['finished', 'Quote done', 'Tick the declaration, then click Submit', 'Both are yours on AmWINS. Nothing is ticked, submitted or bound for you.', null, 'fill-again']);
+});
+
+test('the AmWINS fill that reaches the declaration chimes once; one that leaves more doesn\'t', () => {
+  const h = harness();
+  const played = [];
+  h.context.Audio = class { constructor(src) { this.src = src; this.currentTime = 0; } play() { played.push(this.src); return Promise.resolve(); } };
+  h.ui['finish-sound'] = { checked: true };
+  vm.runInContext(['noteQuoteDone', 'playChime', 'unlockAudio'].map(extractFunction).join('\n'), h.context);
+  h.state.tab = { ...quoteTab(5, 'app'), carrier: amwins };
+  h.state.intake = { record: {} };
+  const opts = { page: 'app', auto: 'page', intake: h.state.intake, revision: undefined };
+  const fill = (frame) => h.rememberFill([{ fields: 30, filled: [], actions: [], noData: [], ...frame }], opts);
+  fill({ stepKey: 'Coverages' });
+  assert.equal(played.length, 0, 'another step');
+  fill({ stepKey: 'Underwriting', noData: [DECLARATION, { name: 'Disclosure details', key: 'disclosure', note: null }] });
+  assert.equal(played.length, 0, 'something else left for the agent');
+  fill({ stepKey: 'Underwriting', noData: [DECLARATION], halted: true });
+  assert.equal(played.length, 0, 'stopped short');
+  fill({ stepKey: 'Underwriting', noData: [DECLARATION] });
+  assert.deepEqual([played.length, h.state.doneActions.has('declaration')], [1, true], 'the declaration is next: the chime, and the quote marked done');
+  fill({ stepKey: 'Underwriting', noData: [DECLARATION] });
+  assert.equal(played.length, 1, 'once a quote');
+  // New quote or Clear empties the tab's done actions: the next quote chimes.
+  h.state.doneActions.clear();
+  fill({ stepKey: 'Underwriting', noData: [DECLARATION] });
+  assert.equal(played.length, 2);
+});
+
+test('what is left besides the declaration is counted with the report, and again as the agent answers', () => {
+  // renderReport keeps the count of items other than the finishing step's own (otherLeft), and
+  // needRow marks the declaration's row so recount keeps that count as the agent answers.
+  assert.match(extractFunction('renderReport'), /otherLeft: needs\.filter\(\(x\) => !finishLeftOk\(carrier, x\)\)\.length/);
+  assert.match(extractFunction('needRow'), /finish: finishLeftOk\(carrier, x\) \? '1' : ''/);
+  assert.match(extractFunction('recount'), /entry\.otherLeft = items\.filter\(\(n\) => !n\.classList\.contains\('resolved'\) && n\.dataset\?\.finish !== '1'\)\.length;/);
+  const context = {};
+  vm.runInNewContext(extractFunction('finishLeftOk'), context);
+  assert.equal(context.finishLeftOk(amwins, DECLARATION), true);
+  assert.equal(context.finishLeftOk(amwins, { name: 'Marital status' }), false);
+  assert.equal(context.finishLeftOk(geico, DECLARATION), false, 'only where the carrier names it');
 });

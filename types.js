@@ -276,6 +276,7 @@
  * @property {{ [name: string]: { button: string, note: string | ((record: ClientRecord) => string) } }} [stopButtons]
  * @property {{ [step: string]: string }} [stepNotes]
  * @property {string} [finishedBy]  the action (its id) whose click ends the quote where TNI stops on this rater (GEICO's Print Quote Proposal, Progressive's Print, Email, Fax): clicked, on its step or page, with nothing left for the agent, the panel says "Quote done" (sidepanel quoteFinished); its click where it wasn't done, or was changed or re-armed since, chimes (noteQuoteDone)
+ * @property {{ id: string, steps: string[], left: string[], said: string, sub: string }} [finishedAt]  where the quote ends at a step instead of a button (AmWINS: Underwriting, with only the Declaration left for the agent): a fill there that leaves the agent nothing but the `left` items (by rule name) is the quote done: Review page says "Quote done", the dock says `said` and `sub`, and the chime sounds once a quote (`id` kept with the tab's done actions; sidepanel quoteFinished, rememberFill)
  * @property {string} [finishedSaid]  the dock's title then, in place of "The quote proposal is printed" (Progressive: "Print, Email, Fax was clicked")
  * @property {string[]} [newQuestionsOnlySteps]
  * @property {string[]} [keepTakenBack]
