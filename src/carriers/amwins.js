@@ -322,6 +322,12 @@ export const amwins = {
   // Each step ends with Save & Continue (saves the draft, opens the next step) once nothing is
   // left for the agent. The declaration step never gets there: the declaration is the agent's.
   advance: { text: '^save\\s*(&|and)\\s*continue$' },
+  // Where the quote ends (the maintainer, 2026-10-25: "on AmWINS that's when we count it done"): a
+  // fill on Underwriting that leaves the agent nothing but the declaration. The panel then says Quote
+  // done, the declaration and Submit are the agent's, and chimes once (sidepanel quoteFinished,
+  // rememberFill). The declaration is never ticked and Submit never clicked.
+  finishedAt: { id: 'declaration', steps: ['Underwriting'], left: ['Declaration'],
+    said: 'Tick the declaration, then click Submit', sub: 'Both are yours on AmWINS. Nothing is ticked, submitted or bound for you.' },
   // Every rule of a repeating section is repeated per row (perRow).
   rules: perRow([
     // --- Start (/commerciallines) --------------------------------------------------------------

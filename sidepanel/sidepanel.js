@@ -2676,6 +2676,19 @@ function rememberFill(frames, { tabId = state.tab?.id, carrier = state.tab?.carr
       waiting: frames.reduce((n, f) => n + (f.blocked?.length ?? 0), 0), halted: frames.some((f) => !!f.halted) };
     if (quoteFinished(carrier, report, page, finishStep, maps.doneActions) && !pendingAi(tabId, page).length) noteQuoteDone();
   }
+  // A rater whose quote ends at a step (`finishedAt`, AmWINS's declaration): the first fill there that
+  // leaves the agent nothing but its own items (the declaration, then Submit) is the quote done, kept
+  // with the tab's done actions (so once a quote: New quote and Clear empty them), with the chime.
+  const at = carrier?.finishedAt;
+  if (at && !maps.doneActions.has(at.id)) {
+    const left = itemsLeft(frames);
+    const report = { fields: frames.reduce((n, f) => n + (f.fields ?? 0), 0), left: left.length, otherLeft: left.filter((x) => !finishLeftOk(carrier, x)).length,
+      waiting: frames.reduce((n, f) => n + (f.blocked?.length ?? 0), 0), halted: frames.some((f) => !!f.halted) };
+    if (quoteFinished(carrier, report, page, finishStep, maps.doneActions) && !pendingAi(tabId, page).length) {
+      maps.doneActions.add(at.id);
+      noteQuoteDone();
+    }
+  }
   // An answer this fill put in on the quote's finishing step, or an edit of the agent's it kept, after
   // the finishing action was clicked, and that action not clicked again: the printed proposal is no
   // longer the quote on the page (noteChangedAfterDone; GEICO's Recalculate and Print are clicked once).
@@ -2890,6 +2903,7 @@ function recount() {
   if (!entry?.fields) return;
   const items = [...$('report').querySelectorAll('.row.need')];
   const left = items.filter((n) => !n.classList.contains('resolved')).length;
+  entry.otherLeft = items.filter((n) => !n.classList.contains('resolved') && n.dataset?.finish !== '1').length;
   if (left === entry.left) return;
   // Settled since the fill: the panel's Continue is a click away now, never on its own.
   entry.settled = !left && entry.left > 0;
@@ -3081,6 +3095,17 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
 // 2026-10-23: the end of a GEICO quote read like every other page).
 // A report whose fill halted, or that found no questions, isn't the quote done either.
 function quoteFinished(carrier, report, page = pageOf(state.tab?.url), step = tabStep(carrier), doneActions = state.doneActions) {
+  // A rater whose quote ends at a step, not a button (`finishedAt`, AmWINS's declaration on
+  // Underwriting): a fill there with nothing left for the agent but the step's own items (otherLeft).
+  // There: the step the report's own fill read (renderReport's `step`; rememberFill passes its fill's),
+  // not the tab's, which stays at the last step it saw: Underwriting on the start page of the next
+  // quote in the same tab (the review of PR #173).
+  const at = carrier?.finishedAt;
+  if (at) {
+    const own = report?.step === undefined ? step : report.step;
+    return [].concat(at.steps).includes(own) && !!report?.fields && !report.error && !report.stopped && !report.halted
+      && (report.otherLeft ?? report.left ?? 0) === 0 && (report.waiting ?? 0) === 0;
+  }
   const id = finishingAction(carrier, page, step);
   return !!id && !!report?.fields && !report.error && !report.stopped && !report.halted && !!doneActions?.has(id) && !doneActions.has(`${id}:changed`)
     && (report.left ?? 0) === 0 && (report.waiting ?? 0) === 0;
@@ -3097,6 +3122,12 @@ function finishingAction(carrier, page, step) {
   if (steps.length && !steps.includes(step)) return null;
   if (pages.length && !pages.includes(page)) return null;
   return id;
+}
+
+// An item left for the agent that the quote's end leaves them anyway (`finishedAt.left`, by rule
+// name: AmWINS's Declaration, ticked by the agent before their Submit).
+function finishLeftOk(carrier, x) {
+  return [].concat(carrier?.finishedAt?.left ?? []).includes(x?.name);
 }
 
 // The page changed on the finishing step after the action was clicked (a limit on GEICO's Quote &
@@ -3201,8 +3232,8 @@ function dockFor() {
   // The quote is done where TNI stops on this rater (quoteFinished): said, in place of "Moving on
   // is yours" or "Ready for Continue" on a page that is the end of the quote.
   if (report && quoteFinished(carrier, report, page, step) && !pendingAi(state.tab.id, page).length) {
-    return { phase: 'finished', tone: 'good', eyebrow: 'Quote done', title: carrier.finishedSaid ?? 'The quote proposal is printed',
-      sub: `This is where TNI stops on ${carrier.name}. Nothing is submitted or bound.`, alt: 'fill-again', altLabel: 'Fill this page again' };
+    return { phase: 'finished', tone: 'good', eyebrow: 'Quote done', title: carrier.finishedAt?.said ?? carrier.finishedSaid ?? 'The quote proposal is printed',
+      sub: carrier.finishedAt?.sub ?? `This is where TNI stops on ${carrier.name}. Nothing is submitted or bound.`, alt: 'fill-again', altLabel: 'Fill this page again' };
   }
   // A page the fill had no question for and left nothing on (a unit list with every unit on it):
   // Continue is next (W43-40: the dock offered Fill this page again on finished vehicle lists).
@@ -4171,7 +4202,7 @@ function renderReport(frames, ctx = {}) {
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
   // `halted`: the fill stopped short ("Filling stopped" above the list, or the agent's Stop).
-  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
+  const entry = { key, tabId, page, step: step ?? null, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, otherLeft: needs.filter((x) => !finishLeftOk(carrier, x)).length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
     halted: frames.some((f) => !!f.halted),
     ...(ctx.restoredAt ? { restored: true } : {}) };
   // The answers and the items in one list, by their place on the page: an item without a field on
@@ -4310,7 +4341,7 @@ function needRow(x, { tabId, page, carrier }, open = false) {
     'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
   const done = x.key ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page',
     'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page, x) }, 'Mark done') : null;
-  const item = h('div', { class: `row need${kind === 'need' ? '' : ` ${kind}`}${open ? ' open' : ''}`, tabindex: '-1', dataset: { need: `${x.key}|${x.label}`, key: x.key ?? '', icon, wait } },
+  const item = h('div', { class: `row need${kind === 'need' ? '' : ` ${kind}`}${open ? ' open' : ''}`, tabindex: '-1', dataset: { need: `${x.key}|${x.label}`, key: x.key ?? '', icon, wait, finish: finishLeftOk(carrier, x) ? '1' : '' } },
     h('button', { type: 'button', class: 'row-head', 'aria-expanded': String(open), onclick: () => toggleRow(item) },
       h('span', { class: 'row-icon', 'aria-hidden': 'true' }, icon),
       h('span', { class: 'row-text' }, h('span', { class: 'row-label' }, label), h('span', { class: 'row-value' }, wait))),
