@@ -1,7 +1,7 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../src/intake.js';
 import { sourcePlace } from '../src/intake-source.js';
-import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
@@ -4804,7 +4804,9 @@ async function aiSettings() {
 // since its check was for the old text. Items are kept by position (checked marks are).
 function claimsTextEdited(intake) {
   const uncheck = (i) => { intake.done = intake.done.filter((d) => d !== i); };
-  const mention = ntlMention(intakeNotes(intake.record));
+  // NTL already asked for on the form (auto liability Non-Trucking): no question about the notes.
+  const fromForm = intake.record.coverage?.ntl === true && nonTruckingAnswer(intake.record.coverage.autoLiability);
+  const mention = fromForm ? null : ntlMention(intakeNotes(intake.record));
   const i = intake.warnings.findIndex((w) => w.code === 'coverage.ntl');
   if (mention && i < 0) intake.warnings.push({ code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: ntlCheckMessage(mention) });
   else if (mention && intake.warnings[i].msg !== ntlCheckMessage(mention)) {

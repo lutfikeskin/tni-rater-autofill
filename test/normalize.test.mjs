@@ -791,3 +791,62 @@ test('a company name of NO / N/A / None is no company: a sole proprietor', () =>
     assert.equal(normalizeIntake({ ...raw, company_name: name }, { today: new Date('2026-09-30') }).record.applicant.name, name);
   }
 });
+
+// The maintainer, 2026-10-26: the form's auto liability question has Select / Yes / No /
+// Non-Trucking. Non-Trucking is the client's own answer that they want non-trucking liability
+// (NTL), so it sets coverage.ntl, as the agent would after reading the notes. Before, only a note
+// naming NTL asked the agent, and Progressive filled such a quote as ordinary liability.
+test('Non-Trucking picked for auto liability on the form is an NTL request', () => {
+  const today = { today: new Date('2026-10-26') };
+  const r = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking', claims_details: 'No' }, today);
+  assert.equal(r.record.coverage.autoLiability, 'Non-Trucking', 'the answer as written');
+  assert.equal(r.record.coverage.ntl, true);
+  const w = r.warnings.find((x) => x.code === 'coverage.ntl-form');
+  assert.equal(w?.level, 'info');
+  assert.equal(w.path, 'coverage.ntl');
+  assert.ok(!r.warnings.some((x) => x.code === 'coverage.ntl'), 'decided by the form: no question about the notes');
+  // Named in the notes too: still decided, still no question.
+  const both = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking', additional_notes: 'Needs non-trucking liability (NTL) only' }, today);
+  assert.equal(both.record.coverage.ntl, true);
+  assert.ok(!both.warnings.some((x) => x.code === 'coverage.ntl'));
+  // Written otherwise on older forms.
+  for (const v of ['Non Trucking', 'non-trucking', 'NonTrucking']) assert.equal(normalizeIntake({ ...raw, auto_liability: v }, today).record.coverage.ntl, true, v);
+  // Yes, No or blank: unset, as before.
+  for (const v of ['Yes', 'No', '']) assert.equal(normalizeIntake({ ...raw, auto_liability: v, claims_details: 'No' }, today).record.coverage.ntl, null, v);
+  // Progressive adds NTL on Rates for it, and leaves Rates to the agent.
+  const actions = buildPlan(r.record, progressive).filter((s) => s.kind === 'action').map((a) => a.action);
+  assert.ok(actions.includes('addNtl'));
+});
+
+test('the agent changing auto liability in the panel follows NTL, unless they set NTL themselves', () => {
+  const r = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking' }, { today: new Date('2026-10-26') }).record;
+  r.coverage.autoLiability = 'Yes';
+  assert.deepEqual(rederive(r, 'coverage.autoLiability'), ['coverage.ntl']);
+  assert.equal(r.coverage.ntl, null, 'no longer asked for: unset, the agent decides');
+  r.coverage.autoLiability = 'Non-Trucking';
+  rederive(r, 'coverage.autoLiability');
+  assert.equal(r.coverage.ntl, true);
+  r.coverage.ntl = false;
+  r.coverage.autoLiability = 'Non-Trucking';
+  assert.deepEqual(rederive(r, 'coverage.autoLiability', { keep: new Set(['coverage.ntl']) }), [], 'the agent\'s own NTL answer stays');
+  assert.equal(r.coverage.ntl, false);
+});
+
+// The maintainer, 2026-10-26: filings asked for with no USDOT or MC number is a wrong intake.
+// Filings are made under a number, so the agent checks it with the client.
+test('filings requested without a USDOT or MC number asks the agent', () => {
+  const today = { today: new Date('2026-10-26') };
+  const r = normalizeIntake({ ...raw, fed_state_filings: 'Yes', dot_number: '', mc_number: '', mc_dot_60days: 'No' }, today);
+  const w = r.warnings.find((x) => x.code === 'filings.no-number');
+  assert.equal(w?.level, 'check');
+  assert.equal(w.path, 'applicant.dot');
+  assert.match(w.msg, /filings/i);
+  // Within 60 days: still a question, said so.
+  const soon = normalizeIntake({ ...raw, fed_state_filings: 'Yes', dot_number: '', mc_number: '', mc_dot_60days: 'Yes' }, today);
+  assert.match(soon.warnings.find((x) => x.code === 'filings.no-number')?.msg ?? '', /within 60 days/);
+  // A number given, no filings, or filings unanswered: nothing.
+  for (const changes of [{ fed_state_filings: 'Yes', dot_number: '1234567', mc_number: '' }, { fed_state_filings: 'Yes', dot_number: '', mc_number: '7654321' },
+    { fed_state_filings: 'No', dot_number: '', mc_number: '' }, { fed_state_filings: '', dot_number: '', mc_number: '' }]) {
+    assert.ok(!normalizeIntake({ ...raw, ...changes }, today).warnings.some((x) => x.code === 'filings.no-number'), JSON.stringify(changes));
+  }
+});

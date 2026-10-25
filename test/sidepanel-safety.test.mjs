@@ -8100,3 +8100,19 @@ test('AmWINS\'s quote is done on a fill of Underwriting, not on the start page w
   context.renderReport([{ ...start, actions: [], stepKey: 'Underwriting', noData: [DECLARATION] }], { tabId: 7, page: '/application/businessauto', carrier: amwins });
   assert.equal(context.quoteFinished(amwins, state.reportFor, '/application/businessauto', 'Underwriting'), true, 'Underwriting with only the declaration left');
 });
+
+
+// The maintainer, 2026-10-26: Non-Trucking on the form's auto liability is NTL asked for. An edit
+// of the claims box or notes that names NTL then asks nothing: NTL is already Yes.
+test('a notes edit naming NTL asks nothing when the form already asked for NTL', () => {
+  const run = (coverage) => {
+    const intake = { record: { coverage, claims: { text: 'No' }, notes: { text: 'Needs non-trucking liability' } }, warnings: [], done: [] };
+    const context = { save() {}, render() {}, ntlMention: (t) => (/non-trucking/i.test(t) ? 'Needs non-trucking liability' : null), ntlCheckMessage: (l) => `ask: ${l}`,
+      intakeNotes: (r) => [r.claims?.text, r.notes?.text].filter(Boolean).join('\n'), nonTruckingAnswer: (v) => /^non[\s-]*trucking$/i.test(String(v ?? '')) };
+    vm.runInNewContext(extractFunction('claimsTextEdited'), context);
+    context.claimsTextEdited(intake);
+    return intake.warnings.map((w) => w.code);
+  };
+  assert.deepEqual(run({ autoLiability: 'Non-Trucking', ntl: true }), []);
+  assert.deepEqual(run({ autoLiability: 'Yes', ntl: null }), ['coverage.ntl'], 'not asked on the form: the notes ask the agent, as before');
+});
