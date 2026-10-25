@@ -355,7 +355,7 @@ const state = {
   fileConfirmFrom: null,
   // New quote with this intake under way (newQuote): no fill starts.
   resetting: false,
-  // The quotes (tab and intake) whose done was chimed (noteQuoteDone), and the panel's audio context.
+  // The quotes (tab and intake) whose done was chimed (noteQuoteDone), and the chime's audio element.
   chimed: new Set(),
   audio: null,
   // Client details: whether fields the intake leaves blank are listed (showEmpty; the flagged ones
@@ -3111,8 +3111,8 @@ function noteChangedAfterDone(carrier, page, step, tabId = state.tab?.id) {
 // a tab, by the fill's click (rememberFill) or the agent's own (agentHelperDone); again only after a
 // change on the finishing step (noteChangedAfterDone) and another print. Off with Sound when the
 // quote is done (Settings → Filling, `finish-sound`, saved on this computer as `finishSound`, never
-// logged). Two rising sine notes made here with Web Audio: no sound file, no new permission. True
-// when it sounded.
+// logged). The sound is the maintainer's pick (2026-10-25), sidepanel/sounds/quote-done.mp3, played
+// with an audio element: no new permission. True when it was started.
 function quoteDoneKey(tabId = state.tab?.id) { return `${tabId}|${usage.currentSession()?.intakeId ?? ''}`; }
 function noteQuoteDone(tabId = state.tab?.id) {
   if (!$('finish-sound')?.checked) return false;
@@ -3121,32 +3121,20 @@ function noteQuoteDone(tabId = state.tab?.id) {
   state.chimed.add(key);
   return playChime();
 }
-// Chrome lets a page make sound once someone has clicked in it: the context is made, and resumed, on
-// the agent's first click in the panel (wireUsage), and again here in case it was suspended since.
+// Chrome lets a page make sound once someone has clicked in it: the element is made and loaded on the
+// agent's first click in the panel (wireUsage), so it is ready when the quote ends.
 function unlockAudio() {
   try {
-    if (!state.audio && typeof AudioContext === 'function') state.audio = new AudioContext();
-    if (state.audio?.state === 'suspended') state.audio.resume().catch?.(() => {});
+    if (!state.audio && typeof Audio === 'function') { state.audio = new Audio('sounds/quote-done.mp3'); state.audio.preload = 'auto'; }
   } catch { state.audio = null; }
   return !!state.audio;
 }
 function playChime() {
   if (!unlockAudio()) return false;
   try {
-    const audio = state.audio;
-    const t = audio.currentTime;
-    for (const [freq, at] of [[660, 0], [880, 0.16]]) {
-      const osc = audio.createOscillator();
-      const gain = audio.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, t + at);
-      gain.gain.exponentialRampToValueAtTime(0.18, t + at + 0.02);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.45);
-      osc.connect(gain).connect(audio.destination);
-      osc.start(t + at);
-      osc.stop(t + at + 0.5);
-    }
+    state.audio.currentTime = 0;
+    // Refused (no click in the panel yet) or unplayable: silent, never an error in the panel.
+    state.audio.play()?.catch?.(() => {});
     return true;
   } catch { return false; }
 }

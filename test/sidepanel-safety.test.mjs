@@ -7871,31 +7871,32 @@ test('a kept report keeps a frame\'s Continue due, which judges the page as it d
 });
 
 
-// The maintainer, 2026-10-25: "a ding when we finish the quote, not just one page". A short two-note
-// chime, made here with Web Audio (no sound file), the first time the quote's finishing action is done
+// The maintainer, 2026-10-25: "a ding when we finish the quote, not just one page". Their notification
+// sound (sidepanel/sounds/quote-done.mp3), the first time the quote's finishing action is done
 // on a tab (noteQuoteDone): the fill's click (rememberFill), or the agent's own that lifts the changed
 // mark (agentHelperDone). Again only after a change on the finishing step and another print; never with
 // Sound when the quote is done off (Settings → Filling, `finish-sound`, saved as `finishSound`).
 test('the quote-done chime plays once per quote and tab, again after a change and a reprint, never with the switch off', () => {
-  const started = [];
+  const played = [];
   let made = 0;
-  class FakeAudioContext {
-    constructor() { made++; this.state = 'suspended'; this.currentTime = 10; this.destination = { kind: 'speaker' }; }
-    resume() { this.state = 'running'; return Promise.resolve(); }
-    createOscillator() { const o = { type: '', frequency: { value: 0 }, connect: (n) => n, start: (t) => started.push([o.type, o.frequency.value, Math.round((t - 10) * 100) / 100]), stop() {} }; return o; }
-    createGain() { return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect: (n) => n }; }
+  class FakeAudio {
+    constructor(src) { made++; this.src = src; this.currentTime = 0; this.preload = ''; }
+    play() { played.push([this.src, this.currentTime]); this.currentTime = 2; return Promise.reject(new Error('NotAllowedError')); }
   }
   const ui = { 'finish-sound': { checked: true } };
   const state = { tab: { id: 7 }, chimed: new Set(), audio: null };
-  const context = { state, $: (id) => ui[id], AudioContext: FakeAudioContext, usage: { currentSession: () => ({ intakeId: 'abc' }) } };
+  const context = { state, $: (id) => ui[id], Audio: FakeAudio, usage: { currentSession: () => ({ intakeId: 'abc' }) } };
   vm.runInNewContext(['noteQuoteDone', 'quoteDoneKey', 'playChime', 'unlockAudio'].map(extractFunction).join('\n'), context);
   assert.equal(context.noteQuoteDone(7), true);
-  assert.deepEqual(started, [['sine', 660, 0], ['sine', 880, 0.16]], 'two rising notes, the second a moment after the first');
+  assert.deepEqual(played, [['sounds/quote-done.mp3', 0]], 'the maintainer\'s sound, from the start');
+  assert.equal(state.audio.preload, 'auto');
+  assert.ok(fs.existsSync(new URL('../sidepanel/sounds/quote-done.mp3', import.meta.url)), 'the sound is in the panel\'s folder, so it is packaged');
   assert.equal(context.noteQuoteDone(7), false, 'once per quote and tab');
   assert.equal(context.noteQuoteDone(), false, 'the tab in front is that tab');
-  assert.equal(started.length, 2);
+  assert.equal(played.length, 1);
   assert.equal(context.noteQuoteDone(8), true, 'another tab\'s quote');
-  assert.equal(made, 1, 'one audio context, kept');
+  assert.deepEqual(played[1], ['sounds/quote-done.mp3', 0], 'rewound before playing again');
+  assert.equal(made, 1, 'one audio element, kept');
   // The quote changed on its finishing step after the print (noteChangedAfterDone forgets the chime):
   // the next print chimes again.
   state.chimed.delete(context.quoteDoneKey(7));
@@ -7907,12 +7908,12 @@ test('the quote-done chime plays once per quote and tab, again after a change an
   // The switch off: silent, and nothing marked (turned on later, the next print chimes).
   ui['finish-sound'].checked = false;
   state.chimed.clear();
-  const before = started.length;
+  const before = played.length;
   assert.equal(context.noteQuoteDone(7), false);
-  assert.deepEqual([started.length, state.chimed.size], [before, 0]);
+  assert.deepEqual([played.length, state.chimed.size], [before, 0]);
   // No audio here (a preview outside Chrome): nothing thrown, and the quote still counts as chimed.
   ui['finish-sound'].checked = true;
-  context.AudioContext = undefined;
+  context.Audio = undefined;
   state.audio = null;
   assert.equal(context.noteQuoteDone(7), false);
   assert.equal(state.chimed.size, 1);
