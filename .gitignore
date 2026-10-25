@@ -11,5 +11,6 @@ design/
 # Pages saved from the raters (Save page as, PDFs, captures): client data, kept locally.
 layouts/
 
-# Local notes that may hold keys or tokens.
+# Local settings and notes that may hold keys or tokens (railway up skips them too).
+.env
 .env.md
