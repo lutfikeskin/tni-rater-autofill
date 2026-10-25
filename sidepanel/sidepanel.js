@@ -3097,9 +3097,13 @@ function continueSaid({ advanced, filled = 0, left = 0, waiting = 0, covered = 0
 function quoteFinished(carrier, report, page = pageOf(state.tab?.url), step = tabStep(carrier), doneActions = state.doneActions) {
   // A rater whose quote ends at a step, not a button (`finishedAt`, AmWINS's declaration on
   // Underwriting): a fill there with nothing left for the agent but the step's own items (otherLeft).
+  // There: the step the report's own fill read (renderReport's `step`; rememberFill passes its fill's),
+  // not the tab's, which stays at the last step it saw: Underwriting on the start page of the next
+  // quote in the same tab (the review of PR #173).
   const at = carrier?.finishedAt;
   if (at) {
-    return [].concat(at.steps).includes(step) && !!report?.fields && !report.error && !report.stopped && !report.halted
+    const own = report?.step === undefined ? step : report.step;
+    return [].concat(at.steps).includes(own) && !!report?.fields && !report.error && !report.stopped && !report.halted
       && (report.otherLeft ?? report.left ?? 0) === 0 && (report.waiting ?? 0) === 0;
   }
   const id = finishingAction(carrier, page, step);
@@ -4198,7 +4202,7 @@ function renderReport(frames, ctx = {}) {
   const held = advanced ? null : frames.find((f) => f.held)?.held ?? null;
   const stopped = !!ctx.stopped;
   // `halted`: the fill stopped short ("Filling stopped" above the list, or the agent's Stop).
-  const entry = { key, tabId, page, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, otherLeft: needs.filter((x) => !finishLeftOk(carrier, x)).length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
+  const entry = { key, tabId, page, step: step ?? null, carrier, plan: ctx.plan ?? [], fields, filled: count, left: needs.length, otherLeft: needs.filter((x) => !finishLeftOk(carrier, x)).length, waiting: waiting.length, covered: covered.length, advanced: advanced ?? null, held, at: ctx.restoredAt ?? Date.now(), auto: !!ctx.auto, stopped,
     halted: frames.some((f) => !!f.halted),
     ...(ctx.restoredAt ? { restored: true } : {}) };
   // The answers and the items in one list, by their place on the page: an item without a field on

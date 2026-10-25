@@ -8086,3 +8086,17 @@ test('what is left besides the declaration is counted with the report, and again
   assert.equal(context.finishLeftOk(amwins, { name: 'Marital status' }), false);
   assert.equal(context.finishLeftOk(geico, DECLARATION), false, 'only where the carrier names it');
 });
+
+// The review of PR #173: the tab's step is the last one it saw (tabSteps), so on the start page of
+// the next quote in the same tab it still reads Underwriting. Only a report whose own fill read
+// Underwriting is the quote done, as for the chime (rememberFill).
+test('AmWINS\'s quote is done on a fill of Underwriting, not on the start page with the tab\'s step left there', () => {
+  const state = { tab: { id: 7, url: '/commerciallines', carrier: amwins }, active: {}, tabSteps: new Map([[7, 'Underwriting']]) };
+  const { context } = reportHarness(state, { keepReport() {} });
+  vm.runInContext(extractFunction('quoteFinished'), context);
+  const start = { fields: 2, filled: [{ label: 'Risk state', shown: 'NE' }], kept: [], failed: [], noData: [], leftRequired: [], actions: [{ id: 'openApplication', text: 'Open New Application' }] };
+  context.renderReport([start], { tabId: 7, page: '/commerciallines', carrier: amwins });
+  assert.equal(context.quoteFinished(amwins, state.reportFor, '/commerciallines', 'Underwriting'), false, 'the start page: its fill read no step');
+  context.renderReport([{ ...start, actions: [], stepKey: 'Underwriting', noData: [DECLARATION] }], { tabId: 7, page: '/application/businessauto', carrier: amwins });
+  assert.equal(context.quoteFinished(amwins, state.reportFor, '/application/businessauto', 'Underwriting'), true, 'Underwriting with only the declaration left');
+});
