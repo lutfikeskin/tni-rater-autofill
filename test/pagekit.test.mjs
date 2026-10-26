@@ -4778,7 +4778,12 @@ test("GEICO's premium summary and its stale-rates wording are recognized", async
 // back once, the agent's left, each red, and Print waits for the agent's own Recalculate.
 const RATED = 'Quote\n$1,000.00\nDue Today\n$1,000.00\nTotal';
 const STALE = 'Please Recalculate Due To Coverage Change\nQuote\n$ --.--\nDue Today\n$ --.--\nTotal';
-function recalcPage({ redraw = () => {}, rows = [] } = {}) {
+// GEICO draws its pay plans only once it has rated the quote (the Recalculate's `ratedBy`).
+function rate(h) {
+  h.document.body.innerText = RATED;
+  h.document.body.append(gdsRadios('GivePayPlanV2', 52525, null, [['GEICO_PP_1Pay', 'Pay In Full']], { checked: 0 }).group);
+}
+function recalcPage({ redraw = () => {}, rows = [], plans = true } = {}) {
   const h = harness({ pathname: '/quote' });
   geicoBar(h, 'Quote & Coverages');
   const row = (suffix, options, value) => new SelectNode(options, { id: `Id_${randomUUID()}_${suffix === 'COMP' ? 11111 : suffix === 'COLL' ? 11112 : 11113}_${suffix}`, value });
@@ -4790,7 +4795,7 @@ function recalcPage({ redraw = () => {}, rows = [] } = {}) {
   const recalc = addButton(h, 'Recalculate');
   const more = addButton(h, 'View More Payment Plans');
   const page = { h, comp, coll, ers, recalc, more, recalcs: 0, clickedAt: null };
-  recalc.onclick = () => { page.recalcs++; page.clickedAt = clock.Date.now(); h.document.body.innerText = RATED; redraw(page); };
+  recalc.onclick = () => { page.recalcs++; page.clickedAt = clock.Date.now(); if (plans) rate(h); else h.document.body.innerText = RATED; redraw(page); };
   more.onclick = () => { more._clicked = (more._clicked ?? 0) + 1; };
   const rules = ['COMP', 'COLL', 'ERS', ...rows].map((suffix) => ({ q: suffix, selector: `[id$="_${suffix}"]`, steps: ['Quote & Coverages'], name: suffix, kind: 'choice', source: 'standard',
     value: () => (suffix === 'ERS' ? 'I accept this coverage' : suffix === 'FT' ? 'Not Included' : '$1,000 deductible') }));
@@ -4853,6 +4858,15 @@ test('GEICO\'s Recalculate: answers kept, the fill goes on; never clicked again 
   assert.deepEqual(plain(stale.failed.map((x) => [x.key, x.label])), [[null, 'Recalculate']]);
   assert.match(stale.failed[0].reason, /no current premium/);
   assert.deepEqual(plain(stale.actions.map((x) => x.id)), ['recalculate']);
+  // 2026-10-26 (NTL, TX): the stale-rates notice gone and a total shown, but GEICO drew no pay plans
+  // (nor coverage premiums) until the agent recalculated. Not rated: one red item, and View More
+  // Payment Plans not clicked.
+  const noPlans = recalcPage({ plans: false });
+  const unplanned = await noPlans.h.kit.fill(noPlans.plan, { maxRounds: 12 });
+  assert.equal(noPlans.recalcs, 1);
+  assert.deepEqual(plain(unplanned.failed.map((x) => [x.key, x.label])), [[null, 'Recalculate']]);
+  assert.match(unplanned.failed[0].reason, /click Recalculate yourself/);
+  assert.equal(noPlans.more._clicked, undefined);
   // Something left for the agent: not clicked at all.
   const open = recalcPage();
   open.comp.value = '';
@@ -4890,7 +4904,7 @@ test('GEICO\'s Recalculate: a redraw seconds later is caught before View More; o
   h.document.body.append(first, second);
   h.document.body.innerText = STALE;
   const recalc = addButton(h, 'Recalculate');
-  recalc.onclick = () => { h.document.body.innerText = RATED; second.value = 'B'; };
+  recalc.onclick = () => { rate(h); second.value = 'B'; };
   const rules = [['first', '#Id_GiveFoo_11'], ['second', '#Id_GiveFoo_22']].map(([name, selector]) => ({ q: name, selector, steps: ['Quote & Coverages'], name, kind: 'choice', source: 'standard', value: () => 'A' }));
   const plan = buildPlan(geicoRecord(), { id: 'synthetic', useGenericRules: false, rules, actions: geico.actions.filter((a) => a.id === 'recalculate') });
   const shared = await h.kit.fill(plan, { maxRounds: 12 });
@@ -4907,7 +4921,7 @@ test('GEICO\'s Recalculate rated 18 s after the click, nothing busy for 3 s: its
     h.document.body.innerText = STALE;
     const loader = new FakeNode('div', { id: 'page-load', className: 'loader-container' });
     setTimeout(() => h.document.body.append(loader), 3000);
-    setTimeout(() => { loader._visible = false; h.document.body.innerText = RATED; comp.value = '$500 deductible'; }, 18000);
+    setTimeout(() => { loader._visible = false; rate(h); comp.value = '$500 deductible'; }, 18000);
   } });
   const report = await slow.h.kit.fill(slow.plan, { maxRounds: 12 });
   assert.equal(slow.recalcs, 1);

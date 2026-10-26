@@ -152,6 +152,8 @@ function actionSteps(carrier, record, active) {
       needsPremium: !!resolve(a.needsPremium),
       needsRecalculation: !!resolve(a.needsRecalculation),
       verify: resolve(a.verify) ?? null,
+      // With `verify: 'premium'`: rated only once this selector is drawn too (GEICO's pay plans).
+      ratedBy: resolve(a.ratedBy) ?? null,
       // `shownBy`: the questions that show the helper's result (`all` of them, or `any`; with
       // `answered`, each with an answer). Shown already for the unit's own value: done, unclicked.
       shownBy: a.shownBy ? { all: (a.shownBy.all ?? []).map((p) => withIndex(p, active)), any: (a.shownBy.any ?? []).map((p) => withIndex(p, active)), answered: !!a.shownBy.answered } : null,

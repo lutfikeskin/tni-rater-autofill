@@ -188,6 +188,7 @@
  * @property {ClientValue<boolean>} [needsPremium]
  * @property {ClientValue<boolean>} [needsRecalculation]
  * @property {ClientValue<ActionVerify | null>} [verify]
+ * @property {ClientValue<string | null>} [ratedBy]  with `verify: 'premium'`, a selector the page draws only once it rated (GEICO's pay plans)
  * @property {ClientValue<number | null>} [quietMs]  how long the page is quiet before the click
  * @property {boolean} [moveOn]
  * @property {boolean} [loads]
@@ -416,6 +417,7 @@
  * @property {boolean} needsPremium
  * @property {boolean} needsRecalculation
  * @property {ActionVerify | null} verify
+ * @property {string | null} ratedBy
  * @property {{ all: string[], any: string[], answered: boolean } | null} shownBy
  * @property {'vehicle' | 'driver' | 'trailer' | null} scope
  * @property {number | null | undefined} scopeIndex
