@@ -85,6 +85,41 @@ export function ownerIsDriver(ownerName, d) {
   return nameWords(d.last).includes(owner.at(-1)) && nameWords(`${d.first ?? ''} ${d.middle ?? ''}`).includes(owner[0]);
 }
 
+// The intake marks the owner's driver row excluded ("Excluded" in its license-number box,
+// normalize.js licenseBox: `drivers[].excluded`): every driver row the owner's name matches
+// (ownerIsDriver) is marked so. No row matching the owner is no exclusion.
+export function ownerExcluded(r) {
+  const rows = (r?.drivers ?? []).filter((d) => ownerIsDriver(r?.applicant?.owner1, d));
+  return rows.length > 0 && rows.every((d) => d?.excluded === true);
+}
+
+// Whether the owner is a driver on the policy, wherever a carrier asks it (GEICO's Business & Owner
+// Info and Add Driver, Progressive's Business Owner Info; AmWINS doesn't ask). TNI, 2026-10-26
+// (W44-25): "Owner Drivers if not excluded, in every case". The intake's No stays No; an owner
+// whose driver row the intake marks excluded is not a driver, No; otherwise Yes: the intake's, or
+// TNI's standard for a blank box. The record keeps the box as read (null when blank), so the answer's
+// source stays right (ownerDrivesSource).
+export function ownerDrives(r) {
+  return r?.applicant?.ownerDrives !== false && !ownerExcluded(r);
+}
+
+// Where ownerDrives' answer comes from (plan.js `source`): the intake's box when it answers and the
+// answer stands; the exclusion when it makes the owner not a driver over a blank box or a Yes
+// (`derived`); TNI's standard for a blank box.
+export function ownerDrivesSource(r) {
+  const said = r?.applicant?.ownerDrives;
+  if (said === false) return 'intake';
+  if (ownerExcluded(r)) return 'derived';
+  return said === true ? 'intake' : 'standard';
+}
+
+// The intake says the owner drives but marks their driver row excluded: ownerDrives is No, and the
+// agent confirms it.
+export function ownerDrivesWarn(r) {
+  return r?.applicant?.ownerDrives === true && ownerExcluded(r)
+    ? 'The intake says the owner drives, but marks their driver row excluded: answered No (TNI: an excluded owner isn\'t a driver). Confirm it with the client.' : null;
+}
+
 // A company-name box saying there is no company ("NO", "N/A", "N.A.", "None.", "No company"): the
 // owner is a sole proprietor (TNI, 2026-10-20). Only for that box: "NO" elsewhere is an answer.
 const NO_COMPANY = /^(?:no(?:ne)?|n\s*[\/.]?\s*a\.?|nil|null|unknown|not applicable|no (?:company|business|name)(?: name)?|-+|\.+)\.?$/i;

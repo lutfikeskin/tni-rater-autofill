@@ -31,6 +31,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -59,6 +60,7 @@ export function owner(r) {
   const lastMatches = candidates.filter((d) => ownerIsDriver(full, d));
   // Some intakes repeat the first name in the sole driver's last-name box. Only connect
   // that DOB when the intake explicitly says the owner drives and the owner's first name agrees.
+  // A blank box, TNI's Yes for the owner-driver question (W44-25), is no evidence of who the row is.
   const sole = r.drivers.length === 1 ? r.drivers[0] : null;
   const repeatedFirst = sole && r.applicant.ownerDrives === true && nameKey(sole.first)
     && nameKey(sole.first) === nameKey(sole.last)
@@ -685,7 +687,10 @@ export const progressive = {
       { q: '296', source: 'derived', field: 'AccountInput.BusinessOwnerMiddleInitial', ask: 'MIMiddle initial', optional: true, name: 'Owner middle initial', value: (r) => owner(r).middle?.[0] ?? null, ignore: true },
       { q: '297', source: 'derived', field: 'AccountInput.BusinessOwnerLastName', ask: 'Last Name', name: 'Owner last name', value: (r) => owner(r).last },
       { q: '298', field: 'AccountInput.BusinessOwnerSuffix', ask: 'Suffix', optional: true, name: 'Owner suffix (optional)', ignore: true },
-      { q: '29F', field: 'AccountInput.DriverInPolicyIndicator', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives' },
+      // The intake's answer; a blank box is TNI's standard Yes, and an owner whose driver row the
+      // intake marks excluded is not a driver, No (TNI, 2026-10-26, W44-25: util.js ownerDrives).
+      { q: '29F', field: 'AccountInput.DriverInPolicyIndicator', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives',
+        source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn },
       { q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
       // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
       { q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },

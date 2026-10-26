@@ -97,7 +97,7 @@ test('Progressive standard answers: USDOT belongs to the business is TNI\'s stan
   record.applicant.dot = '1234567';
   const plan = buildPlan(record, progressive, {});
   assert.equal(byQ(plan, '2C1A').value, true, 'for-hire: an expediter hauls for hire');
-  assert.equal(byQ(plan, '29F').value, true, 'owner-as-driver follows the intake');
+  assert.equal(byQ(plan, '29F').value, true, 'owner-as-driver follows the intake (W44-25: blank is TNI\'s Yes)');
   assert.equal(byQ(plan, '2A5').kind, 'first-option', 'home address: always the first choice');
   assert.equal(byQ(plan, '2CE3').value, true, 'no equipment (Add Vehicle and Rates: one field)');
   assert.equal(byQ(plan, '1FDD').value, 'Not selected', 'UMPD');
@@ -589,6 +589,33 @@ test('the owner with a two-word surname is matched to their driver row (date of 
   assert.equal(owner(record).driver, null, 'a shared surname word with another first name is someone else');
   record.drivers = [{ first: 'Bob', middle: null, last: 'Smith', dob: '01/02/1980' }];
   assert.equal(owner(record).driver, null, 'the same one-word surname with another first name is someone else (audit 2026-10-08)');
+});
+
+// TNI, 2026-10-26 (W44-25): "Owner Drivers if not excluded, in every case".
+test('owner is a driver (29F): blank is TNI\'s Yes; the intake\'s No, or an owner marked excluded, is No', () => {
+  const step = (change) => {
+    const record = baseRecord();
+    record.drivers.push({ first: 'Casey', middle: null, last: 'Example', dob: '07/09/1995', licenseNumber: 'MD7654321', licenseState: 'MD' });
+    change(record);
+    const s = byQ(buildPlan(record, progressive), '29F');
+    return [s.value, s.source, s.standard, s.manualOnly, s.note];
+  };
+  assert.deepEqual(step((r) => { r.applicant.ownerDrives = null; }), [true, 'standard', true, false, null], 'blank: TNI\'s standard Yes');
+  assert.deepEqual(step(() => {}), [true, 'intake', false, false, null], 'the intake\'s Yes');
+  assert.deepEqual(step((r) => { r.applicant.ownerDrives = false; }), [false, 'intake', false, false, null], 'the intake\'s No stays No');
+  // Another driver marked excluded: still the owner's Yes.
+  assert.deepEqual(step((r) => { r.applicant.ownerDrives = null; r.drivers[1].excluded = true; }), [true, 'standard', true, false, null]);
+  // The owner's own row marked excluded: not a driver, No, from the exclusion.
+  assert.deepEqual(step((r) => { r.applicant.ownerDrives = null; r.drivers[0].excluded = true; }), [false, 'derived', false, false, null]);
+  assert.deepEqual(step((r) => { r.applicant.ownerDrives = false; r.drivers[0].excluded = true; }), [false, 'intake', false, false, null]);
+  // The intake's Yes with the owner's row excluded: No, with a warning to confirm.
+  const record = baseRecord();
+  record.drivers[0].excluded = true;
+  const both = byQ(buildPlan(record, progressive), '29F');
+  assert.deepEqual([both.value, both.source], [false, 'derived']);
+  assert.match(both.warn, /says the owner drives.*excluded/);
+  // A blank box with an owner no driver row matches: still TNI's Yes (the Intake step warns).
+  assert.deepEqual(step((r) => { r.applicant.ownerDrives = null; r.applicant.owner1 = 'Jordan Sample'; }), [true, 'standard', true, false, null]);
 });
 
 // Audit 2026-10-08: owner "Alice Sample" who doesn't drive took the first name and date of birth

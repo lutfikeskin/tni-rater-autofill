@@ -563,9 +563,13 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   });
   if (companyAsWritten && !companyName(companyAsWritten)) info('company.none', 'applicant.name', `Company name "${companyAsWritten}": no company, so a sole proprietor.`);
   if (!record.drivers.length) check('drivers.none', 'drivers', 'No drivers listed.');
-  if (a.ownerDrives && a.owner1) {
+  // A blank "owner drives" box is TNI's Yes on the carriers (2026-10-26, W44-25: util.js
+  // ownerDrives; the record keeps it blank): an owner no driver row matches is then listed as a driver
+  // whose details aren't on the intake, as with the intake's Yes.
+  if (a.ownerDrives !== false && a.owner1) {
     if (!record.drivers.some((d) => ownerIsDriver(a.owner1, d))) {
-      check('drivers.owner-not-listed', 'drivers', `Owner drives, but "${a.owner1}" isn't in the driver list.`);
+      check('drivers.owner-not-listed', 'drivers', a.ownerDrives ? `Owner drives, but "${a.owner1}" isn't in the driver list.`
+        : `"Owner drives" is blank, so the carriers answer TNI's standard Yes, but "${a.owner1}" isn't in the driver list: the owner's driver details (date of birth, license) are yours. If the owner doesn't drive, set Owner drives to No.`);
     }
   }
 

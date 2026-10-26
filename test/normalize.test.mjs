@@ -654,6 +654,22 @@ test('an owner whose surname has two words is found in the driver list', () => {
   assert.ok(!same.warnings.some((w) => w.code === 'drivers.owner-not-listed'));
 });
 
+// TNI, 2026-10-26 (W44-25): a blank "owner drives" box is TNI's Yes on the carriers, so an owner no
+// driver row matches is listed as a driver without their details, as with the intake's Yes. The
+// record keeps the box as read.
+test('a blank "owner drives" box: the record stays blank, and an owner missing from the driver list is a check', () => {
+  const people = { ...raw, owner_name_1: 'SOMEONE ELSE', drv_first_1: 'SAMPLE', drv_last_1: 'EXAMPLO', drv_first_2: '', drv_last_2: '', drv_first_3: '', drv_last_3: '', drv_first_4: '', drv_last_4: '' };
+  const read = (extra) => normalizeIntake({ ...people, ...extra }, { today: new Date('2026-09-30') });
+  const notListed = (r) => r.warnings.find((w) => w.code === 'drivers.owner-not-listed');
+  const blank = read({ owner_drives: '' });
+  assert.equal(blank.record.applicant.ownerDrives, null, 'blank stays blank on the record');
+  assert.deepEqual([notListed(blank)?.level, notListed(blank)?.path], ['check', 'drivers']);
+  assert.match(notListed(blank).msg, /"Owner drives" is blank.*TNI's standard Yes.*"SOMEONE ELSE" isn't in the driver list/);
+  assert.match(notListed(read({ owner_drives: true })).msg, /^Owner drives, but "SOMEONE ELSE" isn't in the driver list\.$/);
+  assert.equal(notListed(read({ owner_drives: false })), undefined, 'the intake\'s No: no driver details needed');
+  assert.equal(notListed(read({ owner_drives: '', owner_name_1: 'SAMPLE EXAMPLO' })), undefined, 'the owner is a driver row');
+});
+
 // AR 2026-10-19 (live run): a driver's first-name box read "<first>, JR". Progressive's name box
 // takes letters, digits, spaces, hyphens and apostrophes only, so it refused the comma and the
 // agent retyped it twice. Another driver's "<first> L" went in whole, the initial in the first name.
