@@ -398,7 +398,7 @@ function extCmp(id, input, { caption = 'Synthetic question', required = false, v
   return cmp;
 }
 
-function harness({ ext = false, pathname = '/rater', search = '', MutationObserver = class { observe() {} disconnect() {} } } = {}) {
+function harness({ ext = false, pathname = '/rater', search = '' } = {}) {
   const document = new FakeDocument();
   const location = { origin: 'https://synthetic.example', pathname, search };
   const context = {
@@ -411,7 +411,7 @@ function harness({ ext = false, pathname = '/rater', search = '', MutationObserv
     NodeFilter: { SHOW_TEXT: 4, FILTER_REJECT: 2, FILTER_ACCEPT: 1 },
     CSS: { escape: (value) => String(value).replace(/[^a-z0-9_-]/gi, '\\$&') },
     getComputedStyle: () => ({ visibility: 'visible' }),
-    MutationObserver,
+    MutationObserver: class { observe() {} disconnect() {} },
     Event: class { constructor(type, init = {}) { this.type = type; this.bubbles = !!init.bubbles; this.isTrusted = false; } },
     FocusEvent: class { constructor(type) { this.type = type; } },
     HTMLInputElement: InputNode,
@@ -7210,7 +7210,7 @@ test('progress says what the fill waits on, and nothing while it answers', async
   assert.equal(seen[0].phase, null, 'answering');
   assert.equal(h.kit.progress(), null, 'the fill is over');
   // Each long wait names itself before it begins.
-  assert.match(PAGEKIT, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000, history: true \}\);\s+phase\(null\);/);
+  assert.match(PAGEKIT, /phase\('reading'\);\s+const settled = await settle\(\{ quietMs: 400, maxMs: 15000 \}\);\s+phase\(null\);/);
   assert.match(PAGEKIT, /phase\('premium'\);\s+const until = Date\.now\(\) \+ LOAD_MS;/);
   assert.match(PAGEKIT, /phase\(hold && confirmed == null \? 'waiting' : 'continue'\);\s+if \(serverBacked\) await settle/);
   assert.match(PAGEKIT, /if \(helperClicked\) phase\('helper', pendingAction\?\.label \?\? report\.actions\.at\(-1\)\?\.text \?\? null\);/);
@@ -7353,56 +7353,12 @@ test('GEICO outside Florida: PIP where GEICO offers it, $2,500, and Medical Paym
   assert.deepEqual([r.pip, r.notes], ['$2,500', ['GEICO lists no medical payments choice here: check it yourself.']]);
 });
 
-// Speed (2026-10-25): a fill's first wait for a quiet page counts the quiet time the page already
-// had since the kit came into the document (`history`), so a follow-up on a page quiet for its 400 ms
-// is read at once; a document the kit has just come into, or a page that just changed, waits the
-// rest. Every wait wakes when its quiet time is over, not on its next 60 ms look (420 ms here before).
-test('a fill reads a page already quiet at once, and waits out the rest of 400 ms after a change', async () => {
-  const observers = new Set();
-  const Observer = class {
-    constructor(callback) { this.callback = callback; }
-    observe() { observers.add(this); }
-    disconnect() { observers.delete(this); }
-    takeRecords() { return []; }
-  };
-  // The page changes: every observer watching it is told, as the browser tells them.
-  const pageChanges = () => { for (const o of [...observers]) o.callback([]); };
-  const later = (ms) => new Promise((r) => setTimeout(r, ms));
-  const answeredAfter = async (h) => {
-    const a = makeInput({ id: 'a', ariaLabel: 'A' });
-    h.document.body.append(a);
-    let answered = null;
-    a.addEventListener('change', () => { answered ??= clock.Date.now(); });
-    const start = clock.Date.now();
-    await h.kit.fill([{ id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'a' }], { maxRounds: 3 });
-    return answered - start;
-  };
-  assert.equal(await answeredAfter(harness({ MutationObserver: Observer })), 400, 'just come into the document: the whole wait, and no more');
-  observers.clear();
-  const quiet = harness({ MutationObserver: Observer });
-  await later(1000);
-  assert.equal(await answeredAfter(quiet), 0, 'quiet for a second already');
-  observers.clear();
-  const changed = harness({ MutationObserver: Observer });
-  await later(900);
-  pageChanges();
-  await later(100);
-  assert.equal(await answeredAfter(changed), 300, 'changed 100 ms before the fill: the rest of the 400 ms');
-});
-
-// Review of PR 178 (Cursor): the quiet history counts only DOM changes the kit is told of. GEICO
-// shows and hides its spinners by their style (#page-load, #extendedWaiting), and defining a
-// component draws its shadow root with no change either, so a page held by one as a fill began
-// already had its 400 ms "quiet" and was read the moment the hold ended, before what it was
-// waiting for was drawn. Main waited out the rest of the 400 ms from the fill's start. A page held
-// as the fill begins has no quiet history: its wait counts from the start, as before.
-test('a fill that begins while the page is busy or a component undefined waits its 400 ms, history or not', async () => {
-  const Observer = class {
-    constructor(callback) { this.callback = callback; }
-    observe() {}
-    disconnect() {}
-    takeRecords() { return []; }
-  };
+// Speed (PR 178, 2026-10-26): every wait wakes when its quiet time is over, not on its next 60 ms
+// look (main's kit answers here at 420 ms). A fill's first wait is its whole 400 ms from when it
+// begins, however long the page was quiet before: a page changes in ways no observer is told of
+// (GEICO shows and hides its spinners by their style, and a component draws its shadow root when it
+// is defined), so a quiet history the PR first counted read pages the moment such a hold ended.
+test("a fill's first wait is its whole 400 ms from when it begins, whatever the page did before", async () => {
   const later = (ms) => new Promise((r) => setTimeout(r, ms));
   const answeredAfter = async (h, options = {}) => {
     const a = makeInput({ id: 'a', ariaLabel: 'A' });
@@ -7413,18 +7369,22 @@ test('a fill that begins while the page is busy or a component undefined waits i
     await h.kit.fill([{ id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'a' }], { maxRounds: 3, ...options });
     return answered - start;
   };
-  // GEICO's spinner, shown by its style: the page quiet for a second, then busy as the fill begins.
-  const busy = harness({ pathname: '/quote', MutationObserver: Observer });
+  assert.equal(await answeredAfter(harness()), 400, 'just come into the document');
+  const quiet = harness();
+  await later(1000);
+  assert.equal(await answeredAfter(quiet), 400, 'quiet for a second already');
+  // GEICO's spinner, shown by its style as the fill begins, gone 100 ms in.
+  const busy = harness({ pathname: '/quote' });
   await later(1000);
   const loader = new FakeNode('div', { id: 'page-load', className: 'loader-container section-loader--show' });
   busy.document.body.append(loader);
   setTimeout(() => { loader._visible = false; }, 100);
-  assert.equal(await answeredAfter(busy), 400, 'spinner gone 100 ms in: the rest of the 400 ms');
+  assert.equal(await answeredAfter(busy), 400, 'busy as it began');
   // A GEICO component the page defines 100 ms after the fill begins.
-  const parts = harness({ pathname: '/quote', MutationObserver: Observer });
+  const parts = harness({ pathname: '/quote' });
   await later(1000);
   let defined = false;
   parts.document.body.append(notDefinedYet(new FakeNode('gds-address-check'), () => defined));
   setTimeout(() => { defined = true; }, 100);
-  assert.equal(await answeredAfter(parts, { components: 'gds-' }), 400, 'defined 100 ms in: the rest of the 400 ms');
+  assert.equal(await answeredAfter(parts, { components: 'gds-' }), 400, 'a component undefined as it began');
 });

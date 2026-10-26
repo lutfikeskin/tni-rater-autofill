@@ -383,40 +383,22 @@
   // that keeps sending them (a session check) counts as quiet once its controls are.
   const REQUESTS_MS = 30000;
 
-  // What a wait for the page counts as a change: nodes added or removed, and a pick on a
-  // design-system radio, which redraws nothing: its host's `checked` and its group's `active-index`
-  // change (GEICO). Only these two attributes, so a page's own animations don't keep a wait going.
-  const CHANGES = { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', 'active-index'] };
-  // When the page last changed so, watched from when the kit came into this document (the whole
-  // document, so a body the page replaces is a change too). Only a fill's first wait uses it: a page
-  // already quiet for its time as the fill begins (a follow-up, Fill this page, the next step after
-  // Continue) is read at once rather than watched for that time again. A document the kit has just
-  // come into has no history, and gets the whole wait.
-  let changedAt = Date.now();
-  let changeWatch = null;
-  try {
-    changeWatch = new MutationObserver(() => { changedAt = Date.now(); });
-    changeWatch.observe(document.documentElement ?? document.body, CHANGES);
-  } catch { changeWatch = null; }
-  // A change the observer hasn't been told of yet (its records come a microtask later) is one now.
-  const lastChange = () => {
-    if (changeWatch?.takeRecords?.().length) changedAt = Date.now();
-    return changeWatch ? changedAt : Date.now();
-  };
-
   // Wait until the page stops changing: not busy, every component it draws defined, and no new
   // nodes for `quietMs`. With `requests`, a check that holds while they are waited for (the fill
-  // not stopped), also none of its own requests finished for `quietMs`. With `history`, the quiet
-  // time counts from the page's last change before the wait (lastChange), else from now. Not on a
-  // page held as the wait begins (busy, a component undefined): it changes in ways no observer is
-  // told of (a spinner shown by its style, a shadow root drawn), so its quiet time counts from now.
+  // not stopped), also none of its own requests finished for `quietMs`. The quiet time counts from
+  // when the wait begins: a page can change in ways no observer is told of (a spinner shown by its
+  // style, a shadow root drawn, a value a script sets), so the quiet it had before isn't counted
+  // (PR 178 tried that for a fill's first wait, and dropped it).
   // The wait wakes when its quiet time would be over (60 ms apart while something else holds it:
   // the page busy, a component undefined, a request), not every 60 ms: a 150 ms wait took 195 ms on
   // average in the GEICO mock, a 400 ms one 444 ms.
-  async function settle({ quietMs = 250, maxMs = 15000, requests = null, history = false } = {}) {
-    let last = history && !pageBusy() && !partsUndefined() ? Math.min(Date.now(), lastChange()) : Date.now();
+  async function settle({ quietMs = 250, maxMs = 15000, requests = null } = {}) {
+    let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
-    mo.observe(document.body, CHANGES);
+    // A pick on a design-system radio redraws nothing: its host's `checked` and its group's
+    // `active-index` change (GEICO). Only these two attributes, so a page's own animations don't
+    // keep the wait going.
+    mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', 'active-index'] });
     const start = Date.now();
     try {
       const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
@@ -2112,7 +2094,7 @@
     // Stopped by the agent before it began (the panel was still preparing): nothing is done.
     if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
     phase('reading');
-    const settled = await settle({ quietMs: 400, maxMs: 15000, history: true });
+    const settled = await settle({ quietMs: 400, maxMs: 15000 });
     phase(null);
     // Stopped while the page settled: nothing was done.
     if (!settled || report.halted) {
