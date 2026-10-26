@@ -3875,15 +3875,21 @@ function assistAfterFill(frames, ctx, followUp) {
 // retry sent Next again while GEICO still worked on the first) is never clicked again: its page
 // may load for up to a minute, and a quiet page that hasn't moved for about 18 s is the agent's.
 // `doneKey`: the continued step's entry in state.doneSteps (see stepScope); `run`: the fill's.
+// The page is read every 150 ms, and the new step is filled once three reads in a row (300 ms) show
+// the same questions: the same 300 ms as when it was read every 300 ms and two reads had to agree,
+// which made the new step wait 0.6 s at least (0.63 s on GEICO's 114 fills after a Continue since
+// 2026-10-15). The patience is counted in reads as before: about 6 s (18 s without the retry) of a
+// page unchanged since the Continue, 30 s (60 s) in all.
 async function watchNextStep(carrier, page, before, doneKey = null, run = null, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
   const tabId = ctx.tabId;
   if (!$('auto-followups').checked && !$('auto-pages').checked) return;
   let last = null;
+  let same = 0;
   let unchanged = 0;
   const retries = carrier.continueRetry !== false;
-  const patience = retries ? 20 : 60;
-  for (let i = 0; i < (retries ? 100 : 200); i++) {
-    await new Promise((r) => setTimeout(r, 300));
+  const patience = retries ? 40 : 120;
+  for (let i = 0; i < (retries ? 200 : 400); i++) {
+    await new Promise((r) => setTimeout(r, 150));
     if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page || !state.intake) return;
     let now = null;
     try {
@@ -3892,7 +3898,9 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
       now = results.find((r) => r.frameId === 0)?.result ?? null;
     } catch { return; }
     if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page) return;
-    if (now != null && now !== before && now === last) {
+    same = now === last ? same + 1 : 0;
+    last = now;
+    if (now != null && now !== before && same >= 2) {
       if (state.filling) state.pagePending = page;
       else fillPage({ auto: 'page' });
       return;
@@ -3910,7 +3918,6 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
       if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, ...(run ? { run } : {}), auto: 'page', error: 'continue did not take' });
       return;
     }
-    last = now;
   }
 }
 

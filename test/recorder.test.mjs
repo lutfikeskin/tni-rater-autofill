@@ -430,7 +430,7 @@ test('same-version reinjection rebaselines without adding a second active timer'
   h.tick();
 
   assert.equal(changes(h).length, 1, 'the reused recorder should report one change');
-  assert.equal(h.context.__raterRecorder.version, 12);
+  assert.equal(h.context.__raterRecorder.version, 13);
 });
 
 test('pause and resume rebaseline the page before recording a later change', () => {
@@ -498,7 +498,7 @@ test('an older recorder is replaced, so changes carry what the current one repor
   h.context.__raterRecorder = { version: 7, rebaseline() {}, dispose() { disposed.push(7); } };
   vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
   assert.deepEqual(disposed, [7]);
-  assert.equal(h.context.__raterRecorder.version, 12);
+  assert.equal(h.context.__raterRecorder.version, 13);
 });
 
 test('a recorder orphaned by an extension reload is replaced, not reused', () => {
@@ -1051,4 +1051,36 @@ test('a unit list drawn or changed is sent once, by the step on screen', () => {
   h.context.__raterKit = { unitListsNow: () => { throw new Error('unreadable'); } };
   h.tick();
   assert.equal(shown().length, 2);
+});
+
+// Speed (2026-10-25): Progressive draws most of its pages in the same document, and an arrival there
+// waited for the next poll (up to 1.5 s) before its fill. When the address changes in place (the
+// Navigation API's currententrychange), the top frame looks at once, and reports the new page as
+// soon as it shows a question the old one didn't; a page that shows none of its own yet (the address
+// changed before it was drawn) is left to the poll, as before.
+test('a page drawn in the same document is reported once it shows its questions, without waiting for the poll', () => {
+  const run = (drawn) => {
+    const h = harness();
+    // An older recorder in its place: the one under test replaces it, with the page's Navigation API.
+    h.context.__raterRecorder.dispose();
+    h.context.__raterRecorder = { version: 12, dispose() {} };
+    const navigated = new Set();
+    h.context.navigation = { addEventListener: (type, fn) => type === 'currententrychange' && navigated.add(fn), removeEventListener: (type, fn) => navigated.delete(fn) };
+    h.append(new Control('input', { id: 'old', value: '' }));
+    vm.runInNewContext(RECORDER, h.context, { filename: 'src/content/recorder.js' });
+    h.sent.length = 0;
+    h.context.location.search = '?pageName=Next';
+    if (drawn) h.append(new Control('input', { id: 'new', value: '' }));
+    for (const fn of navigated) fn();
+    h.later();
+    return h;
+  };
+  const drawn = run(true);
+  assert.deepEqual(drawn.sent.filter((m) => m.event === 'page_view').map((m) => [m.page, m.from, m.fields]), [['Next', 'Quote', 2]]);
+  drawn.tick();
+  assert.equal(drawn.sent.filter((m) => m.event === 'page_view').length, 1, 'the poll does not report it again');
+  const notYet = run(false);
+  assert.equal(notYet.sent.filter((m) => m.event === 'page_view').length, 0, 'the old page\'s questions only: left to the poll');
+  notYet.tick();
+  assert.deepEqual(notYet.sent.filter((m) => m.event === 'page_view').map((m) => [m.page, m.from]), [['Next', 'Quote']]);
 });

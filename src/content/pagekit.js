@@ -18,7 +18,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 89 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 90 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -383,23 +383,46 @@
   // that keeps sending them (a session check) counts as quiet once its controls are.
   const REQUESTS_MS = 30000;
 
+  // What a wait for the page counts as a change: nodes added or removed, and a pick on a
+  // design-system radio, which redraws nothing: its host's `checked` and its group's `active-index`
+  // change (GEICO). Only these two attributes, so a page's own animations don't keep a wait going.
+  const CHANGES = { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', 'active-index'] };
+  // When the page last changed so, watched from when the kit came into this document (the whole
+  // document, so a body the page replaces is a change too). Only a fill's first wait uses it: a page
+  // already quiet for its time as the fill begins (a follow-up, Fill this page, the next step after
+  // Continue) is read at once rather than watched for that time again. A document the kit has just
+  // come into has no history, and gets the whole wait.
+  let changedAt = Date.now();
+  let changeWatch = null;
+  try {
+    changeWatch = new MutationObserver(() => { changedAt = Date.now(); });
+    changeWatch.observe(document.documentElement ?? document.body, CHANGES);
+  } catch { changeWatch = null; }
+  // A change the observer hasn't been told of yet (its records come a microtask later) is one now.
+  const lastChange = () => {
+    if (changeWatch?.takeRecords?.().length) changedAt = Date.now();
+    return changeWatch ? changedAt : Date.now();
+  };
+
   // Wait until the page stops changing: not busy, every component it draws defined, and no new
   // nodes for `quietMs`. With `requests`, a check that holds while they are waited for (the fill
-  // not stopped), also none of its own requests finished for `quietMs`.
-  async function settle({ quietMs = 250, maxMs = 15000, requests = null } = {}) {
-    let last = Date.now();
+  // not stopped), also none of its own requests finished for `quietMs`. With `history`, the quiet
+  // time counts from the page's last change before the wait (lastChange), else from now.
+  // The wait wakes when its quiet time would be over (60 ms apart while something else holds it:
+  // the page busy, a component undefined, a request), not every 60 ms: a 150 ms wait took 195 ms on
+  // average in the GEICO mock, a 400 ms one 444 ms.
+  async function settle({ quietMs = 250, maxMs = 15000, requests = null, history = false } = {}) {
+    let last = history ? Math.min(Date.now(), lastChange()) : Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
-    // A pick on a design-system radio redraws nothing: its host's `checked` and its group's
-    // `active-index` change (GEICO). Only these two attributes, so a page's own animations don't
-    // keep the wait going.
-    mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', 'active-index'] });
+    mo.observe(document.body, CHANGES);
     const start = Date.now();
     try {
-      await sleep(60);
       const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
-      while (Date.now() - start < maxMs) {
-        if (!pageBusy() && Date.now() - last >= quietMs && !partsUndefined() && !requested()) return true;
-        await sleep(60);
+      for (let now = Date.now(); now - start < maxMs; now = Date.now()) {
+        if (mo.takeRecords?.().length) last = now;
+        const quietFor = now - last;
+        if (quietFor >= quietMs && !pageBusy() && !partsUndefined() && !requested()) return true;
+        await sleep(Math.max(1, Math.min(quietFor < quietMs ? quietMs - quietFor : 60, maxMs - (now - start))));
       }
       // Only components still not defined at the limit: the page itself is settled.
       return !pageBusy() && Date.now() - last >= quietMs;
@@ -2087,7 +2110,7 @@
     // Stopped by the agent before it began (the panel was still preparing): nothing is done.
     if (run != null && stoppedRuns.delete(run)) halt(STOP_HALT);
     phase('reading');
-    const settled = await settle({ quietMs: 400, maxMs: 15000 });
+    const settled = await settle({ quietMs: 400, maxMs: 15000, history: true });
     phase(null);
     // Stopped while the page settled: nothing was done.
     if (!settled || report.halted) {
@@ -3881,5 +3904,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 89, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 90, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

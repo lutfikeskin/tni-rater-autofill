@@ -14,7 +14,7 @@
 // at the shadow host it reaches the window as.
 
 (() => {
-  const VERSION = 12;
+  const VERSION = 13;
   const previous = globalThis.__raterRecorder;
   // A recorder left by an extension that was reloaded or updated can no longer reach the panel.
   const orphaned = previous?.alive?.() === false;
@@ -591,6 +591,26 @@
   });
 
   const timer = setInterval(tick, TICK_MS);
+  // A move to another page in the same document (Progressive draws most of its pages so: 338 of its
+  // 422 arrivals since 2026-10-15) was seen only by the next poll, up to TICK_MS later, and its fill
+  // waited for that. When the address changes in place (the Navigation API's currententrychange:
+  // pushState, replaceState, a new hash), the top frame looks every PAGE_LOOK_MS until the next poll
+  // would, and polls at once when the page shows questions the old one didn't (the address can
+  // change before the new page is drawn). A page showing none yet is left to the poll, as before: an
+  // arrival with no questions starts no fill.
+  const PAGE_LOOK_MS = 250;
+  let pageLook = null;
+  const lookAtPage = (tries = Math.round(TICK_MS / PAGE_LOOK_MS)) => {
+    if (pageLook !== null) clearTimeout(pageLook);
+    pageLook = setTimeout(() => {
+      pageLook = null;
+      if (!isCurrent() || paused || pageKey() === page) return;
+      if ([...snapshot().keys()].some((k) => !prev.has(k))) tick();
+      else if (tries > 1) lookAtPage(tries - 1);
+    }, PAGE_LOOK_MS);
+  };
+  const onNavigated = () => lookAtPage();
+  if (isTop) globalThis.navigation?.addEventListener?.('currententrychange', onNavigated);
 
   const onMessage = (msg) => {
     if (!isCurrent() || msg?.ra !== 'recorder') return;
@@ -603,6 +623,8 @@
     if (disposed) return;
     disposed = true;
     clearInterval(timer);
+    if (pageLook !== null) clearTimeout(pageLook);
+    globalThis.navigation?.removeEventListener?.('currententrychange', onNavigated);
     trustedPending.clear();
     trustedImmediate.clear();
     eventListeners.forEach(([type, listener]) => removeEventListener?.(type, listener, true));
