@@ -238,11 +238,13 @@ const STANDARDS = [
   'SR-22 (the owner; TNI: No unless the intake says otherwise)', 'SR-22 (this driver; TNI: No unless the intake says otherwise)',
   'Hazardous material placard (TNI: No unless the intake says otherwise)', 'Team driving or slip seating (TNI: No unless the intake says otherwise)',
   'Filings required (TNI: No unless the intake says otherwise)', 'Driver has a CDL (TNI: No when the intake leaves it blank)',
+  'Owner has a CDL (TNI: No when the intake leaves it blank)',
 ];
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
   const seen = new Set();
-  const records = [...RECORDS(), with_({ 'garaging.state': 'FL', 'coverage.reeferBreakdown': null, 'operations.equipVehicle': null, 'vehicles.0.type': 'Van' })];
+  const records = [...RECORDS(), with_({ 'garaging.state': 'FL', 'coverage.reeferBreakdown': null, 'operations.equipVehicle': null, 'vehicles.0.type': 'Van' }),
+    with_({ drivers: [{ ...intake().drivers[0], cdl: null, cdlYear: null }, { ...CASEY, cdl: null }] })];
   for (const rule of geico.rules) {
     const sources = typeof rule.source === 'function' ? records.flatMap((r) => ACTIVES.map((a) => rule.source(r, a))) : [rule.source];
     if (sources.includes('standard')) seen.add(rule.name);
@@ -1198,11 +1200,18 @@ test('Texas UM: $100,000/$300,000 when GEICO lists split limits, else $100,000 C
 // The maintainer, 2026-10-26: a blank CDL box on the intake means No (TNI's standard), for the
 // owner's form and Add Driver alike; the live run left both drivers' CDL questions yellow.
 test('a blank CDL on the intake is No, as TNI\'s standard', () => {
-  const blankCdl = with_({ drivers: [{ ...intake().drivers[0], cdl: null }, { ...CASEY, cdl: null }] });
+  const blankCdl = with_({ drivers: [{ ...intake().drivers[0], cdl: null, cdlYear: null }, { ...CASEY, cdl: null }] });
   const p = plan(blankCdl, { drivers: 1 });
   const ownerCdl = one(p, 'Owner has a CDL (TNI: No when the intake leaves it blank)');
   const driverCdl = one(p, 'Driver has a CDL (TNI: No when the intake leaves it blank)');
   assert.deepEqual([ownerCdl.value, ownerCdl.source, driverCdl.value, driverCdl.source], [false, 'standard', false, 'standard']);
   const yes = plan(with_({ drivers: [intake().drivers[0], { ...CASEY, cdl: true }] }), { drivers: 1 });
   assert.deepEqual([one(yes, 'Driver has a CDL (TNI: No when the intake leaves it blank)').value, one(yes, 'Driver has a CDL (TNI: No when the intake leaves it blank)').source], [true, 'intake']);
+  // The review of PR #176: a CDL year with the box blank says they may have one: not No, the agent's.
+  const year = plan(with_({ drivers: [{ ...intake().drivers[0], cdl: null, cdlYear: 2015 }, { ...CASEY, cdl: null, cdlYear: 2015 }] }), { drivers: 1 });
+  const [o, d] = [one(year, 'Owner has a CDL (TNI: No when the intake leaves it blank)'), one(year, 'Driver has a CDL (TNI: No when the intake leaves it blank)')];
+  assert.deepEqual([o.value, o.source, d.value, d.source], [null, 'derived', null, 'intake']);
+  // A driver the intake doesn't have: nothing, as before.
+  const none = one(plan(blankCdl, { drivers: 5 }), 'Driver has a CDL (TNI: No when the intake leaves it blank)');
+  assert.deepEqual([none.value, none.source], [null, 'intake']);
 });

@@ -215,8 +215,17 @@ export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.tex
 // The form's auto liability answer Non-Trucking (Select / Yes / No / Non-Trucking): the client asks
 // for non-trucking liability (the maintainer, 2026-10-26). Also as written on older forms.
 export const nonTruckingAnswer = (v) => /^\s*non[\s-]*trucking\s*$/i.test(String(v ?? ''));
+// "Does this driver have a CDL?": the intake's answer; a blank box is No (TNI's standard, the
+// maintainer, 2026-10-26), unless a CDL year is filled in: then the agent's (`cdl.blank-with-year`).
+// No driver: nothing.
+export const cdlStandard = (driver) => !!driver && typeof driver.cdl !== 'boolean' && driver.cdlYear == null;
+export const cdlAnswer = (driver) => (cdlStandard(driver) ? false : typeof driver?.cdl === 'boolean' ? driver.cdl : null);
 export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
-export const ntlCheckMessage = (line) => `The claims box or Additional Notes mention non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes. On Progressive the filler adds it on Rates, answers the permanent lease question Yes, puts the limit in the NTL limit and leaves Bodily Injury and Property Damage Liability Not selected; the rest of Rates is yours. On GEICO it picks Non-Trucking Liability, answers "Yes, under permanent lease" and puts the limit in the NTL list. On AmWINS it is written in the disclosure details on Underwriting.`;
+// What the filler does on an NTL quote, carrier by carrier (the NTL items below and Luna's).
+export const NTL_FILLS = 'On Progressive the filler adds it on Rates, answers the permanent lease question Yes, puts the limit in the NTL limit and leaves Bodily Injury and Property Damage Liability Not selected, then does the rest of Rates through Print, Email, Fax; with cargo or general liability too, the rest of Rates is yours. On GEICO it picks Non-Trucking Liability, answers "Yes, under permanent lease" and puts the limit in the NTL list. On AmWINS it is written in the disclosure details on Underwriting.';
+export const ntlCheckMessage = (line) => `The claims box or Additional Notes mention non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes. ${NTL_FILLS}`;
+// The intake's info item when the form's auto liability is Non-Trucking (coverage.ntl-form).
+export const NTL_FORM_MESSAGE = `Auto liability is Non-Trucking on the intake: Non-trucking liability is set to Yes. ${NTL_FILLS}`;
 // NTL and cargo both asked for (the maintainer, 2026-10-26): an NTL client is leased on to a motor
 // carrier, which covers the cargo, so the agent confirms it with the client. Every carrier.
 export const ntlWithCargo = (record) => record?.coverage?.ntl === true && record?.coverage?.cargo === true;
@@ -548,6 +557,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     if (!d.first || !d.last) check('name.missing-part', p(d.first ? 'last' : 'first'), `${who}: missing ${d.first ? 'last' : 'first'} name.`);
     if (d.cdl && !d.cdlYear) check('cdl-year.missing', p('cdlYear'), `${who}: has a CDL but no year it was issued.`);
     if (d.cdl === false && d.cdlYear) check('cdl-year.without-cdl', p('cdlYear'), `${who}: marked no CDL but a CDL year is filled in.`);
+    if (d.cdl == null && d.cdlYear) check('cdl.blank-with-year', p('cdl'), `${who}: the CDL box is blank but a CDL year is filled in: answer whether they have a CDL (a blank box alone is No).`);
     record.drivers.push(d);
     rows.drivers.push(n);
   });
@@ -651,7 +661,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   record.coverage.cargoLimit = cargo.limit;
   record.coverage.cargoDeductible = cargo.deductible;
   if (record.coverage.cargo && !cargo.limit) check('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.');
-  if (record.coverage.autoLiability === 'Yes' && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
+  // Non-Trucking asks for a limit too: the carrier's NTL limit (the review of PR #176).
+  if ((record.coverage.autoLiability === 'Yes' || nonTruckingAnswer(record.coverage.autoLiability)) && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
   if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'Wants general liability but no limit chosen: TNI\'s default is $1M/$2M ($1M per occurrence, $2M aggregate). Confirm it with the client.');
 
   // --- Claims box -----------------------------------------------------------------------------
@@ -680,7 +691,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // agent decides, and nothing is added until they set it to Yes.
   // Decided by the form's Non-Trucking answer: said, and no question about the notes.
   const ntlLine = ntlMention(intakeNotes(record));
-  if (record.coverage.ntl === true) info('coverage.ntl-form', 'coverage.ntl', 'Auto liability is Non-Trucking on the intake: Non-trucking liability is set to Yes. On Progressive the filler adds it on Rates, answers the permanent lease question Yes, puts the limit in the NTL limit and leaves Bodily Injury and Property Damage Liability Not selected; the rest of Rates is yours. On GEICO it picks Non-Trucking Liability, answers "Yes, under permanent lease" and puts the limit in the NTL list. On AmWINS it is written in the disclosure details on Underwriting.');
+  if (record.coverage.ntl === true) info('coverage.ntl-form', 'coverage.ntl', NTL_FORM_MESSAGE);
   else if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
   if (ntlWithCargo(record)) check('coverage.ntl-cargo', 'coverage.cargo', NTL_CARGO_MESSAGE);
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {

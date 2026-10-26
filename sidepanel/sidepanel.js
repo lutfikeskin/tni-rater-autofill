@@ -1,7 +1,7 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../src/intake.js';
 import { sourcePlace } from '../src/intake-source.js';
-import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
@@ -1319,6 +1319,7 @@ async function agentEdit(path, after, kind) {
   // an edit to either is read again; a driver's first name, for the gender check, likewise.
   const notesEdit = path === 'claims.text' || path === 'notes.text';
   if (notesEdit) claimsTextEdited(state.intake);
+  if (['coverage.ntl', 'coverage.autoLiability'].includes(path)) ntlAnswerEdited(state.intake, path);
   if (['coverage.ntl', 'coverage.cargo', 'coverage.autoLiability'].includes(path)) { ntlCargoEdited(state.intake); await save(); render(); }
   if (notesEdit || (path.startsWith('coverage.') && !['coverage.ntl', 'coverage.gl', 'coverage.hasGl'].includes(path))) reviewClaimsBox({ retry: true });
   if (/^drivers\[\d+\]\.first$/.test(path)) reviewDriverGender({ retry: true });
@@ -4367,9 +4368,10 @@ function needRow(x, { tabId, page, carrier }, open = false) {
   // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
   const show = x.key ? h('button', { class: 'link small show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
     'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
-  // A helper's reminder (`action.<id>`, a step of the carrier's left to the agent: Progressive's Rates
-  // on an NTL quote with cargo) has no field: its Mark done marks the helper done (markActionDone).
-  const actionId = !x.key && /^action\./.test(x.path ?? '') ? x.path.slice('action.'.length) : null;
+  // A helper's reminder has no field. One the carrier marks `markable` (Progressive's Rates on an NTL
+  // quote with cargo) carries the helper's own id (`action`), and its Mark done marks the helper done
+  // (markActionDone); the others (NTL still on the quote, a vehicle tile) are settled on the page.
+  const actionId = x.key ? null : x.action ?? null;
   const done = x.key ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page',
     'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page, x) }, 'Mark done')
     : actionId ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You did it on the page: the panel stops waiting on it for this quote',
@@ -4837,20 +4839,44 @@ async function aiSettings() {
 // since its check was for the old text. Items are kept by position (checked marks are).
 function claimsTextEdited(intake) {
   const uncheck = (i) => { intake.done = intake.done.filter((d) => d !== i); };
-  // NTL already asked for on the form (auto liability Non-Trucking): no question about the notes.
+  ntlNotesItem(intake);
+  intake.warnings.forEach((w, j) => { if (['ai.claims-truncated', 'ai.claims-review-failed'].includes(w.code)) uncheck(j); });
+  save();
+  render();
+}
+
+// The intake's NTL item about the notes (coverage.ntl) for the notes and auto liability as they are
+// now: asked (again, unchecked, for a new line), or retired to a note when the notes no longer name
+// NTL or the form asks for it (auto liability Non-Trucking).
+function ntlNotesItem(intake) {
   const fromForm = intake.record.coverage?.ntl === true && nonTruckingAnswer(intake.record.coverage.autoLiability);
   const mention = fromForm ? null : ntlMention(intakeNotes(intake.record));
   const i = intake.warnings.findIndex((w) => w.code === 'coverage.ntl');
   if (mention && i < 0) intake.warnings.push({ code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: ntlCheckMessage(mention) });
-  else if (mention && intake.warnings[i].msg !== ntlCheckMessage(mention)) {
+  else if (mention && (intake.warnings[i].msg !== ntlCheckMessage(mention) || intake.warnings[i].level !== 'check')) {
     intake.warnings[i] = { code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: ntlCheckMessage(mention) };
-    uncheck(i);
+    intake.done = intake.done.filter((d) => d !== i);
   } else if (!mention && i >= 0 && intake.warnings[i].level === 'check') {
-    intake.warnings[i] = { code: 'coverage.ntl', path: 'coverage.ntl', level: 'info', msg: 'The claims box and Additional Notes no longer mention non-trucking liability (NTL).' };
+    intake.warnings[i] = { code: 'coverage.ntl', path: 'coverage.ntl', level: 'info', msg: fromForm
+      ? 'Non-trucking liability is asked for on the form (auto liability Non-Trucking): the notes need no answer about it.'
+      : 'The claims box and Additional Notes no longer mention non-trucking liability (NTL).' };
   }
-  intake.warnings.forEach((w, j) => { if (['ai.claims-truncated', 'ai.claims-review-failed'].includes(w.code)) uncheck(j); });
-  save();
-  render();
+}
+
+// The agent's edit of auto liability (which sets NTL: rederive) or of NTL itself: the form's NTL
+// note follows it (back, or retired when NTL is no longer the form's Non-Trucking), and after an
+// auto liability edit the notes' NTL item too (an NTL the form no longer asks for is asked about
+// again). An NTL the agent set themselves asks nothing more about the notes. Kept by position.
+function ntlAnswerEdited(intake, path) {
+  const fromForm = intake.record.coverage?.ntl === true && nonTruckingAnswer(intake.record.coverage.autoLiability);
+  const f = intake.warnings.findIndex((w) => w.code === 'coverage.ntl-form');
+  const formNote = { code: 'coverage.ntl-form', path: 'coverage.ntl', level: 'info', msg: NTL_FORM_MESSAGE };
+  if (fromForm && f < 0) intake.warnings.push(formNote);
+  else if (fromForm) intake.warnings[f] = formNote;
+  else if (f >= 0 && intake.warnings[f].msg === NTL_FORM_MESSAGE) {
+    intake.warnings[f] = { ...formNote, msg: 'Auto liability is no longer Non-Trucking with Non-trucking liability Yes: Non-trucking liability is as the client details have it.' };
+  }
+  if (path === 'coverage.autoLiability') ntlNotesItem(intake);
 }
 
 // NTL and cargo both Yes after the agent's edit of either (or of auto liability, which sets NTL):

@@ -70,7 +70,8 @@ test('an intake on the new form: Canada answered, the notes read like the claims
   assert.deepEqual(record.crossSell, []);
   assert.deepEqual(sourceFields('operations.canadaLoads'), ['loads_to_canada']);
   assert.deepEqual(sourceFields('notes.text'), ['additional_notes']);
-  assert.deepEqual(sourceFields('coverage.ntl'), ['claims_details', 'additional_notes']);
+  // The review of PR #176: Non-Trucking on auto liability sets it too, and comes first.
+  assert.deepEqual(sourceFields('coverage.ntl'), ['auto_liability', 'claims_details', 'additional_notes']);
 });
 
 test('the Canada dropdown left on Select* is unanswered; No is No', () => {

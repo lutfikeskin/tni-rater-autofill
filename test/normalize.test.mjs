@@ -818,6 +818,27 @@ test('Non-Trucking picked for auto liability on the form is an NTL request', () 
   assert.ok(actions.includes('addNtl'));
 });
 
+// The review of PR #176. The NTL items told the agent the rest of Progressive's Rates is theirs,
+// which is so only with cargo or GL: an NTL-only quote is done through Print. Non-Trucking with no
+// limit is a missing limit, as Yes is. A CDL year with the CDL box blank is a check: TNI's blank-is-No
+// standard doesn't apply to it.
+test('NTL items say who does Rates; Non-Trucking with no limit and a CDL year without a CDL answer are checks', () => {
+  const today = { today: new Date('2026-10-26') };
+  const r = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking', claims_details: 'No\nAlso wants NTL' }, today);
+  const form = r.warnings.find((x) => x.code === 'coverage.ntl-form').msg;
+  const notes = normalizeIntake({ ...raw, auto_liability: 'Yes', claims_details: 'No\nAlso wants NTL' }, today).warnings.find((x) => x.code === 'coverage.ntl').msg;
+  for (const msg of [form, notes]) {
+    assert.doesNotMatch(msg, /; the rest of Rates is yours\./, msg);
+    assert.match(msg, /with cargo or general liability too, the rest of Rates is yours/i, msg);
+  }
+  const noLimit = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking', auto_liab_limit: '' }, today);
+  assert.equal(noLimit.warnings.find((x) => x.code === 'auto-limit.missing')?.path, 'coverage.autoLiabLimit');
+  const year = normalizeIntake({ ...raw, drv_cdl_1: '', drv_cdl_yr_1: '2015' }, today);
+  assert.equal(year.record.drivers[0].cdl, null);
+  assert.equal(year.warnings.find((x) => x.code === 'cdl.blank-with-year')?.path, 'drivers[0].cdl');
+  assert.ok(!normalizeIntake({ ...raw, drv_cdl_1: '', drv_cdl_yr_1: '' }, today).warnings.some((x) => x.code === 'cdl.blank-with-year'), 'blank and no year: TNI\'s No, no question');
+});
+
 test('the agent changing auto liability in the panel follows NTL, unless they set NTL themselves', () => {
   const r = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking' }, { today: new Date('2026-10-26') }).record;
   r.coverage.autoLiability = 'Yes';

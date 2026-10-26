@@ -157,6 +157,7 @@
  * @property {ClientValue<number | null>} [scopeIndex]
  * @property {string} [label]  what the panel calls it
  * @property {ClientValue<string | null>} [missing]  what the panel says when it can't be clicked
+ * @property {boolean} [markable]  its reminder (`missing`) has a Mark done that marks the helper done for the tab: only for a step the agent does instead, never a hold the page settles (`resolvedBy`) or a question answered on the Intake step
  * @property {ClientValue<string | null>} [unfinished]
  * @property {ClientValue<string[]>} [after]  record paths whose answers must be on the page first
  * @property {ClientValue<string[]>} [afterAny]
@@ -373,6 +374,7 @@
  * @property {boolean} unique
  * @property {string | null} label
  * @property {string | null} missing
+ * @property {boolean} markable
  * @property {string[]} heldBy
  * @property {string | null} resolvedBy
  * @property {string[]} settledByPages
@@ -459,6 +461,7 @@
  * @property {boolean} [review]
  * @property {boolean} [otherStep]
  * @property {string} [note]  why it is the agent's
+ * @property {string | null} [action]  a markable helper's reminder: the helper's id as the fill tracks it (scoped: `vehicleTile:0`), for the tab's done actions
  * @property {string} [reason]  why it failed
  * @property {string} [shown]  what the page shows (a choice's text)
  * @property {string} [said]

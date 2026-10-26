@@ -49,7 +49,7 @@
 // intake unit is on it (`advance`, TNI, FL live run 3, 2026-10-21); off, the agent clicks them.
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
-import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius } from '../normalize.js';
+import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
@@ -1078,10 +1078,9 @@ export const geico = {
       { field: 'GiveDriverLicenseState', q: 'GiveDriverLicenseState.owner', name: 'Owner\'s license state', kind: 'state', source: 'derived', value: (r) => owner(r).driver?.licenseState ?? null, note: ownerRowNote('license state') },
       { field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', ask: 'We just need a little more info about this driver. Do they need a Certificate of Financial Responsibility or SR-22?',
         path: 'operations.needSr22', name: 'SR-22 (the owner; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Owner, note: sr22Note(sr22Owner) },
-      // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard).
+      // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard; cdlAnswer).
       { field: 'CommercialDriverLicense', q: 'CommercialDriverLicense.owner', ask: 'Does this driver have a CDL?', name: 'Owner has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
-        source: (r) => (owner(r).driver && typeof owner(r).driver.cdl !== 'boolean' ? 'standard' : 'derived'),
-        value: (r) => (owner(r).driver ? owner(r).driver.cdl ?? false : null), note: ownerRowNote('CDL answer') },
+        source: (r) => (cdlStandard(owner(r).driver) ? 'standard' : 'derived'), value: (r) => cdlAnswer(owner(r).driver), note: ownerRowNote('CDL answer') },
     ]),
     // Add Driver: the panel's active driver.
     ...on(DRIVERS, { whenShown: ADD_DRIVER_FORM }, [
@@ -1094,7 +1093,7 @@ export const geico = {
       { field: 'GiveDriverRelationshipToBusiness', ask: 'What is their relationship to the business?', name: 'Driver\'s relationship to the business (Owner, else Employee)', kind: 'choice', source: relationshipSource, clientFact: true,
         value: relationship, note: driverNote(relationshipNote) },
       { field: 'CommercialDriverLicense', ask: 'Does this driver have a CDL?', path: 'drivers[].cdl', name: 'Driver has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
-        source: (r, a) => (typeof driverOf(r, a)?.cdl === 'boolean' ? 'intake' : 'standard'), value: (r, a) => (driverOf(r, a) ? driverOf(r, a).cdl ?? false : null), note: driverNote() },
+        source: (r, a) => (cdlStandard(driverOf(r, a)) ? 'standard' : 'intake'), value: (r, a) => cdlAnswer(driverOf(r, a)), note: driverNote() },
       // Hidden on the captured Add Driver form.
       { field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', path: 'operations.needSr22', name: 'SR-22 (this driver; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Driver, note: driverNote(sr22Note(sr22Driver)) },
       // Asked again on Add Driver for a driver who is the business's owner, with the owner's mobile

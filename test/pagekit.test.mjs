@@ -1533,6 +1533,20 @@ test('a helper verified by its link going away counts only when the link is gone
   assert.deepEqual(Array.from(report.actions, (x) => x.id), ['addNtl'], 're-armed while its link is on the page');
 });
 
+// The review of PR #176: a helper's reminder offered Mark done for every helper, and it added the
+// helper's base id. On NTL still on the quote (ntlStillAdded) that released the hold on the Rates
+// helpers; on a scoped helper (the vehicle tile, `vehicleTile:0`) it marked nothing the fill checks.
+// Only a helper that says so (`markable`) can be marked done, by its own id as the fill tracks it.
+test('only a markable helper\'s reminder can be marked done, by its scoped id', async () => {
+  const kept = { id: 'kept', kind: 'action', action: 'ntlStillAdded', text: null, label: 'Non-trucking liability', missing: 'remove it yourself',
+    path: 'action.ntlStillAdded', name: 'Click ntlStillAdded', pages: [], after: [], afterActions: ['addNtl'], afterPages: [], unless: [] };
+  let report = await harness().kit.fill([kept], { maxRounds: 2, doneActions: ['addNtl'] });
+  assert.deepEqual(Array.from(report.noData, (x) => [x.note, x.action]), [['remove it yourself', null]], 'a hold the page settles: no Mark done');
+  const rates = { ...kept, id: 'rates', action: 'ntlRates:0', path: 'action.ntlRates', missing: 'the rest is yours', markable: true };
+  report = await harness().kit.fill([rates], { maxRounds: 2, doneActions: ['addNtl'] });
+  assert.deepEqual(Array.from(report.noData, (x) => [x.note, x.action]), [['the rest is yours', 'ntlRates:0']]);
+});
+
 function coverageActionPlan() {
   return [
     { id: 'limit', selector: '#liab-limit', path: 'coverage.autoLiabLimit', kind: 'text', value: '1M CSL' },

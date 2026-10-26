@@ -1051,6 +1051,32 @@ test('a blank CDL on the intake is No on Add Driver, as TNI\'s standard', () => 
   record.drivers[0].cdl = true;
   const yes = buildPlan(record, progressive, { drivers: 0 }).find((s) => s.q === '28E6');
   assert.deepEqual([yes.value, yes.source], [true, 'intake']);
+  // The review of PR #176: a CDL year with the box blank says they may have one: not No, the agent's.
+  record.drivers[0].cdl = null;
+  record.drivers[0].cdlYear = 2015;
+  const year = buildPlan(record, progressive, { drivers: 0 }).find((s) => s.q === '28E6');
+  assert.deepEqual([year.value, year.source], [null, 'intake']);
+  // A driver the intake doesn't have: nothing, as before.
+  const none = buildPlan(record, progressive, { drivers: 3 }).find((s) => s.q === '28E6');
+  assert.deepEqual([none.value, none.source], [null, 'intake']);
+});
+
+// The review of PR #176: Mark done on a helper's reminder released NTL still on the quote
+// (ntlStillAdded, the hold on the Rates helpers) and the NTL question (ntlDecide). Only the NTL
+// quote's reminder that the rest of Rates is the agent's (ntlRates) can be marked done.
+test('only the NTL-with-cargo Rates reminder can be marked done', () => {
+  const markable = (change) => {
+    const record = baseRecord();
+    Object.assign(record.coverage, change);
+    return buildPlan(record, progressive, {}).filter((s) => s.kind === 'action' && s.markable).map((s) => s.action);
+  };
+  assert.deepEqual(markable({ ntl: true, cargo: true }), ['ntlRates']);
+  assert.deepEqual(markable({ ntl: true, cargo: false, gl: false }), [], 'NTL only: no reminder');
+  assert.deepEqual(markable({ ntl: false }), [], 'ntlStillAdded: settled only by the page');
+  const mention = baseRecord();
+  mention.coverage.ntl = null;
+  mention.claims = { ...mention.claims, text: 'No\nNeeds NTL' };
+  assert.ok(buildPlan(mention, progressive, {}).some((s) => s.action === 'ntlDecide' && !s.markable), 'ntlDecide: answered on the Intake step');
 });
 
 

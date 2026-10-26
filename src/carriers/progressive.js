@@ -31,7 +31,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
-import { ntlMention, intakeNotes, otherNotes, isLongHaul } from '../normalize.js';
+import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -502,19 +502,20 @@ export const progressive = {
     // never leaves an intake trailer out (TN 2026-10-07).
     { id: 'addTrailer', page: 'VehicleSummary', text: '^add (a |another )?trailer$', opener: '^add$', unlessActions: ['trailerEntered:trailer'], afterActions: (r) => (r.vehicles ?? []).map((_, i) => `lookupVin:${i}`), scope: 'trailer', label: 'Trailer', missing: 'Add the intake\'s trailer yourself (Add → Add Trailer).', doneWhen: (r, a) => [`trailerEntered:${a.trailers ?? 0}`], unfinished: 'Add Trailer was opened, but this intake trailer was never entered: add it (Add → Add Trailer) before Continue.', when: (r) => (r.trailers?.length ?? 0) > 0 },
     { id: 'trailerTile', page: 'MostCommonTrailers', text: trailerTile, unique: true, label: 'Trailer type', missing: trailerTileNote, scope: 'trailer', when: (r) => (r.trailers?.length ?? 0) > 0 },
-    // Non-trucking liability, once the agent set it to Yes (a claims-box mention alone never
-    // clicks it): the link under the liability coverage that opens the NTL section. First in this
-    // list, so it comes before cargo. Done only when the link is gone afterwards (a click lost in a
-    // redraw stays a blocker). What the section asks hasn't been seen on a live quote: its
-    // questions, the bill plan and the rest of Rates are the agent's (agentPages below).
+    // Non-trucking liability, once it is Yes (the form's Non-Trucking or the agent's; a claims-box
+    // mention alone never clicks it): the link under the liability coverage that opens the NTL
+    // section. First in this list, so it comes before cargo. Done only when the link is gone
+    // afterwards (a click lost in a redraw stays a blocker). The section's questions are filled (the
+    // rules for LineInput.NTLLease and NTLLimit, seen live on 2026-10-26); the rest of Rates as below.
     { id: 'addNtl', page: 'CoveragesRates', text: ADD_NTL, verify: 'gone', immediate: true, when: (r) => r.coverage.ntl === true },
     // NTL added on this quote, then set back to No: the filler doesn't remove it. Never clicked; a
     // "needs you" item on Rates, holding the later Rates helpers, until the page offers Add NTL
     // again (the agent removed it).
-    // NTL quote, or an NTL mention not answered yet: never clicked, a "needs you" item that keeps
-    // Continue for the agent (the rest of Rates is theirs, or waits for their answer).
+    // An NTL mention not answered yet, or an NTL quote with cargo or GL: never clicked, a "needs you"
+    // item that keeps Continue for the agent (the rest of Rates waits for their answer, or is theirs).
     // An NTL quote with cargo or GL too: after NTL, Rates is the agent's (Mark done once it is).
-    { id: 'ntlRates', page: 'CoveragesRates', label: 'Non-trucking liability', when: (r) => r.coverage.ntl === true && !ntlOnly(r),
+    // `markable`: the agent marks it done once the rest of Rates is (no other reminder here is).
+    { id: 'ntlRates', page: 'CoveragesRates', label: 'Non-trucking liability', markable: true, when: (r) => r.coverage.ntl === true && !ntlOnly(r),
       missing: () => 'NTL quote with cargo or general liability: the filler adds NTL with the intake\'s limit and the permanent lease Yes. Cargo, general liability, the bill plan, Recalculate and Print are yours. Continue yourself when it is done.' },
     // The NTL section closes with its own Done with this coverage, once its limit is in (the
     // maintainer, 2026-10-26, live run: the agent clicked it). The only Done on an NTL-only quote.
@@ -540,8 +541,8 @@ export const progressive = {
     { id: 'doneGl', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openGl'], after: ['progressive.q21D1'], verify: 'glClosed', when: (r) => glRequested(r) && notNtl(r) },
     // Rates, as TNI agents work it (the maintainer, 2026-10-23): once cargo and GL are added,
     // Recalculate and wait for the new premium, open the bill plan options and pick automatic
-    // payments there, come back (Continue), then Print, Email, Fax. With NTL they do the rates page
-    // by hand. (The bill plan used to come first and Recalculate after it; with the rates out of
+    // payments there, come back (Continue), then Print, Email, Fax. On an NTL quote with cargo or GL
+    // they do the rest of the rates page by hand (ntlRates). (The bill plan used to come first and Recalculate after it; with the rates out of
     // date Progressive lays something over View bill plan options, so each waited on the other and
     // the agent clicked both: two live TX recordings, 2026-10-23.)
     // None of the rates helpers run while the liability limit is unresolved (missing, rejected or
@@ -825,9 +826,9 @@ export const progressive = {
       { q: '289A', field: 'DriverInput.LastName', ask: 'Driver Last Name', path: 'drivers[].last' },
       { q: '28A7', field: 'DriverInput.DateOfBirth', ask: 'Date of Birth', path: 'drivers[].dob' },
       { q: '28AC', field: 'DriverInput.LicenseStateDup', ask: 'Driver\'s License State', path: 'drivers[].licenseState' },
-      // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard).
+      // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard; cdlAnswer).
       { q: '28E6', field: 'DriverInput.HasCDL', ask: 'Does this driver have a Commercial Driver\'s License (CDL)?', path: 'drivers[].cdl', name: 'Has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
-        source: (r, a) => (typeof r.drivers?.[a.drivers ?? 0]?.cdl === 'boolean' ? 'intake' : 'standard'), value: (r, a) => (r.drivers?.[a.drivers ?? 0] ? r.drivers[a.drivers ?? 0].cdl ?? false : null) },
+        source: (r, a) => (cdlStandard(r.drivers?.[a.drivers ?? 0]) ? 'standard' : 'intake'), value: (r, a) => cdlAnswer(r.drivers?.[a.drivers ?? 0]) },
       { q: '28B9', field: 'DriverInput.DriverLicenseNumber', ask: 'Driver’s License Number', path: 'drivers[].licenseNumber' },
       // FL (2026-10-07): with a CDL, the year it was issued, from the intake; "Year is unknown" is
       // the agent's when the intake has no year.
