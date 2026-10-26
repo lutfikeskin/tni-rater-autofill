@@ -2348,16 +2348,18 @@
             continue;
           }
         }
-        // `onlyOption`: answered only when a list offers no choice but these: its own, nothing but
-        // the answer (GEICO's Medical Payments, Not Included), or another question's (`path`), which
-        // may also be off the page (GEICO's Basic PIP $2,500 where Medical Payments offers no limit:
-        // the maintainer, 2026-10-26). Otherwise the agent's alone, with `onlyNote`: a limit TNI
-        // doesn't name is never the AI's.
-        if (step.onlyOption && step.value != null && !step.note) {
-          const only = step.onlyOption;
-          const list = only.path ? allPairs.find((p) => p.step.path === only.path)?.control : c;
-          const allowed = new Set((only.choices ?? [step.value]).map(squash));
-          if (list && usableOptions(optionsOf(list)).some((o) => !allowed.has(squash(o.text)))) {
+        // `onlyIf`: answered only when one of its conditions holds: a list, its own or another
+        // question's (`path`; off the page it offers none), offers a limit (a choice with an amount)
+        // or none (GEICO's Medical Payments Not Included where Basic PIP offers a limit or it offers
+        // none: the maintainer, 2026-10-26, "If there is personal injury protection available, we
+        // always prefer PIP"). Otherwise the agent's alone, with `onlyNote`: a limit TNI doesn't
+        // name is never the AI's.
+        if (step.onlyIf && step.value != null && !step.note) {
+          const offersLimit = (path) => {
+            const list = path ? allPairs.find((p) => p.step.path === path)?.control : c;
+            return !!list && usableOptions(optionsOf(list)).some((o) => moneyTokens(o.text).length > 0);
+          };
+          if (!step.onlyIf.some((x) => offersLimit(x.path) === x.limit)) {
             report.noData.push({ ...item, note: step.onlyNote, manualOnly: true, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.onlyNote });
             continue;

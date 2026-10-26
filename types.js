@@ -73,11 +73,12 @@
  */
 
 /**
- * The choices a list may offer for a rule to answer (a rule's `onlyOption`), placeholders and
- * GEICO's hidden stand-in aside.
- * @typedef {object} OnlyOption
- * @property {string | null} [path]  another question's plan path, whose list is read (GEICO's Basic PIP reads Medical Payments'); off the page, it holds. None: the rule's own list
- * @property {string[] | null} [choices]  what that list may offer; none: the rule's answer alone
+ * What a list offers, for a rule answered only when one of its conditions holds (a rule's
+ * `onlyIf`): a limit is a choice with an amount ("$2,500", "$10,000/No deductible"), never a
+ * placeholder, GEICO's hidden stand-in, "Not Included" or "I decline".
+ * @typedef {object} ListCondition
+ * @property {string | null} [path]  another question's plan path, whose list is read (GEICO's Medical Payments reads Basic PIP's); none: the rule's own list
+ * @property {boolean} limit  true: the list offers a limit; false: it offers none (a list off the page offers none)
  */
 
 // ---------------------------------------------------------------------------------------------
@@ -136,7 +137,7 @@
  * @property {(record: ClientRecord, active: ActiveUnits) => string[] | null} [businessNames]
  * @property {(record: ClientRecord, active: ActiveUnits) => string[] | null} [labelHas]
  * @property {string} [labelNote]
- * @property {ClientValue<boolean | OnlyOption | null>} [onlyOption]  answered only when a list offers no choice but these (`true`: its own, nothing but the answer: GEICO's Medical Payments, Not Included); otherwise the agent's alone (manual only), with `onlyNote`
+ * @property {ClientValue<ListCondition[] | null>} [onlyIf]  answered only when one of these holds (GEICO's Medical Payments, Not Included: Basic PIP offers a limit, or Medical Payments none); otherwise the agent's alone (manual only), with `onlyNote`
  * @property {string} [onlyNote]
  * @property {ClientValue<string | null>} [unofferedNote]  a list without the answer, which no helper shows later (GEICO's Basic PIP without $2,500): the agent's alone at once, with this note, instead of a failure
  * @property {boolean} [checkNumber]
@@ -355,7 +356,7 @@
  * @property {string[] | null} businessNames
  * @property {string[] | null} labelHas
  * @property {string | null} labelNote
- * @property {OnlyOption | null} onlyOption
+ * @property {{ path: string | null, limit: boolean }[] | null} onlyIf
  * @property {string | null} onlyNote
  * @property {string | null} unofferedNote
  * @property {string | null} fallback

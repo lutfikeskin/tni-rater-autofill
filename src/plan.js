@@ -6,7 +6,7 @@ import { GENERIC_RULES } from './rules.js';
 import { fieldInfo } from './schema.js';
 import { get, listOf } from './util.js';
 
-/** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, OnlyOption, PlanStep } from '../types.js' */
+/** @import { ActionStep, ActiveUnits, CarrierConfig, CarrierRule, ClientRecord, ClientValue, FieldStep, ListCondition, PlanStep } from '../types.js' */
 
 // Where a rule's answer comes from (Contract 2, docs/intake-and-rules.md):
 //   intake       a record path, no computed value (the default for a rule with `path` only)
@@ -174,10 +174,9 @@ function shownOn(cond, record, active) {
   return c?.field ? { field: c.field, label: c.label ?? null, unit: c.unit ?? null } : null;
 }
 
-/** @param {boolean | OnlyOption | null | undefined} only */
-function onlyOptionOf(only) {
-  if (!only) return null;
-  return only === true ? { path: null, choices: null } : { path: only.path ?? null, choices: only.choices ?? null };
+/** @param {ListCondition[] | null | undefined} conditions */
+function onlyIfOf(conditions) {
+  return conditions?.length ? conditions.map((x) => ({ path: x.path ?? null, limit: !!x.limit })) : null;
 }
 
 /**
@@ -335,10 +334,10 @@ function fieldSteps(rules, record, carrier, active) {
       // the intake's house number, street and ZIP, W43-24), and the note when it doesn't.
       labelHas: rule.labelHas ? rule.labelHas(record, active) : null,
       labelNote: rule.labelNote ?? null,
-      // Answered only when a list offers no choice but these (`true`: its own, nothing but the
-      // answer; `path`: another question's, GEICO's Basic PIP on Medical Payments); otherwise the
-      // agent's, with the note.
-      onlyOption: onlyOptionOf(typeof rule.onlyOption === 'function' ? rule.onlyOption(record, active) : rule.onlyOption),
+      // Answered only when one of these holds: a list, its own or another question's (`path`),
+      // offers a limit or none (GEICO's Medical Payments reads Basic PIP's); otherwise the agent's,
+      // with the note.
+      onlyIf: onlyIfOf(typeof rule.onlyIf === 'function' ? rule.onlyIf(record, active) : rule.onlyIf),
       onlyNote: rule.onlyNote ?? null,
       // A list without the answer, which no helper shows later: the agent's at once, with this note.
       unofferedNote: typeof rule.unofferedNote === 'function' ? rule.unofferedNote(record, active) : rule.unofferedNote ?? null,
