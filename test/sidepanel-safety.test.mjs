@@ -8213,3 +8213,19 @@ test('an unfinished recording already gone is said so, and the button is drawn a
   await context.recoverRecording();
   assert.deepEqual([said[1], redrawn], ['Couldn\'t open it: disk full', 2]);
 });
+
+// A frame that swaps its document between the panel's injection of the kit and its snapshot read (a
+// hidden chat frame still loading: the AmWINS mock's Intercom frame) has no kit when the read runs.
+// The read threw there ("Cannot read properties of undefined (reading 'decisionSnapshot')", the Luna
+// mock, 2026-10-26, 3 of 11 runs on the speed branch, 0 of 6 on main). It now gives that frame null,
+// which differs from any snapshot taken before, so the decision is refused as on a changed page,
+// as the panel's callers already did when the read failed.
+test('every snapshot read gives a frame without the kit null instead of throwing', () => {
+  const reads = SIDEPANEL.match(/\(\) => \(?globalThis\.__raterKit[^\n]*?decisionSnapshot\(\)[^\n]*?\)(?=[),;])/g) ?? [];
+  assert.ok(reads.length >= 9, `snapshot reads found: ${reads.length}`);
+  for (const source of reads) {
+    assert.equal(vm.runInNewContext(`(${source})()`, {}), null, `no kit: ${source}`);
+    assert.equal(vm.runInNewContext(`(${source})()`, { __raterKit: { decisionSnapshot: () => 'snapshot' } }), 'snapshot', `the kit's: ${source}`);
+  }
+  assert.doesNotMatch(SIDEPANEL, /\(\) => globalThis\.__raterKit\.decisionSnapshot\(\)/, 'no read that throws without the kit');
+});

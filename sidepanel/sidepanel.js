@@ -778,7 +778,7 @@ async function settleRejectedAi(page, changes, sender, tabId = state.tab?.id) {
   });
   let fresh = null;
   if (eligible.some(([, x]) => !x.origin && !x.originAmbiguous)) {
-    try { fresh = await runKit(tabId, tab.carrier, () => globalThis.__raterKit.decisionSnapshot()); } catch { /* page navigating */ }
+    try { fresh = await runKit(tabId, tab.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); } catch { /* page navigating */ }
   }
   if (state.tab?.id !== tabId || state.tab?.url !== tab?.url || state.intake !== intake) return false;
   let changed = false;
@@ -826,7 +826,7 @@ async function retireAiOrigins(ctx, frames = null) {
     && x.done === 'auto' && (x.quoteHash || aiOriginRecord(x.origin)));
   if (!entries.length) return false;
   if (frames == null && entries.some(([, x]) => x.origin && (!x.quoteHash || x.quoteHash === quoteHash))) {
-    try { frames = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot()); }
+    try { frames = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); }
     catch { frames = null; }
   }
   if (!current()) return false;
@@ -4473,7 +4473,7 @@ async function changeAnswer(item, row, { tabId, page, carrier }) {
   const slot = item.querySelector('.change-slot');
   if (slot.childElementCount) { slot.replaceChildren(); return; }
   let frames = null;
-  try { frames = await runKit(tabId, carrier, () => globalThis.__raterKit.decisionSnapshot()); } catch { /* the page is navigating */ }
+  try { frames = await runKit(tabId, carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); } catch { /* the page is navigating */ }
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   const matches = aiSnapshotFieldMatches(frames, { key: row.key, label: row.field });
   const field = matches.length === 1 ? matches[0].field : null;
@@ -4519,7 +4519,7 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
     guarding = true;
     await runKit(tabId, carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [token]);
     if (!current()) return;
-    const frames = await runKit(tabId, carrier, () => globalThis.__raterKit.decisionSnapshot());
+    const frames = await runKit(tabId, carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
     if (!current()) return;
     const matches = aiSnapshotFieldMatches(frames, x);
     if (matches.length !== 1) { say('The page changed: answer it on the page.'); return; }
@@ -5116,7 +5116,7 @@ async function runAssist(frames, ctx) {
   const run = ++state.aiRun;
   ctx.run = run;
   try {
-    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
   } catch { return; }
   // Why this request (or its answer) no longer fits what the panel shows; null while it does.
   const staleWhy = () => (run !== state.aiRun ? 'a newer request'
@@ -5243,7 +5243,7 @@ async function applyAi(list, ctx, decision) {
     guarding = true;
     await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [guardToken]);
     if (!isCurrent()) return false;
-    const current = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+    const current = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
     if (!isCurrent()) return false;
     if (!snapshotsEqual(current, ctx.snapshots)) {
       for (const x of list) x.error = 'the page changed; click Fill this page for fresh suggestions';
@@ -5348,7 +5348,7 @@ async function applyAi(list, ctx, decision) {
     if (list.some((x) => x.done) || protectedKeys.length) noteChangedAfterDone(ctx.carrier, ctx.page, tabStep(ctx.carrier, ctx.tabId), ctx.tabId);
     await persistGuardedEdits(editOrigin, protectedKeys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
-    const after = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+    const after = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
     for (const x of list) if (x.done) {
       x.snapshots = after;
       x.snapshotHash = snapshotFingerprint(after);
@@ -5432,7 +5432,7 @@ function renderAi(holder, suggestions, ctx) {
       // Approve only what the page still shows as the AI left it; a pick whose page changed since
       // is rejected so the agent reviews it after a fresh fill.
       let now;
-      try { now = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot()); }
+      try { now = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); }
       catch {
         if (!aiActionCurrent(ctx, list)) return;
         for (const x of list) x.error = 'the page is unavailable; return to it and run Fill again';
@@ -5482,7 +5482,7 @@ function renderAi(holder, suggestions, ctx) {
     for (const x of list) {
       let present = false;
       try {
-        const result = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+        const result = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
         present = aiCurrentAnswerPresent(result, x);
       } catch { /* page navigating */ }
       if (!aiActionCurrent(ctx, list)) return;
