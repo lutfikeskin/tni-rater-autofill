@@ -18,7 +18,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 88 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 89 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -946,17 +946,22 @@
   // <option value="" hidden> repeating the current choice ("Not Included"). Picking it picks nothing.
   const standIn = (o) => o.el?.tagName === 'OPTION' && (!!o.el.hidden || !!o.el.disabled || o.value === '');
 
-  function matchOption(options, step) {
-    // Options that read the same are the same choice (pages sometimes list one twice), and the
-    // real one of them is the choice, never a stand-in reading like it.
+  // A list's choices: options that read the same are the same choice (pages sometimes list one
+  // twice), and the real one of them is the choice, never a stand-in reading like it. Placeholders
+  // are no choice.
+  function usableOptions(options) {
     const seenText = new Set();
     const real = new Set(options.filter((o) => !standIn(o)).map((o) => squash(o.text)));
-    const usable = options.filter((o) => {
+    return options.filter((o) => {
       const k = squash(o.text);
       if (!k || isPlaceholderOption(o.text) || seenText.has(k) || (standIn(o) && real.has(k))) return false;
       seenText.add(k);
       return true;
     });
+  }
+
+  function matchOption(options, step) {
+    const usable = usableOptions(options);
     // "Any option except …" (e.g. the registered USDOT address instead of "Enter a different
     // address"), preferring one that matches `prefer` when there are several.
     if (step.kind === 'pick-not') {
@@ -2343,6 +2348,23 @@
             continue;
           }
         }
+        // `onlyIf`: answered only when one of its conditions holds: a list, its own or another
+        // question's (`path`; off the page it offers none), offers a limit (a choice with an amount)
+        // or none (GEICO's Medical Payments Not Included where Basic PIP offers a limit or it offers
+        // none: the maintainer, 2026-10-26, "If there is personal injury protection available, we
+        // always prefer PIP"). Otherwise the agent's alone, with `onlyNote`: a limit TNI doesn't
+        // name is never the AI's.
+        if (step.onlyIf && step.value != null && !step.note) {
+          const offersLimit = (path) => {
+            const list = path ? allPairs.find((p) => p.step.path === path)?.control : c;
+            return !!list && usableOptions(optionsOf(list)).some((o) => moneyTokens(o.text).length > 0);
+          };
+          if (!step.onlyIf.some((x) => offersLimit(x.path) === x.limit)) {
+            report.noData.push({ ...item, note: step.onlyNote, manualOnly: true, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note: step.onlyNote });
+            continue;
+          }
+        }
         if (step.note || step.value == null) {
           if (step.optional) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note, ...describe(c) });
@@ -2509,6 +2531,11 @@
           // Batch: carry on with the next answer, except before a helper button that waits on
           // this one (Import Data after the VIN list): it's clicked first thing next round.
           if (!batch || immediateAfter.has(step.path)) break;
+        } else if (step.unofferedNote && /^no option matches/.test(result.reason ?? '')) {
+          // A list without the answer, which no helper shows later (GEICO's Basic PIP without
+          // $2,500): the agent's alone at once, so a `whenClear` helper (Print) waits for it.
+          report.noData.push({ ...item, note: step.unofferedNote, manualOnly: true, ...describe(c) });
+          handled.set(step.id, { status: 'needs', note: step.unofferedNote });
         } else if (step.whenOffered && /^no option matches/.test(result.reason ?? '')) {
           // Not offered yet: a helper may show it (GEICO's 11 Payments, behind View More Payment
           // Plans). Tried again each round; never offered by the fill's end, it is the agent's.
@@ -3854,5 +3881,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 88, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 89, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

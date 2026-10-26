@@ -8195,3 +8195,21 @@ test('a helper\'s reminder has a Mark done that marks the helper done for the ta
   await context.markActionDone(item, 'ntlRates', 4, 'CoveragesRates');
   assert.deepEqual([...state.doneActions], []);
 });
+
+
+// The maintainer, 2026-10-26: "Save the unfinished recording" said "Couldn't open it: A requested
+// file or directory could not be found", and the button stayed. Its recording was gone from the
+// browser (saved by another panel). Said in words, and the button drawn again.
+test('an unfinished recording already gone is said so, and the button is drawn again', async () => {
+  const said = [];
+  let redrawn = 0;
+  const gone = Object.assign(new Error('A requested file or directory could not be found at the time an operation was processed.'), { name: 'NotFoundError' });
+  const context = { $: () => ({ dataset: { id: 'geico-x' } }), devrecSaid: (s) => said.push(s), renderUnfinished: async () => { redrawn++; },
+    saveRecording: async () => {}, RecordingStore: { reopen: async () => { throw gone; } } };
+  vm.runInNewContext(extractFunction('recoverRecording'), context);
+  await context.recoverRecording();
+  assert.deepEqual([said, redrawn], [['That recording is no longer in this browser: another panel already saved it.'], 1]);
+  context.RecordingStore.reopen = async () => { throw new Error('disk full'); };
+  await context.recoverRecording();
+  assert.deepEqual([said[1], redrawn], ['Couldn\'t open it: disk full', 2]);
+});

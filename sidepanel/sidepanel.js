@@ -4813,7 +4813,14 @@ async function renderUnfinished() {
 async function recoverRecording() {
   const id = $('devrec-recover').dataset.id;
   if (!id) return;
-  try { await saveRecording(await RecordingStore.reopen(id), 'From a panel closed while recording:'); } catch (e) { devrecSaid(`Couldn't open it: ${e.message}`); }
+  try { await saveRecording(await RecordingStore.reopen(id), 'From a panel closed while recording:'); } catch (e) {
+    // Gone from the browser since the button was drawn: another panel (the side panel and its
+    // popped-out window) saved it, which removes it from the store (the maintainer, 2026-10-26:
+    // "Couldn't open it: A requested file or directory could not be found", and the button
+    // stayed). The button is drawn again from what is left.
+    devrecSaid(e?.name === 'NotFoundError' ? 'That recording is no longer in this browser: another panel already saved it.' : `Couldn't open it: ${e.message}`);
+    await renderUnfinished();
+  }
 }
 
 // ---------------------------------------------------------------------------------------------

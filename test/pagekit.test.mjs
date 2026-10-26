@@ -7277,3 +7277,78 @@ test('progress says continue only where the fill may click Continue', async () =
   assert.equal(clicked.report.advanced, 'Continue');
   assert.ok(clicked.seen.includes('continue'), `continued: ${clicked.seen.join(', ')}`);
 });
+
+
+// `onlyIf` (the maintainer, 2026-10-26, GEICO TX live run: Medical Payments listed only Not
+// Included): the answer is given only when one of its conditions holds, here its own list offering
+// no limit (no choice with an amount); a list with a limit is the agent's alone, with the rule's
+// note. A placeholder doesn't count as a choice.
+test('a choice with onlyIf is answered only when its list offers no limit', async () => {
+  const run = async (options) => {
+    const h = harness();
+    const med = new SelectNode(options, { id: 'med', ariaLabel: 'Medical Payments (MED)' });
+    h.document.body.append(med);
+    const rules = [{ selector: '#med', name: 'Medical payments', kind: 'choice', source: 'standard', value: () => 'Not Included', onlyIf: [{ limit: false }], onlyNote: 'Pick one yourself.' }];
+    const report = await h.kit.fill(buildPlan({}, { id: 'test', useGenericRules: false, rules }), { maxRounds: 4 });
+    return { med, report };
+  };
+  let { med, report } = await run([{ text: 'Please Select', value: '' }, { text: 'Not Included', value: 'NI' }]);
+  assert.equal(med.value, 'NI');
+  assert.deepEqual(plain(report.noData), []);
+  ({ med, report } = await run([{ text: 'Please Select', value: '' }, { text: 'Not Included', value: 'NI' }, { text: '$5,000', value: '5000' }]));
+  assert.equal(med.value, '', 'a limit listed: left as it is');
+  assert.deepEqual(plain(report.noData.map((x) => [x.note, x.manualOnly])), [['Pick one yourself.', true]]);
+});
+
+// The maintainer, 2026-10-26 (GEICO, outside Florida): "If there is personal injury protection
+// available, we always prefer PIP", ideally $2,500; without PIP, Medical Payments with a limit is
+// preferred, Not Included where that is its only choice. GEICO's own rules, on a Quote & Coverages
+// with a Print that waits until nothing is left for the agent (`whenClear`). What is left to the
+// agent here is a limit TNI doesn't name: manual only, never the AI's.
+test('GEICO outside Florida: PIP where GEICO offers it, $2,500, and Medical Payments then Not Included; what is left is the agent\'s alone', async () => {
+  const rules = geico.rules.filter((r) => r.q === 'MedicalPayments' || r.q === 'BasicPip');
+  assert.equal(rules.length, 2);
+  const actions = [{ id: 'printProposal', text: '^print quote proposal$', whenClear: true }];
+  const run = async ({ med, pip }) => {
+    const h = harness({ pathname: '/quote' });
+    geicoBar(h, 'Quote & Coverages');
+    const list = (options, ariaLabel, id) => new SelectNode(['Please Select', ...options].map((t) => ({ text: t, value: t === 'Please Select' ? '' : t })), { id, ariaLabel });
+    const medList = med && list(med, 'Medical Payments (MED)', 'Id_med_11');
+    const pipList = pip && list(pip, 'Basic Personal Injury Protection', 'Id_pip_12');
+    const print = gdsButton('Print Quote Proposal');
+    const clicks = [];
+    print.button.onclick = () => clicks.push('print');
+    h.document.body.append(...[medList, pipList].filter(Boolean), print.host);
+    const plan = buildPlan({ ...geicoRecord(), garaging: { state: 'TX' } }, { id: 'geico', useGenericRules: false, rules, actions });
+    const report = await h.kit.fill(plan, { maxRounds: 8 });
+    return { med: medList?.value ?? null, pip: pipList?.value ?? null, clicks, left: plain(report.noData.concat(report.failed).map((x) => [x.label, x.manualOnly])),
+      notes: plain(report.noData.map((x) => x.note)) };
+  };
+  // Basic PIP with $2,500: PIP, and Medical Payments Not Included, whatever limits it lists.
+  let r = await run({ med: ['Not Included'], pip: ['I decline', '$2,500'] });
+  assert.deepEqual([r.med, r.pip, r.left, r.clicks], ['Not Included', '$2,500', [], ['print']], 'the TX run');
+  r = await run({ med: ['Not Included', '$500', '$5,000'], pip: ['I decline', '$2,500'] });
+  assert.deepEqual([r.med, r.pip, r.left, r.clicks], ['Not Included', '$2,500', [], ['print']], 'PIP over medical payments limits');
+  r = await run({ med: null, pip: ['I decline', '$2,500'] });
+  assert.deepEqual([r.pip, r.clicks], ['$2,500', ['print']]);
+  // PIP limits without $2,500: still PIP, its limit the agent's at once, so Print waits for it
+  // (`whenOffered` waited instead, and Print went out with GEICO's own PIP).
+  r = await run({ med: ['Not Included', '$500'], pip: ['I decline', '$5,000', '$10,000'] });
+  assert.deepEqual([r.med, r.pip, r.clicks, r.left], ['Not Included', '', [], [['Basic Personal Injury Protection', true]]]);
+  assert.match(r.notes[0], /doesn't offer \$2,500/);
+  // No PIP on the page: Medical Payments Not Included only where that is its only choice; with a
+  // limit it is the agent's (TNI prefers it then).
+  r = await run({ med: ['Not Included'], pip: null });
+  assert.deepEqual([r.med, r.left, r.clicks], ['Not Included', [], ['print']]);
+  r = await run({ med: ['Not Included', '$500', '$5,000'], pip: null });
+  assert.deepEqual([r.med, r.left, r.clicks], ['', [['Medical Payments (MED)', true]], []]);
+  assert.match(r.notes[0], /no personal injury protection/);
+  // Basic PIP with no limit (only I decline): no PIP. Medical Payments as above, and Basic PIP is
+  // the agent's to check, said so.
+  r = await run({ med: ['Not Included', '$500'], pip: ['I decline'] });
+  assert.deepEqual([r.med, r.pip, r.clicks, r.left], ['', '', [], [['Medical Payments (MED)', true], ['Basic Personal Injury Protection', true]]]);
+  assert.match(r.notes[1], /no basic personal injury protection limit/);
+  // Medical Payments with no choice at all: said so, not "limits".
+  r = await run({ med: [], pip: ['I decline', '$2,500'] });
+  assert.deepEqual([r.pip, r.notes], ['$2,500', ['GEICO lists no medical payments choice here: check it yourself.']]);
+});
