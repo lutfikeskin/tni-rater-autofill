@@ -117,7 +117,7 @@ try {
   // Configure the synthetic profile before panel init can upload to the default usage server.
   await worker.evaluate(() => chrome.storage.local.set({ settings: { aiOn: true, aiAuto: true, lunaAuto: false,
     jevKey: 'synthetic-typesafe', aiKey: 'synthetic-legacy-openai', jevModel: 'jev-1.13.0',
-    autoFollowUps: false, autoPages: false, autoAdvance: true, serverUrl: '', serverToken: '' } }));
+    autoFollowUps: false, autoPages: false, autoAdvance: true, checkBeforeContinue: false, serverUrl: '', serverToken: '' } }));
   await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
   await panel.reload();
   const openMock = async () => {
@@ -318,7 +318,7 @@ try {
   await panel.evaluate(() => chrome.storage.local.remove('storageVersion'));
   await panel.evaluate(({ scope, tabId }) => chrome.storage.local.set({
     settings: { aiOn: true, aiAuto: true, jevKey: 'legacy-typesafe-key', aiKey: 'legacy-openai-key', jevModel: 'jev-1.13.0',
-      autoFollowUps: false, autoPages: false, autoAdvance: true, serverUrl: '', serverToken: '' },
+      autoFollowUps: false, autoPages: false, autoAdvance: true, checkBeforeContinue: false, serverUrl: '', serverToken: '' },
     aiPendingDecisions: [{ version: 1, scope, tabId, page: '/test/fixtures/amwins/application.html',
       model: 'jev-1.13.0', policy: 'jev-evidence-v2', contextHash: 'legacy-context', itemHash: 'legacy-item',
       key: 'mockLunaChoice', label: 'Mock Luna choice', choice: 'No', controlKind: 'select', done: 'auto',
@@ -343,7 +343,7 @@ try {
 
   // Continue the normal Luna workflow with its dedicated key after the upgrade check.
   await panel.evaluate(() => chrome.storage.local.set({ settings: { aiProvider: 'luna', aiOn: true, aiAuto: true, lunaAuto: false,
-    lunaKey: '', autoFollowUps: false, autoPages: false, autoAdvance: true, serverUrl: '', serverToken: '' } }));
+    lunaKey: '', autoFollowUps: false, autoPages: false, autoAdvance: true, checkBeforeContinue: false, serverUrl: '', serverToken: '' } }));
   await panel.reload();
   // The migration hold fill may have settled every other question on this page. Start a fresh
   // intake so the missing-key path still has an unresolved Luna question to render.

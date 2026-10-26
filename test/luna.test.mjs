@@ -325,16 +325,39 @@ test('usage counters ignore malformed values and reasoning is already included i
 test('Luna settings ignore legacy providers and use only Luna opt-in fields', () => {
   const legacy = { aiOn: true, aiAuto: true, aiKey: 'legacy', jevKey: 'typesafe', jevModel: 'jev-old', lunaKey: 'openai' };
   assert.deepEqual(settingsFrom(legacy), {
-    provider: 'luna', on: true, auto: false, apiKey: 'openai', model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: false, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
   });
   assert.deepEqual(settingsFrom({ ...legacy, lunaAuto: true, aiProvider: 'jev' }), {
-    provider: 'luna', on: true, auto: true, apiKey: 'openai', model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: true, apiKey: 'openai', proxy: null, ready: true, model: DEFAULT_MODEL,
   });
   assert.deepEqual(settingsFrom({ aiProvider: 'jev', jevKey: 'typesafe', jevModel: 'jev-old' }), {
-    provider: 'luna', on: false, auto: false, apiKey: '', model: DEFAULT_MODEL,
+    provider: 'luna', on: true, auto: false, apiKey: '', proxy: null, ready: false, model: DEFAULT_MODEL,
   });
   assert.equal(settingsFrom({ aiProvider: 'luna', aiKey: 'legacy', jevKey: 'typesafe' }).apiKey, '');
   assert.equal(settingsFrom({ lunaKey: 'openai', lunaAuto: 'true' }).auto, false);
+});
+
+test('suggestions are on until the agent turns them off; without a key of their own, Luna goes through the usage server', () => {
+  const server = { serverUrl: 'https://usage.example', serverToken: 'upload' };
+  assert.deepEqual(settingsFrom({}, server), { provider: 'luna', on: true, auto: false, apiKey: '',
+    proxy: { url: 'https://usage.example/v1/luna', token: 'upload' }, ready: true, model: DEFAULT_MODEL });
+  assert.equal(settingsFrom({ aiOn: false }, server).on, false, 'turned off stays off');
+  assert.equal(settingsFrom({ lunaKey: 'own' }, server).proxy, null, "the agent's own key goes straight to OpenAI");
+  assert.equal(settingsFrom({}, { serverUrl: '' }).ready, false, 'no server, no key: not ready');
+  assert.equal(settingsFrom({}, { serverUrl: 'not a url' }).proxy, null);
+});
+
+test("without a key of the agent's own, the request goes to the server with its upload token, and its errors name TNI", async () => {
+  const body = buildRequest(items, context);
+  const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
+  let seen;
+  const fetchImpl = async (url, init) => { seen = { url, auth: init.headers.authorization, body: JSON.parse(init.body) }; return { status: 200, ok: true, json: async () => answer(body) }; };
+  assert.equal((await callModel({ apiKey: '', proxy, body, fetchImpl })).model, DEFAULT_MODEL);
+  assert.deepEqual(seen, { url: proxy.url, auth: 'Bearer upload', body });
+  const status = (s) => async () => ({ ok: false, status: s, json: () => { throw new Error('echoed-private-input'); } });
+  await assert.rejects(callModel({ proxy, body, fetchImpl: status(501) }), /isn't set up on TNI's server/);
+  await assert.rejects(callModel({ proxy, body, fetchImpl: status(424) }), /TNI's server right now/);
+  await assert.rejects(callModel({ proxy, body, fetchImpl: status(401) }), error => /TNI's server refused/.test(error.message) && !/OpenAI API key/.test(error.message));
 });
 
 test('HTTP integration sends the key only to OpenAI and hides provider errors', async () => {
@@ -588,4 +611,27 @@ test('driver names: only first names are sent, the answer is a bounded guess, li
   assert.deepEqual([done.names, done.flagged, done.modelCalls, done.tokensIn], [2, 1, 1, 100]);
   const none = await reviewDriverNames({ drivers: [] }, { apiKey: 'k' }, { call: async () => { throw new Error('no call expected'); } });
   assert.equal(none.modelCalls, 0);
+});
+
+// Review of PR 179: a usage server from before /v1/luna answers 404 there. The panel said "Luna
+// returned HTTP 404. Try again shortly." on every page; it is Luna not set up on that server.
+test('through the usage server, a server without /v1/luna is "not set up", as one without a key', async () => {
+  const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
+  const body = buildRequest(items, context);
+  await assert.rejects(callModel({ proxy, body, fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}) }) }), /isn't set up on TNI's server/);
+});
+
+// Review of PR 179: every request the panel sends through the usage server passes its check
+// (server/index.mjs lunaRequestError), not only the first page call: the evidence check, the
+// claims-box review and the driver-name check go there too.
+test('every Luna request the panel builds passes the usage server\'s check', async () => {
+  const { lunaRequestError } = await import('../server/index.mjs');
+  const body = buildRequest(items, context);
+  const bodies = {
+    page: body,
+    verification: buildVerification(parseResponse(answer(body), items, body), context),
+    claimsBox: buildNotesReview({ coverage: {}, claims: { text: 'No\nNeeds NTL off dispatch' } }).body,
+    driverNames: buildNameReview({ drivers: [{ first: 'Ann' }, { first: 'Sam' }] }).body,
+  };
+  for (const [name, b] of Object.entries(bodies)) assert.equal(lunaRequestError(b), null, name);
 });

@@ -8,6 +8,7 @@
 // GET  /v1/health                                       -> { ok, server } (+ events with the admin token)
 // GET  /v1/days      (admin token)                      -> { days: [{ day, bytes }] }
 // GET  /v1/export?since=YYYY-MM-DD[&until=YYYY-MM-DD] (admin token) -> the days' JSONL, in order
+// POST /v1/luna     (upload token) a Luna request (src/ai/luna.js)  -> OpenAI's response
 //
 // Events are appended to DATA_DIR/events/YYYY-MM-DD.jsonl (by day received), one JSON object
 // per line; the review scripts (scripts/*.mjs) read that folder directly. Each event carries an
@@ -26,6 +27,11 @@
 // docs/hosting.md). RATER_TOKEN is the upload token the extension ships with; reading the logs
 // back needs RATER_ADMIN_TOKEN, which only TNI (and the daily review job) has. Without
 // RATER_ADMIN_TOKEN the export is switched off. PORT=0 takes a free port (the startup line names it).
+//
+// /v1/luna lets agents use Luna without an OpenAI key of their own: OPENAI_API_KEY stays in the
+// server's variables and is added here. Only a request shaped like the panel's (lunaRequestError)
+// goes on, at most RATER_LUNA_DAILY_LIMIT a day (UTC); neither the request nor OpenAI's answer is
+// stored or logged. Without OPENAI_API_KEY it answers 501 and the panel says Luna isn't set up.
 
 import http from 'node:http';
 import fs from 'node:fs';
@@ -43,6 +49,43 @@ export const SERVER_HASH = crypto.createHash('sha256').update(fs.readFileSync(fi
 // Names of dropped fields kept on an event: field-like names only, at most this many.
 const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
 const MAX_DROPPED = 20;
+
+// What /v1/luna passes on: the fixed model and the bounds src/ai/luna.js keeps (request()), so the
+// server's key can't be used for another model, tools, stored responses or a larger request. The
+// instructions, the message and the schema are the caller's: whoever has the upload token (it ships
+// in the extension) can ask questions of their own, within the daily limit, and use up that day's
+// limit for every agent. Kept here: the deployed server has no src/.
+export const LUNA_MODEL = 'gpt-6-luna';
+const LUNA_FIELDS = new Set(['model', 'store', 'reasoning', 'max_output_tokens', 'instructions', 'input', 'text']);
+const LUNA_MAX_CHARS = 48_000;
+const LUNA_MAX_OUTPUT = 4096;
+const LUNA_TIMEOUT_MS = 60_000;
+export const LUNA_DAILY_LIMIT = 5000;
+
+// RATER_LUNA_DAILY_LIMIT: unset or blank is LUNA_DAILY_LIMIT; a whole number is the limit, 0
+// refusing every request (429). Anything else is 0 too, so a mistyped limit spends nothing.
+export function lunaDailyLimitFrom(raw) {
+  if (raw == null || String(raw).trim() === '') return LUNA_DAILY_LIMIT;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n >= 0 ? n : 0;
+}
+
+// Why this body may not go to OpenAI: null when it may.
+export function lunaRequestError(b) {
+  if (!b || typeof b !== 'object' || Array.isArray(b)) return 'body is not an object';
+  const extra = Object.keys(b).find((k) => !LUNA_FIELDS.has(k));
+  if (extra) return `${extra} is not allowed`;
+  if (b.model !== LUNA_MODEL) return `model must be ${LUNA_MODEL}`;
+  if (b.store !== false) return 'store must be false';
+  if (!(b.reasoning && Object.keys(b.reasoning).length === 1 && b.reasoning.effort === 'low')) return 'reasoning must be { effort: low }';
+  if (!(Number.isSafeInteger(b.max_output_tokens) && b.max_output_tokens > 0 && b.max_output_tokens <= LUNA_MAX_OUTPUT)) return `max_output_tokens must be 1..${LUNA_MAX_OUTPUT}`;
+  if (typeof b.instructions !== 'string') return 'instructions must be text';
+  if (!(Array.isArray(b.input) && b.input.length === 1 && b.input[0]?.role === 'user' && typeof b.input[0].content === 'string'
+    && Object.keys(b.input[0]).length === 2)) return 'input must be one user message';
+  if (b.text?.format?.type !== 'json_schema' || b.text.format.strict !== true) return 'text.format must be a strict json_schema';
+  if (JSON.stringify(b).length > LUNA_MAX_CHARS) return 'request too large';
+  return null;
+}
 
 // Addresses only this computer can reach: the one place an upload needs no token.
 const LOOPBACK = /^(127(\.\d{1,3}){3}|localhost|::1|\[::1\]|::ffff:127(\.\d{1,3}){3})$/i;
@@ -191,7 +234,8 @@ function keepShape(v, spec) {
   return { value, trimmed: Object.keys(value).length !== Object.keys(v).length };
 }
 
-export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
+export function createServer({ dataDir, token = '', adminToken = '', openaiKey = '', openaiUrl = 'https://api.openai.com/v1/responses',
+  lunaDailyLimit = LUNA_DAILY_LIMIT, fetchImpl = globalThis.fetch } = {}) {
   const eventsDir = path.join(dataDir, 'events');
   fs.mkdirSync(eventsDir, { recursive: true });
 
@@ -341,6 +385,42 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
     res.end(JSON.stringify(body));
   };
 
+  // Luna requests today (UTC day): a leaked upload token can't spend more than the limit.
+  const lunaDay = { day: '', count: 0 };
+  async function askLuna(body, done, res) {
+    const problem = lunaRequestError(body);
+    if (problem) return done(400, { error: problem });
+    const today = new Date().toISOString().slice(0, 10);
+    if (lunaDay.day !== today) Object.assign(lunaDay, { day: today, count: 0 });
+    if (lunaDay.count >= lunaDailyLimit) {
+      res.setHeader('retry-after', '3600');
+      return done(429, { error: 'daily Luna limit reached' }, `luna limit ${lunaDailyLimit}`);
+    }
+    lunaDay.count++;
+    let upstream;
+    try {
+      upstream = await fetchImpl(openaiUrl, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${openaiKey}` },
+        body: JSON.stringify(body), signal: AbortSignal.timeout(LUNA_TIMEOUT_MS) });
+    } catch (e) {
+      return done(504, { error: 'OpenAI did not answer' }, `luna ${e?.name ?? 'error'}`);
+    }
+    // OpenAI's error bodies can echo the request: only the status goes back, and only its error code
+    // (an identifier such as insufficient_quota) is read, for the mapping and the log. The server's
+    // own key refused (401/403/404) or out of credit or over its budget (429 insufficient_quota) is
+    // 424, so the panel tells the agent to tell TNI, not to check a key they don't have or retry.
+    if (!upstream.ok) {
+      let code = '';
+      try { const e = (await upstream.json())?.error?.code; if (typeof e === 'string' && /^[a-z0-9_]{1,40}$/.test(e)) code = e; } catch { /* no JSON */ }
+      const status = [401, 403, 404].includes(upstream.status) || code === 'insufficient_quota' ? 424 : upstream.status;
+      const retry = upstream.headers.get('retry-after');
+      if (retry && status !== 424) res.setHeader('retry-after', retry);
+      return done(status, { error: `OpenAI returned HTTP ${upstream.status}` }, `luna upstream ${upstream.status}${code ? ` ${code}` : ''}`);
+    }
+    let json;
+    try { json = await upstream.json(); } catch { return done(502, { error: 'OpenAI sent an unreadable answer' }, 'luna unreadable'); }
+    done(200, json, `luna ${lunaDay.count}/${lunaDailyLimit}`);
+  }
+
   return http.createServer((req, res) => {
     const started = Date.now();
     const cors = corsHeaders(req);
@@ -382,22 +462,26 @@ export function createServer({ dataDir, token = '', adminToken = '' } = {}) {
       console.log(`${new Date().toISOString()} GET export ${since}..${until} ${files.length} days ${Date.now() - started}ms`);
       return;
     }
-    if (url.pathname !== '/v1/events') return done(404, { error: 'not found' });
+    if (url.pathname !== '/v1/events' && url.pathname !== '/v1/luna') return done(404, { error: 'not found' });
     if (req.method !== 'POST') return done(405, { error: 'use POST' });
     if (!authorized(req)) return done(401, { error: 'missing or wrong token' });
     if (!/^application\/json\b/.test(req.headers['content-type'] ?? '')) return done(415, { error: 'send application/json' });
+    const luna = url.pathname === '/v1/luna';
+    if (luna && !openaiKey) return done(501, { error: 'Luna is not set up on this server' });
+    const maxBody = luna ? LUNA_MAX_CHARS * 2 : MAX_BODY;
 
     let size = 0;
     const chunks = [];
     req.on('data', (c) => {
       size += c.length;
-      if (size > MAX_BODY) { done(413, { error: 'request too large' }); req.destroy(); return; }
+      if (size > maxBody) { done(413, { error: 'request too large' }); req.destroy(); return; }
       chunks.push(c);
     });
     req.on('end', () => {
       if (res.writableEnded) return;
       let body;
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { return done(400, { error: 'body is not valid JSON' }); }
+      if (luna) return askLuna(body, done, res);
       if (!Array.isArray(body?.events)) return done(400, { error: 'body.events must be an array' });
       if (body.events.length > MAX_EVENTS_PER_REQUEST) return done(413, { error: `at most ${MAX_EVENTS_PER_REQUEST} events per request` });
       const agent = typeof body.agent === 'string' ? body.agent.slice(0, 12) : null;
@@ -432,9 +516,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(1);
   }
   const dataDir = path.resolve(process.env.DATA_DIR || 'server-data');
-  const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '' });
+  const lunaDailyLimit = lunaDailyLimitFrom(process.env.RATER_LUNA_DAILY_LIMIT);
+  const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '', openaiKey: process.env.OPENAI_API_KEY || '', lunaDailyLimit });
   server.listen(port, host, () => {
-    console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}`);
+    console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit}/day)` : ''}`);
   });
   for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => server.close(() => process.exit(0)));
 }

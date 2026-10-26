@@ -6,10 +6,18 @@ export const PROVIDERS = Object.freeze({
     suggest: luna.suggest, reviewNotes: luna.reviewNotes, reviewDriverNames: luna.reviewDriverNames, automatic: true },
 });
 
-export function settingsFrom(saved = {}) {
+// `server` is the usage server in use (usage-log.js serverConfig): without a key of the agent's own,
+// Luna goes through its /v1/luna with TNI's key. Suggestions are on unless the agent turned them off;
+// automatic picks stay off unless the agent turned them on.
+export function settingsFrom(saved = {}, server = {}) {
   // Dedicated Luna settings only: obsolete provider credentials are never reused.
-  return { provider: 'luna', on: saved.aiOn === true, auto: saved.lunaAuto === true,
-    apiKey: saved.lunaKey || '', model: luna.DEFAULT_MODEL };
+  const apiKey = saved.lunaKey || '';
+  let proxy = null;
+  if (!apiKey && server.serverUrl) {
+    try { proxy = { url: new URL('/v1/luna', server.serverUrl).href, token: server.serverToken || '' }; } catch { /* not a URL: no server */ }
+  }
+  return { provider: 'luna', on: saved.aiOn !== false, auto: saved.lunaAuto === true,
+    apiKey, proxy, ready: !!(apiKey || proxy), model: luna.DEFAULT_MODEL };
 }
 
 export const suggest = (items, context, config, opts) => luna.suggest(items, context, config, opts);

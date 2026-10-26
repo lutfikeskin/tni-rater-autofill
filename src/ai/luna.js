@@ -188,13 +188,16 @@ function automaticChoiceAllowed(x) {
     && String(x.choice).trim().toLowerCase() !== String(x.current ?? '').trim().toLowerCase();
 }
 
-export async function callModel({ apiKey, body, fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS,
+// The agent's own key goes straight to OpenAI; without one, TNI's server (`proxy`: its /v1/luna and
+// upload token) adds TNI's key and passes the same request on (server/index.mjs).
+export async function callModel({ apiKey, proxy = null, body, fetchImpl = globalThis.fetch, timeoutMs = TIMEOUT_MS,
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
-  if (!apiKey) throw new AssistError('Luna needs an OpenAI API key. Add it in Settings, under Assistant.');
+  const via = apiKey ? { url: API_URL, token: apiKey } : proxy?.url ? proxy : null;
+  if (!via) throw new AssistError('Luna needs an OpenAI API key. Add it in Settings, under Assistant.');
   const abort = new AbortController(), timer = setTimeout(() => abort.abort(), timeoutMs);
   try {
     for (let attempt = 0; attempt < 3; attempt++) {
-      const res = await fetchImpl(API_URL, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      const res = await fetchImpl(via.url, { method: 'POST', headers: { 'content-type': 'application/json', ...(via.token ? { authorization: `Bearer ${via.token}` } : {}) },
         body: JSON.stringify(body), signal: abort.signal });
       if ([429, 500, 502, 503].includes(res.status) && attempt < 2) {
         const header = res.headers?.get('retry-after'), seconds = header == null ? NaN : Number(header);
@@ -204,7 +207,14 @@ export async function callModel({ apiKey, body, fetchImpl = globalThis.fetch, ti
         if (abort.signal.aborted) throw new Error('timeout');
         continue;
       }
-      // Provider errors can echo inputs and credentials. Never expose their bodies.
+      // Provider errors can echo inputs and credentials. Never expose their bodies. Through the
+      // usage server, 404 is a server from before /v1/luna: Luna isn't set up there, as with no key.
+      const notSetUp = "Luna isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under Assistant.";
+      if (!res.ok && !apiKey) throw new AssistError(({ 401: "TNI's server refused this copy of the extension. Tell TNI.",
+        404: notSetUp, 501: notSetUp,
+        424: "Luna isn't working on TNI's server right now. Tell TNI.", 400: 'Luna could not review this page context. Answer it manually.',
+        429: 'Luna is rate-limited. Try again shortly.' })[res.status]
+        ?? `Luna returned HTTP ${res.status}. Try again shortly.`);
       if (!res.ok) throw new AssistError(({ 401: 'The OpenAI API key was refused. Check it in Settings, under Assistant.',
         403: 'This OpenAI key cannot use Luna.', 400: 'Luna could not review this page context. Answer it manually.',
         404: 'GPT-6 Luna is unavailable for this OpenAI project.', 429: 'Luna is rate-limited. Try again shortly.' })[res.status]
@@ -233,12 +243,12 @@ export async function suggest(items, context, config, { call = callModel, isStal
   const groups = requestGroups(items, context);
   for (const { batch, body } of groups) {
     fresh();
-    const json = await call({ apiKey: config.apiKey, body });
+    const json = await call({ apiKey: config.apiKey, proxy: config.proxy, body });
     fresh();
     let parsed = parseResponse(json, batch, body);
     usage(json);
     if (parsed.some(x => !x.leave)) {
-      const checked = await call({ apiKey: config.apiKey, body: buildVerification(parsed, context) });
+      const checked = await call({ apiKey: config.apiKey, proxy: config.proxy, body: buildVerification(parsed, context) });
       fresh();
       parsed = verifyResponse(checked, parsed);
       usage(checked);
@@ -374,7 +384,7 @@ export function notesWarnings(results, { quotedFragments = [], ntlSet = false, i
 export async function reviewNotes(record, config, { call = callModel, redact, today } = {}) {
   const review = buildNotesReview(record, { redact, today });
   if (!review) return { warnings: [], lines: 0, flagged: 0, tokensIn: 0, tokensOut: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0, modelCalls: 0 };
-  const json = await call({ apiKey: config.apiKey, body: review.body });
+  const json = await call({ apiKey: config.apiKey, proxy: config.proxy, body: review.body });
   const results = parseNotesReview(json, review);
   const warnings = notesWarnings(results, review);
   // Lines that got an item (one line can get an NTL and a coverage item), for the usage counts.
@@ -456,7 +466,7 @@ export async function reviewDriverNames(record, config, { call = callModel } = {
   const review = buildNameReview(record);
   const count = value => Number.isFinite(value) && value >= 0 ? value : 0;
   if (!review) return { warnings: [], names: 0, flagged: 0, modelCalls: 0, tokensIn: 0, tokensOut: 0, reasoningTokens: 0, cachedTokens: 0, cacheWriteTokens: 0 };
-  const json = await call({ apiKey: config.apiKey, body: review.body });
+  const json = await call({ apiKey: config.apiKey, proxy: config.proxy, body: review.body });
   const warnings = nameWarnings(parseNameReview(json, review), review, record);
   return { warnings, names: review.ids.length, flagged: warnings.length, modelCalls: 1, tokensIn: count(json.usage?.input_tokens), tokensOut: count(json.usage?.output_tokens),
     reasoningTokens: count(json.usage?.output_tokens_details?.reasoning_tokens), cachedTokens: count(json.usage?.input_tokens_details?.cached_tokens),

@@ -29,7 +29,7 @@ within hours of approval.
 | Service | `usage-server`, built from `server/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`) |
 | URL | https://usage-server-production.up.railway.app (`/v1/health`) |
 | Storage | volume `usage-data` mounted at `/data` (one JSONL file per day received) |
-| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
+| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `OPENAI_API_KEY` (TNI's key for Luna, below; without it `/v1/luna` answers 501), optional `RATER_LUNA_DAILY_LIMIT` (default 5000), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
 
 The extension sends to this server by default (`sidepanel/usage-log.js`, `DEFAULT_SERVER` /
 `DEFAULT_TOKEN`); an agent's own Server setting (a local test server) overrides it, and a blank
@@ -38,6 +38,35 @@ server first (`npm run e2e:extension` does, and fails on any request that leaves
 stay out of the pilot's usage data. The upload token can only add events, which the server cleans; reading
 them back needs the admin token, kept in Railway, in the repository secret `RATER_ADMIN_TOKEN`,
 and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
+
+Agents use Luna without an OpenAI key of their own: with no key saved, the panel sends its Luna
+requests to `/v1/luna` with the upload token, and the server adds `OPENAI_API_KEY` and passes them
+to OpenAI. It passes on only a request shaped like the panel's (`lunaRequestError`: the fixed
+`gpt-6-luna` model, `store: false`, no tools, at most 4,096 output tokens and 48,000 characters), at
+most `RATER_LUNA_DAILY_LIMIT` a day (UTC, then 429; unset or blank is 5000, `0` refuses every
+request, and a value that isn't a whole number counts as 0), and neither stores nor logs the request
+or OpenAI's answer. OpenAI's own errors come back as their status only (the log adds OpenAI's error
+code, such as `insufficient_quota`); the server's key refused (401, 403, 404) or out of credit or
+over its budget (429 `insufficient_quota`) is 424, so the panel says to tell TNI rather than to
+check a key or try again. The upload token ships in the extension, so it is not a secret. What
+bounds the spending is the daily limit (requests, counted here) and the money the key can reach:
+give the key its own OpenAI project, and on prepaid credit keep auto-recharge off, so an empty
+balance stops it (429 `insufficient_quota`, which the panel shows as 424). An OpenAI spend alert on
+the project only sends an email; check in OpenAI's settings whether a limit there also stops
+requests before relying on it. The pilot's Luna calls (2026-10-01 to 23, opt-in with agents' own
+keys) were at most 84 a day, about 3,100 input and 350 output tokens each; a request is at most
+48,000 characters and 4,096 output tokens, so the limit times that is the most a day can cost. The
+check fixes the model and the request's size, not its instructions or schema, so a leaked token can
+still ask questions of its own and use up the day's limit for every agent; the count is kept in
+memory, so a restart or redeploy starts it again. To stop Luna at once, set the limit to 0 or remove
+`OPENAI_API_KEY` (then `/v1/luna` answers 501 and the panel says Luna isn't set up). Rotating the
+key is a variable change and a redeploy, with no extension release.
+
+Release order for Luna through the server: set `OPENAI_API_KEY` on Railway, deploy the server that
+has `/v1/luna`, check it (`node scripts/server-check.mjs` says `same`), then release the extension.
+Suggestions are on by default and an extension with no key of its own counts any usage server as
+ready, so a copy released before then asks a server without the route (404) or the key (501) on
+every page, and every intake with a claims box gets an Intake check item to read it by hand.
 
 For business analysis, `npm run warehouse` copies the pulled log into a DuckDB file on the
 maintainer's computer (`server-data/warehouse.duckdb`, git-ignored). It runs nothing on Railway and

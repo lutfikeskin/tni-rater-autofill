@@ -4836,7 +4836,7 @@ async function recoverRecording() {
 // Verified choices can be applied automatically, but Continue waits for explicit agent review.
 
 async function aiSettings() {
-  return settingsFrom(await usage.settings());
+  return settingsFrom(await usage.settings(), await usage.serverConfig());
 }
 
 // Luna reads the claims box once per intake (reviewNotes in src/ai/luna.js): lines that may name
@@ -4951,7 +4951,7 @@ async function reviewClaimsBox({ retry = false } = {}) {
   let again = false;
   try {
     const cfg = await aiSettings();
-    if (!cfg.on || !cfg.apiKey || state.intake !== intake) return;
+    if (!cfg.on || !cfg.ready || state.intake !== intake) return;
     const started = Date.now();
     const read = claimsContext(intake.record);
     const logged = { type: 'ai_suggest', page: 'ClaimsBox', model: cfg.model };
@@ -5023,7 +5023,7 @@ async function reviewDriverGender({ retry = false } = {}) {
   let again = false;
   try {
     const cfg = await aiSettings();
-    if (!cfg.on || !cfg.apiKey || state.intake !== intake) return;
+    if (!cfg.on || !cfg.ready || state.intake !== intake) return;
     const started = Date.now();
     const read = driverNamesContext(intake.record);
     const logged = { type: 'ai_suggest', page: 'DriverNames', model: cfg.model };
@@ -5109,7 +5109,7 @@ async function runAssist(frames, ctx) {
     return;
   }
   if (head) head.before(holder); else $('report').append(holder);
-  if (!cfg.apiKey) {
+  if (!cfg.ready) {
     holder.append(h('p', { class: 'note-line' }, `${provider.name} needs an ${provider.keyLabel}. `,
       h('button', { type: 'button', class: 'link small', onclick: () => openSettings('ai-openai-key') }, 'Add the key')));
     return;
@@ -5628,19 +5628,25 @@ async function renderAiSettings() {
   $('ai-auto').disabled = !cfg.on || !provider.automatic;
   $('ai-auto-option').hidden = !provider.automatic;
   $('agent-name').textContent = provider.name;
-  $('key-status').textContent = cfg.apiKey ? 'Saved on this computer' : 'Not added yet';
-  $('key-status').className = cfg.apiKey ? 'ok' : 'warn';
-  if ($('key-form').hidden) $('key-edit').textContent = cfg.apiKey ? 'Change' : 'Add key';
+  // No key of the agent's own: the usage server in use lends its key (settingsFrom), so none is
+  // needed. TNI's unless a test server is set under Advanced.
+  const central = !!cfg.proxy && new URL(cfg.proxy.url).origin === new URL(usage.DEFAULT_SERVER).origin;
+  const lender = central ? "TNI's server" : 'the usage server';
+  $('key-status').textContent = cfg.apiKey ? 'Saved on this computer' : cfg.proxy ? `Not needed: ${lender} provides it` : 'Not added yet';
+  $('key-status').className = cfg.ready ? 'ok' : 'warn';
+  if ($('key-form').hidden) $('key-edit').textContent = cfg.apiKey ? 'Change' : cfg.proxy ? 'Use my own key' : 'Add key';
   // On without a key: it can't help yet, said on its card and with a dot on the brain button.
-  $('agent-card').classList.toggle('warn', cfg.on && !cfg.apiKey);
+  $('agent-card').classList.toggle('warn', cfg.on && !cfg.ready);
   $('agent-btn').dataset.on = String(cfg.on);
-  $('agent-dot').hidden = !(cfg.on && !cfg.apiKey);
+  $('agent-dot').hidden = !(cfg.on && !cfg.ready);
   $('agent-btn').title = !cfg.on ? 'Assistant off'
-    : cfg.apiKey ? `${provider.name} assistant on · ${cfg.model}` : `Assistant needs an ${provider.keyLabel}`;
-  $('ai-note').textContent = !cfg.on ? 'Off. Questions are left for you.' : !cfg.apiKey ? 'On, but it needs a key to work.'
+    : cfg.ready ? `${provider.name} assistant on · ${cfg.model}` : `Assistant needs an ${provider.keyLabel}`;
+  $('ai-note').textContent = !cfg.on ? 'Off. Questions are left for you.' : !cfg.ready ? 'On, but it needs a key to work.'
     : cfg.auto ? 'On. Picks answers; you approve them.' : 'On. Suggests answers; you choose.';
-  $('ai-note').className = !cfg.on ? 'off' : !cfg.apiKey ? 'warn' : 'on';
-  $('ai-privacy').textContent = `Sent to ${provider.company} with your key: the questions left for you, TNI's rules, and the intake with client names, birth dates, address, contact and ID numbers replaced by [client]. Written differently in the claims box or notes, they may still go. Business, coverage, vehicle, driver and prior-insurance details are sent. Missing facts stay unanswered. Report orders, exclusions, signatures and payment stay with you. Key saved on this device.`;
+  $('ai-note').className = !cfg.on ? 'off' : !cfg.ready ? 'warn' : 'on';
+  const route = cfg.apiKey ? 'with your key' : central ? "through TNI's server, with TNI's key"
+    : cfg.proxy ? "through the usage server set under Advanced, with that server's key" : 'with your key, once you add one';
+  $('ai-privacy').textContent = `Sent to ${provider.company} ${route}: the questions left for you, TNI's rules, and the intake with client names, birth dates, address, contact and ID numbers replaced by [client]. Written differently in the claims box or notes, they may still go. Business, coverage, vehicle, driver and prior-insurance details are sent. Missing facts stay unanswered. Report orders, exclusions, signatures and payment stay with you.${cfg.apiKey ? ' Key saved on this device.' : ''}`;
   renderUsage();
 }
 
@@ -5682,7 +5688,7 @@ async function renderHealth({ up }) {
   const ai = await aiSettings();
   const setup = [
     !agent && 'add your initials',
-    ai.on && !ai.apiKey && `add the ${PROVIDERS[ai.provider].keyLabel}`,
+    ai.on && !ai.ready && `add the ${PROVIDERS[ai.provider].keyLabel}`,
     up.state === 'off' && 'set the usage server (Advanced)',
   ].filter(Boolean);
   $('setup-note').hidden = !setup.length;
@@ -5722,8 +5728,10 @@ function wireUsage() {
     if (v && !/^https?:\/\/[^\s]+$/i.test(v)) { $('usage-note').textContent = 'Server must look like http://host:port'; return; }
     await usage.saveSettings({ serverUrl: v });
     uploadNow();
+    // Without a key of the agent's own, Luna goes through this server (settingsFrom).
+    renderAiSettings();
   });
-  $('server-token').addEventListener('change', async (e) => { await usage.saveSettings({ serverToken: e.target.value.trim() }); uploadNow(); });
+  $('server-token').addEventListener('change', async (e) => { await usage.saveSettings({ serverToken: e.target.value.trim() }); uploadNow(); renderAiSettings(); });
   $('upload-usage').addEventListener('click', uploadNow);
   setInterval(uploadNow, 60_000);
   $('agent').addEventListener('change', async (e) => {
@@ -6305,7 +6313,7 @@ function wire() {
   $('dock-back').addEventListener('click', dock);
   $('settings-done').addEventListener('click', () => { state.settingsOpen = false; showScreen(); $('settings-btn').focus(); });
   // The brain button: the assistant's settings, at its key when it is on without one.
-  $('agent-btn').addEventListener('click', async () => { const cfg = await aiSettings(); openSettings(cfg.on && !cfg.apiKey ? 'ai-openai-key' : 'ai-on'); });
+  $('agent-btn').addEventListener('click', async () => { const cfg = await aiSettings(); openSettings(cfg.on && !cfg.ready ? 'ai-openai-key' : 'ai-on'); });
   $('step-check').addEventListener('click', () => setView('check'));
   $('step-fill').addEventListener('click', () => setView('page'));
   $('step-confirm').addEventListener('click', () => { setView('page'); refreshAnswers(); });
@@ -6448,13 +6456,13 @@ async function init() {
   await restoreAiPending();
   const saved = await usage.settings();
   $('auto-followups').checked = saved.autoFollowUps ?? true;
-  $('auto-pages').checked = saved.autoPages ?? false;
+  $('auto-pages').checked = saved.autoPages ?? true;
   $('auto-advance').checked = saved.autoAdvance ?? true;
   // The panel opened on a saved intake: the settings in force for the rest of its quote.
   if (state.intake && usage.currentSession()) logSettings('opened');
   // A correction's profile the panel closed before logging (or an intake loaded by an earlier version).
   if (logProfile()) save();
-  $('check-continue').checked = saved.checkBeforeContinue ?? false;
+  $('check-continue').checked = saved.checkBeforeContinue ?? true;
   $('finish-sound').checked = saved.finishSound ?? true;
   uploadNow();
   render();

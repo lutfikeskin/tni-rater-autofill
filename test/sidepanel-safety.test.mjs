@@ -2226,7 +2226,7 @@ function assistHarness({ suggest, cfg = {} } = {}) {
     aiRun: 0, aiCache: new Map(), agentKeys: new Map(), filling: false };
   const context = {
     state, assistContextKey, pageOf: (url) => new URL(url).searchParams.get('pageName'), h: node, $: () => report,
-    aiSettings: async () => ({ on: true, apiKey: 'synthetic', model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
+    aiSettings: async () => ({ on: true, apiKey: 'synthetic', ready: true, model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
     PROVIDERS: { luna: { name: 'Luna', policy: 'synthetic-policy' } },
     collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
     aiSettledOnPage: () => false, aiFingerprint: (v) => JSON.stringify(v), aiItemFingerprint: (x) => `${x.key}|${x.label}`,
@@ -2322,7 +2322,7 @@ function claimsHarness() {
   class AssistError extends Error {}
   const context = {
     state, AssistError, Date, stableJson, redactor: () => (s) => s, redactionTerms: () => [], claimsTruncated: (text) => /LONG/.test(text ?? ''), intakeNotes,
-    aiSettings: async () => ({ on: !state.offline, apiKey: 'k', model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, apiKey: 'k', ready: true, model: 'gpt-6-luna' }),
     reviewNotes: async (record, cfg, opts) => {
       requests.push({ record, opts, reply: t.reply });
       const reply = t.reply;
@@ -5536,7 +5536,7 @@ function namesHarness() {
   const context = {
     state, AssistError, Date, get: (obj, path) => path.split(/[.[\]]+/).filter(Boolean).reduce((o, k) => o?.[k], obj),
     firstNameOf: (v) => String(v ?? '').trim().split(/\s+/)[0] || null,
-    aiSettings: async () => ({ on: !state.offline, apiKey: state.noKey ? '' : 'k', model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
     reviewDriverNames: async (record, cfg) => {
       requests.push({ record: structuredClone(record), cfg });
       const reply = t.reply;
@@ -8213,6 +8213,39 @@ test('an unfinished recording already gone is said so, and the button is drawn a
   context.RecordingStore.reopen = async () => { throw new Error('disk full'); };
   await context.recoverRecording();
   assert.deepEqual([said[1], redrawn], ['Couldn\'t open it: disk full', 2]);
+});
+
+// Review of PR 179: with no key of the agent's own, Assistant said the intake goes to OpenAI
+// "through TNI's server, with TNI's key" whatever the Server setting: also with a test server set
+// under Advanced (whose key it is), and with no server at all, when nothing can be sent.
+test('Assistant names where Luna\'s requests go: the agent\'s key, TNI\'s server, another server, or nowhere yet', async () => {
+  const central = 'https://central.example';
+  const said = async (cfg) => {
+    const els = new Map();
+    const el = (id) => {
+      if (!els.has(id)) els.set(id, { id, hidden: id === 'key-form', checked: false, disabled: false, textContent: '', className: '', title: '', dataset: {}, classList: { toggle() {} } });
+      return els.get(id);
+    };
+    const context = { $: el, URL, usage: { DEFAULT_SERVER: central }, renderUsage() {},
+      PROVIDERS: { luna: { name: 'Luna', company: 'OpenAI', keyLabel: 'OpenAI API key', automatic: true } },
+      aiSettings: async () => ({ provider: 'luna', on: true, auto: false, model: 'gpt-6-luna', apiKey: '', proxy: null, ready: false, ...cfg }) };
+    vm.createContext(context);
+    vm.runInContext(extractFunction('renderAiSettings'), context);
+    await context.renderAiSettings();
+    return { privacy: el('ai-privacy').textContent, key: el('key-status').textContent };
+  };
+  const own = await said({ apiKey: 'sk-own', ready: true });
+  assert.match(own.privacy, /^Sent to OpenAI with your key:/);
+  const tni = await said({ proxy: { url: `${central}/v1/luna`, token: 'upload' }, ready: true });
+  assert.match(tni.privacy, /^Sent to OpenAI through TNI's server, with TNI's key:/);
+  assert.match(tni.key, /TNI's server provides it/);
+  const other = await said({ proxy: { url: 'http://localhost:8787/v1/luna', token: '' }, ready: true });
+  assert.match(other.privacy, /^Sent to OpenAI through the usage server set under Advanced, with that server's key:/);
+  assert.doesNotMatch(other.privacy, /TNI's server|TNI's key/);
+  assert.doesNotMatch(other.key, /TNI's/);
+  const none = await said({});
+  assert.match(none.privacy, /^Sent to OpenAI with your key, once you add one:/);
+  assert.doesNotMatch(none.privacy, /TNI's server|TNI's key/);
 });
 
 // A frame that swaps its document between the panel's injection of the kit and its snapshot read (a
