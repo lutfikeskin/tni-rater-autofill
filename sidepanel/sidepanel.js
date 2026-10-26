@@ -6,7 +6,7 @@ import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
 import { carrierForUrl, quoteProgress, stopScreen } from '../src/carriers.js';
-import { get, set, STATES } from '../src/util.js';
+import { get, set, STATES, sameCarrier, noPriorInsurance } from '../src/util.js';
 import { intakeSummary, intakeProfile, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 // The premium a carrier page quotes (removable: src/premium.js says what goes with it).
@@ -2806,6 +2806,7 @@ function renderSite() {
   $('capture').disabled = !(inExtension && carrier);
   // "Let me look before Continue" is about the panel's Continue: off with it.
   $('check-continue').disabled = !$('auto-advance').checked;
+  showCarrierNote();
   showStopPage();
   showStateNote();
   showReviewMode();
@@ -3295,6 +3296,27 @@ function renderDock() {
   $('dock-alt').hidden = !d.alt;
   $('dock-alt').dataset.go = d.alt ?? '';
   $('dock-alt').textContent = d.altLabel ?? '';
+}
+
+// The intake's current insurance is with the carrier the tab is on (util.js sameCarrier: GEICO or
+// Progressive, misspelled or with a suffix; never AmWINS, a wholesaler): said in red at the top of
+// the page's cards from the tab's arrival on any of that carrier's pages, before any fill, while it
+// stays there (TNI, 2026-10-26, W44-27: the carrier may decline or route the quote). It is about the
+// intake, not the tab's quote, so it needs no evidence the tab holds this client's quote. No stop:
+// filling, follow-ups, helpers, Continue and the AI go on as elsewhere, the carrier's own question is
+// answered from the intake, and Progressive's DeclinationNotice stays its stop page. Not logged: a
+// fill run that stopped would count a page nothing stopped.
+function showCarrierNote() {
+  const box = $('carrier-note');
+  const carrier = state.tab?.carrier;
+  const p = state.intake?.record?.priorInsurance?.[0];
+  const on = !!carrier && !!p && !noPriorInsurance(p) && sameCarrier(p.carrier, carrier.id);
+  box.hidden = !on;
+  if (!on) { box.replaceChildren(); return; }
+  const policy = [p.carrier, p.type, p.expiration ? `expires ${p.expiration}` : null].filter(Boolean).join(' · ');
+  box.replaceChildren(issueCard({ role: 'alert', title: `The client's current insurance is with ${carrier.name}`,
+    text: `${carrier.name} may decline or route this quote. Check with the client before going on.`,
+    compare: [['Intake’s current insurance', policy]], notes: ['Filling goes on as usual.'] }));
 }
 
 // Review mode (plan.js supportedClass): the intake's business class isn't one this carrier's rules

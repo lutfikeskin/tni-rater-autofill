@@ -552,6 +552,12 @@ test('a current GEICO commercial auto policy: only one on the intake, current', 
   assert.equal(current(geicoRow()), true);
   assert.equal(current(geicoRow({ type: 'Personal Auto' })), false, 'a personal auto policy');
   assert.equal(current({ priorInsurance: [{ type: null, carrier: 'None', limit: null, expiration: null }] }), false, 'no prior insurance');
+  // GEICO misspelled or with a suffix is GEICO (TNI, 2026-10-26, W44-06): never "no current GEICO
+  // policy" for it; another insurer with a similar name stays No.
+  for (const carrier of ['GICO', 'Gieco', 'Geico Commercial', 'GEICO Ins.']) assert.equal(current(geicoRow({ carrier })), true, carrier);
+  for (const carrier of ['Gainsco', 'Gateway', 'GAIC']) assert.equal(current(geicoRow({ carrier })), false, carrier);
+  // An expired or undated misspelled GEICO policy is the agent's, as GEICO's is.
+  for (const carrier of ['GICO', 'Gieco']) agents(one(plan(with_(geicoRow({ carrier, expiration: '01/31/2026' }))), 'Current GEICO commercial auto policy'));
   for (const changes of [geicoRow({ expiration: '01/31/2026' }), geicoRow({ expiration: null }), { priorInsurance: [] },
     { priorInsurance: [{ type: 'General Liability', carrier: 'Other Mutual', limit: null, expiration: '12/31/2026' }] }]) {
     const s = one(plan(with_(changes)), 'Current GEICO commercial auto policy');

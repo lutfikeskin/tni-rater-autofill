@@ -50,7 +50,7 @@
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -134,7 +134,9 @@ const dotNumberNote = (r) => (r.applicant.dot && !/^\d+$/.test(r.applicant.dot) 
 // current-insurance row. No for no prior insurance, a personal auto policy, or a commercial auto
 // policy with another carrier; Yes for a current GEICO commercial auto policy. A blank section, an
 // expired or undated GEICO policy, or another kind of policy (GL, cargo) is the agent's:
-// Progressive's reading of a blank section as No is Progressive's.
+// Progressive's reading of a blank section as No is Progressive's. GEICO misspelled or with a
+// suffix ("GICO", "Gieco", "Geico Commercial") is GEICO (sameCarrier; TNI, 2026-10-26, W44-06):
+// it used to be read as another carrier, No.
 const prior = (r) => r.priorInsurance?.[0] ?? null;
 const commercialAuto = (p) => /commercial\s+auto/i.test(p?.type ?? '');
 const currentGeico = (r) => {
@@ -142,7 +144,7 @@ const currentGeico = (r) => {
   if (!p) return null;
   if (noPriorInsurance(p) || /personal\s+auto/i.test(p.type ?? '')) return false;
   if (!p.carrier) return null;
-  if (!/\bgeico\b/i.test(p.carrier)) return commercialAuto(p) ? false : null;
+  if (!sameCarrier(p.carrier, 'geico')) return commercialAuto(p) ? false : null;
   return commercialAuto(p) && p.expiration && !priorPolicyExpired(r, p) ? true : null;
 };
 const currentGeicoNote = (r) => (currentGeico(r) != null ? null

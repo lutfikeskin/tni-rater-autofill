@@ -30,7 +30,7 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -86,9 +86,11 @@ export function ownerDobNote(r) {
 // "Is the customer currently insured with Progressive Commercial Auto?" Yes only when the
 // intake's current-insurance section is a Progressive *commercial* auto policy filled out with
 // the coverage (limit) and the expiration date. A Progressive personal auto policy doesn't count.
+// Progressive misspelled or with a suffix ("Progresive", "Progressive Commercial") is Progressive
+// (sameCarrier; TNI, 2026-10-26, W44-06).
 const insuredWithProgressive = (r) => {
   const p = r.priorInsurance[0];
-  return !!(p && /commercial\s+auto/i.test(p.type ?? '') && /progressive/i.test(p.carrier ?? '') && p.limit && p.expiration && !priorPolicyExpired(r, p));
+  return !!(p && /commercial\s+auto/i.test(p.type ?? '') && sameCarrier(p.carrier, 'progressive') && p.limit && p.expiration && !priorPolicyExpired(r, p));
 };
 
 // After a USDOT lookup Progressive offers the registered business name / address as a choice,

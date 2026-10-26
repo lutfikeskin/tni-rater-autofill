@@ -5898,7 +5898,7 @@ function siteHarness(carrier, step) {
   const ui = {};
   const state = { tab: { id: 4, url: 'https://sales.geico.com/quote', carrier }, intake: { record: {} }, filling: false, reports: new Map(), autoPages: new Set(), tabSteps: new Map(step ? [[4, step]] : []) };
   const context = { state, URL, inExtension: true, $: (id) => (ui[id] ??= el()), h: (tag, props) => ({ tag, props }), quoteProgress,
-    reportShown: () => false, currentReportKey: () => '4|/quote', showStopPage() {}, showStateNote() {}, showReviewMode() {}, renderSteps() {} };
+    reportShown: () => false, currentReportKey: () => '4|/quote', showCarrierNote() {}, showStopPage() {}, showStateNote() {}, showReviewMode() {}, renderSteps() {} };
   vm.runInNewContext(`${PAGE_HELPERS}\n${extractFunction('renderSite')}`, context);
   context.renderSite();
   return ui;
@@ -5922,6 +5922,60 @@ test('on a stop step the panel offers no fill; on the other steps it names the s
   assert.deepEqual([unreadDock.phase, unreadDock.button], ['ready', 'fill']);
   const unread = siteHarness(geico, null);
   assert.equal(unread['site-step'].hidden, true);
+});
+
+// TNI, 2026-10-26, W44-27: the intake's current insurance is with the carrier the tab is on (GEICO or
+// Progressive, spelling variants included, util.js sameCarrier): a red card at the top of the page's
+// cards from arrival, before any fill, while the tab is on that carrier. It is no stop: nothing that
+// fills, clicks or asks the AI reads it.
+test('a red card says the client\'s current insurance is with the carrier the tab is on, and stops nothing', async () => {
+  const { sameCarrier, noPriorInsurance } = await import('../src/util.js');
+  const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
+  const box = { hidden: true, children: [], replaceChildren(...next) { this.children = next; } };
+  const state = { tab: { id: 4, url: 'https://sales.geico.com/quote', carrier: geico }, intake: null };
+  const context = { state, h: node, $: (id) => (id === 'carrier-note' ? box : null), sameCarrier, noPriorInsurance };
+  vm.runInNewContext(extractFunction('showCarrierNote'), context);
+  // `prior`: the intake's current-insurance row; null: a blank section; undefined: no intake.
+  const show = (carrier, prior) => {
+    state.tab = carrier ? { id: 4, url: 'https://example.test/quote', carrier } : null;
+    state.intake = prior === undefined ? null : { record: { priorInsurance: prior ? [prior] : [] } };
+    context.showCarrierNote();
+    return box.hidden ? null : JSON.stringify(box.children);
+  };
+  const policy = (carrier, more = {}) => ({ type: 'Commercial Auto', carrier, limit: '$1M CSL', expiration: '12/31/2026', ...more });
+  for (const name of ['GEICO', 'Gieco', 'GICO', 'Geico Commercial']) {
+    const card = show(geico, policy(name));
+    assert.ok(card, name);
+    assert.match(card, /The client's current insurance is with GEICO/);
+    assert.match(card, /GEICO may decline or route this quote\. Check with the client before going on\./);
+    assert.match(card, /"role":"alert"/);
+    assert.match(card, /"class":"issue"/, 'red: a card with no tone');
+    assert.match(card, /Filling goes on as usual/, 'it says it is no stop');
+  }
+  assert.match(show(progressive, policy('Progresive')), /The client's current insurance is with Progressive/);
+  assert.match(show(progressive, policy('Progressive Commercial')), /Progressive may decline or route this quote/);
+  // None: the tab on another carrier, another insurer with a similar name, no prior insurance, a
+  // blank section, no intake, no carrier page, and AmWINS (a wholesaler, never the current carrier).
+  assert.equal(show(progressive, policy('GEICO')), null);
+  assert.equal(show(geico, policy('Progressive')), null);
+  assert.equal(show(geico, policy('Gainsco')), null);
+  assert.equal(show(progressive, policy('Protective')), null);
+  assert.equal(show(geico, { type: null, carrier: 'No GEICO', limit: null, expiration: null }), null, 'no prior insurance');
+  assert.equal(show(geico, null), null, 'a blank current-insurance section');
+  assert.equal(show(geico, undefined), null, 'no intake');
+  assert.equal(show(null, policy('GEICO')), null, 'not a rater page');
+  assert.equal(show(amwins, policy('AmWINS')), null, 'a wholesaler');
+  // Shown on arrival with the other cards (renderSite runs as the tab reaches a carrier page and as
+  // the intake loads or changes), first among them.
+  assert.match(extractFunction('renderSite').split('\nfunction ')[0], /showCarrierNote\(\);\s*showStopPage\(\);/);
+  const html = fs.readFileSync(new URL('../sidepanel/sidepanel.html', import.meta.url), 'utf8');
+  assert.match(html, /<div id="issues" class="issues">\s*<div id="carrier-note" hidden><\/div>/);
+  // No stop: the fill, follow-ups, the dock, the stop checks and the AI never read it, and
+  // Progressive's DeclinationNotice stays its stop page.
+  for (const fn of ['fillPage', 'scheduleAutoFill', 'dockFor', 'stopNoteFor', 'showStopPage', 'aiActionCurrent', 'stateIssue']) {
+    assert.doesNotMatch(extractFunction(fn), /showCarrierNote|carrier-note|sameCarrier/, fn);
+  }
+  assert.ok(progressive.stopPages?.DeclinationNotice, 'Progressive\'s stop page stays');
 });
 
 test('a one-address step about one vehicle or driver is scoped like Progressive\'s vehicle and driver pages', () => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildPlan } from '../src/plan.js';
 import { progressive } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
-import { priorPolicyExpired } from '../src/util.js';
+import { priorPolicyExpired, sameCarrier } from '../src/util.js';
 
 const record = () => ({
   applicant: { name: 'Sample Test LLC', owner1: 'Alex Example', applicationDate: '10/02/2026' },
@@ -64,4 +64,33 @@ test('AmWINS maps each repeated row independently and adds only missing driver r
   // The previous row being filled is enough: a driver without a license number can't block later rows.
   assert.deepEqual(actions[0].afterAny, ['drivers[0].first', 'drivers[0].last', 'drivers[0].dob', 'drivers[0].licenseNumber']);
   assert.match(actions[0].unlessSelector, /data-id="1"/);
+});
+
+// The intake's current carrier names the carrier being quoted (TNI, 2026-10-26, W44-27, W44-06):
+// GEICO and Progressive, spelling variants and suffixes included; another insurer with a similar
+// name never. AmWINS, a wholesaler, is never the intake's current carrier.
+test('sameCarrier: a carrier\'s name, misspelled or with a suffix, and never another insurer', () => {
+  const yes = {
+    geico: ['GEICO', 'Geico', 'Geico Commercial', 'GEICO Ins.', 'GICO', 'Gieco', 'Geico Indemnity Co', 'GEICO/Berkshire', 'Government Employees Insurance Company'],
+    progressive: ['Progressive', 'PROGRESSIVE COMMERCIAL', 'Progresive', 'Progessive', 'Porgressive', 'Progressive Casualty Ins Co', 'Progressive Express', 'progressive commercial auto'],
+  };
+  const no = {
+    geico: ['Gainsco', 'Gateway', 'GAIC', 'Great West Casualty', 'Gecko Mutual', 'Progressive', 'Other Mutual', 'Employees Mutual', 'None', 'N/A', '', null, undefined],
+    progressive: ['Protective', 'Protective Insurance', 'Professional Ins', 'Prime Insurance', 'Preferred', 'Progress Mutual', 'Aggressive', 'GEICO', 'Other Mutual', 'No', '', null],
+  };
+  for (const [carrier, names] of Object.entries(yes)) for (const name of names) assert.equal(sameCarrier(name, carrier), true, `${name} is ${carrier}`);
+  for (const [carrier, names] of Object.entries(no)) for (const name of names) assert.equal(sameCarrier(name, carrier), false, `${name} isn't ${carrier}`);
+  // A carrier with no names to match (AmWINS, the local test page, an unknown id): never.
+  for (const carrier of ['amwins', 'test', 'nobody', 'toString', null]) assert.equal(sameCarrier('AmWINS', carrier), false, String(carrier));
+});
+
+test('Progressive: a misspelled Progressive commercial auto policy is currently insured with Progressive', () => {
+  const insured = (carrier) => {
+    const r = record();
+    r.priorInsurance[0].carrier = carrier;
+    r.priorInsurance[0].expiration = '12/01/2026';
+    return buildPlan(r, progressive).find((s) => s.q === '198').value;
+  };
+  for (const name of ['Progressive', 'Progresive', 'Progressive Commercial', 'PROGESSIVE']) assert.equal(insured(name), true, name);
+  for (const name of ['Protective', 'GEICO', 'Other Mutual']) assert.equal(insured(name), false, name);
 });

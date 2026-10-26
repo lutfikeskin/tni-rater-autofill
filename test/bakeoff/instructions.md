@@ -19,6 +19,7 @@ Leave a question as it is when the rules and the intake don't say anything about
 
 ### BusinessOwnerInfo (named insured and business)
 - **Is the customer currently insured with Progressive Commercial Auto?** Yes only if the intake's current insurance is a Progressive **commercial** auto policy with a limit and an expiration date. A personal auto policy doesn't count.
+  Progressive misspelled or with a suffix ("Progresive", "Progressive Commercial") is Progressive; another insurer with a similar name ("Protective") is not.
 - **Does the customer have a USDOT number?** "Yes" if the intake has one. If not, "Not Yet…" if they'll have one within 60 days, otherwise "No…".
 - Enter the USDOT number (digits only), then click **Verify DOT**.
 - **Does this USDOT Number belong to the customer's business?** Yes.

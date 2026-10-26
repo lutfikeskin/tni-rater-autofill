@@ -52,6 +52,44 @@ export function noPriorInsurance(policy) {
   return !!policy && /^(no|none|n\/?a)\b/i.test(String(policy.carrier ?? '').trim()) && !policy.expiration;
 }
 
+// The names a carrier being quoted goes by as an intake's current carrier (sameCarrier): one word
+// matched with spelling slips, or words all present. AmWINS, a wholesaler, has none: the client's
+// current carrier is the insurer, never AmWINS.
+const CARRIER_NAMES = {
+  geico: { word: 'geico', words: [['government', 'employees']] },
+  progressive: { word: 'progressive' },
+};
+
+// Edits between two words (insert, delete, substitute, or swap two neighbours: "gieco").
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+    }
+  }
+  return d[a.length][b.length];
+}
+
+// The intake's current carrier (`name`, priorInsurance[0].carrier) is the carrier being quoted
+// (`carrierId`), as written or misspelled (TNI, 2026-10-26, W44-06, W44-27): a word of the name is
+// the carrier's word, starts with it ("GeicoCommercial"), or is one slip from it, two for a word
+// of eight letters or more ("GICO", "Gieco", "Progresive"); suffixes don't matter ("Geico
+// Commercial", "GEICO Ins.", "Progressive Casualty": Progressive's own insurers all carry its
+// name). Another insurer with a similar name is further than that ("Gainsco", "Gateway", "GAIC",
+// "Protective"). A carrier with no names (AmWINS, the test page) is never one.
+export function sameCarrier(name, carrierId) {
+  const names = Object.hasOwn(CARRIER_NAMES, carrierId ?? '') ? CARRIER_NAMES[carrierId] : null;
+  if (!names) return false;
+  const words = nameWords(name);
+  const { word } = names;
+  const slips = word.length >= 8 ? 2 : 1;
+  return words.some((w) => w.startsWith(word) || editDistance(w, word) <= slips)
+    || (names.words ?? []).some((all) => all.every((w) => words.includes(w)));
+}
+
 // Compare calendar dates using the application date, so an archived intake stays reproducible.
 // An absent/invalid date does not establish that a policy expired.
 export function priorPolicyExpired(record, policy = record.priorInsurance?.[0]) {
