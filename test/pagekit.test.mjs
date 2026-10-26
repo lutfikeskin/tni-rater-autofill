@@ -3305,6 +3305,31 @@ test('the defensive driver discount asked about an Armed Forces course is TNI\'s
   }
 });
 
+// TNI, 2026-10-26 (answer to PR question, W44-32): the Armed Forces wording is No also when the notes
+// mention a defensive driving course that isn't said to be military. The old wording keeps such a
+// course the agent's, and a military course stays the agent's in either wording.
+test('a civilian defensive driving course in the notes: the Armed Forces wording stays TNI\'s No, the old wording the agent\'s', async () => {
+  const ARMED = 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?';
+  const fillWith = async (question, notes) => {
+    const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false }, notes: { text: notes } };
+    const h = harness({ search: '?pageName=AddDriver' });
+    const radios = ['Yes', 'No'].map((value) => makeInput({ name: 'r_defensive', type: 'radio', value, attrs: { fieldref: 'DriverInput.DefensiveDriverDiscount' } }));
+    h.document.body.append(radioGroup(question, ...radios));
+    const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => s.q === '299D'), { maxRounds: 4, replaceChoices: true });
+    return { picked: radios.find((r) => r.checked)?.value ?? null, report, theirs: [...report.noData, ...report.checks].map((x) => x.note).join(' ') };
+  };
+  const civilian = 'Driver took a defensive driving course last year.';
+  const armed = await fillWith(ARMED, civilian);
+  assert.equal(armed.picked, 'No');
+  assert.deepEqual([armed.report.reworded.length, armed.report.checks.length, armed.report.noData.length, armed.report.unknown.length], [0, 0, 0, 0]);
+  const old = await fillWith('Defensive Driver Discount', civilian);
+  assert.equal(old.picked, null, 'the old wording: the agent\'s');
+  assert.match(old.theirs, /defensive driving course/);
+  const military = await fillWith(ARMED, 'Completed the Army defensive driving course in 2024.');
+  assert.equal(military.picked, null, 'a military course: the agent\'s');
+  assert.match(military.theirs, /Army defensive driving course/);
+});
+
 // KY live run, 2026-10-26 (W44-32): Progressive's anti-theft list (no caption of its own) was
 // unfamiliar and required, with nothing selected; the agent picked None. TNI: None when Progressive
 // hasn't selected one, and its own choice (the VIN lookup's) kept as it is, without a check, also with

@@ -513,8 +513,8 @@ test('AmWINS: current carrier tenure (asked with a DOT only) 1 TO 2 YEARS and cl
 
 // TNI, 2026-10-26, W44-32 (the maintainer: "Your recommendations good"): AmWINS' "Is a Federal
 // Filing Required?" left blank on the intake is No when the intake doesn't ask for filings. Its own
-// Yes or No wins; named filings, an SR-22, or a line of its notes mentioning a filing leave it to the
-// agent, with what it says. A Non-Trucking quote is W44-28's, not this standard.
+// Yes or No wins; named filings or a line of its notes mentioning a filing leave it to the agent, with
+// what it says; an SR-22 alone doesn't (2026-10-26). A Non-Trucking quote is W44-28's, not this standard.
 test('AmWINS filing required: blank is TNI\'s No unless the intake asks for filings (W44-32)', () => {
   const filing = (changes = {}, { notes = null, ntl = null, applicant = {} } = {}) => {
     const r = baseRecord();
@@ -537,12 +537,19 @@ test('AmWINS filing required: blank is TNI\'s No unless the intake asks for fili
     assert.deepEqual([s.value, s.source, s.standard], [answer, 'derived', false], String(answer));
   }
   // Blank, while the intake asks for filings: the agent's, with what it says.
-  for (const [changes, notes, says] of [[{ filingsWhich: 'BMC-91' }, null, /"BMC-91"/], [{ needSr22: true }, null, /SR-22/],
+  for (const [changes, notes, says] of [[{ filingsWhich: 'BMC-91' }, null, /"BMC-91"/], [{ filingsWhich: 'BMC-91', needSr22: true }, null, /"BMC-91"/],
     [{}, 'Needs MCS-90 for the broker', /"Needs MCS-90 for the broker"/], [{}, 'Owner needs an SR-22 filing', /"Owner needs an SR-22 filing"/]]) {
     const s = filing(changes, { notes });
     assert.deepEqual([s.value, s.standard], [null, false], JSON.stringify([changes, notes]));
     assert.match(s.note, says);
   }
+  // An SR-22 alone (the intake's SR-22 box): No. It is a state filing, and AmWINS asks about a federal
+  // one (TNI, 2026-10-26: answer to PR question). With filings asked for, the intake's Yes stays.
+  for (const applicant of [{}, { dot: '1234567' }]) {
+    const s = filing({ needSr22: true }, { applicant });
+    assert.deepEqual([s.value, s.source, s.standard, s.note], [false, 'standard', true, null], JSON.stringify(applicant));
+  }
+  assert.deepEqual([filing({ needSr22: true, filingsRequired: true, filingsWhich: 'Federal Liability Filing' }).value, filing({ needSr22: true, filingsRequired: true }).source], [true, 'derived']);
   // Non-Trucking: never this standard.
   assert.equal(filing({}, { ntl: true }).standard, false);
 });
@@ -894,11 +901,24 @@ test('defensive driver discount: No, unless the description box mentions a cours
 
 // TNI, 2026-10-26, W44-32 (KY live run: the question asked about an Armed Forces course, the fill
 // held it as reworded, and the agent confirmed No; the maintainer: "Military Stuff NO"): the same
-// field in either wording, TNI's No, and a course in the notes is still the agent's.
-test('defensive driver discount asked about an Armed Forces course: one of its wordings, TNI\'s No (W44-32)', () => {
-  const step = byQ(buildPlan(baseRecord(), progressive, {}), '299D');
-  assert.deepEqual(step.ask, ['Defensive Driver Discount', 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?']);
-  assert.deepEqual([step.field, step.value, step.source, step.standard], ['DriverInput.DefensiveDriverDiscount', false, 'standard', true]);
+// field in either wording, TNI's No. A course the notes mention that isn't said to be military
+// doesn't change the Armed Forces wording's No (TNI, 2026-10-26: answer to PR question); it is still
+// the agent's in the old wording, and a military course is the agent's in either.
+test('defensive driver discount asked about an Armed Forces course: TNI\'s No, also with a civilian course in the notes (W44-32)', () => {
+  const ARMED = 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?';
+  const FORM = { field: 'DriverInput.DefensiveDriverDiscount', label: 'armed forces', unit: null };
+  const steps = (notes = null) => buildPlan({ ...baseRecord(), notes: { text: notes } }, progressive, {}).filter((s) => s.q === '299D');
+  const [old, armed] = steps();
+  assert.deepEqual([old.ask, old.unlessShown, old.whenShown, armed.ask, armed.whenShown, armed.unlessShown], [['Defensive Driver Discount'], FORM, null, [ARMED], FORM, null]);
+  for (const s of [old, armed]) assert.deepEqual([s.field, s.path, s.value, s.source, s.standard, s.note], ['DriverInput.DefensiveDriverDiscount', 'progressive.q299D', false, 'standard', true, null], s.name);
+  const [oldCivilian, armedCivilian] = steps('Driver took a defensive driving course last year.');
+  assert.deepEqual([oldCivilian.value, armedCivilian.value, armedCivilian.note], [null, false, null]);
+  assert.match(oldCivilian.note, /defensive driving course/);
+  for (const notes of ['Completed the Army defensive driving course in 2024.', 'Took a military defensive driving class', 'Navy defensive driver training 2025']) {
+    const [oldMilitary, armedMilitary] = steps(notes);
+    assert.deepEqual([oldMilitary.value, armedMilitary.value], [null, null], notes);
+    assert.match(armedMilitary.note, /military/, notes);
+  }
 });
 
 // TNI, 2026-10-26, W44-32 (KY live run: Progressive's anti-theft list was unfamiliar and required,
@@ -988,7 +1008,8 @@ test('TNI standards of 2026-10-19: blank placard, claims, filings (no USDOT / MC
   // An explicit No in the box wins over notes that mention something else.
   assert.equal(step(claims(false, 'Ticket paid, dismissed'), '28F5').value, false);
 
-  // Filings: the intake's answer; blank is No only without a USDOT or MC number.
+  // Filings: the intake's answer; blank is No, with or without a USDOT or MC number (TNI, 2026-10-26:
+  // answer to PR question; until then a number left it to the agent).
   const filings = baseRecord();
   filings.operations.filingsRequired = null;
   filings.operations.filingsWhich = null;
@@ -998,11 +1019,12 @@ test('TNI standards of 2026-10-19: blank placard, claims, filings (no USDOT / MC
   filings.applicant.mcDotWithin60Days = true;
   assert.deepEqual(got(step(filings, 'CA')), [false, 'standard', true, false], 'USDOT coming within 60 days: still No');
   assert.match(step(filings, '1ED').value, /^Not Yet - but the customer has applied\/will apply/);
+  filings.applicant.mcDotWithin60Days = null;
   filings.applicant.dot = '1234567';
-  assert.deepEqual(got(step(filings, 'CA')), [null, 'derived', false, false], 'blank with a USDOT number: the agent\'s');
+  assert.deepEqual(got(step(filings, 'CA')), [false, 'standard', true, false], 'blank with a USDOT number: TNI standard No (2026-10-26)');
   filings.applicant.dot = null;
   filings.applicant.mc = '765432';
-  assert.deepEqual(got(step(filings, 'CA')), [null, 'derived', false, false], 'blank with an MC number: the agent\'s');
+  assert.deepEqual(got(step(filings, 'CA')), [false, 'standard', true, false], 'blank with an MC number: TNI standard No (2026-10-26)');
   filings.applicant.mc = null;
   // Filings named, or an SR-22 needed, with the answer blank (review of PR #97): the agent's.
   filings.operations.filingsWhich = 'Form E';
@@ -1026,6 +1048,36 @@ test('TNI standards of 2026-10-19: blank placard, claims, filings (no USDOT / MC
   assert.equal(step(recent, '2C06').manualOnly, true, `never Luna's`);
   recent.vehicles[0].year = new Date().getFullYear() - 1;
   assert.deepEqual(got(step(recent, '2C06')), [false, 'standard', true, false], 'last model year: TNI standard No');
+});
+
+// TNI, 2026-10-26 (answer to PR question, W44-32): "filings required" left blank on an intake with a
+// USDOT or MC number is No on every carrier, Progressive too, replacing its 2026-10-19 rule that left
+// it to the agent. An intake that asks for filings keeps its Yes; filings named or an SR-22 needed
+// with the box blank stay the agent's; an NTL quote (decided or only mentioned) is W44-28's, unchanged.
+test('Progressive filings required: blank with a USDOT or MC number is TNI\'s No; filings asked for and NTL unchanged (2026-10-26)', () => {
+  const ca = (changes = {}, { applicant = {}, coverage = {}, notes = null } = {}) => {
+    const r = baseRecord();
+    Object.assign(r.operations, { filingsRequired: null, filingsWhich: null, needSr22: null }, changes);
+    Object.assign(r.applicant, applicant);
+    Object.assign(r.coverage, coverage);
+    if (notes) r.notes = { text: notes };
+    const s = byQ(buildPlan(r, progressive, {}), 'CA');
+    return [s.value, s.source, s.standard, !!s.note];
+  };
+  for (const applicant of [{ dot: '1234567' }, { mc: '765432' }, { dot: '1234567', mc: '765432' }, { dot: '1234567', mcDotWithin60Days: false }]) {
+    assert.deepEqual(ca({}, { applicant }), [false, 'standard', true, false], JSON.stringify(applicant));
+  }
+  // The intake's own answer.
+  assert.deepEqual(ca({ filingsRequired: true, filingsWhich: 'Federal Liability Filing' }, { applicant: { dot: '1234567' } }), [true, 'derived', false, false]);
+  assert.deepEqual(ca({ filingsRequired: false }, { applicant: { dot: '1234567' } }), [false, 'derived', false, false]);
+  // Blank, while the intake names filings or needs an SR-22 (Progressive asks about state filings too): the agent's.
+  assert.deepEqual(ca({ filingsWhich: 'BMC-91' }, { applicant: { dot: '1234567' } }), [null, 'derived', false, true]);
+  assert.deepEqual(ca({ needSr22: true }, { applicant: { mc: '765432' } }), [null, 'derived', false, true]);
+  // NTL, decided or only mentioned in the notes: with a number, a blank stays the agent's (W44-28).
+  assert.deepEqual(ca({}, { applicant: { dot: '1234567' }, coverage: { ntl: true } }), [null, 'derived', false, false]);
+  assert.deepEqual(ca({}, { applicant: { dot: '1234567' }, notes: 'Client asked about non-trucking liability' }), [null, 'derived', false, false]);
+  // Without a number the 2026-10-19 No stands, NTL or not.
+  assert.deepEqual(ca({}, { coverage: { ntl: true } }), [false, 'standard', true, false]);
 });
 
 // Runs of 2026-10-07 (FL, UT, SC): the CDL year, UMPD per vehicle, SC's glass deductible and

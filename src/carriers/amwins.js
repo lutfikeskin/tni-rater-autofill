@@ -251,12 +251,13 @@ const vehicleValueNote = (r, a) => {
 // "Is a Federal Filing Required?" (the intake's own Yes or No: `filings`) left blank on the intake:
 // TNI's No when the intake doesn't ask for filings (TNI, 2026-10-26, W44-32: "Your recommendations
 // good", the "No unless the intake says otherwise" of W43-34). Filings named in its which-filings
-// box, an SR-22 needed, or a line of its notes naming a filing leave it to the agent, quoted. A
-// Non-Trucking quote is W44-28's, never this standard.
+// box or a line of its notes naming a filing leave it to the agent, quoted. An SR-22 alone (the
+// intake's SR-22 box) doesn't: it is a state filing, and the question asks about a federal one (TNI,
+// 2026-10-26: answer to PR question). A Non-Trucking quote is W44-28's, never this standard.
 const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\b|\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
 const filingLine = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => FILING_WORDS.test(s))?.slice(0, 80) ?? null;
 const filingsAsked = (r) => (r.operations.filingsWhich ? `names filings ("${String(r.operations.filingsWhich).slice(0, 40)}")`
-  : r.operations.needSr22 === true ? 'says an SR-22 is needed' : filingLine(r) ? `its notes say "${filingLine(r)}"` : null);
+  : filingLine(r) ? `its notes say "${filingLine(r)}"` : null);
 const filingsBlankNo = (r) => filings(r) == null && r.coverage?.ntl !== true && !filingsAsked(r);
 const filingRequired = (r) => (filingsBlankNo(r) ? false : filings(r));
 const filingRequiredSource = (r) => (filingsBlankNo(r) ? 'standard' : 'derived');
