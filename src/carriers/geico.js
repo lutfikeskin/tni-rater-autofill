@@ -876,17 +876,27 @@ export const geico = {
     byForm: true,
     quietMs: 800,
   },
-  // Screens that are the agent's, without a step of their own (the kit reads none there), by a button
-  // only they show: said in red, nothing filled or clicked there. GEICO's "Add USDOT Number / Skip"
-  // (TNI, 2026-10-21, W43-27: SC and PA, after Business & Owner Info on quotes without a USDOT
-  // number; the panel said nothing, and the agent asked for "a red warning and blocker"). Add or
-  // Skip is the agent's.
+  // Screens without a step of their own (the kit reads none there), by a button only they show:
+  // nothing filled or clicked there, and the panel says so above the page's answers, in a quiet card
+  // for a screen that is the agent's, in red as a stop page's for one that is GEICO's stop (`stopped`).
+  // The first that matches names the screen.
   stopButtons: {
+    // GEICO's "Add USDOT Number / Skip" (TNI, 2026-10-21, W43-27: SC and PA, after Business & Owner
+    // Info on quotes without a USDOT number; the panel said nothing, and the agent asked for "a red
+    // warning and blocker"). Add or Skip is the agent's.
     'USDOT Number': {
       button: '^add usdot number$',
       note: (r) => (r?.applicant?.dot
         ? `GEICO asks for a USDOT number; the intake's is ${quote(r.applicant.dot)}. Add USDOT Number or Skip is yours.`
         : 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.'),
+    },
+    // GEICO's referral (TNI, 2026-10-26, W44-04: IL, after Additional Business Info): a page with no
+    // questions, only Menu, GEICO's phone number and "Return to GEICO Gateway", and the panel said
+    // nothing. GEICO won't quote the business online: GEICO's stop, in red.
+    'GEICO referral': {
+      button: '^return to geico gateway$',
+      stopped: true,
+      note: 'GEICO won\'t quote this business online: its page asks you to call GEICO at the number it shows. The quote is yours from here.',
     },
   },
   // Steps that are the agent's: nothing is filled or clicked there (not even on Fill this page), and
