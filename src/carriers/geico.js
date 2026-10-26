@@ -122,8 +122,10 @@ const zipNote = (r) => (r.garaging?.zip && !zip5(r) ? `The intake's ZIP ${quote(
 // "Does the customer have a USDOT Number registered to themselves or their business?" Yes with a
 // number; No only when the intake says none is coming within 60 days and there is no MC number.
 // "Not yet, but the customer has applied for one." is never derived: a number expected within 60
-// days doesn't say one was applied for.
-const dotStatus = (r) => (r.applicant.dot ? 'Yes' : !r.applicant.mc && r.applicant.mcDotWithin60Days === false ? 'No' : null);
+// days doesn't say one was applied for. "No" in the intake's USDOT box (`noDot`) is No too (TNI,
+// 2026-10-26: answer to PR question), with no MC number and unless the 60-day answer says one is coming.
+const dotStatus = (r) => (r.applicant.dot ? 'Yes'
+  : !r.applicant.mc && (r.applicant.mcDotWithin60Days === false || (r.applicant.noDot === true && r.applicant.mcDotWithin60Days !== true)) ? 'No' : null);
 const dotStatusNote = (r) => (dotStatus(r) ? null
   : r.applicant.mc ? 'The intake has an MC number but no USDOT number: answer it yourself.'
     : r.applicant.mcDotWithin60Days === true ? 'The intake says a USDOT or MC number is coming within 60 days; whether the customer has applied for one is yours to answer.'

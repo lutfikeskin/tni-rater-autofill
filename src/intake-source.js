@@ -10,6 +10,9 @@ const FIELDS = {
   'applicant.name': ['company_name'],
   'applicant.dot': ['dot_number'],
   'applicant.mc': ['mc_number'],
+  // "No" in the USDOT or MC box (normalizeIntake).
+  'applicant.noDot': ['dot_number'],
+  'applicant.noMc': ['mc_number'],
   'applicant.mcDotWithin60Days': ['mc_dot_60days'],
   'applicant.fein': ['fein'],
   'applicant.yearEstablished': ['year_established'],

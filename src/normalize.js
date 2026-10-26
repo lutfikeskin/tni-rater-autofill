@@ -245,15 +245,25 @@ const ownershipLines = (text) => String(text ?? '').split('\n').filter((line) =>
 // whole answer: "Clean-up company" or "clean except one ticket" don't answer it.
 const CLAIMS_CLEAN = /^(?:all\s+)?clean(?:\s+(?:record|mvr|driving\s+record))?\.?$/i;
 
-// Years in business stated in the notes, read when the form gives no years (TNI, 2026-10-26,
-// W44-09: "the reader takes it from the notes"): "3+ years in business", "in Biz for 3+ years",
+// "NEW" as the whole answer in the years-under-own-authority box: 0 years, a new authority (TNI,
+// 2026-10-26: answer to PR question). AmWINS' "federal authority active" is then LESS THAN 1 YEAR.
+const NEW_AUTHORITY = /^new\.?$/i;
+
+// Years in business stated in the notes, read when the form gives no year established (TNI,
+// 2026-10-26, W44-09: "the reader takes it from the notes"; also over years under own authority): "3+ years in business", "in Biz for 3+ years",
 // "in business for 5 years" (a plus is at least that many: 3+ is 3), and a start year:
 // "established 2019", "founded in 2019", "in business since 2019". Narrow on purpose: only a
 // whole number of years right beside "in business" / "in biz" ("in the business" is a career in
 // the trade), in a clause saying nothing about driving, a CDL, experience, authority, insurance or
-// claims, and with no negation. A figure with a qualifier ("about", "over", "less than"), or two
-// figures that disagree, settle nothing: the agent's, as when the notes say nothing.
-const YEARS = '(\\d{1,3})\\s*\\+?\\s*(?:years?|yrs?)\\b\\.?';
+// claims, and with no negation. Two figures that disagree settle nothing: the agent's, as when the
+// notes say nothing.
+// A word before the figure: "over", "about", "around", "more than" and "approximately" (or
+// "approx.") read as the figure itself, "over 3 years" is 3, with the check quoting the phrase
+// (TNI, 2026-10-26: answer to PR question). "less than" and "under" weren't decided, nor were
+// "almost", "nearly" and ~ < >: those settle nothing, as a figure that isn't whole ("2.5 years").
+const QUALIFIER = '(?:(?:less|more)\\s+than|over|under|almost|nearly|about|around|approx(?:imately|\\.)?|[~<>])';
+const AS_THE_FIGURE = /^(?:over|about|around|more\s+than|approx(?:imately|\.)?)$/i;
+const YEARS = `(?:(${QUALIFIER})\\s*)?(\\d{1,3})\\s*\\+?\\s*(?:years?|yrs?)\\b\\.?`;
 const BIZ = '(?:business|biz)\\b';
 const BIZ_PHRASES = [
   new RegExp(`(?<![\\w.,])${YEARS}\\s+in\\s+${BIZ}`, 'i'),
@@ -261,15 +271,17 @@ const BIZ_PHRASES = [
 ];
 const BIZ_START = new RegExp(`\\b(?:established|founded|in\\s+${BIZ}\\s+since)\\s+(?:in\\s+)?(\\d{4})\\b`, 'i');
 const NOT_THE_BUSINESS = /\b(?:not|never|no)\b|n't\b|\b(?:driv\w*|cdl|licen[cs]\w*|experienced?|authority|mc|dot|usdot|insur\w*|polic(?:y|ies)|pop|coverage|carriers?|claims?|accidents?|tickets?|violations?)\b/i;
-const QUALIFIED = /(?:\b(?:less|more)\s+than|\b(?:over|under|almost|nearly|about|around|approx(?:imately|\.)?)|[~<>])\s*$/i;
+// A qualifier just before the match that the match itself doesn't hold (",less than 3 years").
+const QUALIFIED = new RegExp(`(?:^|[^\\w])${QUALIFIER}\\s*$`, 'i');
 const MAX_BUSINESS_YEARS = 100;
 
 /**
  * Years in business the notes state, from the boxes given in order ([form field, text]): one
- * statement, or several that agree. None, a qualified one or figures that disagree give null.
+ * statement, or several that agree. None, an undecided qualifier ("less than 3") or figures that
+ * disagree give null. `word`: the qualifier read as the figure itself ("over"), if the first one has one.
  * @param {[string, string|null|undefined][]} boxes
  * @param {number} year  this year, for a start year
- * @returns {{ years: number, established: number|null, quote: string, fields: string[] } | null}
+ * @returns {{ years: number, established: number|null, quote: string, fields: string[], word: string|null } | null}
  */
 export function yearsInBusinessFromNotes(boxes, year) {
   const found = [];
@@ -280,17 +292,20 @@ export function yearsInBusinessFromNotes(boxes, year) {
       if (!quote || NOT_THE_BUSINESS.test(quote)) continue;
       for (const re of BIZ_PHRASES) {
         const m = quote.match(re);
-        if (m) found.push({ years: QUALIFIED.test(quote.slice(0, m.index)) ? null : Number(m[1]), established: null, quote, field });
+        if (!m) continue;
+        const [, word, n] = m;
+        const read = word ? AS_THE_FIGURE.test(word) : !QUALIFIED.test(quote.slice(0, m.index));
+        found.push({ years: read ? Number(n) : null, established: null, quote, field, word: word ?? null });
       }
       const start = quote.match(BIZ_START);
-      if (start) found.push({ years: year - Number(start[1]), established: Number(start[1]), quote, field });
+      if (start) found.push({ years: year - Number(start[1]), established: Number(start[1]), quote, field, word: null });
     }
   }
   const settled = found.every((f) => Number.isInteger(f.years) && f.years >= 0 && f.years <= MAX_BUSINESS_YEARS);
   if (!found.length || !settled || new Set(found.map((f) => f.years)).size > 1) return null;
   return {
     years: found[0].years, established: found.find((f) => f.established != null)?.established ?? null,
-    quote: found[0].quote, fields: [...new Set(found.map((f) => f.field))],
+    quote: found[0].quote, fields: [...new Set(found.map((f) => f.field))], word: found[0].word,
   };
 }
 
@@ -418,10 +433,13 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // "NO", "N.A.", "None." in the company-name box: no company (util.js companyName).
   const companyAsWritten = txt('company_name');
 
+  // "No" in the FEIN, USDOT or MC box: the client has none, an explicit No, which a blank box is
+  // not (FEIN: W44-15; USDOT and MC: TNI, 2026-10-26: answer to PR question). Not a malformed number.
+  const saysNo = (k) => /^no\.?$/i.test(txt(k) ?? '');
   // Numbers that should be digits only: note when stray characters were dropped.
   const idNumber = (k, path, label, pattern) => {
     const s = txt(k);
-    if (s == null) return null;
+    if (s == null || saysNo(k)) return null;
     const digits = s.replace(/^(us\s*dot|dot|mc|mx)\b/i, '').replace(/\D/g, '');
     if (!pattern.test(digits)) { check('id.invalid', path, `${label} "${s}" doesn't look like a valid number.`); return s; }
     return digits;
@@ -439,6 +457,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       name: companyName(companyAsWritten),
       dot: idNumber('dot_number', 'applicant.dot', 'USDOT #', /^\d{1,8}$/),
       mc: idNumber('mc_number', 'applicant.mc', 'MC #', /^\d{1,8}$/),
+      // The USDOT or MC box says No: true; null for a blank box or a number (unanswered is not No).
+      noDot: saysNo('dot_number') || null,
+      noMc: saysNo('mc_number') || null,
       mcDotWithin60Days: yesNo(raw.mc_dot_60days),
       fein: null,
       yearEstablished: null,
@@ -448,7 +469,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       owner1: txt('owner_name_1'),
       owner2: txt('owner_name_2'),
       ownerDrives: yesNo(raw.owner_drives),
-      yearsExperience: toInt(raw.years_experience),
+      // "NEW" in years under own authority: 0 years, a new authority (TNI, 2026-10-26: answer to PR question).
+      yearsExperience: NEW_AUTHORITY.test(txt('years_experience') ?? '') ? 0 : toInt(raw.years_experience),
       applicationDate: toDate(raw.date_of_application),
     },
     garaging: null,
@@ -514,7 +536,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
 
   // --- Business -------------------------------------------------------------------------------
   // "No" in the FEIN box: no FEIN, as "N/A" is (W44-15), not a malformed number.
-  if (/^no\.?$/i.test(txt('fein') ?? '')) info('fein.none', 'applicant.fein', `FEIN "${txt('fein')}": no FEIN.`);
+  if (saysNo('fein')) info('fein.none', 'applicant.fein', `FEIN "${txt('fein')}": no FEIN.`);
   else if (txt('fein')) {
     const d = txt('fein').replace(/\D/g, '');
     if (d.length === 9) a.fein = `${d.slice(0, 2)}-${d.slice(2)}`;
@@ -533,11 +555,15 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (!a.dot && !a.mc && a.mcDotWithin60Days === true) {
     info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
   }
-  if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
-  // No years on the form (neither year established nor years under own authority): the years in
-  // business the claims box or Additional Notes state, with a check quoting them (TNI, 2026-10-26,
-  // W44-09). Never the years under own authority: a business phrase doesn't say them.
-  const stated = a.yearsInBusiness == null && a.yearsExperience == null
+  if (a.noDot) info('dot.none', 'applicant.dot', `USDOT # "${txt('dot_number')}": the client has no USDOT number.`);
+  if (a.noMc) info('mc.none', 'applicant.mc', `MC # "${txt('mc_number')}": the client has no MC number.`);
+  if (NEW_AUTHORITY.test(txt('years_experience') ?? '')) info('years-experience.new', 'applicant.yearsExperience', `Years under own authority "${txt('years_experience')}": 0 years, a new authority.`);
+  else if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
+  // No year established on the form: the years in business the claims box or Additional Notes state,
+  // with a check quoting them (TNI, 2026-10-26, W44-09). They win over years under own authority
+  // for years in business (TNI, 2026-10-26: answer to PR question); the authority years are another
+  // fact and stay as the form gives them, for their own questions. Never read from a business phrase.
+  const stated = a.yearsInBusiness == null
     ? yearsInBusinessFromNotes([['claims_details', record.claims.text], ['additional_notes', record.notes.text]], year) : null;
   if (stated) {
     a.yearsInBusiness = stated.years;
@@ -545,7 +571,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     if (stated.established != null) { a.yearEstablished = stated.established; readFrom['applicant.yearEstablished'] = stated.fields; }
     const box = stated.fields[0] === 'additional_notes' ? 'Additional Notes box' : 'claims box';
     const quote = stated.quote.length > 80 ? `${stated.quote.slice(0, 79).trimEnd()}…` : stated.quote;
-    check('years-in-business.notes', 'applicant.yearsInBusiness', `The form gives no years in business, and the ${box} says "${quote}": years in business is ${stated.years}${stated.established != null ? `, established ${stated.established}` : ''}. Check it (a plus counts as at least that many); a corrected answer here replaces it.`);
+    const form = a.yearsExperience == null ? 'The form gives no years in business'
+      : `The form gives no year established, only years under own authority (${a.yearsExperience}), which stay for the authority questions`;
+    const word = stated.word ? ` ("${stated.word} ${stated.years}" read as ${stated.years})` : '';
+    check('years-in-business.notes', 'applicant.yearsInBusiness', `${form}, and the ${box} says "${quote}": years in business is ${stated.years}${word}${stated.established != null ? `, established ${stated.established}` : ''}. Check it (a plus counts as at least that many); a corrected answer here replaces it.`);
   }
   // TNI's standard for a blank (2026-10-09): 0 years, established this year (AmWINS' rules fill
   // it, GEICO's leave it to the agent; the record stays blank, so a later answer here replaces it).

@@ -87,7 +87,8 @@ const ownerFull = (r) => {
 // Years in business: the intake's years in business, else its years under own authority; neither
 // is TNI's standard 0, a new venture established this year (2026-10-09). The Intake step warns
 // (years-in-business.default), and Luna points out a claims-box line saying how long it has run.
-// Years the notes state, with none on the form, are the intake's years in business (normalize.js, W44-09).
+// Years the notes state, with none on the form, are the intake's years in business (normalize.js, W44-09),
+// also over years under own authority (TNI, 2026-10-26: answer to PR question).
 const businessYears = (r) => r.applicant.yearsInBusiness ?? r.applicant.yearsExperience ?? null;
 const yearsInBusiness = (r) => {
   const n = businessYears(r) ?? 0;
@@ -216,7 +217,8 @@ const DRIVER = '#driversPanel';
 const VEHICLE = '#vehiclesPanel';
 
 // "How long has the insured's current federal operating authority been active?", from the
-// intake's years under its own authority.
+// intake's years under its own authority ("NEW" there is 0: LESS THAN 1 YEAR; TNI, 2026-10-26:
+// answer to PR question).
 const authorityAge = (r) => {
   const n = r.applicant.yearsExperience;
   if (n == null) return !r.applicant.mc && !r.applicant.dot ? 'NO AUTHORITY' : null;

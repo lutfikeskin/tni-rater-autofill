@@ -5,6 +5,7 @@ import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields, readIntakePlaces } from '../src/intake.js';
 import { normalizeIntake } from '../src/normalize.js';
 import { sourceFields, sourcePlace } from '../src/intake-source.js';
+import { buildPlan } from '../src/plan.js';
 import { SECTIONS, NOT_ON_INTAKE } from '../src/schema.js';
 import { quoteProgress, carrierForUrl } from '../src/carriers.js';
 import { progressive } from '../src/carriers/progressive.js';
@@ -107,6 +108,17 @@ test('an answer the reader took from the notes points at that notes box (W44-09)
   const { readFrom, ...saved } = fromNotes;
   assert.ok(readFrom);
   assert.deepEqual(sourcePlace('applicant.yearsInBusiness', saved).rects, [placesNew.fields.year_established.rect]);
+});
+
+// "No" in the USDOT box (TNI, 2026-10-26: answer to PR question): the has-a-USDOT-number answers
+// it gives are shown on that box.
+test('a USDOT answer read from "no" in the USDOT box points at that box', () => {
+  const intake = { ...normalizeIntake({ ...rawNew, dot_number: 'No', mc_number: '', mc_dot_60days: '' }, { today: new Date('2026-10-26') }), places: placesNew };
+  for (const step of [buildPlan(intake.record, progressive).find((s) => s.q === '1ED'), buildPlan(intake.record, geico).find((s) => s.name === 'Has a USDOT number')]) {
+    assert.deepEqual(step.from, ['applicant.noDot']);
+    assert.deepEqual(sourcePlace(step.from, intake).rects, [placesNew.fields.dot_number.rect]);
+  }
+  assert.deepEqual(sourceFields('applicant.noMc'), ['mc_number']);
 });
 
 test('the page strip names the quote step a page or a one-address step is on', () => {

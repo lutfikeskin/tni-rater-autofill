@@ -959,8 +959,12 @@ test('the notes\' wordings of years in business, and of a start year (W44-09)', 
 test('numbers in the notes about something else stay out of years in business (W44-09)', () => {
   for (const notes of ['10 years driving', 'CDL for 5 years', '5 years experience in business', 'Driver experience: 3+ years in business', 'POP is for 1+ year',
     'WITH STATEFARM A YEAR', 'insured for 14 month', 'Policy term 1 year', 'Accident in 2019', 'Insured since 2019', '20 years in the business',
-    'MC authority established 2020', 'less than 1 year in business', 'about 3 years in business', 'over 3 years in business', '2.5 years in business',
-    'Not in business for 3 years yet', '3 Years', '11 Years', 'In biz for 3+ years\nIn business for 6 years', 'Established 2031', 'in business for 300 years']) {
+    'MC authority established 2020', 'less than 1 year in business', '2.5 years in business',
+    'Not in business for 3 years yet', '3 Years', '11 Years', 'In biz for 3+ years\nIn business for 6 years', 'Established 2031', 'in business for 300 years',
+    // "less than N" and "under N" weren't decided with "over N" and "about N" (TNI, 2026-10-26),
+    // nor were "almost", "nearly" and the signs: still the agent's.
+    'under 3 years in business', 'in business for less than 3 years', 'In biz for under 2 yrs', 'almost 3 years in business',
+    'in business for nearly 3 years', '~3 years in business', '>3 years in business', 'In business for over 3 years\nIn business for 6 years']) {
     const r = noYears(notes);
     assert.equal(r.record.applicant.yearsInBusiness, null, notes);
     assert.equal(r.record.applicant.yearEstablished, null, notes);
@@ -975,11 +979,129 @@ test('a form box with years wins over the notes (W44-09)', () => {
   assert.equal(est.record.applicant.yearsInBusiness, 5);
   assert.ok(!est.warnings.some((x) => /^years-in-business\./.test(x.code)));
   assert.deepEqual(est.readFrom, {});
-  // Years under own authority given, year established blank: the quote's years come from that box,
-  // as before, and the notes are not read (an open question for the maintainer).
-  const authority = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: '4', claims_details: 'No', additional_notes: 'In Biz for 6+ years' }, W44);
+  // Years under own authority given and the notes silent about the business's years: AmWINS' years
+  // in business come from that box, as before.
+  const authority = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: '4', claims_details: 'No', additional_notes: '10 years driving' }, W44);
   assert.equal(authority.record.applicant.yearsInBusiness, null);
+  assert.ok(!authority.warnings.some((x) => /^years-in-business\./.test(x.code)));
   assert.equal(buildPlan(authority.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, '4');
+});
+
+// Q24 (TNI, 2026-10-26: answer to PR question): years under own authority on the form, year
+// established blank, and years in business in the notes: the notes win for years in business. Years
+// under own authority is a different fact and stays as the form gives it, for its own questions.
+test('the notes\' years in business win over years under own authority, which stay for their own questions (W44-09)', () => {
+  const r = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: '2', claims_details: 'No', additional_notes: 'In Biz for 6+ years' }, W44);
+  assert.equal(r.record.applicant.yearsInBusiness, 6);
+  assert.equal(r.record.applicant.yearsExperience, 2, 'years under own authority as the form gives them');
+  assert.equal(r.record.applicant.yearEstablished, null);
+  assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'] });
+  const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+  assert.equal(w?.level, 'check');
+  assert.match(w.msg, /"In Biz for 6\+ years".*years in business is 6/);
+  assert.match(w.msg, /years under own authority \(2\)/, 'the check says the authority years stay');
+  const amwinsPlan = buildPlan(r.record, amwins);
+  assert.equal(amwinsPlan.find((s) => s.selector === '#yrsInBusiness').value, '5+', 'the notes\' 6, not the authority\'s 2');
+  assert.equal(amwinsPlan.find((s) => s.selector === '#howLongFederalOperatingAuthorityActive').value, '2 TO 3 YEARS', 'the authority\'s own question keeps the form\'s 2');
+  assert.equal(buildPlan(r.record, geico).find((s) => s.name === 'Years in business').value, '3-6');
+  // A start year in the notes, the same way.
+  const since = normalizeIntake({ ...raw, year_established: '', years_experience: '1', claims_details: 'No', additional_notes: 'In business since 2019' }, W44);
+  assert.deepEqual([since.record.applicant.yearsInBusiness, since.record.applicant.yearEstablished, since.record.applicant.yearsExperience], [7, 2019, 1]);
+  // Counterexamples: a filled year established still wins, and driving or CDL years are never business years.
+  const est = normalizeIntake({ ...raw, year_established: '2024', years_experience: '2', claims_details: 'No', additional_notes: 'In Biz for 6+ years' }, W44);
+  assert.equal(est.record.applicant.yearsInBusiness, 2);
+  assert.ok(!est.warnings.some((x) => x.code === 'years-in-business.notes'));
+  for (const notes of ['10 years driving', 'CDL for 5 years', 'Driver experience: 6+ years in business']) {
+    const drv = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: '2', claims_details: 'No', additional_notes: notes }, W44);
+    assert.equal(drv.record.applicant.yearsInBusiness, null, notes);
+    assert.equal(buildPlan(drv.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, '2', notes);
+  }
+});
+
+// Q25 (TNI, 2026-10-26: answer to PR question): "NEW" in the years-under-own-authority box is 0
+// years. AmWINS' "federal authority active" is then LESS THAN 1 YEAR; GEICO and Progressive don't
+// read the years under own authority.
+test('"NEW" in years under own authority is 0 years (W44-15)', () => {
+  for (const box of ['NEW', 'New', 'new.', ' NEW ']) {
+    const r = normalizeIntake({ ...raw, years_experience: box }, W44);
+    assert.equal(r.record.applicant.yearsExperience, 0, box);
+    assert.ok(!r.warnings.some((x) => x.code === 'years-experience.invalid'), box);
+    assert.equal(r.warnings.find((x) => x.code === 'years-experience.new')?.level, 'info', box);
+  }
+  const r = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'NEW', claims_details: 'No', additional_notes: '' }, W44);
+  const amwinsPlan = buildPlan(r.record, amwins);
+  assert.equal(amwinsPlan.find((s) => s.selector === '#howLongFederalOperatingAuthorityActive').value, 'LESS THAN 1 YEAR');
+  assert.equal(amwinsPlan.find((s) => s.selector === '#yrsInBusiness').value, 'New Venture', 'the authority\'s 0, as before from the blank standard');
+  assert.equal(buildPlan(r.record, geico).find((s) => s.name === 'Years in business').value, null, 'GEICO reads years in business only');
+  // The notes still give years in business (Q24).
+  const notes = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'NEW', claims_details: 'No', additional_notes: 'in business for 3 years' }, W44);
+  assert.deepEqual([notes.record.applicant.yearsInBusiness, notes.record.applicant.yearsExperience], [3, 0]);
+  assert.equal(buildPlan(notes.record, amwins).find((s) => s.selector === '#howLongFederalOperatingAuthorityActive').value, 'LESS THAN 1 YEAR');
+  // Counterexamples: other words are still not a number, and a blank stays blank.
+  for (const box of ['New authority', 'Newark', 'abc']) {
+    const other = normalizeIntake({ ...raw, years_experience: box }, W44);
+    assert.equal(other.record.applicant.yearsExperience, null, box);
+    assert.ok(other.warnings.some((x) => x.code === 'years-experience.invalid'), box);
+  }
+  assert.equal(normalizeIntake({ ...raw, years_experience: '' }, W44).record.applicant.yearsExperience, null);
+});
+
+// Q26 (TNI, 2026-10-26: answer to PR question): "no" in the USDOT or MC box is an explicit No, the
+// client has no USDOT (or MC) number, which a blank box is not. The has-a-USDOT-number questions
+// answer No.
+test('"no" in the USDOT or MC box is an explicit No (W44-15)', () => {
+  const intake = (fields) => normalizeIntake({ ...raw, mc_number: '', mc_dot_60days: '', ...fields }, W44);
+  const progressiveDot = (r) => buildPlan(r.record, progressive).find((s) => s.q === '1ED').value;
+  const geicoDot = (r) => buildPlan(r.record, geico).find((s) => s.name === 'Has a USDOT number').value;
+  const amwinsStep = (r, sel) => buildPlan(r.record, amwins).find((s) => s.selector === sel).value;
+  for (const box of ['no', 'No', 'NO', 'no.']) {
+    const r = intake({ dot_number: box });
+    assert.equal(r.record.applicant.dot, null, box);
+    assert.equal(r.record.applicant.noDot, true, box);
+    assert.ok(!r.warnings.some((x) => x.code === 'id.invalid'), box);
+    assert.equal(r.warnings.find((x) => x.code === 'dot.none')?.level, 'info', box);
+    assert.equal(progressiveDot(r), 'No - and the customer will not have a USDOT number', box);
+    assert.equal(geicoDot(r), 'No', box);
+    assert.equal(amwinsStep(r, '#hasDotNumber'), false, box);
+    assert.equal(amwinsStep(r, '#noNumber'), true, box);
+  }
+  const mc = intake({ mc_number: 'NO' });
+  assert.equal(mc.record.applicant.mc, null);
+  assert.equal(mc.record.applicant.noMc, true);
+  assert.ok(!mc.warnings.some((x) => x.code === 'id.invalid'));
+  assert.equal(mc.warnings.find((x) => x.code === 'mc.none')?.level, 'info');
+  assert.equal(amwinsStep(mc, '#hasMcNumber'), false);
+  assert.equal(geicoDot(mc), 'Yes', 'the USDOT number is still the intake\'s');
+  // The 60-day answer saying one is coming still decides: Progressive's Not Yet, GEICO's agent.
+  const coming = intake({ dot_number: 'no', mc_dot_60days: 'Yes' });
+  assert.equal(progressiveDot(coming), 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days');
+  assert.equal(geicoDot(coming), null);
+  // Counterexamples: a blank box is not a No, and a real number is unaffected.
+  const blank = intake({ dot_number: '' });
+  assert.equal(blank.record.applicant.noDot, null);
+  assert.equal(progressiveDot(blank), null);
+  assert.equal(geicoDot(blank), null);
+  const number = intake({ dot_number: 'USDOT 1234567' });
+  assert.deepEqual([number.record.applicant.dot, number.record.applicant.noDot], ['1234567', null]);
+  assert.equal(progressiveDot(number), 'Yes - the customer has a USDOT number');
+  assert.equal(geicoDot(number), 'Yes');
+  assert.equal(amwinsStep(number, '#hasDotNumber'), true);
+  assert.ok(intake({ dot_number: 'none yet' }).warnings.some((x) => x.code === 'id.invalid'), 'other words are still not a number');
+});
+
+// Q27 (TNI, 2026-10-26: answer to PR question): "over N", "about N", "around N", "more than N" and
+// "approximately N" years in business in the notes are N, with the check quoting the phrase.
+test('qualified years in business in the notes read as the figure, with the check quoting them (W44-09)', () => {
+  for (const notes of ['over 3 years in business', 'In business for over 3 years', 'about 3 years in business', 'in biz for around 3 yrs',
+    'More than 3 years in business', 'Approximately 3 years in business', 'in business for approx. 3 years', 'In business for about 3+ years']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearsInBusiness, 3, notes);
+    const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+    assert.ok(w?.msg.includes(`"${notes}"`), `${notes}: the check quotes the phrase`);
+    assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.default'), notes);
+  }
+  // A qualified figure and a plain one that agree are one answer.
+  assert.equal(noYears('over 3 years in business\nIn business for 3 years').record.applicant.yearsInBusiness, 3);
 });
 
 // W44-32 (TNI, 2026-10-26: "CLEAN" claims = none): CLEAN as the claims box's answer is an explicit
