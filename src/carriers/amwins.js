@@ -113,6 +113,7 @@ const operationsDescription = (r) => (isFreight(r) ? 'Trucking for Hire - Other 
 
 const moneyK = (n) => (n >= 1e6 ? `$${n / 1e6}M` : n >= 1e3 ? `$${n / 1e3}K` : `$${n}`);
 // "Any other topics to disclose" text, from the intake, one line per item:
+//   Non-Trucking Liability (NTL) - $1M CSL
 //   Motor Truck Cargo $100K with $1K Ded - Consumer Goods / Other Consumer Goods
 //   More than 500 miles radius of operation
 //   Trailer - 2015 Great Dane Dry Van - VIN 1GRAA0621FB700000 - $25K
@@ -130,6 +131,9 @@ const trailerLine = (t) => {
 const disclosure = (r) => {
   const c = r.coverage;
   const lines = [];
+  // Non-trucking liability: AmWINS has no option for it the filler knows, so TNI writes it here,
+  // first, with the intake's liability limit (the maintainer, 2026-10-26).
+  if (c.ntl === true) lines.push(['Non-Trucking Liability (NTL)', c.autoLiabLimit].filter(Boolean).join(' - '));
   if (c.cargo && c.cargoLimit) {
     const goods = /general\s*freight/i.test(r.operations.whatHaul ?? '') ? 'Consumer Goods / Other Consumer Goods' : r.operations.whatHaul;
     lines.push(`Motor Truck Cargo ${moneyK(c.cargoLimit)} with ${moneyK(c.cargoDeductible ?? 1000)} Ded${goods ? ` - ${goods}` : ''}`);

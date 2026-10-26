@@ -8116,3 +8116,21 @@ test('a notes edit naming NTL asks nothing when the form already asked for NTL',
   assert.deepEqual(run({ autoLiability: 'Non-Trucking', ntl: true }), []);
   assert.deepEqual(run({ autoLiability: 'Yes', ntl: null }), ['coverage.ntl'], 'not asked on the form: the notes ask the agent, as before');
 });
+
+// The NTL-with-cargo check follows the agent's edits in the panel (NTL, cargo, auto liability):
+// asked when both are Yes, asked again after a change, retired to a note when no longer so.
+test('the NTL-with-cargo check follows the agent\'s edits', () => {
+  const intake = { record: { coverage: { ntl: true, cargo: true } }, warnings: [], done: [] };
+  const context = { ntlWithCargo: (r) => r.coverage.ntl === true && r.coverage.cargo === true, NTL_CARGO_MESSAGE: 'ntl and cargo' };
+  vm.runInNewContext(extractFunction('ntlCargoEdited'), context);
+  context.ntlCargoEdited(intake);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level, w.path]), [['coverage.ntl-cargo', 'check', 'coverage.cargo']]);
+  intake.done = [0];
+  intake.record.coverage.cargo = false;
+  context.ntlCargoEdited(intake);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['coverage.ntl-cargo', 'info']], 'retired');
+  intake.record.coverage.cargo = true;
+  context.ntlCargoEdited(intake);
+  assert.deepEqual([intake.warnings.map((w) => [w.code, w.level]), intake.done], [[['coverage.ntl-cargo', 'check']], []], 'asked again, not checked');
+  assert.match(extractFunction('agentEdit'), /if \(\['coverage\.ntl', 'coverage\.cargo', 'coverage\.autoLiability'\]\.includes\(path\)\) \{ ntlCargoEdited\(state\.intake\); await save\(\); render\(\); \}/);
+});

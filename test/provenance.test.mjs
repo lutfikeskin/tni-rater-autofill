@@ -158,7 +158,6 @@ const NOT_MAPPED = {
     'coverage.gl': 'AmWINS Business Auto has no general liability section',
     'coverage.glLimit': 'AmWINS Business Auto has no general liability section',
     'coverage.reeferBreakdown': 'no reefer breakdown question on the Business Auto application',
-    'coverage.ntl': 'AmWINS has no known NTL option',
     'coverage.hasGl': 'AmWINS Business Auto has no other-coverages question',
     'claims.text': 'the claims box is read by the intake reader into hasClaims and notes',
   },

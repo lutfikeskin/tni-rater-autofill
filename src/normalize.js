@@ -216,7 +216,11 @@ export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.tex
 // for non-trucking liability (the maintainer, 2026-10-26). Also as written on older forms.
 export const nonTruckingAnswer = (v) => /^\s*non[\s-]*trucking\s*$/i.test(String(v ?? ''));
 export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
-export const ntlCheckMessage = (line) => `The claims box or Additional Notes mention non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. AmWINS has no NTL option the filler knows: quote it by hand. On GEICO the filler leaves the liability coverage and its limit to you.`;
+export const ntlCheckMessage = (line) => `The claims box or Additional Notes mention non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. On AmWINS it is written in the disclosure details on Underwriting. On GEICO the filler leaves the liability coverage and its limit to you.`;
+// NTL and cargo both asked for (the maintainer, 2026-10-26): an NTL client is leased on to a motor
+// carrier, which covers the cargo, so the agent confirms it with the client. Every carrier.
+export const ntlWithCargo = (record) => record?.coverage?.ntl === true && record?.coverage?.cargo === true;
+export const NTL_CARGO_MESSAGE = 'Non-trucking liability (NTL) and cargo coverage are both asked for. An NTL client is leased on to a motor carrier, which usually covers the cargo: confirm with the client whether they want cargo, and set Cargo coverage to No if not.';
 
 // Words in the claims notes that answer the ownership question. Only the form's three answers
 // are taken as the answer; the others count as mentions, so "on a lease, truck owned" is not
@@ -676,8 +680,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // agent decides, and nothing is added until they set it to Yes.
   // Decided by the form's Non-Trucking answer: said, and no question about the notes.
   const ntlLine = ntlMention(intakeNotes(record));
-  if (record.coverage.ntl === true) info('coverage.ntl-form', 'coverage.ntl', 'Auto liability is Non-Trucking on the intake: Non-trucking liability is set to Yes. On Progressive the filler adds it on Rates and leaves that page to you; on GEICO the liability coverage is yours; AmWINS has no NTL option the filler knows.');
+  if (record.coverage.ntl === true) info('coverage.ntl-form', 'coverage.ntl', 'Auto liability is Non-Trucking on the intake: Non-trucking liability is set to Yes. On Progressive the filler adds it on Rates and leaves that page to you; on GEICO the liability coverage is yours; on AmWINS it is written in the disclosure details on Underwriting.');
   else if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
+  if (ntlWithCargo(record)) check('coverage.ntl-cargo', 'coverage.cargo', NTL_CARGO_MESSAGE);
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
     check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.');
   }

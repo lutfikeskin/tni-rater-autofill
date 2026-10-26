@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive } from '../src/normalize.js';
+import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance } from '../src/util.js';
@@ -849,4 +849,38 @@ test('filings requested without a USDOT or MC number asks the agent', () => {
     { fed_state_filings: 'No', dot_number: '', mc_number: '' }, { fed_state_filings: '', dot_number: '', mc_number: '' }]) {
     assert.ok(!normalizeIntake({ ...raw, ...changes }, today).warnings.some((x) => x.code === 'filings.no-number'), JSON.stringify(changes));
   }
+});
+
+// The maintainer, 2026-10-26: an NTL client is leased on to a motor carrier, which covers the
+// cargo; NTL and cargo both asked for doesn't make sense. A check (yellow) for every carrier.
+test('NTL with cargo asked for is a check for the agent, on every carrier', () => {
+  const today = { today: new Date('2026-10-26') };
+  const both = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking', cargo_cov: 'Yes' }, today);
+  const w = both.warnings.find((x) => x.code === 'coverage.ntl-cargo');
+  assert.equal(w?.level, 'check');
+  assert.equal(w.path, 'coverage.cargo');
+  assert.match(w.msg, /non-trucking/i);
+  assert.match(w.msg, /cargo/i);
+  for (const changes of [{ auto_liability: 'Non-Trucking', cargo_cov: 'No' }, { auto_liability: 'Yes', cargo_cov: 'Yes' }, { auto_liability: 'Non-Trucking', cargo_cov: '' }]) {
+    assert.ok(!normalizeIntake({ ...raw, ...changes }, today).warnings.some((x) => x.code === 'coverage.ntl-cargo'), JSON.stringify(changes));
+  }
+  assert.equal(ntlWithCargo({ coverage: { ntl: true, cargo: true } }), true);
+  assert.equal(ntlWithCargo({ coverage: { ntl: null, cargo: true } }), false, 'NTL only mentioned, not decided: no');
+});
+
+// AmWINS has no NTL option the filler knows: TNI writes it in the disclosure details, the big box
+// at the end of Underwriting where the cargo, radius, trailers and POP lines go (the maintainer,
+// 2026-10-26). First, with the intake's liability limit.
+test('AmWINS writes NTL as the first line of the disclosure details', () => {
+  const today = { today: new Date('2026-10-26') };
+  const disclosure = (changes) => buildPlan(normalizeIntake({ ...raw, ...changes }, today).record, amwins).find((s) => s.re === '^disclosure details$').value;
+  const lines = disclosure({ auto_liability: 'Non-Trucking', auto_liab_limit: '$1M CSL' }).split('\n');
+  assert.equal(lines[0], 'Non-Trucking Liability (NTL) - $1M CSL');
+  assert.ok(lines.some((l) => /^POP /.test(l)), 'the other lines stay');
+  assert.equal(disclosure({ auto_liability: 'Non-Trucking', auto_liab_limit: '' }).split('\n')[0], 'Non-Trucking Liability (NTL)', 'no limit: the line without it');
+  assert.doesNotMatch(disclosure({ auto_liability: 'Yes' }), /Non-Trucking/, 'not asked for: no line');
+  // Set by the agent after the notes (no form answer): the same line.
+  const r = normalizeIntake({ ...raw, auto_liability: 'Yes', additional_notes: 'wants NTL' }, today).record;
+  r.coverage.ntl = true;
+  assert.match(buildPlan(r, amwins).find((s) => s.re === '^disclosure details$').value, /^Non-Trucking Liability \(NTL\) - \$1M CSL$/m);
 });

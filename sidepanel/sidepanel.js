@@ -1,7 +1,7 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../src/intake.js';
 import { sourcePlace } from '../src/intake-source.js';
-import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
@@ -1319,6 +1319,7 @@ async function agentEdit(path, after, kind) {
   // an edit to either is read again; a driver's first name, for the gender check, likewise.
   const notesEdit = path === 'claims.text' || path === 'notes.text';
   if (notesEdit) claimsTextEdited(state.intake);
+  if (['coverage.ntl', 'coverage.cargo', 'coverage.autoLiability'].includes(path)) { ntlCargoEdited(state.intake); await save(); render(); }
   if (notesEdit || (path.startsWith('coverage.') && !['coverage.ntl', 'coverage.gl', 'coverage.hasGl'].includes(path))) reviewClaimsBox({ retry: true });
   if (/^drivers\[\d+\]\.first$/.test(path)) reviewDriverGender({ retry: true });
 }
@@ -4818,6 +4819,22 @@ function claimsTextEdited(intake) {
   intake.warnings.forEach((w, j) => { if (['ai.claims-truncated', 'ai.claims-review-failed'].includes(w.code)) uncheck(j); });
   save();
   render();
+}
+
+// NTL and cargo both Yes after the agent's edit of either (or of auto liability, which sets NTL):
+// the intake's check is asked (again, unchecked, when it was retired), or retired to a note when
+// they no longer are. Kept by position, as the checked marks are.
+function ntlCargoEdited(intake) {
+  const both = ntlWithCargo(intake.record);
+  const i = intake.warnings.findIndex((w) => w.code === 'coverage.ntl-cargo');
+  const ask = { code: 'coverage.ntl-cargo', path: 'coverage.cargo', level: 'check', msg: NTL_CARGO_MESSAGE };
+  if (both && i < 0) intake.warnings.push(ask);
+  else if (both && intake.warnings[i].level !== 'check') {
+    intake.warnings[i] = ask;
+    intake.done = intake.done.filter((d) => d !== i);
+  } else if (!both && i >= 0 && intake.warnings[i].level === 'check') {
+    intake.warnings[i] = { code: 'coverage.ntl-cargo', path: 'coverage.cargo', level: 'info', msg: 'Non-trucking liability and cargo coverage are no longer both asked for.' };
+  }
 }
 
 // The long-claims-box item is the code's own: it stays while the box is still too long to read whole.
