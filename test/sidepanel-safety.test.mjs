@@ -2226,7 +2226,7 @@ function assistHarness({ suggest, cfg = {} } = {}) {
     aiRun: 0, aiCache: new Map(), agentKeys: new Map(), filling: false };
   const context = {
     state, assistContextKey, pageOf: (url) => new URL(url).searchParams.get('pageName'), h: node, $: () => report,
-    aiSettings: async () => ({ on: true, apiKey: 'synthetic', model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
+    aiSettings: async () => ({ on: true, apiKey: 'synthetic', ready: true, model: 'gpt-6-luna', provider: 'luna', auto: false, ...cfg }),
     PROVIDERS: { luna: { name: 'Luna', policy: 'synthetic-policy' } },
     collectItems: () => ({ items: [{ key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125' }], blocked: [] }),
     aiSettledOnPage: () => false, aiFingerprint: (v) => JSON.stringify(v), aiItemFingerprint: (x) => `${x.key}|${x.label}`,
@@ -2322,7 +2322,7 @@ function claimsHarness() {
   class AssistError extends Error {}
   const context = {
     state, AssistError, Date, stableJson, redactor: () => (s) => s, redactionTerms: () => [], claimsTruncated: (text) => /LONG/.test(text ?? ''), intakeNotes,
-    aiSettings: async () => ({ on: !state.offline, apiKey: 'k', model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, apiKey: 'k', ready: true, model: 'gpt-6-luna' }),
     reviewNotes: async (record, cfg, opts) => {
       requests.push({ record, opts, reply: t.reply });
       const reply = t.reply;
@@ -5535,7 +5535,7 @@ function namesHarness() {
   const context = {
     state, AssistError, Date, get: (obj, path) => path.split(/[.[\]]+/).filter(Boolean).reduce((o, k) => o?.[k], obj),
     firstNameOf: (v) => String(v ?? '').trim().split(/\s+/)[0] || null,
-    aiSettings: async () => ({ on: !state.offline, apiKey: state.noKey ? '' : 'k', model: 'gpt-6-luna' }),
+    aiSettings: async () => ({ on: !state.offline, apiKey: state.noKey ? '' : 'k', ready: !state.noKey, model: 'gpt-6-luna' }),
     reviewDriverNames: async (record, cfg) => {
       requests.push({ record: structuredClone(record), cfg });
       const reply = t.reply;

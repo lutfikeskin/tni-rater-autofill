@@ -247,7 +247,7 @@ export function checkDismissedEvent(x, { redact = (v) => v, keySalt } = {}) {
 
 // The agent's settings, all of them each time (`values`), so the one in force at any moment is the
 // last event before it: the filling switches as the panel shows them (defaults: follow-ups and
-// Continue on, filling on arrival and replacing answers off), the AI assistant (on, applying
+// Continue and filling on arrival on, replacing answers off), the AI assistant (on unless turned off, applying
 // choices automatically, whether a key is set: never the key), and where usage goes (`central`,
 // `other`: a test server, `off`). `reason`: intake (loaded), opened (the panel on a saved
 // intake) or changed (`changed` names the setting).
@@ -261,8 +261,8 @@ export function agentSettingsEvent(saved = {}, { overwrite = false, reason, chan
   return {
     type: 'agent_settings', reason, ...(changed ? { changed } : {}),
     values: {
-      autoFollowUps: saved.autoFollowUps ?? true, autoAdvance: saved.autoAdvance ?? true, autoPages: saved.autoPages ?? false, overwrite: !!overwrite,
-      aiOn: saved.aiOn === true, aiAuto: saved.lunaAuto === true, aiKey: !!saved.lunaKey,
+      autoFollowUps: saved.autoFollowUps ?? true, autoAdvance: saved.autoAdvance ?? true, autoPages: saved.autoPages ?? true, overwrite: !!overwrite,
+      aiOn: saved.aiOn !== false, aiAuto: saved.lunaAuto === true, aiKey: !!saved.lunaKey,
       uploads: url === '' ? 'off' : url === undefined || url === centralServer ? 'central' : 'other',
     },
   };

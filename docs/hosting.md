@@ -29,7 +29,7 @@ within hours of approval.
 | Service | `usage-server`, built from `server/Dockerfile` (`RAILWAY_DOCKERFILE_PATH`) |
 | URL | https://usage-server-production.up.railway.app (`/v1/health`) |
 | Storage | volume `usage-data` mounted at `/data` (one JSONL file per day received) |
-| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
+| Variables | `RATER_TOKEN` (upload token, also built into the extension; required: with `HOST=0.0.0.0` the server refuses to start without it), `RATER_ADMIN_TOKEN` (reading the logs, and the event count on `/v1/health`), `OPENAI_API_KEY` (TNI's key for Luna, below; without it `/v1/luna` answers 501), optional `RATER_LUNA_DAILY_LIMIT` (default 3000), `HOST=0.0.0.0`, `DATA_DIR=/data`, `PORT=8787` |
 
 The extension sends to this server by default (`sidepanel/usage-log.js`, `DEFAULT_SERVER` /
 `DEFAULT_TOKEN`); an agent's own Server setting (a local test server) overrides it, and a blank
@@ -38,6 +38,17 @@ server first (`npm run e2e:extension` does, and fails on any request that leaves
 stay out of the pilot's usage data. The upload token can only add events, which the server cleans; reading
 them back needs the admin token, kept in Railway, in the repository secret `RATER_ADMIN_TOKEN`,
 and on the maintainer's Mac in `~/.config/tni-rater/admin-token`.
+
+Agents use Luna without an OpenAI key of their own: with no key saved, the panel sends its Luna
+requests to `/v1/luna` with the upload token, and the server adds `OPENAI_API_KEY` and passes
+them to OpenAI. It passes on only a request shaped like the panel's (`lunaRequestError`: the fixed
+`gpt-6-luna` model, `store: false`, no tools, at most 4,096 output tokens and 48,000 characters),
+at most `RATER_LUNA_DAILY_LIMIT` a day (UTC, then 429), and neither stores nor logs the request or
+OpenAI's answer. OpenAI's own errors come back as their status only; the server's key refused
+(401, 403, 404) is 424, so the panel says to tell TNI rather than to check a key. The upload token
+ships in the extension, so it is not a secret: give the key its own OpenAI project with a monthly
+budget, which with the daily limit bounds what a leaked token can spend. Rotating the key is a
+variable change and a redeploy, with no extension release.
 
 For business analysis, `npm run warehouse` copies the pulled log into a DuckDB file on the
 maintainer's computer (`server-data/warehouse.duckdb`, git-ignored). It runs nothing on Railway and

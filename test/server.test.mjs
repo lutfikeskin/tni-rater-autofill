@@ -6,7 +6,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE } from '../server/index.mjs';
+import { createServer, startupError, SERVER_HASH, EVENT_FIELDS, PROFILE, lunaRequestError } from '../server/index.mjs';
+import { buildRequest } from '../src/ai/luna.js';
+import { collectItems } from '../src/ai/common.js';
 import { checkServer } from '../scripts/lib/central.mjs';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'rater-server-'));
@@ -651,4 +653,50 @@ test('a quoted premium is kept in its shape; anything else in it is dropped', as
   assert.equal(odd.total, 12815);
   for (const k of ['termMonths', 'dueToday', 'payments', 'insured']) assert.equal(odd[k], undefined, k);
   assert.deepEqual([...odd.dropped].sort(), ['dueToday', 'insured', 'payments', 'termMonths']);
+});
+
+// A real panel request (src/ai/luna.js), so the server's check can't drift from what Luna sends.
+const lunaBody = () => buildRequest(collectItems([{ unknown: [{ key: 'haz', label: 'Hazardous materials requiring placards?', controlKind: 'select', options: ['Yes', 'No'], current: '' }] }]).items,
+  { carrier: 'geico', page: 'operations', active: { drivers: 0, vehicles: 0 }, record: { operations: {}, drivers: [], vehicles: [] } });
+
+test('/v1/luna adds the server\'s OpenAI key to a Luna request and returns the answer, nothing stored', async () => {
+  const dataDir = tmp();
+  const sent = [];
+  const fetchImpl = async (url, init) => { sent.push({ url, auth: init.headers.authorization, body: JSON.parse(init.body) }); return new Response(JSON.stringify({ status: 'completed', model: 'gpt-6-luna', output: [] }), { status: 200 }); };
+  await withServer({ dataDir, token: 'upload', openaiKey: 'sk-server', openaiUrl: 'https://openai.test/v1/responses', fetchImpl }, async ({ base }) => {
+    const luna = (body, token = 'upload') => fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify(body) });
+    const body = lunaBody();
+    const r = await luna(body);
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).model, 'gpt-6-luna');
+    assert.deepEqual(sent, [{ url: 'https://openai.test/v1/responses', auth: 'Bearer sk-server', body }]);
+    assert.equal((await luna(body, 'wrong')).status, 401, 'the upload token is required');
+    for (const bad of [{ ...body, model: 'gpt-5' }, { ...body, tools: [] }, { ...body, store: true }, { ...body, max_output_tokens: 100_000 },
+      { ...body, input: [...body.input, { role: 'user', content: 'more' }] }, { ...body, instructions: 'x'.repeat(50_000) }]) {
+      assert.equal((await luna(bad)).status, 400, JSON.stringify(Object.keys(bad)));
+    }
+    assert.equal(sent.length, 1, 'nothing else reached OpenAI');
+  });
+  assert.equal(fs.readdirSync(path.join(dataDir, 'events')).length, 0);
+});
+
+test('/v1/luna: 501 without a key, a daily limit, and OpenAI refusing the server\'s key is 424 without its body', async () => {
+  await withServer({ dataDir: tmp() }, async ({ base }) => {
+    assert.equal((await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) })).status, 501);
+  });
+  let status = 200;
+  const fetchImpl = async () => new Response(status === 200 ? '{"status":"completed"}' : '{"error":"echoed-private-input"}', { status });
+  await withServer({ dataDir: tmp(), openaiKey: 'sk-server', lunaDailyLimit: 2, fetchImpl }, async ({ base }) => {
+    const luna = () => fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
+    status = 401;
+    const refused = await luna();
+    assert.equal(refused.status, 424);
+    assert.doesNotMatch(await refused.text(), /private/);
+    status = 200;
+    assert.equal((await luna()).status, 200);
+    const limited = await luna();
+    assert.equal(limited.status, 429);
+    assert.equal(limited.headers.get('retry-after'), '3600');
+  });
+  assert.equal(lunaRequestError(lunaBody()), null);
 });

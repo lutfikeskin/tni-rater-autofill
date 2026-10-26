@@ -65,10 +65,13 @@ let [sw] = ctx.serviceWorkers();
 if (!sw) sw = await ctx.waitForEvent('serviceworker');
 const id = new URL(sw.url()).host;
 console.log('ext id', id);
-// The agent's Server setting, set before the panel first loads (and uploads).
+// The agent's Server setting, set before the panel first loads (and uploads). Luna, on by default,
+// is turned off: this run checks filling, and the local server has no OpenAI key (npm run mock:luna
+// checks Luna). Let me look before Continue and Fill each page as soon as it opens, on by default,
+// are off: the run presses Fill this page itself and waits for the panel's own Continue.
 await sw.evaluate(async (serverUrl) => {
   const { settings = {} } = await chrome.storage.local.get('settings');
-  await chrome.storage.local.set({ settings: { ...settings, serverUrl } });
+  await chrome.storage.local.set({ settings: { ...settings, serverUrl, aiOn: false, checkBeforeContinue: false, autoPages: false } });
 }, usageUrl);
 console.log('usage server', usageUrl);
 const mock = await ctx.newPage();

@@ -67,9 +67,9 @@ Send them the listing link (dashboard → *Store listing* → view). In Chrome: 
 pin the extension → click it to open the side panel. Then, once each:
 
 - **Settings → You → Your initials** (the gear at the top of the panel). The usage log goes to TNI's server by itself (see hosting.md).
-- **Settings → Assistant** (the brain button opens it) → **Add key**, paste the agent's OpenAI API
-  key and **Save**, then turn on *Suggest answers*. Leave *Put checked picks in for me* off for the
-  first weeks of the pilot.
+- Nothing to do for the assistant: *Suggest answers* is on and uses TNI's key on the usage server
+  (`OPENAI_API_KEY`, [hosting](hosting.md)). Leave *Put checked picks in for me* off for the first
+  weeks of the pilot.
 
 ## 5. Updates
 
