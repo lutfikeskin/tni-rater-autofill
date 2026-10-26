@@ -51,13 +51,24 @@ const DROPPED_NAME = /^[a-z][A-Za-z0-9]{0,39}$/;
 const MAX_DROPPED = 20;
 
 // What /v1/luna passes on: the fixed model and the bounds src/ai/luna.js keeps (request()), so the
-// server's key can't be used for anything else. Kept here: the deployed server has no src/.
+// server's key can't be used for another model, tools, stored responses or a larger request. The
+// instructions, the message and the schema are the caller's: whoever has the upload token (it ships
+// in the extension) can ask questions of their own, within the daily limit, and use up that day's
+// limit for every agent. Kept here: the deployed server has no src/.
 export const LUNA_MODEL = 'gpt-6-luna';
 const LUNA_FIELDS = new Set(['model', 'store', 'reasoning', 'max_output_tokens', 'instructions', 'input', 'text']);
 const LUNA_MAX_CHARS = 48_000;
 const LUNA_MAX_OUTPUT = 4096;
 const LUNA_TIMEOUT_MS = 60_000;
 export const LUNA_DAILY_LIMIT = 3000;
+
+// RATER_LUNA_DAILY_LIMIT: unset or blank is LUNA_DAILY_LIMIT; a whole number is the limit, 0
+// refusing every request (429). Anything else is 0 too, so a mistyped limit spends nothing.
+export function lunaDailyLimitFrom(raw) {
+  if (raw == null || String(raw).trim() === '') return LUNA_DAILY_LIMIT;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) && n >= 0 ? n : 0;
+}
 
 // Why this body may not go to OpenAI: null when it may.
 export function lunaRequestError(b) {
@@ -393,13 +404,17 @@ export function createServer({ dataDir, token = '', adminToken = '', openaiKey =
     } catch (e) {
       return done(504, { error: 'OpenAI did not answer' }, `luna ${e?.name ?? 'error'}`);
     }
-    // OpenAI's error bodies can echo the request: only the status goes back. The server's own key
-    // refused (401/403/404) is 424, so the panel doesn't tell the agent to check a key they don't have.
+    // OpenAI's error bodies can echo the request: only the status goes back, and only its error code
+    // (an identifier such as insufficient_quota) is read, for the mapping and the log. The server's
+    // own key refused (401/403/404) or out of credit or over its budget (429 insufficient_quota) is
+    // 424, so the panel tells the agent to tell TNI, not to check a key they don't have or retry.
     if (!upstream.ok) {
-      const status = [401, 403, 404].includes(upstream.status) ? 424 : upstream.status;
+      let code = '';
+      try { const e = (await upstream.json())?.error?.code; if (typeof e === 'string' && /^[a-z0-9_]{1,40}$/.test(e)) code = e; } catch { /* no JSON */ }
+      const status = [401, 403, 404].includes(upstream.status) || code === 'insufficient_quota' ? 424 : upstream.status;
       const retry = upstream.headers.get('retry-after');
-      if (retry) res.setHeader('retry-after', retry);
-      return done(status, { error: `OpenAI returned HTTP ${upstream.status}` }, `luna upstream ${upstream.status}`);
+      if (retry && status !== 424) res.setHeader('retry-after', retry);
+      return done(status, { error: `OpenAI returned HTTP ${upstream.status}` }, `luna upstream ${upstream.status}${code ? ` ${code}` : ''}`);
     }
     let json;
     try { json = await upstream.json(); } catch { return done(502, { error: 'OpenAI sent an unreadable answer' }, 'luna unreadable'); }
@@ -501,7 +516,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(1);
   }
   const dataDir = path.resolve(process.env.DATA_DIR || 'server-data');
-  const lunaDailyLimit = Number(process.env.RATER_LUNA_DAILY_LIMIT) || LUNA_DAILY_LIMIT;
+  const lunaDailyLimit = lunaDailyLimitFrom(process.env.RATER_LUNA_DAILY_LIMIT);
   const server = createServer({ dataDir, token, adminToken: process.env.RATER_ADMIN_TOKEN || '', openaiKey: process.env.OPENAI_API_KEY || '', lunaDailyLimit });
   server.listen(port, host, () => {
     console.log(`rater usage server on http://${host}:${server.address().port}  data: ${dataDir}${token ? '  (token required)' : '  (no token: loopback only)'}${process.env.RATER_ADMIN_TOKEN ? '  (export on)' : ''}${process.env.OPENAI_API_KEY ? `  (Luna on, ${lunaDailyLimit}/day)` : ''}`);

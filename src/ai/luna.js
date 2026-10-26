@@ -207,9 +207,11 @@ export async function callModel({ apiKey, proxy = null, body, fetchImpl = global
         if (abort.signal.aborted) throw new Error('timeout');
         continue;
       }
-      // Provider errors can echo inputs and credentials. Never expose their bodies.
+      // Provider errors can echo inputs and credentials. Never expose their bodies. Through the
+      // usage server, 404 is a server from before /v1/luna: Luna isn't set up there, as with no key.
+      const notSetUp = "Luna isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under Assistant.";
       if (!res.ok && !apiKey) throw new AssistError(({ 401: "TNI's server refused this copy of the extension. Tell TNI.",
-        501: "Luna isn't set up on TNI's server yet. Tell TNI, or add your own OpenAI key in Settings, under Assistant.",
+        404: notSetUp, 501: notSetUp,
         424: "Luna isn't working on TNI's server right now. Tell TNI.", 400: 'Luna could not review this page context. Answer it manually.',
         429: 'Luna is rate-limited. Try again shortly.' })[res.status]
         ?? `Luna returned HTTP ${res.status}. Try again shortly.`);

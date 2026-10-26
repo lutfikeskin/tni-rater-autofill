@@ -8213,3 +8213,36 @@ test('an unfinished recording already gone is said so, and the button is drawn a
   await context.recoverRecording();
   assert.deepEqual([said[1], redrawn], ['Couldn\'t open it: disk full', 2]);
 });
+
+// Review of PR 179: with no key of the agent's own, Assistant said the intake goes to OpenAI
+// "through TNI's server, with TNI's key" whatever the Server setting: also with a test server set
+// under Advanced (whose key it is), and with no server at all, when nothing can be sent.
+test('Assistant names where Luna\'s requests go: the agent\'s key, TNI\'s server, another server, or nowhere yet', async () => {
+  const central = 'https://central.example';
+  const said = async (cfg) => {
+    const els = new Map();
+    const el = (id) => {
+      if (!els.has(id)) els.set(id, { id, hidden: id === 'key-form', checked: false, disabled: false, textContent: '', className: '', title: '', dataset: {}, classList: { toggle() {} } });
+      return els.get(id);
+    };
+    const context = { $: el, URL, usage: { DEFAULT_SERVER: central }, renderUsage() {},
+      PROVIDERS: { luna: { name: 'Luna', company: 'OpenAI', keyLabel: 'OpenAI API key', automatic: true } },
+      aiSettings: async () => ({ provider: 'luna', on: true, auto: false, model: 'gpt-6-luna', apiKey: '', proxy: null, ready: false, ...cfg }) };
+    vm.createContext(context);
+    vm.runInContext(extractFunction('renderAiSettings'), context);
+    await context.renderAiSettings();
+    return { privacy: el('ai-privacy').textContent, key: el('key-status').textContent };
+  };
+  const own = await said({ apiKey: 'sk-own', ready: true });
+  assert.match(own.privacy, /^Sent to OpenAI with your key:/);
+  const tni = await said({ proxy: { url: `${central}/v1/luna`, token: 'upload' }, ready: true });
+  assert.match(tni.privacy, /^Sent to OpenAI through TNI's server, with TNI's key:/);
+  assert.match(tni.key, /TNI's server provides it/);
+  const other = await said({ proxy: { url: 'http://localhost:8787/v1/luna', token: '' }, ready: true });
+  assert.match(other.privacy, /^Sent to OpenAI through the usage server set under Advanced, with that server's key:/);
+  assert.doesNotMatch(other.privacy, /TNI's server|TNI's key/);
+  assert.doesNotMatch(other.key, /TNI's/);
+  const none = await said({});
+  assert.match(none.privacy, /^Sent to OpenAI with your key, once you add one:/);
+  assert.doesNotMatch(none.privacy, /TNI's server|TNI's key/);
+});

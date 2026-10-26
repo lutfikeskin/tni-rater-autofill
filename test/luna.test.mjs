@@ -612,3 +612,26 @@ test('driver names: only first names are sent, the answer is a bounded guess, li
   const none = await reviewDriverNames({ drivers: [] }, { apiKey: 'k' }, { call: async () => { throw new Error('no call expected'); } });
   assert.equal(none.modelCalls, 0);
 });
+
+// Review of PR 179: a usage server from before /v1/luna answers 404 there. The panel said "Luna
+// returned HTTP 404. Try again shortly." on every page; it is Luna not set up on that server.
+test('through the usage server, a server without /v1/luna is "not set up", as one without a key', async () => {
+  const proxy = { url: 'https://usage.example/v1/luna', token: 'upload' };
+  const body = buildRequest(items, context);
+  await assert.rejects(callModel({ proxy, body, fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}) }) }), /isn't set up on TNI's server/);
+});
+
+// Review of PR 179: every request the panel sends through the usage server passes its check
+// (server/index.mjs lunaRequestError), not only the first page call: the evidence check, the
+// claims-box review and the driver-name check go there too.
+test('every Luna request the panel builds passes the usage server\'s check', async () => {
+  const { lunaRequestError } = await import('../server/index.mjs');
+  const body = buildRequest(items, context);
+  const bodies = {
+    page: body,
+    verification: buildVerification(parseResponse(answer(body), items, body), context),
+    claimsBox: buildNotesReview({ coverage: {}, claims: { text: 'No\nNeeds NTL off dispatch' } }).body,
+    driverNames: buildNameReview({ drivers: [{ first: 'Ann' }, { first: 'Sam' }] }).body,
+  };
+  for (const [name, b] of Object.entries(bodies)) assert.equal(lunaRequestError(b), null, name);
+});

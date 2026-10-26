@@ -5620,8 +5620,11 @@ async function renderAiSettings() {
   $('ai-auto').disabled = !cfg.on || !provider.automatic;
   $('ai-auto-option').hidden = !provider.automatic;
   $('agent-name').textContent = provider.name;
-  // No key of the agent's own: TNI's server lends its key (settingsFrom), so none is needed.
-  $('key-status').textContent = cfg.apiKey ? 'Saved on this computer' : cfg.proxy ? "Not needed: TNI's server provides it" : 'Not added yet';
+  // No key of the agent's own: the usage server in use lends its key (settingsFrom), so none is
+  // needed. TNI's unless a test server is set under Advanced.
+  const central = !!cfg.proxy && new URL(cfg.proxy.url).origin === new URL(usage.DEFAULT_SERVER).origin;
+  const lender = central ? "TNI's server" : 'the usage server';
+  $('key-status').textContent = cfg.apiKey ? 'Saved on this computer' : cfg.proxy ? `Not needed: ${lender} provides it` : 'Not added yet';
   $('key-status').className = cfg.ready ? 'ok' : 'warn';
   if ($('key-form').hidden) $('key-edit').textContent = cfg.apiKey ? 'Change' : cfg.proxy ? 'Use my own key' : 'Add key';
   // On without a key: it can't help yet, said on its card and with a dot on the brain button.
@@ -5633,7 +5636,9 @@ async function renderAiSettings() {
   $('ai-note').textContent = !cfg.on ? 'Off. Questions are left for you.' : !cfg.ready ? 'On, but it needs a key to work.'
     : cfg.auto ? 'On. Picks answers; you approve them.' : 'On. Suggests answers; you choose.';
   $('ai-note').className = !cfg.on ? 'off' : !cfg.ready ? 'warn' : 'on';
-  $('ai-privacy').textContent = `Sent to ${provider.company} ${cfg.apiKey ? 'with your key' : "through TNI's server, with TNI's key"}: the questions left for you, TNI's rules, and the intake with client names, birth dates, address, contact and ID numbers replaced by [client]. Written differently in the claims box or notes, they may still go. Business, coverage, vehicle, driver and prior-insurance details are sent. Missing facts stay unanswered. Report orders, exclusions, signatures and payment stay with you.${cfg.apiKey ? ' Key saved on this device.' : ''}`;
+  const route = cfg.apiKey ? 'with your key' : central ? "through TNI's server, with TNI's key"
+    : cfg.proxy ? "through the usage server set under Advanced, with that server's key" : 'with your key, once you add one';
+  $('ai-privacy').textContent = `Sent to ${provider.company} ${route}: the questions left for you, TNI's rules, and the intake with client names, birth dates, address, contact and ID numbers replaced by [client]. Written differently in the claims box or notes, they may still go. Business, coverage, vehicle, driver and prior-insurance details are sent. Missing facts stay unanswered. Report orders, exclusions, signatures and payment stay with you.${cfg.apiKey ? ' Key saved on this device.' : ''}`;
   renderUsage();
 }
 

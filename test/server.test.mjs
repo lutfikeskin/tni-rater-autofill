@@ -700,3 +700,48 @@ test('/v1/luna: 501 without a key, a daily limit, and OpenAI refusing the server
   });
   assert.equal(lunaRequestError(lunaBody()), null);
 });
+
+// Review of PR 179: RATER_LUNA_DAILY_LIMIT=0 started the server with the default 3000 a day
+// (`Number(v) || 3000`), so a limit set to 0 to stop the spending didn't. Unset or blank is the
+// default; a whole number is the limit, 0 stopping every request; anything else spends nothing.
+test('RATER_LUNA_DAILY_LIMIT: 0 stops Luna requests, a mistyped value spends nothing, blank is the default', async () => {
+  const startup = async (limit) => {
+    const s = startServer({ HOST: '127.0.0.1', OPENAI_API_KEY: 'sk-synthetic', ...(limit == null ? {} : { RATER_LUNA_DAILY_LIMIT: limit }) });
+    try {
+      const port = await within(s.started, 'the server did not start');
+      assert.ok(port, `started: ${JSON.stringify(s.out())}`);
+      return s.out().stdout.match(/\(Luna on, ([^)]*)\)/)?.[1] ?? null;
+    } finally { s.child.kill(); }
+  };
+  assert.equal(await startup('0'), '0/day');
+  assert.equal(await startup('abc'), '0/day');
+  assert.equal(await startup('-5'), '0/day');
+  assert.equal(await startup('25'), '25/day');
+  assert.equal(await startup(' '), '3000/day');
+  assert.equal(await startup(null), '3000/day');
+  // A limit of 0 refuses every request before OpenAI is asked.
+  await withServer({ dataDir: tmp(), openaiKey: 'sk-server', lunaDailyLimit: 0, fetchImpl: async () => { throw new Error('OpenAI was asked'); } }, async ({ base }) => {
+    assert.equal((await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) })).status, 429);
+  });
+});
+
+// Review of PR 179: OpenAI answers 429 insufficient_quota when TNI's project is out of credit or
+// over its budget. Passed on as 429, the panel retried it twice and said to try again shortly, and
+// the log said only "luna upstream 429". It is the server's key that can't be used, as a refused
+// key is: 424 (the panel says to tell TNI), still without OpenAI's body. A rate limit stays a 429.
+test('/v1/luna: OpenAI out of quota for the server\'s key is 424, a rate limit stays 429, neither with its body', async () => {
+  let reply;
+  const fetchImpl = async () => new Response(JSON.stringify({ error: { code: reply.code, message: 'echoed-private-input' } }), { status: 429, headers: reply.retry ? { 'retry-after': reply.retry } : {} });
+  await withServer({ dataDir: tmp(), openaiKey: 'sk-server', fetchImpl }, async ({ base }) => {
+    const luna = () => fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) });
+    reply = { code: 'insufficient_quota' };
+    const out = await luna();
+    assert.equal(out.status, 424);
+    assert.doesNotMatch(await out.text(), /private/);
+    reply = { code: 'rate_limit_exceeded', retry: '2' };
+    const limited = await luna();
+    assert.equal(limited.status, 429);
+    assert.equal(limited.headers.get('retry-after'), '2');
+    assert.doesNotMatch(await limited.text(), /private/);
+  });
+});

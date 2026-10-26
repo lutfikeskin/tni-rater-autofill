@@ -42,13 +42,16 @@ the store refuses a version it already has.
    - Host permissions: "foragentsonly.com / progressive.com / amwinsadmittedplacement.com /
      geico.com: the carrier quote pages it fills. api.openai.com: Luna suggestions for unresolved
      choice questions, a review of the application's claims box, and a check of drivers' first
-     names (for the gender TNI assumes), with the agent's own OpenAI key.
+     names (for the gender TNI assumes), when the agent saved an OpenAI key of their own.
      usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, a
      profile of each client's business without names, numbers or addresses, and what an agent types
-     into a problem report).
+     into a problem report), which also passes those Luna requests to OpenAI with TNI's key when
+     the agent has none, storing nothing.
      localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
-     page, sent to OpenAI when the AI assistant is on, with client names and numbers redacted).
+     page, sent to OpenAI when the AI assistant is on, as it is unless the agent turns it off, with
+     client names and numbers redacted: directly with the agent's own key, or through TNI's usage
+     server, which adds TNI's key and stores nothing).
      With the assistant on, drivers' first names are sent to OpenAI unredacted, alone in their own
      request: declare "Personally identifiable information" (name). The usage server gets a
      profile of each client's business (the privacy policy lists it): drivers' ages, marital
@@ -80,7 +83,9 @@ Chrome updates installed copies by itself within a few hours of approval.
 
 ## API keys for the pilot
 
-Configure OpenAI access through TNI's account and enter the agent's key under **Settings → Assistant**.
+OpenAI access is TNI's: `OPENAI_API_KEY` on the usage server ([hosting](hosting.md)), in its own
+OpenAI project with a monthly budget, so agents enter no key. An agent can still use one of their
+own under **Settings → Assistant → Use my own key**.
 Check available account controls for access and spending before a wider rollout. Live quality and
 latency testing requires an OpenAI key and explicit evaluation approval.
 
@@ -104,10 +109,10 @@ What it does
 • Fills one page at a time, checks that each answer was kept by the carrier's page, and marks every field: filled, TNI standard, needs you, couldn't fill, or AI answer.
 • Moves to the next step only when nothing is left for you, and never binds, buys, submits or signs anything.
 • Leaves MVR/CLUE orders, declarations and bank/card details to you. Some coverage and exclusion answers use programmed defaults; review them for this client's circumstances.
-• Optional AI tips (with your own OpenAI key) for questions the rules don't cover; nothing goes in without your approval unless you allow it.
+• AI tips for questions the rules don't cover, on unless you turn them off, through TNI's OpenAI account or your own key; nothing goes in without your approval unless you allow it.
 
 Privacy
-The application stays on your computer for the session. With the AI assistant on, parts of it go to OpenAI with your key: client names and numbers are replaced, except drivers' first names, which are sent alone for the gender check. To improve the extension and analyse TNI's own quoting, a usage log (which fields were filled, what you changed afterwards, problems you report) and a profile of each client's business (state, operations, vehicles, drivers' ages, coverages; no names, numbers or addresses) are sent to TNI's server; client names, numbers and what you type into the quote are not included. A problem report is sent as you type it, with values from the loaded application, if one is loaded, replaced only where they appear exactly as written there, so don't type client details into it.
+The application stays on your computer for the session. With the AI assistant on (it is unless you turn it off), parts of it go to OpenAI, through TNI's server with TNI's key or directly with your own: client names and numbers are replaced, except drivers' first names, which are sent alone for the gender check. To improve the extension and analyse TNI's own quoting, a usage log (which fields were filled, what you changed afterwards, problems you report) and a profile of each client's business (state, operations, vehicles, drivers' ages, coverages; no names, numbers or addresses) are sent to TNI's server; client names, numbers and what you type into the quote are not included. A problem report is sent as you type it, with values from the loaded application, if one is loaded, replaced only where they appear exactly as written there, so don't type client details into it.
 
 For TNI agents only.
 ```

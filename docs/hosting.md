@@ -43,12 +43,24 @@ Agents use Luna without an OpenAI key of their own: with no key saved, the panel
 requests to `/v1/luna` with the upload token, and the server adds `OPENAI_API_KEY` and passes
 them to OpenAI. It passes on only a request shaped like the panel's (`lunaRequestError`: the fixed
 `gpt-6-luna` model, `store: false`, no tools, at most 4,096 output tokens and 48,000 characters),
-at most `RATER_LUNA_DAILY_LIMIT` a day (UTC, then 429), and neither stores nor logs the request or
-OpenAI's answer. OpenAI's own errors come back as their status only; the server's key refused
-(401, 403, 404) is 424, so the panel says to tell TNI rather than to check a key. The upload token
-ships in the extension, so it is not a secret: give the key its own OpenAI project with a monthly
-budget, which with the daily limit bounds what a leaked token can spend. Rotating the key is a
-variable change and a redeploy, with no extension release.
+at most `RATER_LUNA_DAILY_LIMIT` a day (UTC, then 429; unset or blank is 3000, `0` refuses every
+request, and a value that isn't a whole number counts as 0), and neither stores nor logs the request
+or OpenAI's answer. OpenAI's own errors come back as their status only (the log adds OpenAI's error
+code, such as `insufficient_quota`); the server's key refused (401, 403, 404) or out of credit or
+over its budget (429 `insufficient_quota`) is 424, so the panel says to tell TNI rather than to
+check a key or try again. The upload token ships in the extension, so it is not a secret: give the
+key its own OpenAI project with a monthly budget, which with the daily limit bounds what a leaked
+token can spend. The check fixes the model and the request's size, not its instructions or schema,
+so a leaked token can still ask questions of its own and use up the day's limit for every agent;
+the count is kept in memory, so a restart or redeploy starts it again. To stop Luna at once, set
+the limit to 0 or remove `OPENAI_API_KEY` (then `/v1/luna` answers 501 and the panel says Luna isn't
+set up). Rotating the key is a variable change and a redeploy, with no extension release.
+
+Release order for Luna through the server: set `OPENAI_API_KEY` on Railway, deploy the server that
+has `/v1/luna`, check it (`node scripts/server-check.mjs` says `same`), then release the extension.
+Suggestions are on by default and an extension with no key of its own counts any usage server as
+ready, so a copy released before then asks a server without the route (404) or the key (501) on
+every page, and every intake with a claims box gets an Intake check item to read it by hand.
 
 For business analysis, `npm run warehouse` copies the pulled log into a DuckDB file on the
 maintainer's computer (`server-data/warehouse.duckdb`, git-ignored). It runs nothing on Railway and
