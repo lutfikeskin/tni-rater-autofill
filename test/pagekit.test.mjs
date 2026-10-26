@@ -4157,6 +4157,38 @@ test('a bulk helper is not clicked while an answer the agent gave is on the page
   assert.deepEqual(Object.keys(questions).map((n) => plain.groups[n].no.checked), [true, true, true]);
 });
 
+// TNI, 2026-10-26: answer to PR question (#188, question 20): AmWINS' "hazard exposure" is Yes when
+// the intake's hazmat is Yes. "Default all answers to No" answers it No first; the intake's Yes must
+// replace that No (AmWINS keeps a differing choice otherwise), and every other answer stays No.
+test('AmWINS hazard exposure: the intake\'s hazmat Yes replaces the No that "Default all answers to No" gave; otherwise it stays No', async () => {
+  const questions = { hazardExposure: 'Hazard exposure', safetyInfo: 'Safety info' };
+  const run = async (hazmat) => {
+    const h = harness({ pathname: '/application/businessauto' });
+    const groups = Object.fromEntries(Object.entries(questions).map(([name, label]) => {
+      const yes = makeInput({ type: 'radio', name, value: 'Yes' });
+      const no = makeInput({ type: 'radio', name, value: 'No' });
+      h.document.body.append(radioGroup(label, yes, no));
+      return [name, { yes, no }];
+    }));
+    const button = addButton(h, 'Default all answers to "No"');
+    button.onclick = () => { button._clicks = (button._clicks ?? 0) + 1; for (const g of Object.values(groups)) g.no.click(); };
+    const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter', hazmat }, drivers: [], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+    const plan = buildPlan(record, amwins).filter((s) => s.re === '^hazard exposure$' || s.re === '^safety info$' || s.action === 'defaultNo');
+    assert.equal(plan.length, 3, 'the real carrier plan: both questions and the helper');
+    const report = await h.kit.fill(plan, { batch: true, maxRounds: 6 });
+    const answer = (name) => (groups[name].yes.checked ? 'Yes' : groups[name].no.checked ? 'No' : '');
+    return { clicks: button._clicks, answers: Object.keys(questions).map(answer), report };
+  };
+  const yes = await run(true);
+  assert.equal(yes.clicks, 1, 'the helper still answers the section');
+  assert.deepEqual(yes.answers, ['Yes', 'No'], 'the intake\'s hazmat Yes; the other question stays No');
+  assert.ok(yes.report.filled.some((x) => /hazard exposure/.test(x.name) && !x.standard), 'reported as the intake\'s answer');
+  for (const hazmat of [false, null]) {
+    const no = await run(hazmat);
+    assert.deepEqual(no.answers, ['No', 'No'], `hazmat ${hazmat}: No`);
+  }
+});
+
 
 // A pointer event on an ExtJS option bubbles from a popup outside its combo's DOM subtree.
 for (const ownership of ['focused', 'aria-controls', 'aria-owns']) {

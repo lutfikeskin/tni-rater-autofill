@@ -191,9 +191,10 @@ const licenseNumber = (r, a) => {
 const licenseNumberNote = (r, a) => (excludedDriver(r, a) && !driverOf(r, a)?.licenseNumber
   ? 'The intake marks this driver as excluded and gives no license number: type their license number yourself, then "(Excluded)" after it.' : null);
 // Underwriting questions TNI answers No (both sections), by the field names AmWINS uses.
-// The second section's vehicle, MVR and conviction questions have their own rules below.
+// The second section's vehicle, MVR and conviction questions, and hazard exposure, have their own
+// rules below.
 const UNDERWRITING_NO = [
-  'subsidiary to other', 'subsidiary', 'safety info', 'hazard exposure', 'other insurance', 'coverage denial',
+  'subsidiary to other', 'subsidiary', 'safety info', 'other insurance', 'coverage denial',
   'past criminal activity', 'criminal activity in past ?5 ?years', 'code vo\\w*ation', 'finacial default', 'financial default',
   'finacial judgement', 'financial judgement', 'trust', 'foreign operations', 'other venture', 'own drones',
   'hire other to operate drones', 'use their auto', 'vehicle maintenance program', 'vehicle used by family',
@@ -218,6 +219,13 @@ const hazmatNote = (r) => {
 };
 const hazmat = (r) => (typeof r.operations.hazmat === 'boolean' ? r.operations.hazmat : hazmatNote(r) ? null : false);
 const hazmatSource = (r) => (typeof r.operations.hazmat === 'boolean' ? 'intake' : hazmatNote(r) ? 'fact' : 'standard');
+// General Information "hazard exposure" (storing, treating, discharging, applying, disposing or
+// transporting hazardous material; TNI, 2026-10-26: answer to PR question, #188): Yes, the intake's
+// answer, when the intake's hazmat answer is Yes. Otherwise TNI's standard No (2026-10-09), also when
+// the box is blank and what they haul, the notes or the placard point to hazardous freight: that
+// hand-off to the agent is the transporting question's alone. "Default all answers to No" answers it
+// No first, so the Yes replaces that No; the standard No replaces nothing, as before.
+const hazardExposure = (r) => r.operations.hazmat === true;
 
 // Radius bands: "< 50 MILES", "51 - 100 MILES", "101- 200 MILES", "201 + MILES". Unlimited / long
 // haul is the top band.
@@ -491,7 +499,8 @@ export const amwins = {
     // --- Underwriting questions --------------------------------------------------------------------
     // TNI answers this section No (2026-10-09), also when the intake reports claims or leased
     // vehicles; hazardous material is the intake's answer, and blank is No unless the intake points
-    // to hazardous freight (hazmat above; TNI, 2026-10-26, W44-32).
+    // to hazardous freight (hazmat above; TNI, 2026-10-26, W44-32); hazard exposure is Yes when the
+    // intake's hazmat is Yes (hazardExposure above; TNI, 2026-10-26: answer to PR question).
     { name: 'Vehicles not owned (standard: No)', label: '^any vehicle not owned$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Vehicles leased to others (standard: No)', label: '^vehicle leased$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'MVR verification (standard: No)', label: '^mvr verification$', kind: 'bool', source: 'standard', value: () => false },
@@ -499,6 +508,10 @@ export const amwins = {
     { name: 'Convictions / moving violations (standard: No)', label: '^convictions moving violations$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Hazardous material (standard: No unless the intake says otherwise)', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat',
       source: hazmatSource, value: hazmat, note: hazmatNote },
+    // Hazard exposure: Yes when the intake's hazmat is Yes, otherwise No (hazardExposure above;
+    // TNI, 2026-10-26: answer to PR question).
+    { name: 'Underwriting: hazard exposure (standard: No; Yes when the intake\'s hazmat is Yes)', label: '^hazard exposure$', kind: 'bool',
+      source: (r) => (hazardExposure(r) ? 'intake' : 'standard'), value: hazardExposure, replace: hazardExposure },
     ...UNDERWRITING_NO.map(/** @returns {CarrierRule} */ (q) => ({ name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
     // Yes again after "Default all answers to No".
     { name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', source: 'standard', value: () => true, replace: true },

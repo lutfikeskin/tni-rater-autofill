@@ -333,6 +333,37 @@ test('AmWINS transporting hazardous material: the intake\'s answer; blank is TNI
   assert.equal(hazmat({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' }).warn ?? null, null);
 });
 
+// TNI, 2026-10-26: answer to PR question (#188, question 20). AmWINS' General Information "hazard
+// exposure" (storing, treating, disposing or transporting hazardous material) was TNI's No on every
+// intake (2026-10-09); it is now Yes when the intake's hazmat answer is Yes. Otherwise it stays No:
+// freight naming hazardous goods with the box blank hands only the transporting question to the agent.
+test('AmWINS hazard exposure: the intake\'s Yes when its hazmat answer is Yes; otherwise TNI\'s No', () => {
+  const exposure = (changes) => named(buildPlan(with_(changes), amwins, {}), /hazard exposure/);
+  const got = (s) => [s.value, s.source, s.standard, s.manualOnly, s.note ?? null, s.replace];
+  // The intake's Yes: the intake's answer, and it replaces the No that "Default all answers to No" gave.
+  assert.deepEqual(got(exposure({ 'operations.hazmat': true })), [true, 'intake', false, false, null, true], 'the intake\'s Yes');
+  assert.deepEqual(got(exposure({ 'operations.hazmat': true, 'operations.hazPlacard': false, 'operations.whatHaul': 'General freight' })), [true, 'intake', false, false, null, true], 'the intake\'s Yes, no placard');
+  // Everything else: TNI's standard No, as before (no replace: a differing page answer is kept as today).
+  for (const [why, changes] of [
+    ['the intake\'s No', {}],
+    ['the intake\'s No, fuel named', { 'operations.whatHaul': 'Fuel and propane tanks' }],
+    ['blank', { 'operations.hazmat': null }],
+    ['undefined', { 'operations.hazmat': undefined }],
+    ['blank, fuel named', { 'operations.hazmat': null, 'operations.whatHaul': 'Fuel and propane tanks' }],
+    ['blank, chemicals named', { 'operations.hazmat': null, 'operations.whatHaul': 'Industrial chemicals' }],
+    ['blank, propane in the notes', { 'operations.hazmat': null, 'claims.notes': 'Hauls propane cylinders on some routes' }],
+    ['blank, placard Yes', { 'operations.hazmat': null, 'operations.hazPlacard': true }],
+  ]) {
+    assert.deepEqual(got(exposure(changes)), [false, 'standard', true, false, null, false], why);
+  }
+  // The transporting question takes the hand-off to the agent in those blank cases; hazard exposure doesn't.
+  assert.equal(named(buildPlan(with_({ 'operations.hazmat': null, 'operations.whatHaul': 'Fuel and propane tanks' }), amwins, {}), /^Hazardous material/).manualOnly, true);
+  // Review mode: the standard No is a check item; the intake's Yes isn't.
+  const review = { 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' };
+  assert.match(exposure(review).warn ?? '', /Review mode/);
+  assert.equal(exposure({ ...review, 'operations.hazmat': true }).warn ?? null, null);
+});
+
 // The same decision on every carrier's hazmat question: Progressive's and GEICO's placard (2026-10-19,
 // W43-34) and AmWINS' transporting hazardous material (W44-32).
 test('hazmat on every carrier that asks it: the intake\'s answer; blank is No unless the intake points to hazardous freight', () => {

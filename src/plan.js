@@ -301,8 +301,9 @@ function fieldSteps(rules, record, carrier, active) {
       every: !!rule.every,
       // Checked against the intake, never typed (a VIN decode's year): may depend on the unit.
       verifyOnly: typeof rule.verifyOnly === 'function' ? !!rule.verifyOnly(record, active) : !!rule.verifyOnly,
-      // Our answer replaces what the page put there (e.g. a lookup's body type).
-      replace: !!rule.replace,
+      // Our answer replaces what the page put there (e.g. a lookup's body type); may depend on the
+      // client (AmWINS' hazard exposure: only the intake's Yes replaces Default all answers to No's No).
+      replace: typeof rule.replace === 'function' ? !!rule.replace(record, active) : !!rule.replace,
       // What a lookup put there wins over the intake's wording (no "page differs" flag).
       trustPage: !!rule.trustPage,
       // A differing choice already on the page is kept and flagged, never replaced (`replaceChoices`).
