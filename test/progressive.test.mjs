@@ -618,6 +618,31 @@ test('owner is a driver (29F): blank is TNI\'s Yes; the intake\'s No, or an owne
   assert.deepEqual(step((r) => { r.applicant.ownerDrives = null; r.applicant.owner1 = 'Jordan Sample'; }), [true, 'standard', true, false, null]);
 });
 
+// TNI, 2026-10-26 (answer to PR question): the owner's name matches two driver rows (a Sr and a Jr)
+// and only one is marked excluded: whether the owner drives is the agent's, with the reason.
+test('owner is a driver (29F): the owner\'s name on two driver rows, only one excluded, is the agent\'s; none or all excluded unchanged', () => {
+  const step = (box, excluded) => {
+    const record = baseRecord();
+    const senior = record.drivers[0];
+    record.applicant.ownerDrives = box;
+    record.drivers = [{ ...senior, excluded: excluded[0] }, { ...senior, suffix: 'Jr', dob: '03/04/2004', licenseNumber: 'MD7654321', excluded: excluded[1] }];
+    const s = byQ(buildPlan(record, progressive), '29F');
+    return [s.value, s.source, s.manualOnly, s.note];
+  };
+  for (const box of [null, true]) {
+    for (const excluded of [[true, false], [false, true]]) {
+      const [value, source, manualOnly, note] = step(box, excluded);
+      assert.deepEqual([value, source, manualOnly], [null, 'fact', true], JSON.stringify({ box, excluded }));
+      assert.match(note, /owner's name matches 2 of the intake's drivers and only 1 of them is marked excluded.*whether the owner drives/);
+    }
+  }
+  // The intake's No stands.
+  assert.deepEqual(step(false, [true, false]), [false, 'intake', false, null]);
+  // Counterexamples: none excluded keeps the standard Yes; every matching row excluded keeps No.
+  assert.deepEqual(step(null, [false, false]), [true, 'standard', false, null]);
+  assert.deepEqual(step(null, [true, true]), [false, 'derived', false, null]);
+});
+
 // Audit 2026-10-08: owner "Alice Sample" who doesn't drive took the first name and date of birth
 // of the sole driver "Bob Sample" (through the surname-only match), on both carriers.
 test('the owner is never another driver: first names must agree, and a non-driving owner links no row', () => {

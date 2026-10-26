@@ -85,32 +85,62 @@ export function ownerIsDriver(ownerName, d) {
   return nameWords(d.last).includes(owner.at(-1)) && nameWords(`${d.first ?? ''} ${d.middle ?? ''}`).includes(owner[0]);
 }
 
-// The intake marks the owner's driver row excluded ("Excluded" in its license-number box,
-// normalize.js licenseBox: `drivers[].excluded`): every driver row the owner's name matches
-// (ownerIsDriver) is marked so. No row matching the owner is no exclusion.
-export function ownerExcluded(r) {
+// The driver rows the owner's name matches (ownerIsDriver), and how many of them the intake marks
+// excluded ("Excluded" in the license-number box, normalize.js licenseBox: `drivers[].excluded`).
+const ownerRows = (r) => {
   const rows = (r?.drivers ?? []).filter((d) => ownerIsDriver(r?.applicant?.owner1, d));
-  return rows.length > 0 && rows.every((d) => d?.excluded === true);
+  return { rows: rows.length, excluded: rows.filter((d) => d?.excluded === true).length };
+};
+
+// The intake marks the owner's driver row excluded: every driver row the owner's name matches is
+// marked so. No row matching the owner is no exclusion.
+export function ownerExcluded(r) {
+  const { rows, excluded } = ownerRows(r);
+  return rows > 0 && excluded === rows;
+}
+
+// The owner's name matches two or more driver rows (a Sr and a Jr) and only some of them are marked
+// excluded: which row is the owner, and so whether the owner drives, isn't on the intake. TNI,
+// 2026-10-26 (answer to PR question): the agent's, with the reason (ownerDrivesNote); none of them
+// excluded keeps the standard Yes, all of them excluded the No (ownerExcluded).
+export function ownerRowsMixed(r) {
+  const { rows, excluded } = ownerRows(r);
+  return excluded > 0 && excluded < rows;
 }
 
 // Whether the owner is a driver on the policy, wherever a carrier asks it (GEICO's Business & Owner
 // Info and Add Driver, Progressive's Business Owner Info; AmWINS doesn't ask). TNI, 2026-10-26
 // (W44-25): "Owner Drivers if not excluded, in every case". The intake's No stays No; an owner
-// whose driver row the intake marks excluded is not a driver, No; otherwise Yes: the intake's, or
-// TNI's standard for a blank box. The record keeps the box as read (null when blank), so the answer's
-// source stays right (ownerDrivesSource).
+// whose driver row the intake marks excluded is not a driver, No, also over the intake's Yes, with a
+// warning the agent confirms (ownerDrivesWarn; TNI, 2026-10-26: answer to PR question); otherwise
+// Yes: the intake's, or TNI's standard for a blank box. null (the agent's) when the owner's name
+// matches several driver rows and only some are excluded (ownerRowsMixed). The record keeps the box
+// as read (null when blank), so the answer's source stays right (ownerDrivesSource).
+/** @returns {boolean | null} */
 export function ownerDrives(r) {
-  return r?.applicant?.ownerDrives !== false && !ownerExcluded(r);
+  if (r?.applicant?.ownerDrives === false) return false;
+  if (ownerRowsMixed(r)) return null;
+  return !ownerExcluded(r);
 }
 
 // Where ownerDrives' answer comes from (plan.js `source`): the intake's box when it answers and the
-// answer stands; the exclusion when it makes the owner not a driver over a blank box or a Yes
-// (`derived`); TNI's standard for a blank box.
+// answer stands; the agent's (`fact`) when the owner's rows are only partly excluded; the exclusion
+// when it makes the owner not a driver over a blank box or a Yes (`derived`); TNI's standard for a
+// blank box.
 export function ownerDrivesSource(r) {
   const said = r?.applicant?.ownerDrives;
   if (said === false) return 'intake';
+  if (ownerRowsMixed(r)) return 'fact';
   if (ownerExcluded(r)) return 'derived';
   return said === true ? 'intake' : 'standard';
+}
+
+// Why ownerDrives leaves the question to the agent: the owner's name on several driver rows, only
+// some excluded (TNI, 2026-10-26: answer to PR question).
+export function ownerDrivesNote(r) {
+  if (r?.applicant?.ownerDrives === false || !ownerRowsMixed(r)) return null;
+  const { rows, excluded } = ownerRows(r);
+  return `The owner's name matches ${rows} of the intake's drivers and only ${excluded} of them ${excluded === 1 ? 'is' : 'are'} marked excluded, so the intake doesn't show whether the owner drives: answer it yourself.`;
 }
 
 // The intake says the owner drives but marks their driver row excluded: ownerDrives is No, and the

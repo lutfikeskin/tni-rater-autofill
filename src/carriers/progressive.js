@@ -31,7 +31,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
-import { ownerDrives, ownerDrivesSource, ownerDrivesWarn } from '../util.js';
+import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, ownerDrivesNote } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -689,8 +689,10 @@ export const progressive = {
       { q: '298', field: 'AccountInput.BusinessOwnerSuffix', ask: 'Suffix', optional: true, name: 'Owner suffix (optional)', ignore: true },
       // The intake's answer; a blank box is TNI's standard Yes, and an owner whose driver row the
       // intake marks excluded is not a driver, No (TNI, 2026-10-26, W44-25: util.js ownerDrives).
+      // The owner's name on several driver rows, only some excluded: the agent's, with the reason
+      // (TNI, 2026-10-26: answer to PR question).
       { q: '29F', field: 'AccountInput.DriverInPolicyIndicator', label: 'is a driver on the policy$', name: 'Owner is a driver', kind: 'bool', path: 'applicant.ownerDrives',
-        source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn },
+        source: ownerDrivesSource, value: ownerDrives, warn: ownerDrivesWarn, note: ownerDrivesNote },
       { q: '2BB', source: 'derived', field: 'AccountInput.BusinessOwnerDOB', ask: 'Date of Birth', name: 'Owner date of birth', kind: 'date', clientFact: true, value: (r) => owner(r).dob, note: ownerDobNote },
       // The demonstrated workflow deliberately leaves Progressive's optional phone boxes blank.
       { q: '2DB', field: 'AccountInput.PhoneAreaCodeString', ask: 'Primary Phone Number', name: 'Phone area code (optional)', ignore: true },
