@@ -594,17 +594,19 @@ const otherLiabilityNote = (r) => (r.coverage?.hasGl === true && !currentGl(r) ?
 
 // --- Quote & Coverages -------------------------------------------------------------------------
 
-// Non-trucking liability: set by the agent (coverage.ntl), or mentioned in the claims box or notes
-// and not yet answered (Progressive's reading, docs/architecture.md: no NTL path has been seen
-// live). Either way GEICO's liability coverage and its limit are the agent's.
+// Non-trucking liability mentioned in the claims box or notes and not yet answered: GEICO's
+// liability coverage and its limit are the agent's until they answer it on the Intake step.
 const ntlUndecided = (r) => r.coverage?.ntl == null && (!!ntlMention(intakeNotes(r)) || r.claims?.aiNtl === true);
-const ntlNote = (r) => (r.coverage?.ntl === true ? 'Non-trucking liability quote: pick GEICO\'s liability coverage and limit yourself.'
-  : ntlUndecided(r) ? 'The claims box or notes mention non-trucking liability: set it to Yes or No on the Intake step, then fill this page again.' : null);
-// "Liability Coverage": Bodily Injury and Property Damage Liability for an intake asking for auto
-// liability (Yes, or a limit with the box blank). No, NTL, or nothing is the agent's; "I don't need
-// Liability Coverage" is never picked.
+const ntlQuote = (r) => r.coverage?.ntl === true;
+const ntlNote = (r) => (ntlUndecided(r) ? 'The claims box or notes mention non-trucking liability: set it to Yes or No on the Intake step, then fill this page again.' : null);
+// "Liability Coverage": Non-Trucking Liability on an NTL quote (the maintainer, 2026-10-26, live run:
+// GEICO then asks "under permanent lease?", answered Yes by ntlLease, and draws its NTL limit);
+// Bodily Injury and Property Damage Liability for an intake asking for auto liability (Yes, or a
+// limit with the box blank). No, or nothing is the agent's; "I don't need Liability Coverage" is
+// never picked.
 const liabilityType = (r) => {
   const a = String(r.coverage?.autoLiability ?? '').trim();
+  if (ntlQuote(r)) return 'Non-Trucking Liability';
   if (ntlNote(r) || /non-?trucking/i.test(a) || /^no$/i.test(a)) return null;
   return /^yes$/i.test(a) || (!a && r.coverage?.autoLiabLimit) ? 'Bodily Injury and Property Damage Liability' : null;
 };
@@ -836,6 +838,10 @@ export const geico = {
     // opens the proposal in a new tab, which a kit's click opened in 1 to 4 s on all 11 runs before
     // the page's-world press (2026-10-21 and 22), and that press on none of 4 (2026-10-23: one left 12
     // minutes, the agent's click opened it at once). Why is not known.
+    // NTL picked for Liability Coverage: GEICO asks whether the customer is under permanent lease and
+    // puts Liability Coverage back until it is answered (the maintainer, 2026-10-26, live run: Yes).
+    // Clicked first thing the next round; due again whenever it shows again.
+    { id: 'ntlLease', steps: [COVERAGES], text: '^yes,?\\s*under permanent lease$', immediate: true, verify: 'gone', label: 'Yes, under permanent lease (NTL)', when: (r) => r.coverage?.ntl === true },
     { id: 'recalculate', steps: [COVERAGES], text: '^recalculate$', waitRequired: true, needsRecalculation: true, verify: 'premium', whenClear: true,
       quietMs: 2000, once: true, keepAnswers: true },
     { id: 'morePayPlans', steps: [COVERAGES], text: '^view more payment plans$', needsPremium: true, whenClear: true },
@@ -1072,8 +1078,10 @@ export const geico = {
       { field: 'GiveDriverLicenseState', q: 'GiveDriverLicenseState.owner', name: 'Owner\'s license state', kind: 'state', source: 'derived', value: (r) => owner(r).driver?.licenseState ?? null, note: ownerRowNote('license state') },
       { field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', ask: 'We just need a little more info about this driver. Do they need a Certificate of Financial Responsibility or SR-22?',
         path: 'operations.needSr22', name: 'SR-22 (the owner; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Owner, note: sr22Note(sr22Owner) },
-      { field: 'CommercialDriverLicense', q: 'CommercialDriverLicense.owner', ask: 'Does this driver have a CDL?', name: 'Owner has a CDL', kind: 'bool', source: 'derived',
-        value: (r) => (typeof owner(r).driver?.cdl === 'boolean' ? owner(r).driver.cdl : null), note: ownerRowNote('CDL answer') },
+      // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard).
+      { field: 'CommercialDriverLicense', q: 'CommercialDriverLicense.owner', ask: 'Does this driver have a CDL?', name: 'Owner has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
+        source: (r) => (owner(r).driver && typeof owner(r).driver.cdl !== 'boolean' ? 'standard' : 'derived'),
+        value: (r) => (owner(r).driver ? owner(r).driver.cdl ?? false : null), note: ownerRowNote('CDL answer') },
     ]),
     // Add Driver: the panel's active driver.
     ...on(DRIVERS, { whenShown: ADD_DRIVER_FORM }, [
@@ -1085,7 +1093,8 @@ export const geico = {
       { field: 'GiveDriverLicenseState', ask: 'Driver\'s License State', path: 'drivers[].licenseState', name: 'Driver license state', kind: 'state', note: driverNote() },
       { field: 'GiveDriverRelationshipToBusiness', ask: 'What is their relationship to the business?', name: 'Driver\'s relationship to the business (Owner, else Employee)', kind: 'choice', source: relationshipSource, clientFact: true,
         value: relationship, note: driverNote(relationshipNote) },
-      { field: 'CommercialDriverLicense', ask: 'Does this driver have a CDL?', path: 'drivers[].cdl', name: 'Driver has a CDL', kind: 'bool', note: driverNote() },
+      { field: 'CommercialDriverLicense', ask: 'Does this driver have a CDL?', path: 'drivers[].cdl', name: 'Driver has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
+        source: (r, a) => (typeof driverOf(r, a)?.cdl === 'boolean' ? 'intake' : 'standard'), value: (r, a) => (driverOf(r, a) ? driverOf(r, a).cdl ?? false : null), note: driverNote() },
       // Hidden on the captured Add Driver form.
       { field: 'GiveCertificateOfFinancialResponsibilityDriverYesNo', path: 'operations.needSr22', name: 'SR-22 (this driver; TNI: No unless the intake says otherwise)', kind: 'bool', source: sr22Source, value: sr22Driver, note: driverNote(sr22Note(sr22Driver)) },
       // Asked again on Add Driver for a driver who is the business's owner, with the owner's mobile
@@ -1139,14 +1148,20 @@ export const geico = {
       { q: 'LiabilityCoverage', ask: 'Liability Coverage', control: 'select', name: 'Liability coverage', kind: 'choice', source: 'derived', value: liabilityType, note: liabilityNote },
       // The intake's limit, by its amount ($1M CSL is "$1,000,000 Combined Single Limit"). A split
       // limit, State Minimum or one GEICO doesn't offer finds no option: the agent's, never the next one up.
-      { ask: 'Bodily Injury or Combined Single Limit Liability', control: 'select', path: 'coverage.autoLiabLimit', name: 'Liability limit', kind: 'choice',
+      { ask: 'Bodily Injury or Combined Single Limit Liability', control: 'select', path: 'coverage.autoLiabLimit', name: 'Liability limit', kind: 'choice', ignore: ntlQuote,
         note: (r) => ntlNote(r) ?? (liabilityType(r) ? null : 'Pick the liability limit yourself, with the liability coverage.') },
+      // An NTL quote: the intake's liability limit in GEICO's NTL list (the same choices, $300,000 to
+      // $1,000,000 CSL), drawn once the permanent lease is answered.
+      { ask: 'Non Trucking Liability (NTL)', control: 'select', path: 'coverage.autoLiabLimit', name: 'Non-trucking liability limit (the intake\'s liability limit)', kind: 'choice',
+        ignore: (r) => !ntlQuote(r) },
       // TNI's $100,000 CSL, in every state (FL live run 4, 2026-10-21, W43-17: GEICO pre-selected
-      // $750,000); Texas lists only split limits, $100,000/$300,000 there (W43-33). A state without
-      // that option leaves it to the agent. GA and SC caption it "(UMBI)", SC asks underinsured
+      // $750,000); Texas lists only split limits, $100,000/$300,000 there (W43-33), but CSL ones with
+      // a CSL liability or NTL (2026-10-26 live run: no split option, UM left at GEICO's $300,000):
+      // $100,000 CSL then. A state without either option leaves it to the agent. After NTL is
+      // accepted GEICO resets it; GEICO fills one answer a round in page order, so UM comes after. GA and SC caption it "(UMBI)", SC asks underinsured
       // separately: the same limit (W43-33, TNI, 2026-10-21).
       { q: 'UninsuredMotorist', ask: 'Uninsured Motorist Bodily Injury (includes Underinsured)', control: 'select', name: 'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)',
-        kind: 'choice', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT) },
+        kind: 'choice', source: 'standard', value: (r) => (texas(r) ? UM_SPLIT : UM_LIMIT), choiceAliases: (r) => (texas(r) ? [UM_LIMIT] : []) },
       { q: 'UninsuredMotoristUmbi', ask: 'Uninsured Motorist Bodily Injury (UMBI)', control: 'select', name: 'Uninsured motorist bodily injury, UMBI (TNI: $100,000 CSL)',
         kind: 'choice', source: 'standard', value: () => UM_LIMIT },
       { q: 'UnderinsuredMotorist', ask: 'Underinsured Motorist Bodily Injury (UIMBI)', control: 'select', name: 'Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)',

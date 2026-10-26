@@ -495,14 +495,14 @@ export const progressive = {
     // list, so it comes before cargo. Done only when the link is gone afterwards (a click lost in a
     // redraw stays a blocker). What the section asks hasn't been seen on a live quote: its
     // questions, the bill plan and the rest of Rates are the agent's (agentPages below).
-    { id: 'addNtl', page: 'CoveragesRates', text: ADD_NTL, verify: 'gone', when: (r) => r.coverage.ntl === true },
+    { id: 'addNtl', page: 'CoveragesRates', text: ADD_NTL, verify: 'gone', immediate: true, when: (r) => r.coverage.ntl === true },
     // NTL added on this quote, then set back to No: the filler doesn't remove it. Never clicked; a
     // "needs you" item on Rates, holding the later Rates helpers, until the page offers Add NTL
     // again (the agent removed it).
     // NTL quote, or an NTL mention not answered yet: never clicked, a "needs you" item that keeps
     // Continue for the agent (the rest of Rates is theirs, or waits for their answer).
     { id: 'ntlRates', page: 'CoveragesRates', label: 'Non-trucking liability', when: (r) => r.coverage.ntl === true,
-      missing: () => 'NTL quote: the rest of this page is yours (the NTL section, cargo, the bill plan, Recalculate, Print). Continue yourself when it is done.' },
+      missing: () => 'NTL quote: the filler adds NTL with the intake\'s limit and the permanent lease Yes. The rest of this page is yours (cargo, the bill plan, Recalculate, Print). Continue yourself when it is done.' },
     { id: 'ntlDecide', page: 'CoveragesRates', label: 'Non-trucking liability', when: ntlUndecided,
       missing: () => 'The claims box mentions NTL and Non-trucking liability isn\'t answered: set it to Yes or No on the Intake step, then fill this page again.' },
     { id: 'ntlStillAdded', page: 'CoveragesRates', afterActions: ['addNtl'], resolvedBy: ADD_NTL, label: 'Non-trucking liability', when: (r) => r.coverage.ntl !== true,
@@ -594,7 +594,7 @@ export const progressive = {
     // TNI (2026-10-07): an SSN only when the client gave one; the usual fix is the owner's name.
     NoHit: "Progressive couldn't verify the business owner. Adjust the owner's name: removing the middle name and keeping only the first and last name often fixes it. Check the date of birth and home address too (an SSN only if the client gave one), then Continue.",
     CoveragesRates: (r) => (r.coverage?.ntl === true
-      ? 'Non-trucking liability (NTL) quote: the filler opens it with "Add Non-Trucking Liability instead?". The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print.'
+      ? 'Non-trucking liability (NTL) quote: the filler adds it, answers the permanent lease question Yes, picks the intake\'s limit for NTL and leaves Bodily Injury and Property Damage Liability Not selected. The rest of this page is yours: cargo, the bill plan, Recalculate and Print.'
       : null),
   },
   // Pages where Progressive has stopped the quote. Nothing is filled or clicked there (not even on
@@ -809,7 +809,9 @@ export const progressive = {
       { q: '289A', field: 'DriverInput.LastName', ask: 'Driver Last Name', path: 'drivers[].last' },
       { q: '28A7', field: 'DriverInput.DateOfBirth', ask: 'Date of Birth', path: 'drivers[].dob' },
       { q: '28AC', field: 'DriverInput.LicenseStateDup', ask: 'Driver\'s License State', path: 'drivers[].licenseState' },
-      { q: '28E6', field: 'DriverInput.HasCDL', ask: 'Does this driver have a Commercial Driver\'s License (CDL)?', path: 'drivers[].cdl', name: 'Has a CDL', kind: 'bool' },
+      // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard).
+      { q: '28E6', field: 'DriverInput.HasCDL', ask: 'Does this driver have a Commercial Driver\'s License (CDL)?', path: 'drivers[].cdl', name: 'Has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
+        source: (r, a) => (typeof r.drivers?.[a.drivers ?? 0]?.cdl === 'boolean' ? 'intake' : 'standard'), value: (r, a) => (r.drivers?.[a.drivers ?? 0] ? r.drivers[a.drivers ?? 0].cdl ?? false : null) },
       { q: '28B9', field: 'DriverInput.DriverLicenseNumber', ask: 'Driver’s License Number', path: 'drivers[].licenseNumber' },
       // FL (2026-10-07): with a CDL, the year it was issued, from the intake; "Year is unknown" is
       // the agent's when the intake has no year.
@@ -831,7 +833,16 @@ export const progressive = {
       // The same answer shown again on Rates (NJ), with its own wording: Progressive carries it over.
       // Left as Progressive set it, but a carryover that didn't happen (empty) goes to the agent.
       { q: '2007', field: 'LoanLeaseInput.Limit', ask: 'Loan/Lease', name: 'Loan / lease on Rates (carried over from Add Vehicle)', ignore: true, emptyNote: 'Loan / lease should carry over from Add Vehicle but is empty here: answer it yourself.', scope: 'vehicle' },
-      { q: '1D97', field: 'LineInput.RBIPDLimit', ask: 'Bodily Injury and Property Damage Liability', path: 'coverage.autoLiabLimit' },
+      // An NTL quote (the maintainer, 2026-10-26, live run): Bodily Injury and Property Damage stays
+      // Not selected, the permanent lease question is Yes, and the intake's liability limit goes to
+      // the Non-Trucking Liability limit (the same choices). Progressive asks them once Add
+      // Non-Trucking Liability instead? is clicked (addNtl, first on the page).
+      { q: '1D97', field: 'LineInput.RBIPDLimit', ask: 'Bodily Injury and Property Damage Liability', path: 'coverage.autoLiabLimit', name: 'Liability limit (NTL quote: Not selected)',
+        source: (r) => (r.coverage.ntl === true ? 'derived' : 'intake'), value: (r) => (r.coverage.ntl === true ? 'Not selected' : r.coverage.autoLiabLimit) },
+      { q: '1DF0', field: 'LineInput.NTLLease', label: '^is the customer under permanent lease to a motor carrier', name: 'Under permanent lease to a motor carrier (NTL quote, TNI: Yes)',
+        kind: 'bool', source: 'standard', value: () => true, ignore: (r) => r.coverage.ntl !== true },
+      { q: '1DF2', field: 'LineInput.NTLLimit', label: '^non-?trucking liability coverage limit$', path: 'coverage.autoLiabLimit', name: 'Non-trucking liability limit (the intake\'s liability limit)',
+        ignore: (r) => r.coverage.ntl !== true },
       // FL: the CSL already covers property damage; PIP is required, $10k with no deductible (TNI).
       // Changing PIP makes Progressive invalidate the liability limit, which is picked again.
       { q: '1DB8', source: 'standard', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },
