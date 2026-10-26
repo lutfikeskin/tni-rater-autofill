@@ -18,7 +18,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 88 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 89 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -2343,6 +2343,18 @@
             continue;
           }
         }
+        // `onlyOption`: answered only when the list offers nothing but the answer (GEICO's Medical
+        // Payments, Not Included where it is the only choice: the maintainer, 2026-10-26); a list
+        // with other choices is the agent's, with `onlyNote`. Placeholders and GEICO's hidden
+        // stand-in don't count as choices.
+        if (step.onlyOption && step.value != null && !step.note) {
+          const choices = [...new Set(optionsOf(c).filter((o) => !standIn(o) && !isPlaceholderOption(o.text)).map((o) => squash(o.text)).filter(Boolean))];
+          if (choices.length !== 1 || choices[0] !== squash(step.value)) {
+            report.noData.push({ ...item, note: step.onlyNote, ...describe(c) });
+            handled.set(step.id, { status: 'needs', note: step.onlyNote });
+            continue;
+          }
+        }
         if (step.note || step.value == null) {
           if (step.optional) { handled.set(step.id, { status: null }); continue; }
           report.noData.push({ ...item, note: step.note, ...describe(c) });
@@ -3854,5 +3866,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 88, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 89, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();

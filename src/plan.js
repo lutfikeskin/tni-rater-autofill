@@ -329,6 +329,8 @@ function fieldSteps(rules, record, carrier, active) {
       // the intake's house number, street and ZIP, W43-24), and the note when it doesn't.
       labelHas: rule.labelHas ? rule.labelHas(record, active) : null,
       labelNote: rule.labelNote ?? null,
+      onlyOption: typeof rule.onlyOption === 'function' ? !!rule.onlyOption(record, active) : !!rule.onlyOption,
+      onlyNote: rule.onlyNote ?? null,
       // What an address box gets when the page offers no suggestion (e.g. just the street).
       fallback: typeof rule.fallback === 'function' ? rule.fallback(record, active) : rule.fallback ?? null,
       // An address the page already shows agrees only with the intake's house number (GEICO fills

@@ -128,6 +128,8 @@
  * @property {(record: ClientRecord, active: ActiveUnits) => string[] | null} [businessNames]
  * @property {(record: ClientRecord, active: ActiveUnits) => string[] | null} [labelHas]
  * @property {string} [labelNote]
+ * @property {ClientValue<boolean>} [onlyOption]  answered only when the list offers nothing but the answer (GEICO's Medical Payments, Not Included); otherwise the agent's, with `onlyNote`
+ * @property {string} [onlyNote]
  * @property {boolean} [checkNumber]
  * @property {'section' | 'limit' | true} [cargo]
  * @property {'section' | 'limit'} [gl]
@@ -344,6 +346,8 @@
  * @property {string[] | null} businessNames
  * @property {string[] | null} labelHas
  * @property {string | null} labelNote
+ * @property {boolean} onlyOption
+ * @property {string | null} onlyNote
  * @property {string | null} fallback
  * @property {boolean} checkNumber
  * @property {string | null} search

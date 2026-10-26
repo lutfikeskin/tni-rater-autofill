@@ -7277,3 +7277,24 @@ test('progress says continue only where the fill may click Continue', async () =
   assert.equal(clicked.report.advanced, 'Continue');
   assert.ok(clicked.seen.includes('continue'), `continued: ${clicked.seen.join(', ')}`);
 });
+
+
+// `onlyOption` (the maintainer, 2026-10-26, GEICO TX live run: Medical Payments listed only Not
+// Included): the answer is given only when the list offers nothing else; a list with other choices
+// is the agent's, with the rule's note. A placeholder doesn't count as a choice.
+test('a choice marked onlyOption is answered only when it is the list\'s only choice', async () => {
+  const run = async (options) => {
+    const h = harness();
+    const med = new SelectNode(options, { id: 'med', ariaLabel: 'Medical Payments (MED)' });
+    h.document.body.append(med);
+    const rules = [{ selector: '#med', name: 'Medical payments', kind: 'choice', source: 'standard', value: () => 'Not Included', onlyOption: true, onlyNote: 'Pick one yourself.' }];
+    const report = await h.kit.fill(buildPlan({}, { id: 'test', useGenericRules: false, rules }), { maxRounds: 4 });
+    return { med, report };
+  };
+  let { med, report } = await run([{ text: 'Please Select', value: '' }, { text: 'Not Included', value: 'NI' }]);
+  assert.equal(med.value, 'NI');
+  assert.deepEqual(plain(report.noData), []);
+  ({ med, report } = await run([{ text: 'Please Select', value: '' }, { text: 'Not Included', value: 'NI' }, { text: '$5,000', value: '5000' }]));
+  assert.equal(med.value, '', 'other choices: left as it is');
+  assert.deepEqual(plain(report.noData.map((x) => x.note)), ['Pick one yourself.']);
+});
