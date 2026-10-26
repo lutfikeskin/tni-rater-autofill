@@ -857,7 +857,7 @@ export const progressive = {
         source: (r) => (r.coverage.ntl === true ? 'derived' : 'intake'), value: (r) => (r.coverage.ntl === true ? 'Not selected' : r.coverage.autoLiabLimit) },
       { q: '1DF0', field: 'LineInput.NTLLease', label: '^is the customer under permanent lease to a motor carrier', name: 'Under permanent lease to a motor carrier (NTL quote, TNI: Yes)',
         kind: 'bool', source: 'standard', value: () => true, ignore: (r) => r.coverage.ntl !== true },
-      { q: '1DF2', field: 'LineInput.NTLLimit', label: '^non-?trucking liability coverage limit$', name: 'Non-trucking liability limit (the intake\'s liability limit)',
+      { q: '1DF2', field: 'LineInput.NTLLimit', label: '^non\\W*trucking liability coverage limit$', name: 'Non-trucking liability limit (the intake\'s liability limit)',
         kind: 'choice', source: 'derived', value: (r) => r.coverage.autoLiabLimit ?? null, ignore: (r) => r.coverage.ntl !== true },
       // FL: the CSL already covers property damage; PIP is required, $10k with no deductible (TNI).
       // Changing PIP makes Progressive invalidate the liability limit, which is picked again.

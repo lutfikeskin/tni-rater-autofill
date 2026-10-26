@@ -1087,3 +1087,14 @@ test('an NTL-only quote: Done with this coverage after the NTL limit, then Rates
   assert.deepEqual(plain.find((s) => s.action === 'recalculate').after, ['coverage.autoLiabLimit']);
   assert.ok(!plain.some((s) => s.action === 'doneNtl'));
 });
+
+// The maintainer, 2026-10-26, live run: no quote-done sound on an NTL quote. The NTL limit is found
+// by its data-model name, and its caption checked against the rule's pattern as the page kit reads
+// captions (squashed: "Non-Trucking" is "non trucking"); "non-?trucking" didn't match, so the kit
+// took the question for reworded, a check for the agent, and a quote with a check isn't done.
+test('the NTL questions\' patterns match their captions as the page kit reads them', () => {
+  const squash = (s) => String(s ?? '').toLowerCase().replace(/['’*]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const rule = (q) => progressive.rules.find((r) => r.q === q);
+  assert.match(squash('Non-Trucking Liability coverage limit'), new RegExp(rule('1DF2').label, 'i'));
+  assert.match(squash('Is the customer under permanent lease to a motor carrier that provides primary liability coverage when the customer is under dispatch?'), new RegExp(rule('1DF0').label, 'i'));
+});
