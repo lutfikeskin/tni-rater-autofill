@@ -946,17 +946,22 @@
   // <option value="" hidden> repeating the current choice ("Not Included"). Picking it picks nothing.
   const standIn = (o) => o.el?.tagName === 'OPTION' && (!!o.el.hidden || !!o.el.disabled || o.value === '');
 
-  function matchOption(options, step) {
-    // Options that read the same are the same choice (pages sometimes list one twice), and the
-    // real one of them is the choice, never a stand-in reading like it.
+  // A list's choices: options that read the same are the same choice (pages sometimes list one
+  // twice), and the real one of them is the choice, never a stand-in reading like it. Placeholders
+  // are no choice.
+  function usableOptions(options) {
     const seenText = new Set();
     const real = new Set(options.filter((o) => !standIn(o)).map((o) => squash(o.text)));
-    const usable = options.filter((o) => {
+    return options.filter((o) => {
       const k = squash(o.text);
       if (!k || isPlaceholderOption(o.text) || seenText.has(k) || (standIn(o) && real.has(k))) return false;
       seenText.add(k);
       return true;
     });
+  }
+
+  function matchOption(options, step) {
+    const usable = usableOptions(options);
     // "Any option except …" (e.g. the registered USDOT address instead of "Enter a different
     // address"), preferring one that matches `prefer` when there are several.
     if (step.kind === 'pick-not') {
@@ -2343,14 +2348,17 @@
             continue;
           }
         }
-        // `onlyOption`: answered only when the list offers nothing but the answer (GEICO's Medical
-        // Payments, Not Included where it is the only choice: the maintainer, 2026-10-26); a list
-        // with other choices is the agent's, with `onlyNote`. Placeholders and GEICO's hidden
-        // stand-in don't count as choices.
+        // `onlyOption`: answered only when a list offers no choice but these: its own, nothing but
+        // the answer (GEICO's Medical Payments, Not Included), or another question's (`path`), which
+        // may also be off the page (GEICO's Basic PIP $2,500 where Medical Payments offers no limit:
+        // the maintainer, 2026-10-26). Otherwise the agent's alone, with `onlyNote`: a limit TNI
+        // doesn't name is never the AI's.
         if (step.onlyOption && step.value != null && !step.note) {
-          const choices = [...new Set(optionsOf(c).filter((o) => !standIn(o) && !isPlaceholderOption(o.text)).map((o) => squash(o.text)).filter(Boolean))];
-          if (choices.length !== 1 || choices[0] !== squash(step.value)) {
-            report.noData.push({ ...item, note: step.onlyNote, ...describe(c) });
+          const only = step.onlyOption;
+          const list = only.path ? allPairs.find((p) => p.step.path === only.path)?.control : c;
+          const allowed = new Set((only.choices ?? [step.value]).map(squash));
+          if (list && usableOptions(optionsOf(list)).some((o) => !allowed.has(squash(o.text)))) {
+            report.noData.push({ ...item, note: step.onlyNote, manualOnly: true, ...describe(c) });
             handled.set(step.id, { status: 'needs', note: step.onlyNote });
             continue;
           }
@@ -2521,6 +2529,11 @@
           // Batch: carry on with the next answer, except before a helper button that waits on
           // this one (Import Data after the VIN list): it's clicked first thing next round.
           if (!batch || immediateAfter.has(step.path)) break;
+        } else if (step.unofferedNote && /^no option matches/.test(result.reason ?? '')) {
+          // A list without the answer, which no helper shows later (GEICO's Basic PIP without
+          // $2,500): the agent's alone at once, so a `whenClear` helper (Print) waits for it.
+          report.noData.push({ ...item, note: step.unofferedNote, manualOnly: true, ...describe(c) });
+          handled.set(step.id, { status: 'needs', note: step.unofferedNote });
         } else if (step.whenOffered && /^no option matches/.test(result.reason ?? '')) {
           // Not offered yet: a helper may show it (GEICO's 11 Payments, behind View More Payment
           // Plans). Tried again each round; never offered by the fill's end, it is the agent's.

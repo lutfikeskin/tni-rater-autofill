@@ -617,10 +617,13 @@ const liabilityNote = (r) => ntlNote(r) ?? (liabilityType(r) ? null
 
 // Florida (the garaging state): GEICO offers Basic Personal Injury Protection, which TNI takes over
 // medical payments (2026-10-21): Medical Payments is Not Included, and the PIP lists (one choice
-// each in FL) are kept as GEICO has them. Elsewhere (the maintainer, 2026-10-26, a TX live run):
-// Medical Payments is Not Included where that is its only choice (TNI's standard; a list with
-// other limits is the agent's), and Basic Personal Injury Protection is $2,500 where GEICO offers
-// it (TNI's standard; a list without $2,500 is the agent's). The other PIP lists are the agent's.
+// each in FL) are kept as GEICO has them. Elsewhere (the maintainer, 2026-10-26, a TX live run:
+// "if Medical Payment is available with limits we prefer that. If it's not available or the only
+// option for it is Not Included / not selected, we use a PIP, ideally with 2500"): Medical Payments
+// is Not Included where that is its only choice (TNI's standard), and then, or with no Medical
+// Payments on the page, Basic Personal Injury Protection is $2,500 (TNI's standard). Medical
+// Payments with limits is the agent's (its limit), and so is Basic PIP then; so is a Basic PIP list
+// without $2,500. The other PIP lists are the agent's.
 const florida = (r) => String(r.garaging?.state ?? '').trim().toUpperCase() === 'FL';
 const pipKept = (name) => ({ ignore: florida, source: (r) => (florida(r) ? null : 'fact'),
   emptyNote: `GEICO left ${name} empty: pick it yourself.` });
@@ -1177,9 +1180,14 @@ export const geico = {
       { q: 'Stacked', ask: 'Is Stacked', control: 'select', name: 'Stacked uninsured motorist', ...pipKept('stacked uninsured motorist') },
       { q: 'MedicalPayments', ask: 'Medical Payments (MED)', control: 'select', name: 'Medical payments (TNI: Not Included where it is the only choice; FL: Not Included, PIP instead)', kind: 'choice',
         source: 'standard', value: () => 'Not Included', onlyOption: (r) => !florida(r),
-        onlyNote: 'GEICO offers medical payments limits here, not only Not Included: pick one yourself.' },
-      { q: 'BasicPip', ask: 'Basic Personal Injury Protection', control: 'select', name: 'Basic personal injury protection (TNI: $2,500 where offered; FL: as GEICO has it)', kind: 'choice',
-        ignore: florida, source: (r) => (florida(r) ? null : 'standard'), value: (r) => (florida(r) ? null : '$2,500'), whenOffered: true, emptyNote: 'GEICO left basic personal injury protection empty: pick it yourself.' },
+        onlyNote: 'GEICO offers medical payments limits here, and TNI prefers medical payments to PIP: pick a limit yourself.',
+        unofferedNote: (r) => (florida(r) ? null : 'GEICO lists no medical payments choice here: check it yourself.') },
+      { q: 'BasicPip', ask: 'Basic Personal Injury Protection', control: 'select', name: 'Basic personal injury protection (TNI: $2,500 where medical payments offers no limit; FL: as GEICO has it)', kind: 'choice',
+        ignore: florida, source: (r) => (florida(r) ? null : 'standard'), value: (r) => (florida(r) ? null : '$2,500'),
+        onlyOption: (r) => (florida(r) ? null : { path: 'geico.qMedicalPayments', choices: ['Not Included'] }),
+        onlyNote: 'GEICO offers medical payments limits here, which TNI takes instead of PIP: pick basic personal injury protection yourself.',
+        unofferedNote: 'GEICO doesn\'t offer $2,500 basic personal injury protection here: pick a PIP limit yourself.',
+        emptyNote: (r) => (florida(r) ? 'GEICO left basic personal injury protection empty: pick it yourself.' : null) },
       { q: 'PipOptions', ask: 'PIP Options', control: 'select', name: 'PIP options', ...pipKept('the PIP options') },
       { q: 'ExcludedWorkLoss', ask: 'Excluded Work Loss', control: 'select', name: 'Excluded work loss', ...pipKept('excluded work loss') },
       // A vehicle's coverage rows: its year, make and model name them (scope 'vehicle'). TNI's

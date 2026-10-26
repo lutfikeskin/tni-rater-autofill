@@ -8199,7 +8199,7 @@ test('a helper\'s reminder has a Mark done that marks the helper done for the ta
 
 // The maintainer, 2026-10-26: "Save the unfinished recording" said "Couldn't open it: A requested
 // file or directory could not be found", and the button stayed. Its recording was gone from the
-// browser (saved or discarded by another panel). Said in words, and the button drawn again.
+// browser (saved by another panel). Said in words, and the button drawn again.
 test('an unfinished recording already gone is said so, and the button is drawn again', async () => {
   const said = [];
   let redrawn = 0;
@@ -8208,7 +8208,7 @@ test('an unfinished recording already gone is said so, and the button is drawn a
     saveRecording: async () => {}, RecordingStore: { reopen: async () => { throw gone; } } };
   vm.runInNewContext(extractFunction('recoverRecording'), context);
   await context.recoverRecording();
-  assert.deepEqual([said, redrawn], [['That recording is no longer in this browser: another panel already saved or discarded it.'], 1]);
+  assert.deepEqual([said, redrawn], [['That recording is no longer in this browser: another panel already saved it.'], 1]);
   context.RecordingStore.reopen = async () => { throw new Error('disk full'); };
   await context.recoverRecording();
   assert.deepEqual([said[1], redrawn], ['Couldn\'t open it: disk full', 2]);
