@@ -142,7 +142,6 @@ const NOT_MAPPED = {
     'operations.usesEld': 'not asked on the Business Auto application',
     'operations.eldBrand': 'not asked on the Business Auto application',
     'operations.needSr22': 'not asked on the Business Auto application',
-    'operations.hazPlacard': 'AmWINS asks about transporting hazardous material (operations.hazmat)',
     'operations.movingState': 'not asked on the Business Auto application',
     'operations.teamDriving': 'on the intake since 2026-10-02; no AmWINS question for it has been mapped',
     'operations.canadaLoads': 'on the intake since 2026-10; no AmWINS question for it has been mapped',
@@ -292,6 +291,63 @@ test('AmWINS prior loss preserves unknown claims and explicit Yes / No', () => {
     assert.equal(loss.note, null);
     assert.equal(loss.manualOnly, false);
     assert.equal(loss.source, 'derived');
+  }
+});
+
+// TNI, 2026-10-26, W44-32 ("Hazmat is always no, if its not specifically selected"; W43-34 extended
+// to AmWINS): the intake's answer; blank is No, unless the intake points to hazardous freight, which
+// stays the agent's with the reason (the maintainer kept that case the agent's).
+test('AmWINS transporting hazardous material: the intake\'s answer; blank is TNI\'s No unless the intake points to hazardous freight', () => {
+  const hazmat = (changes) => named(buildPlan(with_(changes), amwins, {}), /^Hazardous material/);
+  const got = (s) => [s.value, s.source, s.standard, s.manualOnly, s.note ?? null];
+  // An explicit answer stays the intake's, whatever they haul.
+  assert.deepEqual(got(hazmat({})), [false, 'intake', false, false, null], 'explicit No');
+  assert.deepEqual(got(hazmat({ 'operations.hazmat': true })), [true, 'intake', false, false, null], 'explicit Yes');
+  assert.deepEqual(got(hazmat({ 'operations.whatHaul': 'Fuel and propane tanks' })), [false, 'intake', false, false, null], 'explicit No with fuel named');
+  assert.deepEqual(got(hazmat({ 'operations.hazmat': true, 'operations.hazPlacard': false })), [true, 'intake', false, false, null], 'explicit Yes, no placard');
+  // Blank, nothing pointing to hazardous freight: TNI's standard No.
+  for (const whatHaul of ['General freight', 'Non-hazardous general freight', 'Dry goods, no hazmat', 'Furniture', null]) {
+    for (const blank of [null, undefined]) {
+      assert.deepEqual(got(hazmat({ 'operations.hazmat': blank, 'operations.whatHaul': whatHaul })), [false, 'standard', true, false, null], `${blank} / ${whatHaul}`);
+    }
+  }
+  assert.deepEqual(got(hazmat({ 'operations.hazmat': null, 'operations.hazPlacard': null })), [false, 'standard', true, false, null], 'placard blank too');
+  assert.equal(hazmat({ 'operations.hazmat': null }).path, 'operations.hazmat', 'still linked to the intake answer');
+  // Blank, but what they haul names something that may be hazardous (Progressive's HAZ_HAUL): the agent's, with what they haul quoted.
+  for (const whatHaul of ['Fuel and propane tanks', 'Industrial chemicals', 'Diesel fuel', 'Hazmat loads', 'Lithium batteries']) {
+    const step = hazmat({ 'operations.hazmat': null, 'operations.whatHaul': whatHaul });
+    agentsNote(step);
+    assert.deepEqual([step.source, step.standard, step.manualOnly], ['fact', false, true], whatHaul);
+    assert.ok(step.note.includes(`"${whatHaul}"`), step.note);
+  }
+  // Blank, with the intake's placard Yes, or a line of its notes naming hazardous freight: the agent's too.
+  const placard = hazmat({ 'operations.hazmat': null, 'operations.hazPlacard': true });
+  agentsNote(placard);
+  assert.deepEqual([placard.source, placard.manualOnly], ['fact', true]);
+  assert.match(placard.note, /placard/);
+  const notes = hazmat({ 'operations.hazmat': null, 'claims.notes': 'Hauls propane cylinders on some routes' });
+  agentsNote(notes);
+  assert.match(notes.note, /"Hauls propane cylinders on some routes"/);
+  // A standard: a check item in review mode (a class the rules weren't written for); the intake's answer isn't.
+  assert.match(hazmat({ 'operations.hazmat': null, 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' }).warn ?? '', /Review mode/);
+  assert.equal(hazmat({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel' }).warn ?? null, null);
+});
+
+// The same decision on every carrier's hazmat question: Progressive's and GEICO's placard (2026-10-19,
+// W43-34) and AmWINS' transporting hazardous material (W44-32).
+test('hazmat on every carrier that asks it: the intake\'s answer; blank is No unless the intake points to hazardous freight', () => {
+  const QUESTIONS = [
+    [progressive, (p) => byQ(p, '2F6'), 'operations.hazPlacard'],
+    [geico, (p) => p.find((s) => s.field === 'GiveAnyVehicleNeedHazardousMaterialPlacardYesNo'), 'operations.hazPlacard'],
+    [amwins, (p) => named(p, /^Hazardous material/), 'operations.hazmat'],
+  ];
+  for (const [carrier, find, path] of QUESTIONS) {
+    const step = (changes) => find(buildPlan(with_({ 'operations.hazmat': null, 'operations.hazPlacard': null, ...changes }), carrier, {}));
+    const got = (s) => [s.value, s.source];
+    assert.deepEqual(got(step({})), [false, 'standard'], `${carrier.id}: blank, general freight`);
+    assert.deepEqual(got(step({ [path]: true })), [true, 'intake'], `${carrier.id}: the intake's Yes`);
+    assert.deepEqual(got(step({ [path]: false, 'operations.whatHaul': 'Propane' })), [false, 'intake'], `${carrier.id}: the intake's No`);
+    for (const whatHaul of ['Fuel and propane tanks', 'Industrial chemicals']) agentsNote(step({ 'operations.whatHaul': whatHaul }));
   }
 });
 

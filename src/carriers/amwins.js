@@ -47,7 +47,7 @@
 //   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred.
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
-import { owner, ownerDobNote } from './progressive.js';
+import { owner, ownerDobNote, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, otherNotes } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
@@ -201,6 +201,23 @@ const UNDERWRITING_NO = [
 ];
 
 const filings = (r) => (r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
+
+// Transporting hazardous material (TNI, 2026-10-26, W44-32), the maintainer: "Hazmat is always no,
+// if its not specifically selected" (GEICO's W43-34 rule): the intake's Yes or No; blank is No (standard),
+// unless the intake points to hazardous freight: its placard answer is Yes, or what they haul or a
+// line of its notes names something that may be hazardous (Progressive's HAZ_HAUL: fuel, propane,
+// chemicals…; "non-hazardous" and "no hazmat" don't count). Then it's the agent's, with the reason.
+const hazNotesLine = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => HAZ_HAUL.test(s))?.slice(0, 80) ?? null;
+const hazmatNote = (r) => {
+  if (typeof r.operations.hazmat === 'boolean') return null;
+  if (r.operations.hazPlacard === true) return 'The intake says a hazardous material placard is required but doesn\'t say whether they haul hazardous material: answer it yourself.';
+  const what = String(r.operations.whatHaul ?? '').trim();
+  if (HAZ_HAUL.test(what)) return `What they haul ("${what.slice(0, 60)}") may be hazardous material, but the intake doesn't answer the hazmat question: answer it yourself.`;
+  const line = hazNotesLine(r);
+  return line ? `The intake doesn't answer the hazmat question, and its notes say "${line}": answer it yourself.` : null;
+};
+const hazmat = (r) => (typeof r.operations.hazmat === 'boolean' ? r.operations.hazmat : hazmatNote(r) ? null : false);
+const hazmatSource = (r) => (typeof r.operations.hazmat === 'boolean' ? 'intake' : hazmatNote(r) ? 'fact' : 'standard');
 
 // Radius bands: "< 50 MILES", "51 - 100 MILES", "101- 200 MILES", "201 + MILES". Unlimited / long
 // haul is the top band.
@@ -473,13 +490,15 @@ export const amwins = {
 
     // --- Underwriting questions --------------------------------------------------------------------
     // TNI answers this section No (2026-10-09), also when the intake reports claims or leased
-    // vehicles; hazardous material is the intake's answer.
+    // vehicles; hazardous material is the intake's answer, and blank is No unless the intake points
+    // to hazardous freight (hazmat above; TNI, 2026-10-26, W44-32).
     { name: 'Vehicles not owned (standard: No)', label: '^any vehicle not owned$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Vehicles leased to others (standard: No)', label: '^vehicle leased$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'MVR verification (standard: No)', label: '^mvr verification$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Owned unscheduled vehicles (standard: No)', label: '^owned unscheduled vehicle$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Convictions / moving violations (standard: No)', label: '^convictions moving violations$', kind: 'bool', source: 'standard', value: () => false },
-    { name: 'Hazardous material', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat' },
+    { name: 'Hazardous material (standard: No unless the intake says otherwise)', label: '^transporting hazardous material$', kind: 'bool', path: 'operations.hazmat',
+      source: hazmatSource, value: hazmat, note: hazmatNote },
     ...UNDERWRITING_NO.map(/** @returns {CarrierRule} */ (q) => ({ name: `Underwriting: ${q.replace(/[?\\]/g, '')} (standard: No)`, label: `^${q}$`, kind: 'bool', source: 'standard', value: () => false })),
     // Yes again after "Default all answers to No".
     { name: 'Other topics to disclose (standard: Yes)', label: '^other topic$', kind: 'bool', source: 'standard', value: () => true, replace: true },
