@@ -230,11 +230,27 @@ export const NTL_FORM_MESSAGE = `Auto liability is Non-Trucking on the intake: N
 // carrier, which covers the cargo, so the agent confirms it with the client. Every carrier.
 export const ntlWithCargo = (record) => record?.coverage?.ntl === true && record?.coverage?.cargo === true;
 export const NTL_CARGO_MESSAGE = 'Non-trucking liability (NTL) and cargo coverage are both asked for. An NTL client is leased on to a motor carrier, which usually covers the cargo: confirm with the client whether they want cargo, and set Cargo coverage to No if not.';
+// NTL mentioned in the claims box or the notes (or flagged by Luna, claims.aiNtl) and not answered
+// yet, Yes or No: a mention is not a request, the agent decides on the Intake step. Every carrier.
+export const ntlUndecided = (record) => record?.coverage?.ntl == null && (!!ntlMention(intakeNotes(record)) || record?.claims?.aiNtl === true);
+// NTL and primary auto liability (auto liability Yes) both asked for.
+export const ntlWithPrimary = (record) => record?.coverage?.ntl === true && /^\s*yes\s*$/i.test(String(record?.coverage?.autoLiability ?? ''));
 // An NTL quote, as TNI's USDOT and filings answers read it (TNI, 2026-10-26, W44-28: "US DOT is not
 // added and filings not added if its NTL, in every case"): NTL asked for, with or without cargo or
-// general liability. NTL with primary auto liability asked for too (auto liability Yes) isn't
-// settled: its USDOT and filings are filled as on any quote. Every carrier.
-export const ntlNoDotFilings = (record) => record?.coverage?.ntl === true && !/^\s*yes\s*$/i.test(String(record?.coverage?.autoLiability ?? ''));
+// general liability, and without primary auto liability (below). Every carrier.
+export const ntlNoDotFilings = (record) => record?.coverage?.ntl === true && !ntlWithPrimary(record);
+// (TNI, 2026-10-26: answer to PR question) NTL with primary auto liability too is an intake check
+// naming the conflict (`coverage.ntl-primary`), and on every carrier its USDOT and filings questions
+// are the agent's: no answer, with the note below.
+export const NTL_PRIMARY_MESSAGE = 'Non-trucking liability (NTL) and primary auto liability (auto liability Yes) are both asked for. TNI adds no USDOT number and no filings on an NTL quote alone: confirm with the client which one they want (Non-trucking liability No for primary liability, or auto liability Non-Trucking for NTL alone). Until then the USDOT and filings questions are yours on every carrier.';
+// (TNI, 2026-10-26: answers to PR questions) Why the carriers' USDOT and filings questions are left
+// to the agent, or null: NTL with primary auto liability (the agent's), or NTL mentioned and not
+// answered yet (they wait for the answer; once it is Yes or No, the next fill answers them).
+export const ntlDotFilingsHold = (record) => (ntlWithPrimary(record)
+  ? 'Non-trucking liability (NTL) and primary auto liability are both asked for, and TNI adds no USDOT number and no filings on an NTL quote alone: answer this yourself.'
+  : ntlUndecided(record)
+    ? 'The claims box or notes mention non-trucking liability (NTL), not answered yet: set it to Yes or No on the Intake step first, then fill this page again (TNI adds no USDOT number and no filings on an NTL quote).'
+    : null);
 // The intake's info item when an NTL intake asks for filings or gives a USDOT number (coverage.ntl-filings).
 export const ntlFilingsMessage = (record) => `Non-trucking liability (NTL) quote: TNI adds no USDOT number and no filings on an NTL quote (TNI, 2026-10-26), so ${record?.operations?.filingsRequired === true
   ? `the carriers' filings questions are answered No although the intake asks for filings${record?.applicant?.dot ? ', and the intake\'s USDOT number isn\'t entered' : ''}.`
@@ -628,9 +644,12 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   else if (radius.kind === 'unit') check('radius.unit', 'operations.radiusMiles', `Radius is "${ops.radius}", not in miles. Convert it and enter the miles.`);
   else if (radius.kind === 'text') check('radius.not-miles', 'operations.radius', `Radius is "${ops.radius}", not a number of miles. Raters usually want miles or a band (e.g. 500+).`);
   if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.');
-  if (ops.filingsRequired && !ops.filingsWhich) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.');
+  // (TNI, 2026-10-26: answer to PR question) Neither check on an NTL quote, which gets no filings:
+  // the `coverage.ntl-filings` info item below says why the carriers answer No instead.
+  const ntlQuote = ntlNoDotFilings(record);
+  if (ops.filingsRequired && !ops.filingsWhich && !ntlQuote) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.');
   // Filings are made under a USDOT or MC number (the maintainer, 2026-10-26: a wrong intake).
-  if (ops.filingsRequired === true && !record.applicant.dot && !record.applicant.mc) {
+  if (ops.filingsRequired === true && !record.applicant.dot && !record.applicant.mc && !ntlQuote) {
     check('filings.no-number', 'applicant.dot', `Needs filings but no USDOT or MC number is given${record.applicant.mcDotWithin60Days === true ? ' (the client says they will have one within 60 days)' : ''}. Filings are made under a number: check with the client.`);
   }
   if (ops.hazmat) check('hazmat.yes', 'operations.hazmat', 'Hauls hazmat, tobacco or prescription drugs — confirm which, most raters treat these differently.');
@@ -703,6 +722,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (record.coverage.ntl === true) info('coverage.ntl-form', 'coverage.ntl', NTL_FORM_MESSAGE);
   else if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
   if (ntlWithCargo(record)) check('coverage.ntl-cargo', 'coverage.cargo', NTL_CARGO_MESSAGE);
+  // NTL and primary auto liability both asked for (TNI, 2026-10-26: answer to PR question). Today's
+  // form can't ask for both (Non-Trucking is its auto liability answer): the agent's NTL Yes with
+  // auto liability Yes can, and the panel adds the check then (sidepanel ntlPrimaryEdited).
+  if (ntlWithPrimary(record)) check('coverage.ntl-primary', 'coverage.autoLiability', NTL_PRIMARY_MESSAGE);
   // An NTL quote gets no USDOT number and no filings (W44-28): said where the intake asks otherwise.
   if (ntlNoDotFilings(record) && (ops.filingsRequired === true || record.applicant.dot)) {
     info('coverage.ntl-filings', ops.filingsRequired === true ? 'operations.filingsRequired' : 'applicant.dot', ntlFilingsMessage(record));

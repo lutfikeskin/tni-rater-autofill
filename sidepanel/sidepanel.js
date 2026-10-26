@@ -1,7 +1,7 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../src/intake.js';
 import { sourcePlace } from '../src/intake-source.js';
-import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE, ntlWithPrimary, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
@@ -1320,6 +1320,7 @@ async function agentEdit(path, after, kind) {
   const notesEdit = path === 'claims.text' || path === 'notes.text';
   if (notesEdit) claimsTextEdited(state.intake);
   if (['coverage.ntl', 'coverage.autoLiability'].includes(path)) ntlAnswerEdited(state.intake, path);
+  if (['coverage.ntl', 'coverage.autoLiability'].includes(path)) ntlPrimaryEdited(state.intake);
   if (['coverage.ntl', 'coverage.cargo', 'coverage.autoLiability'].includes(path)) { ntlCargoEdited(state.intake); await save(); render(); }
   if (notesEdit || (path.startsWith('coverage.') && !['coverage.ntl', 'coverage.gl', 'coverage.hasGl'].includes(path))) reviewClaimsBox({ retry: true });
   if (/^drivers\[\d+\]\.first$/.test(path)) reviewDriverGender({ retry: true });
@@ -4907,6 +4908,24 @@ function ntlCargoEdited(intake) {
     intake.done = intake.done.filter((d) => d !== i);
   } else if (!both && i >= 0 && intake.warnings[i].level === 'check') {
     intake.warnings[i] = { code: 'coverage.ntl-cargo', path: 'coverage.cargo', level: 'info', msg: 'Non-trucking liability and cargo coverage are no longer both asked for.' };
+  }
+}
+
+// NTL and primary auto liability (auto liability Yes) both asked for after the agent's edit of either
+// (TNI, 2026-10-26: answer to PR question): the intake's check naming the conflict is asked (again,
+// unchecked, when it was retired), or retired to a note when they no longer are. Today's form can't
+// ask for both (Non-Trucking is its auto liability answer), so the agent's NTL Yes with auto
+// liability Yes is where it arises. Kept by position, as the checked marks are.
+function ntlPrimaryEdited(intake) {
+  const both = ntlWithPrimary(intake.record);
+  const i = intake.warnings.findIndex((w) => w.code === 'coverage.ntl-primary');
+  const ask = { code: 'coverage.ntl-primary', path: 'coverage.autoLiability', level: 'check', msg: NTL_PRIMARY_MESSAGE };
+  if (both && i < 0) intake.warnings.push(ask);
+  else if (both && intake.warnings[i].level !== 'check') {
+    intake.warnings[i] = ask;
+    intake.done = intake.done.filter((d) => d !== i);
+  } else if (!both && i >= 0 && intake.warnings[i].level === 'check') {
+    intake.warnings[i] = { code: 'coverage.ntl-primary', path: 'coverage.autoLiability', level: 'info', msg: 'Non-trucking liability and primary auto liability are no longer both asked for.' };
   }
 }
 

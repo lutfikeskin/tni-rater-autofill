@@ -1227,8 +1227,8 @@ test('an NTL quote: no USDOT number and no filings on GEICO (W44-28)', () => {
     assert.deepEqual(got(one(p, 'State or federal filing')), ['Neither', 'standard', true, null], what);
     for (const name of ['Federal liability filing', 'State filing']) assert.equal(one(p, name).ignore, true, `${name}: never ticked ${what}`);
   }
-  // Not an NTL quote, or NTL with primary auto liability too (not settled): as before.
-  for (const changes of [{}, { 'coverage.ntl': false }, { ...NTL, 'coverage.autoLiability': 'Yes' }]) {
+  // Not an NTL quote: as before. (NTL with primary auto liability too: the agent's, the next test.)
+  for (const changes of [{}, { 'coverage.ntl': false }]) {
     const p = plan(with_(changes));
     const what = JSON.stringify(changes);
     assert.deepEqual(got(one(p, 'Has a USDOT number')), ['Yes', 'derived', false, null], what);
@@ -1251,9 +1251,47 @@ test('an NTL quote: no USDOT number and no filings on GEICO (W44-28)', () => {
   assert.match(note(with_(NTL)), /TNI adds no USDOT number/);
   assert.match(note(with_(NTL)), /yours/);
   assert.equal(note(intake()), 'GEICO asks for a USDOT number; the intake\'s is "1234567". Add USDOT Number or Skip is yours.');
-  assert.equal(note(with_({ ...NTL, 'coverage.autoLiability': 'Yes' })), note(intake()));
   assert.equal(note(with_({ 'applicant.dot': null })), 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.');
   assert.equal(note(null), 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.');
+});
+
+// (TNI, 2026-10-26: answers to PR questions, #192) NTL with primary auto liability too (auto
+// liability Yes): the USDOT and filings questions are the agent's, with a note naming the conflict.
+// NTL mentioned in the claims box or the notes (or flagged by Luna) and not answered yet: they wait
+// for the answer, with a note to answer NTL on the Intake step first. Answered, the PR's rules.
+test('NTL with primary auto liability, or NTL mentioned and not answered: the USDOT and filings questions are the agent\'s on GEICO', () => {
+  const FILINGS = 'Filings required (TNI: No unless the intake says otherwise)';
+  const USDOT_BOXES = ['USDOT #', 'Start quote: USDOT number', 'Start quote: USDOT number (Search Products)'];
+  const got = (s) => [s.value, s.source, s.standard, s.note ?? null];
+  const held = [[{ 'coverage.ntl': true, 'coverage.autoLiability': 'Yes' }, /primary auto liability/], [{ 'claims.text': 'No\nAsked about NTL too' }, /Intake step/],
+    [{ 'notes.text': 'Client may want bobtail' }, /Intake step/], [{ 'claims.aiNtl': true }, /Intake step/], [{ 'notes.text': 'Needs NTL', 'coverage.autoLiability': null }, /Intake step/]];
+  for (const [changes, why] of held) {
+    const p = plan(with_(changes));
+    const what = JSON.stringify(changes);
+    for (const name of ['Has a USDOT number', FILINGS, 'State or federal filing', 'Federal liability filing']) {
+      const s = one(p, name);
+      assert.deepEqual([s.value, s.source, s.standard, s.manualOnly], [null, 'fact', false, true], `${name}: the agent's ${what}`);
+      assert.match(s.note ?? '', why, `${name}: the note says why ${what}`);
+    }
+    for (const name of USDOT_BOXES) {
+      const s = one(p, name);
+      assert.deepEqual([s.value, s.ignore], [null, false], `${name}: not typed ${what}`);
+      assert.match(s.note ?? '', why, `${name} ${what}`);
+    }
+    // The Add USDOT Number screen: still the agent's, its note says why.
+    assert.match(geico.stopButtons['USDOT Number'].note(with_(changes)), why, what);
+  }
+  // Answered No (with the mention still there): as on any quote. Answered Yes (Non-Trucking): the NTL quote's.
+  const no = plan(with_({ 'notes.text': 'Needs NTL', 'coverage.ntl': false }));
+  assert.deepEqual(got(one(no, 'Has a USDOT number')), ['Yes', 'derived', false, null]);
+  assert.deepEqual(got(one(no, FILINGS)), [true, 'intake', false, null]);
+  for (const name of USDOT_BOXES) assert.deepEqual([one(no, name).ignore, one(no, name).note], [false, null], name);
+  const yes = plan(with_({ 'notes.text': 'Needs NTL', 'coverage.ntl': true, 'coverage.autoLiability': 'Non-Trucking' }));
+  assert.deepEqual(got(one(yes, 'Has a USDOT number')), ['No', 'standard', true, null]);
+  assert.deepEqual(got(one(yes, FILINGS)), [false, 'standard', true, null]);
+  // Neither NTL nor a mention: unchanged, the stop screen's note too.
+  assert.deepEqual(got(one(plan(intake()), 'Has a USDOT number')), ['Yes', 'derived', false, null]);
+  assert.equal(geico.stopButtons['USDOT Number'].note(with_({ 'notes.text': 'Needs NTL', 'coverage.ntl': false })), 'GEICO asks for a USDOT number; the intake\'s is "1234567". Add USDOT Number or Skip is yours.');
 });
 
 // The same live run: in Texas with a CSL liability or NTL, GEICO lists UM in CSL only, so the split
