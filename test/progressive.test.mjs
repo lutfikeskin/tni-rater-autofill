@@ -1042,6 +1042,107 @@ test('an NTL quote on Rates: NTL added first, liability Not selected, lease Yes,
   for (const q of ['1DF0', '1DF2']) assert.equal(at(q).ignore, false, q);
 });
 
+// The maintainer, 2026-10-26 (W44-28): "US DOT is not added and filings not added if its NTL, in
+// every case". W44-07 (OH): the intake asked for NTL $1M and federal filings; with the federal
+// filing ticked Progressive offered only $750k to $2M CSL primary liability, and NTL couldn't be rated.
+const ntlRecord = (changes = {}) => {
+  const r = baseRecord();
+  Object.assign(r.applicant, { dot: '1234567', mc: '765432' });
+  Object.assign(r.coverage, { ntl: true, autoLiability: 'Non-Trucking' }, changes);
+  return r;
+};
+const gave = (s) => [s.value, s.source, s.standard, s.note ?? null];
+
+test('an NTL quote on Progressive: no USDOT number, no Verify USDOT and no filings, whatever the intake asks (W44-28)', () => {
+  const plan = (r) => buildPlan(r, progressive, {});
+  const federal = (p) => p.find((s) => s.re === '^federal( liability)?( filing)?$');
+  const NO = 'No - and the customer will not have a USDOT number';
+  // With cargo or general liability too it is still an NTL quote; NTL the agent set with auto liability blank too.
+  for (const r of [ntlRecord(), ntlRecord({ cargo: false }), ntlRecord({ cargo: false, gl: true }), ntlRecord({ autoLiability: null })]) {
+    const p = plan(r);
+    const what = JSON.stringify(r.coverage);
+    assert.deepEqual(gave(byQ(p, '1ED')), [NO, 'standard', true, null], `"Does the customer have a USDOT Number?" ${what}`);
+    assert.equal(byQ(p, '1F3').ignore, true, `the USDOT number box: never typed ${what}`);
+    assert.ok(!p.some((s) => s.baseAction === 'verifyDot'), `Verify USDOT: never clicked ${what}`);
+    assert.deepEqual(gave(byQ(p, 'CA')), [false, 'standard', true, null], `"Are state or federal filings required?" ${what}`);
+    assert.deepEqual(gave(federal(p)), [false, 'standard', true, null], `the Federal filing: never ticked ${what}`);
+    assert.equal(p.find((s) => s.re === '^state( filing)?$').ignore, true, 'the State filing: left as the page has it, as on any quote');
+  }
+  // Blank filings with an SR-22 needed (otherwise the agent's), and no USDOT number with one coming
+  // within 60 days (otherwise "Not Yet"): No too, "in every case".
+  const sr22 = ntlRecord();
+  Object.assign(sr22.operations, { filingsRequired: null, filingsWhich: null, needSr22: true });
+  assert.deepEqual(gave(byQ(plan(sr22), 'CA')), [false, 'standard', true, null]);
+  const soon = ntlRecord();
+  Object.assign(soon.applicant, { dot: null, mc: null, mcDotWithin60Days: true });
+  assert.deepEqual(gave(byQ(plan(soon), '1ED')), [NO, 'standard', true, null]);
+  // Not an NTL quote, or NTL with primary auto liability too (not settled): as before.
+  for (const r of [ntlRecord({ ntl: null, autoLiability: 'Yes' }), ntlRecord({ ntl: false, autoLiability: 'Yes' }), ntlRecord({ autoLiability: 'Yes' })]) {
+    const p = plan(r);
+    const what = JSON.stringify(r.coverage);
+    assert.deepEqual(gave(byQ(p, '1ED')), ['Yes - the customer has a USDOT number', 'derived', false, null], what);
+    assert.equal(byQ(p, '1F3').ignore, false, what);
+    assert.ok(p.some((s) => s.baseAction === 'verifyDot'), what);
+    assert.deepEqual(gave(byQ(p, 'CA')), [true, 'derived', false, null], what);
+    assert.deepEqual(gave(federal(p)), [true, 'derived', false, null], what);
+  }
+  // An NTL intake with no USDOT number, none coming and no filings: nothing to leave out, nothing changes.
+  const none = (changes) => {
+    const r = ntlRecord(changes);
+    Object.assign(r.applicant, { dot: null, mc: null, mcDotWithin60Days: false });
+    Object.assign(r.operations, { filingsRequired: false, filingsWhich: null });
+    return plan(r);
+  };
+  const [withNtl, without] = [none({}), none({ ntl: null, autoLiability: 'Yes' })];
+  for (const q of ['1ED', '1F3', 'CA', '21E', '20F', '22F', '277', '230']) {
+    const [a, b] = [byQ(withNtl, q), byQ(without, q)];
+    assert.deepEqual([a.value, a.source, a.standard, a.ignore, a.note], [b.value, b.source, b.standard, b.ignore, b.note], q);
+  }
+  assert.deepEqual([...gave(federal(withNtl)), federal(withNtl).ignore], [...gave(federal(without)), federal(without).ignore]);
+});
+
+// The same decision on AmWINS: "Does the insured have a DOT or MC number?" (NONE / DOT / MC boxes)
+// and Filing required.
+test('an NTL quote on AmWINS: the DOT box unticked, no DOT number and Filing required No (W44-28)', () => {
+  const plan = (r) => buildPlan(r, amwins, {});
+  const sel = (p, selector) => p.find((s) => s.selector === selector);
+  const filing = (p) => p.find((s) => s.re === '^filling required$');
+  const federal = (p) => p.find((s) => s.re === '^federal bmc91$');
+  const dotOnly = ntlRecord();
+  dotOnly.applicant.mc = null;
+  for (const r of [dotOnly, ntlRecord({ cargo: false }), ntlRecord({ autoLiability: null })]) {
+    const p = plan(r);
+    const what = JSON.stringify([r.applicant.mc, r.coverage]);
+    assert.deepEqual(gave(filing(p)), [false, 'standard', true, null], `Filing required ${what}`);
+    assert.deepEqual(gave(sel(p, '#hasDotNumber')), [false, 'standard', true, null], `the DOT box ${what}`);
+    assert.equal(sel(p, '#dotNumber').value, null, `the DOT number: never typed ${what}`);
+    assert.equal(federal(p).value, null, `no federal filing ticked ${what}`);
+  }
+  // With no MC number either, NONE is ticked (the DOT isn't added); an MC number stays the intake's.
+  assert.deepEqual(gave(sel(plan(dotOnly), '#noNumber')), [true, 'standard', true, null]);
+  const mc = plan(ntlRecord());
+  assert.deepEqual([sel(mc, '#hasMcNumber').value, sel(mc, '#mcNumber').value, sel(mc, '#noNumber').value, sel(mc, '#noNumber').source], [true, '765432', false, 'derived']);
+  // Not an NTL quote, or NTL with primary auto liability too: as before.
+  for (const r of [ntlRecord({ ntl: null, autoLiability: 'Yes' }), ntlRecord({ autoLiability: 'Yes' })]) {
+    const p = plan(r);
+    assert.deepEqual(gave(filing(p)), [true, 'derived', false, null]);
+    assert.deepEqual([sel(p, '#hasDotNumber').value, sel(p, '#dotNumber').value, sel(p, '#noNumber').value], [true, '1234567', false]);
+    assert.equal(federal(p).value, true);
+  }
+  // An NTL intake with no DOT or MC number and no filings: nothing changes.
+  const none = (changes) => {
+    const r = ntlRecord(changes);
+    Object.assign(r.applicant, { dot: null, mc: null });
+    r.operations.filingsRequired = false;
+    return plan(r);
+  };
+  const [withNtl, without] = [none({}), none({ ntl: null, autoLiability: 'Yes' })];
+  for (const find of [filing, federal, (p) => sel(p, '#hasDotNumber'), (p) => sel(p, '#noNumber'), (p) => sel(p, '#dotNumber'), (p) => sel(p, '#hasMcNumber')]) {
+    const [a, b] = [find(withNtl), find(without)];
+    assert.deepEqual([a.value, a.source, a.standard, a.ignore, a.note], [b.value, b.source, b.standard, b.ignore, b.note], a.name);
+  }
+});
+
 // The maintainer, 2026-10-26: a blank CDL box on the intake means No (TNI's standard).
 test('a blank CDL on the intake is No on Add Driver, as TNI\'s standard', () => {
   const record = baseRecord();

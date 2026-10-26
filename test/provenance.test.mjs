@@ -52,6 +52,8 @@ const RECORDS = () => [
   with_({ 'operations.businessClass': 'Dump Truck', 'operations.whatHaul': 'Gravel', 'trailerInfo.ownership': null, 'drivers.0.maritalStatus': null, 'applicant.yearEstablished': null }),
   // General liability on the intake, no current insurance, no date of birth, a gender set by the agent.
   with_({ 'coverage.gl': true, priorInsurance: [], 'drivers.0.dob': null, 'drivers.0.gender': 'FEMALE' }),
+  // An NTL quote asking for filings, with a USDOT number: TNI's No to both (W44-28).
+  with_({ 'coverage.ntl': true, 'coverage.autoLiability': 'Non-Trucking' }),
 ];
 
 test('every rule that computes an answer declares a valid source', () => {
@@ -129,7 +131,6 @@ const NOT_MAPPED = {
     'trailerInfo.hitch': 'not asked by Progressive',
     'trailerInfo.interchange': 'trailer interchange is not mapped (no live quote has asked it)',
     'trailerInfo.interchangeLimit': 'trailer interchange is not mapped (no live quote has asked it)',
-    'coverage.autoLiability': 'liability is always quoted; only its limit is entered',
   },
   amwins: {
     'applicant.mcDotWithin60Days': 'AmWINS asks for the numbers themselves (has DOT / has MC / no number)',
@@ -154,7 +155,6 @@ const NOT_MAPPED = {
     'trailerInfo.interchange': 'AmWINS has no trailer section',
     'trailerInfo.interchangeLimit': 'AmWINS has no trailer section',
     'trailerInfo.equipTrailer': 'AmWINS has no trailer section',
-    'coverage.autoLiability': 'liability is always quoted; only its CSL limit is entered',
     'coverage.gl': 'AmWINS Business Auto has no general liability section',
     'coverage.glLimit': 'AmWINS Business Auto has no general liability section',
     'coverage.reeferBreakdown': 'no reefer breakdown question on the Business Auto application',
@@ -188,12 +188,14 @@ const READ_INDIRECTLY = {
     'claims.text': 'normalize.intakeNotes (an NTL mention in the claims box holds Rates)',
     'claims.notes': 'normalize.otherNotes (the defensive driver course, a claim the notes mention)',
     'notes.text': 'normalize.intakeNotes and otherNotes (NTL, the defensive driver course, a claim the notes mention)',
+    'coverage.autoLiability': 'normalize.ntlNoDotFilings (an NTL quote unless auto liability is Yes too: no USDOT number or filings); otherwise only the liability limit is entered',
   },
   amwins: {
     'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag)',
     'applicant.ownerDrives': 'owner() in progressive.js (the owner\'s driver row)',
     'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
     'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
+    'coverage.autoLiability': 'normalize.ntlNoDotFilings (an NTL quote unless auto liability is Yes too: no DOT number or filings); otherwise only the CSL limit is entered',
   },
   geico: {
     'applicant.applicationDate': 'util.priorPolicyExpired (current GEICO policy, current auto insurance, current GL)',

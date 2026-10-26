@@ -230,6 +230,15 @@ export const NTL_FORM_MESSAGE = `Auto liability is Non-Trucking on the intake: N
 // carrier, which covers the cargo, so the agent confirms it with the client. Every carrier.
 export const ntlWithCargo = (record) => record?.coverage?.ntl === true && record?.coverage?.cargo === true;
 export const NTL_CARGO_MESSAGE = 'Non-trucking liability (NTL) and cargo coverage are both asked for. An NTL client is leased on to a motor carrier, which usually covers the cargo: confirm with the client whether they want cargo, and set Cargo coverage to No if not.';
+// An NTL quote, as TNI's USDOT and filings answers read it (TNI, 2026-10-26, W44-28: "US DOT is not
+// added and filings not added if its NTL, in every case"): NTL asked for, with or without cargo or
+// general liability. NTL with primary auto liability asked for too (auto liability Yes) isn't
+// settled: its USDOT and filings are filled as on any quote. Every carrier.
+export const ntlNoDotFilings = (record) => record?.coverage?.ntl === true && !/^\s*yes\s*$/i.test(String(record?.coverage?.autoLiability ?? ''));
+// The intake's info item when an NTL intake asks for filings or gives a USDOT number (coverage.ntl-filings).
+export const ntlFilingsMessage = (record) => `Non-trucking liability (NTL) quote: TNI adds no USDOT number and no filings on an NTL quote (TNI, 2026-10-26), so ${record?.operations?.filingsRequired === true
+  ? `the carriers' filings questions are answered No although the intake asks for filings${record?.applicant?.dot ? ', and the intake\'s USDOT number isn\'t entered' : ''}.`
+  : 'the intake\'s USDOT number isn\'t entered, and whether the client has one is answered No.'}`;
 
 // Words in the claims notes that answer the ownership question. Only the form's three answers
 // are taken as the answer; the others count as mentions, so "on a lease, truck owned" is not
@@ -694,6 +703,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (record.coverage.ntl === true) info('coverage.ntl-form', 'coverage.ntl', NTL_FORM_MESSAGE);
   else if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
   if (ntlWithCargo(record)) check('coverage.ntl-cargo', 'coverage.cargo', NTL_CARGO_MESSAGE);
+  // An NTL quote gets no USDOT number and no filings (W44-28): said where the intake asks otherwise.
+  if (ntlNoDotFilings(record) && (ops.filingsRequired === true || record.applicant.dot)) {
+    info('coverage.ntl-filings', ops.filingsRequired === true ? 'operations.filingsRequired' : 'applicant.dot', ntlFilingsMessage(record));
+  }
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
     check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.');
   }

@@ -48,7 +48,7 @@
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { owner, ownerDobNote } from './progressive.js';
-import { isLongHaul, otherNotes } from '../normalize.js';
+import { isLongHaul, otherNotes, ntlNoDotFilings } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -200,7 +200,14 @@ const UNDERWRITING_NO = [
   'recruiting method', 'covered by wc',
 ];
 
-const filings = (r) => (r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
+// An NTL quote gets no filings and no DOT number (TNI, 2026-10-26, W44-28: "US DOT is not added and
+// filings not added if its NTL, in every case"): Filing required No, the DOT box unticked and its
+// number never typed, NONE ticked when there is no MC number either; the intake's own No and an MC
+// number stay the intake's. The federal filings (shown after a Yes) are then never ticked.
+const filings = (r) => (ntlNoDotFilings(r) ? false : r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
+const filingsSource = (r) => (ntlNoDotFilings(r) && r.operations.filingsRequired !== false ? 'standard' : 'derived');
+const dot = (r) => (ntlNoDotFilings(r) ? null : r.applicant.dot);
+const dotSource = (r) => (ntlNoDotFilings(r) && r.applicant.dot ? 'standard' : 'derived');
 
 // Radius bands: "< 50 MILES", "51 - 100 MILES", "101- 200 MILES", "201 + MILES". Unlimited / long
 // haul is the top band.
@@ -383,11 +390,12 @@ export const amwins = {
     // template), in page order, visible or collapsed, up to six (live IL run: years 1 and 2 were
     // never filled and the agent set one by hand).
     ...Array.from({ length: 6 }, (_, n) => ({ selector: '#priorCarrierPanel .coveragePanel [data-id="carrierName"]', name: `Prior carrier ${n + 1} (standard: NO PRIOR)`, kind: 'choice', source: 'standard', value: () => 'NO PRIOR', hidden: true })),
-    { name: 'Filings required', label: '^filling required$', kind: 'bool', source: 'derived', value: filings },
-    { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.dot },
+    { name: 'Filings required', label: '^filling required$', kind: 'bool', source: filingsSource, value: filings },
+    // "Does the insured have a DOT or MC number?": the NONE, DOT and MC boxes.
+    { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', source: dotSource, value: (r) => !!dot(r) },
     { selector: '#hasMcNumber', name: 'Has an MC number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.mc },
-    { selector: '#noNumber', name: 'No DOT / MC number', kind: 'bool', source: 'derived', value: (r) => !r.applicant.dot && !r.applicant.mc },
-    { selector: '#dotNumber', name: 'DOT number', source: 'derived', value: (r) => digits(r.applicant.dot) },
+    { selector: '#noNumber', name: 'No DOT / MC number', kind: 'bool', source: (r) => (r.applicant.mc ? 'derived' : dotSource(r)), value: (r) => !dot(r) && !r.applicant.mc },
+    { selector: '#dotNumber', name: 'DOT number', source: 'derived', value: (r) => digits(dot(r)) },
     { selector: '#mcNumber', name: 'MC number', source: 'derived', value: (r) => digits(r.applicant.mc) },
     // Shown with Filing required Yes.
     { selector: '#howLongFederalOperatingAuthorityActive', name: 'Federal authority active for (years under own authority)', kind: 'choice', source: 'derived', value: authorityAge },

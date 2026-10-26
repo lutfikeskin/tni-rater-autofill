@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo } from '../src/normalize.js';
+import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo, ntlNoDotFilings } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance } from '../src/util.js';
@@ -887,6 +887,36 @@ test('NTL with cargo asked for is a check for the agent, on every carrier', () =
   }
   assert.equal(ntlWithCargo({ coverage: { ntl: true, cargo: true } }), true);
   assert.equal(ntlWithCargo({ coverage: { ntl: null, cargo: true } }), false, 'NTL only mentioned, not decided: no');
+});
+
+// The maintainer, 2026-10-26 (W44-28): "US DOT is not added and filings not added if its NTL, in
+// every case". An NTL intake asking for filings, or giving a USDOT number, says so (info): the
+// carriers' filings answers then differ from the intake on purpose.
+test('NTL with filings or a USDOT number on the intake: an info item says TNI adds neither', () => {
+  const today = { today: new Date('2026-10-26') };
+  const item = (changes) => normalizeIntake({ ...raw, ...changes }, today).warnings.find((x) => x.code === 'coverage.ntl-filings');
+  const filings = item({ auto_liability: 'Non-Trucking', fed_state_filings: 'Yes', dot_number: '1234567' });
+  assert.equal(filings?.level, 'info');
+  assert.equal(filings.path, 'operations.filingsRequired');
+  assert.match(filings.msg, /non-trucking liability/i);
+  assert.match(filings.msg, /no filings/i);
+  assert.match(filings.msg, /USDOT/);
+  // A USDOT number without filings: said on the number.
+  const dot = item({ auto_liability: 'Non-Trucking', fed_state_filings: 'No', dot_number: '1234567' });
+  assert.equal(dot?.level, 'info');
+  assert.equal(dot.path, 'applicant.dot');
+  assert.match(dot.msg, /USDOT/);
+  // Nothing to leave out (no USDOT, no filings), no NTL, or NTL with primary auto liability too
+  // (not settled: filled as before): nothing.
+  for (const changes of [{ auto_liability: 'Non-Trucking', fed_state_filings: 'No', dot_number: '' }, { auto_liability: 'Non-Trucking', fed_state_filings: '', dot_number: '' },
+    { auto_liability: 'Yes', fed_state_filings: 'Yes', dot_number: '1234567' }]) {
+    assert.equal(item(changes), undefined, JSON.stringify(changes));
+  }
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: true, autoLiability: 'Non-Trucking' } }), true);
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: true, autoLiability: null } }), true, 'NTL set by the agent, auto liability blank');
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: true, autoLiability: 'Yes' } }), false, 'NTL and primary auto liability: not settled');
+  assert.equal(ntlNoDotFilings({ coverage: { ntl: null, autoLiability: 'Non-Trucking' } }), false, 'NTL not set (the agent changed it): no');
+  assert.equal(ntlNoDotFilings(null), false);
 });
 
 // AmWINS has no NTL option the filler knows: TNI writes it in the disclosure details, the big box
