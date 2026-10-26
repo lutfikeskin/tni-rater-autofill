@@ -18,7 +18,7 @@
   // This build of the kit (stamped by scripts/package.mjs): one left in the page by another build,
   // from before an extension reload or update, is replaced rather than reused.
   const BUILD = 'source';
-  if (globalThis.__raterKit?.version === 89 && globalThis.__raterKit.build === BUILD) return;
+  if (globalThis.__raterKit?.version === 90 && globalThis.__raterKit.build === BUILD) return;
 
   // Private to this document: no VIN or reversible VIN-derived token leaves the page.
   // A carrier redraw keeps the acknowledgement; a new document requires another decision.
@@ -385,7 +385,13 @@
 
   // Wait until the page stops changing: not busy, every component it draws defined, and no new
   // nodes for `quietMs`. With `requests`, a check that holds while they are waited for (the fill
-  // not stopped), also none of its own requests finished for `quietMs`.
+  // not stopped), also none of its own requests finished for `quietMs`. The quiet time counts from
+  // when the wait begins: a page can change in ways no observer is told of (a spinner shown by its
+  // style, a shadow root drawn, a value a script sets), so the quiet it had before isn't counted
+  // (PR 178 tried that for a fill's first wait, and dropped it).
+  // The wait wakes when its quiet time would be over (60 ms apart while something else holds it:
+  // the page busy, a component undefined, a request), not every 60 ms: a 150 ms wait took 195 ms on
+  // average in the GEICO mock, a 400 ms one 444 ms.
   async function settle({ quietMs = 250, maxMs = 15000, requests = null } = {}) {
     let last = Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
@@ -395,11 +401,12 @@
     mo.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['checked', 'active-index'] });
     const start = Date.now();
     try {
-      await sleep(60);
       const requested = () => !!requestWatch && !!requests?.() && Date.now() - start < REQUESTS_MS && perfNow() - lastRequestEnd() < quietMs;
-      while (Date.now() - start < maxMs) {
-        if (!pageBusy() && Date.now() - last >= quietMs && !partsUndefined() && !requested()) return true;
-        await sleep(60);
+      for (let now = Date.now(); now - start < maxMs; now = Date.now()) {
+        if (mo.takeRecords?.().length) last = now;
+        const quietFor = now - last;
+        if (quietFor >= quietMs && !pageBusy() && !partsUndefined() && !requested()) return true;
+        await sleep(Math.max(1, Math.min(quietFor < quietMs ? quietMs - quietFor : 60, maxMs - (now - start))));
       }
       // Only components still not defined at the limit: the page itself is settled.
       return !pageBusy() && Date.now() - last >= quietMs;
@@ -3881,5 +3888,5 @@
       ...describe(c), current: c.kind === 'text' ? c.el.value : selectedText(c) }))]);
   }
 
-  globalThis.__raterKit = { version: 89, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
+  globalThis.__raterKit = { version: 90, build: BUILD, fill, progress, stop, answer, answerEdits, listed, unitList, unitListsNow, markKey, reveal, readBack, receipt, aiBanner, capture, clear, signature, decisionSnapshot, busy: pageBusy, step: stepKey, unitFormsNow };
 })();
