@@ -113,35 +113,88 @@ test('GEICO: no current insurance, an expired policy or another kind of policy s
   agents(geicoStep(none, GEICO.years));
 });
 
-test('years with the current insurer: 1-3 at least; a longer time the notes give is the agent\'s, quoted (W44-02, W44-29)', () => {
-  // IL: the notes say the policy started in December 2025. Still 1-3 years.
-  const il = intake(DATED, { additional_notes: 'Policy started in December 2025' }).record;
-  assert.deepEqual([geicoStep(il, GEICO.years).value, geicoStep(il, GEICO.years).source], ['1-3 Years', 'standard']);
-  assert.deepEqual([howLong(il).value, howLong(il).source], ['1 TO 2 YEARS', 'standard']);
-  for (const line of ['Insured with Synthetic Mutual for 6 years', 'Same insurance since 2019', 'Has had this policy for five years']) {
+// TNI, 2026-10-26 (answer to PR question 10): a longer time with the insurer the notes give picks
+// the carrier's matching band, the line quoted on the Intake step (prior.tenure); a time the
+// carrier's bands can't place in one of them stays the agent's. GEICO's bands: 1-3, 3-5, 5-10, 10+
+// Years; AmWINS': 1 TO 2, 2 TO 3, MORE THAN 3 YEARS. The sample intake is applied for on 09/15/2026.
+test('years with the current insurer: 1-3 at least; a longer time the notes give picks the carrier\'s band, quoted (W44-02, W44-29)', () => {
+  // IL: the notes say the policy started in December 2025. Still 1-3 years, and nothing to show.
+  const il = intake(DATED, { additional_notes: 'Policy started in December 2025' });
+  assert.deepEqual([geicoStep(il.record, GEICO.years).value, geicoStep(il.record, GEICO.years).source], ['1-3 Years', 'standard']);
+  assert.deepEqual([howLong(il.record).value, howLong(il.record).source], ['1 TO 2 YEARS', 'standard']);
+  assert.equal(il.warnings.find((w) => w.code === 'prior.tenure'), undefined);
+  for (const [line, geicoBand, amwinsBand] of [
+    ['Insured with Synthetic Mutual for 6 years', '5-10 Years', 'MORE THAN 3 YEARS'],
+    ['Same insurance since 2019', '5-10 Years', 'MORE THAN 3 YEARS'], // 6.7 to 7.7 years
+    ['Insured 4 years with Synthetic Mutual', '3-5 Years', 'MORE THAN 3 YEARS'],
+    ['With Synthetic Mutual 12 yrs, same policy', '10+ Years', 'MORE THAN 3 YEARS'],
+    ['Insured over 10 years with Synthetic Mutual', '10+ Years', 'MORE THAN 3 YEARS'],
+    ['Policy for almost 5 years', '3-5 Years', 'MORE THAN 3 YEARS'],
+    // Within GEICO's 1-3 years, past AmWINS' 1 TO 2.
+    ['Insured 2.5 years with Synthetic Mutual', '1-3 Years', '2 TO 3 YEARS'],
+    ['Insured 3 years with Synthetic Mutual', '1-3 Years', '2 TO 3 YEARS'],
+  ]) {
+    const { record: r, warnings } = intake(DATED, { additional_notes: line });
+    const years = geicoStep(r, GEICO.years);
+    assert.deepEqual([years.value, years.source, years.note], [geicoBand, geicoBand === '1-3 Years' ? 'standard' : 'derived', null], line);
+    assert.deepEqual([howLong(r).value, howLong(r).source, howLong(r).note], [amwinsBand, 'derived', null], line);
+    // Where it was read: a check on the Intake step quoting the line.
+    const shown = warnings.find((w) => w.code === 'prior.tenure');
+    assert.equal(shown?.level, 'check', line);
+    assert.equal(shown.path, 'notes.text');
+    assert.ok(shown.msg.includes(`"${line}"`), line);
+    // Still currently insured.
+    assert.equal(geicoStep(r, GEICO.auto).value, 'Yes');
+  }
+  // The claims box's other lines count too, the check pointing at it.
+  const claims = intake(DATED, { claims_details: 'No\nInsured with Synthetic Mutual for 6 years' });
+  assert.equal(geicoStep(claims.record, GEICO.years).value, '5-10 Years');
+  assert.equal(claims.warnings.find((w) => w.code === 'prior.tenure')?.path, 'claims.text');
+  // A time the bands can't place in one of them: the agent's, the line quoted. Exactly 5 or 10
+  // years is in two of GEICO's bands; a year alone is anywhere in it.
+  for (const [line, amwinsBand] of [
+    ['Has had this policy for five years', 'MORE THAN 3 YEARS'],
+    ['Insured 10 years with Synthetic Mutual', 'MORE THAN 3 YEARS'],
+    ['Policy since 2021', 'MORE THAN 3 YEARS'], // 4.7 to 5.7 years
+    ['Insured over 3 years with Synthetic Mutual', 'MORE THAN 3 YEARS'],
+    ['Same insurer since 2023', null], // 2.7 to 3.7 years
+  ]) {
     const r = intake(DATED, { additional_notes: line }).record;
     const years = geicoStep(r, GEICO.years);
     agents(years);
     assert.equal(years.source, 'fact');
     assert.ok(years.note.includes(line), line);
-    const amwinsYears = howLong(r);
-    agents(amwinsYears);
-    assert.equal(amwinsYears.source, 'fact');
-    assert.ok(amwinsYears.note.includes(line), line);
-    // Still currently insured.
-    assert.equal(geicoStep(r, GEICO.auto).value, 'Yes');
+    if (amwinsBand) assert.deepEqual([howLong(r).value, howLong(r).source], [amwinsBand, 'derived'], line);
+    else {
+      agents(howLong(r));
+      assert.equal(howLong(r).source, 'fact');
+      assert.ok(howLong(r).note.includes(line), line);
+    }
   }
   // A number of years not about insurance, or within the band, doesn't count.
   for (const line of ['3 Years', '10 years in business, CDL for 12 years', 'Insured 2 years with Synthetic Mutual']) {
-    const r = intake(DATED, { additional_notes: line }).record;
-    assert.equal(geicoStep(r, GEICO.years).value, '1-3 Years', line);
+    const { record: r, warnings } = intake(DATED, { additional_notes: line });
+    assert.deepEqual([geicoStep(r, GEICO.years).value, geicoStep(r, GEICO.years).source], ['1-3 Years', 'standard'], line);
+    assert.deepEqual([howLong(r).value, howLong(r).source], ['1 TO 2 YEARS', 'standard'], line);
+    assert.equal(warnings.find((w) => w.code === 'prior.tenure'), undefined, line);
   }
-  // AmWINS' band ends at 2 years: 3 years with the insurer is its agent's, GEICO's 1-3 still.
-  const three = intake(DATED, { additional_notes: 'Insured 3 years with Synthetic Mutual' }).record;
-  assert.equal(geicoStep(three, GEICO.years).value, '1-3 Years');
-  agents(howLong(three));
-  assert.deepEqual(insurerTenure(three), { years: 3, line: 'Insured 3 years with Synthetic Mutual' });
+  // The notes don't make an expired policy current: GEICO's question stays the agent's.
+  agents(geicoStep(intake({ ...DATED, ins_exp_1: '08/31/2026' }, { additional_notes: 'Insured with Synthetic Mutual for 6 years' }).record, GEICO.years));
+  assert.deepEqual(insurerTenure(intake(DATED, { additional_notes: 'Insured 3 years with Synthetic Mutual' }).record), { years: 3, least: 3, line: 'Insured 3 years with Synthetic Mutual' });
   assert.equal(insurerTenure(intake(DATED, { additional_notes: '3 Years' }).record), null);
+});
+
+// TNI, 2026-10-26 (answer to PR question 11): AmWINS asks how long with the current carrier of a
+// client with a DOT or MC number; there it is 1 TO 2 YEARS, unless the notes give another time
+// (above). The maintainer: it is asked only then, so no prior insurance doesn't change it.
+test('AmWINS: how long with the current carrier is 1 TO 2 YEARS with a DOT or an MC number, not answered without one', () => {
+  for (const more of [{}, { dot_number: '', mc_number: '765432' }, { mc_number: '765432' }]) {
+    const step = howLong(intake(DATED, more).record);
+    assert.deepEqual([step.ignore, step.value, step.source], [false, '1 TO 2 YEARS', 'standard'], JSON.stringify(more));
+  }
+  const none = howLong(intake({ ins_carrier_1: 'NO POP' }).record);
+  assert.deepEqual([none.ignore, none.value], [false, '1 TO 2 YEARS']);
+  assert.equal(howLong(intake(DATED, { dot_number: '', mc_number: '' }).record).ignore, true);
 });
 
 test('Progressive: currently insured with any box filled; a blank limit or date is the agent\'s, never a remark typed (W44-29)', () => {
@@ -182,7 +235,9 @@ test('AmWINS: the prior-carrier rows are NO PRIOR with prior insurance too, the 
     assert.ok(rows.every((s) => s.value === 'NO PRIOR' && s.source === 'standard'), JSON.stringify(boxes));
   }
   assert.match(disclosure(intake(DATED).record), /^POP Commercial - Synthetic Mutual - \$1M CSL - Exp Date 12\/31\/2026$/m);
-  assert.match(disclosure(intake(NE).record), /^POP Commercial - Synthetic Mutual - \$1M CSL/m);
+  // A remark in the date box is no date: no "Exp Date" (TNI, 2026-10-26: answer to PR question 12).
+  assert.match(disclosure(intake(NE).record), /^POP Commercial - Synthetic Mutual - \$1M CSL$/m);
+  assert.doesNotMatch(disclosure(intake(NE).record), /Exp Date|dec page/);
   // No carrier on the intake: the policy is still disclosed, the missing part left out.
   assert.match(disclosure(intake({ ins_type_1: 'Commercial Auto', ins_limit_1: '$1M CSL' }).record), /^POP Commercial - \$1M CSL$/m);
   for (const boxes of [{}, { ins_carrier_1: 'NO POP' }]) assert.doesNotMatch(disclosure(intake(boxes).record), /POP|prior/i, JSON.stringify(boxes));

@@ -72,7 +72,8 @@ export function priorPolicyExpired(record, policy = record.priorInsurance?.[0]) 
 // the start which details are missing"): the intake's current insurance is a current policy when
 // any of its four boxes is filled. Not settled by the decision, so as before: no prior insurance
 // (noPriorInsurance), an expiration date already passed, and a policy typed as something other than
-// auto insurance (General Liability, Cargo, Other).
+// auto insurance (General Liability, Cargo, Other). TNI, 2026-10-26 (answer to PR question): an
+// expired policy is not current, the agent's; a General Liability, Cargo or Other policy is not POP.
 const AUTO_POLICY = /^(?:commercial|personal)\s+auto$/i;
 export function priorInsuranceAssumed(record, policy = record?.priorInsurance?.[0]) {
   const filled = (v) => v != null && String(v).trim() !== '';

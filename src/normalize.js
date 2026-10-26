@@ -218,34 +218,60 @@ export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.tex
 // it names insurance (insured, insurance, insurer, a policy, POP, proof of prior, or the current
 // carrier by name) with a number of years ("6 years", "five yrs"; not a vehicle's age, the years
 // in business or experience) or a start ("since 2019", "since March 2020", "started in December
-// 2025"; a year alone counts from its first day, the longest it could mean). The longest such
-// time, in years to one decimal, and its line; null when no line gives one.
+// 2025"). The longest such time, in years to one decimal, its line, and the least it could mean
+// (TNI, 2026-10-26: answer to PR question: the carriers pick the band a longer time falls in, so
+// a year alone runs from its first day to its last, "over 10 years" has no end, "almost 5 years"
+// is under 5, "about 4 years" half a year either side); null when no line gives one.
 const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const INSURANCE_WORDS = /\b(?:insur\w*|polic(?:y|ies)|pop|proof of prior)\b/i;
-const YEARS_SAID = /\b(\d{1,2}(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s*\+?\s*(?:years?|yrs?)\b(?![\s-]*(?:old|in business|of experience|experience|exp\b))/gi;
-const START_SAID = /\b(?:since|started|began|start(?:ing)?)\s+(?:(?:in|on)\s+)?(?:(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:\d{1,2}(?:st|nd|rd|th)?,?\s+)?|(\d{1,2})\/(?:\d{1,2}\/)?)?((?:19|20)\d{2})\b/gi;
-/** @param {any} record @returns {{ years: number, line: string } | null} */
+const YEARS_SAID = /(?:\b(over|more than|at least|almost|nearly|close to|under|less than|about|around|approximately|roughly)\s+)?\b(\d{1,2}(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s*(\+)?\s*(?:years?|yrs?)\b(?![\s-]*(?:old|in business|of experience|experience|exp\b))/gi;
+const START_SAID = /\b(?:since|started|began|start(?:ing)?)\s+(?:(?:in|on)\s+)?(?:(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:(\d{1,2})(?:st|nd|rd|th)?,?\s+)?|(\d{1,2})\/(?:(\d{1,2})\/)?)?((?:19|20)\d{2})\b/gi;
+// The least and the most a number of years said with its qualifier ("over", "+", "almost", …) can mean.
+const saidSpan = (n, qualifier, plus) => {
+  const q = String(qualifier ?? '').toLowerCase().replace(/\s+/g, ' ');
+  if (plus || q === 'at least') return [n, Infinity];
+  if (q === 'over' || q === 'more than') return [n + 0.1, Infinity];
+  if (q === 'almost' || q === 'nearly' || q === 'close to') return [n - 1, n - 0.1];
+  if (q === 'under' || q === 'less than') return [0, n - 0.1];
+  return q ? [n - 0.5, n + 0.5] : [n, n];
+};
+const tenth = (n) => Math.round(n * 10) / 10;
+/** @param {any} record @returns {{ years: number, least: number, line: string } | null} */
 export const insurerTenure = (record) => {
   const carrier = String(record?.priorInsurance?.[0]?.carrier ?? '').trim().toLowerCase();
   const applied = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(record?.applicant?.applicationDate ?? '');
   const now = applied ? Date.UTC(+applied[3], +applied[1] - 1, +applied[2]) : Date.now();
   const YEAR = 365.25 * 24 * 3600 * 1000;
-  /** @type {{ years: number, line: string } | null} */
+  /** @type {{ years: number, least: number, line: string } | null} */
   let longest = null;
   for (const text of String(intakeNotes(record) ?? '').split('\n')) {
     const line = text.trim();
     if (!INSURANCE_WORDS.test(line) && !(carrier.length >= 3 && line.toLowerCase().includes(carrier))) continue;
-    const said = [...line.matchAll(YEARS_SAID)].map((m) => NUMBER_WORDS[m[1].toLowerCase()] ?? Number(m[1]));
+    /** @type {number[][]} [least, most] */
+    const spans = [...line.matchAll(YEARS_SAID)].map((m) => saidSpan(NUMBER_WORDS[m[2].toLowerCase()] ?? Number(m[2]), m[1], m[3]));
     for (const m of line.matchAll(START_SAID)) {
-      const month = m[1] ? MONTHS.indexOf(m[1].toLowerCase()) : m[2] ? Number(m[2]) - 1 : 0;
-      if (month >= 0 && month <= 11) said.push((now - Date.UTC(Number(m[3]), month, 1)) / YEAR);
+      const month = m[1] ? MONTHS.indexOf(m[1].toLowerCase()) : m[3] ? Number(m[3]) - 1 : null;
+      if (month != null && (month < 0 || month > 11)) continue;
+      const year = Number(m[5]);
+      const day = Number(m[2] ?? m[4]) || null;
+      const first = Date.UTC(year, month ?? 0, day ?? 1);
+      const last = day ? first : month != null ? Date.UTC(year, month + 1, 1) : Date.UTC(year + 1, 0, 1);
+      spans.push([(now - last) / YEAR, (now - first) / YEAR]);
     }
-    const years = Math.max(...said.filter((n) => Number.isFinite(n) && n >= 0), -1);
-    if (years >= 0 && (!longest || years > longest.years)) longest = { years: Math.round(years * 10) / 10, line };
+    for (const [least, most] of spans) {
+      if (!(most >= 0) || (longest && most <= longest.years)) continue;
+      longest = { years: tenth(most), least: tenth(Math.max(least, 0)), line };
+    }
   }
   return longest;
 };
+// The carrier's band for a time with the insurer read from the notes (insurerTenure), by its
+// `band` (a number of years to its band's label; null where two bands share it, as GEICO's 3-5 and
+// 5-10 share 5): the one band both the least and the most the time could mean fall in, else null
+// (TNI, 2026-10-26: answer to PR question: a time the bands can't place stays the agent's).
+/** @param {{ years: number, least: number }} tenure @param {(years: number) => string | null} band @returns {string | null} */
+export const tenureBand = (tenure, band) => { const label = band(tenure.least); return label != null && label === band(tenure.years) ? label : null; };
 
 // The form's auto liability answer Non-Trucking (Select / Yes / No / Non-Trucking): the client asks
 // for non-trucking liability (the maintainer, 2026-10-26). Also as written on older forms.
@@ -724,6 +750,14 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     const own = ops.vehicleOwnership ? null : ownershipFromNotes(notes);
     if (own?.value) ops.vehicleOwnership = own.value;
     else if (own) check('ownership.notes', 'operations.vehicleOwnership', `The claims box or Additional Notes mention ownership ("${own.lines}") but don't settle it for the vehicles. Set Vehicle ownership (owned / leased / financed) yourself.`);
+  }
+  // A time with the current insurer beyond the 1-3 years standard (AmWINS' 1 TO 2 YEARS): the
+  // carriers' how-long questions take its band, the line shown here, where it was read (TNI,
+  // 2026-10-26: answer to PR question, W44-29).
+  const tenure = insurerTenure(record);
+  if (tenure && tenure.years > 2) {
+    const inNotes = String(record.notes?.text ?? '').split('\n').map((s) => s.trim()).includes(tenure.line);
+    check('prior.tenure', inNotes ? 'notes.text' : 'claims.text', `The claims box or Additional Notes give the time with the current insurer: "${tenure.line.slice(0, 160)}". The carriers' questions on how long with the current insurer take the band for it, never under 1-3 years (TNI); a time two bands could fit is left to you.`);
   }
   // Non-trucking liability (NTL) is named only in the notes: "NTL", "non-trucking" (also written
   // "non tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the

@@ -41,14 +41,14 @@
 // - GVW is required unless the body type is a trailer.
 // - Filing required Yes shows BMC-91, MCS-90, BMC-32, how long the authority has been active, how
 //   long with the current carrier, and "can provide claim-free loss runs"; the DOT / MC boxes
-//   show their number fields. How long with the current carrier (only asked with a DOT number)
+//   show their number fields. How long with the current carrier (answered with a DOT or MC number)
 //   and claim-free loss runs aren't on the intake: TNI's standards (1 TO 2 YEARS, No).
 // - Personal Injury Protection shows for FL HI KS KY MA MI MN NJ NY ND PA UT AR DE MD OR TX NH SD
 //   VA WA WI DC. TNI: No, since Medical Payments ($5K) is always offered and preferred.
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { owner, ownerDobNote } from './progressive.js';
-import { isLongHaul, otherNotes, insurerTenure } from '../normalize.js';
+import { isLongHaul, otherNotes, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -143,14 +143,15 @@ const disclosure = (r) => {
   for (const t of r.trailers ?? []) { const line = trailerLine(t); if (line) lines.push(line); }
   // The prior policy is disclosed here; the prior-carrier rows are always NO PRIOR (TNI, 2026-10-26,
   // W44-32). With a carrier as before, and without one when proof of prior insurance is assumed from
-  // the other boxes (TNI, 2026-10-26, W44-29), the part the intake lacks left out.
+  // the other boxes (TNI, 2026-10-26, W44-29), the part the intake lacks left out. A remark in the
+  // date box is no date: no "Exp Date" (TNI, 2026-10-26: answer to PR question).
   const p = r.priorInsurance?.[0];
   if (p && !noPriorInsurance(p) && (p.carrier || priorInsuranceAssumed(r))) {
     const kind = /commercial/i.test(p.type ?? '') ? 'Commercial' : /personal/i.test(p.type ?? '') ? 'Personal' : p.type;
     const carrier = p.carrier ? p.carrier.toLowerCase().replace(/\b\w/g, (x) => x.toUpperCase()) : null;
     const unavailable = /\b(?:pop|proof of prior)(?:\s+(?:insurance|document))?\s+(?:unavailable|missing|not available)\b/i.test(otherNotes(r) ?? '');
     const prefix = unavailable ? 'Prior insurance; POP document unavailable' : 'POP';
-    lines.push([[prefix, kind].filter(Boolean).join(' '), carrier, p.limit, p.expiration ? `Exp Date ${p.expiration}` : null].filter(Boolean).join(' - ')
+    lines.push([[prefix, kind].filter(Boolean).join(' '), carrier, p.limit, /^\d{2}\/\d{2}\/\d{4}$/.test(p.expiration ?? '') ? `Exp Date ${p.expiration}` : null].filter(Boolean).join(' - ')
       + (priorPolicyExpired(r, p) ? ' - EXPIRED; confirm renewal or lapse' : ''));
   }
   return lines.join('\n') || null;
@@ -225,8 +226,12 @@ const authorityAge = (r) => {
   if (n == null) return !r.applicant.mc && !r.applicant.dot ? 'NO AUTHORITY' : null;
   return n < 1 ? 'LESS THAN 1 YEAR' : n < 2 ? '1 TO 2 YEARS' : n < 3 ? '2 TO 3 YEARS' : 'MORE THAN 3 YEARS';
 };
-// A time with the insurer the intake's notes give beyond the 1 TO 2 YEARS standard (W44-29).
+// A time with the insurer the intake's notes give beyond the 1 TO 2 YEARS standard (W44-29), and
+// its band (TNI, 2026-10-26: answer to PR question): 3 years is 2 TO 3 (not MORE THAN 3); null when
+// the time could be in two bands ("since 2023" in 2026), the agent's.
+const AMWINS_TENURE = (n) => (n <= 2 ? '1 TO 2 YEARS' : n <= 3 ? '2 TO 3 YEARS' : 'MORE THAN 3 YEARS');
 const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years > 2 ? t : null; };
+const withCurrentCarrier = (r) => { const t = longerTenure(r); return t ? tenureBand(t, AMWINS_TENURE) : '1 TO 2 YEARS'; };
 // Federal filings from the intake's "which filings": liability means BMC-91 (MCS-90 comes with
 // it); cargo means BMC-32. Unknown when the intake doesn't say which.
 const filingsText = (r) => (filings(r) ? r.operations.filingsWhich ?? null : null);
@@ -403,13 +408,17 @@ export const amwins = {
     { name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', source: 'derived', value: federalCargo },
     // The client's insurance history the intake doesn't give. TNI's standards (2026-10-19, after a
     // live run; may change later): 1 TO 2 YEARS with the current carrier and no claim-free loss
-    // runs. The current-carrier question is only asked of clients with a DOT number. Valued loss
+    // runs. The current-carrier question is only asked of clients with a DOT (or MC) number. Valued loss
     // runs: No too (TNI, 2026-10-19, a later AmWINS run: "valued loss runs are always NO").
     // TNI (2026-10-26, W44-29: proof of prior insurance is "1-3 years at least"): 1 TO 2 YEARS
-    // stays, and a longer time with the insurer than that the notes give isn't shortened: the
-    // agent's, with the line quoted.
-    { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier (standard: 1 TO 2 YEARS)', kind: 'choice', source: (r) => (longerTenure(r) ? 'fact' : 'standard'), ignore: (r) => !r.applicant.dot,
-      value: () => '1 TO 2 YEARS', note: (r) => (longerTenure(r) ? `The intake's notes give more than 2 years with the current carrier ("${longerTenure(r)?.line.slice(0, 80)}"): pick it yourself.` : null) },
+    // stays, and a longer time with the insurer than that the notes give isn't shortened: its band
+    // (TNI, 2026-10-26: answer to PR question; the Intake step quotes the line, `prior.tenure`), or
+    // the agent's, with the line quoted, when two bands could fit it. Asked of a client with a DOT
+    // or an MC number (TNI, 2026-10-26: answer to PR question; the page shows it with a federal
+    // filing required), so no prior insurance on the intake doesn't change it.
+    { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier (standard: 1 TO 2 YEARS)', kind: 'choice',
+      source: (r) => (!withCurrentCarrier(r) ? 'fact' : longerTenure(r) ? 'derived' : 'standard'), ignore: (r) => !r.applicant.dot && !r.applicant.mc,
+      value: withCurrentCarrier, note: (r) => (withCurrentCarrier(r) ? null : `The intake's notes give the time with the current carrier ("${longerTenure(r)?.line.slice(0, 80)}"), and more than one of AmWINS' bands could fit it: pick it yourself.`) },
     { name: 'Claim-free loss runs (standard: No)', label: '^can provide claim free loss run$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', source: 'standard', value: () => false },
     // Preserve the intake's explicit claims answer; unknown history stays with the agent.

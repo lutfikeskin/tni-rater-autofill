@@ -49,7 +49,7 @@
 // intake unit is on it (`advance`, TNI, FL live run 3, 2026-10-21); off, the agent clicks them.
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
-import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer, insurerTenure } from '../normalize.js';
+import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer, insurerTenure, tenureBand } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
@@ -562,16 +562,24 @@ const employees = (r) => {
 // "How long has the customer been with their current auto insurance company?" TNI (2026-10-21;
 // 2026-10-26, W44-29, W44-02: "1-3 years at least"): 1-3 Years whenever the customer currently has
 // auto insurance (above), also when the notes say the policy started within the year. A longer
-// time the notes give (insurerTenure) isn't shortened: the agent's, with the line quoted.
+// time the notes give (insurerTenure) isn't shortened: its band (TNI, 2026-10-26: answer to PR
+// question; the Intake step quotes the line, `prior.tenure`). A time two bands could fit (exactly
+// 5 or 10 years, "since 2021" in 2026) stays the agent's, with the line quoted.
+const GEICO_TENURE = (n) => (n <= 3 ? '1-3 Years' : n < 5 ? '3-5 Years' : n > 5 && n < 10 ? '5-10 Years' : n > 10 ? '10+ Years' : null);
 const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years > 3 ? t : null; };
-const yearsWithInsurer = (r) => (currentAuto(r) === 'Yes' && !longerTenure(r) ? '1-3 Years' : null);
+const yearsWithInsurer = (r) => {
+  if (currentAuto(r) !== 'Yes') return null;
+  const t = longerTenure(r);
+  return t ? tenureBand(t, GEICO_TENURE) : '1-3 Years';
+};
+const yearsSource = (r) => (!yearsWithInsurer(r) ? 'fact' : longerTenure(r) ? 'derived' : 'standard');
 const anyPriorBox = (p) => !!p && ['type', 'carrier', 'limit', 'expiration'].some((k) => p[k] != null && String(p[k]).trim() !== '');
 const currentAutoNote = (r) => (currentAuto(r) != null ? null
   : !anyPriorBox(prior(r)) ? 'The intake\'s current insurance section is blank: answer it yourself.'
     : priorPolicyExpired(r, prior(r)) ? 'The intake\'s current policy has expired: answer it yourself.'
       : `The intake's current insurance is ${prior(r).type ? quote(prior(r).type, 30) : 'another kind of policy'}, not an auto policy: answer it yourself.`);
 const yearsNote = (r) => (yearsWithInsurer(r) ? null
-  : currentAuto(r) === 'Yes' ? `The intake's notes give more than 3 years with the current insurer (${quote(longerTenure(r)?.line, 80)}): pick it yourself.`
+  : currentAuto(r) === 'Yes' ? `The intake's notes give the time with the current insurer (${quote(longerTenure(r)?.line, 80)}), and more than one of GEICO's bands could fit it: pick it yourself.`
     : currentAutoNote(r) ?? 'The intake shows no current auto policy: answer it yourself.');
 // The current bodily injury limits, from the intake's limit, when there is a current auto policy:
 // each intake option to GEICO's, exactly. $500K/$1M and Other have no GEICO match; none is "closest".
@@ -1135,7 +1143,7 @@ export const geico = {
       { field: 'GiveCurrentAutoInsuranceStatus', ask: 'Does the customer currently have personal or commercial auto insurance?', name: 'Currently has auto insurance', kind: 'choice', source: currentAutoSource, clientFact: true, value: currentAuto, note: currentAutoNote },
       fact('GiveInsurancePriorToBeingDeployed', 'Insured before being deployed'),
       { field: 'GiveYearsWithCurrentAutoInsurer', ask: 'How long has the customer been with their current auto insurance company?', name: 'Years with the current auto insurer (1-3 with a current policy)', kind: 'choice',
-        source: (r) => (yearsWithInsurer(r) ? 'standard' : 'fact'), value: yearsWithInsurer, note: yearsNote },
+        source: yearsSource, value: yearsWithInsurer, note: yearsNote },
       { field: 'GiveCurrentBodilyInjuryLimits', ask: 'What bodily injury limits does the customer currently have on their vehicle insurance?', path: 'priorInsurance[0].limit', name: 'Current bodily injury limits',
         kind: 'choice', source: 'derived', value: currentBi, note: currentBiNote },
       { field: 'GiveOtherLiabilityInsurance', ask: 'What kind of liability insurance does the customer currently have to cover their business?', name: 'Liability insurance the business has (None unless the notes say)',
