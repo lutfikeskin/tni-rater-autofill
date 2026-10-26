@@ -725,7 +725,11 @@ test('the page list keeps items in the page order of their fields, the first ope
   assert.deepEqual(needs.map((r) => /\bopen\b/.test(r.props.class)), [true, ...Array(8).fill(false)], 'only the first item starts open');
   assert.deepEqual(needs.map((r) => r.children[1].props.hidden), [false, ...Array(8).fill(true)]);
   assert.equal(box.children.some((c) => /\bneeds-say\b/.test(c?.props?.class ?? '')), false, 'no line above the list');
-  assert.ok(needs.every((r) => nodesIn(r).some((n) => n.props?.class === 'row-say' && n.children[0] === 'Answer it on the rater page, then mark it done here.')),
+  // An item with a field, or a helper's reminder, can be marked done here; one with neither (a
+  // helper the fill couldn't click) has no Mark done, so its row says only where to do it (the
+  // maintainer, 2026-10-26: a row said "mark it done here" with no button to press).
+  const say = (r) => nodesIn(r).find((n) => n.props?.class === 'row-say')?.children[0];
+  assert.deepEqual(needs.map(say), [...Array(8).fill('Answer it on the rater page, then mark it done here.'), 'Do it on the rater page.'],
     'an item the panel can not answer says where to answer it');
   const notes = needs.map((r) => r.children[1].children.at(-1));
   assert.ok(notes.every((note) => note.props.class === 'need-note' && note.props.hidden === true && !note.children.length), 'each note empty and hidden while open');
@@ -2583,7 +2587,7 @@ test('claims-box edits keep the NTL, long-box and failed-review items current', 
     warnings: [{ code: 'coverage.ntl', path: 'coverage.ntl', level: 'check', msg: 'NTL: Needs NTL' },
       { code: 'ai.claims-truncated', level: 'check' }, { code: 'ai.claims-review-failed', level: 'check' }] };
   const context = { ntlMention, ntlCheckMessage, intakeNotes, save() {}, render() {} };
-  vm.runInNewContext(extractFunction('claimsTextEdited'), context);
+  vm.runInNewContext(`${extractFunction('claimsTextEdited')}\n${extractFunction('ntlNotesItem')}`, context);
   intake.record.claims.text = 'No\nNeeds bobtail off dispatch';
   context.claimsTextEdited(intake);
   assert.equal(intake.warnings[0].msg, 'NTL: Needs bobtail off dispatch', 'the quoted line follows the edit');
@@ -7368,7 +7372,8 @@ test('a quote-wide helper the agent clicks themselves is done, as if the fill ha
 // for): the agent's click of another coverage's Done, or one Progressive refused, isn't cargo closed.
 // The fill's own click counts only once its check (`verify: cargoClosed`) passes.
 test('a helper the fill checks after its click is not done by the agent clicking its words', () => {
-  const plan = progressive.actions.filter((a) => !['openGl', 'doneGl'].includes(a.id)).map((a) => ({ kind: 'action', action: a.id, baseAction: a.id,
+  // (Nor an NTL quote's Done, doneNtl: not in a cargo quote's plan.)
+  const plan = progressive.actions.filter((a) => !['openGl', 'doneGl', 'doneNtl'].includes(a.id)).map((a) => ({ kind: 'action', action: a.id, baseAction: a.id,
     pages: [].concat(a.page ?? []), steps: null, text: typeof a.text === 'function' ? null : a.text ?? null, near: a.near ?? null, token: a.token ?? null,
     within: a.within ?? null, opener: a.opener ?? null, unique: !!a.unique, needsRecalculation: !!a.needsRecalculation, verify: a.verify ?? null }));
   const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set() };
@@ -8099,4 +8104,94 @@ test('AmWINS\'s quote is done on a fill of Underwriting, not on the start page w
   assert.equal(context.quoteFinished(amwins, state.reportFor, '/commerciallines', 'Underwriting'), false, 'the start page: its fill read no step');
   context.renderReport([{ ...start, actions: [], stepKey: 'Underwriting', noData: [DECLARATION] }], { tabId: 7, page: '/application/businessauto', carrier: amwins });
   assert.equal(context.quoteFinished(amwins, state.reportFor, '/application/businessauto', 'Underwriting'), true, 'Underwriting with only the declaration left');
+});
+
+
+// The maintainer, 2026-10-26: Non-Trucking on the form's auto liability is NTL asked for. An edit
+// of the claims box or notes that names NTL then asks nothing: NTL is already Yes.
+test('a notes edit naming NTL asks nothing when the form already asked for NTL', () => {
+  const run = (coverage) => {
+    const intake = { record: { coverage, claims: { text: 'No' }, notes: { text: 'Needs non-trucking liability' } }, warnings: [], done: [] };
+    const context = { save() {}, render() {}, ntlMention: (t) => (/non-trucking/i.test(t) ? 'Needs non-trucking liability' : null), ntlCheckMessage: (l) => `ask: ${l}`,
+      intakeNotes: (r) => [r.claims?.text, r.notes?.text].filter(Boolean).join('\n'), nonTruckingAnswer: (v) => /^non[\s-]*trucking$/i.test(String(v ?? '')) };
+    vm.runInNewContext(`${extractFunction('claimsTextEdited')}\n${extractFunction('ntlNotesItem')}`, context);
+    context.claimsTextEdited(intake);
+    return intake.warnings.map((w) => w.code);
+  };
+  assert.deepEqual(run({ autoLiability: 'Non-Trucking', ntl: true }), []);
+  assert.deepEqual(run({ autoLiability: 'Yes', ntl: null }), ['coverage.ntl'], 'not asked on the form: the notes ask the agent, as before');
+});
+
+// The NTL-with-cargo check follows the agent's edits in the panel (NTL, cargo, auto liability):
+// asked when both are Yes, asked again after a change, retired to a note when no longer so.
+test('the NTL-with-cargo check follows the agent\'s edits', () => {
+  const intake = { record: { coverage: { ntl: true, cargo: true } }, warnings: [], done: [] };
+  const context = { ntlWithCargo: (r) => r.coverage.ntl === true && r.coverage.cargo === true, NTL_CARGO_MESSAGE: 'ntl and cargo' };
+  vm.runInNewContext(extractFunction('ntlCargoEdited'), context);
+  context.ntlCargoEdited(intake);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level, w.path]), [['coverage.ntl-cargo', 'check', 'coverage.cargo']]);
+  intake.done = [0];
+  intake.record.coverage.cargo = false;
+  context.ntlCargoEdited(intake);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['coverage.ntl-cargo', 'info']], 'retired');
+  intake.record.coverage.cargo = true;
+  context.ntlCargoEdited(intake);
+  assert.deepEqual([intake.warnings.map((w) => [w.code, w.level]), intake.done], [[['coverage.ntl-cargo', 'check']], []], 'asked again, not checked');
+  assert.match(extractFunction('agentEdit'), /if \(\['coverage\.ntl', 'coverage\.cargo', 'coverage\.autoLiability'\]\.includes\(path\)\) \{ ntlCargoEdited\(state\.intake\); await save\(\); render\(\); \}/);
+});
+
+// The review of PR #176: auto liability edited away from Non-Trucking left "NTL is set to Yes" on
+// the intake (NTL was unset) and asked nothing about an NTL mention in the notes, the only warning
+// AmWINS gives; edited to Non-Trucking, the notes' question stayed, asking to set what is set.
+test('an edit of auto liability or NTL keeps the intake\'s NTL items in step', () => {
+  const context = { ntlMention: (t) => (/NTL/.test(t) ? 'Needs NTL' : null), ntlCheckMessage: (l) => `ask: ${l}`, NTL_FORM_MESSAGE: 'form says NTL',
+    intakeNotes: (r) => [r.claims?.text, r.notes?.text].filter(Boolean).join('\n'), nonTruckingAnswer: (v) => /^non[\s-]*trucking$/i.test(String(v ?? '')) };
+  vm.runInNewContext(`${extractFunction('ntlNotesItem')}\n${extractFunction('ntlAnswerEdited')}`, context);
+  const intake = { record: { coverage: { autoLiability: 'Non-Trucking', ntl: true }, claims: { text: 'No' }, notes: { text: 'Needs NTL' } },
+    warnings: [{ code: 'coverage.ntl-form', path: 'coverage.ntl', level: 'info', msg: 'form says NTL' }], done: [0] };
+  const items = () => intake.warnings.map((w) => [w.code, w.level, w.msg === 'form says NTL' || /^ask/.test(w.msg)]);
+  // Yes (rederive unset NTL): the form's note retired, the notes asked about.
+  intake.record.coverage = { autoLiability: 'Yes', ntl: null };
+  context.ntlAnswerEdited(intake, 'coverage.autoLiability');
+  assert.deepEqual(items(), [['coverage.ntl-form', 'info', false], ['coverage.ntl', 'check', true]]);
+  // Non-Trucking again: the form's note back, the notes' question retired.
+  intake.record.coverage = { autoLiability: 'Non-Trucking', ntl: true };
+  context.ntlAnswerEdited(intake, 'coverage.autoLiability');
+  assert.deepEqual(items(), [['coverage.ntl-form', 'info', true], ['coverage.ntl', 'info', false]]);
+  // NTL set to No by the agent: the form's note follows; the notes aren't asked about again.
+  intake.record.coverage = { autoLiability: 'Non-Trucking', ntl: false };
+  context.ntlAnswerEdited(intake, 'coverage.ntl');
+  assert.deepEqual(items(), [['coverage.ntl-form', 'info', false], ['coverage.ntl', 'info', false]]);
+  assert.match(extractFunction('agentEdit'), /if \(\['coverage\.ntl', 'coverage\.autoLiability'\]\.includes\(path\)\) ntlAnswerEdited\(state\.intake, path\);/);
+  assert.match(extractFunction('claimsTextEdited'), /ntlNotesItem\(intake\);/);
+});
+
+
+// The maintainer, 2026-10-26, live run: Progressive's Rates on an NTL quote showed a "Non-trucking
+// liability" item asking to be marked done, with no Mark done (a helper's reminder has no field). Its
+// Mark done marks the helper done for the tab, as a click of the fill's would, and can be undone.
+test('a helper\'s reminder has a Mark done that marks the helper done for the tab', async () => {
+  const src = extractFunction('needRow');
+  // The review of PR #176: only a reminder the fill marks as markable (`action`, the helper's own
+  // scoped id), never one parsed from its path (ntlStillAdded's hold, a vehicle tile's `:0`).
+  assert.match(src, /const actionId = x\.key \? null : x\.action \?\? null;/);
+  assert.doesNotMatch(src, /x\.path\.slice\('action\.'/);
+  assert.match(src, /onclick: \(\) => markActionDone\(item, actionId, tabId, page, x\) \}, 'Mark done'\)/);
+  const state = { tab: { id: 4, url: 'CoveragesRates' }, filling: false, doneActions: new Set(), intake: null };
+  const persisted = [];
+  let settled = null;
+  const node = { hidden: true, textContent: '', replaceChildren() {}, remove() {}, append() {}, querySelector: (sel) => (sel === '.row-head' ? null : node) };
+  const item = { dataset: {}, classList: { remove() {} }, querySelector: (sel) => node.querySelector(sel) };
+  const context = { state, pageOf: (u) => u, persistDoneActions: async (tabId) => { persisted.push([tabId, [...state.doneActions]]); },
+    settleNeed: (it, how, undo) => { settled = { how, undo }; it.dataset.settled = how; }, setRowHead() {}, recount() {}, usage: { log() {} } };
+  vm.runInNewContext(extractFunction('markActionDone'), context);
+  await context.markActionDone(item, 'ntlRates', 4, 'CoveragesRates');
+  assert.deepEqual([[...state.doneActions], settled.how, persisted.at(-1)], [['ntlRates'], 'marked', [4, ['ntlRates']]]);
+  await settled.undo();
+  assert.deepEqual([...state.doneActions], [], 'undone');
+  // Another tab or page in front, or a fill running: nothing.
+  await context.markActionDone(item, 'ntlRates', 5, 'CoveragesRates');
+  state.filling = true;
+  await context.markActionDone(item, 'ntlRates', 4, 'CoveragesRates');
+  assert.deepEqual([...state.doneActions], []);
 });

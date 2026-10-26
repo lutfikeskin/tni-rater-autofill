@@ -393,6 +393,11 @@ test('claims-box review: one strict call with two flags per line, redacted, flag
   assert.equal(two.quoted, 'Does not want bobtail');
   assert.deepEqual(notesWarnings(parseNotesReview(flags([[false, false], [true, false]]), two), two).map((w) => [w.code, w.msg.includes('Needs NTL off dispatch')]),
     [['ai.ntl', true]], 'a second, positive NTL line is still flagged');
+  // The review of PR #176: NTL already Yes (the form's Non-Trucking, or the agent's) asks nothing
+  // more about NTL; the card says what the filler now does on Progressive.
+  assert.doesNotMatch(notesWarnings(parseNotesReview(flags([[false, false], [true, false]]), two), two)[0].msg, /leaves that page to you/);
+  const set = buildNotesReview({ coverage: { autoLiability: 'Non-Trucking', ntl: true }, claims: { text: 'No\nDoes not want bobtail\nNeeds NTL off dispatch' } });
+  assert.deepEqual(notesWarnings(parseNotesReview(flags([[false, false], [true, false]]), set), set), [], 'NTL already Yes');
   // Codex on PR #22: another request in the quoted line itself is kept.
   const shared = buildNotesReview({ coverage: {}, claims: { text: 'No\nNeeds NTL. Also needs physical damage.' } });
   assert.deepEqual(shared.lines, ['Needs NTL.', 'Also needs physical damage.']);

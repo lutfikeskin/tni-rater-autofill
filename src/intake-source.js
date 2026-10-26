@@ -58,8 +58,8 @@ const FIELDS = {
   'coverage.gl': ['gen_liability'],
   'coverage.glLimit': ['gen_liab_limit'],
   'coverage.reeferBreakdown': ['reefer_breakdown'],
-  // Not a form field: only the claims box or the Additional Notes box names it.
-  'coverage.ntl': ['claims_details', 'additional_notes'],
+  // Auto liability Non-Trucking (nonTruckingAnswer), else the claims box or the Additional Notes box.
+  'coverage.ntl': ['auto_liability', 'claims_details', 'additional_notes'],
   'coverage.hasGl': ['claims_details', 'additional_notes'],
   claims: ['claims_details'],
   notes: ['additional_notes'],

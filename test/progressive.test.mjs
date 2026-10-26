@@ -722,7 +722,7 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   assert.ok(!ids(record).includes('printSend'));
   assert.match(progressive.agentPages.PrintEmailFax, /Click Print\/Send yourself/);
   assert.ok(progressive.advance.exceptPages.includes('PrintEmailFax'), 'never continued past the Print page');
-  assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print/);
+  assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: cargo, general liability, the bill plan, Recalculate and Print/);
   // GL without NTL: our GL helpers and bill plan. With NTL too, the NTL item says the rest of
   // Rates is theirs: no GL helpers.
   const gl = baseRecord();
@@ -1017,4 +1017,110 @@ test('AmWINS vehicle rows are found by their VIN (witness), not their position; 
   assert.deepEqual(second.find((s) => s.baseAction === 'lookupVin').shownBy, { all: ['vehicles[1].year', 'vehicles[1].make', 'vehicles[1].model'], any: [], answered: true });
   assert.deepEqual(p.find((s) => s.baseAction === 'verifyDot').shownBy, { all: [], any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'], answered: false });
   assert.ok(p.filter((s) => s.kind !== 'action').every((s) => s.witness === null));
+});
+
+
+// The maintainer, 2026-10-26, live run (Progressive, NTL on the form): after Add Non-Trucking
+// Liability instead?, Progressive asks "Is the customer under permanent lease to a motor carrier…"
+// (LineInput.NTLLease) and its "Non-Trucking Liability coverage limit" (LineInput.NTLLimit, $300k to
+// $1 million CSL); the fill had put $1 million CSL in Bodily Injury and Property Damage Liability,
+// which must stay Not selected.
+test('an NTL quote on Rates: NTL added first, liability Not selected, lease Yes, the intake\'s limit for NTL', () => {
+  const record = baseRecord();
+  record.coverage.ntl = true;
+  const steps = buildPlan(record, progressive, {});
+  const at = (q) => steps.find((s) => s.q === q && s.kind !== 'action');
+  assert.deepEqual([at('1D97').value, at('1D97').source], ['Not selected', 'derived']);
+  assert.deepEqual([at('1DF0').value, at('1DF0').source, at('1DF0').field], [true, 'standard', 'LineInput.NTLLease']);
+  assert.deepEqual([at('1DF2').value, at('1DF2').field], [record.coverage.autoLiabLimit, 'LineInput.NTLLimit']);
+  assert.ok(new RegExp(at('1DF0').re ?? at('1DF0').label, 'i').test('Is the customer under permanent lease to a motor carrier that provides primary liability coverage when the customer'));
+  assert.equal(steps.find((s) => s.action === 'addNtl').immediate, true, 'NTL is added before the liability limit is touched');
+  // Without NTL: the intake's limit, and neither NTL question.
+  const plain = buildPlan(baseRecord(), progressive, {});
+  assert.deepEqual([plain.find((s) => s.q === '1D97').value, plain.find((s) => s.q === '1D97').source], [baseRecord().coverage.autoLiabLimit, 'intake']);
+  for (const q of ['1DF0', '1DF2']) assert.equal(plain.find((s) => s.q === q).ignore, true, q);
+  for (const q of ['1DF0', '1DF2']) assert.equal(at(q).ignore, false, q);
+});
+
+// The maintainer, 2026-10-26: a blank CDL box on the intake means No (TNI's standard).
+test('a blank CDL on the intake is No on Add Driver, as TNI\'s standard', () => {
+  const record = baseRecord();
+  record.drivers[0].cdl = null;
+  const cdl = buildPlan(record, progressive, { drivers: 0 }).find((s) => s.q === '28E6');
+  assert.deepEqual([cdl.value, cdl.source], [false, 'standard']);
+  record.drivers[0].cdl = true;
+  const yes = buildPlan(record, progressive, { drivers: 0 }).find((s) => s.q === '28E6');
+  assert.deepEqual([yes.value, yes.source], [true, 'intake']);
+  // The review of PR #176: a CDL year with the box blank says they may have one: not No, the agent's.
+  record.drivers[0].cdl = null;
+  record.drivers[0].cdlYear = 2015;
+  const year = buildPlan(record, progressive, { drivers: 0 }).find((s) => s.q === '28E6');
+  assert.deepEqual([year.value, year.source], [null, 'intake']);
+  // A driver the intake doesn't have: nothing, as before.
+  const none = buildPlan(record, progressive, { drivers: 3 }).find((s) => s.q === '28E6');
+  assert.deepEqual([none.value, none.source], [null, 'intake']);
+});
+
+// The review of PR #176: Mark done on a helper's reminder released NTL still on the quote
+// (ntlStillAdded, the hold on the Rates helpers) and the NTL question (ntlDecide). Only the NTL
+// quote's reminder that the rest of Rates is the agent's (ntlRates) can be marked done.
+test('only the NTL-with-cargo Rates reminder can be marked done', () => {
+  const markable = (change) => {
+    const record = baseRecord();
+    Object.assign(record.coverage, change);
+    return buildPlan(record, progressive, {}).filter((s) => s.kind === 'action' && s.markable).map((s) => s.action);
+  };
+  assert.deepEqual(markable({ ntl: true, cargo: true }), ['ntlRates']);
+  assert.deepEqual(markable({ ntl: true, cargo: false, gl: false }), [], 'NTL only: no reminder');
+  assert.deepEqual(markable({ ntl: false }), [], 'ntlStillAdded: settled only by the page');
+  const mention = baseRecord();
+  mention.coverage.ntl = null;
+  mention.claims = { ...mention.claims, text: 'No\nNeeds NTL' };
+  assert.ok(buildPlan(mention, progressive, {}).some((s) => s.action === 'ntlDecide' && !s.markable), 'ntlDecide: answered on the Intake step');
+});
+
+
+// The maintainer, 2026-10-26, live run (NTL, no cargo or GL): after the NTL section the agent clicked
+// its Done with this coverage, Recalculate, View bill plan options and Print, Email, Fax, as on a
+// quote without NTL. The fill does them now, so the quote ends at Print (and its sound plays). With
+// cargo or GL too, Rates after NTL stays the agent's, with a reminder they can mark done.
+test('an NTL-only quote: Done with this coverage after the NTL limit, then Rates as on any quote', () => {
+  const record = baseRecord();
+  record.coverage.ntl = true;
+  record.coverage.cargo = false;
+  const steps = buildPlan(record, progressive, {});
+  const act = (id) => steps.find((s) => s.action === id);
+  const done = act('doneNtl');
+  assert.deepEqual([done.afterActions, done.after, done.waitRequired], [['addNtl'], ['progressive.q1DF2'], true]);
+  assert.ok(new RegExp(done.text, 'i').test('Done with this coverage'));
+  const ntlLimit = steps.find((s) => s.q === '1DF2' && s.kind !== 'action');
+  assert.deepEqual([ntlLimit.path, ntlLimit.value], ['progressive.q1DF2', '$1M CSL'], 'its own path, so Done and the rates helpers wait for it');
+  for (const id of ['recalculate', 'billPlan']) assert.deepEqual([act(id).afterActions, act(id).after], [['doneNtl'], ['progressive.q1DF2']], id);
+  for (const id of ['recalculateAgain', 'print']) assert.ok(act(id), id);
+  assert.ok(!act('ntlRates') && !act('openCargo') && !act('openGl'), 'no reminder, no cargo or GL helpers');
+  assert.equal(progressive.agentPages.CoveragesRates(record), null);
+  assert.equal(progressive.finishedBy, 'print', 'Print, Email, Fax ends it: the quote-done sound');
+  // With cargo (or GL): the reminder, and the rest of Rates is the agent's.
+  for (const changes of [{ cargo: true }, { gl: true }]) {
+    const r = baseRecord();
+    Object.assign(r.coverage, { ntl: true, cargo: false, gl: false }, changes);
+    const ids = buildPlan(r, progressive, {}).filter((s) => s.kind === 'action').map((s) => s.action);
+    assert.ok(ids.includes('ntlRates') && !ids.includes('doneNtl') && !ids.includes('print') && !ids.includes('recalculate'), JSON.stringify(changes));
+  }
+  // Without NTL: as before.
+  const plain = buildPlan(baseRecord(), progressive, {});
+  assert.deepEqual(plain.find((s) => s.action === 'recalculate').afterActions, ['doneCargo']);
+  assert.deepEqual(plain.find((s) => s.action === 'recalculate').after, ['coverage.autoLiabLimit']);
+  assert.ok(!plain.some((s) => s.action === 'doneNtl'));
+});
+
+// The maintainer, 2026-10-26, live run: no quote-done sound on an NTL quote. The NTL limit is found
+// by its data-model name, and its caption checked against the rule's pattern as the page kit reads
+// captions (squashed: "Non-Trucking" is "non trucking"); "non-?trucking" didn't match, so the kit
+// took the question for reworded, a check for the agent, and a quote with a check isn't done.
+test('the NTL questions\' patterns match their captions as the page kit reads them', () => {
+  const squash = (s) => String(s ?? '').toLowerCase().replace(/['’*]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+  const rule = (q) => progressive.rules.find((r) => r.q === q);
+  assert.match(squash('Non-Trucking Liability coverage limit'), new RegExp(rule('1DF2').label, 'i'));
+  assert.match(squash('Is the customer under permanent lease to a motor carrier that provides primary liability coverage when the customer is under dispatch?'), new RegExp(rule('1DF0').label, 'i'));
 });

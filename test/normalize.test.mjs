@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { readIntakeFields } from '../src/intake.js';
-import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive } from '../src/normalize.js';
+import { normalizeIntake, parseAddress, parseLicense, toMoney, toDate, vinProblem, parseLimitDeductible, parseRadius, isLongHaul, ownershipFromNotes, rederive, ntlWithCargo } from '../src/normalize.js';
 import { buildPlan, redactionTerms } from '../src/plan.js';
 import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance } from '../src/util.js';
@@ -790,4 +790,118 @@ test('a company name of NO / N/A / None is no company: a sole proprietor', () =>
   for (const name of ['Nova Freight LLC', 'NOA Trucking', 'Nolan Inc']) {
     assert.equal(normalizeIntake({ ...raw, company_name: name }, { today: new Date('2026-09-30') }).record.applicant.name, name);
   }
+});
+
+// The maintainer, 2026-10-26: the form's auto liability question has Select / Yes / No /
+// Non-Trucking. Non-Trucking is the client's own answer that they want non-trucking liability
+// (NTL), so it sets coverage.ntl, as the agent would after reading the notes. Before, only a note
+// naming NTL asked the agent, and Progressive filled such a quote as ordinary liability.
+test('Non-Trucking picked for auto liability on the form is an NTL request', () => {
+  const today = { today: new Date('2026-10-26') };
+  const r = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking', claims_details: 'No' }, today);
+  assert.equal(r.record.coverage.autoLiability, 'Non-Trucking', 'the answer as written');
+  assert.equal(r.record.coverage.ntl, true);
+  const w = r.warnings.find((x) => x.code === 'coverage.ntl-form');
+  assert.equal(w?.level, 'info');
+  assert.equal(w.path, 'coverage.ntl');
+  assert.ok(!r.warnings.some((x) => x.code === 'coverage.ntl'), 'decided by the form: no question about the notes');
+  // Named in the notes too: still decided, still no question.
+  const both = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking', additional_notes: 'Needs non-trucking liability (NTL) only' }, today);
+  assert.equal(both.record.coverage.ntl, true);
+  assert.ok(!both.warnings.some((x) => x.code === 'coverage.ntl'));
+  // Written otherwise on older forms.
+  for (const v of ['Non Trucking', 'non-trucking', 'NonTrucking']) assert.equal(normalizeIntake({ ...raw, auto_liability: v }, today).record.coverage.ntl, true, v);
+  // Yes, No or blank: unset, as before.
+  for (const v of ['Yes', 'No', '']) assert.equal(normalizeIntake({ ...raw, auto_liability: v, claims_details: 'No' }, today).record.coverage.ntl, null, v);
+  // Progressive adds NTL on Rates for it, and leaves Rates to the agent.
+  const actions = buildPlan(r.record, progressive).filter((s) => s.kind === 'action').map((a) => a.action);
+  assert.ok(actions.includes('addNtl'));
+});
+
+// The review of PR #176. The NTL items told the agent the rest of Progressive's Rates is theirs,
+// which is so only with cargo or GL: an NTL-only quote is done through Print. Non-Trucking with no
+// limit is a missing limit, as Yes is. A CDL year with the CDL box blank is a check: TNI's blank-is-No
+// standard doesn't apply to it.
+test('NTL items say who does Rates; Non-Trucking with no limit and a CDL year without a CDL answer are checks', () => {
+  const today = { today: new Date('2026-10-26') };
+  const r = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking', claims_details: 'No\nAlso wants NTL' }, today);
+  const form = r.warnings.find((x) => x.code === 'coverage.ntl-form').msg;
+  const notes = normalizeIntake({ ...raw, auto_liability: 'Yes', claims_details: 'No\nAlso wants NTL' }, today).warnings.find((x) => x.code === 'coverage.ntl').msg;
+  for (const msg of [form, notes]) {
+    assert.doesNotMatch(msg, /; the rest of Rates is yours\./, msg);
+    assert.match(msg, /with cargo or general liability too, the rest of Rates is yours/i, msg);
+  }
+  const noLimit = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking', auto_liab_limit: '' }, today);
+  assert.equal(noLimit.warnings.find((x) => x.code === 'auto-limit.missing')?.path, 'coverage.autoLiabLimit');
+  const year = normalizeIntake({ ...raw, drv_cdl_1: '', drv_cdl_yr_1: '2015' }, today);
+  assert.equal(year.record.drivers[0].cdl, null);
+  assert.equal(year.warnings.find((x) => x.code === 'cdl.blank-with-year')?.path, 'drivers[0].cdl');
+  assert.ok(!normalizeIntake({ ...raw, drv_cdl_1: '', drv_cdl_yr_1: '' }, today).warnings.some((x) => x.code === 'cdl.blank-with-year'), 'blank and no year: TNI\'s No, no question');
+});
+
+test('the agent changing auto liability in the panel follows NTL, unless they set NTL themselves', () => {
+  const r = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking' }, { today: new Date('2026-10-26') }).record;
+  r.coverage.autoLiability = 'Yes';
+  assert.deepEqual(rederive(r, 'coverage.autoLiability'), ['coverage.ntl']);
+  assert.equal(r.coverage.ntl, null, 'no longer asked for: unset, the agent decides');
+  r.coverage.autoLiability = 'Non-Trucking';
+  rederive(r, 'coverage.autoLiability');
+  assert.equal(r.coverage.ntl, true);
+  r.coverage.ntl = false;
+  r.coverage.autoLiability = 'Non-Trucking';
+  assert.deepEqual(rederive(r, 'coverage.autoLiability', { keep: new Set(['coverage.ntl']) }), [], 'the agent\'s own NTL answer stays');
+  assert.equal(r.coverage.ntl, false);
+});
+
+// The maintainer, 2026-10-26: filings asked for with no USDOT or MC number is a wrong intake.
+// Filings are made under a number, so the agent checks it with the client.
+test('filings requested without a USDOT or MC number asks the agent', () => {
+  const today = { today: new Date('2026-10-26') };
+  const r = normalizeIntake({ ...raw, fed_state_filings: 'Yes', dot_number: '', mc_number: '', mc_dot_60days: 'No' }, today);
+  const w = r.warnings.find((x) => x.code === 'filings.no-number');
+  assert.equal(w?.level, 'check');
+  assert.equal(w.path, 'applicant.dot');
+  assert.match(w.msg, /filings/i);
+  // Within 60 days: still a question, said so.
+  const soon = normalizeIntake({ ...raw, fed_state_filings: 'Yes', dot_number: '', mc_number: '', mc_dot_60days: 'Yes' }, today);
+  assert.match(soon.warnings.find((x) => x.code === 'filings.no-number')?.msg ?? '', /within 60 days/);
+  // A number given, no filings, or filings unanswered: nothing.
+  for (const changes of [{ fed_state_filings: 'Yes', dot_number: '1234567', mc_number: '' }, { fed_state_filings: 'Yes', dot_number: '', mc_number: '7654321' },
+    { fed_state_filings: 'No', dot_number: '', mc_number: '' }, { fed_state_filings: '', dot_number: '', mc_number: '' }]) {
+    assert.ok(!normalizeIntake({ ...raw, ...changes }, today).warnings.some((x) => x.code === 'filings.no-number'), JSON.stringify(changes));
+  }
+});
+
+// The maintainer, 2026-10-26: an NTL client is leased on to a motor carrier, which covers the
+// cargo; NTL and cargo both asked for doesn't make sense. A check (yellow) for every carrier.
+test('NTL with cargo asked for is a check for the agent, on every carrier', () => {
+  const today = { today: new Date('2026-10-26') };
+  const both = normalizeIntake({ ...raw, auto_liability: 'Non-Trucking', cargo_cov: 'Yes' }, today);
+  const w = both.warnings.find((x) => x.code === 'coverage.ntl-cargo');
+  assert.equal(w?.level, 'check');
+  assert.equal(w.path, 'coverage.cargo');
+  assert.match(w.msg, /non-trucking/i);
+  assert.match(w.msg, /cargo/i);
+  for (const changes of [{ auto_liability: 'Non-Trucking', cargo_cov: 'No' }, { auto_liability: 'Yes', cargo_cov: 'Yes' }, { auto_liability: 'Non-Trucking', cargo_cov: '' }]) {
+    assert.ok(!normalizeIntake({ ...raw, ...changes }, today).warnings.some((x) => x.code === 'coverage.ntl-cargo'), JSON.stringify(changes));
+  }
+  assert.equal(ntlWithCargo({ coverage: { ntl: true, cargo: true } }), true);
+  assert.equal(ntlWithCargo({ coverage: { ntl: null, cargo: true } }), false, 'NTL only mentioned, not decided: no');
+});
+
+// AmWINS has no NTL option the filler knows: TNI writes it in the disclosure details, the big box
+// at the end of Underwriting where the cargo, radius, trailers and POP lines go (the maintainer,
+// 2026-10-26). First, with the intake's liability limit.
+test('AmWINS writes NTL as the first line of the disclosure details', () => {
+  const today = { today: new Date('2026-10-26') };
+  const disclosure = (changes) => buildPlan(normalizeIntake({ ...raw, ...changes }, today).record, amwins).find((s) => s.re === '^disclosure details$').value;
+  const lines = disclosure({ auto_liability: 'Non-Trucking', auto_liab_limit: '$1M CSL' }).split('\n');
+  assert.equal(lines[0], 'Non-Trucking Liability (NTL) - $1M CSL');
+  assert.ok(lines.some((l) => /^POP /.test(l)), 'the other lines stay');
+  assert.equal(disclosure({ auto_liability: 'Non-Trucking', auto_liab_limit: '' }).split('\n')[0], 'Non-Trucking Liability (NTL)', 'no limit: the line without it');
+  assert.doesNotMatch(disclosure({ auto_liability: 'Yes' }), /Non-Trucking/, 'not asked for: no line');
+  // Set by the agent after the notes (no form answer): the same line.
+  const r = normalizeIntake({ ...raw, auto_liability: 'Yes', additional_notes: 'wants NTL' }, today).record;
+  r.coverage.ntl = true;
+  assert.match(buildPlan(r, amwins).find((s) => s.re === '^disclosure details$').value, /^Non-Trucking Liability \(NTL\) - \$1M CSL$/m);
 });

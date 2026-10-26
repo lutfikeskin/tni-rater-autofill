@@ -3231,7 +3231,8 @@
         if (!a.missing || clicked.has(a.action) || !actionHere(a) || findButton(a)
           || !a.afterActions.every((id) => clicked.has(id)) || a.unlessActions?.some((id) => clicked.has(id))
           || settledItem(a)) continue;
-        report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing });
+        // A markable one carries its own id, scoped as `clicked` has it, for the panel's Mark done.
+        report.noData.push({ label: a.label ?? a.name, path: a.path, name: a.name, key: null, q: null, controlKind: null, note: a.missing, action: a.markable ? a.action : null });
       }
       // Clicked earlier, but what it adds never got in (Add Trailer opened, the trailer page left
       // without filling it): the agent finishes it before Continue. A helper kept to a container

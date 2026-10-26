@@ -10,8 +10,8 @@
     "questions": 29,
     "filled": 19,
     "failed": [
-     "Home Address: the page offered no address suggestion; check the address, city and ZIP",
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP",
+     "Home Address: the page offered no address suggestion; check the address, city and ZIP"
     ],
     "noData": 0,
     "unmapped": 2,
@@ -93,7 +93,7 @@
     "clicked": [
      "+"
     ],
-    "outcomes": "2ddae520497f"
+    "outcomes": "d27f88cccc90"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -202,7 +202,7 @@
     "unmapped": 5,
     "blockers": 4,
     "clicked": [],
-    "outcomes": "21e8a12e0748"
+    "outcomes": "05cee6a1fc26"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -267,7 +267,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "f63a275ac1bd"
+    "outcomes": "3886e455dd50"
    },
    "NoHit": {
     "questions": 9,
@@ -299,7 +299,7 @@
     "unmapped": 5,
     "blockers": 4,
     "clicked": [],
-    "outcomes": "6fc0d3169ddb"
+    "outcomes": "c4b7d5a943c0"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -400,7 +400,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "c9914f29dbf6"
+    "outcomes": "80a1622f1f88"
    },
    "CoveragesRates": {
     "questions": 12,
@@ -412,7 +412,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "561bf7b57ccc"
+    "outcomes": "490aa2bac832"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -499,7 +499,7 @@
     "unmapped": 0,
     "blockers": 1,
     "clicked": [],
-    "outcomes": "b439375c1581"
+    "outcomes": "1bb1fae35f5e"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -526,9 +526,9 @@
     "questions": 25,
     "filled": 13,
     "failed": [
-     "Home Address: the page offered no address suggestion; check the address, city and ZIP",
+     "Business type list: no option matches \"For Hire Trucking\"",
      "Street Address: the page offered no address suggestion; check the address, city and ZIP",
-     "Business type list: no option matches \"For Hire Trucking\""
+     "Home Address: the page offered no address suggestion; check the address, city and ZIP"
     ],
     "noData": 0,
     "unmapped": 0,
@@ -568,7 +568,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "4634f3d66e16"
+    "outcomes": "733d7e795b5d"
    },
    "MoreAboutBusiness": {
     "questions": 11,
@@ -592,7 +592,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "ff54b4909c5c"
+    "outcomes": "784d4d5be2b8"
    },
    "VehicleSummary": {
     "questions": 20,
@@ -631,10 +631,10 @@
     "questions": 37,
     "filled": 21,
     "failed": [
-     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
-     "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])",
+     "Home Address: the page offered no address suggestion; check the address, city and ZIP",
+     "Business type list: no option matches \"For Hire Trucking\"",
      "Street Address: the page offered no address suggestion; check the address, city and ZIP",
-     "Business type list: no option matches \"For Hire Trucking\""
+     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP"
     ],
     "noData": 0,
     "unmapped": 3,
@@ -688,7 +688,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "cbbbd5ace3ca"
+    "outcomes": "f0b3f4d786f6"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -757,9 +757,9 @@
     "questions": 26,
     "filled": 13,
     "failed": [
-     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
-     "Home Address: the page offered no address suggestion; check the address, city and ZIP (new on the page: div#form-#.x-panel.x-panel-default.x-border-box[role=presentation], div#container-#.x-container.x-container-default.x-border-box[role=presentation])",
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP",
+     "Home Address: the page offered no address suggestion; check the address, city and ZIP",
+     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP"
     ],
     "noData": 0,
     "unmapped": 0,
@@ -771,8 +771,8 @@
     "questions": 26,
     "filled": 13,
     "failed": [
-     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP",
-     "Street Address: the page offered no address suggestion; check the address, city and ZIP"
+     "Street Address: the page offered no address suggestion; check the address, city and ZIP",
+     "Business Owner Home Address Input Non Shredded Address For PB Ad: the page offered no address suggestion; check the address, city and ZIP"
     ],
     "noData": 0,
     "unmapped": 0,
@@ -836,7 +836,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "5b2355fc2c3b"
+    "outcomes": "ab093e34c66e"
    },
    "ChangePaymentPlan": {
     "questions": 4,
@@ -933,7 +933,7 @@
     "unmapped": 7,
     "blockers": 14,
     "clicked": [],
-    "outcomes": "d3483a14a109"
+    "outcomes": "7a95287407b4"
    },
    "CoveragesRates": {
     "questions": 25,
@@ -945,7 +945,7 @@
     "clicked": [
      "Continue ›"
     ],
-    "outcomes": "77b7417a177f"
+    "outcomes": "d5b2ef365267"
    },
    "ChangePaymentPlan": {
     "questions": 4,

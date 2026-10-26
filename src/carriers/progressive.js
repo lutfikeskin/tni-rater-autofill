@@ -31,7 +31,7 @@
 // doesn't answer it.
 
 import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
-import { ntlMention, intakeNotes, otherNotes, isLongHaul } from '../normalize.js';
+import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -335,6 +335,18 @@ const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT numb
 // Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl).
 const ntlUndecided = (r) => r.coverage.ntl == null && (!!ntlMention(intakeNotes(r)) || r.claims?.aiNtl === true);
 const notNtl = (r) => r.coverage.ntl !== true && !ntlUndecided(r);
+// An NTL quote asking for neither cargo nor general liability: the fill does Rates as on any quote
+// (the maintainer, 2026-10-26, live run: NTL, then Done with this coverage, Recalculate, the bill
+// plan, Print, Email, Fax, as on a quote without NTL). With cargo or GL too (a check on the
+// intake: an NTL client's motor carrier usually covers the cargo), Rates after NTL is the agent's.
+const ntlOnly = (r) => r.coverage.ntl === true && r.coverage.cargo !== true && r.coverage?.gl !== true;
+const ratesOurs = (r) => notNtl(r) || ntlOnly(r);
+// What the rates helpers wait for: cargo and GL closed, or on an NTL quote its Done; the liability
+// limit resolved, or on an NTL quote its NTL limit (Bodily Injury stays Not selected there).
+const ratesAfterActions = (r) => (r.coverage.ntl === true ? ['doneNtl'] : [...(r.coverage.cargo ? ['doneCargo'] : []), ...(r.coverage?.gl === true ? ['doneGl'] : [])]);
+const ratesAfter = (r) => (r.coverage.ntl === true ? [NTL_LIMIT] : ['coverage.autoLiabLimit']);
+const ratesAfterAny = (r) => (r.coverage.ntl === true ? [NTL_LIMIT] : ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F']);
+const NTL_LIMIT = 'progressive.q1DF2';
 
 // The whole address on one line, for address boxes that offer the carrier's own suggestions.
 const oneLineAddress = (r) => {
@@ -490,19 +502,24 @@ export const progressive = {
     // never leaves an intake trailer out (TN 2026-10-07).
     { id: 'addTrailer', page: 'VehicleSummary', text: '^add (a |another )?trailer$', opener: '^add$', unlessActions: ['trailerEntered:trailer'], afterActions: (r) => (r.vehicles ?? []).map((_, i) => `lookupVin:${i}`), scope: 'trailer', label: 'Trailer', missing: 'Add the intake\'s trailer yourself (Add → Add Trailer).', doneWhen: (r, a) => [`trailerEntered:${a.trailers ?? 0}`], unfinished: 'Add Trailer was opened, but this intake trailer was never entered: add it (Add → Add Trailer) before Continue.', when: (r) => (r.trailers?.length ?? 0) > 0 },
     { id: 'trailerTile', page: 'MostCommonTrailers', text: trailerTile, unique: true, label: 'Trailer type', missing: trailerTileNote, scope: 'trailer', when: (r) => (r.trailers?.length ?? 0) > 0 },
-    // Non-trucking liability, once the agent set it to Yes (a claims-box mention alone never
-    // clicks it): the link under the liability coverage that opens the NTL section. First in this
-    // list, so it comes before cargo. Done only when the link is gone afterwards (a click lost in a
-    // redraw stays a blocker). What the section asks hasn't been seen on a live quote: its
-    // questions, the bill plan and the rest of Rates are the agent's (agentPages below).
-    { id: 'addNtl', page: 'CoveragesRates', text: ADD_NTL, verify: 'gone', when: (r) => r.coverage.ntl === true },
+    // Non-trucking liability, once it is Yes (the form's Non-Trucking or the agent's; a claims-box
+    // mention alone never clicks it): the link under the liability coverage that opens the NTL
+    // section. First in this list, so it comes before cargo. Done only when the link is gone
+    // afterwards (a click lost in a redraw stays a blocker). The section's questions are filled (the
+    // rules for LineInput.NTLLease and NTLLimit, seen live on 2026-10-26); the rest of Rates as below.
+    { id: 'addNtl', page: 'CoveragesRates', text: ADD_NTL, verify: 'gone', immediate: true, when: (r) => r.coverage.ntl === true },
     // NTL added on this quote, then set back to No: the filler doesn't remove it. Never clicked; a
     // "needs you" item on Rates, holding the later Rates helpers, until the page offers Add NTL
     // again (the agent removed it).
-    // NTL quote, or an NTL mention not answered yet: never clicked, a "needs you" item that keeps
-    // Continue for the agent (the rest of Rates is theirs, or waits for their answer).
-    { id: 'ntlRates', page: 'CoveragesRates', label: 'Non-trucking liability', when: (r) => r.coverage.ntl === true,
-      missing: () => 'NTL quote: the rest of this page is yours (the NTL section, cargo, the bill plan, Recalculate, Print). Continue yourself when it is done.' },
+    // An NTL mention not answered yet, or an NTL quote with cargo or GL: never clicked, a "needs you"
+    // item that keeps Continue for the agent (the rest of Rates waits for their answer, or is theirs).
+    // An NTL quote with cargo or GL too: after NTL, Rates is the agent's (Mark done once it is).
+    // `markable`: the agent marks it done once the rest of Rates is (no other reminder here is).
+    { id: 'ntlRates', page: 'CoveragesRates', label: 'Non-trucking liability', markable: true, when: (r) => r.coverage.ntl === true && !ntlOnly(r),
+      missing: () => 'NTL quote with cargo or general liability: the filler adds NTL with the intake\'s limit and the permanent lease Yes. Cargo, general liability, the bill plan, Recalculate and Print are yours. Continue yourself when it is done.' },
+    // The NTL section closes with its own Done with this coverage, once its limit is in (the
+    // maintainer, 2026-10-26, live run: the agent clicked it). The only Done on an NTL-only quote.
+    { id: 'doneNtl', page: 'CoveragesRates', waitRequired: true, text: '^done with this coverage$', afterActions: ['addNtl'], after: [NTL_LIMIT], label: 'Non-trucking liability: Done with this coverage', when: ntlOnly },
     { id: 'ntlDecide', page: 'CoveragesRates', label: 'Non-trucking liability', when: ntlUndecided,
       missing: () => 'The claims box mentions NTL and Non-trucking liability isn\'t answered: set it to Yes or No on the Intake step, then fill this page again.' },
     { id: 'ntlStillAdded', page: 'CoveragesRates', afterActions: ['addNtl'], resolvedBy: ADD_NTL, label: 'Non-trucking liability', when: (r) => r.coverage.ntl !== true,
@@ -524,25 +541,25 @@ export const progressive = {
     { id: 'doneGl', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^done with this coverage$', afterActions: ['openGl'], after: ['progressive.q21D1'], verify: 'glClosed', when: (r) => glRequested(r) && notNtl(r) },
     // Rates, as TNI agents work it (the maintainer, 2026-10-23): once cargo and GL are added,
     // Recalculate and wait for the new premium, open the bill plan options and pick automatic
-    // payments there, come back (Continue), then Print, Email, Fax. With NTL they do the rates page
-    // by hand. (The bill plan used to come first and Recalculate after it; with the rates out of
+    // payments there, come back (Continue), then Print, Email, Fax. On an NTL quote with cargo or GL
+    // they do the rest of the rates page by hand (ntlRates). (The bill plan used to come first and Recalculate after it; with the rates out of
     // date Progressive lays something over View bill plan options, so each waited on the other and
     // the agent clicked both: two live TX recordings, 2026-10-23.)
     // None of the rates helpers run while the liability limit is unresolved (missing, rejected or
     // different from the intake); a limit the agent set themselves counts as resolved.
     // Recalculate only when the rates say they're out of date (needsRecalculation).
-    { id: 'recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', afterActions: (r) => [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], needsRecalculation: true, verify: 'premium', when: notNtl },
+    { id: 'recalculate', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', afterActions: ratesAfterActions, after: ratesAfter, afterAny: ratesAfterAny, needsRecalculation: true, verify: 'premium', when: ratesOurs },
     // The bill plan once the premium is current (needsPremium: Recalculate done, or not needed).
-    { id: 'billPlan', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, needsPremium: true, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: (r) => [...(r.coverage.cargo ? ['doneCargo'] : []), ...(glRequested(r) ? ['doneGl'] : [])], after: ['coverage.autoLiabLimit'], afterAny: ['coverage.autoLiabLimit', 'progressive.q2150', 'progressive.q216F'], when: notNtl },
+    { id: 'billPlan', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, needsPremium: true, text: '^(view )?bill(ing)?( plan)? options?$', afterActions: ratesAfterActions, after: ratesAfter, afterAny: ratesAfterAny, when: ratesOurs },
     // Back from the bill plan, Recalculate again only if it's there (the rates out of date: the
     // maintainer, 2026-10-23), else straight to Print, Email, Fax. It follows the bill plan, which
     // waited for a resolved limit, and doesn't re-check it (as Print, below).
-    { id: 'recalculateAgain', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: notNtl },
+    { id: 'recalculateAgain', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: '^recalculate$', afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], needsRecalculation: true, verify: 'premium', when: ratesOurs },
     // Progressive shows Print, Email, Fax (in place of Recalculate) only once the rates are
     // current, so back from the bill plan the button itself is the signal. It doesn't re-check the
     // liability limit: back from the bill plan, the reloaded Rates page failed that check on a
     // limit that was fine (FL and NJ runs: Print, Email, Fax never ran).
-    { id: 'print', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: PRINT_EMAIL_FAX, afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], when: notNtl },
+    { id: 'print', page: 'CoveragesRates', heldBy: NTL_HOLD, waitRequired: true, text: PRINT_EMAIL_FAX, afterActions: ['billPlan'], afterPages: ['ChangePaymentPlan'], when: ratesOurs },
     // Print/Send is the agent's (TNI 2026-10-07): Progressive opens the quote PDF in a new window
     // from that click, and Chrome only lets a page open one right after the person's own click, so
     // ours went through without a PDF. The Print page is filled; the panel asks for the click.
@@ -593,8 +610,8 @@ export const progressive = {
     PrintEmailFax: 'Click Print/Send yourself to get the quote PDF: Chrome only opens it after your own click. The document and Print are already chosen.',
     // TNI (2026-10-07): an SSN only when the client gave one; the usual fix is the owner's name.
     NoHit: "Progressive couldn't verify the business owner. Adjust the owner's name: removing the middle name and keeping only the first and last name often fixes it. Check the date of birth and home address too (an SSN only if the client gave one), then Continue.",
-    CoveragesRates: (r) => (r.coverage?.ntl === true
-      ? 'Non-trucking liability (NTL) quote: the filler opens it with "Add Non-Trucking Liability instead?". The rest of this page is yours: answer that section, then cargo, the bill plan, Recalculate and Print.'
+    CoveragesRates: (r) => (r.coverage?.ntl === true && !ntlOnly(r)
+      ? 'Non-trucking liability (NTL) quote with cargo or general liability: the filler adds NTL, answers the permanent lease question Yes, picks the intake\'s limit for NTL and leaves Bodily Injury and Property Damage Liability Not selected. The rest of this page is yours: cargo, general liability, the bill plan, Recalculate and Print.'
       : null),
   },
   // Pages where Progressive has stopped the quote. Nothing is filled or clicked there (not even on
@@ -809,7 +826,9 @@ export const progressive = {
       { q: '289A', field: 'DriverInput.LastName', ask: 'Driver Last Name', path: 'drivers[].last' },
       { q: '28A7', field: 'DriverInput.DateOfBirth', ask: 'Date of Birth', path: 'drivers[].dob' },
       { q: '28AC', field: 'DriverInput.LicenseStateDup', ask: 'Driver\'s License State', path: 'drivers[].licenseState' },
-      { q: '28E6', field: 'DriverInput.HasCDL', ask: 'Does this driver have a Commercial Driver\'s License (CDL)?', path: 'drivers[].cdl', name: 'Has a CDL', kind: 'bool' },
+      // A blank CDL box on the intake is No (the maintainer, 2026-10-26: TNI's standard; cdlAnswer).
+      { q: '28E6', field: 'DriverInput.HasCDL', ask: 'Does this driver have a Commercial Driver\'s License (CDL)?', path: 'drivers[].cdl', name: 'Has a CDL (TNI: No when the intake leaves it blank)', kind: 'bool',
+        source: (r, a) => (cdlStandard(r.drivers?.[a.drivers ?? 0]) ? 'standard' : 'intake'), value: (r, a) => cdlAnswer(r.drivers?.[a.drivers ?? 0]) },
       { q: '28B9', field: 'DriverInput.DriverLicenseNumber', ask: 'Driver’s License Number', path: 'drivers[].licenseNumber' },
       // FL (2026-10-07): with a CDL, the year it was issued, from the intake; "Year is unknown" is
       // the agent's when the intake has no year.
@@ -831,7 +850,16 @@ export const progressive = {
       // The same answer shown again on Rates (NJ), with its own wording: Progressive carries it over.
       // Left as Progressive set it, but a carryover that didn't happen (empty) goes to the agent.
       { q: '2007', field: 'LoanLeaseInput.Limit', ask: 'Loan/Lease', name: 'Loan / lease on Rates (carried over from Add Vehicle)', ignore: true, emptyNote: 'Loan / lease should carry over from Add Vehicle but is empty here: answer it yourself.', scope: 'vehicle' },
-      { q: '1D97', field: 'LineInput.RBIPDLimit', ask: 'Bodily Injury and Property Damage Liability', path: 'coverage.autoLiabLimit' },
+      // An NTL quote (the maintainer, 2026-10-26, live run): Bodily Injury and Property Damage stays
+      // Not selected, the permanent lease question is Yes, and the intake's liability limit goes to
+      // the Non-Trucking Liability limit (the same choices). Progressive asks them once Add
+      // Non-Trucking Liability instead? is clicked (addNtl, first on the page).
+      { q: '1D97', field: 'LineInput.RBIPDLimit', ask: 'Bodily Injury and Property Damage Liability', path: 'coverage.autoLiabLimit', name: 'Liability limit (NTL quote: Not selected)',
+        source: (r) => (r.coverage.ntl === true ? 'derived' : 'intake'), value: (r) => (r.coverage.ntl === true ? 'Not selected' : r.coverage.autoLiabLimit) },
+      { q: '1DF0', field: 'LineInput.NTLLease', label: '^is the customer under permanent lease to a motor carrier', name: 'Under permanent lease to a motor carrier (NTL quote, TNI: Yes)',
+        kind: 'bool', source: 'standard', value: () => true, ignore: (r) => r.coverage.ntl !== true },
+      { q: '1DF2', field: 'LineInput.NTLLimit', label: '^non\\W*trucking liability coverage limit$', name: 'Non-trucking liability limit (the intake\'s liability limit)',
+        kind: 'choice', source: 'derived', value: (r) => r.coverage.autoLiabLimit ?? null, ignore: (r) => r.coverage.ntl !== true },
       // FL: the CSL already covers property damage; PIP is required, $10k with no deductible (TNI).
       // Changing PIP makes Progressive invalidate the liability limit, which is picked again.
       { q: '1DB8', source: 'standard', ask: 'Property Damage Liability Only', name: 'Property damage liability only (standard: Not Selected)', kind: 'choice', value: () => 'Not Selected' },

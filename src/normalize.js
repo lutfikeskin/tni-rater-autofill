@@ -212,8 +212,24 @@ export const intakeNotes = (record) => [record?.claims?.text, record?.notes?.tex
 // The same without the claims box's own yes/no answer: its other lines and the Additional Notes box.
 export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.text].filter(Boolean).join('\n') || null;
 
+// The form's auto liability answer Non-Trucking (Select / Yes / No / Non-Trucking): the client asks
+// for non-trucking liability (the maintainer, 2026-10-26). Also as written on older forms.
+export const nonTruckingAnswer = (v) => /^\s*non[\s-]*trucking\s*$/i.test(String(v ?? ''));
+// "Does this driver have a CDL?": the intake's answer; a blank box is No (TNI's standard, the
+// maintainer, 2026-10-26), unless a CDL year is filled in: then the agent's (`cdl.blank-with-year`).
+// No driver: nothing.
+export const cdlStandard = (driver) => !!driver && typeof driver.cdl !== 'boolean' && driver.cdlYear == null;
+export const cdlAnswer = (driver) => (cdlStandard(driver) ? false : typeof driver?.cdl === 'boolean' ? driver.cdl : null);
 export const ntlMention = (text) => String(text ?? '').split('\n').find((line) => NTL_WORDS.test(line))?.trim() || null;
-export const ntlCheckMessage = (line) => `The claims box or Additional Notes mention non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you. AmWINS has no NTL option the filler knows: quote it by hand. On GEICO the filler leaves the liability coverage and its limit to you.`;
+// What the filler does on an NTL quote, carrier by carrier (the NTL items below and Luna's).
+export const NTL_FILLS = 'On Progressive the filler adds it on Rates, answers the permanent lease question Yes, puts the limit in the NTL limit and leaves Bodily Injury and Property Damage Liability Not selected, then does the rest of Rates through Print, Email, Fax; with cargo or general liability too, the rest of Rates is yours. On GEICO it picks Non-Trucking Liability, answers "Yes, under permanent lease" and puts the limit in the NTL list. On AmWINS it is written in the disclosure details on Underwriting.';
+export const ntlCheckMessage = (line) => `The claims box or Additional Notes mention non-trucking liability (NTL): "${line}". If the client wants NTL, set Non-trucking liability to Yes. ${NTL_FILLS}`;
+// The intake's info item when the form's auto liability is Non-Trucking (coverage.ntl-form).
+export const NTL_FORM_MESSAGE = `Auto liability is Non-Trucking on the intake: Non-trucking liability is set to Yes. ${NTL_FILLS}`;
+// NTL and cargo both asked for (the maintainer, 2026-10-26): an NTL client is leased on to a motor
+// carrier, which covers the cargo, so the agent confirms it with the client. Every carrier.
+export const ntlWithCargo = (record) => record?.coverage?.ntl === true && record?.coverage?.cargo === true;
+export const NTL_CARGO_MESSAGE = 'Non-trucking liability (NTL) and cargo coverage are both asked for. An NTL client is leased on to a motor carrier, which usually covers the cargo: confirm with the client whether they want cargo, and set Cargo coverage to No if not.';
 
 // Words in the claims notes that answer the ownership question. Only the form's three answers
 // are taken as the answer; the others count as mentions, so "on a lease, truck owned" is not
@@ -420,8 +436,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
       gl: yesNo(raw.gen_liability),
       glLimit: txt('gen_liab_limit'),
       reeferBreakdown: yesNo(raw.reefer_breakdown),
-      // Not on the form: only the agent sets it, after reading the claims box.
-      ntl: null,
+      // Non-Trucking picked for auto liability on the form (nonTruckingAnswer), else the agent's,
+      // after reading the claims box and the notes.
+      ntl: nonTruckingAnswer(raw.auto_liability) ? true : null,
       // The client already has general liability elsewhere (not a GL request: that's `gl`). Not on
       // the form either: the agent sets it, after Luna flags the claims box.
       hasGl: null,
@@ -540,6 +557,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     if (!d.first || !d.last) check('name.missing-part', p(d.first ? 'last' : 'first'), `${who}: missing ${d.first ? 'last' : 'first'} name.`);
     if (d.cdl && !d.cdlYear) check('cdl-year.missing', p('cdlYear'), `${who}: has a CDL but no year it was issued.`);
     if (d.cdl === false && d.cdlYear) check('cdl-year.without-cdl', p('cdlYear'), `${who}: marked no CDL but a CDL year is filled in.`);
+    if (d.cdl == null && d.cdlYear) check('cdl.blank-with-year', p('cdl'), `${who}: the CDL box is blank but a CDL year is filled in: answer whether they have a CDL (a blank box alone is No).`);
     record.drivers.push(d);
     rows.drivers.push(n);
   });
@@ -602,6 +620,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   else if (radius.kind === 'text') check('radius.not-miles', 'operations.radius', `Radius is "${ops.radius}", not a number of miles. Raters usually want miles or a band (e.g. 500+).`);
   if (ops.usesEld && !ops.eldBrand) check('eld-brand.missing', 'operations.eldBrand', 'Uses an ELD but brand not given.');
   if (ops.filingsRequired && !ops.filingsWhich) check('filings-which.missing', 'operations.filingsWhich', 'Needs filings but did not say which.');
+  // Filings are made under a USDOT or MC number (the maintainer, 2026-10-26: a wrong intake).
+  if (ops.filingsRequired === true && !record.applicant.dot && !record.applicant.mc) {
+    check('filings.no-number', 'applicant.dot', `Needs filings but no USDOT or MC number is given${record.applicant.mcDotWithin60Days === true ? ' (the client says they will have one within 60 days)' : ''}. Filings are made under a number: check with the client.`);
+  }
   if (ops.hazmat) check('hazmat.yes', 'operations.hazmat', 'Hauls hazmat, tobacco or prescription drugs — confirm which, most raters treat these differently.');
 
   // --- Current insurance ----------------------------------------------------------------------
@@ -639,7 +661,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   record.coverage.cargoLimit = cargo.limit;
   record.coverage.cargoDeductible = cargo.deductible;
   if (record.coverage.cargo && !cargo.limit) check('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.');
-  if (record.coverage.autoLiability === 'Yes' && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
+  // Non-Trucking asks for a limit too: the carrier's NTL limit (the review of PR #176).
+  if ((record.coverage.autoLiability === 'Yes' || nonTruckingAnswer(record.coverage.autoLiability)) && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
   if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'Wants general liability but no limit chosen: TNI\'s default is $1M/$2M ($1M per occurrence, $2M aggregate). Confirm it with the client.');
 
   // --- Claims box -----------------------------------------------------------------------------
@@ -666,8 +689,11 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // Non-trucking liability (NTL) is named only in the notes: "NTL", "non-trucking" (also written
   // "non tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the
   // agent decides, and nothing is added until they set it to Yes.
+  // Decided by the form's Non-Trucking answer: said, and no question about the notes.
   const ntlLine = ntlMention(intakeNotes(record));
-  if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
+  if (record.coverage.ntl === true) info('coverage.ntl-form', 'coverage.ntl', NTL_FORM_MESSAGE);
+  else if (ntlLine) check('coverage.ntl', 'coverage.ntl', ntlCheckMessage(ntlLine));
+  if (ntlWithCargo(record)) check('coverage.ntl-cargo', 'coverage.cargo', NTL_CARGO_MESSAGE);
   if (record.vehicles.length && !ops.vehicleOwnership && !warnings.some((w) => w.path === 'operations.vehicleOwnership')) {
     check('ownership.missing', 'operations.vehicleOwnership', 'Vehicle ownership (owned / leased / financed) not selected.');
   }
@@ -698,6 +724,8 @@ export function parseEdit(kind, text) {
 // the derived field itself ("Radius (miles)") is the agent's value and is left as typed, also
 // when the source is edited afterwards (the panel passes the paths the agent edited as `keep`).
 const DERIVED = {
+  // Non-Trucking on auto liability is an NTL request; another answer leaves NTL to the agent.
+  'coverage.autoLiability': ['coverage.ntl', (record) => (nonTruckingAnswer(record.coverage?.autoLiability) ? true : null)],
   'operations.radius': ['operations.radiusMiles', (record) => parseRadius(record.operations?.radius).miles],
   'applicant.yearEstablished': ['applicant.yearsInBusiness', (record, year) => {
     const est = record.applicant?.yearEstablished;

@@ -1,6 +1,6 @@
 // Luna resolves bounded choices; code gates automatic picks and the agent approves them.
 import { AssistError, LEAVE, neverReason, manualOnlyReason, evidenceFor, scopedIntake } from './common.js';
-import { ntlMention, intakeNotes, NTL_WORDS } from '../normalize.js';
+import { ntlMention, intakeNotes, NTL_WORDS, NTL_FILLS } from '../normalize.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
 export const API_URL = 'https://api.openai.com/v1/responses';
@@ -309,6 +309,8 @@ export function buildNotesReview(record, { redact = (s) => s, today = new Date()
   const fromNotes = noteFragments(record.notes?.text).map(redact).filter((l) => !inClaims.has(l));
   return { body, lines, ids, fromNotes, quoted: mention ? redact(mention).replace(/\s+/g, ' ').trim() : null,
     quotedFragments: mention ? noteFragments(mention).map(redact) : [], truncated: claimsTruncated(notes),
+    // NTL already Yes (the form's Non-Trucking, or the agent's): nothing more to ask about it.
+    ntlSet: ntl === true,
     intakeYears, year: today.getFullYear() };
 }
 
@@ -334,13 +336,14 @@ const statedYears = (x, year) => x.businessYears ?? (x.businessSince != null ? y
 // line the intake's own NTL item already quotes (`quoted`) isn't repeated; another NTL line still
 // is ("does not want bobtail" quoted, then "needs NTL off dispatch"), and so is any other request,
 // also in the quoted line ("Needs NTL. Also needs physical damage.", "Needs NTL and physical damage").
+// With NTL already Yes (`ntlSet`) no line asks about NTL.
 // How long the business has run: one item, for the first line stating it, when it differs from
 // the intake's years (`intakeYears`, null when blank: the quote then gets 0, a new venture).
 // General liability: one item, for the first line flagged, whether or not the form asks for GL.
 // Its quote must be one of the lines sent (`lines`): evidence Luna can't make up.
 export const GL_CHOICES = Object.freeze([{ label: 'Client has GL', path: 'coverage.hasGl', value: true }, { label: 'Not GL' }]);
 const shortQuote = (line, max = 120) => (line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line);
-export function notesWarnings(results, { quotedFragments = [], intakeYears = null, year = new Date().getFullYear(), lines = null, fromNotes = [] } = {}) {
+export function notesWarnings(results, { quotedFragments = [], ntlSet = false, intakeYears = null, year = new Date().getFullYear(), lines = null, fromNotes = [] } = {}) {
   const out = [];
   const gl = results.find((x) => x.generalLiability === true && (!lines || lines.includes(x.line)));
   if (gl) {
@@ -358,8 +361,8 @@ export function notesWarnings(results, { quotedFragments = [], intakeYears = nul
   for (const x of results) {
     // The intake's own NTL item already covers NTL here; another request in it still counts.
     const quotedNtl = quotedFragments.includes(x.line) && NTL_WORDS.test(x.line);
-    if (x.ntl && !quotedNtl) {
-      out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: the claims box or Additional Notes may be about non-trucking liability (NTL): "${x.line}". If the client wants NTL, set Non-trucking liability to Yes: on Progressive the filler then adds it on Rates and leaves that page to you.` });
+    if (x.ntl && !quotedNtl && !ntlSet) {
+      out.push({ line: x.line, code: 'ai.ntl', path: 'coverage.ntl', level: 'check', msg: `Luna: the claims box or Additional Notes may be about non-trucking liability (NTL): "${x.line}". If the client wants NTL, set Non-trucking liability to Yes. ${NTL_FILLS}` });
     }
     if (x.coverageChange) {
       out.push({ line: x.line, code: 'ai.coverage-change', path: fromNotes.includes(x.line) ? 'notes.text' : 'claims.text', level: 'check', msg: `Luna: the claims box or Additional Notes may ask for a coverage change: "${x.line}". The filler uses the coverages ticked on the form; change them under Requested coverage if the client wants this.` });

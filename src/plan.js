@@ -104,6 +104,8 @@ function actionSteps(carrier, record, active) {
       // A helper the agent must otherwise do by hand: what the panel says when it can't be clicked.
       label: a.label ?? null,
       missing: resolve(a.missing) ?? null,
+      // Its reminder can be marked done by the agent (carrier `markable`: Progressive's ntlRates).
+      markable: !!a.markable,
       // `heldBy`: helpers (by id) whose open "needs you" item holds this one; `resolvedBy`: the
       // button whose return on the page settles that item (the Add NTL link, NTL removed).
       heldBy: resolve(a.heldBy) ?? [],

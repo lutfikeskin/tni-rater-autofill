@@ -156,7 +156,7 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   assert.deepEqual(buildPlan(intake(), geico, {}).filter((s) => s.field === 'GivePayPlanV2').map((s) => [s.value, s.whenOffered, s.orMost]), [['11 Payments', true, ORMOST], ['11 Payments', true, ORMOST]]);
   const most = (texts) => texts.map((t) => (new RegExp(ORMOST.one, 'i').test(t) ? 1 : Number(new RegExp(ORMOST.count, 'i').exec(t)?.[1] ?? NaN)));
   assert.deepEqual(most(['Pay In Full', '4 Payments Bi-Monthly Plan', '9 Payments', '11 Payments', 'Paperless discount']), [1, 4, 9, 11, NaN]);
-  assert.ok(geico.actions.filter((a) => a.steps.includes(QC) && !['openCargo', 'recalculate'].includes(a.id)).every((a) => a.needsPremium), 'each waits for a current premium');
+  assert.ok(geico.actions.filter((a) => a.steps.includes(QC) && !['openCargo', 'recalculate', 'ntlLease'].includes(a.id)).every((a) => a.needsPremium), 'each waits for a current premium');
   for (const a of geico.actions) assert.ok(a.steps.every((s) => [VEH, DRV, QC].includes(s)), a.id);
   assert.deepEqual([geico.newQuestionsOnlySteps, geico.keepTakenBack], [[QC], [QC]]);
   assert.ok(!('noFollowUpSteps' in geico));
@@ -237,12 +237,14 @@ const STANDARDS = [
   'Uninsured motorist bodily injury, UMBI (TNI: $100,000 CSL)', 'Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)',
   'SR-22 (the owner; TNI: No unless the intake says otherwise)', 'SR-22 (this driver; TNI: No unless the intake says otherwise)',
   'Hazardous material placard (TNI: No unless the intake says otherwise)', 'Team driving or slip seating (TNI: No unless the intake says otherwise)',
-  'Filings required (TNI: No unless the intake says otherwise)',
+  'Filings required (TNI: No unless the intake says otherwise)', 'Driver has a CDL (TNI: No when the intake leaves it blank)',
+  'Owner has a CDL (TNI: No when the intake leaves it blank)',
 ];
 
 test('TNI\'s GEICO standards are the recorded ones, and only GEICO\'s own rules answer', () => {
   const seen = new Set();
-  const records = [...RECORDS(), with_({ 'garaging.state': 'FL', 'coverage.reeferBreakdown': null, 'operations.equipVehicle': null, 'vehicles.0.type': 'Van' })];
+  const records = [...RECORDS(), with_({ 'garaging.state': 'FL', 'coverage.reeferBreakdown': null, 'operations.equipVehicle': null, 'vehicles.0.type': 'Van' }),
+    with_({ drivers: [{ ...intake().drivers[0], cdl: null, cdlYear: null }, { ...CASEY, cdl: null }] })];
   for (const rule of geico.rules) {
     const sources = typeof rule.source === 'function' ? records.flatMap((r) => ACTIVES.map((a) => rule.source(r, a))) : [rule.source];
     if (sources.includes('standard')) seen.add(rule.name);
@@ -769,16 +771,16 @@ test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel
   const r = with_({ drivers: [intake().drivers[0], CASEY] });
   const p = plan(r, { drivers: 1 });
   // The form GEICO adds for an owner who drives: the owner's answers, whoever the panel shows.
-  assert.deepEqual([one(p, 'Owner\'s license state').value, one(p, 'Owner has a CDL').value], ['NE', true]);
+  assert.deepEqual([one(p, 'Owner\'s license state').value, one(p, 'Owner has a CDL (TNI: No when the intake leaves it blank)').value], ['NE', true]);
   // Add Driver: the panel's driver.
-  assert.deepEqual(['Driver first name', 'Driver last name', 'Driver date of birth', 'Driver license state', 'Driver has a CDL'].map((n) => one(p, n).value), ['Casey', 'Example', '07/09/1995', 'IA', false]);
+  assert.deepEqual(['Driver first name', 'Driver last name', 'Driver date of birth', 'Driver license state', 'Driver has a CDL (TNI: No when the intake leaves it blank)'].map((n) => one(p, n).value), ['Casey', 'Example', '07/09/1995', 'IA', false]);
   assert.equal(one(p, 'Driver suffix').optional, true);
   // Anyone but an owner: TNI's standard Employee.
   const rel = one(p, 'Driver\'s relationship to the business (Owner, else Employee)');
   assert.deepEqual([rel.value, rel.source, rel.standard, rel.manualOnly], ['Employee', 'standard', true, false]);
   // The owner as the panel's driver while GEICO already lists them: Add Driver isn't filled.
   const owner = plan(r, { drivers: 0 });
-  for (const name of ['Driver first name', 'Driver last name', 'Driver date of birth', 'Driver license state', 'Driver has a CDL', 'Driver\'s relationship to the business (Owner, else Employee)']) {
+  for (const name of ['Driver first name', 'Driver last name', 'Driver date of birth', 'Driver license state', 'Driver has a CDL (TNI: No when the intake leaves it blank)', 'Driver\'s relationship to the business (Owner, else Employee)']) {
     agents(one(owner, name));
     assert.match(one(owner, name).note, /already lists/);
   }
@@ -872,7 +874,7 @@ test('adding units: the chooser answers the unit the panel adds; its "+" and Nex
   // Quote Proposal (TNI, 2026-10-21), Recalculate once a quote (W43-31), never its Next (MVR & CLUE).
   for (const a of geico.actions) {
     assert.ok(a.token === 'addIcon' || (a.text === '^next$' && a.moveOn && /VehicleOrTrailer/.test(a.within))
-      || (a.steps.includes(QC) && (a.token === 'editIcon' || ['^recalculate$', '^view more payment plans$', '^print quote proposal$'].includes(a.text))), a.id);
+      || (a.steps.includes(QC) && (a.token === 'editIcon' || ['^recalculate$', '^view more payment plans$', '^print quote proposal$', '^yes,?\\s*under permanent lease$'].includes(a.text))), a.id);
   }
 });
 
@@ -972,13 +974,13 @@ test('liability insurance the business has: GL from a current GL policy on the i
 
 // --- Quote & Coverages --------------------------------------------------------------------------
 
-test('liability coverage and its limit from the intake; NTL is the agent\'s', () => {
+test('liability coverage and its limit from the intake; an NTL mention not answered is the agent\'s', () => {
   const liab = (changes) => { const p = plan(with_(changes)); return [one(p, 'Liability coverage'), one(p, 'Liability limit')]; };
   const [type, limit] = liab({});
   assert.deepEqual([type.value, limit.value], ['Bodily Injury and Property Damage Liability', '$1M CSL']);
   assert.equal(liab({ 'coverage.autoLiability': null })[0].value, 'Bodily Injury and Property Damage Liability', 'a limit with the box blank');
-  // NTL mentioned and not decided, NTL wanted, or no auto liability: both the agent's.
-  for (const changes of [{ 'claims.text': 'Client also wants NTL' }, { 'coverage.ntl': true }, { 'coverage.autoLiability': 'No' }, { 'coverage.autoLiability': null, 'coverage.autoLiabLimit': null }]) {
+  // NTL mentioned and not decided, or no auto liability: both the agent's (an NTL quote: below).
+  for (const changes of [{ 'claims.text': 'Client also wants NTL' }, { 'coverage.autoLiability': 'No' }, { 'coverage.autoLiability': null, 'coverage.autoLiabLimit': null }]) {
     for (const s of liab(changes)) agents(s);
   }
   assert.match(liab({ 'notes.text': 'bobtail cover' })[0].note, /the Intake step/);
@@ -1163,4 +1165,53 @@ test('with a VIN, the vehicle form\'s answers wait for GEICO\'s decoded year; wi
   const two = with_({ vehicles: [{ ...intake().vehicles[0], vin: null }, SECOND_VEHICLE] });
   assert.equal(one(plan(two, { vehicles: 0 }), WAITING[0], VEH).waitFor, null);
   assert.equal(one(plan(two, { vehicles: 1 }), WAITING[0], VEH).waitFor, 'GiveYear');
+});
+
+
+// The maintainer, 2026-10-26, live run (GEICO, TX, NTL on the form): picking Non-Trucking Liability
+// for Liability Coverage, GEICO asks "Yes, under permanent lease" and puts Liability Coverage back
+// until it is answered; then it draws "Non Trucking Liability (NTL)" ($300,000 to $1,000,000 CSL,
+// GEICO's $300,000 picked) in place of the liability limit, and resets UM to $300,000.
+test('an NTL quote: Non-Trucking Liability, the permanent lease Yes, the intake\'s limit for NTL', () => {
+  const r = with_({ 'coverage.ntl': true, 'coverage.autoLiability': 'Non-Trucking' });
+  const p = plan(r);
+  const type = one(p, 'Liability coverage');
+  assert.deepEqual([type.value, type.note ?? null], ['Non-Trucking Liability', null]);
+  const ntl = one(p, 'Non-trucking liability limit (the intake\'s liability limit)');
+  assert.deepEqual([ntl.value, ntl.ask, ntl.control], ['$1M CSL', ['Non Trucking Liability (NTL)'], 'select']);
+  assert.equal(one(p, 'Liability limit').ignore, true, 'GEICO hides the liability limit with NTL');
+  assert.equal(one(plan(intake()), 'Non-trucking liability limit (the intake\'s liability limit)').ignore, true, 'not without NTL');
+  assert.equal(one(plan(intake()), 'Liability limit').ignore, false);
+  // The pop-up: clicked first thing the next round, again whenever it shows again.
+  const lease = buildPlan(r, geico, {}).find((s) => s.action === 'ntlLease');
+  assert.deepEqual([lease.immediate, lease.verify], [true, 'gone']);
+  assert.ok(new RegExp(lease.text, 'i').test('Yes, under permanent lease'));
+  assert.ok(!buildPlan(intake(), geico, {}).some((s) => s.action === 'ntlLease'), 'not without NTL');
+});
+
+// The same live run: in Texas with a CSL liability or NTL, GEICO lists UM in CSL only, so the split
+// $100,000/$300,000 found no option and GEICO's $300,000 stayed. $100,000 CSL then.
+test('Texas UM: $100,000/$300,000 when GEICO lists split limits, else $100,000 CSL', () => {
+  const um = one(plan(with_({ 'garaging.state': 'TX' })), 'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)');
+  assert.deepEqual([um.value, um.choiceAliases], ['$100,000/$300,000', ['$100,000 Combined Single Limit']]);
+  assert.deepEqual(one(plan(intake()), 'Uninsured motorist bodily injury (TNI: $100,000 CSL; TX $100,000/$300,000)').choiceAliases, []);
+});
+
+// The maintainer, 2026-10-26: a blank CDL box on the intake means No (TNI's standard), for the
+// owner's form and Add Driver alike; the live run left both drivers' CDL questions yellow.
+test('a blank CDL on the intake is No, as TNI\'s standard', () => {
+  const blankCdl = with_({ drivers: [{ ...intake().drivers[0], cdl: null, cdlYear: null }, { ...CASEY, cdl: null }] });
+  const p = plan(blankCdl, { drivers: 1 });
+  const ownerCdl = one(p, 'Owner has a CDL (TNI: No when the intake leaves it blank)');
+  const driverCdl = one(p, 'Driver has a CDL (TNI: No when the intake leaves it blank)');
+  assert.deepEqual([ownerCdl.value, ownerCdl.source, driverCdl.value, driverCdl.source], [false, 'standard', false, 'standard']);
+  const yes = plan(with_({ drivers: [intake().drivers[0], { ...CASEY, cdl: true }] }), { drivers: 1 });
+  assert.deepEqual([one(yes, 'Driver has a CDL (TNI: No when the intake leaves it blank)').value, one(yes, 'Driver has a CDL (TNI: No when the intake leaves it blank)').source], [true, 'intake']);
+  // The review of PR #176: a CDL year with the box blank says they may have one: not No, the agent's.
+  const year = plan(with_({ drivers: [{ ...intake().drivers[0], cdl: null, cdlYear: 2015 }, { ...CASEY, cdl: null, cdlYear: 2015 }] }), { drivers: 1 });
+  const [o, d] = [one(year, 'Owner has a CDL (TNI: No when the intake leaves it blank)'), one(year, 'Driver has a CDL (TNI: No when the intake leaves it blank)')];
+  assert.deepEqual([o.value, o.source, d.value, d.source], [null, 'derived', null, 'intake']);
+  // A driver the intake doesn't have: nothing, as before.
+  const none = one(plan(blankCdl, { drivers: 5 }), 'Driver has a CDL (TNI: No when the intake leaves it blank)');
+  assert.deepEqual([none.value, none.source], [null, 'intake']);
 });
