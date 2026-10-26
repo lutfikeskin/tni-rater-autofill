@@ -144,6 +144,8 @@ test('the steps come from the progress bar; the last three are the agent\'s', ()
   assert.deepEqual(quoteHelpers(with_({ 'coverage.cargo': null })), [['recalculate', [QC], true, 'premium'], ['morePayPlans', [QC], true, null], ['printProposal', [QC], true, null]]);
   const recalc = buildPlan(intake(), geico, {}).find((s) => s.action === 'recalculate');
   assert.deepEqual([recalc.needsRecalculation, recalc.waitRequired, recalc.quietMs, recalc.once, recalc.keepAnswers], [true, true, 2000, true, true]);
+  // Rated once the pay plans are drawn (2026-10-26: a total showed with none).
+  assert.equal(recalc.ratedBy, '[id^="Id_GivePayPlanV2_"]');
   assert.deepEqual(quoteHelpers(with_({ 'coverage.cargo': true }))[0], ['openCargo', [QC], false, null]);
   assert.ok(!quoteHelpers(with_({ 'coverage.cargo': false })).some(([id]) => id === 'openCargo'));
   const cargo = geico.actions.find((a) => a.id === 'openCargo');

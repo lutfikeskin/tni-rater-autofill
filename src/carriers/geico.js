@@ -848,8 +848,11 @@ export const geico = {
     // puts Liability Coverage back until it is answered (the maintainer, 2026-10-26, live run: Yes).
     // Clicked first thing the next round; due again whenever it shows again.
     { id: 'ntlLease', steps: [COVERAGES], text: '^yes,?\\s*under permanent lease$', immediate: true, verify: 'gone', label: 'Yes, under permanent lease (NTL)', when: (r) => r.coverage?.ntl === true },
+    // Rated only once GEICO draws the pay plans too (`ratedBy`): on 2026-10-26 (NTL, TX) the fill's
+    // Recalculate left a total on the page with no coverage premiums and no pay plans, until the
+    // agent's own Recalculate; the fill took it as rated and stopped without a word.
     { id: 'recalculate', steps: [COVERAGES], text: '^recalculate$', waitRequired: true, needsRecalculation: true, verify: 'premium', whenClear: true,
-      quietMs: 2000, once: true, keepAnswers: true },
+      quietMs: 2000, once: true, keepAnswers: true, ratedBy: '[id^="Id_GivePayPlanV2_"]' },
     { id: 'morePayPlans', steps: [COVERAGES], text: '^view more payment plans$', needsPremium: true, whenClear: true },
     { id: 'printProposal', steps: [COVERAGES], text: '^print quote proposal$', needsPremium: true, whenClear: true, after: ['geico.qGivePayPlanV2'], kitClick: true },
   ],

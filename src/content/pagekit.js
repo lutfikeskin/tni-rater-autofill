@@ -1584,6 +1584,15 @@
       || /\bquote\s+\$\s*[1-9][\d,]*\.\d{2}\s+due today\s+\$\s*[\d,]+\.\d{2}\s+total\b/i.test(text);
   }
 
+  // A helper that rates the quote (`verify: 'premium'`) is rated once a current premium shows and,
+  // with `ratedBy`, that is drawn too. GEICO's pay plans (2026-10-26, NTL, TX): after the fill's
+  // Recalculate the stale-rates notice went and a total showed, but GEICO drew no coverage premiums
+  // and no pay plans until the agent clicked Recalculate again; the fill took it as rated, and
+  // View More Payment Plans and Print, not on the page, were never said.
+  function rated(a) {
+    return premiumReady() && (!a?.ratedBy || deepQueryAll(document, a.ratedBy).some((el) => el.getClientRects().length));
+  }
+
   // The page's own "move on" button, only ever used when nothing is left for the agent. Buttons
   // that commit anything stay off limits whatever the pattern says, and so do discarding a form and
   // signing (scripts/lib/signals.mjs RESTRICTED keeps every word of this list).
@@ -2681,8 +2690,8 @@
       if (rates && !serverBacked) {
         phase('premium');
         const until = Date.now() + LOAD_MS;
-        while (Date.now() < until && !premiumReady() && !report.halted && currentPage() === startPage && !stepChanged()) { traceRead(pendingAction); await sleep(500); }
-        if (pendingAction?.trace && premiumReady()) { pendingAction.trace.premiumMs = Math.round(perfNow() - pendingAction.trace.at); traceRead(pendingAction); }
+        while (Date.now() < until && !rated(pendingAction) && !report.halted && currentPage() === startPage && !stepChanged()) { traceRead(pendingAction); await sleep(500); }
+        if (pendingAction?.trace && rated(pendingAction)) { pendingAction.trace.premiumMs = Math.round(perfNow() - pendingAction.trace.at); traceRead(pendingAction); }
         // Stopped, or the agent edited, while it rated: nothing more is done here.
         if (report.halted) { traceEnd(pendingAction); break; }
         if (!await settle({ quietMs: pendingAction?.quietMs ?? 250, maxMs: LOAD_MS, requests: () => !report.halted })) { traceEnd(pendingAction); halt(LOAD_HALT); break; }
@@ -2714,7 +2723,7 @@
         return true;
       }
       let accepted = true;
-      if (a.verify === 'premium') accepted = premiumReady();
+      if (a.verify === 'premium') accepted = rated(a);
       // Clicked once a quote (`once`: GEICO's Recalculate, W43-31): never again, also when its
       // result didn't show; from here it is the agent's, and they're told.
       if (!accepted && a.once) {
