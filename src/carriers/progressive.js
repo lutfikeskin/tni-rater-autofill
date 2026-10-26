@@ -151,6 +151,7 @@ const offTrailerPages = (rule) => ({ ...rule, notPages: TRAILER_PAGES });
 const isFlorida = (r) => /^(fl|florida)$/i.test(String(r.garaging?.state ?? '').trim());
 const isArkansas = (r) => /^(ar|arkansas)$/i.test(String(r.garaging?.state ?? '').trim());
 const isTexas = (r) => /^(tx|texas)$/i.test(String(r.garaging?.state ?? '').trim());
+const isMaryland = (r) => /^(md|maryland)$/i.test(String(r.garaging?.state ?? '').trim());
 
 // A trailer's attached equipment: the intake's amount when it gives one (not "N/A" or 0), else
 // none (TNI standard: "Trailer has no equipment").
@@ -867,9 +868,9 @@ export const progressive = {
       // PIP shares its data-model name across states. TX (TNI, 2026-10-26, W44-26: Medical Payments
       // $5,000 wherever offered, PIP not selected unless the state requires it): Progressive offers
       // medical payments there (1FE4), so PIP is Not Selected, from its list of Not Selected and
-      // $2,500 to $25,000. Other states' lists are left as Progressive set them: KY (no-fault; whether
-      // PIP is required there is open for TNI), UT (marked required, no medical payments) and MD (its
-      // own list, 1E7C).
+      // $2,500 to $25,000. Other states' lists are left as Progressive set them: KY (base PIP is
+      // required there, so Progressive's stays), UT (required, "$3k Basic" its only option, no medical
+      // payments: it stays) (TNI, 2026-10-26: answers to PR questions) and MD (its own list, 1E7C).
       { q: '1E8D', source: 'standard', field: 'LineInput.PIPLimit', ask: 'Personal Injury Protection', name: 'Personal injury protection (FL standard: $10k w/ $0 Deductible; TX: Not Selected; other states: as Progressive set it)', kind: 'choice',
         value: (r) => (isFlorida(r) ? '$10k w/ $0 Deductible' : isTexas(r) ? 'Not Selected' : null), ignore: (r) => !isFlorida(r) && !isTexas(r),
         emptyNote: (r) => (isFlorida(r) || isTexas(r) ? null : 'Progressive left personal injury protection empty, and TNI has a standard for Florida, Texas and Arkansas only: choose it yourself.') },
@@ -900,10 +901,12 @@ export const progressive = {
       ...[['1E69', 'Extraordinary Medical Expense'], ['1E6E', 'Income Loss'], ['1E71', 'Funeral Expense'], ['1E74', 'Accidental Death']]
         .map(/** @returns {CarrierRule} */ ([q, what]) => ({ q, source: 'standard', ask: `${what} Benefits`, name: `PA ${what.toLowerCase()} benefits (not on the intake: Not Selected)`, kind: 'choice', value: () => 'Not Selected' })),
       // PIP's state choice (MD): its box has no question text and its fieldref isn't recorded yet; it's
-      // the list offering "$2,500 Full PIP". Kept as Progressive set it: its MD page shows no medical
-      // payments, so W44-26 would take PIP $2,500 there, and the list has Full and Guest PIP at $2,500
-      // (open for TNI, 2026-10-26).
-      { q: '1E7C', withOption: '$2,500 Full PIP', name: 'PIP (preserve prefilled state choice)', ignore: true },
+      // the list offering "$2,500 Full PIP" (Not selected, $2,500 Full PIP, $2,500 Guest PIP). Its MD
+      // page offers no medical payments, so W44-26 takes PIP $2,500 there: "$2,500 Full PIP", not
+      // Guest PIP (TNI, 2026-10-26: answer to PR question). Another state showing this list (none
+      // captured) keeps Progressive's choice.
+      { q: '1E7C', source: 'standard', withOption: '$2,500 Full PIP', name: 'PIP, MD (standard: $2,500 Full PIP; other states: as Progressive set it)', kind: 'choice',
+        value: (r) => (isMaryland(r) ? '$2,500 Full PIP' : null), ignore: (r) => !isMaryland(r) },
       // SC (2026-10-07) lists comprehensive with a $0 glass deductible ("$1,000 Deductible w/ $0
       // Glass Deductible"): the same deductible.
       // TNI's standard deductibles (the intake has no deductible field).
