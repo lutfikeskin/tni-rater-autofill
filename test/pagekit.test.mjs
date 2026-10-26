@@ -7389,3 +7389,42 @@ test('a fill reads a page already quiet at once, and waits out the rest of 400 m
   await later(100);
   assert.equal(await answeredAfter(changed), 300, 'changed 100 ms before the fill: the rest of the 400 ms');
 });
+
+// Review of PR 178 (Cursor): the quiet history counts only DOM changes the kit is told of. GEICO
+// shows and hides its spinners by their style (#page-load, #extendedWaiting), and defining a
+// component draws its shadow root with no change either, so a page held by one as a fill began
+// already had its 400 ms "quiet" and was read the moment the hold ended, before what it was
+// waiting for was drawn. Main waited out the rest of the 400 ms from the fill's start. A page held
+// as the fill begins has no quiet history: its wait counts from the start, as before.
+test('a fill that begins while the page is busy or a component undefined waits its 400 ms, history or not', async () => {
+  const Observer = class {
+    constructor(callback) { this.callback = callback; }
+    observe() {}
+    disconnect() {}
+    takeRecords() { return []; }
+  };
+  const later = (ms) => new Promise((r) => setTimeout(r, ms));
+  const answeredAfter = async (h, options = {}) => {
+    const a = makeInput({ id: 'a', ariaLabel: 'A' });
+    h.document.body.append(a);
+    let answered = null;
+    a.addEventListener('change', () => { answered ??= clock.Date.now(); });
+    const start = clock.Date.now();
+    await h.kit.fill([{ id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'a' }], { maxRounds: 3, ...options });
+    return answered - start;
+  };
+  // GEICO's spinner, shown by its style: the page quiet for a second, then busy as the fill begins.
+  const busy = harness({ pathname: '/quote', MutationObserver: Observer });
+  await later(1000);
+  const loader = new FakeNode('div', { id: 'page-load', className: 'loader-container section-loader--show' });
+  busy.document.body.append(loader);
+  setTimeout(() => { loader._visible = false; }, 100);
+  assert.equal(await answeredAfter(busy), 400, 'spinner gone 100 ms in: the rest of the 400 ms');
+  // A GEICO component the page defines 100 ms after the fill begins.
+  const parts = harness({ pathname: '/quote', MutationObserver: Observer });
+  await later(1000);
+  let defined = false;
+  parts.document.body.append(notDefinedYet(new FakeNode('gds-address-check'), () => defined));
+  setTimeout(() => { defined = true; }, 100);
+  assert.equal(await answeredAfter(parts, { components: 'gds-' }), 400, 'defined 100 ms in: the rest of the 400 ms');
+});

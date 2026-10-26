@@ -4342,7 +4342,8 @@ test('a Continue on a carrier without the retry is never clicked again: waited f
   const geico = { id: 'geico', continueRetry: false };
   await context.watchNextStep(geico, 'Step', 'same', 'Step||Vehicles', 'run-1');
   assert.equal(fills, 0, 'never clicked again');
-  assert.ok(reads > 20, `waited longer than the retry's 6 s (${reads} reads)`);
+  // Read every 150 ms: the retry's 6 s is 40 reads.
+  assert.ok(reads > 40, `waited longer than the retry's 6 s (${reads} reads)`);
   assert.equal(state.autoPaused, true);
   assert.equal(state.doneSteps.has('Step||Vehicles'), true, 'its Continue stays done');
   assert.match(appended[0], /Continue didn't take: click it yourself\./);
@@ -4350,7 +4351,7 @@ test('a Continue on a carrier without the retry is never clicked again: waited f
   // While GEICO's page loads, nothing counts: the next step is filled when it comes, up to a minute.
   state.autoPaused = false;
   reads = 0;
-  context.runKit = async () => [{ frameId: 0, result: ++reads < 150 ? null : 'next' }];
+  context.runKit = async () => [{ frameId: 0, result: ++reads < 300 ? null : 'next' }];
   await context.watchNextStep(geico, 'Step', 'same', 'Step||Other');
   assert.equal(fills, 1, 'the next step, after 45 s of loading');
   assert.equal(state.autoPaused, false);
@@ -8228,4 +8229,26 @@ test('every snapshot read gives a frame without the kit null instead of throwing
     assert.equal(vm.runInNewContext(`(${source})()`, { __raterKit: { decisionSnapshot: () => 'snapshot' } }), 'snapshot', `the kit's: ${source}`);
   }
   assert.doesNotMatch(SIDEPANEL, /\(\) => globalThis\.__raterKit\.decisionSnapshot\(\)/, 'no read that throws without the kit');
+});
+
+// Review of PR 178: the next-step watch's read (busy, then the step's signature) still threw in a
+// frame without the kit, the frame the snapshot reads above now read as null. Chrome then gives that
+// frame null and reports the error on its page (Chromium 153, 2026-10-26), as it did for the snapshot
+// reads that failed the Luna mock; the watch, reading every 150 ms now, did that twice as often.
+test('the next-step watch reads a frame without the kit as nothing, without throwing there', async () => {
+  let fills = 0, reads = 0;
+  const thrown = [];
+  const state = { tab: { id: 1, url: 'Step' }, intake: {}, filling: false, pagePending: null, autoPaused: false, advanceRetried: new Set(), doneSteps: new Set() };
+  const context = { state, pageOf: (u) => u, $: () => ({ checked: true }), setTimeout: (fn) => fn(), fillProblem() {}, fillPage: () => { fills++; }, usage: { log() {} } };
+  // Frame 0 has the kit and shows the next step from the third read; frame 3's document was replaced
+  // after the kit was injected, so it has none.
+  context.runKit = async (tabId, carrier, func) => {
+    reads++;
+    const run = (globals) => { try { return vm.runInNewContext(`(${func})()`, globals); } catch (e) { thrown.push(e.message); return null; } };
+    return [{ frameId: 0, result: run({ __raterKit: { busy: () => false, signature: () => (reads > 2 ? 'next' : 'same') } }) }, { frameId: 3, result: run({}) }];
+  };
+  vm.runInNewContext(extractFunction('watchNextStep'), context);
+  await context.watchNextStep({ id: 'amwins' }, 'Step', 'same', 'Step||Vehicles');
+  assert.deepEqual(thrown, []);
+  assert.equal(fills, 1, 'the next step is filled');
 });

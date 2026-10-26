@@ -407,12 +407,14 @@
   // Wait until the page stops changing: not busy, every component it draws defined, and no new
   // nodes for `quietMs`. With `requests`, a check that holds while they are waited for (the fill
   // not stopped), also none of its own requests finished for `quietMs`. With `history`, the quiet
-  // time counts from the page's last change before the wait (lastChange), else from now.
+  // time counts from the page's last change before the wait (lastChange), else from now. Not on a
+  // page held as the wait begins (busy, a component undefined): it changes in ways no observer is
+  // told of (a spinner shown by its style, a shadow root drawn), so its quiet time counts from now.
   // The wait wakes when its quiet time would be over (60 ms apart while something else holds it:
   // the page busy, a component undefined, a request), not every 60 ms: a 150 ms wait took 195 ms on
   // average in the GEICO mock, a 400 ms one 444 ms.
   async function settle({ quietMs = 250, maxMs = 15000, requests = null, history = false } = {}) {
-    let last = history ? Math.min(Date.now(), lastChange()) : Date.now();
+    let last = history && !pageBusy() && !partsUndefined() ? Math.min(Date.now(), lastChange()) : Date.now();
     const mo = new MutationObserver(() => { last = Date.now(); });
     mo.observe(document.body, CHANGES);
     const start = Date.now();

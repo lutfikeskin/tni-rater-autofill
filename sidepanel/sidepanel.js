@@ -3893,8 +3893,9 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
     if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page || !state.intake) return;
     let now = null;
     try {
-      // While the page saves / reloads (its loading overlay) the step isn't ready yet.
-      const results = await runKit(tabId, carrier, () => (globalThis.__raterKit.busy() ? null : globalThis.__raterKit.signature()));
+      // While the page saves / reloads (its loading overlay) the step isn't ready yet. A frame without
+      // the kit (its document replaced after the kit went in) reads as nothing, as the snapshot reads do.
+      const results = await runKit(tabId, carrier, () => (!globalThis.__raterKit || globalThis.__raterKit.busy() ? null : globalThis.__raterKit.signature()));
       now = results.find((r) => r.frameId === 0)?.result ?? null;
     } catch { return; }
     if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page) return;
