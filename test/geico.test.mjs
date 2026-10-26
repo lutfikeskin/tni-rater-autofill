@@ -925,7 +925,9 @@ test('years in business, current insurance and its limits', () => {
   assert.equal(auto({}).value, 'Yes');
   assert.equal(auto({ 'priorInsurance.0.type': 'Personal Auto' }).value, 'Yes');
   assert.equal(auto({ priorInsurance: [{ type: null, carrier: 'No', limit: null, expiration: null }] }).value, 'No');
-  for (const changes of [{ 'priorInsurance.0.expiration': '01/31/2026' }, { 'priorInsurance.0.expiration': null }, { priorInsurance: [] },
+  // Undated: proof of prior insurance assumed (TNI, 2026-10-26, W44-29; the agent's before).
+  assert.deepEqual([auto({ 'priorInsurance.0.expiration': null }).value, auto({ 'priorInsurance.0.expiration': null }).source], ['Yes', 'standard']);
+  for (const changes of [{ 'priorInsurance.0.expiration': '01/31/2026' }, { priorInsurance: [] },
     { 'priorInsurance.0.type': 'General Liability' }]) {
     agents(auto(changes));
     assert.equal(auto(changes).manualOnly, true);

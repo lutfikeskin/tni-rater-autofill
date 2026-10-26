@@ -49,8 +49,8 @@
 // intake unit is on it (`advance`, TNI, FL live run 3, 2026-10-21); off, the agent clicks them.
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
-import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer, insurerTenure } from '../normalize.js';
+import { noPriorInsurance, priorPolicyExpired, priorInsuranceAssumed, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -134,7 +134,8 @@ const dotNumberNote = (r) => (r.applicant.dot && !/^\d+$/.test(r.applicant.dot) 
 // current-insurance row. No for no prior insurance, a personal auto policy, or a commercial auto
 // policy with another carrier; Yes for a current GEICO commercial auto policy. A blank section, an
 // expired or undated GEICO policy, or another kind of policy (GL, cargo) is the agent's:
-// Progressive's reading of a blank section as No is Progressive's.
+// Progressive's reading of a blank section as No is Progressive's. Proof of prior insurance assumed
+// (W44-29) doesn't say the policy is GEICO's: an undated GEICO policy stays the agent's.
 const prior = (r) => r.priorInsurance?.[0] ?? null;
 const commercialAuto = (p) => /commercial\s+auto/i.test(p?.type ?? '');
 const currentGeico = (r) => {
@@ -536,17 +537,21 @@ const startBucket = (n) => (!Number.isInteger(n) || n < 0 ? null
   : n < 1 ? 'Less than 1' : n === 1 ? '1' : n === 2 ? '2' : n <= 6 ? '3-6' : '7+');
 
 // "Does the customer currently have personal or commercial auto insurance?" Yes for a current auto
-// policy on the intake (commercial or personal, with an expiration date not passed), No for no prior
-// insurance. A blank section, an expired or undated policy, or a GL / cargo / other row is the
-// agent's; "deployed" is never derived.
+// policy on the intake (commercial or personal, with an expiration date not passed; derived), No for
+// no prior insurance. Yes too, TNI's assumption, when any other box of an auto or untyped policy is
+// filled: an undated policy, a remark in the date box, a carrier or limit alone (TNI, 2026-10-26,
+// W44-29, W44-12: proof of prior insurance; the Intake step names the blank boxes). A blank
+// section, an expired policy, or a GL / cargo / other row is the agent's; "deployed" is never
+// derived.
 const AUTO = /^(commercial|personal)\s+auto$/i;
+const datedAuto = (r) => { const p = prior(r); return !!p && AUTO.test(String(p.type ?? '').trim()) && DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p); };
 const currentAuto = (r) => {
   const p = prior(r);
   if (!p) return null;
   if (noPriorInsurance(p)) return 'No';
-  if (!AUTO.test(String(p.type ?? '').trim())) return null;
-  return DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p) ? 'Yes' : null;
+  return datedAuto(r) || priorInsuranceAssumed(r) ? 'Yes' : null;
 };
+const currentAutoSource = (r) => (currentAuto(r) === 'Yes' && !datedAuto(r) ? 'standard' : 'derived');
 // "How many employees does the customer's business have…?" TNI (2026-10-21): the intake's drivers
 // other than the owner(s), as GEICO's band. No drivers on the intake is the agent's.
 const employees = (r) => {
@@ -554,14 +559,20 @@ const employees = (r) => {
   const n = r.drivers.filter((d) => !isOwner(r, d)).length;
   return n === 0 ? 'None' : n === 1 ? '1' : n <= 3 ? '2-3' : n <= 5 ? '4-5' : n <= 10 ? '6-10' : n <= 20 ? '11-20' : '21+';
 };
-// "How long has the customer been with their current auto insurance company?" TNI (2026-10-21):
-// 1-3 Years when the intake shows a current auto policy (proof of prior insurance); otherwise the
-// agent's.
-const yearsWithInsurer = (r) => (currentAuto(r) === 'Yes' ? '1-3 Years' : null);
+// "How long has the customer been with their current auto insurance company?" TNI (2026-10-21;
+// 2026-10-26, W44-29, W44-02: "1-3 years at least"): 1-3 Years whenever the customer currently has
+// auto insurance (above), also when the notes say the policy started within the year. A longer
+// time the notes give (insurerTenure) isn't shortened: the agent's, with the line quoted.
+const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years > 3 ? t : null; };
+const yearsWithInsurer = (r) => (currentAuto(r) === 'Yes' && !longerTenure(r) ? '1-3 Years' : null);
+const anyPriorBox = (p) => !!p && ['type', 'carrier', 'limit', 'expiration'].some((k) => p[k] != null && String(p[k]).trim() !== '');
 const currentAutoNote = (r) => (currentAuto(r) != null ? null
-  : !prior(r) ? 'The intake\'s current insurance section is blank: answer it yourself.'
-    : prior(r).expiration && priorPolicyExpired(r, prior(r)) ? 'The intake\'s current policy has expired: answer it yourself.'
-      : 'The intake\'s current insurance doesn\'t show a current auto policy: answer it yourself.');
+  : !anyPriorBox(prior(r)) ? 'The intake\'s current insurance section is blank: answer it yourself.'
+    : priorPolicyExpired(r, prior(r)) ? 'The intake\'s current policy has expired: answer it yourself.'
+      : `The intake's current insurance is ${prior(r).type ? quote(prior(r).type, 30) : 'another kind of policy'}, not an auto policy: answer it yourself.`);
+const yearsNote = (r) => (yearsWithInsurer(r) ? null
+  : currentAuto(r) === 'Yes' ? `The intake's notes give more than 3 years with the current insurer (${quote(longerTenure(r)?.line, 80)}): pick it yourself.`
+    : currentAutoNote(r) ?? 'The intake shows no current auto policy: answer it yourself.');
 // The current bodily injury limits, from the intake's limit, when there is a current auto policy:
 // each intake option to GEICO's, exactly. $500K/$1M and Other have no GEICO match; none is "closest".
 const BI_LIMITS = {
@@ -578,7 +589,8 @@ const BI_LIMITS = {
 const currentBi = (r) => (currentAuto(r) === 'Yes' ? BI_LIMITS[String(prior(r).limit ?? '').trim()] ?? null : null);
 const currentBiNote = (r) => (currentBi(r) != null ? null
   : currentAuto(r) === 'Yes' && prior(r).limit ? `The intake's current limit ${quote(prior(r).limit, 30)} has no exact match in GEICO's list: pick it yourself.`
-    : 'The intake has no current auto policy limit GEICO lists: answer it yourself.');
+    : currentAuto(r) === 'Yes' ? 'The intake\'s current insurance has no limit: answer it yourself.'
+      : 'The intake has no current auto policy limit GEICO lists: answer it yourself.');
 // "What kind of liability insurance does the customer currently have to cover their business?" GL
 // for a current general liability policy on the intake. You marking that the client has GL
 // (coverage.hasGl) doesn't say GL or a business owner's policy: the agent's. Otherwise TNI's
@@ -1120,10 +1132,10 @@ export const geico = {
         value: (r) => startBucket(r.applicant.yearsInBusiness), note: (r) => (startBucket(r.applicant.yearsInBusiness) == null ? 'The intake has no years in business (or year established): answer it yourself.' : null) },
       { field: 'GiveNumberOfEmployees', ask: 'How many employees does the customer\'s business have, including part-time employees?', name: 'Number of employees (the drivers besides the owner)', kind: 'choice',
         source: (r) => (employees(r) ? 'standard' : 'fact'), value: employees, note: (r) => (employees(r) ? null : 'The intake lists no drivers: answer how many employees the business has yourself.') },
-      { field: 'GiveCurrentAutoInsuranceStatus', ask: 'Does the customer currently have personal or commercial auto insurance?', name: 'Currently has auto insurance', kind: 'choice', source: 'derived', clientFact: true, value: currentAuto, note: currentAutoNote },
+      { field: 'GiveCurrentAutoInsuranceStatus', ask: 'Does the customer currently have personal or commercial auto insurance?', name: 'Currently has auto insurance', kind: 'choice', source: currentAutoSource, clientFact: true, value: currentAuto, note: currentAutoNote },
       fact('GiveInsurancePriorToBeingDeployed', 'Insured before being deployed'),
       { field: 'GiveYearsWithCurrentAutoInsurer', ask: 'How long has the customer been with their current auto insurance company?', name: 'Years with the current auto insurer (1-3 with a current policy)', kind: 'choice',
-        source: (r) => (yearsWithInsurer(r) ? 'standard' : 'fact'), value: yearsWithInsurer, note: (r) => (yearsWithInsurer(r) ? null : currentAutoNote(r) ?? 'The intake shows no current auto policy: answer it yourself.') },
+        source: (r) => (yearsWithInsurer(r) ? 'standard' : 'fact'), value: yearsWithInsurer, note: yearsNote },
       { field: 'GiveCurrentBodilyInjuryLimits', ask: 'What bodily injury limits does the customer currently have on their vehicle insurance?', path: 'priorInsurance[0].limit', name: 'Current bodily injury limits',
         kind: 'choice', source: 'derived', value: currentBi, note: currentBiNote },
       { field: 'GiveOtherLiabilityInsurance', ask: 'What kind of liability insurance does the customer currently have to cover their business?', name: 'Liability insurance the business has (None unless the notes say)',

@@ -159,7 +159,6 @@ const NOT_MAPPED = {
     'coverage.glLimit': 'AmWINS Business Auto has no general liability section',
     'coverage.reeferBreakdown': 'no reefer breakdown question on the Business Auto application',
     'coverage.hasGl': 'AmWINS Business Auto has no other-coverages question',
-    'claims.text': 'the claims box is read by the intake reader into hasClaims and notes',
   },
   geico: {
     'applicant.fein': 'not asked before Final Quote Details, which is the agent\'s (stopSteps)',
@@ -194,6 +193,7 @@ const READ_INDIRECTLY = {
     'applicant.ownerDrives': 'owner() in progressive.js (the owner\'s driver row)',
     'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
     'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
+    'claims.text': 'normalize.insurerTenure (a longer time with the insurer than the 1 TO 2 YEARS standard, W44-29)',
   },
   geico: {
     'applicant.applicationDate': 'util.priorPolicyExpired (current GEICO policy, current auto insurance, current GL)',

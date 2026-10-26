@@ -5,7 +5,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, noPriorInsurance, ownerIsDriver, set, companyName } from './util.js';
+import { STATES, noPriorInsurance, priorInsuranceAssumed, ownerIsDriver, set, companyName } from './util.js';
 
 /** @import { IntakeResult } from '../types.js' */
 
@@ -211,6 +211,41 @@ export const NTL_WORDS = /\b(ntl|non[\s-]*tr[ua]ck(ing)?|bob[\s-]*tail(ing)?)\b/
 export const intakeNotes = (record) => [record?.claims?.text, record?.notes?.text].filter(Boolean).join('\n') || null;
 // The same without the claims box's own yes/no answer: its other lines and the Additional Notes box.
 export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.text].filter(Boolean).join('\n') || null;
+
+// How long the client has been with their insurer, when a line of the intake's notes says so. TNI
+// (2026-10-26, W44-29): "Prior Insurance is always assumed 1-3 years at least", so a longer time
+// the intake gives isn't shortened, and a shorter one stays 1-3 years (W44-02). A line counts when
+// it names insurance (insured, insurance, insurer, a policy, POP, proof of prior, or the current
+// carrier by name) with a number of years ("6 years", "five yrs"; not a vehicle's age, the years
+// in business or experience) or a start ("since 2019", "since March 2020", "started in December
+// 2025"; a year alone counts from its first day, the longest it could mean). The longest such
+// time, in years to one decimal, and its line; null when no line gives one.
+const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const INSURANCE_WORDS = /\b(?:insur\w*|polic(?:y|ies)|pop|proof of prior)\b/i;
+const YEARS_SAID = /\b(\d{1,2}(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s*\+?\s*(?:years?|yrs?)\b(?![\s-]*(?:old|in business|of experience|experience|exp\b))/gi;
+const START_SAID = /\b(?:since|started|began|start(?:ing)?)\s+(?:(?:in|on)\s+)?(?:(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(?:\d{1,2}(?:st|nd|rd|th)?,?\s+)?|(\d{1,2})\/(?:\d{1,2}\/)?)?((?:19|20)\d{2})\b/gi;
+/** @param {any} record @returns {{ years: number, line: string } | null} */
+export const insurerTenure = (record) => {
+  const carrier = String(record?.priorInsurance?.[0]?.carrier ?? '').trim().toLowerCase();
+  const applied = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(record?.applicant?.applicationDate ?? '');
+  const now = applied ? Date.UTC(+applied[3], +applied[1] - 1, +applied[2]) : Date.now();
+  const YEAR = 365.25 * 24 * 3600 * 1000;
+  /** @type {{ years: number, line: string } | null} */
+  let longest = null;
+  for (const text of String(intakeNotes(record) ?? '').split('\n')) {
+    const line = text.trim();
+    if (!INSURANCE_WORDS.test(line) && !(carrier.length >= 3 && line.toLowerCase().includes(carrier))) continue;
+    const said = [...line.matchAll(YEARS_SAID)].map((m) => NUMBER_WORDS[m[1].toLowerCase()] ?? Number(m[1]));
+    for (const m of line.matchAll(START_SAID)) {
+      const month = m[1] ? MONTHS.indexOf(m[1].toLowerCase()) : m[2] ? Number(m[2]) - 1 : 0;
+      if (month >= 0 && month <= 11) said.push((now - Date.UTC(Number(m[3]), month, 1)) / YEAR);
+    }
+    const years = Math.max(...said.filter((n) => Number.isFinite(n) && n >= 0), -1);
+    if (years >= 0 && (!longest || years > longest.years)) longest = { years: Math.round(years * 10) / 10, line };
+  }
+  return longest;
+};
 
 // The form's auto liability answer Non-Trucking (Select / Yes / No / Non-Trucking): the client asks
 // for non-trucking liability (the maintainer, 2026-10-26). Also as written on older forms.
@@ -644,10 +679,14 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   } else if (prior.type || prior.carrier || prior.limit || prior.expiration) {
     record.priorInsurance.push(prior);
     if (prior.type === 'Personal Auto') info('prior.personal-auto', 'priorInsurance[0].type', 'Current insurance is a personal auto policy — no prior commercial coverage.');
+    // TNI (2026-10-26, W44-29): any box filled is proof of prior insurance, 1-3 years (util.js
+    // priorInsuranceAssumed), and the agent is told at the start which boxes are blank.
     const missing = [
-      ['type', prior.type], ['carrier', prior.carrier], ['limit', prior.limit], ['expiration', prior.expiration],
+      ['policy type', prior.type], ['carrier', prior.carrier], ['limit', prior.limit], ['expiration date', prior.expiration],
     ].filter(([, value]) => !value).map(([name]) => name);
-    if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance is missing ${missing.join(', ')}; confirm the policy details before quoting.`);
+    const named = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
+    if (missing.length && priorInsuranceAssumed(record, prior)) check('prior.incomplete', 'priorInsurance[0]', `Current insurance is missing the ${named}. Proof of prior insurance (1-3 years) is assumed from the boxes filled (TNI): get the missing details from the client.`);
+    else if (missing.length) check('prior.incomplete', 'priorInsurance[0]', `Current insurance is missing the ${named}; confirm the policy details before quoting.`);
     if (prior.expiration && /^\d{2}\/\d{2}\/\d{4}$/.test(prior.expiration)) {
       const [mm, dd, yyyy] = prior.expiration.split('/').map(Number);
       const expiry = Date.UTC(yyyy, mm - 1, dd);

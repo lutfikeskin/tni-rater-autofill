@@ -30,7 +30,7 @@
 // A `clientFact` rule (USDOT, loan / lease) is the agent's too, never the AI's, when the intake
 // doesn't answer it.
 
-import { priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
+import { priorPolicyExpired, priorInsuranceAssumed, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
@@ -294,7 +294,18 @@ const isFreightHauler = (r) => FREIGHT_HAULER.test((r.operations.businessClass ?
 const isGeneralFreight = (r) => isFreightHauler(r) && /general\s+freight/i.test(`${r.operations.businessClass ?? ''} ${r.operations.whatHaul ?? ''}`);
 const businessType = (r) => isExpediter(r) ? 'For Hire Trucking' : isFreightHauler(r) ? 'General Freight Hauler' : (r.operations.businessClass ?? null);
 const businessAliases = (r) => isGeneralFreight(r) ? ['General Freight Trucking'] : [];
-const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration && !priorPolicyExpired(r, p));
+// "Is the customer currently insured?" Yes for a policy on the intake with a limit and an
+// expiration not passed (derived), and, TNI's assumption, whenever any box of an auto or untyped
+// policy is filled (TNI, 2026-10-26, W44-29: proof of prior insurance, 1-3 years; the Intake step
+// names the blank boxes). Nothing filled, no prior insurance or an expired policy: No, as before.
+const PRIOR_DATE = /^\d{2}\/\d{2}\/\d{4}$/;
+const currentlyInsured = (r) => !!r.priorInsurance?.some((p) => p.limit && p.expiration && !priorPolicyExpired(r, p)) || priorInsuranceAssumed(r);
+const insuredSource = (r) => (currentlyInsured(r) && !r.priorInsurance?.some((p) => p.limit && PRIOR_DATE.test(p.expiration ?? '') && !priorPolicyExpired(r, p)) ? 'standard' : 'derived');
+// The current policy's limit and expiration date, asked once currently insured: a blank box (or a
+// remark in the date box) is the agent's, named, never typed.
+const priorBoxNote = (r, key) => (!currentlyInsured(r) ? null
+  : key === 'limit' && !r.priorInsurance?.[0]?.limit ? 'The intake\'s current insurance has no limit: answer it yourself.'
+    : key === 'expiration' && !PRIOR_DATE.test(r.priorInsurance?.[0]?.expiration ?? '') ? 'The intake\'s current insurance has no expiration date: enter it yourself.' : null);
 // Other business coverages (MoreAboutBusiness): TNI's standard is none (2026-10-10), unless the
 // notes say the customer has general liability: the agent marked that they have it
 // (coverage.hasGl, from Luna's claims-box card). Then every one of them is the agent's. GL asked
@@ -386,8 +397,8 @@ const SAFE_LABEL_RULES = [
   { path: 'operations.hazPlacard', label: 'placard', kind: 'bool', source: hazPlacardSource, value: hazPlacard, note: hazPlacardNote },
   { path: 'operations.personalUse', label: 'personal use' },
   { path: 'coverage.autoLiabLimit', label: '(auto |bodily injury |combined single |csl )?liability limit|^bi limit|combined single limit', not: 'general|cargo' },
-  { path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', ignore: (r) => !currentlyInsured(r) },
-  { path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration', ignore: (r) => !currentlyInsured(r) },
+  { path: 'priorInsurance[0].limit', label: '(prior|current|previous).*liability.*limit', clientFact: true, ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'limit') },
+  { path: 'priorInsurance[0].expiration', label: '(prior|current|previous).*expir|policy expiration', clientFact: true, ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'expiration') },
   { name: 'Fire / theft additional coverage (standard: Not selected)', label: 'fire\\s*/?\\s*theft', kind: 'choice', source: 'standard', value: () => 'Not selected' },
 ];
 
@@ -714,15 +725,17 @@ export const progressive = {
     // --- More about the business (MoreAboutBusiness) -------------------------------------------
     ...onPage('MoreAboutBusiness', [
       { q: '77', field: 'AccountInput.Email', ask: 'Customer Email Address', name: 'Customer email (optional in this workflow)', ignore: true },
-      { q: '81', source: 'derived', field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
+      { q: '81', source: insuredSource, field: 'MoreBusinessInput.HasCurrentInsurancePolicy', ask: 'Is the customer currently insured?', name: 'Currently insured', kind: 'bool', value: currentlyInsured },
       // TNI (2026-10-10; the agent's from 2026-10-09): Yes when the intake shows the customer
       // currently insured ("more than a year is always Yes"); otherwise the agent's. Yes reveals the
       // current BI limit (95; live run 2026-10-10: left blank until the agent answered this).
       { q: '83', source: (r) => (currentlyInsured(r) ? 'standard' : 'attestation'), field: 'MoreBusinessInput.HasContinuousCoverage', ask: 'Has the customer had continuous coverage?', name: 'Continuous coverage (Yes when currently insured)', kind: 'bool',
         value: (r) => (currentlyInsured(r) ? true : null),
         note: (r) => (currentlyInsured(r) ? null : 'The intake shows no current insurance, so whether the customer has had continuous coverage is yours to answer.') },
-      { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', ignore: (r) => !currentlyInsured(r) },
-      { q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', ignore: (r) => !currentlyInsured(r) },
+      { q: '95', field: 'MoreBusinessInput.CurrentLimitsBodilyInjuryCoverage', ask: 'Current Bodily Injury Liability Limit', path: 'priorInsurance[0].limit', kind: 'choice', clientFact: true,
+        ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'limit') },
+      { q: '9D', field: 'PriorInsurance.ExpirationDate', ask: 'Current Policy Expiration Date', path: 'priorInsurance[0].expiration', clientFact: true,
+        ignore: (r) => !currentlyInsured(r), note: (r) => priorBoxNote(r, 'expiration') },
       // Other business coverages: TNI's standard None (2026-10-10; the agent's from 2026-10-09),
       // unless the notes say the customer has general liability (hasGl): then all of them are the
       // agent's. A GL request alone keeps None (2026-10-19). The radio version (A2: General Liability / Business Owner's Policy /
