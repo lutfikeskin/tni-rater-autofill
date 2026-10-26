@@ -91,6 +91,24 @@ test('a place for several answers marks each one, and the paths the PDF has no f
   assert.equal(sourcePlace([], intake), null);
 });
 
+// W44-09: years in business read from the notes, when the form leaves them blank, are shown on the
+// notes box they were read from, not on the blank year-established box.
+test('an answer the reader took from the notes points at that notes box (W44-09)', () => {
+  const today = { today: new Date('2026-10-26') };
+  const blank = { ...rawNew, year_established: 'N/A', years_experience: 'N/A' };
+  const fromNotes = { ...normalizeIntake({ ...blank, claims_details: 'No', additional_notes: 'In Biz for 3+ years' }, today), places: placesNew };
+  assert.deepEqual(sourcePlace('applicant.yearsInBusiness', fromNotes).rects, [placesNew.fields.additional_notes.rect]);
+  const fromClaims = { ...normalizeIntake({ ...blank, claims_details: 'No\nIn Biz for 3+ years', additional_notes: '' }, today), places: placesNew };
+  assert.deepEqual(sourcePlace('applicant.yearsInBusiness', fromClaims).rects, [placesNew.fields.claims_details.rect]);
+  // Read from its own box: that box.
+  const boxed = { ...normalizeIntake({ ...rawNew, year_established: '2020' }, today), places: placesNew };
+  assert.deepEqual(sourcePlace('applicant.yearsInBusiness', boxed).rects, [placesNew.fields.year_established.rect]);
+  // An intake saved before readFrom: its own box.
+  const { readFrom, ...saved } = fromNotes;
+  assert.ok(readFrom);
+  assert.deepEqual(sourcePlace('applicant.yearsInBusiness', saved).rects, [placesNew.fields.year_established.rect]);
+});
+
 test('the page strip names the quote step a page or a one-address step is on', () => {
   assert.deepEqual(quoteProgress(progressive, 'BusinessOwnerInfo'), { name: 'Business', index: 0, count: 7 });
   assert.deepEqual(quoteProgress(progressive, 'AddTrailer'), { name: 'Vehicles', index: 1, count: 7 });

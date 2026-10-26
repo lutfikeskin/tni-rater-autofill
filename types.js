@@ -43,6 +43,10 @@
  * @property {IntakeWarning[]} warnings
  * @property {{ fields: number, filled: number }} stats
  * @property {{ drivers: number[], vehicles: number[], trailers: number[] }} rows  the form row (1-4) each unit was read from
+ * @property {Record<string, string[]>} readFrom  record path -> the form fields an answer was read
+ *   from when that isn't its own box (years in business stated in the notes: `claims_details`,
+ *   `additional_notes`); the panel marks it there on the PDF (intake-source.js sourcePlace). Empty
+ *   otherwise; absent on an intake saved before it.
  */
 
 /** @typedef {'vehicles' | 'drivers' | 'trailers'} UnitList */

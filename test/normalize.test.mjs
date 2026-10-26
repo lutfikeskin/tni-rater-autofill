@@ -9,6 +9,7 @@ import { carrierForUrl } from '../src/carriers.js';
 import { noPriorInsurance } from '../src/util.js';
 import { progressive, owner } from '../src/carriers/progressive.js';
 import { amwins } from '../src/carriers/amwins.js';
+import { geico } from '../src/carriers/geico.js';
 
 // test/fixtures/sample-intake.pdf is the real TNI form filled with made-up data, including the
 // kinds of mess real clients produce (stray tabs, "45,000$", state prefix on the license, etc.).
@@ -904,4 +905,117 @@ test('AmWINS writes NTL as the first line of the disclosure details', () => {
   const r = normalizeIntake({ ...raw, auto_liability: 'Yes', additional_notes: 'wants NTL' }, today).record;
   r.coverage.ntl = true;
   assert.match(buildPlan(r, amwins).find((s) => s.re === '^disclosure details$').value, /^Non-Trucking Liability \(NTL\) - \$1M CSL$/m);
+});
+
+// W44-09 (TNI, 2026-10-26: the reader takes it from the notes). A PA intake had year established
+// and years under own authority N/A and "3+ years in business" in its notes: every quote got 0
+// (AmWINS New Venture) until the agent typed 3. A form box with a value wins over the notes.
+const W44 = { today: new Date('2026-10-26') };
+const noYears = (notes, claims = 'No') => normalizeIntake({ ...raw, year_established: 'N/A', years_experience: 'N/A', claims_details: claims, additional_notes: notes }, W44);
+
+test('years in business the notes state fill a blank form, with a check quoting them (W44-09)', () => {
+  const r = noYears('In Biz for 3+ years \n\nPOP is for 1+ year\n\n');
+  assert.equal(r.record.applicant.yearsInBusiness, 3, 'a plus is at least that many');
+  assert.equal(r.record.applicant.yearEstablished, null);
+  assert.equal(r.record.applicant.yearsExperience, null, 'years under own authority are never read from a business phrase');
+  const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+  assert.equal(w?.level, 'check');
+  assert.equal(w.path, 'applicant.yearsInBusiness');
+  assert.match(w.msg, /Additional Notes.*"In Biz for 3\+ years"/);
+  assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.default'), 'not the blank standard');
+  assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'] });
+  // Every carrier that asks it (Progressive doesn't).
+  const amwinsYears = buildPlan(r.record, amwins).find((s) => s.selector === '#yrsInBusiness');
+  assert.equal(amwinsYears.value, '3');
+  assert.equal(amwinsYears.source, 'derived');
+  const geicoYears = buildPlan(r.record, geico).find((s) => s.name === 'Years in business');
+  assert.equal(geicoYears.value, '3-6');
+  assert.equal(geicoYears.note, null);
+  // The claims box's other lines too.
+  const claims = noYears('', 'No \n\nin Biz for 3+ years ');
+  assert.equal(claims.record.applicant.yearsInBusiness, 3);
+  assert.deepEqual(claims.readFrom, { 'applicant.yearsInBusiness': ['claims_details'] });
+  assert.match(claims.warnings.find((x) => x.code === 'years-in-business.notes').msg, /claims box.*"in Biz for 3\+ years"/);
+});
+
+test('the notes\' wordings of years in business, and of a start year (W44-09)', () => {
+  for (const [notes, years] of [['5 years in business', 5], ['in business for 5 years', 5], ['In business 2 yrs.', 2], ['6+ yrs in biz', 6],
+    ['Owner operator, in business for 4 years, 2 trucks', 4], ['0 years in business', 0]]) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearsInBusiness, years, notes);
+    assert.equal(r.record.applicant.yearEstablished, null, notes);
+  }
+  for (const notes of ['Established 2019', 'Business established in 2019', 'In business since 2019', 'Company founded in 2019']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearEstablished, 2019, notes);
+    assert.equal(r.record.applicant.yearsInBusiness, 7, notes);
+    assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'], 'applicant.yearEstablished': ['additional_notes'] }, notes);
+  }
+  assert.equal(buildPlan(noYears('Established 2019').record, amwins).find((s) => s.selector === '#yearBusinessEstablished').value, 2019);
+  // Two statements that agree are one answer.
+  assert.equal(noYears('Established 2019\nIn business for 7 years').record.applicant.yearsInBusiness, 7);
+});
+
+test('numbers in the notes about something else stay out of years in business (W44-09)', () => {
+  for (const notes of ['10 years driving', 'CDL for 5 years', '5 years experience in business', 'Driver experience: 3+ years in business', 'POP is for 1+ year',
+    'WITH STATEFARM A YEAR', 'insured for 14 month', 'Policy term 1 year', 'Accident in 2019', 'Insured since 2019', '20 years in the business',
+    'MC authority established 2020', 'less than 1 year in business', 'about 3 years in business', 'over 3 years in business', '2.5 years in business',
+    'Not in business for 3 years yet', '3 Years', '11 Years', 'In biz for 3+ years\nIn business for 6 years', 'Established 2031', 'in business for 300 years']) {
+    const r = noYears(notes);
+    assert.equal(r.record.applicant.yearsInBusiness, null, notes);
+    assert.equal(r.record.applicant.yearEstablished, null, notes);
+    assert.ok(r.warnings.some((x) => x.code === 'years-in-business.default'), `${notes}: still TNI's blank standard`);
+    assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.notes'), notes);
+    assert.deepEqual(r.readFrom, {}, notes);
+  }
+});
+
+test('a form box with years wins over the notes (W44-09)', () => {
+  const est = normalizeIntake({ ...raw, year_established: '2021', years_experience: '5+ years', claims_details: 'No', additional_notes: 'In Biz for 6+ years' }, W44);
+  assert.equal(est.record.applicant.yearsInBusiness, 5);
+  assert.ok(!est.warnings.some((x) => /^years-in-business\./.test(x.code)));
+  assert.deepEqual(est.readFrom, {});
+  // Years under own authority given, year established blank: the quote's years come from that box,
+  // as before, and the notes are not read (an open question for the maintainer).
+  const authority = normalizeIntake({ ...raw, year_established: 'N/A', years_experience: '4', claims_details: 'No', additional_notes: 'In Biz for 6+ years' }, W44);
+  assert.equal(authority.record.applicant.yearsInBusiness, null);
+  assert.equal(buildPlan(authority.record, amwins).find((s) => s.selector === '#yrsInBusiness').value, '4');
+});
+
+// W44-32 (TNI, 2026-10-26: "CLEAN" claims = none): CLEAN as the claims box's answer is an explicit
+// No for claims and losses, for every carrier, as "Clean record" already counted for Progressive.
+test('"CLEAN" as the claims box\'s answer is no claims; "clean" in a sentence is not (W44-32)', () => {
+  const claims = (box, notes = '') => normalizeIntake({ ...raw, claims_details: box, additional_notes: notes }, W44).record;
+  for (const box of ['CLEAN ', 'Clean.', 'clean record', 'Clean MVR', 'Clean driving record', 'all clean \r']) {
+    assert.equal(claims(box).claims.hasClaims, false, box);
+    assert.equal(claims(box).claims.notes, null, box);
+  }
+  const more = claims('CLEAN\nFinanced');
+  assert.equal(more.claims.hasClaims, false);
+  assert.equal(more.claims.notes, 'Financed', 'the other lines stay notes');
+  assert.equal(more.operations.vehicleOwnership, 'Financed');
+  for (const box of ['Clean-up company', 'Clean record except 1 speeding ticket', 'Accident 2024, otherwise clean', 'Cleaning supplies\nNo', 'Clean up']) {
+    assert.equal(claims(box).claims.hasClaims, null, box);
+  }
+  assert.equal(claims('', 'CLEAN').claims.hasClaims, null, 'only the claims box answers the claims question');
+  // Every carrier that asks it: AmWINS prior loss No (was the agent's), Progressive's driver
+  // question from the intake (was its standard No). GEICO maps no claims question.
+  const r = claims('CLEAN');
+  const loss = buildPlan(r, amwins).find((s) => s.name === 'Any prior loss');
+  assert.equal(loss.value, false);
+  assert.equal(loss.note, null);
+  const driver = buildPlan(r, progressive).find((s) => s.q === '28F5');
+  assert.equal(driver.value, false);
+  assert.equal(driver.source, 'intake');
+});
+
+// W44-15: "no" in the FEIN box is no FEIN, as "N/A" is, not a malformed number.
+test('"no" in the FEIN box is no FEIN (W44-15)', () => {
+  for (const box of ['no', 'NO', 'No.']) {
+    const r = normalizeIntake({ ...raw, fein: box }, W44);
+    assert.equal(r.record.applicant.fein, null, box);
+    assert.ok(!r.warnings.some((w) => w.code === 'fein.invalid'), box);
+  }
+  assert.equal(normalizeIntake({ ...raw, fein: '12-345' }, W44).warnings.find((w) => w.code === 'fein.invalid')?.level, 'check', 'a short number is still checked');
+  assert.equal(normalizeIntake({ ...raw, fein: '12-3456789' }, W44).record.applicant.fein, '12-3456789');
 });

@@ -240,6 +240,60 @@ const NEGATION = /\b(not|no|never|without|none)\b|n't\b/i;
 const TRAILER_WORD = /\btrailers?\b/i;
 const ownershipLines = (text) => String(text ?? '').split('\n').filter((line) => new RegExp(OWNERSHIP_WORDS.source, 'i').test(line));
 
+// The claims box's first line saying the client's record is clean ("CLEAN", "Clean record",
+// "all clean"): no claims, an explicit No like "No" (TNI, 2026-10-26, W44-32). Only as the line's
+// whole answer: "Clean-up company" or "clean except one ticket" don't answer it.
+const CLAIMS_CLEAN = /^(?:all\s+)?clean(?:\s+(?:record|mvr|driving\s+record))?\.?$/i;
+
+// Years in business stated in the notes, read when the form gives no years (TNI, 2026-10-26,
+// W44-09: "the reader takes it from the notes"): "3+ years in business", "in Biz for 3+ years",
+// "in business for 5 years" (a plus is at least that many: 3+ is 3), and a start year:
+// "established 2019", "founded in 2019", "in business since 2019". Narrow on purpose: only a
+// whole number of years right beside "in business" / "in biz" ("in the business" is a career in
+// the trade), in a clause saying nothing about driving, a CDL, experience, authority, insurance or
+// claims, and with no negation. A figure with a qualifier ("about", "over", "less than"), or two
+// figures that disagree, settle nothing: the agent's, as when the notes say nothing.
+const YEARS = '(\\d{1,3})\\s*\\+?\\s*(?:years?|yrs?)\\b\\.?';
+const BIZ = '(?:business|biz)\\b';
+const BIZ_PHRASES = [
+  new RegExp(`(?<![\\w.,])${YEARS}\\s+in\\s+${BIZ}`, 'i'),
+  new RegExp(`\\bin\\s+${BIZ}\\s+(?:for\\s+)?${YEARS}`, 'i'),
+];
+const BIZ_START = new RegExp(`\\b(?:established|founded|in\\s+${BIZ}\\s+since)\\s+(?:in\\s+)?(\\d{4})\\b`, 'i');
+const NOT_THE_BUSINESS = /\b(?:not|never|no)\b|n't\b|\b(?:driv\w*|cdl|licen[cs]\w*|experienced?|authority|mc|dot|usdot|insur\w*|polic(?:y|ies)|pop|coverage|carriers?|claims?|accidents?|tickets?|violations?)\b/i;
+const QUALIFIED = /(?:\b(?:less|more)\s+than|\b(?:over|under|almost|nearly|about|around|approx(?:imately|\.)?)|[~<>])\s*$/i;
+const MAX_BUSINESS_YEARS = 100;
+
+/**
+ * Years in business the notes state, from the boxes given in order ([form field, text]): one
+ * statement, or several that agree. None, a qualified one or figures that disagree give null.
+ * @param {[string, string|null|undefined][]} boxes
+ * @param {number} year  this year, for a start year
+ * @returns {{ years: number, established: number|null, quote: string, fields: string[] } | null}
+ */
+export function yearsInBusinessFromNotes(boxes, year) {
+  const found = [];
+  for (const [field, text] of boxes) {
+    // Clauses: lines, semicolons, commas, and full stops before a new sentence ("3 yrs. in biz" is one).
+    for (const clause of String(text ?? '').split(/\n|;|,\s|\.\s+(?=[A-Z])/)) {
+      const quote = clause.trim();
+      if (!quote || NOT_THE_BUSINESS.test(quote)) continue;
+      for (const re of BIZ_PHRASES) {
+        const m = quote.match(re);
+        if (m) found.push({ years: QUALIFIED.test(quote.slice(0, m.index)) ? null : Number(m[1]), established: null, quote, field });
+      }
+      const start = quote.match(BIZ_START);
+      if (start) found.push({ years: year - Number(start[1]), established: Number(start[1]), quote, field });
+    }
+  }
+  const settled = found.every((f) => Number.isInteger(f.years) && f.years >= 0 && f.years <= MAX_BUSINESS_YEARS);
+  if (!found.length || !settled || new Set(found.map((f) => f.years)).size > 1) return null;
+  return {
+    years: found[0].years, established: found.find((f) => f.established != null)?.established ?? null,
+    quote: found[0].quote, fields: [...new Set(found.map((f) => f.field))],
+  };
+}
+
 // A generational suffix written into a driver's name box ("SAMPLE, JR", "EXAMPLO III"), and a
 // lone letter after the first name ("JORDAN L"), its middle initial. Carriers' driver name boxes
 // take letters, digits, spaces, hyphens and apostrophes only (Progressive refused the comma, AR
@@ -376,6 +430,10 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // The form row (1-4) each driver, vehicle and trailer was read from: blank rows are skipped, so
   // drivers[1] can be the form's row 3 (the panel shows an answer where it is on the PDF).
   const rows = { drivers: [], vehicles: [], trailers: [] };
+  // An answer read from another box than its own (years in business from the notes): its path and
+  // the form fields it was read from, so the panel shows it there (intake-source.js sourcePlace).
+  /** @type {Record<string, string[]>} */
+  const readFrom = {};
   const record = {
     applicant: {
       name: companyName(companyAsWritten),
@@ -455,7 +513,9 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const ops = record.operations;
 
   // --- Business -------------------------------------------------------------------------------
-  if (txt('fein')) {
+  // "No" in the FEIN box: no FEIN, as "N/A" is (W44-15), not a malformed number.
+  if (/^no\.?$/i.test(txt('fein') ?? '')) info('fein.none', 'applicant.fein', `FEIN "${txt('fein')}": no FEIN.`);
+  else if (txt('fein')) {
     const d = txt('fein').replace(/\D/g, '');
     if (d.length === 9) a.fein = `${d.slice(0, 2)}-${d.slice(2)}`;
     else { a.fein = txt('fein'); check('fein.invalid', 'applicant.fein', `FEIN "${a.fein}" should be 9 digits.`); }
@@ -474,6 +534,19 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
     info('dot.pending', 'applicant.dot', 'No DOT/MC yet — client says they will have one within 60 days.');
   }
   if (txt('years_experience') && a.yearsExperience == null) check('years-experience.invalid', 'applicant.yearsExperience', `Years of experience "${txt('years_experience')}" isn't a number.`);
+  // No years on the form (neither year established nor years under own authority): the years in
+  // business the claims box or Additional Notes state, with a check quoting them (TNI, 2026-10-26,
+  // W44-09). Never the years under own authority: a business phrase doesn't say them.
+  const stated = a.yearsInBusiness == null && a.yearsExperience == null
+    ? yearsInBusinessFromNotes([['claims_details', record.claims.text], ['additional_notes', record.notes.text]], year) : null;
+  if (stated) {
+    a.yearsInBusiness = stated.years;
+    readFrom['applicant.yearsInBusiness'] = stated.fields;
+    if (stated.established != null) { a.yearEstablished = stated.established; readFrom['applicant.yearEstablished'] = stated.fields; }
+    const box = stated.fields[0] === 'additional_notes' ? 'Additional Notes box' : 'claims box';
+    const quote = stated.quote.length > 80 ? `${stated.quote.slice(0, 79).trimEnd()}…` : stated.quote;
+    check('years-in-business.notes', 'applicant.yearsInBusiness', `The form gives no years in business, and the ${box} says "${quote}": years in business is ${stated.years}${stated.established != null ? `, established ${stated.established}` : ''}. Check it (a plus counts as at least that many); a corrected answer here replaces it.`);
+  }
   // TNI's standard for a blank (2026-10-09): 0 years, established this year (AmWINS' rules fill
   // it, GEICO's leave it to the agent; the record stays blank, so a later answer here replaces it).
   if (a.yearsInBusiness == null && a.yearsExperience == null) {
@@ -667,11 +740,12 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
 
   // --- Claims box -----------------------------------------------------------------------------
   // Clients use this box for answers to other questions too. A leading yes/no answers the claims
-  // question; everything else is kept as notes (no warning) for the agent and the AI assistant.
+  // question ("CLEAN" is a No: CLAIMS_CLEAN); everything else is kept as notes (no warning) for
+  // the agent and the AI assistant.
   const claims = record.claims.text;
   if (claims) {
     const lines = claims.split('\n');
-    if (/^(no|none|no claims?)\.?$/i.test(lines[0])) record.claims.hasClaims = false;
+    if (/^(no|none|no claims?)\.?$/i.test(lines[0]) || CLAIMS_CLEAN.test(lines[0])) record.claims.hasClaims = false;
     else if (/^yes\b/i.test(lines[0])) record.claims.hasClaims = true;
     const notes = (record.claims.hasClaims == null ? lines : lines.slice(1)).filter(Boolean);
     record.claims.notes = notes.length ? notes.join('\n') : null;
@@ -702,7 +776,7 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   if (unknown.length) info('form.unknown-fields', '', `The PDF has filled fields this tool doesn't read yet: ${unknown.join(', ')}.`);
 
   const filled = Object.values(raw).filter((v) => v === true || (typeof v === 'string' && clean(v) != null)).length;
-  return { record, warnings, stats: { fields: Object.keys(raw).length, filled }, rows };
+  return { record, warnings, stats: { fields: Object.keys(raw).length, filled }, rows, readFrom };
 }
 
 // Parses a value typed into the review panel, according to the field's kind.
