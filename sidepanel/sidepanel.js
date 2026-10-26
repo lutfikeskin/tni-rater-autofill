@@ -3936,6 +3936,33 @@ async function markDone(item, key, tabId, page, x = null) {
   settleNeed(item, 'marked', had ? null : () => undoMarkDone(item, key, tabId, page, scope));
 }
 
+// "Mark done" on a helper's reminder (no field: Progressive's Rates on an NTL quote with cargo, after
+// NTL): the helper joins the tab's done actions, as one the fill clicked, so no fill reports it again
+// and what waits on it goes on. Logged as a Mark done is. It can be undone, as Mark done can.
+async function markActionDone(item, id, tabId, page, x = null) {
+  if (!id || state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
+  if (x && state.intake && !state.tab?.carrier?.practice) {
+    usage.log({ ...checkDismissedEvent(x, { redact: redactor(redactionTerms(state.intake.record)), keySalt: usage.currentSession()?.keySalt }),
+      carrier: state.tab.carrier?.id ?? null, page, view: viewOf(tabId, page, state.tab.carrier) });
+  }
+  const had = state.doneActions.has(id);
+  state.doneActions.add(id);
+  await persistDoneActions(tabId);
+  settleNeed(item, 'marked', had ? null : async () => {
+    if (state.filling || state.tab?.id !== tabId || item.dataset.settled !== 'marked') return;
+    state.doneActions.delete(id);
+    await persistDoneActions(tabId);
+    item.classList.remove('resolved');
+    delete item.dataset.settled;
+    item.querySelector('.mark-done').hidden = false;
+    setRowHead(item, { icon: item.dataset.icon, value: item.dataset.wait });
+    const note = item.querySelector('.need-note');
+    note.replaceChildren();
+    note.hidden = true;
+    recount();
+  });
+}
+
 async function undoMarkDone(item, key, tabId, page, scope = editScope(page)) {
   if (state.filling || state.tab?.id !== tabId || pageOf(state.tab?.url) !== page || item.dataset.settled !== 'marked') return;
   state.agentKeys.get(scope)?.delete(key);
@@ -4340,8 +4367,13 @@ function needRow(x, { tabId, page, carrier }, open = false) {
   // Scrolls the carrier page to its field and flashes its mark (showOnPage): changes nothing.
   const show = x.key ? h('button', { class: 'link small show-on-page', type: 'button', title: 'Scroll the carrier page to this question and flash its mark',
     'aria-label': `Show on page: ${label}`, onclick: () => showOnPage(item, x, tabId, page, carrier) }, 'Show on page') : null;
+  // A helper's reminder (`action.<id>`, a step of the carrier's left to the agent: Progressive's Rates
+  // on an NTL quote with cargo) has no field: its Mark done marks the helper done (markActionDone).
+  const actionId = !x.key && /^action\./.test(x.path ?? '') ? x.path.slice('action.'.length) : null;
   const done = x.key ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You answered it, or it stays as the page has it: the panel won’t fill it or wait on it on this page',
-    'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page, x) }, 'Mark done') : null;
+    'aria-label': `Mark done: ${label}`, onclick: () => markDone(item, x.key, tabId, page, x) }, 'Mark done')
+    : actionId ? h('button', { class: 'ghost mark-done', type: 'button', title: 'You did it on the page: the panel stops waiting on it for this quote',
+      'aria-label': `Mark done: ${label}`, onclick: () => markActionDone(item, actionId, tabId, page, x) }, 'Mark done') : null;
   const item = h('div', { class: `row need${kind === 'need' ? '' : ` ${kind}`}${open ? ' open' : ''}`, tabindex: '-1', dataset: { need: `${x.key}|${x.label}`, key: x.key ?? '', icon, wait, finish: finishLeftOk(carrier, x) ? '1' : '' } },
     h('button', { type: 'button', class: 'row-head', 'aria-expanded': String(open), onclick: () => toggleRow(item) },
       h('span', { class: 'row-icon', 'aria-hidden': 'true' }, icon),
@@ -4352,7 +4384,7 @@ function needRow(x, { tabId, page, carrier }, open = false) {
       pickable
         ? choiceList(options, { current: now, onPick: (choice, button) => (item.aiAccept && choice === item.dataset.aiPick
           ? item.aiAccept(button) : agentAnswer(item, x, choice, { tabId, page, carrier }, button)) })
-        : h('p', { class: 'row-say' }, 'Answer it on the rater page, then mark it done here.'),
+        : h('p', { class: 'row-say' }, x.key || actionId ? 'Answer it on the rater page, then mark it done here.' : 'Do it on the rater page.'),
       !pickable && x.options?.length && x.mark === 'failed' ? h('div', { class: 'options' }, `Options: ${x.options.slice(0, 25).join(' · ')}${x.options.length > 25 ? ' · …' : ''}`) : null,
       h('div', { class: 'row-actions' }, show, done),
       show ? h('span', { class: 'need-where', hidden: true }) : null,

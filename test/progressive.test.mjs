@@ -722,7 +722,7 @@ test('an NTL quote: Add Non-Trucking Liability once the agent set it, verified, 
   assert.ok(!ids(record).includes('printSend'));
   assert.match(progressive.agentPages.PrintEmailFax, /Click Print\/Send yourself/);
   assert.ok(progressive.advance.exceptPages.includes('PrintEmailFax'), 'never continued past the Print page');
-  assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: cargo, the bill plan, Recalculate and Print/);
+  assert.match(progressive.agentPages.CoveragesRates(record), /The rest of this page is yours: cargo, general liability, the bill plan, Recalculate and Print/);
   // GL without NTL: our GL helpers and bill plan. With NTL too, the NTL item says the rest of
   // Rates is theirs: no GL helpers.
   const gl = baseRecord();
@@ -1051,4 +1051,39 @@ test('a blank CDL on the intake is No on Add Driver, as TNI\'s standard', () => 
   record.drivers[0].cdl = true;
   const yes = buildPlan(record, progressive, { drivers: 0 }).find((s) => s.q === '28E6');
   assert.deepEqual([yes.value, yes.source], [true, 'intake']);
+});
+
+
+// The maintainer, 2026-10-26, live run (NTL, no cargo or GL): after the NTL section the agent clicked
+// its Done with this coverage, Recalculate, View bill plan options and Print, Email, Fax, as on a
+// quote without NTL. The fill does them now, so the quote ends at Print (and its sound plays). With
+// cargo or GL too, Rates after NTL stays the agent's, with a reminder they can mark done.
+test('an NTL-only quote: Done with this coverage after the NTL limit, then Rates as on any quote', () => {
+  const record = baseRecord();
+  record.coverage.ntl = true;
+  record.coverage.cargo = false;
+  const steps = buildPlan(record, progressive, {});
+  const act = (id) => steps.find((s) => s.action === id);
+  const done = act('doneNtl');
+  assert.deepEqual([done.afterActions, done.after, done.waitRequired], [['addNtl'], ['progressive.q1DF2'], true]);
+  assert.ok(new RegExp(done.text, 'i').test('Done with this coverage'));
+  const ntlLimit = steps.find((s) => s.q === '1DF2' && s.kind !== 'action');
+  assert.deepEqual([ntlLimit.path, ntlLimit.value], ['progressive.q1DF2', '$1M CSL'], 'its own path, so Done and the rates helpers wait for it');
+  for (const id of ['recalculate', 'billPlan']) assert.deepEqual([act(id).afterActions, act(id).after], [['doneNtl'], ['progressive.q1DF2']], id);
+  for (const id of ['recalculateAgain', 'print']) assert.ok(act(id), id);
+  assert.ok(!act('ntlRates') && !act('openCargo') && !act('openGl'), 'no reminder, no cargo or GL helpers');
+  assert.equal(progressive.agentPages.CoveragesRates(record), null);
+  assert.equal(progressive.finishedBy, 'print', 'Print, Email, Fax ends it: the quote-done sound');
+  // With cargo (or GL): the reminder, and the rest of Rates is the agent's.
+  for (const changes of [{ cargo: true }, { gl: true }]) {
+    const r = baseRecord();
+    Object.assign(r.coverage, { ntl: true, cargo: false, gl: false }, changes);
+    const ids = buildPlan(r, progressive, {}).filter((s) => s.kind === 'action').map((s) => s.action);
+    assert.ok(ids.includes('ntlRates') && !ids.includes('doneNtl') && !ids.includes('print') && !ids.includes('recalculate'), JSON.stringify(changes));
+  }
+  // Without NTL: as before.
+  const plain = buildPlan(baseRecord(), progressive, {});
+  assert.deepEqual(plain.find((s) => s.action === 'recalculate').afterActions, ['doneCargo']);
+  assert.deepEqual(plain.find((s) => s.action === 'recalculate').after, ['coverage.autoLiabLimit']);
+  assert.ok(!plain.some((s) => s.action === 'doneNtl'));
 });

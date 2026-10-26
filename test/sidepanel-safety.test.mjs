@@ -725,7 +725,11 @@ test('the page list keeps items in the page order of their fields, the first ope
   assert.deepEqual(needs.map((r) => /\bopen\b/.test(r.props.class)), [true, ...Array(8).fill(false)], 'only the first item starts open');
   assert.deepEqual(needs.map((r) => r.children[1].props.hidden), [false, ...Array(8).fill(true)]);
   assert.equal(box.children.some((c) => /\bneeds-say\b/.test(c?.props?.class ?? '')), false, 'no line above the list');
-  assert.ok(needs.every((r) => nodesIn(r).some((n) => n.props?.class === 'row-say' && n.children[0] === 'Answer it on the rater page, then mark it done here.')),
+  // An item with a field, or a helper's reminder, can be marked done here; one with neither (a
+  // helper the fill couldn't click) has no Mark done, so its row says only where to do it (the
+  // maintainer, 2026-10-26: a row said "mark it done here" with no button to press).
+  const say = (r) => nodesIn(r).find((n) => n.props?.class === 'row-say')?.children[0];
+  assert.deepEqual(needs.map(say), [...Array(8).fill('Answer it on the rater page, then mark it done here.'), 'Do it on the rater page.'],
     'an item the panel can not answer says where to answer it');
   const notes = needs.map((r) => r.children[1].children.at(-1));
   assert.ok(notes.every((note) => note.props.class === 'need-note' && note.props.hidden === true && !note.children.length), 'each note empty and hidden while open');
@@ -7368,7 +7372,8 @@ test('a quote-wide helper the agent clicks themselves is done, as if the fill ha
 // for): the agent's click of another coverage's Done, or one Progressive refused, isn't cargo closed.
 // The fill's own click counts only once its check (`verify: cargoClosed`) passes.
 test('a helper the fill checks after its click is not done by the agent clicking its words', () => {
-  const plan = progressive.actions.filter((a) => !['openGl', 'doneGl'].includes(a.id)).map((a) => ({ kind: 'action', action: a.id, baseAction: a.id,
+  // (Nor an NTL quote's Done, doneNtl: not in a cargo quote's plan.)
+  const plan = progressive.actions.filter((a) => !['openGl', 'doneGl', 'doneNtl'].includes(a.id)).map((a) => ({ kind: 'action', action: a.id, baseAction: a.id,
     pages: [].concat(a.page ?? []), steps: null, text: typeof a.text === 'function' ? null : a.text ?? null, near: a.near ?? null, token: a.token ?? null,
     within: a.within ?? null, opener: a.opener ?? null, unique: !!a.unique, needsRecalculation: !!a.needsRecalculation, verify: a.verify ?? null }));
   const state = { intake: { record: {} }, active: { vehicles: 0, drivers: 0, trailers: 0 }, doneActions: new Set() };
@@ -8133,4 +8138,31 @@ test('the NTL-with-cargo check follows the agent\'s edits', () => {
   context.ntlCargoEdited(intake);
   assert.deepEqual([intake.warnings.map((w) => [w.code, w.level]), intake.done], [[['coverage.ntl-cargo', 'check']], []], 'asked again, not checked');
   assert.match(extractFunction('agentEdit'), /if \(\['coverage\.ntl', 'coverage\.cargo', 'coverage\.autoLiability'\]\.includes\(path\)\) \{ ntlCargoEdited\(state\.intake\); await save\(\); render\(\); \}/);
+});
+
+
+// The maintainer, 2026-10-26, live run: Progressive's Rates on an NTL quote showed a "Non-trucking
+// liability" item asking to be marked done, with no Mark done (a helper's reminder has no field). Its
+// Mark done marks the helper done for the tab, as a click of the fill's would, and can be undone.
+test('a helper\'s reminder has a Mark done that marks the helper done for the tab', async () => {
+  const src = extractFunction('needRow');
+  assert.match(src, /const actionId = !x\.key && \/\^action\\\.\/\.test\(x\.path \?\? ''\) \? x\.path\.slice\('action\.'\.length\) : null;/);
+  assert.match(src, /onclick: \(\) => markActionDone\(item, actionId, tabId, page, x\) \}, 'Mark done'\)/);
+  const state = { tab: { id: 4, url: 'CoveragesRates' }, filling: false, doneActions: new Set(), intake: null };
+  const persisted = [];
+  let settled = null;
+  const node = { hidden: true, textContent: '', replaceChildren() {}, remove() {}, append() {}, querySelector: (sel) => (sel === '.row-head' ? null : node) };
+  const item = { dataset: {}, classList: { remove() {} }, querySelector: (sel) => node.querySelector(sel) };
+  const context = { state, pageOf: (u) => u, persistDoneActions: async (tabId) => { persisted.push([tabId, [...state.doneActions]]); },
+    settleNeed: (it, how, undo) => { settled = { how, undo }; it.dataset.settled = how; }, setRowHead() {}, recount() {}, usage: { log() {} } };
+  vm.runInNewContext(extractFunction('markActionDone'), context);
+  await context.markActionDone(item, 'ntlRates', 4, 'CoveragesRates');
+  assert.deepEqual([[...state.doneActions], settled.how, persisted.at(-1)], [['ntlRates'], 'marked', [4, ['ntlRates']]]);
+  await settled.undo();
+  assert.deepEqual([...state.doneActions], [], 'undone');
+  // Another tab or page in front, or a fill running: nothing.
+  await context.markActionDone(item, 'ntlRates', 5, 'CoveragesRates');
+  state.filling = true;
+  await context.markActionDone(item, 'ntlRates', 4, 'CoveragesRates');
+  assert.deepEqual([...state.doneActions], []);
 });
