@@ -34,6 +34,8 @@
  * @property {string} path  the record path it is about
  * @property {'check' | 'info'} level
  * @property {string} msg
+ * @property {boolean} [alert]  said in red and first on the Intake step (`prior.carrier-is-quoted`:
+ *   the current commercial auto policy is with a carrier the panel quotes); still a check, no stop
  */
 
 /**

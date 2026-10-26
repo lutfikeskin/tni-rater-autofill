@@ -5675,6 +5675,37 @@ test('Luna\'s GL and driver-gender check cards set the record as the agent\'s ed
   assert.deepEqual([...intake.done], []);
 });
 
+// TNI, 2026-10-26 (answer to PR #189's question 9): the current carrier being one the panel quotes
+// is said in red on the intake check screen, before any carrier page, first among the checks. It is
+// a check like the others (its field, Looks right now), no stop (question 19).
+test('an alert intake check is red and first on the check screen, with its field and Looks right now', () => {
+  const el = (tag, props = {}, ...children) => ({ tag, props, children: children.flat().filter((c) => c != null && c !== false) });
+  const nodes = {};
+  const $ = (id) => (nodes[id] ??= { id, hidden: false, textContent: '', replaceChildren(...kids) { this.kids = kids; } });
+  const intake = { record: { priorInsurance: [{ type: 'Commercial Auto', carrier: 'GEICO' }] }, agentEdited: [], done: [], warnings: [
+    { code: 'other', level: 'check', path: 'applicant.name', msg: 'other' },
+    { code: 'prior.carrier-is-quoted', level: 'check', path: 'priorInsurance[0].carrier', alert: true, msg: 'Current insurance is with GEICO: a GEICO quote may be declined or routed.' },
+  ] };
+  const rows = [];
+  const sandbox = { state: { intake, view: 'check' }, h: el, $, fieldInfo: (p) => ({ label: `Field ${p}`, kind: 'text' }), sourcePlace: () => null, pdfPageSaid: () => '',
+    renderSteps() {}, fieldRow: (path) => { rows.push(path); return el('input', { path }); }, jumpTo() {}, openPdf() {} };
+  vm.createContext(sandbox);
+  vm.runInContext(extractFunction('renderWarnings'), sandbox);
+  sandbox.renderWarnings();
+  assert.equal(nodes['check-title'].textContent, '2 things to look at on the intake');
+  const [first, second] = nodes.warnings.kids;
+  assert.deepEqual([first.props.class, first.props.role, first.props.dataset.check], ['check alert', 'alert', '1'], 'red, said at once, first');
+  assert.deepEqual([second.props.class, second.props.role ?? null], ['check', null], 'the others as before');
+  assert.ok(JSON.stringify(first).includes('Looks right now'));
+  assert.deepEqual(rows, ['priorInsurance[0].carrier', 'applicant.name']);
+  // Checked, it is a row like any other.
+  intake.done = [1];
+  sandbox.renderWarnings();
+  assert.equal(nodes.warnings.kids[0].props.class, 'checked-row');
+  const css = fs.readFileSync(new URL('../sidepanel/sidepanel.css', import.meta.url), 'utf8');
+  assert.match(css, /\.check\.alert\s*\{[^}]*border-color:\s*var\(--signal-line\)/);
+});
+
 // ---------------------------------------------------------------------------------------------
 // GEICO (survey 2026-10-20): every step of the quote is one address (sales.geico.com/quote), the
 // Vehicles and Drivers & Incidents steps draw one unit's form at a time, and Final Quote Details,
@@ -5929,11 +5960,11 @@ test('on a stop step the panel offers no fill; on the other steps it names the s
 // cards from arrival, before any fill, while the tab is on that carrier. It is no stop: nothing that
 // fills, clicks or asks the AI reads it.
 test('a red card says the client\'s current insurance is with the carrier the tab is on, and stops nothing', async () => {
-  const { sameCarrier, noPriorInsurance } = await import('../src/util.js');
+  const { sameCarrier, noPriorInsurance, quotedCarrierPolicy } = await import('../src/util.js');
   const node = (tag, props = {}, ...children) => ({ tag, props, children: children.flat() });
   const box = { hidden: true, children: [], replaceChildren(...next) { this.children = next; } };
   const state = { tab: { id: 4, url: 'https://sales.geico.com/quote', carrier: geico }, intake: null };
-  const context = { state, h: node, $: (id) => (id === 'carrier-note' ? box : null), sameCarrier, noPriorInsurance };
+  const context = { state, h: node, $: (id) => (id === 'carrier-note' ? box : null), sameCarrier, noPriorInsurance, quotedCarrierPolicy };
   vm.runInNewContext(extractFunction('showCarrierNote'), context);
   // `prior`: the intake's current-insurance row; null: a blank section; undefined: no intake.
   const show = (carrier, prior) => {
@@ -5965,6 +5996,12 @@ test('a red card says the client\'s current insurance is with the carrier the ta
   assert.equal(show(geico, undefined), null, 'no intake');
   assert.equal(show(null, policy('GEICO')), null, 'not a rater page');
   assert.equal(show(amwins, policy('AmWINS')), null, 'a wholesaler');
+  // TNI, 2026-10-26 (answer to PR question 18): only a commercial auto policy with the carrier. A
+  // personal auto, GL-only, cargo or other policy with GEICO says nothing; one of no type is said
+  // (only a warning), and so is an expired or undated one, as before.
+  for (const type of ['Personal Auto', 'General Liability', 'Cargo', 'Other']) assert.equal(show(geico, policy('GEICO', { type })), null, type);
+  assert.equal(show(progressive, policy('Progressive', { type: 'Personal Auto' })), null, 'Progressive personal auto');
+  for (const more of [{ type: null }, { expiration: '01/31/2026' }, { expiration: null }]) assert.ok(show(geico, policy('GEICO', more)), JSON.stringify(more));
   // Shown on arrival with the other cards (renderSite runs as the tab reaches a carrier page and as
   // the intake loads or changes), first among them.
   assert.match(extractFunction('renderSite').split('\nfunction ')[0], /showCarrierNote\(\);\s*showStopPage\(\);/);
@@ -5973,7 +6010,7 @@ test('a red card says the client\'s current insurance is with the carrier the ta
   // No stop: the fill, follow-ups, the dock, the stop checks and the AI never read it, and
   // Progressive's DeclinationNotice stays its stop page.
   for (const fn of ['fillPage', 'scheduleAutoFill', 'dockFor', 'stopNoteFor', 'showStopPage', 'aiActionCurrent', 'stateIssue']) {
-    assert.doesNotMatch(extractFunction(fn), /showCarrierNote|carrier-note|sameCarrier/, fn);
+    assert.doesNotMatch(extractFunction(fn), /showCarrierNote|carrier-note|sameCarrier|quotedCarrierPolicy|carrier-is-quoted|\.alert\b/, fn);
   }
   assert.ok(progressive.stopPages?.DeclinationNotice, 'Progressive\'s stop page stays');
 });

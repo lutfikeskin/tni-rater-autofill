@@ -94,3 +94,25 @@ test('Progressive: a misspelled Progressive commercial auto policy is currently 
   for (const name of ['Progressive', 'Progresive', 'Progressive Commercial', 'PROGESSIVE']) assert.equal(insured(name), true, name);
   for (const name of ['Protective', 'GEICO', 'Other Mutual']) assert.equal(insured(name), false, name);
 });
+
+// TNI, 2026-10-26: answer to PR question 9 (#189, #194): a commercial auto policy with Progressive
+// itself is "currently insured with Progressive Commercial Auto" also without a usable expiration
+// date or a limit, as W44-29 reads proof of prior insurance (any box filled, no date already
+// passed). TNI's answer, so a standard; with a limit and a date it stays derived. Expired stays No.
+test('Progressive: an undated Progressive commercial auto policy is currently insured with Progressive (TNI, 2026-10-26)', () => {
+  const step = (more) => {
+    const r = record();
+    Object.assign(r.priorInsurance[0], { expiration: '12/01/2026', ...more });
+    return buildPlan(r, progressive).find((s) => s.q === '198');
+  };
+  for (const more of [{ expiration: null }, { expiration: 'see notes' }, { limit: null }, { limit: null, expiration: null }, { carrier: 'Progresive', expiration: null }]) {
+    assert.deepEqual([step(more).value, step(more).source], [true, 'standard'], JSON.stringify(more));
+  }
+  assert.deepEqual([step({}).value, step({}).source], [true, 'derived'], 'a limit and a date: derived, as before');
+  // Unchanged, No: expired, a personal auto policy, another insurer, no prior insurance ("No
+  // Progressive" without a date), and a policy of no type.
+  for (const more of [{ expiration: '09/01/2026' }, { type: 'Personal Auto', expiration: null }, { carrier: 'Protective', expiration: null },
+    { carrier: 'No Progressive', expiration: null }, { type: null, expiration: null }]) {
+    assert.deepEqual([step(more).value, step(more).source], [false, 'derived'], JSON.stringify(more));
+  }
+});

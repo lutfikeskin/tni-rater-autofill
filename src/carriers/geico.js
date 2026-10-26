@@ -50,7 +50,7 @@
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
 import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer } from '../normalize.js';
-import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier } from '../util.js';
+import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote, sameCarrier, priorPolicyCurrent } from '../util.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule, ShownCondition } from '../../types.js' */
 
@@ -133,10 +133,12 @@ const dotNumberNote = (r) => (r.applicant.dot && !/^\d+$/.test(r.applicant.dot) 
 // "Does the customer's business have a current GEICO commercial auto policy?" from the intake's
 // current-insurance row. No for no prior insurance, a personal auto policy, or a commercial auto
 // policy with another carrier; Yes for a current GEICO commercial auto policy. A blank section, an
-// expired or undated GEICO policy, or another kind of policy (GL, cargo) is the agent's:
+// expired GEICO policy, or another kind of policy (GL, cargo) or one of no type is the agent's:
 // Progressive's reading of a blank section as No is Progressive's. GEICO misspelled or with a
 // suffix ("GICO", "Gieco", "Geico Commercial") is GEICO (sameCarrier; TNI, 2026-10-26, W44-06):
-// it used to be read as another carrier, No.
+// it used to be read as another carrier, No. An undated GEICO commercial auto policy (no expiration
+// date, or a remark in the date box) is Yes too, TNI's answer, a standard (TNI, 2026-10-26: answer
+// to PR question 9, by W44-29's proof of prior: priorPolicyCurrent); it used to be the agent's.
 const prior = (r) => r.priorInsurance?.[0] ?? null;
 const commercialAuto = (p) => /commercial\s+auto/i.test(p?.type ?? '');
 const currentGeico = (r) => {
@@ -145,8 +147,10 @@ const currentGeico = (r) => {
   if (noPriorInsurance(p) || /personal\s+auto/i.test(p.type ?? '')) return false;
   if (!p.carrier) return null;
   if (!sameCarrier(p.carrier, 'geico')) return commercialAuto(p) ? false : null;
-  return commercialAuto(p) && p.expiration && !priorPolicyExpired(r, p) ? true : null;
+  return commercialAuto(p) && priorPolicyCurrent(r, p) ? true : null;
 };
+// Derived from a dated policy; TNI's standard when the Yes is the answer to question 9 (undated).
+const currentGeicoSource = (r) => (currentGeico(r) === true && !DATE.test(prior(r)?.expiration ?? '') ? 'standard' : 'derived');
 const currentGeicoNote = (r) => (currentGeico(r) != null ? null
   : !prior(r) ? 'The intake\'s current insurance section is blank: answer it yourself.'
     : 'The intake\'s current insurance doesn\'t show whether there is a current GEICO commercial auto policy: answer it yourself.');
@@ -953,7 +957,7 @@ export const geico = {
     ...on(BUSINESS_CLASS, {}, [
       { field: 'GiveInitialZipCode', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'ZIP code (the garaging ZIP)', source: 'derived', value: zip5, note: zipNote },
       { field: 'GiveCurrentGeicoCommercialAutoPolicyYesNo', ask: 'Does the customer\'s business have a current GEICO commercial auto policy?', name: 'Current GEICO commercial auto policy',
-        kind: 'bool', source: 'derived', clientFact: true, value: currentGeico, note: currentGeicoNote },
+        kind: 'bool', source: currentGeicoSource, clientFact: true, value: currentGeico, note: currentGeicoNote },
       { field: 'GiveDepartmentOfTransportationNumber', ask: 'What is the customer\'s USDOT number?', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
       // The business description lists 1,599 kinds of business (too many for the AI assistant), the
       // more detailed one 26. An expediter or a general freight hauler is For Hire Trucking, then

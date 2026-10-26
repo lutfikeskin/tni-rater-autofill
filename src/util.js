@@ -56,8 +56,8 @@ export function noPriorInsurance(policy) {
 // matched with spelling slips, or words all present. AmWINS, a wholesaler, has none: the client's
 // current carrier is the insurer, never AmWINS.
 const CARRIER_NAMES = {
-  geico: { word: 'geico', words: [['government', 'employees']] },
-  progressive: { word: 'progressive' },
+  geico: { name: 'GEICO', word: 'geico', words: [['government', 'employees']] },
+  progressive: { name: 'Progressive', word: 'progressive' },
 };
 
 // Edits between two words (insert, delete, substitute, or swap two neighbours: "gieco").
@@ -88,6 +88,37 @@ export function sameCarrier(name, carrierId) {
   const slips = word.length >= 8 ? 2 : 1;
   return words.some((w) => w.startsWith(word) || editDistance(w, word) <= slips)
     || (names.words ?? []).some((all) => all.every((w) => words.includes(w)));
+}
+
+// The intake's current policy is one the carrier being quoted may decline or route (W44-27): with
+// that carrier (sameCarrier), not no prior insurance, and a commercial auto policy (TNI, 2026-10-26:
+// answer to PR question 18: a personal auto, GL-only, cargo or other policy with it is not). A policy
+// of no type is said too: it is only a warning, and the carrier's question stays as it was. Expired
+// or undated, it is said, as before. The side panel's red card on the carrier's pages and the intake
+// check (prior.carrier-is-quoted, normalize.js) both read it.
+export function quotedCarrierPolicy(policy, carrierId) {
+  if (!policy || noPriorInsurance(policy) || !sameCarrier(policy.carrier, carrierId)) return false;
+  const type = String(policy.type ?? '').trim();
+  return !type || /commercial\s+auto/i.test(type);
+}
+
+// The carriers the panel quotes that the intake's current policy is with (quotedCarrierPolicy), by
+// name, for the intake check: an intake isn't tied to one carrier.
+export function quotedCarriersOf(policy) {
+  return Object.entries(CARRIER_NAMES).filter(([id]) => quotedCarrierPolicy(policy, id)).map(([, c]) => c.name);
+}
+
+// The intake's current policy is current, a usable expiration date or not (TNI, 2026-10-26: answer
+// to PR question 9, by W44-29's reading of proof of prior insurance): any of its type, carrier,
+// limit or expiration boxes filled, not no prior insurance, and no expiration date already passed
+// (a blank date, or a remark in the date box, passes nothing). GEICO's current GEICO policy and
+// Progressive's "insured with Progressive Commercial Auto" read it for a commercial auto policy with
+// themselves. PR #194's priorInsuranceAssumed states W44-29 for every policy (and leaves out a
+// GL, cargo or other one): the two become one helper once both are merged.
+export function priorPolicyCurrent(record, policy = record?.priorInsurance?.[0]) {
+  const filled = (v) => v != null && String(v).trim() !== '';
+  if (!policy || noPriorInsurance(policy) || !['type', 'carrier', 'limit', 'expiration'].some((k) => filled(policy[k]))) return false;
+  return !priorPolicyExpired(record, policy);
 }
 
 // Compare calendar dates using the application date, so an archived intake stays reproducible.

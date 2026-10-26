@@ -556,14 +556,36 @@ test('a current GEICO commercial auto policy: only one on the intake, current', 
   // policy" for it; another insurer with a similar name stays No.
   for (const carrier of ['GICO', 'Gieco', 'Geico Commercial', 'GEICO Ins.']) assert.equal(current(geicoRow({ carrier })), true, carrier);
   for (const carrier of ['Gainsco', 'Gateway', 'GAIC']) assert.equal(current(geicoRow({ carrier })), false, carrier);
-  // An expired or undated misspelled GEICO policy is the agent's, as GEICO's is.
+  // An expired misspelled GEICO policy is the agent's, as GEICO's is.
   for (const carrier of ['GICO', 'Gieco']) agents(one(plan(with_(geicoRow({ carrier, expiration: '01/31/2026' }))), 'Current GEICO commercial auto policy'));
-  for (const changes of [geicoRow({ expiration: '01/31/2026' }), geicoRow({ expiration: null }), { priorInsurance: [] },
+  for (const changes of [geicoRow({ expiration: '01/31/2026' }), { priorInsurance: [] },
     { priorInsurance: [{ type: 'General Liability', carrier: 'Other Mutual', limit: null, expiration: '12/31/2026' }] }]) {
     const s = one(plan(with_(changes)), 'Current GEICO commercial auto policy');
     agents(s);
     assert.equal(s.manualOnly, true);
   }
+});
+
+// TNI, 2026-10-26: answer to PR question 9 (#189, #194): a commercial auto policy with GEICO itself
+// is a current GEICO policy also when the intake gives no usable expiration date (blank, or a remark
+// in the date box), as W44-29 reads proof of prior insurance: any box filled and no date already
+// passed. TNI's answer, so a standard; a dated one stays derived. An expired one stays the agent's.
+test('an undated GEICO commercial auto policy is a current GEICO policy (TNI, 2026-10-26)', () => {
+  const geicoRow = (more = {}) => ({ priorInsurance: [{ type: 'Commercial Auto', carrier: 'GEICO', limit: '$1M CSL', expiration: null, ...more }] });
+  const step = (changes) => one(plan(with_(changes)), 'Current GEICO commercial auto policy');
+  for (const more of [{}, { carrier: 'Gieco' }, { carrier: 'Geico Commercial' }, { limit: null }, { expiration: 'renews in spring' }]) {
+    const s = step(geicoRow(more));
+    assert.deepEqual([s.value, s.source, s.note], [true, 'standard', null], JSON.stringify(more));
+  }
+  assert.deepEqual([step(geicoRow({ expiration: '12/31/2026' })).value, step(geicoRow({ expiration: '12/31/2026' })).source], [true, 'derived'], 'a dated one: derived, as before');
+  // Unchanged: expired (the agent's), a personal auto policy (No), no prior insurance (No), another
+  // insurer's commercial auto policy (No), a GL policy with GEICO and one of no type (the agent's).
+  agents(step(geicoRow({ expiration: '01/31/2026' })));
+  assert.equal(step(geicoRow({ type: 'Personal Auto' })).value, false);
+  assert.equal(step(geicoRow({ type: null, carrier: 'No GEICO', limit: null })).value, false, 'no prior insurance');
+  assert.equal(step(geicoRow({ carrier: 'Gainsco' })).value, false);
+  for (const type of ['General Liability', null]) agents(step(geicoRow({ type })));
+  assert.equal(step(geicoRow({ carrier: 'Gainsco' })).source, 'derived');
 });
 
 test('the owner: from their driver row or the owner box, never the first driver', () => {

@@ -6,7 +6,7 @@ import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
 import { carrierForUrl, quoteProgress, stopScreen } from '../src/carriers.js';
-import { get, set, STATES, sameCarrier, noPriorInsurance } from '../src/util.js';
+import { get, set, STATES, quotedCarrierPolicy } from '../src/util.js';
 import { intakeSummary, intakeProfile, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
 import { quoteStatePick, stateCode, stateMismatch } from '../src/quote-state.js';
 // The premium a carrier page quotes (removable: src/premium.js says what goes with it).
@@ -1138,7 +1138,10 @@ function setFilter(filter) {
 // Looks right now and where it is on the PDF; then the cleanup notes, and All client details below.
 function renderWarnings() {
   const { warnings, done } = state.intake;
-  const checks = warnings.map((w, i) => [w, i]).filter(([w]) => w.level === 'check');
+  // An `alert` check first, in red: the current commercial auto policy is with a carrier the panel
+  // quotes (prior.carrier-is-quoted; TNI, 2026-10-26: answer to PR question 9, said here before any
+  // carrier page). Still a check like the others, no stop (question 19).
+  const checks = warnings.map((w, i) => [w, i]).filter(([w]) => w.level === 'check').sort(([a], [b]) => Number(!!b.alert) - Number(!!a.alert));
   const infos = warnings.filter((w) => w.level === 'info');
   const open = checks.filter(([, i]) => !done.includes(i)).length;
   $('check-title').textContent = open ? `${open} thing${open === 1 ? '' : 's'} to look at on the intake` : 'The intake is checked';
@@ -1171,7 +1174,7 @@ function renderWarnings() {
           h('div', { class: 'check-choices' }, ...w.choices.map((c) => h('button', { type: 'button', class: 'ghost', onclick: () => applyCheckChoice(i, c) }, c.label))),
           pdfLink(w, label))));
     }
-    return h('div', { class: 'check', dataset: { check: String(i) } }, head(info, w),
+    return h('div', { class: w.alert ? 'check alert' : 'check', ...(w.alert ? { role: 'alert' } : {}), dataset: { check: String(i) } }, head(info, w),
       h('div', { class: 'check-body' },
         info ? fieldRow(w.path, info.label, info.kind, true, 'input') : null,
         h('div', { class: 'check-actions' },
@@ -3305,12 +3308,14 @@ function renderDock() {
 // intake, not the tab's quote, so it needs no evidence the tab holds this client's quote. No stop:
 // filling, follow-ups, helpers, Continue and the AI go on as elsewhere, the carrier's own question is
 // answered from the intake, and Progressive's DeclinationNotice stays its stop page. Not logged: a
-// fill run that stopped would count a page nothing stopped.
+// fill run that stopped would count a page nothing stopped. Only for a commercial auto policy, or one
+// of no type (util.js quotedCarrierPolicy; TNI, 2026-10-26: answer to PR question 18: not a personal
+// auto or GL-only policy). The intake check screen says it first (prior.carrier-is-quoted).
 function showCarrierNote() {
   const box = $('carrier-note');
   const carrier = state.tab?.carrier;
   const p = state.intake?.record?.priorInsurance?.[0];
-  const on = !!carrier && !!p && !noPriorInsurance(p) && sameCarrier(p.carrier, carrier.id);
+  const on = !!carrier && quotedCarrierPolicy(p, carrier.id);
   box.hidden = !on;
   if (!on) { box.replaceChildren(); return; }
   const policy = [p.carrier, p.type, p.expiration ? `expires ${p.expiration}` : null].filter(Boolean).join(' · ');

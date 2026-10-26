@@ -83,9 +83,19 @@ The intake's current carrier is compared with the carrier being quoted by `sameC
 
 - GEICO or Progressive misspelled or with a suffix is that carrier: a word of the name is the carrier's, starts with it, or is one slip from it (two for Progressive's longer name): "GICO", "Gieco", "Geico Commercial", "GEICO Ins.", "Government Employees Insurance Company", "Progresive", "Progressive Commercial". Progressive's own insurers all carry its name, so "Progressive Casualty" or "Progressive Express" is Progressive.
 - Another insurer with a similar name is not ("Gainsco", "Gateway", "GAIC", "Protective").
-- GEICO's current GEICO commercial auto policy and Progressive's "currently insured with Progressive Commercial Auto" read it so. A misspelled GEICO used to be answered "no current GEICO commercial policy". The answers are otherwise unchanged (`derived`, not a standard): a current misspelled GEICO commercial auto policy is Yes, and an expired or undated one is the agent's, as GEICO's is.
+- GEICO's current GEICO commercial auto policy and Progressive's "currently insured with Progressive Commercial Auto" read it so. A misspelled GEICO used to be answered "no current GEICO commercial policy". A current misspelled GEICO commercial auto policy is Yes, and an expired one is the agent's, as GEICO's is.
 - AmWINS asks no such question: it is a wholesaler, so the client's current carrier is the insurer, never AmWINS. Its prior carrier dropdowns stay the standard NO PRIOR, and its disclosure names the carrier as the intake writes it.
 - The side panel says in red when the intake's current carrier is the carrier the tab is on ([browser filling](browser-filling.md)). It stops nothing.
+
+TNI's answers of 2026-10-26 to PR #189's open questions (`(TNI, 2026-10-26: answer to PR question …)` in the code):
+
+- **Undated, question 9** (`priorPolicyCurrent` in [util.js](../src/util.js)): a commercial auto policy with the carrier being quoted is Yes to that carrier's own question also when the intake gives no usable expiration date (blank, or a remark in the date box): GEICO's current GEICO commercial auto policy (`GiveCurrentGeicoCommercialAutoPolicyYesNo`) and Progressive's "currently insured with Progressive Commercial Auto" (`198`), Progressive's also without a limit.
+  - "Undated" is read as TNI's proof-of-prior decision (W44-29) reads the current insurance section: any of its policy type, carrier, limit or date filled, and no date already passed. PR #194's `priorInsuranceAssumed` says the same for every policy; the two become one helper once both are merged.
+  - That Yes is TNI's `standard`; with a limit and a date it stays `derived`. Before, an undated GEICO policy was the agent's and Progressive's was No.
+  - Unchanged: an expired policy (GEICO the agent's, Progressive No), a personal auto policy (No on both), another insurer, and a policy of no type (GEICO the agent's, Progressive No).
+- **Said early, question 9**: the intake check `prior.carrier-is-quoted` says it on the Intake step, shown when the intake loads and before any carrier page, so the agent doesn't fill that carrier's pages for nothing: "Current insurance is with GEICO: a GEICO quote may be declined or routed…". The intake isn't tied to one carrier, so it names the carrier(s). It is red and first among the checks (`alert`), with the carrier box and Looks right now. The red card on the carrier's own pages stays.
+- **Commercial auto only, question 18** (`quotedCarrierPolicy` in [util.js](../src/util.js)): the check and the card are said only when the policy with that carrier is commercial auto, not personal auto, GL-only, cargo or other. A policy of no type is said too (it is only a warning; not settled by the answer). An expired or undated policy is said, as before.
+- **A warning, question 19**: neither the check nor the card holds filling, Continue or the AI.
 
 AmWINS "Any prior loss" follows an explicit Yes or No in `claims.hasClaims`. An unknown or missing claims answer leaves prior loss empty with a note and `manualOnly`, so the agent answers it and Luna never receives that unresolved fact.
 
@@ -98,6 +108,7 @@ GEICO ([geico.js](../src/carriers/geico.js), mapped from saved NE pages and FL c
 - A driver besides the owner(s) is an Employee.
 - The number of employees is the intake's drivers besides the owner(s), as GEICO's band (none, 1, 2-3, …).
 - Years with the current auto insurer is 1-3 Years when the intake shows a current auto policy (proof of prior insurance).
+- A current GEICO commercial auto policy is Yes for a commercial auto policy with GEICO that has no usable expiration date (TNI, 2026-10-26: answer to PR #189's question 9, above); a dated one is `derived`.
 - The other liability insurance the business has is None, unless the intake shows a current GL policy (GL, `derived`) or you marked on the Intake step that the client has GL (the agent's: GL or a business owner's policy).
 - A named additional insured or waiver of subrogation, and a contract needing a blanket additional insured or blanket waiver of subrogation endorsement, are No.
 - Does this driver have a CDL? (the owner's form and each Add Driver form): the intake's answer, and No when the intake leaves it blank (`standard`; the maintainer, 2026-10-26: "if it's empty, it means no"), unless it gives a CDL year: then the agent's, with a check (`cdl.blank-with-year`; `cdlAnswer`). Progressive's Add Driver CDL question likewise.

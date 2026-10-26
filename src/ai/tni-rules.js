@@ -14,7 +14,7 @@ export const TNI_RULES = `
 - The agent decides: MVR and CLUE report orders, anything the client must sign, attest or authorise, payment or bank details, and moving to another page.
 
 ## Named insured and business (BusinessOwnerInfo)
-- Currently insured with Progressive Commercial Auto: Yes only if the intake's current insurance is a Progressive commercial auto policy with a limit and an expiration date. A personal auto policy doesn't count.
+- Currently insured with Progressive Commercial Auto: Yes only if the intake's current insurance is a Progressive commercial auto policy whose expiration date hasn't passed. A personal auto policy doesn't count. Without a limit or a usable expiration date it is still Yes (TNI, 2026-10-26: answer to PR question 9); an expired one is No.
 - The intake's current carrier misspelled or with a suffix ("Progresive", "Progressive Commercial") is Progressive; another insurer with a similar name ("Protective") is not.
 - Has a USDOT number: "Yes" if the intake has one. If not, the intake's 60-day answer decides: "Not Yet…" when they'll have one within 60 days, "No…" when the intake says they won't; no answer there is the agent's.
 - A prior policy that expired before the application date does not establish current insurance. Preserve its dates and flag it for renewal/lapse review. Missing POP paperwork does not mean no prior policy: retain the policy details and explicitly disclose that the proof is unavailable. A current-insurance carrier of "No", "None" or "no POP" without an expiration date is no prior insurance, whatever type or limit the form shows; nothing about it is disclosed.
