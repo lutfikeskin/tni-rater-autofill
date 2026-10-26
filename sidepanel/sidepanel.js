@@ -778,7 +778,7 @@ async function settleRejectedAi(page, changes, sender, tabId = state.tab?.id) {
   });
   let fresh = null;
   if (eligible.some(([, x]) => !x.origin && !x.originAmbiguous)) {
-    try { fresh = await runKit(tabId, tab.carrier, () => globalThis.__raterKit.decisionSnapshot()); } catch { /* page navigating */ }
+    try { fresh = await runKit(tabId, tab.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); } catch { /* page navigating */ }
   }
   if (state.tab?.id !== tabId || state.tab?.url !== tab?.url || state.intake !== intake) return false;
   let changed = false;
@@ -826,7 +826,7 @@ async function retireAiOrigins(ctx, frames = null) {
     && x.done === 'auto' && (x.quoteHash || aiOriginRecord(x.origin)));
   if (!entries.length) return false;
   if (frames == null && entries.some(([, x]) => x.origin && (!x.quoteHash || x.quoteHash === quoteHash))) {
-    try { frames = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot()); }
+    try { frames = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); }
     catch { frames = null; }
   }
   if (!current()) return false;
@@ -3875,24 +3875,33 @@ function assistAfterFill(frames, ctx, followUp) {
 // retry sent Next again while GEICO still worked on the first) is never clicked again: its page
 // may load for up to a minute, and a quiet page that hasn't moved for about 18 s is the agent's.
 // `doneKey`: the continued step's entry in state.doneSteps (see stepScope); `run`: the fill's.
+// The page is read every 150 ms, and the new step is filled once three reads in a row (300 ms) show
+// the same questions: the same 300 ms as when it was read every 300 ms and two reads had to agree,
+// which made the new step wait 0.6 s at least (0.63 s on GEICO's 114 fills after a Continue since
+// 2026-10-15). The patience is counted in reads as before: about 6 s (18 s without the retry) of a
+// page unchanged since the Continue, 30 s (60 s) in all.
 async function watchNextStep(carrier, page, before, doneKey = null, run = null, ctx = { tabId: state.tab?.id, intake: state.intake, revision: state.intakeRevision }) {
   const tabId = ctx.tabId;
   if (!$('auto-followups').checked && !$('auto-pages').checked) return;
   let last = null;
+  let same = 0;
   let unchanged = 0;
   const retries = carrier.continueRetry !== false;
-  const patience = retries ? 20 : 60;
-  for (let i = 0; i < (retries ? 100 : 200); i++) {
-    await new Promise((r) => setTimeout(r, 300));
+  const patience = retries ? 40 : 120;
+  for (let i = 0; i < (retries ? 200 : 400); i++) {
+    await new Promise((r) => setTimeout(r, 150));
     if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page || !state.intake) return;
     let now = null;
     try {
-      // While the page saves / reloads (its loading overlay) the step isn't ready yet.
-      const results = await runKit(tabId, carrier, () => (globalThis.__raterKit.busy() ? null : globalThis.__raterKit.signature()));
+      // While the page saves / reloads (its loading overlay) the step isn't ready yet. A frame without
+      // the kit (its document replaced after the kit went in) reads as nothing, as the snapshot reads do.
+      const results = await runKit(tabId, carrier, () => (!globalThis.__raterKit || globalThis.__raterKit.busy() ? null : globalThis.__raterKit.signature()));
       now = results.find((r) => r.frameId === 0)?.result ?? null;
     } catch { return; }
     if (!fillCurrent(ctx) || pageOf(state.tab?.url) !== page) return;
-    if (now != null && now !== before && now === last) {
+    same = now === last ? same + 1 : 0;
+    last = now;
+    if (now != null && now !== before && same >= 2) {
       if (state.filling) state.pagePending = page;
       else fillPage({ auto: 'page' });
       return;
@@ -3910,7 +3919,6 @@ async function watchNextStep(carrier, page, before, doneKey = null, run = null, 
       if (!carrier.practice) usage.log({ type: 'fill_error', carrier: carrier.id, page, ...(run ? { run } : {}), auto: 'page', error: 'continue did not take' });
       return;
     }
-    last = now;
   }
 }
 
@@ -4466,7 +4474,7 @@ async function changeAnswer(item, row, { tabId, page, carrier }) {
   const slot = item.querySelector('.change-slot');
   if (slot.childElementCount) { slot.replaceChildren(); return; }
   let frames = null;
-  try { frames = await runKit(tabId, carrier, () => globalThis.__raterKit.decisionSnapshot()); } catch { /* the page is navigating */ }
+  try { frames = await runKit(tabId, carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); } catch { /* the page is navigating */ }
   if (state.tab?.id !== tabId || pageOf(state.tab?.url) !== page) return;
   const matches = aiSnapshotFieldMatches(frames, { key: row.key, label: row.field });
   const field = matches.length === 1 ? matches[0].field : null;
@@ -4512,7 +4520,7 @@ async function agentAnswer(item, x, choice, { tabId, page, carrier }, button = n
     guarding = true;
     await runKit(tabId, carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [token]);
     if (!current()) return;
-    const frames = await runKit(tabId, carrier, () => globalThis.__raterKit.decisionSnapshot());
+    const frames = await runKit(tabId, carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
     if (!current()) return;
     const matches = aiSnapshotFieldMatches(frames, x);
     if (matches.length !== 1) { say('The page changed: answer it on the page.'); return; }
@@ -5109,7 +5117,7 @@ async function runAssist(frames, ctx) {
   const run = ++state.aiRun;
   ctx.run = run;
   try {
-    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+    ctx.snapshots = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
   } catch { return; }
   // Why this request (or its answer) no longer fits what the panel shows; null while it does.
   const staleWhy = () => (run !== state.aiRun ? 'a newer request'
@@ -5236,7 +5244,7 @@ async function applyAi(list, ctx, decision) {
     guarding = true;
     await runKit(ctx.tabId, ctx.carrier, (t) => globalThis.__raterKit.answerEdits('begin', t), [guardToken]);
     if (!isCurrent()) return false;
-    const current = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+    const current = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
     if (!isCurrent()) return false;
     if (!snapshotsEqual(current, ctx.snapshots)) {
       for (const x of list) x.error = 'the page changed; click Fill this page for fresh suggestions';
@@ -5341,7 +5349,7 @@ async function applyAi(list, ctx, decision) {
     if (list.some((x) => x.done) || protectedKeys.length) noteChangedAfterDone(ctx.carrier, ctx.page, tabStep(ctx.carrier, ctx.tabId), ctx.tabId);
     await persistGuardedEdits(editOrigin, protectedKeys);
     // Read the original carrier tab even if the panel has since switched to another intake/tab.
-    const after = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+    const after = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
     for (const x of list) if (x.done) {
       x.snapshots = after;
       x.snapshotHash = snapshotFingerprint(after);
@@ -5425,7 +5433,7 @@ function renderAi(holder, suggestions, ctx) {
       // Approve only what the page still shows as the AI left it; a pick whose page changed since
       // is rejected so the agent reviews it after a fresh fill.
       let now;
-      try { now = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot()); }
+      try { now = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null)); }
       catch {
         if (!aiActionCurrent(ctx, list)) return;
         for (const x of list) x.error = 'the page is unavailable; return to it and run Fill again';
@@ -5475,7 +5483,7 @@ function renderAi(holder, suggestions, ctx) {
     for (const x of list) {
       let present = false;
       try {
-        const result = await runKit(ctx.tabId, ctx.carrier, () => globalThis.__raterKit.decisionSnapshot());
+        const result = await runKit(ctx.tabId, ctx.carrier, () => (globalThis.__raterKit ? globalThis.__raterKit.decisionSnapshot() : null));
         present = aiCurrentAnswerPresent(result, x);
       } catch { /* page navigating */ }
       if (!aiActionCurrent(ctx, list)) return;

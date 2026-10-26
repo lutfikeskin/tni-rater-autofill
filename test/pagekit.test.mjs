@@ -7352,3 +7352,39 @@ test('GEICO outside Florida: PIP where GEICO offers it, $2,500, and Medical Paym
   r = await run({ med: [], pip: ['I decline', '$2,500'] });
   assert.deepEqual([r.pip, r.notes], ['$2,500', ['GEICO lists no medical payments choice here: check it yourself.']]);
 });
+
+// Speed (PR 178, 2026-10-26): every wait wakes when its quiet time is over, not on its next 60 ms
+// look (main's kit answers here at 420 ms). A fill's first wait is its whole 400 ms from when it
+// begins, however long the page was quiet before: a page changes in ways no observer is told of
+// (GEICO shows and hides its spinners by their style, and a component draws its shadow root when it
+// is defined), so a quiet history the PR first counted read pages the moment such a hold ended.
+test("a fill's first wait is its whole 400 ms from when it begins, whatever the page did before", async () => {
+  const later = (ms) => new Promise((r) => setTimeout(r, ms));
+  const answeredAfter = async (h, options = {}) => {
+    const a = makeInput({ id: 'a', ariaLabel: 'A' });
+    h.document.body.append(a);
+    let answered = null;
+    a.addEventListener('change', () => { answered ??= clock.Date.now(); });
+    const start = clock.Date.now();
+    await h.kit.fill([{ id: 'a', selector: '#a', path: 'x.a', kind: 'text', value: 'a' }], { maxRounds: 3, ...options });
+    return answered - start;
+  };
+  assert.equal(await answeredAfter(harness()), 400, 'just come into the document');
+  const quiet = harness();
+  await later(1000);
+  assert.equal(await answeredAfter(quiet), 400, 'quiet for a second already');
+  // GEICO's spinner, shown by its style as the fill begins, gone 100 ms in.
+  const busy = harness({ pathname: '/quote' });
+  await later(1000);
+  const loader = new FakeNode('div', { id: 'page-load', className: 'loader-container section-loader--show' });
+  busy.document.body.append(loader);
+  setTimeout(() => { loader._visible = false; }, 100);
+  assert.equal(await answeredAfter(busy), 400, 'busy as it began');
+  // A GEICO component the page defines 100 ms after the fill begins.
+  const parts = harness({ pathname: '/quote' });
+  await later(1000);
+  let defined = false;
+  parts.document.body.append(notDefinedYet(new FakeNode('gds-address-check'), () => defined));
+  setTimeout(() => { defined = true; }, 100);
+  assert.equal(await answeredAfter(parts, { components: 'gds-' }), 400, 'a component undefined as it began');
+});
