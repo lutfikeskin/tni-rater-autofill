@@ -762,8 +762,15 @@ export const progressive = {
       { q: '2BCB', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (from VIN lookup)', ignore: true },
       // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
       // a box the lookup leaves empty goes to the agent.
-      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
+      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
         q, field, ask, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
+      })),
+      // The anti-theft device: Progressive's own choice (the VIN lookup's) when it made one, and None
+      // when it didn't (TNI, 2026-10-26, W44-32: "If not selected automatically, no"; KY live run, where
+      // the list was unfamiliar and the agent picked None). FL's list (None, Standard, Recovery) and
+      // KY's (None, Anti-Theft Device 1 to 3, with no caption of its own) have their own names.
+      ...[['2BAC', 'RiskInput.AntiTheftDevice', 'Anti-Theft Device Discount'], ['2CFA', 'RiskInputNonShredded.AntiTheftDeviceAgentOptions', null]].map(/** @returns {CarrierRule} */ ([q, field, ask]) => ({
+        q, field, ...(ask ? { ask } : {}), source: 'standard', name: 'Anti-theft device (Progressive\'s, else TNI: None)', kind: 'choice', value: () => 'None', keepPreset: true,
       })),
       // Asked only when the VIN lookup decodes a vehicle other than the tile picked from the intake's
       // type (TN 2026-10-08: an intake "Van" whose VIN was a truck tractor). The agent's pick, with
@@ -836,8 +843,10 @@ export const progressive = {
       { q: '2960', field: 'DriverInput.CDLYearUnknow', ask: 'Year is unknown', name: 'CDL year unknown (the agent\'s)', ignore: true },
       // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; a course the
       // intake's description box mentions is the agent's. (299D: the id when it was first seen,
-      // after the renumbering.)
-      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
+      // after the renumbering.) KY asks it about an Armed Forces course: the same No (TNI, 2026-10-26,
+      // W44-32: "Military Stuff NO"; the agent confirmed the fill's No, held as reworded).
+      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount',
+        ask: ['Defensive Driver Discount', 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?'], name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
       // No: the driver is listed on the intake to be covered. Yes for a driver the intake marks
       // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver).
       { q: '28C1', source: 'derived', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (No unless the intake marks them excluded)', kind: 'bool', value: excludedDriver },

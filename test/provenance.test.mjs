@@ -141,7 +141,6 @@ const NOT_MAPPED = {
     'operations.vehicleOwnership': 'TNI answers not owned, leased and additional interest No; a lienholder or lessor is added after the quote',
     'operations.usesEld': 'not asked on the Business Auto application',
     'operations.eldBrand': 'not asked on the Business Auto application',
-    'operations.needSr22': 'not asked on the Business Auto application',
     'operations.hazPlacard': 'AmWINS asks about transporting hazardous material (operations.hazmat)',
     'operations.movingState': 'not asked on the Business Auto application',
     'operations.teamDriving': 'on the intake since 2026-10-02; no AmWINS question for it has been mapped',

@@ -124,11 +124,12 @@ const EXPECT = {
     GiveFarthestOneWayDistance: '101-200', GiveCommercialVehicleForPersonalUse: 'No',
   },
   // No VIN: the agent says so, and make and model are picked from the intake. The year is the agent's
-  // correction (the intake has 2021), the type the agent's pick, and the distance the agent's too,
-  // picked while the form was held.
+  // correction (the intake has 2021); the type the fill's Box/Straight Truck for the intake's Box Truck
+  // (TNI, W44-32: GEICO lists no Box Truck), which the agent corrects; and the distance the agent's
+  // too, picked while the form was held.
   'Vehicles: vehicle 2': {
     YesNoPreQuoteHaveFullVinActivity: 'No', GiveVinPreQuote: '', GiveYear: '2022', GiveMake: 'RAM', GiveModel: '2500',
-    GiveOtherVehicleType: 'Box/Straight Truck', GiveAnyVehicleCustomizationYesNo: 'No', GiveGrossVehicleWeight: '', GiveStreet: '1 Test Way', GiveZip: '68102', GiveCity: 'OMAHA',
+    GiveOtherVehicleType: 'Flatbed Truck', GiveAnyVehicleCustomizationYesNo: 'No', GiveGrossVehicleWeight: '', GiveStreet: '1 Test Way', GiveZip: '68102', GiveCity: 'OMAHA',
     GiveFarthestOneWayDistance: '201-300', GiveCommercialVehicleForPersonalUse: 'No',
   },
   // The trailer's year as the agent picked it before any fill read the form (the intake has 2015),
@@ -174,7 +175,7 @@ const NEEDS_YOU = [
   ['Business & Owner Info', /\S/, ['ref:GiveEffectiveDate']],
   ['Vehicles: owner check', /never filled/, ['ref:GiveSocialSecurityNumber']],
   ['Vehicles: vehicle 1', /\S/, ['ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
-  ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveOtherVehicleType', 'ref:GiveGrossVehicleWeight']],
+  ['Vehicles: vehicle 2', /\S/, ['ref:YesNoPreQuoteHaveFullVinActivity', 'ref:GiveGrossVehicleWeight']],
   ['Vehicles: trailer 1', /trailer/, ['ref:GiveOtherVehicleType']],
   ['Quote & Coverages', /\S/, ['cov:medical payments med']],
 ];
@@ -757,15 +758,19 @@ async function scenario() {
   await agent.radio('YesNoPreQuoteHaveFullVinActivity', 'No');
   await fillAll('Vehicles: vehicle 2');
   // The agent corrects the year (the intake has 2021): the page empties make and model, which the next
-  // fill gives again. Then they pick its type (the intake's words are quoted in its note). Both are
-  // vehicle 2's (its form's and `|v1`): the trailer form asks both by the same names, and they keep
-  // nothing there from the fill (checked below).
+  // fill gives again. Then they change its type from the fill's Box/Straight Truck (TNI's for the
+  // intake's Box Truck where GEICO lists no Box Truck: W44-32) to their own pick. Both are vehicle 2's
+  // (its form's and `|v1`): the trailer form asks both by the same names, and they keep nothing there
+  // from the fill (checked below).
   await agent.choose(page.locator('#salesForm select[id^="Id_GiveYear_"]').first(), '2022');
   await fillAll('Vehicles: vehicle 2');
   await corrected('Vehicles: vehicle 2', 'ref:GiveYear', 'GiveYear', '2022');
-  await agent.choose(page.locator('#salesForm select[id^="Id_GiveOtherVehicleType_"]').first(), 'Box/Straight Truck');
+  if (!filledOn('Vehicles: vehicle 2', 'ref:GiveOtherVehicleType') || (await values()).GiveOtherVehicleType !== 'Box/Straight Truck') {
+    fail(`Vehicles: vehicle 2: the intake's Box Truck was not filled as GEICO's Box/Straight Truck (W44-32): ${JSON.stringify((await values()).GiveOtherVehicleType)}`);
+  }
+  await agent.choose(page.locator('#salesForm select[id^="Id_GiveOtherVehicleType_"]').first(), 'Flatbed Truck');
   await fillAll('Vehicles: vehicle 2');
-  await corrected('Vehicles: vehicle 2', 'ref:GiveOtherVehicleType', 'GiveOtherVehicleType', 'Box/Straight Truck');
+  await corrected('Vehicles: vehicle 2', 'ref:GiveOtherVehicleType', 'GiveOtherVehicleType', 'Flatbed Truck');
   await leave('Vehicles: vehicle 2');
   await agent.go('Next', 'vehicle-list');
 

@@ -307,6 +307,9 @@ function fieldSteps(rules, record, carrier, active) {
       trustPage: !!rule.trustPage,
       // A differing choice already on the page is kept and flagged, never replaced (`replaceChoices`).
       keepChoice: !!rule.keepChoice,
+      // A choice the carrier already made is kept as it is, without a check; only an empty one is
+      // answered (Progressive's anti-theft device: W44-32).
+      keepPreset: !!rule.keepPreset,
       // A list without the answer keeps the page's own choice, with a check (GEICO's cities for the ZIP).
       keepUnlisted: !!rule.keepUnlisted,
       // A choice whose option a helper shows (GEICO's 11 Payments, behind View More Payment Plans):

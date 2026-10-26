@@ -511,6 +511,52 @@ test('AmWINS: current carrier tenure (asked with a DOT only) 1 TO 2 YEARS and cl
   assert.equal(marital().path, 'drivers[0].maritalStatus');
 });
 
+// TNI, 2026-10-26, W44-32 (the maintainer: "Your recommendations good"): AmWINS' "Is a Federal
+// Filing Required?" left blank on the intake is No when the intake doesn't ask for filings. Its own
+// Yes or No wins; named filings, an SR-22, or a line of its notes mentioning a filing leave it to the
+// agent, with what it says. A Non-Trucking quote is W44-28's, not this standard.
+test('AmWINS filing required: blank is TNI\'s No unless the intake asks for filings (W44-32)', () => {
+  const filing = (changes = {}, { notes = null, ntl = null, applicant = {} } = {}) => {
+    const r = baseRecord();
+    Object.assign(r.operations, { filingsRequired: null, filingsWhich: null, needSr22: null }, changes);
+    Object.assign(r.applicant, applicant);
+    if (notes) r.notes = { text: notes };
+    r.coverage.ntl = ntl;
+    return buildPlan(r, amwins, {}).find((s) => s.re === '^filling required$');
+  };
+  const silent = filing();
+  assert.deepEqual([silent.value, silent.source, silent.standard, silent.note], [false, 'standard', true, null]);
+  // A USDOT or MC number alone doesn't ask for filings.
+  const numbers = filing({}, { applicant: { dot: '1234567', mc: 'MC-765432' } });
+  assert.deepEqual([numbers.value, numbers.source], [false, 'standard']);
+  // A notes line that names no filing doesn't either.
+  assert.equal(filing({}, { notes: 'Hauls general freight. Clean record.' }).value, false);
+  // The intake's own answer.
+  for (const answer of [true, false]) {
+    const s = filing({ filingsRequired: answer, filingsWhich: answer ? 'Federal Liability Filing' : null });
+    assert.deepEqual([s.value, s.source, s.standard], [answer, 'derived', false], String(answer));
+  }
+  // Blank, while the intake asks for filings: the agent's, with what it says.
+  for (const [changes, notes, says] of [[{ filingsWhich: 'BMC-91' }, null, /"BMC-91"/], [{ needSr22: true }, null, /SR-22/],
+    [{}, 'Needs MCS-90 for the broker', /"Needs MCS-90 for the broker"/], [{}, 'Owner needs an SR-22 filing', /"Owner needs an SR-22 filing"/]]) {
+    const s = filing(changes, { notes });
+    assert.deepEqual([s.value, s.standard], [null, false], JSON.stringify([changes, notes]));
+    assert.match(s.note, says);
+  }
+  // Non-Trucking: never this standard.
+  assert.equal(filing({}, { ntl: true }).standard, false);
+});
+
+// TNI's AmWINS coverage standards, recorded as TNI's on 2026-10-26 (W44-32: "limits are fine").
+test('AmWINS towing $75, rental $40 a day ($1,200), uninsured motorists Yes at $100K are TNI standards (W44-32)', () => {
+  const plan = buildPlan(baseRecord(), amwins, {});
+  for (const [find, value] of [[(s) => s.selector === '#towingAndLaborReimbursement', '$75'], [(s) => /^Rental reimbursement \(/.test(s.name), '$40 day / $1,200 total'],
+    [(s) => s.re === '^uninsured motorists$', true], [(s) => s.selector === '#uninsuredMotoristsLimit', '$100K']]) {
+    const s = plan.find(find);
+    assert.deepEqual([s.value, s.source, s.standard], [value, 'standard', true], s.name);
+  }
+});
+
 test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN lookup, PD-only and PIP not selected', () => {
   const record = baseRecord();
   record.applicant.dot = '4123456';
@@ -527,7 +573,8 @@ test('Progressive FL run: new USDOT not found yet, safety equipment from the VIN
   const vehicleType = plan.find((s) => s.field === 'RiskInput.VehicleTypeToDisplay');
   assert.equal(vehicleType.ignore, true, 'the agent picks the vehicle type');
   assert.match(vehicleType.emptyNote, /VIN lookup doesn't match the intake's Van/);
-  for (const q of ['2BA1', '2BAC', '2BAE']) {
+  // The anti-theft device (2BAC) is TNI's None when the lookup leaves it empty (W44-32, below).
+  for (const q of ['2BA1', '2BAE']) {
     assert.equal(byQ(plan, q).ignore, true, q);
     assert.match(byQ(plan, q).emptyNote, /VIN lookup/);
   }
@@ -843,6 +890,30 @@ test('defensive driver discount: No, unless the description box mentions a cours
   const notes = { ...baseRecord(), notes: { text: 'Driver took a defensive driving course last year.' } };
   const fromNotes = byQ(buildPlan(notes, progressive, {}), '299D');
   assert.deepEqual([fromNotes.value, /defensive driving course/.test(fromNotes.note ?? '')], [null, true]);
+});
+
+// TNI, 2026-10-26, W44-32 (KY live run: the question asked about an Armed Forces course, the fill
+// held it as reworded, and the agent confirmed No; the maintainer: "Military Stuff NO"): the same
+// field in either wording, TNI's No, and a course in the notes is still the agent's.
+test('defensive driver discount asked about an Armed Forces course: one of its wordings, TNI\'s No (W44-32)', () => {
+  const step = byQ(buildPlan(baseRecord(), progressive, {}), '299D');
+  assert.deepEqual(step.ask, ['Defensive Driver Discount', 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?']);
+  assert.deepEqual([step.field, step.value, step.source, step.standard], ['DriverInput.DefensiveDriverDiscount', false, 'standard', true]);
+});
+
+// TNI, 2026-10-26, W44-32 (KY live run: Progressive's anti-theft list was unfamiliar and required,
+// with nothing selected, and the agent picked None; the maintainer: "If not selected automatically,
+// no"): the anti-theft device is Progressive's own choice (the VIN lookup's) when it made one, and
+// None when it didn't, in either of Progressive's lists. The other safety equipment is unchanged.
+test('Progressive anti-theft device: None when Progressive has not selected one, its own choice kept (W44-32)', () => {
+  const plan = buildPlan(baseRecord(), progressive, { vehicles: 0 });
+  for (const [q, field] of [['2CFA', 'RiskInputNonShredded.AntiTheftDeviceAgentOptions'], ['2BAC', 'RiskInput.AntiTheftDevice']]) {
+    const s = byQ(plan, q);
+    assert.deepEqual([s.field, s.value, s.source, s.standard, s.keepPreset, s.ignore, s.note, s.emptyNote], [field, 'None', 'standard', true, true, false, null, null], q);
+  }
+  for (const q of ['2BA1', '2BAE']) assert.deepEqual([byQ(plan, q).ignore, byQ(plan, q).keepPreset], [true, false], q);
+  // NJ's safety equipment boxes stay as the VIN lookup ticked them (an unticked box is no device).
+  for (const q of ['2C45', '2C46', '2C47', '2C48']) assert.equal(byQ(plan, q).ignore, true, q);
 });
 
 // PA 2026-10-20 (live run): the intake's license box said "Excluded" for driver 1 of 4, and the

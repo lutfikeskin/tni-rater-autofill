@@ -248,6 +248,20 @@ const vehicleValueNote = (r, a) => {
   return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
 };
 
+// "Is a Federal Filing Required?" (the intake's own Yes or No: `filings`) left blank on the intake:
+// TNI's No when the intake doesn't ask for filings (TNI, 2026-10-26, W44-32: "Your recommendations
+// good", the "No unless the intake says otherwise" of W43-34). Filings named in its which-filings
+// box, an SR-22 needed, or a line of its notes naming a filing leave it to the agent, quoted. A
+// Non-Trucking quote is W44-28's, never this standard.
+const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\b|\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
+const filingLine = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => FILING_WORDS.test(s))?.slice(0, 80) ?? null;
+const filingsAsked = (r) => (r.operations.filingsWhich ? `names filings ("${String(r.operations.filingsWhich).slice(0, 40)}")`
+  : r.operations.needSr22 === true ? 'says an SR-22 is needed' : filingLine(r) ? `its notes say "${filingLine(r)}"` : null);
+const filingsBlankNo = (r) => filings(r) == null && r.coverage?.ntl !== true && !filingsAsked(r);
+const filingRequired = (r) => (filingsBlankNo(r) ? false : filings(r));
+const filingRequiredSource = (r) => (filingsBlankNo(r) ? 'standard' : 'derived');
+const filingRequiredNote = (r) => (filings(r) == null && filingsAsked(r) ? `The intake leaves "filings required" blank but ${filingsAsked(r)}: answer it yourself.` : null);
+
 // AmWINS shows several repeater rows on one page. Give every row its own values;
 // the active-driver picker is for carriers that show one driver page at a time.
 /** @param {CarrierRule[]} rules @returns {CarrierRule[]} */
@@ -383,7 +397,7 @@ export const amwins = {
     // template), in page order, visible or collapsed, up to six (live IL run: years 1 and 2 were
     // never filled and the agent set one by hand).
     ...Array.from({ length: 6 }, (_, n) => ({ selector: '#priorCarrierPanel .coveragePanel [data-id="carrierName"]', name: `Prior carrier ${n + 1} (standard: NO PRIOR)`, kind: 'choice', source: 'standard', value: () => 'NO PRIOR', hidden: true })),
-    { name: 'Filings required', label: '^filling required$', kind: 'bool', source: 'derived', value: filings },
+    { name: 'Filings required (TNI: No when the intake is silent)', label: '^filling required$', kind: 'bool', source: filingRequiredSource, value: filingRequired, note: filingRequiredNote },
     { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.dot },
     { selector: '#hasMcNumber', name: 'Has an MC number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.mc },
     { selector: '#noNumber', name: 'No DOT / MC number', kind: 'bool', source: 'derived', value: (r) => !r.applicant.dot && !r.applicant.mc },
@@ -452,6 +466,8 @@ export const amwins = {
 
     // --- Coverages -------------------------------------------------------------------------------
     { name: 'CSL liability limit', label: '^csl liability limit$', path: 'coverage.autoLiabLimit' },
+    // Uninsured motorists Yes at $100K, rental $40 a day ($1,200) and towing $75: TNI's (recorded
+    // 2026-10-26, W44-32: "limits are fine").
     { name: 'Uninsured motorists (standard: Yes)', label: '^uninsured motorists$', kind: 'bool', source: 'standard', value: () => true },
     { name: 'Rental reimbursement (standard: $40/day, $1,200)', label: 'transportation expense|rental reimbursement', kind: 'choice', source: 'standard', value: () => '$40 day / $1,200 total' },
     { selector: '#uninsuredMotoristsLimit', name: 'UM limit (standard: $100K)', kind: 'choice', source: 'standard', value: () => '$100K' },

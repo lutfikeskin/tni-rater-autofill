@@ -220,7 +220,7 @@
  },
  "test/fixtures/progressive/progressive_FL_expediter_van.json": {
   "questions": 110,
-  "filled": 68,
+  "filled": 70,
   "failed": 1,
   "unmapped": 5,
   "issues": [],
@@ -239,23 +239,23 @@
    },
    "MostCommonVehicles": {
     "questions": 9,
-    "filled": 5,
-    "failed": [],
-    "noData": 4,
-    "unmapped": 0,
-    "blockers": 4,
-    "clicked": [],
-    "outcomes": "5343e61f6333"
-   },
-   "AddVehicle": {
-    "questions": 12,
-    "filled": 8,
+    "filled": 6,
     "failed": [],
     "noData": 3,
     "unmapped": 0,
     "blockers": 3,
     "clicked": [],
-    "outcomes": "2b1ac85d4d6b"
+    "outcomes": "7be53987be72"
+   },
+   "AddVehicle": {
+    "questions": 12,
+    "filled": 9,
+    "failed": [],
+    "noData": 2,
+    "unmapped": 0,
+    "blockers": 2,
+    "clicked": [],
+    "outcomes": "75f0a2f15b63"
    },
    "AddDriver": {
     "questions": 9,

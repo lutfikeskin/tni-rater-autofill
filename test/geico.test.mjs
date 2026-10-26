@@ -73,6 +73,7 @@ const one = (p, name, step) => {
 const value = (r, name, step, active) => one(plan(r, active), name, step).value;
 // The agent's: not filled, with a note saying why.
 const agents = (s) => { assert.equal(s.value, null, `${s.name}: not filled`); assert.ok(s.note, `${s.name}: has a note`); };
+const VEHICLE_TYPE = 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, Box Truck or else Box/Straight Truck for a box truck, else the agent\'s pick)';
 
 // --- The carrier --------------------------------------------------------------------------------
 
@@ -218,7 +219,7 @@ test('the gateway ZIP replaces a carried-over one; a city GEICO doesn\'t list ke
 
 // TNI's GEICO standards (FL live run, 2026-10-21): only these rules may be one.
 const STANDARDS = [
-  'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
+  VEHICLE_TYPE, 'Customizations (from the attached equipment value)',
   'Comprehensive or collision wanted (TNI: Yes)', 'Trailer comprehensive or collision wanted (TNI: Yes)',
   'Driver\'s relationship to the business (Owner, else Employee)', 'Number of employees (the drivers besides the owner)',
   'Years with the current auto insurer (1-3 with a current policy)', 'Liability insurance the business has (None unless the notes say)',
@@ -354,19 +355,23 @@ test('a vehicle\'s form and a trailer\'s never answer each other\'s questions', 
   assert.match(one(p, 'Trailer type (the agent\'s pick)').note, /"Dry Van"/);
 });
 
-test('vehicle type: a cargo van is GEICO\'s Delivery Van and a semi truck its Tractor (TNI); any other type is the agent\'s pick', () => {
-  const type = (t) => one(plan(with_({ 'vehicles.0.type': t })), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)');
-  for (const t of ['Van', 'Cargo Van', 'cargo van ']) assert.deepEqual([type(t).value, type(t).source, type(t).standard], ['Delivery Van', 'standard', true], t);
-  for (const t of ['Semi Truck', 'semi-truck']) assert.deepEqual([type(t).value, type(t).source, type(t).standard], ['Tractor', 'standard', true], t);
-  for (const t of ['Box Truck', 'Passenger Van', 'Semi Trailer', 'Van Trailer', null]) {
+// TNI, 2026-10-26, W44-32 (PA live run: an intake "Box Truck" was the agent's, who picked
+// Box/Straight Truck; the maintainer: "If Box Truck is available, yes, if no, Box/Straight Truck").
+test('vehicle type: a cargo van is GEICO\'s Delivery Van, a semi truck its Tractor, a box truck its Box Truck or else Box/Straight Truck (TNI); any other type is the agent\'s pick', () => {
+  const type = (t) => one(plan(with_({ 'vehicles.0.type': t })), VEHICLE_TYPE);
+  const answer = (t) => [type(t).value, type(t).choiceAliases, type(t).source, type(t).standard];
+  for (const t of ['Van', 'Cargo Van', 'cargo van ']) assert.deepEqual(answer(t), ['Delivery Van', [], 'standard', true], t);
+  for (const t of ['Semi Truck', 'semi-truck']) assert.deepEqual(answer(t), ['Tractor', [], 'standard', true], t);
+  for (const t of ['Box Truck', 'box truck', ' Box  Truck ']) assert.deepEqual(answer(t), ['Box Truck', ['Box/Straight Truck'], 'standard', true], t);
+  for (const t of ['Straight Truck', 'Box Truck Trailer', 'Flatbed', 'Passenger Van', 'Semi Trailer', 'Van Trailer', null]) {
     agents(type(t));
     assert.equal(type(t).standard, false, String(t));
   }
-  assert.match(type('Box Truck').note, /"Box Truck"/);
-  // Per vehicle: the second one, a cargo van.
-  const two = with_({ vehicles: [intake().vehicles[0], SECOND_VEHICLE] });
-  assert.equal(one(plan(two, { vehicles: 1 }), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)').value, 'Delivery Van');
-  agents(one(plan(two, { vehicles: 0 }), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)'));
+  assert.match(type('Flatbed').note, /"Flatbed"/);
+  // Per vehicle: a flatbed (the agent's), then a cargo van.
+  const two = with_({ vehicles: [{ ...intake().vehicles[0], type: 'Flatbed' }, SECOND_VEHICLE] });
+  assert.equal(one(plan(two, { vehicles: 1 }), VEHICLE_TYPE).value, 'Delivery Van');
+  agents(one(plan(two, { vehicles: 0 }), VEHICLE_TYPE));
 });
 
 test('with a VIN the year, make and model are checked, never typed; without one they are typed', () => {
@@ -1169,7 +1174,7 @@ test('notes are short and plain', () => {
 // FL live run 2, 2026-10-21: GEICO's VIN decode redrew the vehicle form and cleared the type (the
 // Cascadia's Tractor, three times), distance and personal use given before it.
 test('with a VIN, the vehicle form\'s answers wait for GEICO\'s decoded year; without one, nothing waits', () => {
-  const WAITING = ['Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
+  const WAITING = [VEHICLE_TYPE, 'Customizations (from the attached equipment value)',
     'Customization value (the attached equipment value, else TNI: 0)', 'Vehicle value without customizations', 'Comprehensive or collision wanted (TNI: Yes)',
     'Farthest one-way distance (from the radius)', 'Personal use'];
   const withVin = plan(intake());
