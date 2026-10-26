@@ -4,7 +4,7 @@ import { sourcePlace } from '../src/intake-source.js';
 import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
-import { unitListSpecs, unitToAdd, advanceFor } from '../src/units.js';
+import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
 import { carrierForUrl, quoteProgress, stopScreen } from '../src/carriers.js';
 import { get, set, STATES } from '../src/util.js';
 import { intakeSummary, intakeProfile, fieldChangeEvent, fillEvents, clientErrorEvent, agentSettingsEvent, platformOf, checkDismissedEvent, redactor, sha256Hex, rulesHash, RULE_FILES, knownStep } from '../src/usage.js';
@@ -1399,6 +1399,22 @@ function renderPickers() {
   if (focused) $(focused)?.focus();
 }
 
+// The unit forms on screen as the agent discarded their changes (GEICO's "Yes, Discard Changes"; the
+// recorder sends the forms with the click): a form's unit was never saved from it, so it no longer
+// holds that unit (unitForms). The next blank form is filled for it, and the list's "+" adds it, unless
+// the list already shows it (W44-05, PA 2026-10-26: the van's discarded form kept the van bound, so the
+// next blank form was filled as the box truck and the van was never added). Its other marks stay: a
+// unit a list showed while bound is still on the quote.
+function releaseDiscardedForms(forms) {
+  let released = false;
+  for (const { list, id } of forms) {
+    if (!id || !Object.hasOwn(state.unitForms?.[list] ?? {}, id)) continue;
+    delete state.unitForms[list][id];
+    released = true;
+  }
+  if (released) persistUnitForms(state.tab?.id, state.unitForms);
+}
+
 // Picking vehicle (driver, trailer) `index` in the panel: the forms bound to it (unitForms) are
 // let go, so the form on the page now can be filled for it (pagekit holds a form while the active
 // unit was filled on another one). Other units' forms stay theirs, the one on the page too: picking
@@ -1643,6 +1659,7 @@ function onRecorderMessage(msg, sender) {
     const step = state.tab.carrier?.layoutSteps ? knownStep(state.tab.carrier, msg.step) : undefined;
     log({ type: 'agent_click', carrier, page, view: viewOf(sender.tab.id, page), ...(step ? { step } : {}), text: redactor(redactionTerms(state.intake.record))(String(msg.text ?? '')).slice(0, 60) });
     agentHelperDone(state.tab.carrier, page, step, msg.text);
+    if (/\bdiscard\b/i.test(String(msg.text ?? '')) && Array.isArray(msg.forms)) releaseDiscardedForms(msg.forms);
   }
   // An error or validation message appeared (a refused Continue): the layout carries the messages.
   if (msg.event === 'new_messages') scheduleLayout(layoutPage, 'messages');
@@ -2222,6 +2239,7 @@ async function autoFill(page) {
     // Filled with this intake: the tab's quote is this client's, so its layouts may be taken.
     // Only once the fill went through; a fill that failed proves nothing about the page.
     state.layoutReadyTabs.add(tabId);
+    noteMissingUnit(results, ctx);
     const frames = results.map((r) => r.result).filter(Boolean);
     const retrying = rememberFill(frames, ctx);
     followUp = afterFill(frames, ctx);
@@ -3584,6 +3602,7 @@ async function fillPage({ auto = false, confirmed = null, continuing = false } =
     if (results.some((r) => r.result?.pageMoved)) { moved = true; notePageMoved(ctx); return; }
     // Filled with this intake (and the fill went through): this tab's layouts may be taken.
     state.layoutReadyTabs.add(tabId);
+    noteMissingUnit(results, ctx);
     const frames = results.map((r) => r.result).filter(Boolean);
     const retrying = rememberFill(frames, ctx);
     tabMaps(tabId).autoPages.add(page);
@@ -3702,6 +3721,7 @@ async function pickUnitForm(carrier, ctx) {
 async function pickUnitToAdd(carrier, ctx) {
   ctx.adding = null;
   ctx.unitsListed = false;
+  ctx.unitMissing = null;
   if (!carrier?.unitLists?.length || !Number.isInteger(ctx.tabId) || !ctx.intake) return;
   const record = ctx.intake.record ?? {};
   const specs = unitListSpecs(carrier, record);
@@ -3735,6 +3755,23 @@ async function pickUnitToAdd(carrier, ctx) {
     await save();
     if (fillCurrent(ctx)) renderPickers();
   }
+  // The list on screen without this unit, and no helper that would add it even with its clicks
+  // allowed (GEICO's Add Driver while the owner's driver rows are unknown): named after the fill,
+  // left for the agent (noteMissingUnit; W44-01, OH 2026-10-26: the quote printed with one of two
+  // drivers, the panel silent).
+  try { ctx.unitMissing = unitMissing(next, buildPlan(record, carrier, { ...state.active, adding: { ...next.adding, click: true } })); } catch { /* no plan, nothing said */ }
+}
+
+// The unit pickUnitToAdd found missing from the list on screen with nothing to add it (ctx.unitMissing),
+// as an item the top frame's report leaves for the agent, which holds its Continue: the list's Looks
+// Good is the agent's (W44-01).
+function noteMissingUnit(results, ctx) {
+  if (!ctx.unitMissing) return;
+  const top = results.find((r) => r.frameId === 0)?.result;
+  if (!top || top.halted) return;
+  const item = unitMissingItem(ctx.carrier, ctx.intake?.record ?? {}, ctx.unitMissing);
+  top.noData = [...(top.noData ?? []), item];
+  top.blockers = [...(top.blockers ?? []), `needs you: ${item.label}`];
 }
 
 // On the vehicle list, a trailer is on the quote when the list shows its VIN (Progressive lists each

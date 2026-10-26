@@ -495,6 +495,16 @@ const listedDriver = (r) => (r.applicant?.ownerDrives === true && owner(r).drive
 // (or an unanswered "owner drives") may be one of them spelled otherwise: adding the drivers is then
 // the agent's, so no driver is added twice.
 const driversKnown = (r) => r.applicant?.ownerDrives === false || listedDriver(r) >= 0;
+// What the driver list says of an intake driver it doesn't have, with GEICO's own driver rows unknown
+// (the panel, src/units.js unitMissing; W44-01, OH 2026-10-26: "owner drives" blank, the quote printed
+// with the owner alone and the panel silent).
+const driverMissing = (r, list, i) => {
+  const d = r.drivers?.[i];
+  const who = [d?.first, d?.last].filter(Boolean).join(' ') || `Driver ${i + 1}`;
+  const why = typeof r.applicant?.ownerDrives !== 'boolean' ? 'the intake doesn\'t say whether the owner drives'
+    : 'the owner drives, but no driver on the intake has the owner\'s name';
+  return `${who} (driver ${i + 1} of the intake) isn't on GEICO's driver list: add them with "+" yourself. The extension adds no driver here because ${why}, so GEICO may already list one of them under the owner.`;
+};
 // An Add Driver form while the panel's driver is the owner, whom GEICO already lists as a driver
 // (Business & Owner Info: the owner drives): filling it would add the owner twice. The panel's
 // picker starts on the first driver, often the owner.
@@ -800,7 +810,9 @@ export const geico = {
   // shows (a VIN, a driver's name), how many it lists, and so the next unit to add.
   unitLists: [
     { steps: [VEHICLES], selector: VEHICLE_LIST, lists: ['vehicles', 'trailers'] },
-    { steps: [DRIVERS], selector: DRIVER_LIST, lists: ['drivers'] },
+    // An intake driver the list doesn't have, while the extension adds none (driversKnown): said in
+    // red with why (W44-01).
+    { steps: [DRIVERS], selector: DRIVER_LIST, lists: ['drivers'], missing: driverMissing },
   ],
   // The units the fill adds itself, behind the panel's "Fill the pages" or "Click Continue when the
   // page is done" (TNI, FL live run 5, 2026-10-21, W43-20; FL live run 2026-10-21: "click + and add the new vehicle", "click Next after choosing Vehicle or
