@@ -42,6 +42,8 @@ git status --short          # no tracked changes before you start
 
 For every finding from every reviewer, read the code it points to and decide: **real** (with the concrete input that goes wrong), **not real** (why the code is already right), or **needs the maintainer** (an insurance answer, client fact or product decision). Don't fix what you can't show going wrong. Report findings that need the maintainer as questions; don't guess them.
 
+Watch for scope creep, and don't be afraid to push back. Reviewers, especially subagents and second models (Grok, Cursor `/thermos`, an independent pass), suggest refactors, extra features, defensive code and other work beyond the PR. A suggestion outside what the PR set out to do is **not real** for this PR, even when it is a fair idea: say why in the comment, and list it as a possible follow-up rather than doing it. Disagree with a finding when the code is right; a reviewer's confidence is not evidence.
+
 ## 3. Fix the real findings
 
 Follow `docs/corrections.md` and the document for the layer (the table in `CLAUDE.md`).
@@ -49,7 +51,8 @@ Follow `docs/corrections.md` and the document for the layer (the table in `CLAUD
 1. **Test first.** Write the smallest test that reproduces the finding. Run it on the PR's code before the fix and see it **fail for the right reason**; keep that output for the report. A finding with no possible test (wording, documentation) says so.
 2. **Fix the layer that owns the cause**, not the symptom, and add the nearby counterexample when a rule's reach changes.
 3. **Update documents** the change makes stale, in the same PR.
-4. Don't touch what the findings didn't name. Report a problem found on `main` as a separate one; don't fold it in.
+4. **Prefer the minimal meaningful change** that resolves the finding: the smallest fix that removes the cause, not a rewrite or a broader cleanup to satisfy the reviewer.
+5. Don't touch what the findings didn't name. Report a problem found on `main` as a separate one; don't fold it in.
 
 ## 4. Verify
 
