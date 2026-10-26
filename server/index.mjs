@@ -60,7 +60,7 @@ const LUNA_FIELDS = new Set(['model', 'store', 'reasoning', 'max_output_tokens',
 const LUNA_MAX_CHARS = 48_000;
 const LUNA_MAX_OUTPUT = 4096;
 const LUNA_TIMEOUT_MS = 60_000;
-export const LUNA_DAILY_LIMIT = 3000;
+export const LUNA_DAILY_LIMIT = 5000;
 
 // RATER_LUNA_DAILY_LIMIT: unset or blank is LUNA_DAILY_LIMIT; a whole number is the limit, 0
 // refusing every request (429). Anything else is 0 too, so a mistyped limit spends nothing.

@@ -84,7 +84,7 @@ Chrome updates installed copies by itself within a few hours of approval.
 ## API keys for the pilot
 
 OpenAI access is TNI's: `OPENAI_API_KEY` on the usage server ([hosting](hosting.md)), in its own
-OpenAI project with a monthly budget, so agents enter no key. An agent can still use one of their
+OpenAI project with what bounds its spending set up there, so agents enter no key. An agent can still use one of their
 own under **Settings → Assistant → Use my own key**.
 Check available account controls for access and spending before a wider rollout. Live quality and
 latency testing requires an OpenAI key and explicit evaluation approval.

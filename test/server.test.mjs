@@ -703,7 +703,7 @@ test('/v1/luna: 501 without a key, a daily limit, and OpenAI refusing the server
 
 // Review of PR 179: RATER_LUNA_DAILY_LIMIT=0 started the server with the default 3000 a day
 // (`Number(v) || 3000`), so a limit set to 0 to stop the spending didn't. Unset or blank is the
-// default; a whole number is the limit, 0 stopping every request; anything else spends nothing.
+// default (5000 since the maintainer raised it, 2026-10-26); a whole number is the limit, 0 stopping every request; anything else spends nothing.
 test('RATER_LUNA_DAILY_LIMIT: 0 stops Luna requests, a mistyped value spends nothing, blank is the default', async () => {
   const startup = async (limit) => {
     const s = startServer({ HOST: '127.0.0.1', OPENAI_API_KEY: 'sk-synthetic', ...(limit == null ? {} : { RATER_LUNA_DAILY_LIMIT: limit }) });
@@ -717,8 +717,8 @@ test('RATER_LUNA_DAILY_LIMIT: 0 stops Luna requests, a mistyped value spends not
   assert.equal(await startup('abc'), '0/day');
   assert.equal(await startup('-5'), '0/day');
   assert.equal(await startup('25'), '25/day');
-  assert.equal(await startup(' '), '3000/day');
-  assert.equal(await startup(null), '3000/day');
+  assert.equal(await startup(' '), '5000/day');
+  assert.equal(await startup(null), '5000/day');
   // A limit of 0 refuses every request before OpenAI is asked.
   await withServer({ dataDir: tmp(), openaiKey: 'sk-server', lunaDailyLimit: 0, fetchImpl: async () => { throw new Error('OpenAI was asked'); } }, async ({ base }) => {
     assert.equal((await fetch(`${base}/v1/luna`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(lunaBody()) })).status, 429);
