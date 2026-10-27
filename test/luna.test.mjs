@@ -515,6 +515,14 @@ test('claims-box review: a stated time in business the intake lacks or contradic
   assert.match(notesWarnings(parseNotesReview(answer({ businessYears: 3 }), one), one)[0].msg, /but the intake gives 1/);
   // Nothing stated: no item.
   assert.deepEqual(notesWarnings(parseNotesReview(answer({}), blank), blank), []);
+  // A range in the notes the reader left to the agent (TNI, 2026-10-27: answer to PR question V7):
+  // not New Venture, nor the authority years.
+  for (const applicant of [{ yearsInBusiness: null, yearsExperience: null, yearsInBusinessRange: true }, { yearsInBusiness: null, yearsExperience: 4, yearsInBusinessRange: true }]) {
+    const range = buildNotesReview(record(applicant), { today });
+    const msg = notesWarnings(parseNotesReview(answer({ businessYears: 3 }), range), range)[0].msg;
+    assert.match(msg, /"in Biz for 3\+ years" \(3 years\).*a range, so it is left to you/, JSON.stringify(applicant));
+    assert.doesNotMatch(msg, /New Venture|the intake gives/, JSON.stringify(applicant));
+  }
   // Out-of-range answers fail the review.
   for (const bad of [{ businessYears: -1 }, { businessYears: 2.5 }, { businessYears: 101 }, { businessSince: 2027 }, { businessSince: 1900 }, { businessYears: '3' }]) {
     assert.throws(() => parseNotesReview(answer(bad), blank), AssistError, JSON.stringify(bad));

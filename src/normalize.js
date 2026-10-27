@@ -277,32 +277,58 @@ const BELOW = /^(?:less\s+than|under)$/i;
 // (TNI, 2026-10-27: answer to PR question U1), "under 18 months" settles nothing.
 const MAX_MONTHS_BELOW_A_YEAR = 12;
 // A number in words reads as its digits (TNI, 2026-10-26: answer to PR question, T8): "two years
-// in business" is 2, "less than one year" is 0, up to ninety-nine ("twenty-five"). "a" counts only
-// in "less than a year" and "under a year" (0; TNI, 2026-10-27: answer to PR question U1); "a year"
-// alone, "half a year" and "a few years" settle nothing. A word
+// in business" is 2, "less than one year" is 0, up to ninety-nine ("twenty-five"). A word
 // right after a hyphen ("five" in "twenty-five") is never a figure of its own, nor is the end of a
-// range in words ("two-three", "two to three", "two or three", "two and three years"), which no
-// answer settles: unread, as before.
+// range ("two-three", "two to three", "two or three", "two and three years"): a range is read whole
+// (V7, below).
+// The definite phrases (TNI, 2026-10-27: answer to PR question V11): "a year" is 1, "half a year" 0,
+// "a year and a half" 1, "less than a month" and "under a month" 0 (and "less than a year", "under a
+// year" 0, U1), "first year in business" 0. "a" is a figure only before year (or yr), not in "a year
+// ago", "once a year" or "a year-old truck", and before a month only after "less than" or "under"
+// ("a month in business" isn't named: unread). "a few years", "several years", "a couple of years",
+// "one and a half years" and "second year" settle nothing.
 const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
   'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
 const TENS_WORDS = ['twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
-const RANGE_END = `(?<!(?:\\d|\\b(?:${[...NUMBER_WORDS, ...TENS_WORDS].join('|')}))\\s*(?:[-–]|\\b(?:to|or|and)\\b)\\s*)`;
-const IN_WORDS = `(?<![\\w-])${RANGE_END}(?:(?:${TENS_WORDS.join('|')})(?:[\\s-]+(?:${NUMBER_WORDS.slice(1, 10).join('|')}))?|${NUMBER_WORDS.join('|')})(?![\\w-])`;
-const NUMBER = `\\d{1,3}|${IN_WORDS}|(?<=\\b(?:less\\s+than|under)\\s+)a(?=\\s+(?:year|yr)\\b)`;
+const UNIT_WORDS = NUMBER_WORDS.slice(1, 10);
+const WORD_NUMBER = `(?:(?:${TENS_WORDS.join('|')})(?:[\\s-]+(?:${UNIT_WORDS.join('|')}))?|${NUMBER_WORDS.join('|')})`;
+const RANGE_SEP = '\\s*(?:[-–—]|\\b(?:to|or|and)\\b)\\s*';
+const RANGE_END = `(?<!(?:\\d|\\b(?:${[...NUMBER_WORDS, ...TENS_WORDS].join('|')}))\\s*\\+?${RANGE_SEP})`;
+const IN_WORDS = `(?<![\\w-])${RANGE_END}${WORD_NUMBER}(?![\\w-])`;
+const A_YEAR = '(?=\\s+(?:year|yr)\\b(?!-)(?!\\.?\\s+ago\\b))';
+const NUMBER = `\\d{1,3}|${IN_WORDS}|(?<![\\w-])half\\s+a${A_YEAR}|(?<![\\w-])(?<!\\b(?:half|once|twice)\\s+)a${A_YEAR}`
+  + '|(?<=\\b(?:less\\s+than|under)\\s+)a(?=\\s+(?:months?|mos?)\\b)';
 const numberValue = (s) => {
   if (/^\d+$/.test(s)) return Number(s);
   if (/^a$/i.test(s)) return 1;
+  if (/^half/i.test(s)) return 0.5;
   const [tens, units] = s.toLowerCase().split(/[\s-]+/);
   const t = TENS_WORDS.indexOf(tens);
   return t < 0 ? NUMBER_WORDS.indexOf(tens) : 20 + t * 10 + (units ? NUMBER_WORDS.indexOf(units) : 0);
 };
 // Years plus months are the whole years, the months dropped: "1 year 6 months" and "2 years, 6
-// months" in business are 1 and 2 (TNI, 2026-10-26: answer to PR question, T8).
+// months" in business are 1 and 2 (TNI, 2026-10-26: answer to PR question, T8), also after "over"
+// or "about": "over 1 year 6 months" is 1 (TNI, 2026-10-27: answer to PR question V10, confirmed).
 const MONTHS = /^mo/i;
 const YEARS_UNIT = '(?:years?|yrs?)';
 const MONTHS_UNIT = '(?:months?|mos?)';
 const AND_MONTHS = `[\\s,&]*(?:and\\s+)?(?<months>${NUMBER})\\s*\\+?\\s*(?<monthsUnit>${MONTHS_UNIT})\\b\\.?`;
-const YEARS = `(?:(?<word>${QUALIFIER})\\s*)?(?<n>${NUMBER})\\s*\\+?\\s*(?<unit>${YEARS_UNIT}|${MONTHS_UNIT})\\b\\.?(?:(?<=${YEARS_UNIT}\\.?)${AND_MONTHS})?`;
+// "a year and a half" (V11): 1.
+const AND_A_HALF = '(?:(?<=\\ba\\s+(?:year|yr)\\.?)(?<half>\\s+and\\s+a\\s+half)\\b)?';
+const YEARS = `(?:(?<word>${QUALIFIER})\\s*)?(?<n>${NUMBER})\\s*\\+?\\s*(?<unit>${YEARS_UNIT}|${MONTHS_UNIT})\\b\\.?${AND_A_HALF}(?:(?<=${YEARS_UNIT}\\.?)${AND_MONTHS})?`;
+// A range (TNI, 2026-10-27: answer to PR question V7): an answer only when both ends give the same
+// one. Years in business is a number, so "2-3 years in business" is the agent's, with the check
+// naming the line (before, it read the last figure, 3), in words too ("two to three years"); ends
+// that round to the same whole years ("18-20 months", both 1) give that number.
+const RANGE_FIRST = `\\d{1,3}|(?<![\\w-])${WORD_NUMBER}(?!\\w)`;
+const RANGE_SECOND = `\\d{1,3}|(?<![\\w])${WORD_NUMBER}(?![\\w-])`;
+const RANGE = `(?<span>(?:(?<word>${QUALIFIER})\\s*)?(?:between\\s+)?(?<a>${RANGE_FIRST})\\s*\\+?(?<sep>${RANGE_SEP})(?<b>${RANGE_SECOND})\\s*\\+?\\s*(?<unit>${YEARS_UNIT}|${MONTHS_UNIT})\\b)\\.?`;
+// "twenty-five" and "twenty five" are one number, not a range from twenty to five.
+const TENS_WORD = new RegExp(`^(?:${TENS_WORDS.join('|')})$`, 'i');
+const ONES_WORD = new RegExp(`^(?:${UNIT_WORDS.join('|')})$`, 'i');
+const compound = (a, sep, b) => TENS_WORD.test(a) && /^\s*-?\s*$/.test(sep) && ONES_WORD.test(b);
+// "first year in business" (V11): 0.
+const FIRST_YEAR = /(?<![\w-])(?<reading>first\s+(?:year|yr))\s+in\s+(?:business|biz)\b/i;
 // Months right after years on a line, outside one figure read as above: a months figure there
 // settles nothing.
 const FIGURE = `(?:\\d{1,3}|${IN_WORDS})\\s*\\+?\\s*`;
@@ -325,6 +351,10 @@ const BIZ_PHRASES = [
   new RegExp(`(?<![\\w.,])${YEARS}\\s+in\\s+${BIZ}`, 'i'),
   new RegExp(`\\bin\\s+${BIZ}\\s+(?:for\\s+)?${YEARS}`, 'i'),
 ];
+const RANGE_PHRASES = [
+  new RegExp(`(?<![\\w.,])${RANGE}\\s+in\\s+${BIZ}`, 'i'),
+  new RegExp(`\\bin\\s+${BIZ}\\s+(?:for\\s+)?${RANGE}`, 'i'),
+];
 const BIZ_START = new RegExp(`\\b(?:established|founded|in\\s+${BIZ}\\s+since)\\s+(?:in\\s+)?(\\d{4})\\b`, 'i');
 const NOT_THE_BUSINESS = /\b(?:not|never|no)\b|n't\b|\b(?:driv\w*|cdl|licen[cs]\w*|experienced?|authority|mc|dot|usdot|insur\w*|polic(?:y|ies)|pop|coverage|carriers?|claims?|accidents?|tickets?|violations?)\b/i;
 // A qualifier just before the match that the match itself doesn't hold (",less than 3 years").
@@ -336,34 +366,51 @@ const MAX_BUSINESS_YEARS = 100;
  * statement, or several that agree. None, an undecided qualifier ("less than 3") or figures that
  * disagree give null. `reading`: the figure as written when it isn't plain whole years in digits
  * ("over 3 years", "less than 1 year", "18 months", "two years", "1 year 6 months"), for the first one.
+ * A range whose ends give different years (V7) gives `years` null and `range` true, quoting it: the
+ * agent's, whatever else the notes say.
  * @param {[string, string|null|undefined][]} boxes
  * @param {number} year  this year, for a start year
- * @returns {{ years: number, established: number|null, quote: string, fields: string[], reading: string|null } | null}
+ * @returns {{ years: number|null, range?: true, established: number|null, quote: string, fields: string[], reading: string|null } | null}
  */
 export function yearsInBusinessFromNotes(boxes, year) {
   const found = [];
   for (const [field, text] of boxes) {
     for (const line of String(text ?? '').split('\n')) {
       const yearsThenMonths = YEARS_THEN_MONTHS.test(line);
+      // The years one figure gives, with the word before it, or null when it settles nothing.
+      const yearsOf = (word, figure, unit, more, before) => {
+        const months = MONTHS.test(unit);
+        // "less than 1 year", "under 1 year": 0 (R10); "less than N months", N up to 12: 0 (T8),
+        // and "under N months" alike (U1). Not with more after the year ("less than 1 year 6
+        // months", "under 1 year 6 months" and "under a year and a half" are more than a year).
+        const belowOne = Boolean(word) && BELOW.test(word) && !months && !more && figure === 1;
+        const belowAYear = Boolean(word) && BELOW.test(word) && months && figure >= 1 && figure <= MAX_MONTHS_BELOW_A_YEAR;
+        const read = word ? AS_THE_FIGURE.test(word) || belowOne || belowAYear : !QUALIFIED.test(before);
+        return !read || (months && yearsThenMonths) ? null : belowOne || belowAYear ? 0 : Math.floor(months ? figure / 12 : figure);
+      };
       for (const clause of clausesOf(line)) {
         const quote = clause.trim();
         if (!quote || NOT_THE_BUSINESS.test(quote)) continue;
+        const range = RANGE_PHRASES.map((re) => quote.match(re)).find((m) => m?.groups && !compound(m.groups.a, m.groups.sep, m.groups.b));
+        if (range?.groups) {
+          // Both ends read as one figure would be, with the same word and unit (V7).
+          const { span, word, a, b, unit } = range.groups;
+          const before = quote.slice(0, range.index);
+          const ends = [a, b].map((n) => yearsOf(word, numberValue(n), unit, null, before));
+          const same = ends[0] != null && ends[0] === ends[1];
+          found.push({ years: same ? ends[0] : null, range: !same, established: null, quote, field, reading: span.replace(/\s+/g, ' ') });
+          continue;
+        }
+        const first = quote.match(FIRST_YEAR);
+        if (first?.groups) found.push({ years: 0, established: null, quote, field, reading: first.groups.reading.replace(/\s+/g, ' ') });
         for (const re of BIZ_PHRASES) {
           const m = quote.match(re);
           if (!m?.groups) continue;
-          const { word, n, unit, months: andMonths, monthsUnit } = m.groups;
-          const figure = numberValue(n);
-          const months = MONTHS.test(unit);
-          // "less than 1 year", "under 1 year": 0 (R10); "less than N months", N up to 12: 0 (T8),
-          // and "under N months" alike (U1). Not with months after the year ("less than 1 year 6
-          // months" and "under 1 year 6 months" are more than a year).
-          const belowOne = Boolean(word) && BELOW.test(word) && !months && !andMonths && figure === 1;
-          const belowAYear = Boolean(word) && BELOW.test(word) && months && figure >= 1 && figure <= MAX_MONTHS_BELOW_A_YEAR;
-          const read = word ? AS_THE_FIGURE.test(word) || belowOne || belowAYear : !QUALIFIED.test(quote.slice(0, m.index));
-          const years = !read || (months && yearsThenMonths) ? null : belowOne || belowAYear ? 0 : months ? Math.floor(figure / 12) : figure;
+          const { word, n, unit, months: andMonths, monthsUnit, half } = m.groups;
+          const years = yearsOf(word, numberValue(n) + (half ? 0.5 : 0), unit, andMonths || half, quote.slice(0, m.index));
           // How it was read, when it isn't plain whole years in digits.
-          const reading = word || months || andMonths || !/^\d+$/.test(n)
-            ? `${word ? `${word} ` : ''}${n} ${unit}${andMonths ? ` ${andMonths} ${monthsUnit}` : ''}` : null;
+          const reading = word || MONTHS.test(unit) || andMonths || !/^\d+$/.test(n)
+            ? `${word ? `${word} ` : ''}${n.replace(/\s+/g, ' ')} ${unit}${half ? ' and a half' : ''}${andMonths ? ` ${andMonths} ${monthsUnit}` : ''}` : null;
           found.push({ years, established: null, quote, field, reading });
         }
         const start = quote.match(BIZ_START);
@@ -371,6 +418,9 @@ export function yearsInBusinessFromNotes(boxes, year) {
       }
     }
   }
+  // A range whose ends differ is the agent's, whatever else the notes say (V7).
+  const open = found.find((f) => f.range);
+  if (open) return { years: null, range: true, established: null, quote: open.quote, fields: [open.field], reading: open.reading };
   const settled = found.every((f) => Number.isInteger(f.years) && f.years >= 0 && f.years <= MAX_BUSINESS_YEARS);
   if (!found.length || !settled || new Set(found.map((f) => f.years)).size > 1) return null;
   return {
@@ -644,20 +694,28 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   const stated = a.yearsInBusiness == null
     ? yearsInBusinessFromNotes([['claims_details', record.claims.text], ['additional_notes', record.notes.text]], year) : null;
   if (stated) {
-    a.yearsInBusiness = stated.years;
     readFrom['applicant.yearsInBusiness'] = stated.fields;
-    if (stated.established != null) { a.yearEstablished = stated.established; readFrom['applicant.yearEstablished'] = stated.fields; }
     const box = stated.fields[0] === 'additional_notes' ? 'Additional Notes box' : 'claims box';
     const quote = stated.quote.length > 80 ? `${stated.quote.slice(0, 79).trimEnd()}…` : stated.quote;
     const form = a.yearsExperience == null ? 'The form gives no years in business'
       : `The form gives no year established, only years under own authority (${a.yearsExperience}), which stay for the authority questions`;
-    // How a figure that isn't plain years was read: "over 3 years" as 3, "18 months" as 1 (R11).
-    const reading = stated.reading ? ` ("${stated.reading}" read as ${stated.years})` : '';
-    check('years-in-business.notes', 'applicant.yearsInBusiness', `${form}, and the ${box} says "${quote}": years in business is ${stated.years}${reading}${stated.established != null ? `, established ${stated.established}` : ''}. Check it (a plus counts as at least that many); a corrected answer here replaces it.`);
+    if (stated.range) {
+      // A range whose ends differ (TNI, 2026-10-27: answer to PR question V7): the agent's on every
+      // carrier, neither the blank standard nor the authority years; the check names the line.
+      a.yearsInBusinessRange = true;
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `${form}, and the ${box} says "${quote}": a range ("${stated.reading}"), so years in business is left to you. Enter Years in business or Year established here.`);
+    } else {
+      a.yearsInBusiness = stated.years;
+      if (stated.established != null) { a.yearEstablished = stated.established; readFrom['applicant.yearEstablished'] = stated.fields; }
+      // How a figure that isn't plain years was read: "over 3 years" as 3, "18 months" as 1 (R11).
+      const reading = stated.reading ? ` ("${stated.reading}" read as ${stated.years})` : '';
+      check('years-in-business.notes', 'applicant.yearsInBusiness', `${form}, and the ${box} says "${quote}": years in business is ${stated.years}${reading}${stated.established != null ? `, established ${stated.established}` : ''}. Check it (a plus counts as at least that many); a corrected answer here replaces it.`);
+    }
   }
   // TNI's standard for a blank (2026-10-09): 0 years, established this year (AmWINS' rules fill
   // it, GEICO's leave it to the agent; the record stays blank, so a later answer here replaces it).
-  if (a.yearsInBusiness == null && a.yearsExperience == null) {
+  // Not for a range in the notes (V7), which is the agent's.
+  if (a.yearsInBusiness == null && a.yearsExperience == null && !a.yearsInBusinessRange) {
     check('years-in-business.default', 'applicant.yearsInBusiness', `Years in business and year established are blank: the AmWINS quote gets 0 years (New Venture), established ${year}; GEICO's question about it is left to you. If the client has been in business longer, enter Years in business or Year established.`);
   }
 

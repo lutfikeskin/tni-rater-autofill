@@ -89,12 +89,16 @@ const ownerFull = (r) => {
 // (years-in-business.default), and Luna points out a claims-box line saying how long it has run.
 // Years the notes state, with none on the form, are the intake's years in business (normalize.js, W44-09),
 // also over years under own authority (TNI, 2026-10-26: answer to PR question).
+// A range in the notes whose ends differ ("2-3 years in business") is the agent's, neither New
+// Venture nor the authority years (TNI, 2026-10-27: answer to PR question V7).
 const businessYears = (r) => r.applicant.yearsInBusiness ?? r.applicant.yearsExperience ?? null;
+const yearsRange = (r) => r.applicant.yearsInBusiness == null && r.applicant.yearsInBusinessRange === true;
 const yearsInBusiness = (r) => {
   const n = businessYears(r) ?? 0;
   return n < 1 ? 'New Venture' : n >= 5 ? '5+' : String(n);
 };
-const yearsSource = (r) => (businessYears(r) == null ? 'standard' : 'derived');
+const yearsSource = (r) => (yearsRange(r) || businessYears(r) != null ? 'derived' : 'standard');
+const yearsNote = (r) => (yearsRange(r) ? 'The notes give years in business as a range: answer it yourself.' : null);
 // Year established: the intake's, else this year (TNI's standard, as on the recorded quotes).
 const yearEstablished = (r) => r.applicant.yearEstablished ?? new Date().getFullYear();
 const establishedSource = (r) => (r.applicant.yearEstablished == null ? 'standard' : 'derived');
@@ -360,7 +364,7 @@ export const amwins = {
     { selector: '#mailingZip', path: 'garaging.zip' },
     { selector: '#businessPhone', name: 'Business phone', source: 'derived', value: (r) => digits(r.applicant.phone) },
     { selector: '#entityType', name: 'Entity type (from the company name)', kind: 'choice', source: 'derived', clientFact: true, value: entityType, note: entityTypeNote, warn: entityTypeWarn },
-    { selector: '#yrsInBusiness', name: 'Years in business (standard when blank: New Venture)', kind: 'choice', source: yearsSource, value: yearsInBusiness },
+    { selector: '#yrsInBusiness', name: 'Years in business (standard when blank: New Venture)', kind: 'choice', source: yearsSource, value: yearsInBusiness, note: yearsNote },
     { selector: '#yearBusinessEstablished', name: 'Year established (standard when blank: this year)', kind: 'int', source: establishedSource, value: yearEstablished },
     { name: 'Non-profit (standard: No)', label: '^is non profit$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Single contact (standard: Yes)', label: '^is single contact$', kind: 'bool', source: 'standard', value: () => true },

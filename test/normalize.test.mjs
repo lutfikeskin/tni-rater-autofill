@@ -1215,10 +1215,10 @@ test('"less than N months" in business, N up to 12, is 0 years (W44-09, T8)', ()
     readsYears(notes, 0, reading);
     assert.deepEqual(plansYears(notes), ['New Venture', 'derived', 'Less than 1'], notes);
   }
-  // Counterexamples: more than 12 months stays the agent's, as before; "less than a month" (not
-  // named by the answer) and a clause about something else too. "under" months: U1, below.
+  // Counterexamples: more than 12 months stays the agent's, as before, and a clause about something
+  // else too. "under" months: U1, below; "less than a month": V11, below.
   for (const notes of ['less than 13 months in business', 'In business for less than 18 months', 'less than 24 mos in biz',
-    'less than a month in business', 'less than 6 months driving']) leavesYears(notes);
+    'less than 6 months driving']) leavesYears(notes);
   // Another number in the same note is not taken: a vehicle count, a driver's experience, a date.
   readsOnly('3 trucks, less than 6 months in business', 0, 'less than 6 months in business');
   readsOnly('Driver has 10 years experience; less than 6 months in business', 0, 'less than 6 months in business');
@@ -1246,16 +1246,11 @@ test('numbers in words in the notes read as their digits (W44-09, T8)', () => {
   // In words and in digits, agreeing or not.
   assert.equal(noYears('two years in business\nIn business for 2 years').record.applicant.yearsInBusiness, 2);
   leavesYears('two years in business\nIn business for 3 years');
-  // Counterexamples, as before: "a year" outside "less than a year" and "under a year" (U1, below), "half a year", "a few years",
-  // an ordinal, a fraction, a range in words, other qualifiers, and clauses about something else.
-  for (const notes of ['a year in business', 'in business for a year', 'half a year in business', 'in business for half a year',
-    'a few years in business', 'several years in business', 'about a year in business', 'more than a year in business',
-    'first year in business', 'one and a half years in business', 'two-three years in business',
-    'two to three years in business', 'two or three years in business', 'between two and three years in business', 'two - three years in business',
-    'in business for two to three years', 'almost three years in business', 'three years driving', 'CDL for two years', 'Driver experience: three years in business',
+  // Counterexamples, as before: "a few years", a fraction, other qualifiers, and clauses about
+  // something else. "a year", "half a year", "first year" (V11) and ranges in words (V7): below.
+  for (const notes of ['a few years in business', 'several years in business', 'one and a half years in business',
+    'almost three years in business', 'three years driving', 'CDL for two years', 'Driver experience: three years in business',
     'insured for two years', 'three years', 'less than a year driving']) leavesYears(notes);
-  // "a year" alone neither reads nor blocks another statement, as before.
-  assert.equal(noYears('a year in business\nIn business for 3 years').record.applicant.yearsInBusiness, 3);
   // Another number in the same note is not taken: a vehicle count, a driver's experience, a date.
   readsOnly('Two trucks, three years in business', 3, 'three years in business');
   readsOnly('Three drivers; in business for two years', 2, 'in business for two years');
@@ -1308,10 +1303,10 @@ test('"under N months" (N up to 12) and "under a year" in business are 0 years (
   assert.equal(noYears('under a year in business\n6 months in business').record.applicant.yearsInBusiness, 0);
   leavesYears('under 6 months in business\nIn business for 3 years');
   // Counterexamples, left as they were: more than 12 months, years plus months, other figures after
-  // "under", "a" before anything but a year, and a clause about something else.
+  // "under", "a" before anything but a year or a month (V11, below), and a clause about something else.
   for (const notes of ['under 13 months in business', 'In business for under 18 months', 'under 24 mos in biz', 'under eighteen months in business',
     'under 1 year 6 months in business', 'in business for under 1 year, 6 months', 'under a year 6 months in business', 'under one year six months in business',
-    'under 2 years in business', 'under two years in business', 'under a month in business', 'under a few years in business',
+    'under 2 years in business', 'under two years in business', 'under a few years in business',
     'under 6 months driving', 'under a year of driving experience']) leavesYears(notes);
   // "under" before another number in the same note is not taken: a vehicle count, a driver's
   // experience, an age. The years come only from the phrase beside "in business".
@@ -1322,6 +1317,131 @@ test('"under N months" (N up to 12) and "under a year" in business are 0 years (
   readsOnly('Driver has under 2 years experience; under a year in business', 0, 'under a year in business');
   readsOnly('Owner under 25 years old, in business for under 6 months', 0, 'in business for under 6 months');
   for (const notes of ['under 5 trucks', 'Driver has under 2 years experience', 'Owner under 25 years old']) leavesYears(notes);
+});
+
+// V7 (TNI, 2026-10-27: answer to PR question V7): a range gives an answer only when both ends give
+// the same one. Years in business is a number, so "2-3 years in business" is the agent's, with the
+// years-in-business.notes check naming the line, in digits or in words. Before, "2-3 years in
+// business" and "2 to 3 years in business" read the last figure (3). A range whose ends round to the
+// same whole years ("18-20 months", both 1) gives that number.
+const leavesRange = (notes, reading, fields = { year_established: 'N/A', years_experience: 'N/A' }, line = notes) => {
+  const r = normalizeIntake({ ...raw, ...fields, claims_details: 'No', additional_notes: notes }, W44);
+  assert.equal(r.record.applicant.yearsInBusiness, null, notes);
+  assert.equal(r.record.applicant.yearEstablished, null, notes);
+  assert.equal(r.record.applicant.yearsInBusinessRange, true, notes);
+  const w = r.warnings.find((x) => x.code === 'years-in-business.notes');
+  assert.equal(w?.level, 'check', notes);
+  assert.ok(w.msg.includes(`"${line}"`), `${notes}: the check names the line: ${w?.msg}`);
+  assert.ok(w.msg.includes(`a range ("${reading}")`), `${notes}: says it is a range: ${w.msg}`);
+  assert.match(w.msg, /left to you/, notes);
+  assert.ok(!r.warnings.some((x) => x.code === 'years-in-business.default'), `${notes}: not the blank standard`);
+  assert.deepEqual(r.readFrom, { 'applicant.yearsInBusiness': ['additional_notes'] }, notes);
+  // The agent's on every carrier that asks it: AmWINS neither New Venture nor the authority years.
+  const amwinsYears = buildPlan(r.record, amwins).find((s) => s.selector === '#yrsInBusiness');
+  assert.equal(amwinsYears.value, null, notes);
+  assert.match(amwinsYears.note, /range/, notes);
+  const geicoYears = buildPlan(r.record, geico).find((s) => s.name === 'Years in business');
+  assert.equal(geicoYears.value, null, notes);
+  assert.match(geicoYears.note, /range/, notes);
+  return r;
+};
+
+test('a range of years in business in the notes gives an answer only when both ends give the same one (W44-09, V7)', () => {
+  // Ends that differ: the agent's. In digits, and in words (ranges in words count too).
+  for (const [notes, reading] of [['2-3 years in business', '2-3 years'], ['2 to 3 years in business', '2 to 3 years'],
+    ['in business for 2-3 years', '2-3 years'], ['In business for 2 to 3 years', '2 to 3 years'], ['2–3 yrs in biz', '2–3 yrs'],
+    ['2 - 3 years in business', '2 - 3 years'], ['2 or 3 years in business', '2 or 3 years'], ['between 2 and 3 years in business', 'between 2 and 3 years'],
+    ['6-8 years in business', '6-8 years'], ['3-5+ years in business', '3-5+ years'], ['about 2-3 years in business', 'about 2-3 years'],
+    ['in business for 18-24 months', '18-24 months'], ['6-18 months in business', '6-18 months'],
+    ['two to three years in business', 'two to three years'], ['two-three years in business', 'two-three years'],
+    ['in business for two to three years', 'two to three years'], ['two or three years in business', 'two or three years'],
+    ['between two and three years in business', 'between two and three years'], ['two - three years in business', 'two - three years'],
+    ['Twenty to thirty years in business', 'Twenty to thirty years'], ['in biz for 2 to three yrs', '2 to three yrs']]) {
+    leavesRange(notes, reading);
+  }
+  // Years under own authority on the form: the notes still win for years in business (Q24), so the
+  // range is the agent's, not the authority years.
+  const authority = leavesRange('in business for 2-3 years', '2-3 years', { year_established: 'N/A', years_experience: '4' });
+  assert.match(authority.warnings.find((x) => x.code === 'years-in-business.notes').msg, /years under own authority \(4\)/);
+  assert.equal(buildPlan(authority.record, amwins).find((s) => s.selector === '#howLongFederalOperatingAuthorityActive').value, 'MORE THAN 3 YEARS', 'the authority\'s own question keeps the form\'s 4');
+  // A range beside a plain statement: still the agent's, the range named.
+  leavesRange('In business for 3 years\n2-3 years in business', '2-3 years', undefined, '2-3 years in business');
+  // Ends that round to the same whole years: that number, with the check saying how it was read.
+  for (const [notes, years, reading] of [['18-20 months in business', 1, '18-20 months'], ['in business for 18-20 months', 1, '18-20 months'],
+    ['6-8 months in business', 0, '6-8 months'], ['In business for 13 to 23 months', 1, '13 to 23 months'],
+    ['eighteen to twenty months in business', 1, 'eighteen to twenty months'], ['about 18-20 months in business', 1, 'about 18-20 months']]) {
+    const r = readsYears(notes, years, reading);
+    assert.equal(r.record.applicant.yearsInBusinessRange, undefined, notes);
+  }
+  assert.deepEqual(plansYears('18-20 months in business'), ['1', 'derived', '1']);
+  assert.deepEqual(plansYears('6-8 months in business'), ['New Venture', 'derived', 'Less than 1']);
+  // Counterexamples: a range of something else isn't a range of years in business, nor are a
+  // compound number in words ("twenty-five"), years plus months, or a range with no "in business".
+  readsYears('twenty-five years in business', 25, 'twenty-five years');
+  readsYears('3 years and 2 months in business', 3, '3 years 2 months');
+  readsOnly('2-3 trucks, 4 years in business', 4, '4 years in business');
+  readsOnly('Driver experience 2-3 years; in business for 5 years', 5, 'in business for 5 years');
+  readsOnly('1 to 2 loads a week, in business for 2 years', 2, 'in business for 2 years');
+  for (const notes of ['2-3 years driving', 'CDL for 2-3 years', '2-3 years', 'two to three years', 'Insured 2-3 years', '20-25 years in the business']) {
+    leavesYears(notes);
+    assert.equal(noYears(notes).record.applicant.yearsInBusinessRange, undefined, notes);
+  }
+});
+
+// V10 (TNI, 2026-10-27: answer to PR question V10, confirmed): "over" or "about" before years plus
+// months in business is the whole years: "over 1 year 6 months" is 1, "about 2 years, 3 months" is 2.
+test('"over" or "about" before years plus months in business is the whole years (W44-09, V10)', () => {
+  for (const [notes, years, reading] of [['over 1 year 6 months in business', 1, 'over 1 year 6 months'],
+    ['about 2 years, 3 months in business', 2, 'about 2 years 3 months'], ['In business for over 1 year 6 months', 1, 'over 1 year 6 months'],
+    ['in business for about 2 years 3 months', 2, 'about 2 years 3 months'], ['over one year six months in business', 1, 'over one year six months']]) {
+    readsYears(notes, years, reading);
+  }
+  assert.deepEqual(plansYears('over 1 year 6 months in business'), ['1', 'derived', '1']);
+  assert.deepEqual(plansYears('about 2 years, 3 months in business'), ['2', 'derived', '2']);
+  // Counterexamples: a qualifier not read, "less than" before years plus months, and a clause about
+  // something else stay the agent's.
+  for (const notes of ['almost 1 year 6 months in business', 'nearly 2 years, 3 months in business', 'less than 1 year 6 months in business',
+    'over 1 year 6 months driving']) leavesYears(notes);
+});
+
+// V11 (TNI, 2026-10-27: answer to PR question V11): the definite phrases are read in business: "a
+// year" is 1, "half a year" 0, "a year and a half" 1, "less than a month" and "under a month" 0, and
+// "first year in business" 0. "a few years" and "several years" stay the agent's.
+test('the definite phrases of years in business in the notes are read (W44-09, V11)', () => {
+  for (const [notes, years, reading] of [['a year in business', 1, 'a year'], ['In business for a year', 1, 'a year'], ['A yr in biz', 1, 'A yr'],
+    ['half a year in business', 0, 'half a year'], ['in business for half a year', 0, 'half a year'],
+    ['a year and a half in business', 1, 'a year and a half'], ['In business for a year and a half', 1, 'a year and a half'],
+    ['less than a month in business', 0, 'less than a month'], ['in business for less than a month', 0, 'less than a month'],
+    ['under a month in business', 0, 'under a month'], ['In business for under a month', 0, 'under a month'],
+    ['first year in business', 0, 'first year'], ['First year in biz', 0, 'First year'], ['In our first year in business', 0, 'first year'],
+    // A word read as the figure before "a year" (answer 4 with V11).
+    ['about a year in business', 1, 'about a year'], ['in business for over a year', 1, 'over a year'], ['More than a year in business', 1, 'More than a year']]) {
+    readsYears(notes, years, reading);
+  }
+  assert.deepEqual(plansYears('a year in business'), ['1', 'derived', '1']);
+  assert.deepEqual(plansYears('a year and a half in business'), ['1', 'derived', '1']);
+  for (const notes of ['half a year in business', 'less than a month in business', 'under a month in business', 'first year in business']) {
+    assert.deepEqual(plansYears(notes), ['New Venture', 'derived', 'Less than 1'], notes);
+  }
+  // Agreeing is one answer; disagreeing settles nothing ("a year" now reads, so it blocks 3).
+  assert.equal(noYears('a year in business\nIn business for 1 year').record.applicant.yearsInBusiness, 1);
+  assert.equal(noYears('half a year in business\n6 months in business').record.applicant.yearsInBusiness, 0);
+  assert.equal(noYears('first year in business\nless than a year in business').record.applicant.yearsInBusiness, 0);
+  leavesYears('a year in business\nIn business for 3 years');
+  // Stay the agent's: "a few years", "several years", and what V11 doesn't name.
+  for (const notes of ['a few years in business', 'In business for a few years', 'several years in business', 'in business for several years',
+    'a couple of years in business', 'a month in business', 'about a month in business', 'one and a half years in business',
+    '1 year and a half in business', 'second year in business', 'less than half a year in business', 'under a year and a half in business',
+    'almost a year in business', 'a year-old business']) leavesYears(notes);
+  // "a year" doesn't catch other phrases: alone, and beside a statement of years in business.
+  for (const notes of ['Started a year ago', 'Truck inspected once a year', 'Owns a year-old truck', 'Driver has a year of experience',
+    'a year', 'first year driving', 'First year with Progressive', 'Went into business a year ago', 'in business a year ago']) leavesYears(notes);
+  readsOnly('Bought the truck a year ago, in business for 3 years', 3, 'in business for 3 years');
+  readsOnly('Inspected once a year; 2 years in business', 2, '2 years in business');
+  readsOnly('Owns a year-old truck, in business for 4 years', 4, 'in business for 4 years');
+  readsOnly('Driver has a year of experience. In business for 2 years', 2, 'In business for 2 years');
+  readsOnly('first year driving, in business for 5 years', 5, 'in business for 5 years');
+  readsOnly('Truck is a year old; in business for 6 years', 6, 'in business for 6 years');
 });
 
 // R12 (TNI, 2026-10-26: answer to PR question): "no" in the USDOT box with an MC number on the

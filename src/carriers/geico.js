@@ -1122,7 +1122,10 @@ export const geico = {
     // --- Additional Business Info --------------------------------------------------------------
     ...on(MORE_BUSINESS, {}, [
       { field: 'GiveBusinessStartDate', ask: 'How many years has this business been operating?', path: 'applicant.yearsInBusiness', name: 'Years in business', kind: 'choice', source: 'derived',
-        value: (r) => startBucket(r.applicant.yearsInBusiness), note: (r) => (startBucket(r.applicant.yearsInBusiness) == null ? 'The intake has no years in business (or year established): answer it yourself.' : null) },
+        value: (r) => startBucket(r.applicant.yearsInBusiness), note: (r) => (startBucket(r.applicant.yearsInBusiness) != null ? null
+          // A range in the notes whose ends differ (TNI, 2026-10-27: answer to PR question V7).
+          : r.applicant.yearsInBusinessRange === true ? 'The notes give years in business as a range: answer it yourself.'
+            : 'The intake has no years in business (or year established): answer it yourself.') },
       { field: 'GiveNumberOfEmployees', ask: 'How many employees does the customer\'s business have, including part-time employees?', name: 'Number of employees (the drivers besides the owner)', kind: 'choice',
         source: (r) => (employees(r) ? 'standard' : 'fact'), value: employees, note: (r) => (employees(r) ? null : 'The intake lists no drivers: answer how many employees the business has yourself.') },
       { field: 'GiveCurrentAutoInsuranceStatus', ask: 'Does the customer currently have personal or commercial auto insurance?', name: 'Currently has auto insurance', kind: 'choice', source: 'derived', clientFact: true, value: currentAuto, note: currentAutoNote },
