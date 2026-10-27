@@ -651,7 +651,7 @@ test('AmWINS filing required: an SR-22 beside a Form E or H is TNI\'s No (T9)', 
 
 test('AmWINS filing required: "State filing" or "Intrastate" alone is TNI\'s No (T9)', () => {
   filingTniNo([[{ filingsWhich: 'State filing' }, null], [{ filingsWhich: 'State filings' }, null], [{ filingsWhich: 'Intrastate' }, null], [{ filingsWhich: 'Intrastate filing' }, null],
-    [{}, 'Needs a state filing'], [{}, 'Intrastate filings only']]);
+    [{ filingsWhich: 'Intra-state' }, null], [{}, 'Needs a state filing'], [{}, 'Intrastate filings only']]);
   // Anything federal or another filing beside them: the agent's. "State" alone, and a state filing
   // beside a Form E or H, aren't settled by T9: the agent's, as before.
   filingAgents([[{ filingsWhich: 'State and federal filings' }, null, /"State and federal filings"/], [{ filingsWhich: 'Intrastate and interstate' }, null, /"Intrastate and interstate"/],
@@ -670,12 +670,15 @@ test('AmWINS filing required: an SR-22 beside an MC number on the same line is T
 });
 
 test('AmWINS filing required: "SR-22 and filings" is TNI\'s No (T9)', () => {
-  filingTniNo([[{ filingsWhich: 'SR-22 and filings' }, null], [{}, 'SR-22 and filings'], [{}, 'SR22 & filings needed'], [{ filingsWhich: 'FR-44 and filings' }, null]]);
+  filingTniNo([[{ filingsWhich: 'SR-22 and filings' }, null], [{}, 'SR-22 and filings'], [{}, 'SR22 & filings needed'], [{ filingsWhich: 'FR-44 and filings' }, null],
+    [{}, 'SR-22 for the owner and filings'], [{ filingsWhich: 'SR-22, Form E, MC 123456 and filings' }, null]]);
   // Other, federal or named filings beside it: the agent's. A bare "filings" with no SR-22 or FR-44
   // named isn't settled by T9: the agent's, as before.
   filingAgents([[{ filingsWhich: 'SR-22 and other filings' }, null, /"SR-22 and other filings"/], [{}, 'SR-22 and federal filings', /"SR-22 and federal filings"/],
     [{}, 'SR-22 and filings, MCS-90', /"SR-22 and filings, MCS-90"/], [{}, 'SR-22 and BMC-91 filings', /"SR-22 and BMC-91 filings"/],
-    [{ filingsWhich: 'Filings' }, null, /"Filings"/], [{}, 'Filings needed', /"Filings needed"/]]);
+    [{ filingsWhich: 'Filings' }, null, /"Filings"/], [{}, 'Filings needed', /"Filings needed"/],
+    // Not settled by T9 either: "filings" before the SR-22, or qualified.
+    [{}, 'Filings and SR-22', /"Filings and SR-22"/], [{}, 'SR-22 and additional filings', /"SR-22 and additional filings"/]]);
   filingKept('SR-22 and filings');
 });
 

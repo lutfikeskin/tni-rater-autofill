@@ -262,22 +262,23 @@ const vehicleValueNote = (r, a) => {
 // These are state filings too, so No with the box blank, the same `standard` (TNI, 2026-10-26: answer
 // to PR question, T9): beside an SR-22 or FR-44 (`SR_FR_BESIDE`), a Form E or H ("SR-22 and Form E"),
 // the client's MC number on the same line ("SR-22, MC 123456"; an MC filing, "MC 123456 filing", stays
-// federal) and a bare "filings" ("SR-22 and filings"; "other filings" stays another); and a state filing
-// or intrastate alone, with no SR-22 or FR-44 named ("State filing", "Intrastate"). Anything federal
+// federal) and a bare "filings" joined by "and", "&", "+", "plus", a comma or a slash ("SR-22 and
+// filings", "SR-22 for the owner and filings"; "other filings" stays another); and a state filing or
+// intrastate alone, with no SR-22 or FR-44 named ("State filing", "Intrastate"). Anything federal
 // beside them still leaves a blank to the agent, and so do a Form E or H or a lone "State" with no SR-22
 // or FR-44 named (T9 doesn't settle those).
 const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\b|\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
 const SR_FR = /\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
 const SR_FR_NAMED = /(?:\bfilings?\s*(?:needed|required)?\s*:\s*)?(?:\bstate\s+)?\b(?:sr[\s-]?22|fr[\s-]?44)\b(?:\s+(?:state\s+)?filings?\b)?|\bstate\s+filings?\b/gi;
 const SR_FR_BESIDE = /\bforms?[\s-]*[eh](?:\s*(?:,|\/|&|\band\b|\bor\b)\s*[eh])?\b(?:\s+filings?\b)?|\bmc\s*(?:#|no\.?|number)?\s*[:-]?\s*\d{3,8}\b(?!\s*filings?\b)/gi;
-const SR_FR_AND_FILINGS = /\b(sr[\s-]?22|fr[\s-]?44)\s*(?:\band\b|&|\+|\bplus\b|,|\/)\s*filings?\b/gi;
-const STATE_ONLY = /\bstate\s+filings?\b|\bintrastate\b/i;
-const INTRASTATE_NAMED = /\bintrastate(?:\s+filings?)?\b/gi;
+const SR_FR_AND_FILINGS = /(?:\band\b|&|\+|\bplus\b|,|\/)\s*filings?\b/gi;
+const STATE_ONLY = /\bstate\s+filings?\b|\bintra[\s-]?state\b/i;
+const INTRASTATE_NAMED = /\bintra[\s-]?state(?:\s+filings?)?\b/gi;
 const FEDERAL = /\bfed(?:eral)?\b|\bicc\b|\bmc\b|\binterstate\b|\bfmcsa\b|\bboc[\s-]?3\b|\bucr\b|\bauthority\b/i;
 const onlyStateFilings = (text) => {
   const srFr = SR_FR.test(text);
   if (!srFr && !STATE_ONLY.test(text)) return false;
-  const t = srFr ? text.replace(SR_FR_BESIDE, ' ').replace(SR_FR_AND_FILINGS, '$1') : text;
+  const t = srFr ? text.replace(SR_FR_BESIDE, ' ').replace(SR_FR_AND_FILINGS, ' ') : text;
   return !FEDERAL.test(t) && !FILING_WORDS.test(t.replace(SR_FR_NAMED, ' ').replace(INTRASTATE_NAMED, ' '));
 };
 const filingLine = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => FILING_WORDS.test(s) && !onlyStateFilings(s))?.slice(0, 80) ?? null;
