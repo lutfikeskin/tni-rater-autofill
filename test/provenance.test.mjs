@@ -189,7 +189,7 @@ const READ_INDIRECTLY = {
     'notes.text': 'normalize.intakeNotes and otherNotes (NTL, the defensive driver course, a claim the notes mention)',
   },
   amwins: {
-    'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag)',
+    'applicant.applicationDate': 'util.priorPolicyExpired (the disclosure\'s expired-policy flag; how long with the current carrier, round 3, T6)',
     'applicant.ownerDrives': 'owner() in progressive.js (the owner\'s driver row)',
     'claims.notes': 'normalize.otherNotes (POP document unavailable, in the disclosure)',
     'notes.text': 'normalize.otherNotes (POP document unavailable, in the disclosure)',

@@ -233,10 +233,24 @@ const authorityAge = (r) => {
 // 1 TO 2 and 2 TO 3 share, takes the upper band, 2 TO 3 YEARS (TNI, 2026-10-26: answer to PR
 // question, round 2, R5: a time on a band edge takes the upper band; GEICO keeps exactly 3 at 1-3
 // because the decision names 1-3, and 1 TO 2 and 2 TO 3 are both within it). 3 is no edge here:
-// MORE THAN 3 doesn't include it.
+// MORE THAN 3 doesn't include it. TNI, 2026-10-26 (answer to PR question, round 3, T4): exactly
+// 2 years is 2 TO 3 YEARS, the upper band: confirmed.
+// An expired policy with a time with the insurer in the notes (any time the notes give, shorter
+// ones too): the agent's, as GEICO's years with the insurer is (TNI, 2026-10-26: answer to PR
+// question, round 3, T6; until then the band, or 1 TO 2 YEARS). An expired policy isn't current
+// (answer 7), so the notes' time may not be with a current carrier. With no time in the notes it
+// stays 1 TO 2 YEARS (answer 11: asked whatever the prior insurance).
 const AMWINS_TENURE = (n) => (n < 2 ? '1 TO 2 YEARS' : n <= 3 ? '2 TO 3 YEARS' : 'MORE THAN 3 YEARS');
 const longerTenure = (r) => { const t = insurerTenure(r); return t && t.years >= 2 ? t : null; };
-const withCurrentCarrier = (r) => { const t = longerTenure(r); return t ? tenureBand(t, AMWINS_TENURE) : '1 TO 2 YEARS'; };
+const expiredWithTenure = (r) => priorPolicyExpired(r, r.priorInsurance?.[0]) && !!insurerTenure(r);
+const withCurrentCarrier = (r) => {
+  if (expiredWithTenure(r)) return null;
+  const t = longerTenure(r);
+  return t ? tenureBand(t, AMWINS_TENURE) : '1 TO 2 YEARS';
+};
+const withCurrentCarrierNote = (r) => (withCurrentCarrier(r) ? null
+  : expiredWithTenure(r) ? `The intake's current policy has expired, and its notes give the time with the insurer ("${insurerTenure(r)?.line.slice(0, 80)}"): pick it yourself.`
+    : `The intake's notes give the time with the current carrier ("${longerTenure(r)?.line.slice(0, 80)}"), and more than one of AmWINS' bands could fit it: pick it yourself.`);
 // Federal filings from the intake's "which filings": liability means BMC-91 (MCS-90 comes with
 // it); cargo means BMC-32. Unknown when the intake doesn't say which.
 const filingsText = (r) => (filings(r) ? r.operations.filingsWhich ?? null : null);
@@ -423,9 +437,11 @@ export const amwins = {
     // Answered wherever the page shows it: with "Is a Federal Filing Required?" Yes, also without a
     // DOT or MC number (TNI, 2026-10-26: answer to PR question, round 2, R7; until then only with a
     // DOT or MC number). Without a filing the page hides it, and hidden fields aren't filled.
+    // An expired policy with a time in the notes: the agent's, as on GEICO (TNI, 2026-10-26: answer
+    // to PR question, round 3, T6; withCurrentCarrier above).
     { selector: '#howLongWithCurrentCarrier', name: 'How long with the current carrier (standard: 1 TO 2 YEARS)', kind: 'choice',
       source: (r) => (!withCurrentCarrier(r) ? 'fact' : longerTenure(r) ? 'derived' : 'standard'),
-      value: withCurrentCarrier, note: (r) => (withCurrentCarrier(r) ? null : `The intake's notes give the time with the current carrier ("${longerTenure(r)?.line.slice(0, 80)}"), and more than one of AmWINS' bands could fit it: pick it yourself.`) },
+      value: withCurrentCarrier, note: withCurrentCarrierNote },
     { name: 'Claim-free loss runs (standard: No)', label: '^can provide claim free loss run$', kind: 'bool', source: 'standard', value: () => false },
     { name: 'Valued loss runs (standard: No)', label: '^valued loss runs$', kind: 'bool', source: 'standard', value: () => false },
     // Preserve the intake's explicit claims answer; unknown history stays with the agent.

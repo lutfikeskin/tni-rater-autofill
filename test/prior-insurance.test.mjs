@@ -135,17 +135,23 @@ test('years with the current insurer: 1-3 at least; a longer time the notes give
     ['Insured 3 years with Synthetic Mutual', '1-3 Years', '2 TO 3 YEARS'],
     // TNI, 2026-10-26 (round 2, R5): a time on a band edge takes the upper band: exactly 5 years
     // is GEICO's 5-10, exactly 10 or "10+" its 10+. Exactly 3 stays 1-3 (the decision's "1-3 at
-    // least"). AmWINS' 1 TO 2 and 2 TO 3 share 2, so 2 years is 2 TO 3 there.
+    // least"). AmWINS' 1 TO 2 and 2 TO 3 share 2, so 2 years is 2 TO 3 there (round 3, T4:
+    // confirmed).
     ['Has had this policy for five years', '5-10 Years', 'MORE THAN 3 YEARS'],
     ['Insured 5 years with Synthetic Mutual', '5-10 Years', 'MORE THAN 3 YEARS'],
     ['Insured 10 years with Synthetic Mutual', '10+ Years', 'MORE THAN 3 YEARS'],
     ['Insured 10+ years with Synthetic Mutual', '10+ Years', 'MORE THAN 3 YEARS'],
     ['Insured 2 years with Synthetic Mutual', '1-3 Years', '2 TO 3 YEARS'],
+    ['Insured with Synthetic Mutual for two years', '1-3 Years', '2 TO 3 YEARS'],
     // R8: "about", "around" or "approximately" N is N, then placed by the edge rule above.
     ['Insured about 3 years with Synthetic Mutual', '1-3 Years', '2 TO 3 YEARS'],
     ['Around 5 years with the same insurer', '5-10 Years', 'MORE THAN 3 YEARS'],
     ['Approximately 10 years insured with Synthetic Mutual', '10+ Years', 'MORE THAN 3 YEARS'],
     ['Insured about 2 years with Synthetic Mutual', '1-3 Years', '2 TO 3 YEARS'],
+    // Round 3, T5: "roughly N" is N too (until then half a year either side, often the agent's).
+    ['Insured roughly 5 years with Synthetic Mutual', '5-10 Years', 'MORE THAN 3 YEARS'],
+    ['Insured roughly 3 years with Synthetic Mutual', '1-3 Years', '2 TO 3 YEARS'],
+    ['Roughly 2 years with the same insurer', '1-3 Years', '2 TO 3 YEARS'],
   ]) {
     const { record: r, warnings } = intake(DATED, { additional_notes: line });
     const years = geicoStep(r, GEICO.years);
@@ -173,8 +179,6 @@ test('years with the current insurer: 1-3 at least; a longer time the notes give
     ['Insured over 5 years with Synthetic Mutual', 'MORE THAN 3 YEARS'],
     ['Same insurer since 2023', null], // 2.7 to 3.7 years
     ['Insured 2+ years with Synthetic Mutual', null], // 2 TO 3 or MORE THAN 3; GEICO 1-3 to 10+
-    // Not settled by R8 (it names about, around and approximately): as before, half a year either side.
-    ['Insured roughly 5 years with Synthetic Mutual', 'MORE THAN 3 YEARS'],
   ]) {
     const r = intake(DATED, { additional_notes: line }).record;
     const years = geicoStep(r, GEICO.years);
@@ -207,6 +211,51 @@ test('years with the current insurer: 1-3 at least; a longer time the notes give
   assert.deepEqual(tenureOf('Insured about 3 years with Synthetic Mutual'), { years: 3, least: 3, line: 'Insured about 3 years with Synthetic Mutual' });
   assert.deepEqual(tenureOf('Insured 10+ years with Synthetic Mutual'), { years: Infinity, least: 10, line: 'Insured 10+ years with Synthetic Mutual' });
   assert.equal(tenureOf('3 Years'), null);
+  // Round 3, T5: roughly N is N, as about N is.
+  assert.deepEqual(tenureOf('Insured roughly 5 years with Synthetic Mutual'), { years: 5, least: 5, line: 'Insured roughly 5 years with Synthetic Mutual' });
+  // T5's counterexample: the other qualifiers the reader knows keep their meaning ("close to N" and
+  // "almost N" under N), and a hedge it doesn't read stays unread (no time read from the line).
+  assert.deepEqual(tenureOf('Insured close to 5 years with Synthetic Mutual'), { years: 4.9, least: 4, line: 'Insured close to 5 years with Synthetic Mutual' });
+  for (const line of ['Insured 5ish years with Synthetic Mutual', 'Insured 5 or so years with Synthetic Mutual']) assert.equal(tenureOf(line), null, line);
+});
+
+// TNI, 2026-10-26 (round 3, T6): an expired policy with a time with the insurer in the notes:
+// AmWINS' how long with the current carrier is the agent's, as GEICO's years with the insurer is
+// (an expired policy isn't current, answer 7).
+test('AmWINS: an expired policy with a time with the insurer in the notes leaves how long with the current carrier to the agent, as GEICO (round 3, T6)', () => {
+  const EXPIRED = { ...DATED, ins_exp_1: '08/31/2026' };
+  for (const line of ['Insured with Synthetic Mutual for 6 years', 'Insured 10 years with Synthetic Mutual', 'Insured 2 years with Synthetic Mutual',
+    'Same insurer since 2023', 'Insured about 1 year with Synthetic Mutual']) {
+    const { record: r, warnings } = intake(EXPIRED, { additional_notes: line });
+    const step = howLong(r);
+    agents(step);
+    assert.deepEqual([step.ignore, step.source, step.manualOnly], [false, 'fact', true], line);
+    assert.match(step.note, /expired/, line);
+    assert.ok(step.note.includes(line), line);
+    // GEICO unchanged: its years with the insurer is the agent's, the policy having expired.
+    const years = geicoStep(r, GEICO.years);
+    agents(years);
+    assert.match(years.note, /expired/, line);
+    // The Intake step, where it shows the line, doesn't promise a band for it.
+    const shown = warnings.find((w) => w.code === 'prior.tenure');
+    if (shown) {
+      assert.match(shown.msg, /expired/, line);
+      assert.doesNotMatch(shown.msg, /take the band/, line);
+    }
+  }
+  // Counterexamples: a current policy with the same lines keeps its band (above); an expired
+  // policy with no time in the notes keeps 1 TO 2 YEARS (answer 11: asked whatever the prior
+  // insurance), GEICO's question still the agent's.
+  for (const [line, band, source] of [['Insured with Synthetic Mutual for 6 years', 'MORE THAN 3 YEARS', 'derived'], ['Insured 2 years with Synthetic Mutual', '2 TO 3 YEARS', 'derived']]) {
+    const r = intake(DATED, { additional_notes: line }).record;
+    assert.deepEqual([howLong(r).value, howLong(r).source], [band, source], line);
+    assert.match(intake(DATED, { additional_notes: line }).warnings.find((w) => w.code === 'prior.tenure').msg, /take the band/, line);
+  }
+  const expiredNoTime = intake(EXPIRED).record;
+  assert.deepEqual([howLong(expiredNoTime).value, howLong(expiredNoTime).source, howLong(expiredNoTime).note], ['1 TO 2 YEARS', 'standard', null]);
+  agents(geicoStep(expiredNoTime, GEICO.years));
+  // No prior insurance with no time in the notes: 1 TO 2 YEARS, as before (answer 11).
+  assert.equal(howLong(intake({ ins_carrier_1: 'NO POP' }).record).value, '1 TO 2 YEARS');
 });
 
 // TNI, 2026-10-26 (answer to PR question 11): AmWINS asks how long with the current carrier of a

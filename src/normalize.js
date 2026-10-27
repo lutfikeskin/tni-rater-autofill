@@ -5,7 +5,7 @@
 // Rule of thumb: clean up formatting, never guess at meaning. Anything ambiguous stays as the
 // client wrote it and gets a warning instead.
 
-import { STATES, noPriorInsurance, priorInsuranceAssumed, ownerIsDriver, set, companyName } from './util.js';
+import { STATES, noPriorInsurance, priorInsuranceAssumed, priorPolicyExpired, ownerIsDriver, set, companyName } from './util.js';
 
 /** @import { IntakeResult } from '../types.js' */
 
@@ -221,10 +221,13 @@ export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.tex
 // 2025"). The longest such time, in years to one decimal, its line, and the least it could mean
 // (TNI, 2026-10-26: answer to PR question: the carriers pick the band a longer time falls in, so
 // a year alone runs from its first day to its last, "over 10 years" has no end, "almost 5 years"
-// is under 5, "roughly 4 years" half a year either side); null when no line gives one. "About",
-// "around" or "approximately" N is N (TNI, 2026-10-26: answer to PR question, round 2, R8, as
-// "about N" is N for the intake's other figures); "over N" (more than N) and "N+" (N or more)
-// stay as before, with no end. The carriers place a time on a band edge (tenureBand).
+// is under 5); null when no line gives one. "About", "around" or "approximately" N is N (TNI,
+// 2026-10-26: answer to PR question, round 2, R8, as "about N" is N for the intake's other
+// figures), and "roughly N" too (TNI, 2026-10-26: answer to PR question, round 3, T5; until then
+// half a year either side); "over N" (more than N) and "N+" (N or more) stay as before, with no
+// end. A hedge not named here isn't read: the number alone is ("~5 years" is 5), or nothing when
+// the hedge is part of it ("5ish years", "5 or so years" give no time). The carriers place a time
+// on a band edge (tenureBand).
 const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const INSURANCE_WORDS = /\b(?:insur\w*|polic(?:y|ies)|pop|proof of prior)\b/i;
@@ -237,9 +240,9 @@ const saidSpan = (n, qualifier, plus) => {
   if (q === 'over' || q === 'more than') return [n + 0.1, Infinity];
   if (q === 'almost' || q === 'nearly' || q === 'close to') return [n - 1, n - 0.1];
   if (q === 'under' || q === 'less than') return [0, n - 0.1];
-  // TNI, 2026-10-26 (answer to PR question, round 2, R8): "about 3 years" counts as 3. "Roughly"
-  // isn't named in the answer: as before, half a year either side.
-  if (q === 'roughly') return [n - 0.5, n + 0.5];
+  // TNI, 2026-10-26 (answer to PR question, round 2, R8): "about 3 years" counts as 3, as do
+  // "around" and "approximately". TNI, 2026-10-26 (answer to PR question, round 3, T5): "roughly
+  // N" counts as N, like "about N" (until then half a year either side).
   return [n, n];
 };
 const tenth = (n) => Math.round(n * 10) / 10;
@@ -762,10 +765,15 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   // carriers' how-long questions take its band, the line shown here, where it was read (TNI,
   // 2026-10-26: answer to PR question, W44-29). From 2 years: AmWINS' 1 TO 2 and 2 TO 3 YEARS share
   // 2, and a time on a band edge takes the upper band (TNI, 2026-10-26: answer to PR question, round 2, R5).
+  // An expired policy: both carriers leave the question to the agent (TNI, 2026-10-26: answer to PR
+  // question, round 3, T6), so the check says that instead of a band.
   const tenure = insurerTenure(record);
   if (tenure && tenure.years >= 2) {
     const inNotes = String(record.notes?.text ?? '').split('\n').map((s) => s.trim()).includes(tenure.line);
-    check('prior.tenure', inNotes ? 'notes.text' : 'claims.text', `The claims box or Additional Notes give the time with the current insurer: "${tenure.line.slice(0, 160)}". The carriers' questions on how long with the current insurer take the band for it, never under 1-3 years (TNI); a time two bands could fit is left to you.`);
+    const then = priorPolicyExpired(record)
+      ? 'The current policy has expired, so the carriers\' questions on how long with the current insurer are left to you (TNI).'
+      : 'The carriers\' questions on how long with the current insurer take the band for it, never under 1-3 years (TNI); a time two bands could fit is left to you.';
+    check('prior.tenure', inNotes ? 'notes.text' : 'claims.text', `The claims box or Additional Notes give the time with the current insurer: "${tenure.line.slice(0, 160)}". ${then}`);
   }
   // Non-trucking liability (NTL) is named only in the notes: "NTL", "non-trucking" (also written
   // "non tracking"), "bobtail". A mention is not a request ("no bobtail", "asked about NTL"): the
