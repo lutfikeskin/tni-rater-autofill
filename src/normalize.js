@@ -348,8 +348,8 @@ const clausesOf = (line) => {
 };
 const BIZ = '(?:business|biz)\\b';
 const BIZ_PHRASES = [
-  new RegExp(`(?<![\\w.,])${YEARS}\\s+in\\s+${BIZ}`, 'i'),
-  new RegExp(`\\bin\\s+${BIZ}\\s+(?:for\\s+)?${YEARS}`, 'i'),
+  new RegExp(`(?<![\\w.,])${YEARS}\\s+in\\s+${BIZ}`, 'gi'),
+  new RegExp(`\\bin\\s+${BIZ}\\s+(?:for\\s+)?${YEARS}`, 'gi'),
 ];
 const RANGE_PHRASES = [
   new RegExp(`(?<![\\w.,])${RANGE}\\s+in\\s+${BIZ}`, 'i'),
@@ -403,9 +403,9 @@ export function yearsInBusinessFromNotes(boxes, year) {
         }
         const first = quote.match(FIRST_YEAR);
         if (first?.groups) found.push({ years: 0, established: null, quote, field, reading: first.groups.reading.replace(/\s+/g, ' ') });
-        for (const re of BIZ_PHRASES) {
-          const m = quote.match(re);
-          if (!m?.groups) continue;
+        // Every statement in the clause, so two that disagree settle nothing.
+        for (const m of BIZ_PHRASES.flatMap((re) => [...quote.matchAll(re)])) {
+          if (!m.groups) continue;
           const { word, n, unit, months: andMonths, monthsUnit, half } = m.groups;
           const years = yearsOf(word, numberValue(n) + (half ? 0.5 : 0), unit, andMonths || half, quote.slice(0, m.index));
           // How it was read, when it isn't plain whole years in digits.

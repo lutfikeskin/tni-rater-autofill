@@ -964,7 +964,9 @@ test('numbers in the notes about something else stay out of years in business (W
     // "less than N" and "under N" weren't decided with "over N" and "about N" (TNI, 2026-10-26),
     // nor were "almost", "nearly" and the signs: still the agent's.
     'under 3 years in business', 'in business for less than 3 years', 'In biz for under 2 yrs', 'almost 3 years in business',
-    'in business for nearly 3 years', '~3 years in business', '>3 years in business', 'In business for over 3 years\nIn business for 6 years']) {
+    'in business for nearly 3 years', '~3 years in business', '>3 years in business', 'In business for over 3 years\nIn business for 6 years',
+    // Two figures that disagree in one clause settle nothing either (not only the first one read).
+    '3 years in business and 4 years in business', 'in business for 3 years and in business for 4 years']) {
     const r = noYears(notes);
     assert.equal(r.record.applicant.yearsInBusiness, null, notes);
     assert.equal(r.record.applicant.yearEstablished, null, notes);
