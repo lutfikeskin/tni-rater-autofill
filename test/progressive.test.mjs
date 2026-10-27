@@ -607,8 +607,8 @@ test('AmWINS filing required: blank is TNI\'s No unless the intake asks for fili
     assert.deepEqual([s.value, s.source, s.standard, s.note], [false, 'standard', true, null], JSON.stringify(applicant));
   }
   assert.deepEqual([filing({ needSr22: true, filingsRequired: true, filingsWhich: 'Federal Liability Filing' }).value, filing({ needSr22: true, filingsRequired: true }).source], [true, 'derived']);
-  // Non-Trucking: never this standard.
-  assert.equal(filing({}, { ntl: true }).standard, false);
+  // Non-Trucking: never this standard; W44-28's No instead (#192).
+  assert.equal(filing({}, { ntl: true }).value, false);
 });
 
 // TNI, 2026-10-26 (answer to PR question, R16): a notes line or a which-filings box naming only an
@@ -658,8 +658,8 @@ test('AmWINS filing required: a notes line or which-filings box naming only an S
   }
   // A notes line about something else entirely changes nothing.
   assert.deepEqual([filing({}, { notes: 'Hauls general freight. Clean record.' }).value, filing({ filingsWhich: 'BMC-91' }, { notes: 'Hauls general freight.' }).value], [false, null]);
-  // Non-Trucking: never this standard.
-  assert.equal(filing({ filingsWhich: 'SR-22' }, { ntl: true }).standard, false);
+  // Non-Trucking: never this standard; W44-28's No instead (#192).
+  assert.equal(filing({ filingsWhich: 'SR-22' }, { ntl: true }).value, false);
 });
 
 // TNI, 2026-10-26 (answer to PR question, T9): with "filings required" blank, four more texts in the
@@ -692,7 +692,7 @@ const filingKept = (text) => {
     const s = amwinsFiling(changes, { notes });
     assert.deepEqual([s.value, s.source, s.standard], [true, 'derived', false], `filings asked for: ${JSON.stringify([changes, notes])}`);
   }
-  assert.equal(amwinsFiling({ filingsWhich: text }, { ntl: true }).standard, false, `NTL: ${text}`);
+  assert.equal(amwinsFiling({ filingsWhich: text }, { ntl: true }).value, false, `NTL, W44-28's No (#192): ${text}`);
 };
 
 test('AmWINS filing required: an SR-22 beside a Form E or H is TNI\'s No (T9)', () => {
@@ -1346,9 +1346,9 @@ test('Progressive filings required: blank with a USDOT or MC number is TNI\'s No
   // Blank, while the intake names filings or needs an SR-22 (Progressive asks about state filings too): the agent's.
   assert.deepEqual(ca({ filingsWhich: 'BMC-91' }, { applicant: { dot: '1234567' } }), [null, 'derived', false, true]);
   assert.deepEqual(ca({ needSr22: true }, { applicant: { mc: '765432' } }), [null, 'derived', false, true]);
-  // NTL, decided or only mentioned in the notes: with a number, a blank stays the agent's (W44-28).
-  assert.deepEqual(ca({}, { applicant: { dot: '1234567' }, coverage: { ntl: true } }), [null, 'derived', false, false]);
-  assert.deepEqual(ca({}, { applicant: { dot: '1234567' }, notes: 'Client asked about non-trucking liability' }), [null, 'derived', false, false]);
+  // NTL decided: W44-28's No, also with a number; only mentioned in the notes: held for the agent (#192).
+  assert.deepEqual(ca({}, { applicant: { dot: '1234567' }, coverage: { ntl: true } }), [false, 'standard', true, false], 'NTL: W44-28\'s No (#192)');
+  assert.deepEqual(ca({}, { applicant: { dot: '1234567' }, notes: 'Client asked about non-trucking liability' }), [null, 'fact', false, true], 'NTL mentioned: held with its note (#192)');
   // Without a number the 2026-10-19 No stands, NTL or not.
   assert.deepEqual(ca({}, { coverage: { ntl: true } }), [false, 'standard', true, false]);
 });
