@@ -60,7 +60,7 @@ Leave a question as it is when the rules and the intake don't say anything about
 - **Continuous coverage?**: Yes when the customer is currently insured; otherwise leave it to the agent.
 - **Current bodily injury limit** and **current policy expiration**: from the intake, as written ("State Minimum" is "State Minimum or less").
 - **Other coverages for the business?**: None, unless the customer has general liability (then leave them to the agent). General liability asked for on the intake alone keeps None.
-- Leave the additional insured and waiver questions as they are.
+- **Named additional insured / waiver counts and blanket endorsements**: 0 and No (TNI adds any needed after the policy starts).
 - **State or federal filings required?**: Yes when the intake says filings are required, No when it says they aren't. The page pre-selects No. Left blank: No (TNI standard) when the intake has no USDOT or MC number, also when one is coming within 60 days; with either number, filings named on the intake, or an SR-22 needed, leave it to the agent.
 - **ELD required?**: from the intake.
 

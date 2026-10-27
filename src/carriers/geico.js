@@ -1302,9 +1302,14 @@ export const geico = {
       { field: 'GiveOtherLiabilityInsurance', ask: 'What kind of liability insurance does the customer currently have to cover their business?', tni: 'geico.other-liability', name: 'Liability insurance the business has (None unless the notes say)',
         kind: 'choice', source: otherLiabilitySource, clientFact: true, value: otherLiability, note: otherLiabilityNote },
       // TNI (2026-10-21): No for every intake.
-      { field: 'GiveInsuredOrWaiverYesNo', ask: 'Does the customer need to add a named additional insured or a designated insured? Or do they need a named waiver of subrogation?', tni: 'geico.additional-insured', name: 'Named additional insured or waiver of subrogation (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
-      { field: 'GiveHasContractForBlanketAiEndorsement', ask: 'Does the customer have a contract that requires a blanket additional insured endorsement?', tni: 'geico.additional-insured', name: 'Blanket additional insured by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
-      { field: 'GiveHasContractForBlanketWosEndorsement', tni: 'geico.additional-insured', name: 'Blanket waiver of subrogation by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
+      // TNI, 2026-10-27: No at quote; any needed AI/waiver is added after the policy starts. GEICO
+      // reworded the named-AI question (dropped "or a designated insured"); both wordings match.
+      { field: 'GiveInsuredOrWaiverYesNo', tni: 'general.additional-insured',
+        ask: ['Does the customer need to add a named additional insured? Or do they need a named waiver of subrogation?',
+          'Does the customer need to add a named additional insured or a designated insured? Or do they need a named waiver of subrogation?'],
+        name: 'Named additional insured or waiver of subrogation (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
+      { field: 'GiveHasContractForBlanketAiEndorsement', ask: 'Does the customer have a contract that requires a blanket additional insured endorsement?', tni: 'general.additional-insured', name: 'Blanket additional insured by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
+      { field: 'GiveHasContractForBlanketWosEndorsement', tni: 'general.additional-insured', name: 'Blanket waiver of subrogation by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
       { field: 'GiveHasFilingsYesNo', ask: 'Is the customer required to provide proof of insurance/filings to a state or federal agency?', path: 'operations.filingsRequired', tni: 'geico.filings', name: 'Filings required (TNI: No unless the intake says otherwise)',
         kind: 'bool', value: (r) => (ntlNoDotFilings(r) ? false : hasFilings.value(r)), source: held((r) => (ntlNoFilings(r) ? 'standard' : hasFilings.source(r))), note: holdOr(filingsNote) },
       // Shown after Yes (FL): only a box the intake names is ticked.
@@ -1347,9 +1352,13 @@ export const geico = {
         kind: 'choice', source: 'standard', value: () => UM_LIMIT },
       { q: 'UnderinsuredMotorist', ask: 'Underinsured Motorist Bodily Injury (UIMBI)', control: 'select', tni: 'geico.um', name: 'Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)',
         kind: 'choice', source: 'standard', value: () => UM_LIMIT },
-      // The rest of the uninsured motorist and property damage lists stay the agent's (W43-33).
-      { q: 'UninsuredMotoristDeductible', ask: 'Uninsured Motorist Deductible', control: 'select', name: 'Uninsured motorist deductible', source: 'fact' },
-      { q: 'UmUimType', ask: 'UM/UIM Type', control: 'select', name: 'UM/UIM type', source: 'fact' },
+      // TNI, 2026-10-27: when a state asks UM/UIM type or deductible (another form of the UM
+      // questions), type is Add-On and deductible $1,000; the deductible isn't always shown.
+      { q: 'UninsuredMotoristDeductible', ask: 'Uninsured Motorist Deductible', control: 'select', tni: 'geico.um',
+        name: 'Uninsured motorist deductible (TNI: $1,000)', kind: 'choice', source: 'standard', value: () => '$1,000' },
+      { q: 'UmUimType', ask: 'UM/UIM Type', control: 'select', tni: 'geico.um',
+        name: 'UM/UIM type (TNI: Add-On)', kind: 'choice', source: 'standard', value: () => 'Add-On' },
+      // Property damage liability and UMPD stay the agent's (W43-33).
       { q: 'PropertyDamage', ask: 'Property Damage Liability (PD)', control: 'select', name: 'Property damage liability', source: 'fact' },
       { q: 'UninsuredMotoristPd', ask: 'Uninsured Motorist Property Damage (UMPD)', control: 'select', name: 'Uninsured motorist property damage', source: 'fact' },
       // FL: one choice each, kept as GEICO has them (pipKept).

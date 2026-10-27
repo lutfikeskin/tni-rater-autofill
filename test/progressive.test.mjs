@@ -314,6 +314,11 @@ test('search-style business type (IN), other-coverage checkboxes, vehicle list',
   const has = baseRecord();
   has.coverage.hasGl = true;
   for (const q of ['AA', 'B2', 'A8', 'A2']) { const s = byQ(buildPlan(has, progressive, {}), q); assert.equal(s.value, null, q); assert.match(s.note, /general liability/); }
+  // TNI, 2026-10-27: named AI / waiver counts 0 and blanket endorsements No (after-bind, not at quote).
+  assert.deepEqual(['B7', 'B8', 'BE', 'C1'].map((q) => {
+    const s = byQ(plan, q);
+    return [s.value, s.source, s.standard];
+  }), [[0, 'standard', true], [0, 'standard', true], [false, 'standard', true], [false, 'standard', true]]);
   const search = plan.find((s) => s.action === 'businessTypeSearch');
   assert.equal(search.near, 'business type');
   assert.equal(progressive.vehicleList, 'VehicleSummary');

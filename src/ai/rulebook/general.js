@@ -25,6 +25,7 @@ export const general = {
     ] },
     { heading: 'Operations', rules: [
       { id: 'general.hazmat-placard', kind: 'standard', text: 'Hazardous material placard: the intake\'s answer. Left blank: No (TNI standard), unless the intake says they haul hazardous material, or what they haul may need a placard (fuel, propane, chemicals and the like; on GEICO also a line of the intake\'s notes naming them); then the agent\'s.' },
+      { id: 'general.additional-insured', kind: 'standard', text: 'Named additional insured, named waiver of subrogation, and blanket additional-insured or waiver-of-subrogation endorsements by contract: No / 0 (TNI standard). Any needed after the policy starts are added then, not at quote. AmWINS does not ask these.' },
     ] },
     { heading: 'Non-trucking liability', rules: [
       { id: 'general.ntl', kind: 'standard', text: 'Non-trucking liability (NTL): only when coverage.ntl is Yes (the intake\'s auto liability Non-Trucking, or the agent\'s answer); a claims-box mention alone is not a request. On an NTL quote the intake\'s liability limit goes to the carrier\'s NTL limit, never the auto liability limit, and "Is the customer under permanent lease to a motor carrier" is Yes (TNI standard).' },
