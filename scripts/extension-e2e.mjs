@@ -116,9 +116,15 @@ if (process.argv[2]) {
 }
 const clearedBox = panel.locator(`#f-${CLEARED.replace(/[^\w]/g, '_')}`);
 if (!await clearedBox.inputValue()) throw new Error(`The sample intake no longer answers ${CLEARED}.`);
-await clearedBox.click();
-await clearedBox.press('ControlOrMeta+A');
-await clearedBox.press('Delete');
+// Client details draws a <select> for the intake's dropdowns (schema choice/state); a text box
+// for the rest. Clearing must work for both: Delete empties a text box, the blank "—" option a select.
+const tag = await clearedBox.evaluate((el) => el.tagName);
+if (tag === 'SELECT') await clearedBox.selectOption('');
+else {
+  await clearedBox.click();
+  await clearedBox.press('ControlOrMeta+A');
+  await clearedBox.press('Delete');
+}
 await clearedBox.press('Tab'); // the panel saves a client-details edit on change
 try {
   await panel.waitForFunction(async path => {
