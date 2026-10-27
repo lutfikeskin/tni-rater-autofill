@@ -81,7 +81,8 @@ export function unitToAdd(carrier, record, step, seen, { unitForms = {}, done = 
 
 // A unit the list on screen doesn't have that no helper of `plan` adds: unitToAdd's `adding` (`next`)
 // when the plan built for it, its clicks allowed, has no action its marker finishes (doneWhen):
-// GEICO's Add Driver while the owner's driver rows are unknown (driversKnown). The panel names it
+// GEICO's Add Driver while the panel's driver is another one (no form read on the page yet; GEICO's
+// own driver rows are known whenever the intake has a driver: W44-25, V4). The panel names it
 // as left for the agent instead of saying nothing (W44-01, OH 2026-10-26: the quote printed with one
 // of the intake's two drivers). Null otherwise, and off the list (a unit's form on screen).
 export function unitMissing(next, plan) {

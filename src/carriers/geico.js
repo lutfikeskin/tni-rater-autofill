@@ -532,18 +532,17 @@ const omittedDriver = (r) => (r?.applicant && ownerExcluded(r) ? r.drivers.index
 // (answer to PR question V1): the agent's, with a "needs you" item that holds Continue (the action
 // noOtherDriver).
 const noOtherDriver = (r) => omittedDriver(r) >= 0 && r.drivers.length === 1;
-// What the driver list says of an intake driver it doesn't have, with GEICO's own driver rows unknown
-// (the panel, src/units.js unitMissing; W44-01, OH 2026-10-26: "owner drives" blank, the quote printed
-// with the owner alone and the panel silent).
+// What the driver list says of an intake driver it doesn't have that no helper adds (the panel,
+// src/units.js unitMissing; W44-01, OH 2026-10-26: "owner drives" blank, the quote printed with the
+// owner alone and the panel silent). With a blank box TNI's Yes (W44-25) and the owner's row the first
+// (V4), GEICO's own driver rows are known whenever the intake has a driver (driversKnown), so the
+// extension adds the driver once the panel has them picked (the picker stays where it was until a form
+// is read on this page). The owner's row GEICO's quote leaves out (omittedDriver) is never named: it is
+// no unit of the list (src/units.js unitToAdd).
 const driverMissing = (r, list, i) => {
   const d = r.drivers?.[i];
   const who = [d?.first, d?.last].filter(Boolean).join(' ') || `Driver ${i + 1}`;
-  // GEICO's rows known, the extension adds them once the panel has that driver picked (the picker
-  // stays where it was until a form is read on this page).
-  if (driversKnown(r)) return `${who} (driver ${i + 1} of the intake) isn't on GEICO's driver list: pick them in the panel and Fill again, or add them with "+" yourself.`;
-  const why = typeof r.applicant?.ownerDrives !== 'boolean' ? 'the intake doesn\'t say whether the owner drives'
-    : 'the owner drives, but no driver on the intake has the owner\'s name';
-  return `${who} (driver ${i + 1} of the intake) isn't on GEICO's driver list: add them with "+" yourself. The extension adds no driver here because ${why}, so GEICO may already list one of them under the owner.`;
+  return `${who} (driver ${i + 1} of the intake) isn't on GEICO's driver list: pick them in the panel and Fill again, or add them with "+" yourself.`;
 };
 // An Add Driver form while the panel's driver is the owner, whom GEICO already lists as a driver
 // (Business & Owner Info: the owner drives): filling it would add the owner twice. The panel's
@@ -871,8 +870,8 @@ export const geico = {
   // shows (a VIN, a driver's name), how many it lists, and so the next unit to add.
   unitLists: [
     { steps: [VEHICLES], selector: VEHICLE_LIST, lists: ['vehicles', 'trailers'] },
-    // An intake driver the list doesn't have, while the extension adds none (driversKnown): said in
-    // red with why (W44-01).
+    // An intake driver the list doesn't have, while the extension adds none (the panel's driver another
+    // one): said in red with what to do (W44-01).
     { steps: [DRIVERS], selector: DRIVER_LIST, lists: ['drivers'], missing: driverMissing },
   ],
   // The units the fill adds itself, behind the panel's "Fill the pages" or "Click Continue when the

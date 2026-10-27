@@ -3785,7 +3785,7 @@ async function pickUnitToAdd(carrier, ctx) {
     if (fillCurrent(ctx)) renderPickers();
   }
   // The list on screen without this unit, and no helper that would add it even with its clicks
-  // allowed (GEICO's Add Driver while the owner's driver rows are unknown): named after the fill,
+  // allowed (GEICO's Add Driver while the panel's driver is another one): named after the fill,
   // left for the agent (noteMissingUnit; W44-01, OH 2026-10-26: the quote printed with one of two
   // drivers, the panel silent).
   try { ctx.unitMissing = unitMissing(next, buildPlan(record, carrier, { ...state.active, adding: { ...next.adding, click: true } })); } catch { /* no plan, nothing said */ }
