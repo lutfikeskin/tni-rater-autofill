@@ -707,6 +707,21 @@
  */
 
 /**
+ * @typedef {object} AiSuggestEvent  sidepanel.js runAssist: one Luna page review (counts only)
+ * @property {'ai_suggest'} type
+ * @property {string} model
+ * @property {number} items  questions sent
+ * @property {number} [suggested]
+ * @property {number} [leave]  questions left to the agent; the leave* counts below say why
+ * @property {number} [leaveMissing]  Luna said information is missing
+ * @property {number} [leaveConflict]  Luna saw conflicting facts
+ * @property {number} [leaveChose]  Luna left it without either
+ * @property {number} [leaveNoSource]  it answered but cited nothing usable
+ * @property {number} [leaveUnverified]  the evidence check refused its answer
+ * @property {string} [error]
+ */
+
+/**
  * The events src/usage.js builds. The panel logs others of its own (sidepanel.js).
  * @typedef {IntakeProfileEvent | CheckDismissedEvent | AgentSettingsEvent | ClientErrorEvent | FieldChangeEvent | FillRunEvent | FillFieldEvent | RecalcLayoutEvent} UsageEvent
  */

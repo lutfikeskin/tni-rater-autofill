@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { collectItems } from '../src/ai/common.js';
+import { buildRequest } from '../src/ai/luna.js';
 import {
   DEFAULT_CASES_PATH,
   parseArgs,
@@ -50,7 +51,7 @@ test('multiple supplied citations can match an expected evidence path without lo
 });
 
 test('synthetic cases are bounded, sanitized and explicitly unreviewed', () => {
-  assert.equal(cases.length, 5);
+  assert.equal(cases.length, 8);
   assert.ok(cases.every(entry => entry.expertReviewed === false));
   assert.deepEqual(cases.map(entry => entry.id), [
     'missing-vs-explicit-no',
@@ -58,6 +59,9 @@ test('synthetic cases are bounded, sanitized and explicitly unreviewed', () => {
     'conflicting-evidence',
     'unsupported-coverage-default',
     'safety-boundary',
+    'other-driver-row',
+    'vehicle-named-in-label',
+    'blank-mapped-field-with-page-context',
   ]);
   assert.ok(cases.some(entry => entry.expected.some(answer => answer.choice === null)));
   assert.ok(cases.some(entry => entry.expected.some(answer => answer.choice === 'No')));
@@ -91,6 +95,25 @@ test('evaluation inputs retain current choices and use bounded controls', () => 
     assert.ok(items.every(item => ['radio', 'select', 'checkbox'].includes(item.controlKind)));
     assert.ok(items.every(item => item.current !== undefined));
   }
+});
+
+// The 2026-10-27 context cases: what each request now carries for its expected answer. Offline
+// only: whether Luna answers them right needs a live run (--live).
+test('context cases: the request carries the named row, the blank mapped field and the page answers', () => {
+  const request = (id) => {
+    const entry = cases.find(x => x.id === id);
+    const items = providerItems(entry).map((x, i) => ({ ...x, id: `f${i + 1}` }));
+    return JSON.parse(buildRequest(items, providerContext(entry)).input[0].content);
+  };
+  const driver = request('other-driver-row');
+  assert.equal(driver.fields.f1.entity, 'drivers[1]');
+  assert.ok(Object.values(driver.sources).some(s => s.path === 'drivers[1].cdl' && s.value === true));
+  const vehicle = request('vehicle-named-in-label');
+  assert.equal(vehicle.fields.f1.entity, 'vehicles[1]');
+  assert.ok(Object.values(vehicle.sources).some(s => s.path === 'vehicles[1].type' && s.value === 'Box Truck'));
+  const blank = request('blank-mapped-field-with-page-context');
+  assert.deepEqual([blank.fields.f1.intakePath, blank.fields.f1.intakeBlank], ['operations.needSr22', true]);
+  assert.equal(blank.pageAnswers.length, 1);
 });
 
 test('safety-boundary fields are blocked before Luna sees them', () => {
