@@ -236,6 +236,7 @@ export const otherNotes = (record) => [record?.claims?.notes, record?.notes?.tex
 const NUMBER_WORDS = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20 };
 const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
 const INSURANCE_WORDS = /\b(?:insur\w*|polic(?:y|ies)|pop|proof of prior)\b/i;
+const OTHER_YEARS = /\b(?:claims?|accidents?|violations?|tickets?|cdl|licen[cs]ed?|driv(?:e|es|ing|er|ers)|experience|business|established|trucks?|vehicles?|vans?|trailers?|record|laps\w*|uninsured|no insurance|not insured|without insurance|ago|expir\w*|renew\w*)\b/i;
 const NUMBER_SAID = String.raw`\d{1,2}(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty`;
 // [1] a symbol before the number (~ > <), [2] a word before it, [3] a range's first figure, [4] the
 // number, [5]-[8] a hedge after it ("+", "plus", "ish", "or so"), [9] a hedge after "years".
@@ -295,6 +296,11 @@ export const insurerTenure = (record) => {
       const last = day ? first : month != null ? Date.UTC(year, month + 1, 1) : Date.UTC(year + 1, 0, 1);
       spans.push([(now - last) / YEAR, (now - first) / YEAR]);
     }
+    // A line that also names something else with years (claims, CDL or driving, the business, a
+    // vehicle, a lapse, an expiration) may give that time, not the time with the insurer: any
+    // time, so no band fits it and both carriers leave it to the agent, the line quoted (PR #194
+    // review: "No insurance claims in 5 years" was GEICO's 5-10 Years).
+    if (spans.length && OTHER_YEARS.test(line)) spans.splice(0, spans.length, [0, Infinity]);
     for (const [least, most] of spans) {
       if (!(most >= 0) || (longest && most <= longest.years)) continue;
       longest = { years: tenth(most), least: tenth(Math.max(least, 0)), line };

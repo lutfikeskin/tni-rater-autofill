@@ -463,3 +463,26 @@ test('AmWINS: the prior-carrier rows are NO PRIOR with prior insurance too, the 
   assert.match(disclosure(intake({ ins_type_1: 'Commercial Auto', ins_limit_1: '$1M CSL' }).record), /^POP Commercial - \$1M CSL$/m);
   for (const boxes of [{}, { ins_carrier_1: 'NO POP' }]) assert.doesNotMatch(disclosure(intake(boxes).record), /POP|prior/i, JSON.stringify(boxes));
 });
+
+// A line that names insurance can give a time that isn't with the insurer: claims-free years, CDL
+// or driving years, years in business, a vehicle's age, a lapse, an expiration (PR #194 review).
+// That time is no tenure to take a band from: both carriers' how-long questions are the agent's,
+// the line quoted, never a band read from it.
+test('a time on a line about something else besides insurance is the agent\'s, never a band (PR #194 review)', () => {
+  for (const line of ['No insurance claims in 5 years', 'Currently insured. CDL for 12 years', 'In business 8 years, currently insured with Synthetic Mutual',
+    'POP on file. Truck is 10 years', 'Currently insured. Business started in 2019', 'Owner has 10 years driving, needs insurance for 2 trucks',
+    'Policy expires in 2 years', 'Clean record 5 years. Current insurance with Synthetic Mutual.']) {
+    const r = intake(DATED, { additional_notes: line }).record;
+    agents(geicoStep(r, GEICO.years));
+    assert.ok(geicoStep(r, GEICO.years).note.includes(line), line);
+    agents(howLong(r));
+    assert.ok(howLong(r).note.includes(line), line);
+    assert.equal(geicoStep(r, GEICO.auto).value, 'Yes', `${line}: still currently insured`);
+  }
+  // No prior insurance, and notes saying how long without it: AmWINS' question isn't 2 TO 3 YEARS.
+  const nopop = intake({ ins_carrier_1: 'NO POP' }, { additional_notes: 'No insurance for 2 years' }).record;
+  agents(howLong(nopop));
+  // Counterexample: a time with the insurer on its own line keeps its band beside such a line.
+  const both = intake(DATED, { additional_notes: 'Insured with Synthetic Mutual for 6 years\nCDL for 12 years' }).record;
+  assert.deepEqual([geicoStep(both, GEICO.years).value, howLong(both).value], ['5-10 Years', 'MORE THAN 3 YEARS']);
+});
