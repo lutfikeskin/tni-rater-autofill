@@ -52,6 +52,12 @@ export function noPriorInsurance(policy) {
   return !!policy && /^(no|none|n\/?a)\b/i.test(String(policy.carrier ?? '').trim()) && !policy.expiration;
 }
 
+// A cargo limit with no deductible on the intake: the deductible is the client's, so on every
+// carrier the cargo limit and deductible are the agent's, told what it usually is (TNI, 2026-10-27;
+// before, Progressive and AmWINS took $1,000).
+export const noCargoDeductible = (record) => !!record.coverage?.cargoLimit && record.coverage?.cargoDeductible == null;
+export const CARGO_DEDUCTIBLE_NOTE = 'The intake gives a cargo limit but no deductible: choose the cargo limit and deductible yourself (the deductible is usually $1,000 or $2,500).';
+
 // The names a carrier being quoted goes by as an intake's current carrier (sameCarrier): one word
 // matched with spelling slips, or words all present. AmWINS, a wholesaler, has none: the client's
 // current carrier is the insurer, never AmWINS.

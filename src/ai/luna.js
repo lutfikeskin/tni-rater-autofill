@@ -5,7 +5,7 @@ import { ntlMention, intakeNotes, NTL_WORDS, NTL_FILLS } from '../normalize.js';
 
 export const DEFAULT_MODEL = 'gpt-6-luna';
 export const API_URL = 'https://api.openai.com/v1/responses';
-export const POLICY_VERSION = 'luna-evidence-v5';
+export const POLICY_VERSION = 'luna-evidence-v6';
 const KINDS = new Set(['radio', 'select', 'checkbox']);
 const BATCH_SIZE = 12;
 const MAX_REQUEST_CHARS = 48000;
@@ -48,8 +48,9 @@ export function buildRequest(items, context) {
   }
   // Reuse the exact citation constraint instead of repeating every source ID per field.
   const schema = { ...object({ decisions: object(properties) }), $defs: { citations } };
+  // The carrier and its TNI rules (the first sources) lead, so a carrier's requests share one start.
   return request(schema, {
-    carrier: context.carrier, page: context.page, active: context.active ?? {}, sources, fields, ...pageContext(context),
+    carrier: context.carrier, sources, page: context.page, active: context.active ?? {}, fields, ...pageContext(context),
   });
 }
 

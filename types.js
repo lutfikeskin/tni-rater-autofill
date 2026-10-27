@@ -90,6 +90,26 @@
  */
 
 // ---------------------------------------------------------------------------------------------
+// TNI's rulebook as Luna reads it (src/ai/tni-rules.js, src/ai/rulebook/*.js)
+
+/**
+ * One rule of the rulebook. Luna cites it by its id (src/ai/common.js evidenceFor).
+ * @typedef {object} RulebookEntry
+ * @property {string} id  '<part>.<name>': general.cdl-blank, geico.um; a carrier rule names it in `tni`
+ * @property {'standard' | 'intake' | 'agent' | 'workflow'} kind  standard: states a TNI answer that a
+ *   carrier rule fills with `source: 'standard'` and names in `tni` (test/rulebook.test.mjs);
+ *   intake: how an intake answer is read; agent: left to the agent; workflow: buttons, order, stops
+ * @property {string} text  what Luna reads
+ */
+
+/**
+ * The general part, or one carrier's. Its section headings name the page for whoever edits it; Luna
+ * gets each entry's text only, without its heading (src/ai/common.js evidenceFor).
+ * @typedef {object} RulebookPart
+ * @property {string} title
+ * @property {{ heading: string, rules: RulebookEntry[] }[]} sections
+ */
+
 // Carrier configuration (src/carriers.js and src/carriers/*.js)
 
 /**
@@ -102,6 +122,9 @@
  * @property {(record: ClientRecord, active: ActiveUnits) => any} [value]
  * @property {ClientValue<string | null>} [source]  where its answer comes from: one of src/plan.js
  *   SOURCES (Contract 2, docs/intake-and-rules.md), which test/provenance.test.mjs checks for every rule
+ * @property {string} [tni]  the id of the TNI rulebook entry that states this answer (src/ai/rulebook/:
+ *   general.js or this carrier's part); every rule that can be `standard` has one, which
+ *   test/rulebook.test.mjs checks with the entry's kind and part. Nothing at fill time reads it
  * @property {string} [kind]  a value kind (src/schema.js: bool, choice, date, int, money, state, text), or
  *   how the page kit picks it (address-suggest, first-option, pick-not, search-select, selected-option)
  * @property {string} [q]  the carrier's question id (Duck Creek)
@@ -167,6 +190,8 @@
  * Submit or Buy: those are the carrier's `advance` or the agent's.
  * @typedef {object} CarrierAction
  * @property {string} id
+ * @property {string} [tni]  the TNI rulebook entry the click carries out, as a rule's `tni` (GEICO's
+ *   permanent-lease Yes for NTL); optional, and test/rulebook.test.mjs counts it for its entry
  * @property {ClientValue<string | null>} [text]  a pattern on the button's words
  * @property {string} [token]  a string in its id, href or onclick
  * @property {string} [near]

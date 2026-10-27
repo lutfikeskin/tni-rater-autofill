@@ -1163,6 +1163,8 @@ export function normalizeIntake(raw, { today = new Date() } = {}) {
   record.coverage.cargoLimit = cargo.limit;
   record.coverage.cargoDeductible = cargo.deductible;
   if (record.coverage.cargo && !cargo.limit) check('cargo-limit.missing', 'coverage.cargoLimit', 'Wants cargo coverage but no limit chosen.');
+  // No deductible: the carriers leave the cargo limit to the agent (TNI, 2026-10-27).
+  else if (record.coverage.cargo && cargo.deductible == null) check('cargo-deductible.missing', 'coverage.cargoDeductible', 'Wants cargo coverage with a limit but no deductible: the deductible is usually $1,000 or $2,500. Enter it here, or choose it on the carrier page.');
   // Non-Trucking asks for a limit too: the carrier's NTL limit (the review of PR #176).
   if ((record.coverage.autoLiability === 'Yes' || nonTruckingAnswer(record.coverage.autoLiability)) && !record.coverage.autoLiabLimit) check('auto-limit.missing', 'coverage.autoLiabLimit', 'Wants auto liability but no limit chosen.');
   if (record.coverage.gl && !record.coverage.glLimit) check('gl-limit.missing', 'coverage.glLimit', 'Wants general liability but no limit chosen: TNI\'s default is $1M/$2M ($1M per occurrence, $2M aggregate). Confirm it with the client.');

@@ -46,7 +46,7 @@ Follow `docs/corrections.md` for every item, and read the document for its layer
 2. **Reproduce it first** with the smallest test that fails for the right reason: a unit test in the matching file (`test/progressive.test.mjs`, `test/geico.test.mjs`, `test/normalize.test.mjs`, `test/pagekit.test.mjs`, `test/learn.test.mjs`, …), a scrubbed fixture (`test/fixtures/`; GEICO's `quote.html` is rebuilt by `node scripts/geico-fixture.mjs`, which reads the raw pages from `layouts/geico`, the main checkout's from a worktree, and writes nothing on a privacy finding), or a synthetic intake. Never commit a raw carrier page, a client PDF or a client value; raw evidence stays in ignored `layouts/`.
 3. **Fix the layer that owns the cause**, keeping its contracts:
    - a rule declares its answer's `source`; facts and attestations stay the agent's (`test/provenance.test.mjs`);
-   - exact mappings and calculations stay in code; the model only resolves a bounded choice; a standard represented in `src/ai/tni-rules.js` changes there too;
+   - exact mappings and calculations stay in code; the model only resolves a bounded choice; a `standard` rule names its entry in the AI rulebook (`tni`, `src/ai/rulebook/`), which changes with it (`test/rulebook.test.mjs`);
    - agent edits stay protected, review stops and retained-value checks stay, and `NEVER_CLICK` / `NEVER_ADVANCE` are never widened to make a flow pass;
    - an answer the maintainer decided carries its source and date in a comment, as existing rules do (`(TNI, 2026-10-09)`), and becomes a test case that fails if the answer changes;
    - a usage server change that accepts new event fields is deployed before the extension that sends them (`docs/hosting.md`).

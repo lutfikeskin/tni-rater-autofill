@@ -1503,7 +1503,11 @@ test('Medical Payments $5,000 wherever GEICO offers it, PIP declined beside it a
 test('cargo: the intake\'s limit and deductible as one pair; never a default deductible', () => {
   const p = plan(intake());
   assert.deepEqual([one(p, 'Motor truck cargo wanted').value, one(p, 'Motor truck cargo limit and deductible').value], [true, '$100000/$1000']);
-  agents(one(plan(with_({ 'coverage.cargoDeductible': null })), 'Motor truck cargo limit and deductible'));
+  const noDed = one(plan(with_({ 'coverage.cargoDeductible': null })), 'Motor truck cargo limit and deductible');
+  agents(noDed);
+  // TNI, 2026-10-27: the agent's alone (a client fact, never Luna's), told what it usually is.
+  assert.deepEqual([noDed.source, noDed.manualOnly], ['fact', true]);
+  assert.match(noDed.note, /usually \$1,000 or \$2,500/);
   agents(one(plan(with_({ 'coverage.cargo': false })), 'Motor truck cargo limit and deductible'));
   agents(one(plan(with_({ 'coverage.cargo': null })), 'Motor truck cargo wanted'));
   // Household goods: Yes for a household goods mover; otherwise TNI's No (W43-30), unless the class,

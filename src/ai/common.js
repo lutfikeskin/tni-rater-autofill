@@ -1,6 +1,6 @@
 // Shared intake scoping and field restrictions for Luna assistance.
 // Exact answers, calculations and page execution remain in code.
-import { TNI_RULES } from './tni-rules.js';
+import { rulebookFor } from './tni-rules.js';
 import { noPriorInsurance, priorPolicyExpired } from '../util.js';
 import { redactionTerms } from '../plan.js';
 import { redactor } from '../usage.js';
@@ -204,22 +204,21 @@ export function scopedIntake(record, active, rows = {}) {
 
 export function evidenceFor(context) {
   const facts = scopedIntake(context.record, context.active ?? {}, context.rows ?? {});
+  // TNI's rules first, keyed by their ids: the general part and this carrier's (none for a carrier
+  // without a part), the same for every request on that carrier, so its requests share one start.
   const sources = {};
+  for (const rule of rulebookFor(context.carrier)) sources[rule.id] = { basis: 'tni_rule', rule: rule.text };
+  let n = 0;
   const flatten = (obj, path = '') => {
     for (const [key, value] of Object.entries(obj ?? {})) {
       const p = Array.isArray(obj) ? `${path}[${key}]` : path ? `${path}.${key}` : key;
       if (value && typeof value === 'object') flatten(value, p);
       else if (value !== null && value !== undefined && value !== '') {
-        sources[`s${Object.keys(sources).length + 1}`] = { basis: 'intake', path: p, value };
+        sources[`s${++n}`] = { basis: 'intake', path: p, value };
       }
     }
   };
   flatten(facts);
-  const [progressive, amwins] = TNI_RULES.split('# AmWINS Admitted Placement (Business Auto)');
-  const text = context.carrier === 'progressive' ? progressive : context.carrier === 'amwins' ? amwins : '';
-  for (const line of (text || '').split('\n').filter(l => l.startsWith('- '))) {
-    sources[`s${Object.keys(sources).length + 1}`] = { basis: 'tni_rule', rule: line.slice(2) };
-  }
   // Too much for one request: the planner splits the group (fewer questions name fewer rows).
   if (Object.keys(sources).length > MAX_OPTIONS) throw new RequestTooLarge('Too much intake context for one decision. Answer this page manually.');
   return { facts, sources };

@@ -261,7 +261,9 @@ test('verification size is checked before paying for proposals', async () => {
 
 test('groups also split for the largest legal verification while every request stays bounded', async () => {
   const notes = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`note${i}`, 'x'.repeat(1000)]));
-  const ctx = { ...context, record: { operations: { hazPlacard: false, ...notes } } };
+  // A carrier with no TNI rules: they go in the first request only (GEICO's take about 13,000
+  // characters), and this checks that the verification's size alone splits the group.
+  const ctx = { ...context, carrier: 'test', record: { operations: { hazPlacard: false, ...notes } } };
   const fields = questions(12).map(x => ({ ...x, label: `${x.label} ${'x'.repeat(1000)}` }));
   assert.ok(JSON.stringify(buildRequest(fields, ctx)).length <= 48000, 'the first request alone would fit all twelve');
   const sizes = [];
@@ -674,7 +676,7 @@ test('a question about another driver or vehicle sends that row, named as its en
   assert.equal(entityOf(cdl, fleet), 'drivers[1]');
   assert.equal(entityOf(comp, fleet), 'vehicles[1]');
   assert.deepEqual(rowsFor([cdl, comp], fleet, fleetContext.active), { drivers: [1], vehicles: [1] });
-  const body = buildRequest([cdl, { ...comp, id: 'f2' }], fleetContext), wire = JSON.stringify(body);
+  const body = buildRequest([cdl, { ...comp, id: 'f2' }], fleetContext);
   const state = JSON.parse(body.input[0].content);
   assert.deepEqual({ entity: state.fields.f1.entity, intakePath: state.fields.f1.intakePath, intakeBlank: state.fields.f1.intakeBlank },
     { entity: 'drivers[1]', intakePath: 'drivers[1].cdl', intakeBlank: false });
@@ -682,8 +684,9 @@ test('a question about another driver or vehicle sends that row, named as its en
   const paths = Object.values(state.sources).map((s) => s.path);
   assert.ok(paths.includes('drivers[1].cdl') && paths.includes('vehicles[1].value'), 'the named rows are evidence');
   assert.ok(!paths.some((p) => p?.startsWith('drivers[2]')), 'a row no question names stays out');
-  // The same redaction and identifier removal as the active row.
-  for (const secret of ['D-PRIVATE', 'VIN-PRIVATE', 'Lee', 'Other', 'Sample Freight']) assert.equal(wire.includes(secret), false, secret);
+  // The same redaction and identifier removal as the active row (TNI's rule texts are no intake).
+  const intakeWire = JSON.stringify({ ...body, input: [{ ...state, sources: Object.values(state.sources).filter((s) => s.basis !== 'tni_rule') }] });
+  for (const secret of ['D-PRIVATE', 'VIN-PRIVATE', 'Lee', 'Other', 'Sample Freight']) assert.equal(intakeWire.includes(secret), false, secret);
   // The evidence check sees the same rows, and the entity it judges for.
   const parsed = parseResponse(envelope({ decisions: {
     f1: { option: 'o0', sourceIds: [Object.keys(state.sources).find((k) => state.sources[k].path === 'drivers[1].cdl')], explanation: 'Driver 2 has a CDL.', missingInformation: [], conflicts: [], nextStep: '' },
@@ -776,7 +779,7 @@ test('page answers: the page\'s other choice answers go as context, redacted and
   // In both calls as context; never among the sources a decision may cite.
   const body = buildRequest(asked, { ...fleetContext, pageAnswers: out }), state = JSON.parse(body.input[0].content);
   assert.deepEqual(state.pageAnswers, out);
-  assert.ok(Object.values(state.sources).every((s) => !JSON.stringify(s).includes('Combined Single Limit')));
+  assert.ok(Object.values(state.sources).every((s) => s.basis === 'tni_rule' || !JSON.stringify(s).includes('Combined Single Limit')));
   assert.match(body.instructions, /pageAnswers .* never evidence and never citable/);
   const hazBody = buildRequest(items, { ...context, pageAnswers: out });
   const parsed = parseResponse(answer(hazBody), items, hazBody);
