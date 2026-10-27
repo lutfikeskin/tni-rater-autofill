@@ -148,8 +148,9 @@ const DIRECTIONAL = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw', 'north'
 const UNIT_WORD = /^(apt|apartment|unit|ste|suite|lot|bldg|building|rm|room|trlr|#)\.?$/i;
 
 // Splits a one-line US address. `confident` is false when there were no commas and the city had
-// to be inferred from where the street part seems to end, or when trailing ZIP junk / a stuck
-// directional was repaired.
+// to be inferred from where the street part seems to end, or when trailing ZIP junk was dropped.
+// A directional glued to the city ("SWCARTERSVILLE") stays in the city for the agent to confirm:
+// without a list of cities it can't be told from NEWARK or SEATTLE (TNI, 2026-10-27).
 export function parseAddress(raw) {
   const s = clean(raw);
   if (s == null) return null;
@@ -164,7 +165,7 @@ export function parseAddress(raw) {
   // Trailing letters after the ZIP were ignored (county / leftover).
   const zipEnd = body.search(/\b\d{5}(?:-?\d{4})?(?![0-9])/);
   const afterZip = zipEnd >= 0 ? body.slice(zipEnd).replace(/^\d{5}(?:-?\d{4})?/, '') : '';
-  let repaired = /[A-Za-z]/.test(afterZip);
+  const repaired = /[A-Za-z]/.test(afterZip);
   const rest = m[1].replace(/,\s*$/, '');
   let streetPart = rest;
   if (rest.includes(',')) {
@@ -193,13 +194,6 @@ export function parseAddress(raw) {
   // Its number needs a digit, so a city like "Ste Genevieve" stays whole.
   const lead = !out.unit && out.city?.match(/^((?:apt|apartment|unit|ste|suite|lot|bldg|building|rm|room|trlr)\.?\s*#?\s*[\w-]*\d[\w-]*|#\s*[\w-]+)\s+(\S.*)$/i);
   if (lead) { out.unit = lead[1]; out.city = lead[2]; }
-  // "SWCARTERSVILLE": a short directional glued to the city peels onto the street (not "Westminster").
-  const stuck = out.city?.match(/^(NE|NW|SE|SW|N|S|E|W)([A-Z][A-Za-z]+)$/);
-  if (stuck) {
-    out.street = `${out.street} ${stuck[1]}`.replace(/\s+/g, ' ').trim();
-    out.city = stuck[2];
-    repaired = true;
-  }
   // "Ci" isn't a street suffix; clients mean "Cir" (and USDOT records say CIR).
   out.street = out.street.replace(/\bCi\.?$/i, 'Cir');
   if (repaired) out.confident = false;
