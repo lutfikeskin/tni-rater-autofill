@@ -2046,6 +2046,10 @@
     try { ext()?.Ajax?.on?.('beforerequest', countAjax); } catch { /* no ExtJS events */ }
     const visited = new Set(visitedPages);
     const startPage = currentPage();
+    // The plan has questions for this page (a field rule for it, not only helpers): while it shows no
+    // field it is still drawing, and its helpers wait for one (W44-03), except a tile pick
+    // (`onBlankPage`: Most Common Vehicles, which may draw only its tiles).
+    const expectsQuestions = plan.some((s) => s.kind !== 'action' && s.pages?.includes(startPage));
     const handled = new Map(); // step id -> { status, note }
     /** @type {FillReport} */
     const report = { frame: location.origin + location.pathname, fields: 0, filled: [], noData: [], kept: [], failed: [], leftRequired: [], actions: [], unknown: [], blocked: [], protectedKeys: [], invalidatedActions: [], checks: [], reworded: [], renamed: [], halted: false, rounds: 0, unitForm: null, unitHeld: null, stepUnread: false };
@@ -3071,6 +3075,11 @@
     }
 
     function clickNextAction(controls, immediateOnly = false) {
+      // A page the plan has questions for that shows none yet is still drawing: its helpers wait for
+      // them, a tile pick aside (W44-03, Progressive Business Owner Info in KY and OH, 2026-10-26: the
+      // business type's Search was the only thing to do on the undrawn page, its click counted as
+      // something done there, and "Ok, start quote." followed it).
+      const blank = !controls.length && expectsQuestions && currentPage() === startPage;
       const pairs = assign(controls, plan);
       const has = (path) => answered(pairs, path);
       const blocked = [];
@@ -3079,7 +3088,7 @@
         blocked.push(a.action);
         report.blocked.push({ id: a.action, why: COVERED_HELPER, waits: [{ say: 'what is open over it closed' }], text: buttonText(el).slice(0, 60) || (a.label ?? '') });
       };
-      for (const a of actions.filter((x) => !immediateOnly || x.immediate)) {
+      for (const a of actions.filter((x) => (!immediateOnly || x.immediate) && (!blank || x.onBlankPage))) {
         // A link verified by its going away that is back on its page (NTL removed by hand, then
         // asked for again) is due again.
         if (clicked.has(a.action) && a.verify === 'gone' && actionHere(a) && findButton(a)) clicked.delete(a.action);
@@ -3372,7 +3381,8 @@
     // the page in front says so: Progressive keeps a hidden frame loaded with Business Owner Info's
     // address for the whole quote, and on every later page it found none of "its" questions and said
     // the page wasn't drawn, so the panel took the top frame's held Continue for "No questions found"
-    // and filled the page once more (live recording, 2026-10-24).
+    // and filled the page once more (live recording, 2026-10-24). On a page the plan has questions for,
+    // only a tile pick is done while it shows none (clickNextAction, W44-03).
     const notDrawn = !report.fields && !report.actions.length && (topPage == null || topPage === startPage) && plan.some((s) => s.pages?.includes(startPage));
     // The panel tries such a page again in a moment, and says nothing of it yet (W43-42).
     if (notDrawn && !report.halted) report.notDrawn = true;

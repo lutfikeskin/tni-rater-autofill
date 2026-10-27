@@ -4,7 +4,8 @@
 // port 8792): loads the sample intake, clears one client fact in All client details (the sample
 // answers every AmWINS client fact), verifies the missing fact holds Save & Continue, supplies
 // explicit synthetic agent answers using trusted browser controls, then resumes from the panel.
-// Checks retained answers after reloads, stops at the declaration and never submits.
+// Checks retained answers after reloads, stops at the declaration and never submits, and that the
+// panel's document never scrolled its header out of view on the way (W44-10).
 // Usage events go to a throwaway local usage server (server/index.mjs on a temporary folder), set
 // as the panel's Server before it opens. The run fails if any request leaves the machine (a host
 // other than localhost: the production usage server, an AI provider, a CDN), if the intake_loaded
@@ -77,6 +78,16 @@ console.log('usage server', usageUrl);
 const mock = await ctx.newPage();
 await mock.goto(MOCK_URL);
 const panel = await ctx.newPage();
+// The panel's document never scrolls: its middle (.view) and dock do. A fill's scrollIntoView once
+// scrolled the document, and at AmWINS' declaration, the last step, the header and client strip
+// stayed out of view (W44-10, 2026-10-26). At a side panel's size, the furthest it ever scrolled.
+await panel.setViewportSize({ width: 400, height: 860 });
+await panel.addInitScript(() => {
+  window.__docScrolled = 0;
+  const note = () => { window.__docScrolled = Math.max(window.__docScrolled, document.scrollingElement?.scrollTop ?? 0); };
+  document.addEventListener('scroll', note, { capture: true, passive: true });
+  setInterval(note, 100);
+});
 await panel.goto(`chrome-extension://${id}/sidepanel/sidepanel.html`);
 await mock.bringToFront();
 // The panel follows the mock's tab, then reads the intake.
@@ -308,6 +319,9 @@ for (let round = 0; round < 20; round++) {
   }
 }
 for (const [, , selector] of AGENT_ANSWERS) if (!agentAnswered.has(selector)) manualFailures.push(`Manual hold wasn't exercised: ${selector}`);
+const docScrolled = await panel.evaluate(() => window.__docScrolled);
+console.log('Panel document scrolled at most:', docScrolled);
+if (docScrolled) console.log('SCROLLED: the panel\'s document scrolled, so its header and client strip went out of view.');
 if (manualFailures.length) console.log('MANUAL:', manualFailures.join('; '));
 // Every step's answers must survive the site's background save and reload (it redraws all
 // steps from what was saved): read them once the last reload has landed.
@@ -461,6 +475,6 @@ if (outside.length) console.log('OFF THIS MACHINE:', outside.join('; '));
 const usageOk = !outside.length && received.includes('intake_loaded') && profileWhole;
 console.log(`Errors: ${errors.length}${errors.length ? ` (${errors.join('; ')})` : ''}`);
 const result = JSON.parse(await Promise.resolve(lastMock));
-const ok = usageOk && !errors.length && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
-console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone with the earlier steps’ reports, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
+const ok = usageOk && !errors.length && !docScrolled && earlierOk && poppedOk && reachedDeclaration && !manualFailures.length && !kept.declaration && !lost.length && result.steps.includes('Underwriting') && savesBefore === 4 && !result.submitted && stayed.step === 'Coverage' && stayed.saves === savesBefore;
+console.log(ok ? 'OK: manual facts held Continue, trusted agent answers survived reloads, going back stayed there, an earlier step showed read-only, the panel popped out alone with the earlier steps’ reports, filled and went back to the side panel, declaration and Submit stayed untouched, usage went only to the local server, nothing left this machine, and nothing logged an error.' : !usageOk ? 'FAILED: a request left this machine, or usage events did not reach the local server.' : errors.length ? 'FAILED: an error was logged (above).' : 'FAILED: the panel’s document scrolled, manual facts did not hold Continue, trusted answers were lost, declaration was ticked, Prev did not stay put, the earlier step was not shown read-only, or Pop out failed.');
 process.exit(ok ? 0 : 1);

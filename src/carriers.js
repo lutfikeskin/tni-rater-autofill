@@ -31,7 +31,11 @@
 // action's `steps`: the only steps it is clicked on. `stopButtons`: screens that are the agent's
 // without a step of their own, by name, each known by a button only it shows (`button`, a pattern on
 // the button's words) with what the panel says there (`note`, or a function of the client record):
-// nothing is filled or clicked on them either (stopScreen below).
+// nothing is filled or clicked on them either (stopScreen below). A screen marked `stopped` is the
+// carrier's stop, not the agent's step (GEICO's referral): said in red, as a stop page.
+//
+// `agentPages`: pages that need the agent whatever the intake says, with the panel's note there;
+// `warnPages`: those whose note is a yellow warning box, with its title (Progressive's NoHit).
 //
 // `world: 'MAIN'` runs the page script in the page's own JavaScript world, needed when the
 // carrier's widgets (e.g. ExtJS) are only reachable through the page's own objects.
