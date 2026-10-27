@@ -87,7 +87,7 @@ test('the business profile the extension builds is one the server keeps whole', 
   const unit = { type: 'Semi Truck', year: 2019, make: 'Freightliner', model: 'Cascadia', vin: 'x', value: 65000 };
   const record = {
     applicant: { dot: '1234567', mc: '654321', fein: '12-3456789', mcDotWithin60Days: false, yearsInBusiness: 4, yearsExperience: 6, ownerDrives: true,
-      email: 'owner@sample-trucking.test', phone: '(555) 010-0199', name: 'Sample Trucking LLC', owner1: 'Jordan Sample' },
+      email: 'owner@sample-trucking.test', phone: '(555) 010-0199' },
     garaging: { state: 'TX' },
     operations: { businessClass: 'Freight Hauler', whatHaul: 'General freight', radius: '500 miles', radiusMiles: 500, vehicleOwnership: 'Owned', personalUse: false, usesEld: true, eldBrand: 'Motive',
       needSr22: false, filingsRequired: true, filingsWhich: 'MCS-90', hazmat: false, hazPlacard: false, movingState: false, teamDriving: false, canadaLoads: false, equipVehicle: 5000 },

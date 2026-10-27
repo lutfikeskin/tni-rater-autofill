@@ -34,8 +34,8 @@ function profile(over = {}) {
 const INTAKE = { client: 'c1'.repeat(32), marked: 'a2'.repeat(32), listed: 'b3'.repeat(32), pdfonly: 'd4'.repeat(32), testpage: 'e5'.repeat(32) };
 const LISTED = 'b3b3b3b3';
 
-// Match codes as the usage server stores them (server/index.mjs matchCodes): no owner on the intake.
-const MATCH = { email: 'a'.repeat(64), phone: 'b'.repeat(64), company: 'c'.repeat(64), owner: null };
+// Match codes as the usage server stores them (server/index.mjs matchCodes): no phone on the intake.
+const MATCH = { email: 'a'.repeat(64), phone: null };
 
 function history() {
   const events = [];
@@ -99,7 +99,7 @@ test('warehouseRows counts quotes as the reviews do, with the last profile and t
   assert.deepEqual([c.drivers, c.vehicles, c.trailers], [1, 2, 1]);
   assert.equal(c.has_claims, false);
   assert.ok(!('dropped' in c.profile) && !('id' in c.profile) && !('match' in c.profile), 'the profile column holds the profile only');
-  assert.deepEqual([c.match_email, c.match_phone, c.match_company, c.match_owner], [MATCH.email, MATCH.phone, MATCH.company, null], 'the codes for joining to the CRM');
+  assert.deepEqual([c.match_email, c.match_phone], [MATCH.email, null], 'the codes for joining to the CRM');
 
   // A quote without a profile keeps the summary logged on load, and nulls for the rest.
   const m = quotes.marked;

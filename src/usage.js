@@ -47,8 +47,8 @@ export async function intakeSummary(pdfBytes, raw, result) {
 
 // What the client's business looks like, without names, numbers or addresses (intake_profile, for
 // TNI's analysis of its quoting): no name, contact, address, identification number, date of birth,
-// VIN or plate, except `contact`, the email, phone, company and owner's name the server turns into
-// match codes for finding the quote's deal in TNI's CRM, and never stores. It is pseudonymous, not anonymous: state, fleet and years together can still point
+// VIN or plate, except `contact`, the email and phone the server turns into match codes for finding
+// the quote's deal in TNI's CRM, and never stores. It is pseudonymous, not anonymous: state, fleet and years together can still point
 // to one carrier. Where an identifier matters, a fact about it instead: whether a USDOT, MC or FEIN
 // number was given (`given`: a valid one; `other`: something else written, such as "Pending"), a
 // driver's age on `today`, the month a policy expires. A yes/no keeps null (unanswered, never No).
@@ -156,7 +156,7 @@ export function intakeProfile(record, { redact = (s) => s, today = new Date() } 
     hasClaims: yesNo(r.claims?.hasClaims),
     // Who the client is, for the server to turn into match codes (matchCodes in server/index.mjs)
     // and never store: the only part of the profile that names the client.
-    contact: { email: contactText(a.email), phone: contactText(a.phone), company: contactText(a.name), owner: contactText(a.owner1) },
+    contact: { email: contactText(a.email), phone: contactText(a.phone) },
   };
 }
 

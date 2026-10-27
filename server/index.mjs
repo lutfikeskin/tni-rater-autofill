@@ -108,7 +108,7 @@ export const EVENT_FIELDS = {
   intake_loaded: ['formVersion', 'answers', 'state', 'businessClass', 'vehicleTypes', 'counts', 'coverages', 'warnings', 'test', 'platform'],
   // What the client's business looks like, never who it is (src/usage.js intakeProfile): when the
   // intake is loaded and after the agent corrects it. Each group is kept in its shape (PROFILE).
-  // contact: the client's email, phone and names, turned into codes (`match`, matchCodes) and never stored.
+  // contact: the client's email and phone, turned into codes (`match`, matchCodes) and never stored.
   intake_profile: ['business', 'operations', 'vehicles', 'trailers', 'trailerInfo', 'drivers', 'coverage', 'priorInsurance', 'hasClaims', 'contact', 'match'],
   // Events the computer's log dropped (full, oldest first): how many.
   usage_lost: ['count'],
@@ -242,21 +242,16 @@ function keepShape(v, spec) {
 }
 
 // Match codes: how TNI finds a quote's deal in its CRM (Bitrix) without the server keeping who the
-// client is. The profile carries the intake's email, phone, company name and first owner's name as
-// written (`contact`); the server turns each into a keyed code (HMAC-SHA256 with MATCH_KEY) of its
+// client is. The profile carries the intake's email and phone as written (`contact`); the server turns each into a keyed code (HMAC-SHA256 with MATCH_KEY) of its
 // normalized form, keeps the codes (`match`) and never stores or logs the values. The maintainer
 // computes the same codes from the CRM's contacts with the same key (matchCodes). A plain hash
 // wouldn't do: every US phone number can be hashed in minutes. Without MATCH_KEY the contact is
 // dropped and named in `dropped`. Changing the key leaves the earlier codes matching nothing.
-export const MATCH_KINDS = ['email', 'phone', 'company', 'owner'];
+export const MATCH_KINDS = ['email', 'phone'];
 export const MATCH_KEY_MIN = 32;
 const MATCH_TEXT_MAX = 200;
-const LEGAL_SUFFIX = new Set(['llc', 'inc', 'incorporated', 'corp', 'corporation', 'co', 'company', 'ltd', 'limited', 'lp', 'llp', 'pllc', 'pc']);
-const NAME_SUFFIX = new Set(['jr', 'sr', 'ii', 'iii', 'iv']);
-const words = (s) => s.toLowerCase().replace(/\./g, '').replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').trim().split(' ').filter(Boolean);
-/** The form a contact value is compared in: the first email or US phone number in it, a company
- * name without punctuation, "The" or a trailing LLC/Inc, an owner's name as its words sorted, without
- * initials or Jr/Sr (so "Smith, John A." is "john smith"); null when nothing usable is left. */
+/** The form a contact value is compared in: the first email address in it, lowercased, or the first
+ * US phone number as its 10 digits; null when there is none. */
 export function normalizeContact(kind, value) {
   if (typeof value !== 'string' || !value.trim() || value.length > MATCH_TEXT_MAX) return null;
   if (kind === 'email') return value.match(/[^\s@,;<>()]+@[^\s@,;<>()]+\.[a-z]{2,}/i)?.[0].toLowerCase() ?? null;
@@ -265,20 +260,9 @@ export function normalizeContact(kind, value) {
     const digits = m ? m[0].replace(/\D/g, '') : '';
     return digits.length === 11 ? digits.slice(1) : digits.length === 10 ? digits : null;
   }
-  if (kind === 'company') {
-    const w = words(value);
-    if (w[0] === 'the') w.shift();
-    while (w.length > 1 && LEGAL_SUFFIX.has(w.at(-1))) w.pop();
-    const s = w.join(' ');
-    return s.length >= 2 ? s : null;
-  }
-  if (kind === 'owner') {
-    const w = words(value).filter((x) => x.length > 1 && !NAME_SUFFIX.has(x) && !/\d/.test(x)).sort();
-    return w.join(' ').length >= 2 ? w.join(' ') : null;
-  }
   return null;
 }
-/** The keyed codes of a contact ({ email, phone, company, owner }: text or null), each null when its
+/** The keyed codes of a contact ({ email, phone }: text or null), each null when its
  * value has no usable form; null when the contact isn't such an object or there's no key. */
 export function matchCodes(contact, key) {
   if (!key || !contact || typeof contact !== 'object' || Array.isArray(contact)) return null;

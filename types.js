@@ -643,7 +643,7 @@
  * @property {object} coverage
  * @property {object[]} priorInsurance
  * @property {boolean | null} hasClaims
- * @property {{ email: string | null, phone: string | null, company: string | null, owner: string | null }} contact  as written on the intake; the usage server turns it into match codes (server/index.mjs matchCodes) and stores only those
+ * @property {{ email: string | null, phone: string | null }} contact  as written on the intake; the usage server turns it into match codes (server/index.mjs matchCodes) and stores only those
  */
 
 /**

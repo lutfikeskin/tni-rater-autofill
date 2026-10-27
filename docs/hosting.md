@@ -62,8 +62,8 @@ memory, so a restart or redeploy starts it again. To stop Luna at once, set the 
 `OPENAI_API_KEY` (then `/v1/luna` answers 501 and the panel says Luna isn't set up). Rotating the
 key is a variable change and a redeploy, with no extension release.
 
-`MATCH_KEY` makes the business profile's match codes: the server turns the intake's email, phone,
-company name and first owner's name into keyed codes (HMAC-SHA256) and stores only those
+`MATCH_KEY` makes the business profile's match codes: the server turns the intake's email and phone
+into keyed codes (HMAC-SHA256) and stores only those
 (`matchCodes` in `server/index.mjs`; [quoting history](quoting-history-database.md#match-codes)).
 Generate it once, at least 32 characters, with
 `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`, and keep it in two

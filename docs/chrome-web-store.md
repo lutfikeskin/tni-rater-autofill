@@ -38,18 +38,18 @@ the store refuses a version it already has.
    - `storage`: "Keeps the loaded intake for the session and the agent's settings."
    - `unlimitedStorage`: "Keeps the usage log on the agent's computer while TNI's usage server
      can't be reached, so what happened isn't lost before it's uploaded (no client names, numbers or
-     addresses, except the contact details that go with the business profile until the server
-     turns them into matching codes; the profile, the codes and problem reports are described in
+     addresses, except the client's email and phone that go with the business profile until the
+     server turns them into matching codes; the profile, the codes and problem reports are described in
      the privacy policy)."
    - Host permissions: "foragentsonly.com / progressive.com / amwinsadmittedplacement.com /
      geico.com: the carrier quote pages it fills. api.openai.com: Luna suggestions for unresolved
      choice questions, a review of the application's claims box, and a check of drivers' first
      names (for the gender TNI assumes), when the agent saved an OpenAI key of their own.
      usage-server-production.up.railway.app: TNI's usage-log server (how the extension is used, a
-     profile of each client's business without names, numbers or addresses, the client's email,
-     phone and names, which the server turns into codes for matching TNI's own client records and
-     doesn't store, and what an agent types into a problem report), which also passes those Luna requests to OpenAI with TNI's key when
-     the agent has none, storing nothing.
+     profile of each client's business without names, numbers or addresses, the client's email and
+     phone, which the server turns into codes for matching TNI's own client records and doesn't
+     store, and what an agent types into a problem report), which also passes those Luna requests
+     to OpenAI with TNI's key when the agent has none, storing nothing.
      localhost: a local test server."
    - Data usage: declare what the extension handles (form content from the intake PDF and carrier
      page, sent to OpenAI when the AI assistant is on, as it is unless the agent turns it off, with
@@ -59,10 +59,10 @@ the store refuses a version it already has.
      request: declare "Personally identifiable information" (name). The usage server gets a
      profile of each client's business (the privacy policy lists it): drivers' ages, marital
      status and gender as the agent set it are personal information too, and the garaging state
-     is a region ("Location"). With the profile, the client's email address, phone number,
-     company name and owner's name reach the usage server, which keeps only keyed codes made from
-     them (to match quotes with TNI's CRM): declare "Personally identifiable information" (name,
-     email address, phone number) for the usage server too. The store also asks to certify that data isn't used for purposes
+     is a region ("Location"). With the profile, the client's email address and phone number
+     reach the usage server, which keeps only keyed codes made from them (to match quotes with
+     TNI's CRM): declare "Personally identifiable information" (email address, phone number) for
+     the usage server too. The store also asks to certify that data isn't used for purposes
      unrelated to the extension's single purpose; analysing TNI's own quoting from the usage log is
      a purpose beyond filling quotes, and so is matching quotes with TNI's CRM. TNI's compliance owner
      should confirm these answers, and that certification, before a version that sends the profile
@@ -119,7 +119,7 @@ What it does
 • AI tips for questions the rules don't cover, on unless you turn them off, through TNI's OpenAI account or your own key; nothing goes in without your approval unless you allow it.
 
 Privacy
-The application stays on your computer for the session. With the AI assistant on (it is unless you turn it off), parts of it go to OpenAI, through TNI's server with TNI's key or directly with your own: client names and numbers are replaced, except drivers' first names, which are sent alone for the gender check. To improve the extension and analyse TNI's own quoting, a usage log (which fields were filled, what you changed afterwards, problems you report) and a profile of each client's business (state, operations, vehicles, drivers' ages, coverages; no names, numbers or addresses) are sent to TNI's server; client names, numbers and what you type into the quote are not stored. The client's email, phone and names go with the profile only so TNI's server can turn them into codes that match TNI's own client records; the server keeps the codes, not the details. A problem report is sent as you type it, with values from the loaded application, if one is loaded, replaced only where they appear exactly as written there, so don't type client details into it.
+The application stays on your computer for the session. With the AI assistant on (it is unless you turn it off), parts of it go to OpenAI, through TNI's server with TNI's key or directly with your own: client names and numbers are replaced, except drivers' first names, which are sent alone for the gender check. To improve the extension and analyse TNI's own quoting, a usage log (which fields were filled, what you changed afterwards, problems you report) and a profile of each client's business (state, operations, vehicles, drivers' ages, coverages; no names, numbers or addresses) are sent to TNI's server; client names, numbers and what you type into the quote are not stored. The client's email and phone go with the profile only so TNI's server can turn them into codes that match TNI's own client records; the server keeps the codes, not the details. A problem report is sent as you type it, with values from the loaded application, if one is loaded, replaced only where they appear exactly as written there, so don't type client details into it.
 
 For TNI agents only.
 ```

@@ -54,8 +54,7 @@ const PROFILE_COLUMNS = [
   ['ntl', 'coverage', 'ntl', 'BOOLEAN', 'Non-trucking liability'],
 ];
 // The profile's match codes (server/index.mjs matchCodes) as quote columns: [column, kind].
-const MATCH_COLUMNS = [['match_email', 'email'], ['match_phone', 'phone'], ['match_company', 'company name'], ['match_owner', "first owner's name"]];
-const MATCH_KEYS = { match_email: 'email', match_phone: 'phone', match_company: 'company', match_owner: 'owner' };
+const MATCH_COLUMNS = [['match_email', 'email'], ['match_phone', 'phone']];
 const UNIT_COLUMNS = [['type', 'VARCHAR'], ['year', 'INTEGER'], ['make', 'VARCHAR'], ['model', 'VARCHAR'], ['value', 'INTEGER', 'Dollars']];
 
 // Every table: its comment, columns ([name, type, comment]) and primary key. A yes/no column is
@@ -251,7 +250,7 @@ export function warehouseRows(events, { testIntakes = [] } = {}) {
       requested: strs(l.coverages),
       has_claims: p ? bool(p.hasClaims) : null,
       profile: p ? Object.fromEntries(PROFILE_GROUPS.filter((g) => Object.hasOwn(p, g)).map((g) => [g, p[g]])) : null,
-      ...Object.fromEntries(MATCH_COLUMNS.map(([c]) => [c, str(group(p?.match)?.[MATCH_KEYS[c]])])),
+      ...Object.fromEntries(MATCH_COLUMNS.map(([c, kind]) => [c, str(group(p?.match)?.[kind])])),
     });
     for (const kind of ['vehicle', 'trailer']) {
       list(p?.[`${kind}s`]).forEach((u, i) => rows.quote_vehicles.push({ session, kind, n: i + 1, type: str(u.type), year: int(u.year), make: str(u.make), model: str(u.model), value: int(u.value) }));
