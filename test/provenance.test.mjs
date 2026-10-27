@@ -141,7 +141,7 @@ const NOT_MAPPED = {
     'operations.vehicleOwnership': 'TNI answers not owned, leased and additional interest No; a lienholder or lessor is added after the quote',
     'operations.usesEld': 'not asked on the Business Auto application',
     'operations.eldBrand': 'not asked on the Business Auto application',
-    'operations.needSr22': 'not asked on the Business Auto application',
+    'operations.needSr22': 'not asked on the Business Auto application; an SR-22 alone is a state filing, so federal filing required stays No (TNI, 2026-10-26)',
     'operations.movingState': 'not asked on the Business Auto application',
     'operations.teamDriving': 'on the intake since 2026-10-02; no AmWINS question for it has been mapped',
     'operations.canadaLoads': 'on the intake since 2026-10; no AmWINS question for it has been mapped',

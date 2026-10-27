@@ -380,14 +380,18 @@ const typeNote = (unit, of) => (r, a) => {
   return type ? `The ${unit} type is yours to pick: the intake says ${quote(type)}.` : `The intake has no type for this ${unit}: pick it yourself.`;
 };
 // TNI, 2026-10-21: a cargo van (the intake's "Van", or "Cargo Van") is GEICO's Delivery Van, not
-// one of its four other vans, and a Semi Truck is GEICO's Tractor. Any other type stays the
-// agent's pick.
+// one of its four other vans, and a Semi Truck is GEICO's Tractor. Any other type but a box truck
+// (below) stays the agent's pick.
 const CARGO_VAN = /^(?:cargo\s+)?van$/i;
 const SEMI_TRUCK = /^semi[\s-]*truck$/i;
+// TNI, 2026-10-26, W44-32 (PA live run: the agent picked Box/Straight Truck): an intake "Box Truck"
+// is GEICO's Box Truck where GEICO offers one, else its Box/Straight Truck (`choiceAliases`, in order).
+const BOX_TRUCK = /^box\s+truck$/i;
 const vehicleType = (r, a) => {
   const type = String(vehicleOf(r, a)?.type ?? '').trim();
-  return CARGO_VAN.test(type) ? 'Delivery Van' : SEMI_TRUCK.test(type) ? 'Tractor' : null;
+  return CARGO_VAN.test(type) ? 'Delivery Van' : SEMI_TRUCK.test(type) ? 'Tractor' : BOX_TRUCK.test(type) ? 'Box Truck' : null;
 };
+const vehicleTypeAliases = (r, a) => (vehicleType(r, a) === 'Box Truck' ? ['Box/Straight Truck'] : []);
 const valueNote = (unit, of) => (r, a) => {
   const v = of(r, a)?.value;
   return v != null && typeof v !== 'number' ? `The intake's ${unit} value ${quote(v)} isn't a dollar amount: enter it yourself.` : null;
@@ -1066,8 +1070,8 @@ export const geico = {
       { field: 'GiveMake', path: 'vehicles[].make', name: 'Vehicle make', kind: 'choice', verifyOnly: hasVin },
       { field: 'GiveModel', path: 'vehicles[].model', name: 'Vehicle model', kind: 'choice', verifyOnly: hasVin },
       // 40 kinds of vehicle: "Van" alone is five of them.
-      { field: 'GiveOtherVehicleType', waitFor: afterDecode, ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', kind: 'choice',
-        source: (r, a) => (vehicleType(r, a) ? 'standard' : null), value: vehicleType, note: (r, a) => (vehicleType(r, a) ? null : typeNote('vehicle', vehicleOf)(r, a)) },
+      { field: 'GiveOtherVehicleType', waitFor: afterDecode, ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, Box Truck or else Box/Straight Truck for a box truck, else the agent\'s pick)', kind: 'choice',
+        source: (r, a) => (vehicleType(r, a) ? 'standard' : null), value: vehicleType, choiceAliases: vehicleTypeAliases, note: (r, a) => (vehicleType(r, a) ? null : typeNote('vehicle', vehicleOf)(r, a)) },
       { field: 'GiveAnyVehicleCustomizationYesNo', waitFor: afterDecode, ask: 'Does the customer have any customizations?', path: 'operations.equipVehicle', name: 'Customizations (from the attached equipment value)',
         kind: 'bool', source: valueSource(noEquipValue), clientFact: true, value: customization, note: customizationNote },
       { field: 'GiveTotalCustomizationValue', waitFor: afterDecode, ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', name: 'Customization value (the attached equipment value, else TNI: 0)',

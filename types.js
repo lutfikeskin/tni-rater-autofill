@@ -132,6 +132,7 @@
  *   lookup's, or a bulk helper's such as AmWINS' "Default all answers to No"); a function: only for these clients
  * @property {boolean} [trustPage]
  * @property {boolean} [keepChoice]
+ * @property {boolean} [keepPreset]  a choice the carrier already made (a pre-selection, such as Progressive's anti-theft device from its VIN lookup) is kept as it is, without a check, also with Replace existing answers: only an empty one is answered
  * @property {boolean} [keepUnlisted]
  * @property {boolean} [whenOffered]
  * @property {{ count: string, one?: string, after: string, name: string }} [orMost]
@@ -354,6 +355,7 @@
  * @property {boolean} replace
  * @property {boolean} trustPage
  * @property {boolean} keepChoice
+ * @property {boolean} keepPreset
  * @property {boolean} keepUnlisted
  * @property {boolean} whenOffered
  * @property {{ count: string, one: string | null, after: string, name: string } | null} orMost

@@ -166,6 +166,11 @@ const excludedDriver = (r, a) => r.drivers?.[a.drivers ?? 0]?.excluded === true;
 // TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
 // the driver took a course (or the Additional Notes box does); then it's the agent's.
 const defensiveMention = (r) => String(otherNotes(r) ?? '').match(/[^\n.]*defensive[^\n.]*/i)?.[0].trim().slice(0, 80) ?? null;
+// KY's wording asks about an Armed Forces course (W44-32): a course the notes mention that isn't
+// said to be military doesn't change its No (TNI, 2026-10-26: answer to PR question); one that is
+// stays the agent's.
+const ARMED_FORCES_COURSE = { field: 'DriverInput.DefensiveDriverDiscount', label: 'armed forces' };
+const militaryCourse = (r) => (/\b(military|armed forces|army|navy|naval|air force|marines?|coast guard|national guard)\b/i.test(defensiveMention(r) ?? '') ? defensiveMention(r) : null);
 
 // A driver's accidents, claims or violations: the claims box's Yes or No. TNI (2026-10-19, after a
 // live run): when it gives neither, No (standard) unless the intake's notes (the claims box's
@@ -245,10 +250,12 @@ const filingsNote = (r) => (r.operations.filingsRequired === true && !r.applican
   : filingsHint(r) ? `The intake leaves "filings required" blank but ${filingsHint(r)}: answer it yourself.` : null);
 // "Are state or federal filings required?" TNI (2026-10-19, after a live run): left blank on an
 // intake with no USDOT or MC number, No (standard), also when the intake says one is coming
-// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number,
-// filings named or an SR-22 needed, a blank answer stays the agent's. (The Filings page's answers
-// keep `filings`: that page shows only after a Yes.)
-const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && !r.applicant.dot && !r.applicant.mc && !filingsHint(r);
+// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number, No
+// too, as on every carrier (TNI, 2026-10-26: answer to PR question, replacing the 2026-10-19 rule
+// that left it to the agent), except on a quote that is or may be NTL (W44-28's). Filings named or an
+// SR-22 needed leave a blank to the agent. (The Filings page's answers keep `filings`: that page
+// shows only after a Yes. `filingsBlankNoNumber` keeps the 2026-10-19 rule's name.)
+const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && (notNtl(r) || (!r.applicant.dot && !r.applicant.mc)) && !filingsHint(r);
 const filingsAsked = (r) => (filingsBlankNoNumber(r) ? false : filings(r));
 const filingsSource = (r) => (filingsBlankNoNumber(r) ? 'standard' : 'derived');
 const usesEld = (r) => explicitBoolean(r, 'operations.usesEld');
@@ -753,7 +760,7 @@ export const progressive = {
       { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
       { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },
       { q: 'C1', field: 'AccountInput.BlanketWOSQuestion', ask: 'Is a Blanket Waiver of Subrogation endorsement needed by contract?', name: 'Blanket waiver of subrogation (preserve prefilled value)', ignore: true },
-      { q: 'CA', source: filingsSource, field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank with no USDOT or MC number)', kind: 'bool', value: filingsAsked, note: filingsNote },
+      { q: 'CA', source: filingsSource, field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank)', kind: 'bool', value: filingsAsked, note: filingsNote },
       { q: 'D1', source: 'derived', field: 'PolicyInput.ELDHoursOfServiceRecords', ask: 'Is an Electronic Logging Device (ELD) required to record hours of service?', name: 'Electronic logging', kind: 'bool', value: usesEld, note: eldNote },
     ]),
 
@@ -774,8 +781,15 @@ export const progressive = {
       { q: '2BCB', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (from VIN lookup)', ignore: true },
       // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
       // a box the lookup leaves empty goes to the agent.
-      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
+      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
         q, field, ask, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
+      })),
+      // The anti-theft device: Progressive's own choice (the VIN lookup's) when it made one, and None
+      // when it didn't (TNI, 2026-10-26, W44-32: "If not selected automatically, no"; KY live run, where
+      // the list was unfamiliar and the agent picked None). FL's list (None, Standard, Recovery) and
+      // KY's (None, Anti-Theft Device 1 to 3, with no caption of its own) have their own names.
+      ...[['2BAC', 'RiskInput.AntiTheftDevice', 'Anti-Theft Device Discount'], ['2CFA', 'RiskInputNonShredded.AntiTheftDeviceAgentOptions', null]].map(/** @returns {CarrierRule} */ ([q, field, ask]) => ({
+        q, field, ...(ask ? { ask } : {}), source: 'standard', name: 'Anti-theft device (Progressive\'s, else TNI: None)', kind: 'choice', value: () => 'None', keepPreset: true,
       })),
       // Asked only when the VIN lookup decodes a vehicle other than the tile picked from the intake's
       // type (TN 2026-10-08: an intake "Van" whose VIN was a truck tractor). The agent's pick, with
@@ -848,8 +862,14 @@ export const progressive = {
       { q: '2960', field: 'DriverInput.CDLYearUnknow', ask: 'Year is unknown', name: 'CDL year unknown (the agent\'s)', ignore: true },
       // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; a course the
       // intake's description box mentions is the agent's. (299D: the id when it was first seen,
-      // after the renumbering.)
-      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
+      // after the renumbering.) KY asks it about an Armed Forces course: the same No (TNI, 2026-10-26,
+      // W44-32: "Military Stuff NO"; the agent confirmed the fill's No, held as reworded), also with a
+      // course in the notes not said to be military (TNI, 2026-10-26: answer to PR question). Each
+      // wording is its own rule, told by the question's text (ARMED_FORCES_COURSE).
+      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', unlessShown: ARMED_FORCES_COURSE,
+        ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
+      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', whenShown: ARMED_FORCES_COURSE,
+        ask: 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?', name: 'Armed Forces defensive driving course (standard: No)', kind: 'bool', value: (r) => (militaryCourse(r) ? null : false), note: (r) => (militaryCourse(r) ? `The intake's notes mention a military defensive driving course ("${militaryCourse(r)}"): answer it yourself.` : null) },
       // No: the driver is listed on the intake to be covered. Yes for a driver the intake marks
       // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver).
       { q: '28C1', source: 'derived', field: 'DriverInput.DriverExcludedInd', ask: 'Exclude this driver from the policy?', name: 'Exclude driver (No unless the intake marks them excluded)', kind: 'bool', value: excludedDriver },

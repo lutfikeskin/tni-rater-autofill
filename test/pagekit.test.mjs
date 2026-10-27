@@ -3304,6 +3304,94 @@ test('a question whose wording carries a date is not flagged as reworded when th
   assert.equal(report.unknown.length, 0);
 });
 
+// KY live run, 2026-10-26 (W44-32): Progressive asked the defensive driver discount about an Armed
+// Forces course, with No pre-selected; the fill kept it but held Continue on a reworded check, and the
+// agent confirmed No. That wording is now one of the rule's: TNI's No, no check.
+test('the defensive driver discount asked about an Armed Forces course is TNI\'s No, not a reworded check (W44-32)', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false } };
+  const plan = buildPlan(record, progressive).filter((s) => s.q === '299D');
+  for (const preset of [null, 'No']) {
+    const h = harness({ search: '?pageName=AddDriver' });
+    const radios = ['Yes', 'No'].map((value) => makeInput({ name: 'r_defensive', type: 'radio', value, checked: value === preset, attrs: { fieldref: 'DriverInput.DefensiveDriverDiscount' } }));
+    h.document.body.append(radioGroup('Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?', ...radios));
+    const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true });
+    assert.equal(radios.find((r) => r.checked)?.value, 'No', String(preset));
+    assert.deepEqual([report.reworded.length, report.checks.length, report.unknown.length], [0, 0, 0], String(preset));
+  }
+});
+
+// TNI, 2026-10-26 (answer to PR question, W44-32): the Armed Forces wording is No also when the notes
+// mention a defensive driving course that isn't said to be military. The old wording keeps such a
+// course the agent's, and a military course stays the agent's in either wording.
+test('a civilian defensive driving course in the notes: the Armed Forces wording stays TNI\'s No, the old wording the agent\'s', async () => {
+  const ARMED = 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?';
+  const fillWith = async (question, notes) => {
+    const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [{ first: 'Test', last: 'Driver' }], vehicles: [], trailers: [], priorInsurance: [], coverage: {}, claims: { hasClaims: false }, notes: { text: notes } };
+    const h = harness({ search: '?pageName=AddDriver' });
+    const radios = ['Yes', 'No'].map((value) => makeInput({ name: 'r_defensive', type: 'radio', value, attrs: { fieldref: 'DriverInput.DefensiveDriverDiscount' } }));
+    h.document.body.append(radioGroup(question, ...radios));
+    const report = await h.kit.fill(buildPlan(record, progressive).filter((s) => s.q === '299D'), { maxRounds: 4, replaceChoices: true });
+    return { picked: radios.find((r) => r.checked)?.value ?? null, report, theirs: [...report.noData, ...report.checks].map((x) => x.note).join(' ') };
+  };
+  const civilian = 'Driver took a defensive driving course last year.';
+  const armed = await fillWith(ARMED, civilian);
+  assert.equal(armed.picked, 'No');
+  assert.deepEqual([armed.report.reworded.length, armed.report.checks.length, armed.report.noData.length, armed.report.unknown.length], [0, 0, 0, 0]);
+  const old = await fillWith('Defensive Driver Discount', civilian);
+  assert.equal(old.picked, null, 'the old wording: the agent\'s');
+  assert.match(old.theirs, /defensive driving course/);
+  const military = await fillWith(ARMED, 'Completed the Army defensive driving course in 2024.');
+  assert.equal(military.picked, null, 'a military course: the agent\'s');
+  assert.match(military.theirs, /Army defensive driving course/);
+});
+
+// KY live run, 2026-10-26 (W44-32): Progressive's anti-theft list (no caption of its own) was
+// unfamiliar and required, with nothing selected; the agent picked None. TNI: None when Progressive
+// hasn't selected one, and its own choice (the VIN lookup's) kept as it is, without a check, also with
+// Replace existing answers; Progressive's other pre-selected answers are still replaced.
+test('Progressive\'s anti-theft device: None when nothing is selected, Progressive\'s own choice kept (keepPreset, W44-32)', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [{ type: 'Van' }], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive, { vehicles: 0 }).filter((s) => s.q === '2CFA');
+  assert.equal(plan.length, 1);
+  for (const overwrite of [false, true]) {
+    for (const [current, kept] of [['', 'None'], ['Anti-Theft Device 2', 'Anti-Theft Device 2'], ['None', 'None']]) {
+      const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+      const list = addExtText(h, 'c', '2CFA', { caption: ' ', ref: 'RiskInputNonShredded.AntiTheftDeviceAgentOptions', required: true, value: current });
+      const records = ['', 'None', 'Anti-Theft Device 1', 'Anti-Theft Device 2', 'Anti-Theft Device 3'].map((label) => ({ get: () => label }));
+      Object.assign(list.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+      const report = await h.kit.fill(plan, { maxRounds: 4, replaceChoices: true, overwrite });
+      const where = `${current || 'empty'}${overwrite ? ', replace existing answers' : ''}`;
+      assert.equal(list.cmp.getValue(), kept, where);
+      assert.equal(report.filled.length, current ? 0 : 1, where);
+      assert.deepEqual([report.checks.length, report.unknown.length, report.leftRequired.length, report.blockers.length], [0, 0, 0, 0], where);
+    }
+  }
+});
+
+// The same rule when Progressive selects a device a moment after the fill gave None (a late answer
+// from its VIN lookup): Progressive's choice is kept, not overwritten with None again (PR #196 review).
+test('Progressive\'s anti-theft device selected by the page after the fill gave None: its choice is kept, not given None again (keepPreset)', async () => {
+  const record = { applicant: {}, garaging: {}, operations: { businessClass: 'Expediter' }, drivers: [], vehicles: [{ type: 'Van' }], trailers: [], priorInsurance: [], coverage: {}, claims: {} };
+  const plan = buildPlan(record, progressive, { vehicles: 0 }).filter((s) => s.q === '2CFA');
+  // 20 ms: while the fill is still on the page (this harness's pages settle at once).
+  for (const [overwrite, ms] of [[false, 20], [true, 20]]) {
+    const h = harness({ ext: true, search: '?pageName=AddVehicle' });
+    let late = false;
+    const list = addExtText(h, 'c', '2CFA', { caption: ' ', ref: 'RiskInputNonShredded.AntiTheftDeviceAgentOptions', required: true, value: '',
+      onSet: (cmp, v) => {
+        if (v !== 'None' || late) return;
+        late = true;
+        setTimeout(() => { cmp._value = 'Anti-Theft Device 2'; cmp.el.dom.value = cmp._value; }, ms);
+      } });
+    const records = ['', 'None', 'Anti-Theft Device 1', 'Anti-Theft Device 2', 'Anti-Theft Device 3'].map((label) => ({ get: () => label }));
+    Object.assign(list.cmp, { displayField: 'label', valueField: 'label', store: { getRange: () => records } });
+    const report = await h.kit.fill(plan, { maxRounds: 6, replaceChoices: true, overwrite });
+    const where = `${ms} ms${overwrite ? ', replace existing answers' : ''}`;
+    assert.equal(list.cmp.getValue(), 'Anti-Theft Device 2', where);
+    assert.deepEqual([report.filled.length, report.failed.length, report.checks.length], [0, 0, 0], `${where}: ${JSON.stringify(report.failed)}`);
+  }
+});
+
 // AmWINS' vehicle rows after Import Valid Records: each row shows a VIN, in the import's order,
 // not the intake's. A step with a `witness` takes the row whose VIN is its unit's; a unit whose
 // VIN is on no row (rejected by the import) or on two stays the agent's, named without its VIN.
@@ -5544,6 +5632,24 @@ function geicoBar(h, current, { title } = {}) {
 // A GEICO text box or list: named Id_<data-model name>_<render number>.
 const geicoBox = (stem, n, ariaLabel, props = {}) => makeInput({ id: `Id_${stem}_${n}`, name: `Id_${stem}_${n}`, ariaLabel, ...props });
 const geicoList = (stem, n, ariaLabel, options, props = {}) => new SelectNode(options, { id: `Id_${stem}_${n}`, name: `Id_${stem}_${n}`, ariaLabel, ...props });
+
+// PA live run, 2026-10-26 (W44-32): an intake "Box Truck" was the agent's, who picked Box/Straight
+// Truck. TNI: GEICO's Box Truck where it offers one, else its Box/Straight Truck (shown so, valued
+// "Straight Truck").
+test('GEICO\'s vehicle type for an intake box truck: Box Truck where offered, else Box/Straight Truck (W44-32)', async () => {
+  const record = { ...geicoRecord(), operations: { businessClass: 'Expediter' }, vehicles: [{ type: 'Box Truck', year: 2021, make: 'FORD', model: 'F-650', vin: null }] };
+  const step = buildPlan(record, geico, { vehicles: 0 }).find((s) => s.field === 'GiveOtherVehicleType' && s.value != null);
+  assert.deepEqual([step.value, step.choiceAliases, step.standard], ['Box Truck', ['Box/Straight Truck'], true]);
+  const LIST = ['Please Select', 'Full Size Van', 'Delivery Van', 'Pickup Truck', { text: 'Box/Straight Truck', value: 'Straight Truck' }, 'Flatbed Truck', 'Tractor'];
+  for (const [options, picked] of [[LIST, 'Straight Truck'], [[...LIST, 'Box Truck'], 'Box Truck']]) {
+    const h = harness({ pathname: '/quote' });
+    const list = geicoList('GiveOtherVehicleType', 7, 'Which of the following best describes the customer\'s vehicle?', options, { required: true });
+    h.document.body.append(list);
+    const report = await h.kit.fill([{ ...step, steps: null, whenShown: null, waitFor: null }], { maxRounds: 2, replaceChoices: true });
+    assert.equal(list.value, picked);
+    assert.equal(report.failed.length, 0);
+  }
+});
 
 test('GEICO\'s step is its progress bar\'s part under way while the title names it too; pages without a bar read their headings', async () => {
   const h = harness({ pathname: '/quote' });
