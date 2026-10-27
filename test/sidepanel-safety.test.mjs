@@ -8,7 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
-import { unitToAdd, unitListSpecs, advanceFor } from '../src/units.js';
+import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
+import { buildPlan } from '../src/plan.js';
 import { intakeNotes } from '../src/normalize.js';
 import { amwins } from '../src/carriers/amwins.js';
 import { geico } from '../src/carriers/geico.js';
@@ -1043,7 +1044,7 @@ test('warning-only automatic follow-ups render and log unfamiliar fields without
     fillEvents: () => [{ type: 'fill_field', result: 'unfamiliar' }], knownStep,
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: (...events) => logged.push(...events), currentSession: () => null },
     runAssist: (result, ctx) => assisted.push({ result, ctx, filling: state.filling }),
-    pickListItem: async () => {}, retireAiOrigins: async () => {},
+    pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {},
     afterFill: () => {},
     runPendingPage: () => {}, fillProblem() {}, reportShown: () => true,
   };
@@ -1083,7 +1084,7 @@ test('an automatic fill shows the report of a unit that has none yet', async () 
     redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
     runAssist: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {}, fillProblem() {}, reportShown: () => true,
     // The list moved the picker to the vehicle it adds (pickUnitToAdd).
-    pickListItem: async () => { state.active.vehicles = next; },
+    pickListItem: async () => { state.active.vehicles = next; }, noteMissingUnit: () => {},
     reportKey: (tabId, page, carrier, active = state.active) => `v${active.vehicles}`,
   };
   context.renderSteps ??= () => {};
@@ -2396,7 +2397,7 @@ test('the follow-up fill a Luna request waited for asks it, even with nothing un
       state, Date, crypto, rulesVersion: null, $: () => ({ checked: false }), pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit: async () => frames.map((result) => ({ result })), rememberFill: () => {}, renderReport: (result) => rendered.push(result),
       recordLayout: () => {}, fillEvents: () => [], redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
-      runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, retireAiOrigins: async () => {},
+      runAssist: (result, ctx) => assisted.push(ctx.page), pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {},
       afterFill: () => followUp, runPendingPage: () => {}, viewOf: () => 't1',
     };
     context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
@@ -3330,7 +3331,7 @@ test('an automatic fill readies its tab for layouts only when it went through', 
       state, Date, crypto, rulesVersion: null, pageOf: (url) => url, tellRecorder: async () => {}, buildPlan: () => [], fillOptions: (_, options) => options,
       runKit, rememberFill: () => {}, renderReport: () => {}, recordLayout: () => {}, fillEvents: () => [],
       redactionTerms: () => [], redactor: () => (s) => s, usage: { log: () => {}, currentSession: () => null },
-      runAssist: () => {}, pickListItem: async () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
+      runAssist: () => {}, pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {}, afterFill: () => {}, runPendingPage: () => {},
       $: () => ({ checked: false, append() {} }), h: () => ({}), viewOf: () => 't1', fillProblem() {}, reportShown: () => true,
     };
     context.reportKey = () => 'k'; state.reports = new Map([['k', {}]]);
@@ -3712,7 +3713,7 @@ function stopHarness(page = 'DeclinationNotice') {
     setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; }, clearTimeout: () => {},
     usage: { log: (...events) => logged.push(...events), currentSession: () => ({ id: 'quote-1' }) },
     runKit: async (...args) => { kits.push(args); return []; }, tellRecorder: async () => {}, ensureRecorder: async () => {},
-    pickListItem: async () => {}, retireAiOrigins: async () => {}, buildPlan: () => [], fillOptions: () => ({}),
+    pickListItem: async () => {}, noteMissingUnit: () => {}, retireAiOrigins: async () => {}, buildPlan: () => [], fillOptions: () => ({}),
     scheduleLayout: () => {}, store: { set: async () => {} },
   };
   vm.runInNewContext(`${PAGE_HELPERS}\n${['showStopPage', 'stopPageIsOurs', 'fillPage', 'scheduleAutoFill', 'autoFill', 'aiActionCurrent', 'onRecorderMessage', 'viewOf', 'saveViews', 'stepScope'].map(extractFunction).join('\n')}`, context);
@@ -4154,7 +4155,7 @@ function fillHarness({ carrier = { id: 'amwins', practice: false, layoutSteps: a
   const seen = { plan: null, logged: [], rendered: 0, reportTabs: [], problems: [], layouts: 0, persistedKeys: [], persistedActions: [], afterFill: [], options: null };
   const context = {
     state, URL, crypto, Date, rulesVersion: rules, $: (id) => ui[id], pageOf: (url) => new URL(url).pathname, onQuotePage: () => true, showStopPage() {},
-    clearTimeout() {}, setTimeout: () => 1, pickListItem: async () => {},
+    clearTimeout() {}, setTimeout: () => 1, pickListItem: async () => {}, noteMissingUnit: () => {},
     buildPlan: (record, c, active) => { seen.plan = { client: record.client, active: { ...active } }; return []; },
     fillOptions: () => ({}), pendingAi: () => [], ensureRecorder: async () => {}, tellRecorder: async () => {}, retireAiOrigins: async () => {},
     runKit: async (tabId, carrier, func, args) => { seen.options = args[1]; markStarted(); return pending; }, afterFill: (frames, ctx) => { seen.afterFill.push(ctx); return false; }, recordLayout: () => { seen.layouts++; },
@@ -6968,7 +6969,7 @@ test('GEICO: the next intake unit not on the quote is the one added; never one l
       persistDoneActions: () => { calls.persisted++; },
       save: async () => { calls.saved++; },
       renderPickers: () => { calls.rendered++; },
-      unitToAdd, unitListSpecs,
+      unitToAdd, unitListSpecs, unitMissing, buildPlan,
     };
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
     const ctx = { tabId: 4, intake, revision: 1, asked, settings: { autoAdvance, autoPages } };
@@ -7312,7 +7313,7 @@ test('a unit list not read as complete is said in counts in the usage log', asyn
     const state = { tab: { id: 4 }, intake: { record }, intakeRevision: 1, active: { vehicles: 1, drivers: 0, trailers: 0 },
       unitForms: { vehicles: {}, drivers: {}, trailers: {}, ...unitForms }, doneActions: new Set() };
     const context = { state, knownStep, runKit: async () => [{ result: { step: 'Vehicles', forms: [], lists } }], fillCurrent: () => true,
-      persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs };
+      persistDoneActions: () => {}, save: async () => {}, renderPickers: () => {}, unitToAdd, unitListSpecs, unitMissing, buildPlan };
     vm.runInNewContext(extractFunction('pickUnitToAdd'), context);
     const ctx = { tabId: 4, intake: state.intake, revision: 1, settings: { autoAdvance: true } };
     await context.pickUnitToAdd(geico, ctx);
@@ -8494,4 +8495,68 @@ test('the next-step watch reads a frame without the kit as nothing, without thro
   await context.watchNextStep({ id: 'amwins' }, 'Step', 'same', 'Step||Vehicles');
   assert.deepEqual(thrown, []);
   assert.equal(fills, 1, 'the next step is filled');
+});
+
+// W44-05, GEICO PA (2026-10-26): the agent left Vehicles during the van's form and confirmed "Yes,
+// Discard Changes"; the van's form kept the van bound (unitForms), so back on Vehicles the next blank
+// form was filled as the box truck, and the van was never added. A discarded form lets go of its unit.
+test('a unit form the agent discards no longer holds its unit; other forms and clicks change nothing', () => {
+  const persisted = [];
+  const state = { tab: { id: 4 }, unitForms: { vehicles: { VAN: 0, OTHER: 1 }, drivers: { D: 0 }, trailers: {} } };
+  const context = { state, persistUnitForms: (tabId, forms) => persisted.push([tabId, JSON.parse(JSON.stringify(forms))]) };
+  vm.createContext(context);
+  vm.runInContext(extractFunction('releaseDiscardedForms'), context);
+  context.releaseDiscardedForms([{ list: 'vehicles', id: 'VAN', blank: false }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.unitForms)), { vehicles: { OTHER: 1 }, drivers: { D: 0 }, trailers: {} });
+  assert.equal(persisted.length, 1);
+  // A form no fill bound, or none on screen: nothing to let go, nothing saved.
+  context.releaseDiscardedForms([{ list: 'vehicles', id: 'NEW', blank: true }]);
+  context.releaseDiscardedForms([]);
+  assert.equal(persisted.length, 1);
+});
+
+// W44-05: only the agent's Yes to GEICO's discard question lets go of the forms on screen. "Discard
+// Changes" only opens the question, and "No, please don't discard." keeps the form and its answers: let
+// go there, the form the agent kept would be filled as the next unit picked (the mock's #action-modal).
+test('only a confirmed discard, with the forms on screen, lets go of their units', () => {
+  const state = { intake: { record: {} }, tab: { id: 4, carrier: { id: 'geico' } }, unitForms: { vehicles: { VAN: 0 }, drivers: {}, trailers: {} } };
+  const context = { state, usage: { log() {} }, pageOf: (u) => u, samePage: (p) => p, viewOf: () => 't1', knownStep: () => undefined,
+    redactor: () => (s) => s, redactionTerms: () => [], agentHelperDone() {}, persistUnitForms() {} };
+  vm.createContext(context);
+  vm.runInContext(['releaseDiscardedForms', 'onRecorderMessage'].map(extractFunction).join('\n'), context);
+  const click = (text, forms = [{ list: 'vehicles', id: 'VAN', blank: false }]) => context.onRecorderMessage({ ra: 'usage', event: 'agent_click', page: '/quote', text, forms }, { tab: { id: 4 }, frameId: 0 });
+  for (const text of ['Discard Changes', 'No, please don\'t discard.', 'Save and Continue']) {
+    click(text);
+    assert.deepEqual(Object.keys(state.unitForms.vehicles), ['VAN'], text);
+  }
+  click('Yes, please discard.', null);
+  assert.deepEqual(Object.keys(state.unitForms.vehicles), ['VAN'], 'no forms sent');
+  click('Yes, please discard.');
+  assert.deepEqual(Object.keys(state.unitForms.vehicles), [], 'the confirm lets go');
+  state.unitForms.vehicles.VAN = 0;
+  click('Yes, Discard Changes');
+  assert.deepEqual(Object.keys(state.unitForms.vehicles), [], 'the live run\'s words');
+});
+
+// W44-01: the unit pickUnitToAdd found missing from the list with nothing to add it is an item the top
+// frame's report leaves for the agent, holding its Continue; nothing for another frame, a halted fill,
+// or when nothing is missing.
+test('a unit missing from the list with no helper for it is left for the agent in the top frame\'s report', () => {
+  const context = { unitMissingItem };
+  vm.createContext(context);
+  vm.runInContext(extractFunction('noteMissingUnit'), context);
+  const record = { applicant: { ownerDrives: null }, drivers: [{ first: 'Pat', last: 'Owner' }, { first: 'Sam', last: 'Second' }] };
+  const ctx = { carrier: geico, intake: { record }, unitMissing: { list: 'drivers', index: 1 } };
+  const results = [{ frameId: 3, result: { noData: [], blockers: [] } }, { frameId: 0, result: { noData: [], blockers: ['continue: none to click'] } }];
+  context.noteMissingUnit(results, ctx);
+  assert.deepEqual(results[0].result, { noData: [], blockers: [] });
+  const top = results[1].result;
+  assert.deepEqual(JSON.parse(JSON.stringify([top.noData.map((x) => [x.label, x.path]), top.blockers])), [[['Add Driver', 'drivers[1]']], ['continue: none to click', 'needs you: Add Driver']]);
+  assert.match(top.noData[0].note, /^Sam Second \(driver 2 of the intake\)/);
+  const halted = [{ frameId: 0, result: { halted: true, noData: [], blockers: [] } }];
+  context.noteMissingUnit(halted, ctx);
+  assert.equal(halted[0].result.noData.length, 0);
+  const none = [{ frameId: 0, result: { noData: [], blockers: [] } }];
+  context.noteMissingUnit(none, { ...ctx, unitMissing: null });
+  assert.equal(none[0].result.noData.length, 0);
 });

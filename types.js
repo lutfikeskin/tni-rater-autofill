@@ -240,6 +240,7 @@
  * @property {string[]} steps
  * @property {string} selector
  * @property {UnitList[]} lists
+ * @property {(record: ClientRecord, list: UnitList, index: number) => string} [missing]  what the panel says of an intake unit the list on screen doesn't have and no helper adds (src/units.js unitMissing, W44-01)
  */
 
 /**
