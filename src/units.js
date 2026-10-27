@@ -31,8 +31,8 @@ const MARKER = { vehicles: 'vehicleEntered', trailers: 'trailerEntered', drivers
 // intake's order (vehicles, then trailers), and the `marks` to add to the done actions
 // (`<unit>Entered:<i>`, as Progressive's are). A unit is on the quote once a fill answered a form for
 // it or the list shows it; the driver GEICO lists itself (listedDriver) is never added, and the one
-// its quote leaves out (omittedDriver: the owner's row when the intake says the owner doesn't drive,
-// TNI 2026-10-26, T1) is no unit of the list at all, neither added nor counted. Nothing is
+// its quote leaves out (omittedDriver: the owner's row, the first, when the intake says the owner
+// doesn't drive or marks that row Excluded, TNI 2026-10-26 and 2026-10-27, T1, V3, V4) is no unit of the list at all, neither added nor counted. Nothing is
 // added while the list holds as many units as the intake or more. A unit the list can't be read for
 // (no VIN, a name another driver's holds), while the list has a row no intake unit is known to be
 // on, may be that row (added by hand): it is taken as on the quote, left to the agent, never added

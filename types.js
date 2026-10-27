@@ -284,7 +284,7 @@
  * @property {UnitListSpec[]} [unitLists]
  * @property {UnitNameSpec[]} [unitNames]
  * @property {(record: ClientRecord) => number} [listedDriver]  the intake driver the carrier lists itself, -1 for none
- * @property {(record: ClientRecord) => number} [omittedDriver]  the intake driver the carrier's quote leaves out (GEICO: the owner's row when the intake says the owner doesn't drive): never added, never an Add Driver form's, not a row of its driver list; -1 for none
+ * @property {(record: ClientRecord) => number} [omittedDriver]  the intake driver the carrier's quote leaves out (GEICO: the owner's row, the first, when the intake says the owner doesn't drive or marks that row Excluded): never added, never an Add Driver form's, not a row of its driver list; -1 for none
  * @property {{ [page: string]: string | null | ((record: ClientRecord) => string | null) }} [agentPages]
  * @property {{ [page: string]: string }} [stopPages]
  * @property {{ [step: string]: string }} [stopSteps]

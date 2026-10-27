@@ -79,8 +79,16 @@ test('owner drives No: the owner\'s row is never added, and GEICO\'s driver list
   // A row that isn't Casey (the agent added the owner by hand): not complete, and nothing added.
   out = unitToAdd(geico, no, DRV, list(1, [true, false]));
   assert.deepEqual([out.adding, out.complete], [null, false]);
-  // The owner listed second: the first driver is added.
-  assert.deepEqual(unitToAdd(geico, record(false, [{ first: 'Casey', last: 'Example' }, { first: 'Pat', last: 'Owner' }]), DRV, list(0, [false, false])).adding, { list: 'drivers', index: 0 });
+  // The owner's name on the second row: the first row is the owner's all the same (TNI, 2026-10-27:
+  // answer to PR question V4), so the second is added (before V4: the first, by name).
+  assert.deepEqual(unitToAdd(geico, record(false, [{ first: 'Casey', last: 'Example' }, { first: 'Pat', last: 'Owner' }]), DRV, list(0, [false, false])).adding, { list: 'drivers', index: 1 });
+  // The owner's row marked Excluded over a blank box or a Yes: left out too (TNI, 2026-10-27: answer to
+  // PR question V3), the list complete with Casey on it.
+  for (const box of [null, true]) {
+    const marked = record(box, [{ first: 'Pat', last: 'Owner', excluded: true }, { first: 'Casey', last: 'Example' }]);
+    assert.deepEqual(unitToAdd(geico, marked, DRV, list(0, [false, false])).adding, { list: 'drivers', index: 1 }, String(box));
+    assert.equal(unitToAdd(geico, marked, DRV, list(1, [false, true])).complete, true, String(box));
+  }
   // Counterexamples: a blank box or the intake's Yes, GEICO lists the owner itself, as a row of its own.
   for (const box of [null, true]) {
     assert.deepEqual(unitToAdd(geico, record(box), DRV, list(1, [true, false])).adding, { list: 'drivers', index: 1 }, String(box));
