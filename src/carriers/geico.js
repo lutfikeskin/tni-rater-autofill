@@ -49,7 +49,7 @@
 // intake unit is on it (`advance`, TNI, FL live run 3, 2026-10-21); off, the agent clicks them.
 
 import { owner, ownerDobNote as noOwnerDob, HAZ_HAUL } from './progressive.js';
-import { isLongHaul, intakeNotes, otherNotes, ntlMention, parseRadius, cdlStandard, cdlAnswer } from '../normalize.js';
+import { isLongHaul, otherNotes, parseRadius, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, ownerIsDriver, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, driverExcluded, ownerExcluded, ownerRow, nonDrivingOwnerRow } from '../util.js';
 
@@ -124,12 +124,17 @@ const zipNote = (r) => (r.garaging?.zip && !zip5(r) ? `The intake's ZIP ${quote(
 // number; No only when the intake says none is coming within 60 days and there is no MC number.
 // "Not yet, but the customer has applied for one." is never derived: a number expected within 60
 // days doesn't say one was applied for.
-const dotStatus = (r) => (r.applicant.dot ? 'Yes' : !r.applicant.mc && r.applicant.mcDotWithin60Days === false ? 'No' : null);
+// On an NTL quote No, and the number is typed nowhere, the gateway included (TNI, 2026-10-26, W44-28:
+// "US DOT is not added … if its NTL, in every case"); the intake's own No stays `derived`.
+const intakeDotNo = (r) => !r.applicant.dot && !r.applicant.mc && r.applicant.mcDotWithin60Days === false;
+const dotStatus = (r) => (ntlNoDotFilings(r) ? 'No' : r.applicant.dot ? 'Yes' : intakeDotNo(r) ? 'No' : null);
+const dotStatusSource = (r) => (ntlNoDotFilings(r) && !intakeDotNo(r) ? 'standard' : 'derived');
+const noDotOnQuote = (r) => !r.applicant.dot || ntlNoDotFilings(r);
 const dotStatusNote = (r) => (dotStatus(r) ? null
   : r.applicant.mc ? 'The intake has an MC number but no USDOT number: answer it yourself.'
     : r.applicant.mcDotWithin60Days === true ? 'The intake says a USDOT or MC number is coming within 60 days; whether the customer has applied for one is yours to answer.'
       : 'The intake has no USDOT number and doesn\'t say whether one is coming: answer it yourself.');
-const dotNumberNote = (r) => (r.applicant.dot && !/^\d+$/.test(r.applicant.dot) ? 'The intake\'s USDOT number isn\'t digits only: enter it yourself.' : null);
+const dotNumberNote = (r) => (!noDotOnQuote(r) && !/^\d+$/.test(r.applicant.dot) ? 'The intake\'s USDOT number isn\'t digits only: enter it yourself.' : null);
 
 // "Does the customer's business have a current GEICO commercial auto policy?" from the intake's
 // current-insurance row. No for no prior insurance, a personal auto policy, or a commercial auto
@@ -199,9 +204,13 @@ const CARGO_FILING = /\bbmc[\s-]?3[24]\b|\bcargo\b/i;
 const STATE_FILING = /\bstate\b|\bintrastate\b/i;
 // true, false, or null when "federal" may be the cargo filing.
 const federalLiability = (text) => (FED_LIAB.test(text) ? true : /\bfederal\b/i.test(text) ? (CARGO_FILING.test(text) ? null : true) : false);
+// An NTL quote has no filings (TNI, 2026-10-26, W44-28: "filings not added if its NTL, in every
+// case"): Neither, No, and no Add Filings box ticked, whatever the intake asks; the intake's own No
+// stays the intake's.
+const ntlNoFilings = (r) => ntlNoDotFilings(r) && r.operations.filingsRequired !== false;
 const filingType = (r) => {
   const f = r.operations.filingsRequired;
-  if (f === false) return 'Neither';
+  if (f === false || ntlNoDotFilings(r)) return 'Neither';
   if (f !== true || !which(r) || ONLY_FR.test(which(r))) return null;
   const federal = federalLiability(which(r));
   if (federal == null) return null;
@@ -219,7 +228,7 @@ const filingTypeNote = (r) => {
 };
 // The Add Filings boxes: ticked when the intake names that filing; otherwise left as the page has
 // them (never unticked: a box no filing names isn't a No).
-const filingBoxes = (r) => (r.operations.filingsRequired === true && which(r) && !ONLY_FR.test(which(r))
+const filingBoxes = (r) => (!ntlNoDotFilings(r) && r.operations.filingsRequired === true && which(r) && !ONLY_FR.test(which(r))
   ? { federal: federalLiability(which(r)) || null, state: STATE_FILING.test(which(r)) || null } : { federal: null, state: null });
 // Whether proof of insurance or filings go to an agency: the intake's Yes or No; blank, TNI's No
 // (W43-34) unless the intake names filings or a line of its notes mentions one. An SR-22 or FR-44
@@ -229,13 +238,22 @@ const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\
 const FR_FILINGS = /\b(?:sr[\s-]?22|fr[\s-]?44)(?:\s+filings?)?\b/gi;
 const OTHER_FILING = { test: (s) => FILING_WORDS.test(s.replace(FR_FILINGS, ' ')) };
 const filingsMention = (r) => (which(r) && !ONLY_FR.test(which(r)) ? 'which' : notesLine(OTHER_FILING)(r) ? 'notes' : null);
+const hasFilings = noUnless((r) => r.operations.filingsRequired, filingsMention);
 const filingsNote = (r) => {
   const f = r.operations.filingsRequired;
+  if (ntlNoDotFilings(r)) return null;
   if (f === true && ONLY_FR.test(which(r))) return `The intake names only ${quote(which(r), 40)}, which GEICO doesn't count as a filing here: answer it yourself.`;
   if (f != null) return null;
   return { which: `The intake leaves "filings required" blank but names filings (${quote(which(r), 40)}): answer it yourself.`,
     notes: `The intake leaves "filings required" blank, and its notes say ${quote(notesLine(OTHER_FILING)(r), 80)}: answer it yourself.` }[filingsMention(r)] ?? null;
 };
+// (TNI, 2026-10-26: answers to PR questions) NTL with primary auto liability too, or NTL mentioned
+// and not answered yet: the USDOT questions (the gateway's two boxes, the USDOT number, "has a USDOT
+// number") and the filings questions (filings required, the filing type, the Add Filings boxes) are
+// the agent's, with a note saying why (`ntlDotFilingsHold`). Answered Yes or No, the next fill
+// answers them by the rules above.
+const held = (source) => (r) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r) : source);
+const holdOr = (note) => (r) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r) : note ?? null);
 
 // --- Business owner ----------------------------------------------------------------------------
 
@@ -389,14 +407,18 @@ const typeNote = (unit, of) => (r, a) => {
   return type ? `The ${unit} type is yours to pick: the intake says ${quote(type)}.` : `The intake has no type for this ${unit}: pick it yourself.`;
 };
 // TNI, 2026-10-21: a cargo van (the intake's "Van", or "Cargo Van") is GEICO's Delivery Van, not
-// one of its four other vans, and a Semi Truck is GEICO's Tractor. Any other type stays the
-// agent's pick.
+// one of its four other vans, and a Semi Truck is GEICO's Tractor. Any other type but a box truck
+// (below) stays the agent's pick.
 const CARGO_VAN = /^(?:cargo\s+)?van$/i;
 const SEMI_TRUCK = /^semi[\s-]*truck$/i;
+// TNI, 2026-10-26, W44-32 (PA live run: the agent picked Box/Straight Truck): an intake "Box Truck"
+// is GEICO's Box Truck where GEICO offers one, else its Box/Straight Truck (`choiceAliases`, in order).
+const BOX_TRUCK = /^box\s+truck$/i;
 const vehicleType = (r, a) => {
   const type = String(vehicleOf(r, a)?.type ?? '').trim();
-  return CARGO_VAN.test(type) ? 'Delivery Van' : SEMI_TRUCK.test(type) ? 'Tractor' : null;
+  return CARGO_VAN.test(type) ? 'Delivery Van' : SEMI_TRUCK.test(type) ? 'Tractor' : BOX_TRUCK.test(type) ? 'Box Truck' : null;
 };
+const vehicleTypeAliases = (r, a) => (vehicleType(r, a) === 'Box Truck' ? ['Box/Straight Truck'] : []);
 const valueNote = (unit, of) => (r, a) => {
   const v = of(r, a)?.value;
   return v != null && typeof v !== 'number' ? `The intake's ${unit} value ${quote(v)} isn't a dollar amount: enter it yourself.` : null;
@@ -658,7 +680,8 @@ const otherLiabilityNote = (r) => (r.coverage?.hasGl === true && !currentGl(r) ?
 
 // Non-trucking liability mentioned in the claims box or notes and not yet answered: GEICO's
 // liability coverage and its limit are the agent's until they answer it on the Intake step.
-const ntlUndecided = (r) => r.coverage?.ntl == null && (!!ntlMention(intakeNotes(r)) || r.claims?.aiNtl === true);
+// (`ntlUndecided` in normalize.js: the claims box, the notes or Luna's flag; it holds the USDOT and
+// filings questions too.)
 const ntlQuote = (r) => r.coverage?.ntl === true;
 const ntlNote = (r) => (ntlUndecided(r) ? 'The claims box or notes mention non-trucking liability: set it to Yes or No on the Intake step, then fill this page again.' : null);
 // "Liability Coverage": Non-Trucking Liability on an NTL quote (the maintainer, 2026-10-26, live run:
@@ -964,10 +987,16 @@ export const geico = {
   stopButtons: {
     // GEICO's "Add USDOT Number / Skip" (TNI, 2026-10-21, W43-27: SC and PA, after Business & Owner
     // Info on quotes without a USDOT number; the panel said nothing, and the agent asked for "a red
-    // warning and blocker"). Add or Skip is the agent's.
+    // warning and blocker"). Add or Skip is the agent's. On an NTL quote TNI adds no USDOT number (TNI,
+    // 2026-10-26, W44-28): said, and the screen is still the agent's (nothing clicked). With primary
+    // auto liability too, or NTL not answered yet, the note says why the USDOT number is theirs (TNI,
+    // 2026-10-26: answers to PR questions).
     'USDOT Number': {
       button: '^add usdot number$',
-      note: (r) => (r?.applicant?.dot
+      note: (r) => (ntlNoDotFilings(r)
+        ? 'GEICO asks for a USDOT number. This is a non-trucking liability (NTL) quote, and TNI adds no USDOT number on an NTL quote: Skip is yours.'
+        : ntlDotFilingsHold(r) ? `GEICO asks for a USDOT number. ${ntlDotFilingsHold(r)} Add USDOT Number or Skip is yours.`
+        : r?.applicant?.dot
         ? `GEICO asks for a USDOT number; the intake's is ${quote(r.applicant.dot)}. Add USDOT Number or Skip is yours.`
         : 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.'),
     },
@@ -1022,13 +1051,13 @@ export const geico = {
     // 2026-10-21, W43-28: 4 of 5 quotes opened with another ZIP, kept and flagged, and the agent
     // typed it); one the agent typed or marked done is theirs (the fill's skip), never replaced.
     { notPages: GATEWAY_OFF, selector: '#start-quote-zip', name: 'Start quote: ZIP (the garaging ZIP)', path: 'garaging.zip', source: 'derived', value: zip5, note: zipNote, replace: true },
-    { notPages: GATEWAY_OFF, selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
+    { notPages: GATEWAY_OFF, selector: '#dashboard-usdot', name: 'Start quote: USDOT number', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
     // The Search Products window (TNI, FL live run 3, 2026-10-21: "after Search Products you should
     // select commercial auto"): Commercial Auto/Trucking ticked, and no other product; its own USDOT
     // box takes the intake's number.
     { notPages: GATEWAY_OFF, selector: `${PRODUCT}#commercial, ${PRODUCT}[value="commercial"]`, name: 'Start quote: Commercial Auto/Trucking (TNI: ticked)', q: 'gatewayCommercial',
       kind: 'bool', source: 'standard', value: () => true },
-    { notPages: GATEWAY_OFF, selector: '#start-quote-usdot', name: 'Start quote: USDOT number (Search Products)', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
+    { notPages: GATEWAY_OFF, selector: '#start-quote-usdot', name: 'Start quote: USDOT number (Search Products)', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
     // The gateway's own controls are never answered: the header search, the other products, the
     // alerts settings. One rule each, as a selector rule answers its first match only (the header
     // search took the one that named the products too, and they were left unfamiliar). The product
@@ -1043,7 +1072,7 @@ export const geico = {
       { field: 'GiveInitialZipCode', ask: '5-Digit ZIP Code', path: 'garaging.zip', name: 'ZIP code (the garaging ZIP)', source: 'derived', value: zip5, note: zipNote },
       { field: 'GiveCurrentGeicoCommercialAutoPolicyYesNo', ask: 'Does the customer\'s business have a current GEICO commercial auto policy?', name: 'Current GEICO commercial auto policy',
         kind: 'bool', source: 'derived', clientFact: true, value: currentGeico, note: currentGeicoNote },
-      { field: 'GiveDepartmentOfTransportationNumber', ask: 'What is the customer\'s USDOT number?', path: 'applicant.dot', ignore: (r) => !r.applicant.dot, note: dotNumberNote },
+      { field: 'GiveDepartmentOfTransportationNumber', ask: 'What is the customer\'s USDOT number?', path: 'applicant.dot', ignore: noDotOnQuote, note: holdOr(dotNumberNote) },
       // The business description lists 1,599 kinds of business (too many for the AI assistant), the
       // more detailed one 26. An expediter or a general freight hauler is For Hire Trucking, then
       // Other For-Hire Trucking (TNI, 2026-10-21: forHire). Any other class is the agent's pick,
@@ -1063,7 +1092,7 @@ export const geico = {
       { field: 'GiveElectronicLoggingDevice', ask: 'Does the customer have an electronic logging device (ELD) in their vehicle(s)?', path: 'operations.usesEld', name: 'Electronic logging device (ELD)', kind: 'bool',
         note: (r) => (typeof r.operations.usesEld === 'boolean' ? null : 'The intake doesn\'t say whether the vehicles have an ELD: answer it yourself.') },
       // Not shown on the captured quotes (what reveals it isn't known).
-      { field: 'GiveFilingType', name: 'State or federal filing', kind: 'choice', source: 'derived', clientFact: true, value: filingType, note: filingTypeNote },
+      { field: 'GiveFilingType', name: 'State or federal filing', kind: 'choice', source: held((r) => (ntlNoFilings(r) ? 'standard' : 'derived')), clientFact: true, value: filingType, note: holdOr(filingTypeNote) },
       // Questions shown for other kinds of business (hidden on the captured quotes): not on the
       // intake, a general freight class doesn't make them No.
       fact('GiveAnyVehicleTransportFoodYesNo', 'Food delivery (UberEats, DoorDash)'),
@@ -1079,7 +1108,7 @@ export const geico = {
     // Shown with a USDOT number (and hidden on Additional Business Info).
     ...on([BUSINESS_CLASS, MORE_BUSINESS], {}, [
       { field: 'GiveDepartmentOfTransportationNumberStatus', ask: 'Does the customer have a USDOT Number registered to themselves or their business?', name: 'Has a USDOT number',
-        kind: 'choice', source: 'derived', clientFact: true, value: dotStatus, note: dotStatusNote },
+        kind: 'choice', source: held(dotStatusSource), clientFact: true, value: dotStatus, note: holdOr(dotStatusNote) },
       // "USDOT Information: Is this the customer's business?", under GEICO's record of the number:
       // Yes when the record (the question's text) shows the intake's house number, street and ZIP;
       // otherwise the agent checks it against the client (TNI, FL live run 5, 2026-10-21, W43-24).
@@ -1133,8 +1162,8 @@ export const geico = {
       { field: 'GiveMake', path: 'vehicles[].make', name: 'Vehicle make', kind: 'choice', verifyOnly: hasVin },
       { field: 'GiveModel', path: 'vehicles[].model', name: 'Vehicle model', kind: 'choice', verifyOnly: hasVin },
       // 40 kinds of vehicle: "Van" alone is five of them.
-      { field: 'GiveOtherVehicleType', waitFor: afterDecode, ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', kind: 'choice',
-        source: (r, a) => (vehicleType(r, a) ? 'standard' : null), value: vehicleType, note: (r, a) => (vehicleType(r, a) ? null : typeNote('vehicle', vehicleOf)(r, a)) },
+      { field: 'GiveOtherVehicleType', waitFor: afterDecode, ask: 'Which of the following best describes the customer\'s vehicle?', name: 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, Box Truck or else Box/Straight Truck for a box truck, else the agent\'s pick)', kind: 'choice',
+        source: (r, a) => (vehicleType(r, a) ? 'standard' : null), value: vehicleType, choiceAliases: vehicleTypeAliases, note: (r, a) => (vehicleType(r, a) ? null : typeNote('vehicle', vehicleOf)(r, a)) },
       { field: 'GiveAnyVehicleCustomizationYesNo', waitFor: afterDecode, ask: 'Does the customer have any customizations?', path: 'operations.equipVehicle', name: 'Customizations (from the attached equipment value)',
         kind: 'bool', source: valueSource(noEquipValue), clientFact: true, value: customization, note: customizationNote },
       { field: 'GiveTotalCustomizationValue', waitFor: afterDecode, ask: 'What is the total value of the customizations or modifications to the vehicle?', path: 'operations.equipVehicle', name: 'Customization value (the attached equipment value, else TNI: 0)',
@@ -1231,13 +1260,13 @@ export const geico = {
       { field: 'GiveHasContractForBlanketAiEndorsement', ask: 'Does the customer have a contract that requires a blanket additional insured endorsement?', name: 'Blanket additional insured by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
       { field: 'GiveHasContractForBlanketWosEndorsement', name: 'Blanket waiver of subrogation by contract (TNI: No)', kind: 'bool', source: 'standard', value: () => false },
       { field: 'GiveHasFilingsYesNo', ask: 'Is the customer required to provide proof of insurance/filings to a state or federal agency?', path: 'operations.filingsRequired', name: 'Filings required (TNI: No unless the intake says otherwise)',
-        kind: 'bool', ...noUnless((r) => r.operations.filingsRequired, filingsMention), note: filingsNote },
+        kind: 'bool', value: (r) => (ntlNoDotFilings(r) ? false : hasFilings.value(r)), source: held((r) => (ntlNoFilings(r) ? 'standard' : hasFilings.source(r))), note: holdOr(filingsNote) },
       // Shown after Yes (FL): only a box the intake names is ticked.
-      { field: 'AddFilings.FederalLiability', ask: 'Federal Liability (includes MCS-90)', path: 'operations.filingsWhich', name: 'Federal liability filing', kind: 'bool', source: 'derived',
-        value: (r) => filingBoxes(r).federal, ignore: (r) => !filingBoxes(r).federal },
+      { field: 'AddFilings.FederalLiability', ask: 'Federal Liability (includes MCS-90)', path: 'operations.filingsWhich', name: 'Federal liability filing', kind: 'bool', source: held('derived'),
+        value: (r) => filingBoxes(r).federal, ignore: (r) => !filingBoxes(r).federal, note: holdOr() },
       { field: 'AddFilings.MCS90', ask: 'MCS-90', name: 'MCS-90 filing (as the page has it)', ignore: true },
-      { field: 'AddFilings.StateFiling', ask: 'State', path: 'operations.filingsWhich', name: 'State filing', kind: 'bool', source: 'derived',
-        value: (r) => filingBoxes(r).state, ignore: (r) => !filingBoxes(r).state },
+      { field: 'AddFilings.StateFiling', ask: 'State', path: 'operations.filingsWhich', name: 'State filing', kind: 'bool', source: held('derived'),
+        value: (r) => filingBoxes(r).state, ignore: (r) => !filingBoxes(r).state, note: holdOr() },
     ]),
 
     // --- Quote & Coverages ---------------------------------------------------------------------

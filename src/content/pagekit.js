@@ -2278,7 +2278,7 @@
         // person's): those stay as they are, flagged.
         const own = allPairs.find((p) => p.control === c)?.step;
         const ours = !!own && handled.get(own.id)?.note !== IDENTITY_NOTE
-          && (!own.keepChoice || refill.has(own.id) || report.filled.some((x) => x.stepId === own.id));
+          && (!(own.keepChoice || own.keepPreset) || refill.has(own.id) || report.filled.some((x) => x.stepId === own.id));
         if (ours && own.value != null && !own.ignore && !own.note && !own.verifyOnly && retryOnce(own.id)) {
           report.failed = report.failed.filter((x) => x.key !== fieldKey(c));
           handled.delete(own.id);
@@ -2432,7 +2432,7 @@
         // An answer an earlier fill gave here that the page has since taken back (`takenBack`).
         const tookBack = isChoice && !overwrite && !!takenBack?.keys && Object.hasOwn(takenBack.keys, fieldKey(c)) && stepIs(takenBack.steps)
           && !agreesWith(step, c) && !refill.has(step.id) && !report.filled.some((x) => x.stepId === step.id);
-        const differs = isChoice && replaceChoices && !step.keepChoice && !tookBack && !agreesWith(step, c);
+        const differs = isChoice && replaceChoices && !step.keepChoice && !step.keepPreset && !tookBack && !agreesWith(step, c);
         const legacyHold = mayHoldLegacyEdit(c) && !refill.has(step.id);
         // An unticked box that should stay unticked already has its answer (live run 2026-10-09:
         // every unticked box was "filled" again on each pass).
@@ -2450,11 +2450,17 @@
         // Coverages set 9–12 coverages again, once right after Recalculate). An address-suggest
         // box agrees with any address, so Replace still retypes it.
         const sameAnswer = overwrite && answered && step.kind !== 'address-suggest' && agreesWith(step, c);
+        // `keepPreset`: a choice the carrier already made is kept as it is, also with Replace existing
+        // answers; only an empty one is answered (Progressive's anti-theft device, the VIN lookup's
+        // else None: TNI, 2026-10-26, W44-32). The agent's own choice is in the fill's skip anyway.
+        // One the carrier made after the fill's answer (a late VIN lookup) is kept too; the fill's
+        // own answer, or an emptied list, is given again as any other.
+        const presetKept = !!step.keepPreset && isChoice && answered && (!refill.has(step.id) || !agreesWith(step, c));
         // What a fill gave here for another vehicle, driver or trailer, still as it gave it, is
         // replaced with this unit's answer (W43-38, Progressive Add Driver, 2026-10-22: another
         // driver's name and date of birth were kept as differing and left to the agent).
         const otherUnits = answered && !agreesWith(step, c) && givenForOtherUnit(step, c);
-        if (legacyHold || sameAnswer || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
+        if (legacyHold || sameAnswer || presetKept || (!overwrite && answered && !presetToReplace && !differs && !otherUnits && !refill.has(step.id) && !(step.replace && !agreesWith(step, c)))) {
           report.kept.push(item);
           if (legacyHold && !agreesWith(step, c)) {
             const note = 'Left as it is: an edit saved by an older version may be on this question. Check it.';

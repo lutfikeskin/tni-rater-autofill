@@ -69,6 +69,7 @@ test('keeps bounded Luna usage counters and drops unrelated fields', async () =>
   await withServer({ dataDir }, async ({ post }) => {
     const r = await (await post({ events: [ev({ type: 'ai_suggest', model: 'gpt-6-luna', items: 2,
       modelCalls: 2, reasoningTokens: 31, cachedTokens: 9, cacheWriteTokens: 4,
+      leaveMissing: 1, leaveConflict: 0, leaveChose: 0, leaveNoSource: 0, leaveUnverified: 1,
       clientName: 'should not be stored' })] })).json();
     assert.equal(r.accepted, 1);
   });
@@ -76,6 +77,8 @@ test('keeps bounded Luna usage counters and drops unrelated fields', async () =>
   assert.deepEqual({ modelCalls: suggest.modelCalls, reasoningTokens: suggest.reasoningTokens,
     cachedTokens: suggest.cachedTokens, cacheWriteTokens: suggest.cacheWriteTokens }, { modelCalls: 2,
     reasoningTokens: 31, cachedTokens: 9, cacheWriteTokens: 4 });
+  // Why questions were left, as counts.
+  assert.deepEqual({ missing: suggest.leaveMissing, unverified: suggest.leaveUnverified, chose: suggest.leaveChose }, { missing: 1, unverified: 1, chose: 0 });
   assert.equal(suggest.clientName, undefined);
 });
 

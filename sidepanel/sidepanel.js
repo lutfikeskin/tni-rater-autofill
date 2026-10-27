@@ -1,7 +1,7 @@
 import * as pdfjs from '../lib/pdf.min.mjs';
 import { readIntakeFields, readIntakePlaces } from '../src/intake.js';
 import { sourcePlace } from '../src/intake-source.js';
-import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE } from '../src/normalize.js';
+import { normalizeIntake, parseEdit, rederive, ntlMention, ntlCheckMessage, intakeNotes, nonTruckingAnswer, ntlWithCargo, NTL_CARGO_MESSAGE, NTL_FORM_MESSAGE, ntlWithPrimary, NTL_PRIMARY_MESSAGE } from '../src/normalize.js';
 import { SECTIONS, fieldInfo } from '../src/schema.js';
 import { buildPlan, redactionTerms, supportedClass } from '../src/plan.js';
 import { unitListSpecs, unitToAdd, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
@@ -15,7 +15,7 @@ import * as usage from './usage-log.js';
 import { canRecord, recordingId, stampEvents, newManifest } from '../src/recording.js';
 import { RecordingStore } from './recording.js';
 import { migrateStorage } from '../src/storage-version.js';
-import { collectItems, AssistError, assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
+import { collectItems, AssistError, assistContextKey, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION, claimsTruncated, firstNameOf } from '../src/ai/luna.js';
 import { PROVIDERS, settingsFrom, suggest, reviewNotes, reviewDriverNames } from '../src/ai/providers.js';
 // Not type-checked yet; what it passes the page kit and reads back is typed in types.js, at the repository's root.
@@ -1327,6 +1327,7 @@ async function agentEdit(path, after, kind) {
   const notesEdit = path === 'claims.text' || path === 'notes.text';
   if (notesEdit) claimsTextEdited(state.intake);
   if (['coverage.ntl', 'coverage.autoLiability'].includes(path)) ntlAnswerEdited(state.intake, path);
+  if (['coverage.ntl', 'coverage.autoLiability'].includes(path)) ntlPrimaryEdited(state.intake);
   if (['coverage.ntl', 'coverage.cargo', 'coverage.autoLiability'].includes(path)) { ntlCargoEdited(state.intake); await save(); render(); }
   if (notesEdit || (path.startsWith('coverage.') && !['coverage.ntl', 'coverage.gl', 'coverage.hasGl'].includes(path))) reviewClaimsBox({ retry: true });
   if (/^drivers\[\d+\]\.first$/.test(path)) reviewDriverGender({ retry: true });
@@ -4979,6 +4980,24 @@ function ntlCargoEdited(intake) {
   }
 }
 
+// NTL and primary auto liability (auto liability Yes) both asked for after the agent's edit of either
+// (TNI, 2026-10-26: answer to PR question): the intake's check naming the conflict is asked (again,
+// unchecked, when it was retired), or retired to a note when they no longer are. Today's form can't
+// ask for both (Non-Trucking is its auto liability answer), so the agent's NTL Yes with auto
+// liability Yes is where it arises. Kept by position, as the checked marks are.
+function ntlPrimaryEdited(intake) {
+  const both = ntlWithPrimary(intake.record);
+  const i = intake.warnings.findIndex((w) => w.code === 'coverage.ntl-primary');
+  const ask = { code: 'coverage.ntl-primary', path: 'coverage.autoLiability', level: 'check', msg: NTL_PRIMARY_MESSAGE };
+  if (both && i < 0) intake.warnings.push(ask);
+  else if (both && intake.warnings[i].level !== 'check') {
+    intake.warnings[i] = ask;
+    intake.done = intake.done.filter((d) => d !== i);
+  } else if (!both && i >= 0 && intake.warnings[i].level === 'check') {
+    intake.warnings[i] = { code: 'coverage.ntl-primary', path: 'coverage.autoLiability', level: 'info', msg: 'Non-trucking liability and primary auto liability are no longer both asked for.' };
+  }
+}
+
 // The long-claims-box item is the code's own: it stays while the box is still too long to read whole.
 function supersedeClaimsItems(intake) {
   const truncated = claimsTruncated(intakeNotes(intake.record));
@@ -5226,7 +5245,9 @@ async function runAssist(frames, ctx) {
   if (missing.length) {
     asking(missing.length);
     const started = Date.now();
-    const context = { record, carrier: ctx.carrier.id, page: ctx.page, active };
+    // The page's other choice questions and their answers go along as context (redacted, bounded,
+    // never typed values): what the agent sees beside the questions left to them.
+    const context = { record, carrier: ctx.carrier.id, page: ctx.page, active, pageAnswers: pageAnswers(ctx.snapshots, missing, record) };
     const logged = { type: 'ai_suggest', carrier: ctx.carrier.id, page: ctx.page, model: cfg.model, items: missing.length, blocked: blocked.length };
     let answered = () => {};
     const sigs = missing.map(sigOf);
@@ -5239,7 +5260,7 @@ async function runAssist(frames, ctx) {
       // An answer that came too late is still logged (its tokens were spent), with the reason.
       const why = discardWhy();
       if (!ctx.carrier.practice) usage.log({ ...logged, ms: Date.now() - started, suggested: fresh.filter(x => !x.leave).length,
-        leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length,
+        leave: fresh.filter(x => x.leave).length, autoOk: fresh.filter(x => x.autoOk).length, ...leaveCounts(fresh),
         tokensIn: result.tokensIn, tokensOut: result.tokensOut, modelCalls: result.modelCalls,
         reasoningTokens: result.reasoningTokens, cachedTokens: result.cachedTokens, cacheWriteTokens: result.cacheWriteTokens,
         ...(why ? { error: `Answer discarded: ${why}.` } : {}) });
@@ -5270,6 +5291,15 @@ async function runAssist(frames, ctx) {
   else if (applied) dropped(`${staleWhy()} after its selections were put in`, 'Click Fill this page to review them before continuing.');
   else dropped(`${staleWhy()} before its answers were shown, so nothing was applied`);
   syncAiBanner(ctx);
+}
+
+// Why Luna left questions, as counts (luna.js leaveWhy): it said information is missing, saw a
+// conflict, chose to leave, cited nothing usable, or its answer failed the evidence check.
+function leaveCounts(suggestions) {
+  const field = { missing: 'leaveMissing', conflict: 'leaveConflict', chose: 'leaveChose', noSource: 'leaveNoSource', unverified: 'leaveUnverified' };
+  const out = Object.fromEntries(Object.values(field).map((k) => [k, 0]));
+  for (const x of suggestions) if (x.leave && field[x.leaveWhy]) out[field[x.leaveWhy]]++;
+  return out;
 }
 
 // AI selections on this tab's page that the agent hasn't approved or rejected yet. While there
@@ -5622,7 +5652,9 @@ function renderAi(holder, suggestions, ctx) {
     if (x.done) return h('div', { class: 'ai-done' }, h('b', {}, '✓'), h('span', { class: 'grow' }, `Put in ${answer(x)} (purple on the page).`));
     if (x.dismissed) return null;
     if (x.leave || !x.applyable) {
-      return h('div', { class: 'ai-box' }, h('div', { class: 'ai-says' }, x.leave ? 'AI: this one is yours to decide.' : 'AI tip'), x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null);
+      // Its recommendation (luna.js nextStep): what to confirm or check, never an answer.
+      return h('div', { class: 'ai-box' }, h('div', { class: 'ai-says' }, x.leave ? 'AI: this one is yours to decide.' : 'AI tip'), x.tip ? h('div', { class: 'ai-tip' }, x.tip) : null,
+        x.leave && x.nextStep ? h('div', { class: 'ai-tip ai-next' }, h('b', {}, 'Luna recommends: '), x.nextStep) : null);
     }
     return h('div', { class: 'ai-box' },
       h('div', { class: 'ai-says' }, 'AI suggests ', h('b', {}, x.controlKind === 'text' ? `typing “${x.choice}”` : x.choice)),

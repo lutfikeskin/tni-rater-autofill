@@ -132,6 +132,7 @@
  *   lookup's, or a bulk helper's such as AmWINS' "Default all answers to No"); a function: only for these clients
  * @property {boolean} [trustPage]
  * @property {boolean} [keepChoice]
+ * @property {boolean} [keepPreset]  a choice the carrier already made (a pre-selection, such as Progressive's anti-theft device from its VIN lookup) is kept as it is, without a check, also with Replace existing answers: only an empty one is answered
  * @property {boolean} [keepUnlisted]
  * @property {boolean} [whenOffered]
  * @property {{ count: string, one?: string, after: string, name: string }} [orMost]
@@ -355,6 +356,7 @@
  * @property {boolean} replace
  * @property {boolean} trustPage
  * @property {boolean} keepChoice
+ * @property {boolean} keepPreset
  * @property {boolean} keepUnlisted
  * @property {boolean} whenOffered
  * @property {{ count: string, one: string | null, after: string, name: string } | null} orMost
@@ -719,6 +721,32 @@
  * @property {'recalculate'} reason
  * @property {{ action: string | null, ms: number | null, press: 'page' | 'late' | 'kit' | null, premiumMs: number | null, requests: ([number, number] | [number, number, 1])[] }} context
  * @property {{ label: string, key: string | null, selected: string, agents: boolean, seen: [number, string][], putBack: boolean }[]} fields
+ */
+
+/**
+ * @typedef {object} AiSuggestEvent  sidepanel.js runAssist: one Luna page review (counts only)
+ * @property {'ai_suggest'} type
+ * @property {string} model
+ * @property {string} carrier
+ * @property {string} [page]
+ * @property {number} items  questions sent
+ * @property {number} blocked  questions kept from Luna (never-list, manual-only)
+ * @property {number} [ms]  time the review took
+ * @property {number} [suggested]
+ * @property {number} [autoOk]  answers allowed as automatic picks
+ * @property {number} [leave]  questions left to the agent; the leave* counts below say why
+ * @property {number} [leaveMissing]  Luna said information is missing
+ * @property {number} [leaveConflict]  Luna saw conflicting facts
+ * @property {number} [leaveChose]  Luna left it without either
+ * @property {number} [leaveNoSource]  it answered but cited nothing usable
+ * @property {number} [leaveUnverified]  the evidence check refused its answer
+ * @property {number} [tokensIn]
+ * @property {number} [tokensOut]
+ * @property {number} [modelCalls]
+ * @property {number} [reasoningTokens]
+ * @property {number} [cachedTokens]
+ * @property {number} [cacheWriteTokens]
+ * @property {string} [error]
  */
 
 /**

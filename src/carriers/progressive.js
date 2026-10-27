@@ -32,7 +32,7 @@
 
 import { priorPolicyExpired, ownerIsDriver, ownerRow, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 import { ownerDrives, ownerDrivesSource, ownerDrivesWarn, driverExcluded, nonDrivingOwnerRow } from '../util.js';
-import { ntlMention, intakeNotes, otherNotes, isLongHaul, cdlStandard, cdlAnswer } from '../normalize.js';
+import { otherNotes, isLongHaul, cdlStandard, cdlAnswer, ntlNoDotFilings, ntlUndecided, ntlDotFilingsHold } from '../normalize.js';
 
 /** @import { CarrierAction, CarrierConfig, CarrierRule } from '../../types.js' */
 
@@ -182,6 +182,11 @@ const excludedDriver = (r, a) => driverExcluded(r, r.drivers?.[a.drivers ?? 0]);
 // TNI (2026-10-07): the defensive driver discount is No unless the intake's description box says
 // the driver took a course (or the Additional Notes box does); then it's the agent's.
 const defensiveMention = (r) => String(otherNotes(r) ?? '').match(/[^\n.]*defensive[^\n.]*/i)?.[0].trim().slice(0, 80) ?? null;
+// KY's wording asks about an Armed Forces course (W44-32): a course the notes mention that isn't
+// said to be military doesn't change its No (TNI, 2026-10-26: answer to PR question); one that is
+// stays the agent's.
+const ARMED_FORCES_COURSE = { field: 'DriverInput.DefensiveDriverDiscount', label: 'armed forces' };
+const militaryCourse = (r) => (/\b(military|armed forces|army|navy|naval|air force|marines?|coast guard|national guard)\b/i.test(defensiveMention(r) ?? '') ? defensiveMention(r) : null);
 
 // A driver's accidents, claims or violations: the claims box's Yes or No. TNI (2026-10-19, after a
 // live run): when it gives neither, No (standard) unless the intake's notes (the claims box's
@@ -256,17 +261,29 @@ const filings = (r) => (r.operations.filingsRequired === true ? true : r.operati
 const filingsHint = (r) => (r.operations.filingsRequired != null ? null
   : r.operations.filingsWhich ? `names filings ("${String(r.operations.filingsWhich).slice(0, 40)}")`
     : r.operations.needSr22 === true ? 'says an SR-22 is needed' : null);
-const filingsNote = (r) => (r.operations.filingsRequired === true && !r.applicant.dot
+const filingsNote = (r) => (ntlNoDotFilings(r) ? null : r.operations.filingsRequired === true && !r.applicant.dot
   ? 'Filings are requested but the intake has no USDOT number; Progressive may not allow filings without one.'
   : filingsHint(r) ? `The intake leaves "filings required" blank but ${filingsHint(r)}: answer it yourself.` : null);
 // "Are state or federal filings required?" TNI (2026-10-19, after a live run): left blank on an
 // intake with no USDOT or MC number, No (standard), also when the intake says one is coming
-// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number,
-// filings named or an SR-22 needed, a blank answer stays the agent's. (The Filings page's answers
-// keep `filings`: that page shows only after a Yes.)
-const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && !r.applicant.dot && !r.applicant.mc && !filingsHint(r);
-const filingsAsked = (r) => (filingsBlankNoNumber(r) ? false : filings(r));
-const filingsSource = (r) => (filingsBlankNoNumber(r) ? 'standard' : 'derived');
+// within 60 days (TNI, 2026-10-19; the USDOT question then says "Not Yet"). With either number, No
+// too, as on every carrier (TNI, 2026-10-26: answer to PR question, replacing the 2026-10-19 rule
+// that left it to the agent), except on a quote that is or may be NTL (W44-28's). Filings named or an
+// SR-22 needed leave a blank to the agent. (The Filings page's answers keep `filings`: that page
+// shows only after a Yes. `filingsBlankNoNumber` keeps the 2026-10-19 rule's name.)
+const filingsBlankNoNumber = (r) => r.operations.filingsRequired == null && (notNtl(r) || (!r.applicant.dot && !r.applicant.mc)) && !filingsHint(r);
+// An NTL quote (TNI, 2026-10-26, W44-28: "US DOT is not added and filings not added if its NTL, in
+// every case"): No, whatever the intake asks; the intake's own No stays the intake's (`derived`).
+// The Federal filing on the Filings page (reached only after a Yes) is No there too.
+const ntlNoFilings = (r) => ntlNoDotFilings(r) && r.operations.filingsRequired !== false;
+const filingsAsked = (r) => (ntlNoDotFilings(r) || filingsBlankNoNumber(r) ? false : filings(r));
+// (TNI, 2026-10-26: answers to PR questions) NTL with primary auto liability too, or NTL mentioned
+// and not answered yet: the USDOT and filings questions (`1ED`, `1F3`, `CA`, the Federal filing)
+// are the agent's, with a note saying why (`ntlDotFilingsHold`), and Verify USDOT isn't clicked.
+// Business Owner Info comes before Rates, so the USDOT number waits for the NTL answer there too.
+const held = (source) => (r) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r) : source);
+const holdOr = (note) => (r) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r) : note ?? null);
+const filingsSource = (r) => (ntlNoFilings(r) || filingsBlankNoNumber(r) ? 'standard' : 'derived');
 const usesEld = (r) => explicitBoolean(r, 'operations.usesEld');
 const eldNote = (r) => (usesEld(r) == null ? 'The intake does not answer the ELD question.' : null);
 const cargoNote = (r) => r.coverage.cargo === true && !r.coverage.cargoLimit
@@ -339,9 +356,16 @@ const forHire = (r) => (isExpediter(r) || isFreightHauler(r) ? true : null);
 const forHireNote = (r) => (forHire(r) == null ? `Whether a ${r.operations.businessClass || 'business of this class'} hauls goods for hire isn't known: answer it yourself.` : null);
 // Has a USDOT number: Yes with one; without one, the intake's 60-day answer decides, and no answer
 // is the agent's (2026-10-09; until then "will not" was asserted).
-const hasUsdot = (r) => (r.applicant.dot ? 'Yes - the customer has a USDOT number'
+// On an NTL quote No, and the number is neither typed nor verified (TNI, 2026-10-26, W44-28: "US DOT
+// is not added … if its NTL, in every case"); the intake's own No ("will not have one") stays `derived`.
+// This wording is accepted also when the client has a USDOT number (TNI, 2026-10-26: answer to PR
+// question).
+const USDOT_NO = 'No - and the customer will not have a USDOT number';
+const hasUsdot = (r) => (ntlNoDotFilings(r) ? USDOT_NO : r.applicant.dot ? 'Yes - the customer has a USDOT number'
   : r.applicant.mcDotWithin60Days === true ? 'Not Yet - but the customer has applied/will apply for a USDOT number within 60 days'
-    : r.applicant.mcDotWithin60Days === false ? 'No - and the customer will not have a USDOT number' : null);
+    : r.applicant.mcDotWithin60Days === false ? USDOT_NO : null);
+const hasUsdotSource = (r) => (ntlNoDotFilings(r) && (r.applicant.dot || r.applicant.mcDotWithin60Days !== false) ? 'standard' : 'derived');
+const dotOnQuote = (r) => !!r.applicant.dot && !ntlNoDotFilings(r);
 const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT number and doesn\'t say whether one is expected within 60 days: answer it yourself.' : null);
 
 // Rates as TNI agents work it (cargo and GL added, bill plan, back, Recalculate, Print). With NTL
@@ -350,8 +374,8 @@ const hasUsdotNote = (r) => (hasUsdot(r) == null ? 'The intake has no USDOT numb
 // while its new questions are open).
 // An NTL mention in the claims box the agent hasn't answered yet (Yes or No) is not a No: Rates
 // waits for it like for NTL itself.
-// Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl).
-const ntlUndecided = (r) => r.coverage.ntl == null && (!!ntlMention(intakeNotes(r)) || r.claims?.aiNtl === true);
+// Luna's NTL flag for a line the words don't catch ("bobtale", "N.T.L.") counts too (claims.aiNtl):
+// `ntlUndecided` in normalize.js, which holds the USDOT and filings questions too.
 const notNtl = (r) => r.coverage.ntl !== true && !ntlUndecided(r);
 // An NTL quote asking for neither cargo nor general liability: the fill does Rates as on any quote
 // (the maintainer, 2026-10-26, live run: NTL, then Done with this coverage, Recalculate, the bill
@@ -494,7 +518,10 @@ export const progressive = {
     // Done once the page shows the lookup's result (the registered names to pick, or the 60-day
     // question when the number is new): a click without one is tried again, then the agent's.
     // Already showing them for the number on the page (the agent verified it before Fill): done.
-    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] } },
+    // Never on an NTL quote, whose USDOT number isn't entered (TNI, 2026-10-26, W44-28), nor while the
+    // USDOT number is the agent's: NTL with primary auto liability, or NTL not answered yet (TNI,
+    // 2026-10-26: answers to PR questions).
+    { id: 'verifyDot', page: 'BusinessOwnerInfo', text: '^verify( us)?( ?dot)?( number)?$', after: ['applicant.dot'], immediate: true, verify: 'revealed', shownBy: { any: ['progressive.q20F', 'progressive.q21E', 'progressive.q22F', 'progressive.q277'] }, when: (r) => !ntlNoDotFilings(r) && !ntlDotFilingsHold(r) },
     // Vehicle summary: "Add a Vehicle" for a vehicle not entered yet (its VIN lookup not done).
     // The vehicles found by the USDOT lookup are listed there too; ours is added with Add Vehicle,
     // which sits in the "Add" menu.
@@ -656,8 +683,8 @@ export const progressive = {
       { q: '194', field: 'PolicyInput.EffectiveDate', ask: 'When should this Progressive Commercial Auto policy start?', name: 'Policy start date (preserve prefilled value)', ignore: true },
       { q: '198', source: 'derived', field: 'AccountInput.PGRInsuredIndicator', ask: 'Is the customer currently insured with Progressive Commercial Auto?', name: 'Currently insured with Progressive Commercial Auto', kind: 'bool', value: insuredWithProgressive },
       { q: '1CC', field: 'Warehouse.QuoteVendorCode', ask: 'Quote Vendor Code', optional: true, name: 'Quote vendor code (optional)', ignore: true },
-      { q: '1ED', source: 'derived', clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: hasUsdotNote },
-      { q: '1F3', field: 'USDOTInput.NumberCollection', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !r.applicant.dot },
+      { q: '1ED', source: held(hasUsdotSource), clientFact: true, field: 'USDOTInput.Question', ask: 'Does the customer have a USDOT Number?', name: 'Has a USDOT number', kind: 'choice', value: hasUsdot, note: holdOr(hasUsdotNote) },
+      { q: '1F3', field: 'USDOTInput.NumberCollection', ask: 'USDOT Number associated with the customer\'s business:', path: 'applicant.dot', ignore: (r) => !dotOnQuote(r), note: holdOr() },
       // Shown when Verify USDOT finds no record for the number (a brand-new USDOT). TNI's standard
       // Yes (2026-10-19, after a live run): a number the lookup doesn't know yet is a new one.
       { q: '21E', source: 'standard', field: 'USDOTInput.SixtyDayQuestion', ask: 'Did the customer obtain their USDOT Number within the last 60 days?', name: 'USDOT obtained within the last 60 days (standard: Yes)', kind: 'bool', ignore: (r) => !r.applicant.dot, value: () => true },
@@ -775,7 +802,7 @@ export const progressive = {
       { q: 'B8', field: 'MoreBusinessInput.WaiverOfSubrogationCount', ask: 'Number of Named Waiver of Subrogation Holders', name: 'Named waiver count (preserve prefilled value)', ignore: true },
       { q: 'BE', field: 'AccountInput.BlanketAIQuestion', ask: 'Is a Blanket Additional Insured endorsement needed by contract?', name: 'Blanket additional insured (preserve prefilled value)', ignore: true },
       { q: 'C1', field: 'AccountInput.BlanketWOSQuestion', ask: 'Is a Blanket Waiver of Subrogation endorsement needed by contract?', name: 'Blanket waiver of subrogation (preserve prefilled value)', ignore: true },
-      { q: 'CA', source: filingsSource, field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank with no USDOT or MC number)', kind: 'bool', value: filingsAsked, note: filingsNote },
+      { q: 'CA', source: held(filingsSource), field: 'MoreBusinessInput.HasOperatingAuthority', ask: 'Are state or federal filings required?', name: 'Filings required (standard: No when blank)', kind: 'bool', value: filingsAsked, note: holdOr(filingsNote) },
       { q: 'D1', source: 'derived', field: 'PolicyInput.ELDHoursOfServiceRecords', ask: 'Is an Electronic Logging Device (ELD) required to record hours of service?', name: 'Electronic logging', kind: 'bool', value: usesEld, note: eldNote },
     ]),
 
@@ -783,7 +810,7 @@ export const progressive = {
     ...onPage('Filings', [
       // TNI's 2026-10-01 decision, kept as a standard: the quote covers all the customer's vehicles.
       { q: 'F11', source: 'standard', field: 'FilingsInput.AllVehiclesUsedOwned', ask: 'Will this quote include all the customer\'s commercially owned and operated vehicles?', name: 'All commercially owned vehicles on this quote (standard: Yes)', kind: 'bool', value: filings },
-      { source: 'derived', field: 'FilingsInput.FederalOpAuthorityIndicator', label: '^federal( liability)?( filing)?$', name: 'Federal filing', kind: 'bool', value: filings },
+      { source: held((r) => (ntlNoFilings(r) ? 'standard' : 'derived')), field: 'FilingsInput.FederalOpAuthorityIndicator', label: '^federal( liability)?( filing)?$', name: 'Federal filing', kind: 'bool', value: (r) => (ntlNoDotFilings(r) ? false : filings(r)), note: holdOr() },
       { field: 'FilingsInput.MCS90Indicator', label: '^mcs ?-?90$', name: 'MCS-90 (ticked by the page with Federal)', kind: 'bool', ignore: true },
       { field: 'FilingsInput.StateIndicator', label: '^state( filing)?$', name: 'State filing', kind: 'bool', ignore: true },
     ]),
@@ -796,8 +823,15 @@ export const progressive = {
       { q: '2BCB', field: 'RiskInput.AnnualMileage', ask: 'Annual Mileage', name: 'Annual mileage (from VIN lookup)', ignore: true },
       // Safety equipment (FL): the VIN lookup answers these; Progressive's answers are kept, and only
       // a box the lookup leaves empty goes to the agent.
-      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAC', 'Anti-theft device', 'Anti-Theft Device Discount', 'RiskInput.AntiTheftDevice'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
+      ...[['2BA1', 'Anti-lock brakes', 'Anti-Lock Brakes?', 'RiskInput.AntiLockBrakes'], ['2BAE', 'Driver-side airbag', 'Driver-Side Airbag?', 'RiskInput.Airbag']].map(/** @returns {CarrierRule} */ ([q, name, ask, field]) => ({
         q, field, ask, name: `${name} (from VIN lookup)`, ignore: true, emptyNote: `${name}: comes from the VIN lookup, which left it empty. Answer it yourself.`,
+      })),
+      // The anti-theft device: Progressive's own choice (the VIN lookup's) when it made one, and None
+      // when it didn't (TNI, 2026-10-26, W44-32: "If not selected automatically, no"; KY live run, where
+      // the list was unfamiliar and the agent picked None). FL's list (None, Standard, Recovery) and
+      // KY's (None, Anti-Theft Device 1 to 3, with no caption of its own) have their own names.
+      ...[['2BAC', 'RiskInput.AntiTheftDevice', 'Anti-Theft Device Discount'], ['2CFA', 'RiskInputNonShredded.AntiTheftDeviceAgentOptions', null]].map(/** @returns {CarrierRule} */ ([q, field, ask]) => ({
+        q, field, ...(ask ? { ask } : {}), source: 'standard', name: 'Anti-theft device (Progressive\'s, else TNI: None)', kind: 'choice', value: () => 'None', keepPreset: true,
       })),
       // Asked only when the VIN lookup decodes a vehicle other than the tile picked from the intake's
       // type (TN 2026-10-08: an intake "Van" whose VIN was a truck tractor). The agent's pick, with
@@ -870,8 +904,14 @@ export const progressive = {
       { q: '2960', field: 'DriverInput.CDLYearUnknow', ask: 'Year is unknown', name: 'CDL year unknown (the agent\'s)', ignore: true },
       // OK (2026-10-07): a defensive driving course discount. TNI's standard: No; a course the
       // intake's description box mentions is the agent's. (299D: the id when it was first seen,
-      // after the renumbering.)
-      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
+      // after the renumbering.) KY asks it about an Armed Forces course: the same No (TNI, 2026-10-26,
+      // W44-32: "Military Stuff NO"; the agent confirmed the fill's No, held as reworded), also with a
+      // course in the notes not said to be military (TNI, 2026-10-26: answer to PR question). Each
+      // wording is its own rule, told by the question's text (ARMED_FORCES_COURSE).
+      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', unlessShown: ARMED_FORCES_COURSE,
+        ask: 'Defensive Driver Discount', name: 'Defensive driver discount (standard: No)', kind: 'bool', value: (r) => (defensiveMention(r) ? null : false), note: (r) => (defensiveMention(r) ? `The intake's notes mention a defensive driving course ("${defensiveMention(r)}"): answer the discount yourself.` : null) },
+      { q: '299D', source: 'standard', field: 'DriverInput.DefensiveDriverDiscount', whenShown: ARMED_FORCES_COURSE,
+        ask: 'Has this driver completed an approved United States Armed Forces defensive driving course within the last 3 years?', name: 'Armed Forces defensive driving course (standard: No)', kind: 'bool', value: (r) => (militaryCourse(r) ? null : false), note: (r) => (militaryCourse(r) ? `The intake's notes mention a military defensive driving course ("${militaryCourse(r)}"): answer it yourself.` : null) },
       // No: the driver is listed on the intake to be covered. Yes for a driver the intake marks
       // excluded ("Excluded" in the license-number box; TNI 2026-10-20, excludedDriver), and for the
       // owner's row when the intake says the owner doesn't drive (TNI, 2026-10-26: answer to PR

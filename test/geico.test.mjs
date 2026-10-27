@@ -73,6 +73,7 @@ const one = (p, name, step) => {
 const value = (r, name, step, active) => one(plan(r, active), name, step).value;
 // The agent's: not filled, with a note saying why.
 const agents = (s) => { assert.equal(s.value, null, `${s.name}: not filled`); assert.ok(s.note, `${s.name}: has a note`); };
+const VEHICLE_TYPE = 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, Box Truck or else Box/Straight Truck for a box truck, else the agent\'s pick)';
 
 // --- The carrier --------------------------------------------------------------------------------
 
@@ -218,7 +219,7 @@ test('the gateway ZIP replaces a carried-over one; a city GEICO doesn\'t list ke
 
 // TNI's GEICO standards (FL live run, 2026-10-21): only these rules may be one.
 const STANDARDS = [
-  'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
+  VEHICLE_TYPE, 'Customizations (from the attached equipment value)',
   'Comprehensive or collision wanted (TNI: Yes)', 'Trailer comprehensive or collision wanted (TNI: Yes)',
   'Driver\'s relationship to the business (Owner, else Employee)', 'Number of employees (the drivers besides the owner)',
   'Years with the current auto insurer (1-3 with a current policy)', 'Liability insurance the business has (None unless the notes say)',
@@ -359,19 +360,23 @@ test('a vehicle\'s form and a trailer\'s never answer each other\'s questions', 
   assert.match(one(p, 'Trailer type (the agent\'s pick)').note, /"Dry Van"/);
 });
 
-test('vehicle type: a cargo van is GEICO\'s Delivery Van and a semi truck its Tractor (TNI); any other type is the agent\'s pick', () => {
-  const type = (t) => one(plan(with_({ 'vehicles.0.type': t })), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)');
-  for (const t of ['Van', 'Cargo Van', 'cargo van ']) assert.deepEqual([type(t).value, type(t).source, type(t).standard], ['Delivery Van', 'standard', true], t);
-  for (const t of ['Semi Truck', 'semi-truck']) assert.deepEqual([type(t).value, type(t).source, type(t).standard], ['Tractor', 'standard', true], t);
-  for (const t of ['Box Truck', 'Passenger Van', 'Semi Trailer', 'Van Trailer', null]) {
+// TNI, 2026-10-26, W44-32 (PA live run: an intake "Box Truck" was the agent's, who picked
+// Box/Straight Truck; the maintainer: "If Box Truck is available, yes, if no, Box/Straight Truck").
+test('vehicle type: a cargo van is GEICO\'s Delivery Van, a semi truck its Tractor, a box truck its Box Truck or else Box/Straight Truck (TNI); any other type is the agent\'s pick', () => {
+  const type = (t) => one(plan(with_({ 'vehicles.0.type': t })), VEHICLE_TYPE);
+  const answer = (t) => [type(t).value, type(t).choiceAliases, type(t).source, type(t).standard];
+  for (const t of ['Van', 'Cargo Van', 'cargo van ']) assert.deepEqual(answer(t), ['Delivery Van', [], 'standard', true], t);
+  for (const t of ['Semi Truck', 'semi-truck']) assert.deepEqual(answer(t), ['Tractor', [], 'standard', true], t);
+  for (const t of ['Box Truck', 'box truck', ' Box  Truck ']) assert.deepEqual(answer(t), ['Box Truck', ['Box/Straight Truck'], 'standard', true], t);
+  for (const t of ['Straight Truck', 'Box Truck Trailer', 'Flatbed', 'Passenger Van', 'Semi Trailer', 'Van Trailer', null]) {
     agents(type(t));
     assert.equal(type(t).standard, false, String(t));
   }
-  assert.match(type('Box Truck').note, /"Box Truck"/);
-  // Per vehicle: the second one, a cargo van.
-  const two = with_({ vehicles: [intake().vehicles[0], SECOND_VEHICLE] });
-  assert.equal(one(plan(two, { vehicles: 1 }), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)').value, 'Delivery Van');
-  agents(one(plan(two, { vehicles: 0 }), 'Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)'));
+  assert.match(type('Flatbed').note, /"Flatbed"/);
+  // Per vehicle: a flatbed (the agent's), then a cargo van.
+  const two = with_({ vehicles: [{ ...intake().vehicles[0], type: 'Flatbed' }, SECOND_VEHICLE] });
+  assert.equal(one(plan(two, { vehicles: 1 }), VEHICLE_TYPE).value, 'Delivery Van');
+  agents(one(plan(two, { vehicles: 0 }), VEHICLE_TYPE));
 });
 
 test('with a VIN the year, make and model are checked, never typed; without one they are typed', () => {
@@ -1113,6 +1118,29 @@ test('filings: the kind and the boxes from which filings the intake names', () =
   }
 });
 
+// The texts AmWINS' "Is a Federal Filing Required?" answers No since T9 (TNI, 2026-10-26: an SR-22
+// beside a Form E or H, "State filing" or "Intrastate" alone, an SR-22 beside an MC number, "SR-22
+// and filings"): GEICO asks about proof of insurance or filings to a state or federal agency, so they
+// stay as before T9. In the which-filings box each is the agent's. So do V12's (TNI, 2026-10-27: a
+// Form E or H, a lone "State", a state filing beside an MC number, "Filings and SR-22").
+test('filings required: AmWINS\' T9 texts stay the agent\'s in GEICO\'s which-filings box (state or federal)', () => {
+  const FILINGS = 'Filings required (TNI: No unless the intake says otherwise)';
+  // V12's texts too (TNI, 2026-10-27: GEICO unchanged).
+  for (const which of ['SR-22 and Form E', 'State filing', 'Intrastate', 'SR-22, MC 123456', 'SR-22 and filings',
+    'Form E', 'State', 'State filing, MC 123456', 'Filings and SR-22', 'SR-22 and additional filings', 'Filings and FR-44']) {
+    const s = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': which })), FILINGS);
+    agents(s);
+    assert.match(s.note, new RegExp(`names filings \\("${which}"\\)`));
+  }
+  // A notes line naming a Form E or H, a state filing or a bare "filings" beside an SR-22: also the agent's.
+  for (const notes of ['SR-22 and Form E', 'Needs a state filing', 'SR-22 and filings',
+    'Needs a Form H filing', 'State filing, MC 123456', 'Filings and SR-22', 'SR-22 and additional filings']) {
+    const s = one(plan(with_({ 'operations.filingsRequired': null, 'operations.filingsWhich': null, 'notes.text': notes })), FILINGS);
+    agents(s);
+    assert.match(s.note, new RegExp(`"${notes}"`));
+  }
+});
+
 // --- Drivers ------------------------------------------------------------------------------------
 
 test('drivers: the owner\'s form from the owner\'s row; Add Driver for the panel\'s driver', () => {
@@ -1539,7 +1567,7 @@ test('notes are short and plain', () => {
 // FL live run 2, 2026-10-21: GEICO's VIN decode redrew the vehicle form and cleared the type (the
 // Cascadia's Tractor, three times), distance and personal use given before it.
 test('with a VIN, the vehicle form\'s answers wait for GEICO\'s decoded year; without one, nothing waits', () => {
-  const WAITING = ['Vehicle type (Delivery Van for a cargo van, Tractor for a semi truck, else the agent\'s pick)', 'Customizations (from the attached equipment value)',
+  const WAITING = [VEHICLE_TYPE, 'Customizations (from the attached equipment value)',
     'Customization value (the attached equipment value, else TNI: 0)', 'Vehicle value without customizations', 'Comprehensive or collision wanted (TNI: Yes)',
     'Farthest one-way distance (from the radius)', 'Personal use'];
   const withVin = plan(intake());
@@ -1573,6 +1601,95 @@ test('an NTL quote: Non-Trucking Liability, the permanent lease Yes, the intake\
   assert.deepEqual([lease.immediate, lease.verify], [true, 'gone']);
   assert.ok(new RegExp(lease.text, 'i').test('Yes, under permanent lease'));
   assert.ok(!buildPlan(intake(), geico, {}).some((s) => s.action === 'ntlLease'), 'not without NTL');
+});
+
+// The maintainer, 2026-10-26 (W44-28): "US DOT is not added and filings not added if its NTL, in
+// every case" (W44-07: with the federal filing ticked Progressive offered only primary liability).
+// On GEICO: no USDOT number on the gateway or on Business Class & USDOT, "has a USDOT number" No,
+// filings No and Neither, no filing box ticked. The Add USDOT Number screen stays the agent's.
+test('an NTL quote: no USDOT number and no filings on GEICO (W44-28)', () => {
+  const NTL = { 'coverage.ntl': true, 'coverage.autoLiability': 'Non-Trucking' };
+  const FILINGS = 'Filings required (TNI: No unless the intake says otherwise)';
+  const USDOT_BOXES = ['USDOT #', 'Start quote: USDOT number', 'Start quote: USDOT number (Search Products)'];
+  const got = (s) => [s.value, s.source, s.standard, s.note ?? null];
+  // With cargo or GL too, NTL the agent set with auto liability blank, an MC number, a notes line
+  // naming a filing, a USDOT number coming within 60 days and none now: still none of either.
+  for (const changes of [NTL, { ...NTL, 'coverage.cargo': false }, { ...NTL, 'coverage.gl': true }, { ...NTL, 'coverage.autoLiability': null },
+    { ...NTL, 'applicant.mc': 'MC-765432' }, { ...NTL, 'operations.filingsRequired': null, 'operations.filingsWhich': null, 'notes.text': 'Needs MCS-90 for the broker' },
+    { ...NTL, 'applicant.dot': null, 'applicant.mcDotWithin60Days': true }]) {
+    const p = plan(with_(changes));
+    const what = JSON.stringify(changes);
+    assert.deepEqual(got(one(p, 'Has a USDOT number')), ['No', 'standard', true, null], `"Does the customer have a USDOT Number registered to themselves or their business?" ${what}`);
+    for (const name of USDOT_BOXES) assert.equal(one(p, name).ignore, true, `${name}: never typed ${what}`);
+    assert.deepEqual(got(one(p, FILINGS)), [false, 'standard', true, null], `"Is the customer required to provide proof of insurance/filings to a state or federal agency?" ${what}`);
+    assert.deepEqual(got(one(p, 'State or federal filing')), ['Neither', 'standard', true, null], what);
+    for (const name of ['Federal liability filing', 'State filing']) assert.equal(one(p, name).ignore, true, `${name}: never ticked ${what}`);
+  }
+  // Not an NTL quote: as before. (NTL with primary auto liability too: the agent's, the next test.)
+  for (const changes of [{}, { 'coverage.ntl': false }]) {
+    const p = plan(with_(changes));
+    const what = JSON.stringify(changes);
+    assert.deepEqual(got(one(p, 'Has a USDOT number')), ['Yes', 'derived', false, null], what);
+    for (const name of USDOT_BOXES) assert.equal(one(p, name).ignore, false, `${name} ${what}`);
+    assert.deepEqual(got(one(p, FILINGS)), [true, 'intake', false, null], what);
+    assert.deepEqual(got(one(p, 'State or federal filing')), ['Federal', 'derived', false, null], what);
+    assert.deepEqual([one(p, 'Federal liability filing').value, one(p, 'Federal liability filing').ignore], [true, false], what);
+  }
+  // An NTL intake with no USDOT or MC number, none coming and no filings: nothing changes.
+  const none = { 'applicant.dot': null, 'applicant.mc': null, 'applicant.mcDotWithin60Days': false, 'operations.filingsRequired': false, 'operations.filingsWhich': null };
+  const [withNtl, without] = [plan(with_({ ...NTL, ...none })), plan(with_(none))];
+  for (const name of ['Has a USDOT number', ...USDOT_BOXES, FILINGS, 'State or federal filing', 'Federal liability filing', 'State filing']) {
+    const [a, b] = [one(withNtl, name), one(without, name)];
+    assert.deepEqual([a.value, a.source, a.standard, a.ignore, a.note], [b.value, b.source, b.standard, b.ignore, b.note], name);
+  }
+  // GEICO's "Add USDOT Number / Skip" screen: still the agent's (nothing clicked); on an NTL quote its
+  // note says TNI adds no USDOT number there. Elsewhere it says what it said.
+  const note = geico.stopButtons['USDOT Number'].note;
+  assert.match(note(with_(NTL)), /non-trucking liability \(NTL\) quote/i);
+  assert.match(note(with_(NTL)), /TNI adds no USDOT number/);
+  assert.match(note(with_(NTL)), /yours/);
+  assert.equal(note(intake()), 'GEICO asks for a USDOT number; the intake\'s is "1234567". Add USDOT Number or Skip is yours.');
+  assert.equal(note(with_({ 'applicant.dot': null })), 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.');
+  assert.equal(note(null), 'GEICO asks for a USDOT number, and the intake has none. Add USDOT Number or Skip is yours.');
+});
+
+// (TNI, 2026-10-26: answers to PR questions, #192) NTL with primary auto liability too (auto
+// liability Yes): the USDOT and filings questions are the agent's, with a note naming the conflict.
+// NTL mentioned in the claims box or the notes (or flagged by Luna) and not answered yet: they wait
+// for the answer, with a note to answer NTL on the Intake step first. Answered, the PR's rules.
+test('NTL with primary auto liability, or NTL mentioned and not answered: the USDOT and filings questions are the agent\'s on GEICO', () => {
+  const FILINGS = 'Filings required (TNI: No unless the intake says otherwise)';
+  const USDOT_BOXES = ['USDOT #', 'Start quote: USDOT number', 'Start quote: USDOT number (Search Products)'];
+  const got = (s) => [s.value, s.source, s.standard, s.note ?? null];
+  const held = [[{ 'coverage.ntl': true, 'coverage.autoLiability': 'Yes' }, /primary auto liability/], [{ 'claims.text': 'No\nAsked about NTL too' }, /Intake step/],
+    [{ 'notes.text': 'Client may want bobtail' }, /Intake step/], [{ 'claims.aiNtl': true }, /Intake step/], [{ 'notes.text': 'Needs NTL', 'coverage.autoLiability': null }, /Intake step/]];
+  for (const [changes, why] of held) {
+    const p = plan(with_(changes));
+    const what = JSON.stringify(changes);
+    for (const name of ['Has a USDOT number', FILINGS, 'State or federal filing', 'Federal liability filing']) {
+      const s = one(p, name);
+      assert.deepEqual([s.value, s.source, s.standard, s.manualOnly], [null, 'fact', false, true], `${name}: the agent's ${what}`);
+      assert.match(s.note ?? '', why, `${name}: the note says why ${what}`);
+    }
+    for (const name of USDOT_BOXES) {
+      const s = one(p, name);
+      assert.deepEqual([s.value, s.ignore], [null, false], `${name}: not typed ${what}`);
+      assert.match(s.note ?? '', why, `${name} ${what}`);
+    }
+    // The Add USDOT Number screen: still the agent's, its note says why.
+    assert.match(geico.stopButtons['USDOT Number'].note(with_(changes)), why, what);
+  }
+  // Answered No (with the mention still there): as on any quote. Answered Yes (Non-Trucking): the NTL quote's.
+  const no = plan(with_({ 'notes.text': 'Needs NTL', 'coverage.ntl': false }));
+  assert.deepEqual(got(one(no, 'Has a USDOT number')), ['Yes', 'derived', false, null]);
+  assert.deepEqual(got(one(no, FILINGS)), [true, 'intake', false, null]);
+  for (const name of USDOT_BOXES) assert.deepEqual([one(no, name).ignore, one(no, name).note], [false, null], name);
+  const yes = plan(with_({ 'notes.text': 'Needs NTL', 'coverage.ntl': true, 'coverage.autoLiability': 'Non-Trucking' }));
+  assert.deepEqual(got(one(yes, 'Has a USDOT number')), ['No', 'standard', true, null]);
+  assert.deepEqual(got(one(yes, FILINGS)), [false, 'standard', true, null]);
+  // Neither NTL nor a mention: unchanged, the stop screen's note too.
+  assert.deepEqual(got(one(plan(intake()), 'Has a USDOT number')), ['Yes', 'derived', false, null]);
+  assert.equal(geico.stopButtons['USDOT Number'].note(with_({ 'notes.text': 'Needs NTL', 'coverage.ntl': false })), 'GEICO asks for a USDOT number; the intake\'s is "1234567". Add USDOT Number or Skip is yours.');
 });
 
 // The same live run: in Texas with a CSL liability or NTL, GEICO lists UM in CSL only, so the split

@@ -49,7 +49,7 @@
 // - The underwriting step ends with Submit (never clicked); the other steps with Save & Continue.
 
 import { owner, ownerDobNote, HAZ_HAUL } from './progressive.js';
-import { isLongHaul, otherNotes } from '../normalize.js';
+import { isLongHaul, otherNotes, ntlNoDotFilings, ntlDotFilingsHold } from '../normalize.js';
 import { noPriorInsurance, priorPolicyExpired, companyName, companyStructure, companyStructureWarn, companyStructureNote } from '../util.js';
 import { driverExcluded, ownerRowExcluded } from '../util.js';
 
@@ -209,7 +209,21 @@ const UNDERWRITING_NO = [
   'recruiting method', 'covered by wc',
 ];
 
-const filings = (r) => (r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
+// An NTL quote gets no filings and no DOT number (TNI, 2026-10-26, W44-28: "US DOT is not added and
+// filings not added if its NTL, in every case"): Filing required No, the DOT box unticked and its
+// number never typed, NONE ticked when there is no MC number either; the intake's own No and an MC
+// number stay the intake's. The federal filings (shown after a Yes) are then never ticked. NONE is
+// accepted also when the client has a USDOT number (TNI, 2026-10-26: answer to PR question).
+const filings = (r) => (ntlNoDotFilings(r) ? false : r.operations.filingsRequired === true ? true : r.operations.filingsRequired === false ? false : null);
+const filingsSource = (r) => (ntlNoDotFilings(r) && r.operations.filingsRequired !== false ? 'standard' : 'derived');
+const dot = (r) => (ntlNoDotFilings(r) ? null : r.applicant.dot);
+const dotSource = (r) => (ntlNoDotFilings(r) && r.applicant.dot ? 'standard' : 'derived');
+// (TNI, 2026-10-26: answers to PR questions) NTL with primary auto liability too, or NTL mentioned
+// and not answered yet (AmWINS has no NTL question: the claims box, the notes or Luna's flag):
+// Filing required, the DOT box, its number, NONE (without an MC number) and the federal filings
+// are the agent's, with a note saying why (`ntlDotFilingsHold`). An MC number stays the intake's.
+const held = (source) => (r) => (ntlDotFilingsHold(r) ? 'fact' : typeof source === 'function' ? source(r) : source);
+const holdOr = (note) => (r) => ntlDotFilingsHold(r) ?? (typeof note === 'function' ? note(r) : note ?? null);
 
 // Transporting hazardous material (TNI, 2026-10-26, W44-32), the maintainer: "Hazmat is always no,
 // if its not specifically selected" (GEICO's W43-34 rule): the intake's Yes or No; blank is No (standard),
@@ -280,6 +294,65 @@ const vehicleValueNote = (r, a) => {
   const v = r.vehicles?.[a.vehicles ?? 0]?.value;
   return v != null && typeof v !== 'number' ? `The intake's vehicle value "${v}" isn't a dollar amount: enter it yourself.` : null;
 };
+
+// "Is a Federal Filing Required?" (the intake's own Yes or No: `filings`) left blank on the intake:
+// TNI's No when the intake doesn't ask for filings (TNI, 2026-10-26, W44-32: "Your recommendations
+// good", the "No unless the intake says otherwise" of W43-34). Filings named in its which-filings
+// box or a line of its notes naming a filing leave it to the agent, quoted. An SR-22 alone (the
+// intake's SR-22 box) doesn't: it is a state filing, and the question asks about a federal one (TNI,
+// 2026-10-26: answer to PR question). A Non-Trucking quote is W44-28's, never this standard.
+// Nor does a which-filings box or a notes line naming only an SR-22 or FR-44, state filings, with
+// words that only describe them ("state", "filing": "Owner needs an SR-22 filing", "Filings: SR22 /
+// FR-44") (TNI, 2026-10-26: answer to PR question, R16). One naming anything federal (MCS-90, BMC-91,
+// BMC-34, BMC-32, "federal" or "fed", ICC, MC, interstate, FMCSA, BOC-3, UCR, authority) or another filing
+// (a Form E or H, "other filings") beside it still leaves a blank to the agent.
+// These are state filings too, so No with the box blank, the same `standard` (TNI, 2026-10-26: answer
+// to PR question, T9): beside an SR-22 or FR-44, a Form E or H ("SR-22 and Form E": `FORM_EH`),
+// the client's MC number on the same line ("SR-22, MC 123456"; an MC filing, "MC 123456 filing", stays
+// federal) and a bare "filings" joined by "and", "&", "+", "plus", a comma or a slash ("SR-22 and
+// filings", "SR-22 for the owner and filings"; "other filings" stays another); and a state filing or
+// intrastate alone, with no SR-22 or FR-44 named ("State filing", "Intrastate"). Anything federal
+// beside them still leaves a blank to the agent.
+// And these, the cases T9 left to the agent, are state filings too: No with the box blank, the same
+// `standard` (TNI, 2026-10-27: answer to PR question V12): a Form E or H with no SR-22 or FR-44 named
+// ("Form E", "Needs a Form H filing", "State filing and Form E": `FORM_EH`); a lone "State" in the
+// which-filings box (`LONE_STATE`; "State" in any other phrase, "State and federal filings" or "United
+// States DOT", isn't); a state filing or intrastate beside the client's MC number ("State filing, MC
+// 123456": `MC_NUMBER`); a bare or "additional" "filings" before or after the SR-22 or FR-44 ("Filings
+// and SR-22": `FILINGS_AND_SR_FR`; "SR-22 and additional filings"). Anything federal beside them
+// (MCS-90, BMC-91, "federal", interstate, an MC filing, the list above) and "other filings" still leave
+// a blank to the agent. FR-44 counts as SR-22 throughout (TNI, 2026-10-27: answer to PR question V13).
+const FILING_WORDS = /\bfilings?\b|\bbmc[\s-]?\d+|\bmcs[\s-]?90\b|\bform\s+[eh]\b|\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
+const SR_FR = /\bsr[\s-]?22\b|\bfr[\s-]?44\b/i;
+const SR_FR_NAMED = /(?:\bfilings?\s*(?:needed|required)?\s*:\s*)?(?:\bstate\s+)?\b(?:sr[\s-]?22|fr[\s-]?44)\b(?:\s+(?:state\s+)?filings?\b)?|\bstate\s+filings?\b/gi;
+const FORM_EH = /\bforms?[\s-]*[eh](?:\s*(?:,|\/|&|\band\b|\bor\b)\s*[eh])?\b(?:\s+filings?\b)?/gi;
+const MC_NUMBER = /\bmc\s*(?:#|no\.?|number)?\s*[:-]?\s*\d{3,8}\b(?!\s*filings?\b)/gi;
+const SR_FR_AND_FILINGS = /(?:\band\b|&|\+|\bplus\b|,|\/)\s*(?:additional\s+)?filings?\b/gi;
+// "filings" before the SR-22 or FR-44, at the start of the line, after punctuation or after a verb:
+// "Filings and SR-22", "Needs filings & FR44"; not "Other filings and SR-22" or "MC filings and SR-22".
+const FILINGS_AND_SR_FR = /(?:^\s*|[,;:.(]\s*|\b(?:needs?|wants?|requires?|with|also)\s+)(?:additional\s+)?filings?\s*(?:\band\b|&|\+|\bplus\b|,|\/)\s*(?=(?:an?\s+)?(?:state\s+)?(?:sr[\s-]?22|fr[\s-]?44)\b)/gi;
+const STATE_ONLY = /\bstate\s+filings?\b|\bintra[\s-]?state\b/i;
+const LONE_STATE = /^\s*state\s*\.?\s*$/i;
+const INTRASTATE_NAMED = /\bintra[\s-]?state(?:\s+filings?)?\b/gi;
+const FEDERAL = /\bfed(?:eral)?\b|\bicc\b|\bmc\b|\binterstate\b|\bfmcsa\b|\bboc[\s-]?3\b|\bucr\b|\bauthority\b/i;
+const onlyStateFilings = (text) => {
+  if (LONE_STATE.test(text)) return true;
+  const srFr = SR_FR.test(text);
+  const state = STATE_ONLY.test(text);
+  if (!srFr && !state && !/\bforms?[\s-]*[eh]\b/i.test(text)) return false;
+  let t = srFr ? text.replace(FILINGS_AND_SR_FR, ' ').replace(SR_FR_AND_FILINGS, ' ') : text;
+  if (srFr || state) t = t.replace(MC_NUMBER, ' ');
+  t = t.replace(FORM_EH, ' ');
+  return !FEDERAL.test(t) && !FILING_WORDS.test(t.replace(SR_FR_NAMED, ' ').replace(INTRASTATE_NAMED, ' '));
+};
+const filingLine = (r) => String(otherNotes(r) ?? '').split('\n').map((s) => s.trim()).find((s) => FILING_WORDS.test(s) && !onlyStateFilings(s))?.slice(0, 80) ?? null;
+const filingsAsked = (r) => (r.operations.filingsWhich && !onlyStateFilings(String(r.operations.filingsWhich)) ? `names filings ("${String(r.operations.filingsWhich).slice(0, 40)}")`
+  : filingLine(r) ? `its notes say "${filingLine(r)}"` : null);
+const filingsBlankNo = (r) => filings(r) == null && r.coverage?.ntl !== true && !filingsAsked(r);
+const filingRequired = (r) => (filingsBlankNo(r) ? false : filings(r));
+// An NTL quote keeps its own No and source (filingsSource, W44-28) (integration of #192 and #196).
+const filingRequiredSource = (r) => (filingsBlankNo(r) ? 'standard' : filingsSource(r));
+const filingRequiredNote = (r) => (filings(r) == null && filingsAsked(r) ? `The intake leaves "filings required" blank but ${filingsAsked(r)}: answer it yourself.` : null);
 
 // AmWINS shows several repeater rows on one page. Give every row its own values;
 // the active-driver picker is for carriers that show one driver page at a time.
@@ -416,17 +489,19 @@ export const amwins = {
     // template), in page order, visible or collapsed, up to six (live IL run: years 1 and 2 were
     // never filled and the agent set one by hand).
     ...Array.from({ length: 6 }, (_, n) => ({ selector: '#priorCarrierPanel .coveragePanel [data-id="carrierName"]', name: `Prior carrier ${n + 1} (standard: NO PRIOR)`, kind: 'choice', source: 'standard', value: () => 'NO PRIOR', hidden: true })),
-    { name: 'Filings required', label: '^filling required$', kind: 'bool', source: 'derived', value: filings },
-    { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.dot },
+    { name: 'Filings required (TNI: No when the intake is silent)', label: '^filling required$', kind: 'bool', source: held(filingRequiredSource), value: filingRequired, note: holdOr(filingRequiredNote) },
+    // "Does the insured have a DOT or MC number?": the NONE, DOT and MC boxes.
+    { selector: '#hasDotNumber', name: 'Has a DOT number', kind: 'bool', source: held(dotSource), value: (r) => !!dot(r), note: holdOr() },
     { selector: '#hasMcNumber', name: 'Has an MC number', kind: 'bool', source: 'derived', value: (r) => !!r.applicant.mc },
-    { selector: '#noNumber', name: 'No DOT / MC number', kind: 'bool', source: 'derived', value: (r) => !r.applicant.dot && !r.applicant.mc },
-    { selector: '#dotNumber', name: 'DOT number', source: 'derived', value: (r) => digits(r.applicant.dot) },
+    { selector: '#noNumber', name: 'No DOT / MC number', kind: 'bool', source: (r) => (r.applicant.mc ? 'derived' : held(dotSource)(r)), value: (r) => !dot(r) && !r.applicant.mc,
+      note: (r) => (r.applicant.mc ? null : ntlDotFilingsHold(r)) },
+    { selector: '#dotNumber', name: 'DOT number', source: held('derived'), value: (r) => digits(dot(r)), note: holdOr() },
     { selector: '#mcNumber', name: 'MC number', source: 'derived', value: (r) => digits(r.applicant.mc) },
     // Shown with Filing required Yes.
     { selector: '#howLongFederalOperatingAuthorityActive', name: 'Federal authority active for (years under own authority)', kind: 'choice', source: 'derived', value: authorityAge },
-    { name: 'Federal BMC-91', label: '^federal bmc91$', kind: 'bool', source: 'derived', value: federalLiability },
-    { name: 'Federal liability MCS-90', label: '^federal liability mcs90$', kind: 'bool', source: 'derived', value: federalLiability },
-    { name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', source: 'derived', value: federalCargo },
+    { name: 'Federal BMC-91', label: '^federal bmc91$', kind: 'bool', source: held('derived'), value: federalLiability, note: holdOr() },
+    { name: 'Federal liability MCS-90', label: '^federal liability mcs90$', kind: 'bool', source: held('derived'), value: federalLiability, note: holdOr() },
+    { name: 'Federal cargo BMC-32', label: '^federal cargo bmc32$', kind: 'bool', source: held('derived'), value: federalCargo, note: holdOr() },
     // The client's insurance history the intake doesn't give. TNI's standards (2026-10-19, after a
     // live run; may change later): 1 TO 2 YEARS with the current carrier and no claim-free loss
     // runs. The current-carrier question is only asked of clients with a DOT number. Valued loss
@@ -485,6 +560,8 @@ export const amwins = {
 
     // --- Coverages -------------------------------------------------------------------------------
     { name: 'CSL liability limit', label: '^csl liability limit$', path: 'coverage.autoLiabLimit' },
+    // Uninsured motorists Yes at $100K, rental $40 a day ($1,200) and towing $75: TNI's (recorded
+    // 2026-10-26, W44-32: "limits are fine").
     { name: 'Uninsured motorists (standard: Yes)', label: '^uninsured motorists$', kind: 'bool', source: 'standard', value: () => true },
     { name: 'Rental reimbursement (standard: $40/day, $1,200)', label: 'transportation expense|rental reimbursement', kind: 'choice', source: 'standard', value: () => '$40 day / $1,200 total' },
     { selector: '#uninsuredMotoristsLimit', name: 'UM limit (standard: $100K)', kind: 'choice', source: 'standard', value: () => '$100K' },

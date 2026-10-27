@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { assistContextKey, stableJson, neverReason } from '../src/ai/common.js';
+import { assistContextKey, stableJson, neverReason, pageAnswers } from '../src/ai/common.js';
 import { DEFAULT_MODEL, POLICY_VERSION } from '../src/ai/luna.js';
 import { fillEvents, sha256Hex, knownStep } from '../src/usage.js';
 import { unitToAdd, unitListSpecs, unitMissing, unitMissingItem, advanceFor } from '../src/units.js';
@@ -1579,6 +1579,25 @@ function makeAiActionHarness({ rejected = false, via = 'row' } = {}) {
   };
 }
 
+test('a question Luna left shows its recommendation; an answered one shows none', () => {
+  const holder = { isConnected: true, children: [], replaceChildren(...c) { this.children = c; } };
+  const fakeH = (tag, props = {}, ...children) => ({ tag, props, children: children.flat().filter(c => c != null && c !== false), dataset: {} });
+  const state = { filling: false, tab: { id: 1, url: 'https://example.test/quote' }, intake: { record: {} }, active: {}, aiCache: new Map(), agentKeys: new Map(), aiRun: 0, aiDocks: new Map() };
+  const context = { state, $: id => (id === 'report' ? { querySelectorAll: () => [] } : { checked: false }), h: fakeH, pageOf: url => new URL(url).pathname,
+    assistContextKey: () => 'context', aiFingerprint: JSON.stringify, runKit: async () => [], usage: { log() {} }, recount() {}, renderSteps() {} };
+  vm.runInNewContext(AI_ACTION_FUNCTIONS, context, { filename: 'sidepanel/sidepanel.js' });
+  const ctx = { tabId: 1, page: '/quote', carrier: { id: 'synthetic', practice: true } };
+  const left = { key: 'sr22', label: 'SR-22?', leave: true, applyable: true, controlKind: 'radio', options: ['Yes', 'No'], tip: 'Not on the intake.',
+    nextStep: 'The intake leaves "Needs SR-22" blank: confirm it with the client, then add it under All client details.', checks: [] };
+  context.renderAi(holder, [left], ctx);
+  const text = aiActionTreeText(holder.children);
+  assert.match(text, /this one is yours to decide/);
+  assert.match(text, /Luna recommends: The intake leaves "Needs SR-22" blank/);
+  assert.equal(aiActionButtons(holder.children).some(b => /Use this answer/.test(aiActionTreeText(b.children))), false, 'a recommendation is no answer to put in');
+  context.renderAi(holder, [{ ...left, leave: false, choice: 'No', nextStep: null, evidenceSources: [] }], ctx);
+  assert.doesNotMatch(aiActionTreeText(holder.children), /recommends/);
+});
+
 async function awaitDeferredAction(harness, mutate) {
   const action = harness.button().props.onclick();
   await harness.snapshotStartedPromise;
@@ -2233,9 +2252,9 @@ function assistHarness({ suggest, cfg = {}, record = { vehicles: [] } } = {}) {
     aiCacheSignature: (x) => JSON.stringify(x), runKit: async () => [{ frameId: 0, result: 'snapshot' }],
     suggest, AssistError: class extends Error {}, usage: { log: (...events) => logged.push(...events) },
     renderAi: (...args) => rendered.push(args), applyAi: async (...args) => { applied.push(args); return false; },
-    syncAiBanner: () => {}, pendingAi: () => [], redactor: () => (s) => s, redactionTerms: () => [],
+    syncAiBanner: () => {}, pendingAi: () => [], pageAnswers, redactor: () => (s) => s, redactionTerms: () => [],
   };
-  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('runAssist'), context);
+  vm.runInNewContext(extractFunction('aiActionCurrent') + extractFunction('leaveCounts') + extractFunction('runAssist'), context);
   const ctx = { tabId: 1, page: 'CoveragesRates', carrier: { id: 'progressive' } };
   return { state, context, ctx, report, logged, rendered, applied, holder: () => report.children.at(-1) };
 }
@@ -2262,6 +2281,27 @@ test('an AI answer that arrives after the page changed replaces the waiting mess
   await fresh.context.runAssist([{}], fresh.ctx);
   assert.equal(fresh.rendered.length, 1);
   assert.equal(fresh.logged[0].error, undefined);
+});
+
+// 2026-10-27: Luna sees the page's other answers (as the agent does), and the log says why questions
+// were left, as counts.
+test('Luna gets the page’s other answers from the snapshot, and the log counts why questions were left', async () => {
+  let sent;
+  const why = ['missing', 'unverified', 'unverified', 'chose', null];
+  const t = assistHarness({ suggest: async (items, context) => {
+    sent = context;
+    return { suggestions: why.map((leaveWhy, i) => ({ key: `k${i}`, label: `Q${i}`, leave: !!leaveWhy, leaveWhy })), tokensIn: 1, tokensOut: 1, modelCalls: 1 };
+  } });
+  t.context.runKit = async () => [{ frameId: 0, result: JSON.stringify(['https://rater.test/', [
+    { key: 'liab', label: 'Liability limit', kind: 'select', current: '$1,000,000 CSL' },
+    { key: 'typed', label: 'Years in business', kind: 'text', current: '7' },
+    { key: '1FF9', label: '2016 FREIGHTLINER CASCADIA 125', kind: 'select', current: null },
+  ]]) }];
+  await t.context.runAssist([{}], t.ctx);
+  assert.deepEqual(sent.pageAnswers, [{ label: 'Liability limit', answer: '$1,000,000 CSL' }], 'choice answers only, not the questions asked or typed values');
+  const { leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified, leave } = t.logged[0];
+  assert.deepEqual({ leave, leaveMissing, leaveConflict, leaveChose, leaveNoSource, leaveUnverified },
+    { leave: 4, leaveMissing: 1, leaveConflict: 0, leaveChose: 1, leaveNoSource: 0, leaveUnverified: 2 });
 });
 
 // 2026-10-09 to 10-26: 12 of 58 page reviews ended "The page or intake changed", most on GEICO's
@@ -8357,6 +8397,30 @@ test('the NTL-with-cargo check follows the agent\'s edits', () => {
   context.ntlCargoEdited(intake);
   assert.deepEqual([intake.warnings.map((w) => [w.code, w.level]), intake.done], [[['coverage.ntl-cargo', 'check']], []], 'asked again, not checked');
   assert.match(extractFunction('agentEdit'), /if \(\['coverage\.ntl', 'coverage\.cargo', 'coverage\.autoLiability'\]\.includes\(path\)\) \{ ntlCargoEdited\(state\.intake\); await save\(\); render\(\); \}/);
+});
+
+// (TNI, 2026-10-26: answer to PR question, #192) NTL and primary auto liability both asked for is
+// an intake check naming the conflict. Today's form can't ask for both (Non-Trucking is its auto
+// liability answer): the agent's NTL Yes with auto liability Yes does, so the check follows the
+// agent's edits of NTL or auto liability, as the NTL-with-cargo check does.
+test('the NTL-with-primary-liability check follows the agent\'s edits', () => {
+  const intake = { record: { coverage: { ntl: true, autoLiability: 'Yes' } }, warnings: [], done: [] };
+  const context = { ntlWithPrimary: (r) => r.coverage.ntl === true && r.coverage.autoLiability === 'Yes', NTL_PRIMARY_MESSAGE: 'ntl and primary' };
+  vm.runInNewContext(extractFunction('ntlPrimaryEdited'), context);
+  context.ntlPrimaryEdited(intake);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level, w.path, w.msg]), [['coverage.ntl-primary', 'check', 'coverage.autoLiability', 'ntl and primary']]);
+  intake.done = [0];
+  intake.record.coverage.ntl = false;
+  context.ntlPrimaryEdited(intake);
+  assert.deepEqual(intake.warnings.map((w) => [w.code, w.level]), [['coverage.ntl-primary', 'info']], 'retired');
+  intake.record.coverage.ntl = true;
+  context.ntlPrimaryEdited(intake);
+  assert.deepEqual([intake.warnings.map((w) => [w.code, w.level]), intake.done], [[['coverage.ntl-primary', 'check']], []], 'asked again, not checked');
+  // Never asked while they aren't both asked for.
+  const other = { record: { coverage: { ntl: true, autoLiability: 'Non-Trucking' } }, warnings: [], done: [] };
+  context.ntlPrimaryEdited(other);
+  assert.deepEqual(other.warnings, []);
+  assert.match(extractFunction('agentEdit'), /if \(\['coverage\.ntl', 'coverage\.autoLiability'\]\.includes\(path\)\) ntlPrimaryEdited\(state\.intake\);/);
 });
 
 // The review of PR #176: auto liability edited away from Non-Trucking left "NTL is set to Yes" on
