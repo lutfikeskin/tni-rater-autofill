@@ -238,6 +238,7 @@ const STANDARDS = [
   'Cargo: household goods or freshly ginned cotton (Yes for a household goods mover; TNI: No unless the intake mentions them)',
   'Rental reimbursement with downtime (TNI: Not Included)',
   'Uninsured motorist bodily injury, UMBI (TNI: $100,000 CSL)', 'Underinsured motorist bodily injury, UIMBI (TNI: $100,000 CSL)',
+  'Uninsured motorist deductible (TNI: $1,000)', 'UM/UIM type (TNI: Add-On)',
   'SR-22 (the owner; TNI: No unless the intake says otherwise)', 'SR-22 (this driver; TNI: No unless the intake says otherwise)',
   'Hazardous material placard (TNI: No unless the intake says otherwise)', 'Team driving or slip seating (TNI: No unless the intake says otherwise)',
   'Filings required (TNI: No unless the intake says otherwise)', 'Driver has a CDL (TNI: No when the intake leaves it blank)',
@@ -1401,10 +1402,16 @@ test('employees, years with the insurer, additional insureds: TNI\'s answers', (
   const years = (changes) => one(plan(with_(changes)), 'Years with the current auto insurer (1-3 with a current policy)');
   assert.deepEqual([years({}).value, years({}).source, years({ 'priorInsurance.0.type': 'Personal Auto' }).value], ['1-3 Years', 'standard', '1-3 Years']);
   for (const changes of [{ priorInsurance: [] }, { 'priorInsurance.0.expiration': '01/31/2026' }, { priorInsurance: [{ type: null, carrier: 'No', limit: null, expiration: null }] }]) agents(years(changes));
-  // Additional insureds and waivers: No.
+  // Additional insureds and waivers: No (TNI, 2026-10-27: after the policy starts, not at quote).
   for (const name of ['Named additional insured or waiver of subrogation (TNI: No)', 'Blanket additional insured by contract (TNI: No)', 'Blanket waiver of subrogation by contract (TNI: No)']) {
     assert.deepEqual([one(plan(intake()), name).value, one(plan(intake()), name).source], [false, 'standard'], name);
   }
+  // Both GEICO wordings of the named-AI question (it dropped "or a designated insured").
+  const named = one(plan(intake()), 'Named additional insured or waiver of subrogation (TNI: No)');
+  assert.deepEqual(named.ask, [
+    'Does the customer need to add a named additional insured? Or do they need a named waiver of subrogation?',
+    'Does the customer need to add a named additional insured or a designated insured? Or do they need a named waiver of subrogation?',
+  ]);
 });
 
 test('liability insurance the business has: GL from a current GL policy on the intake, else TNI\'s None', () => {
@@ -1455,8 +1462,13 @@ test('liability coverage and its limit from the intake; an NTL mention not answe
     const pay = plan(r).filter((s) => s.field === 'GivePayPlanV2');
     assert.deepEqual(pay.map((s) => [s.each, s.value, s.source, s.whenOffered]), [[true, '11 Payments', 'standard', true], [true, '11 Payments', 'standard', true]]);
   }
-  // The rest of the uninsured motorist and property damage lists stay the agent's (W43-33).
-  for (const name of ['Uninsured motorist deductible', 'UM/UIM type', 'Property damage liability', 'Uninsured motorist property damage']) {
+  // TNI, 2026-10-27: when asked, UM/UIM type is Add-On and deductible $1,000.
+  for (const r of [intake(), with_({ 'garaging.state': 'TX' }), blank()]) {
+    assert.deepEqual([one(plan(r), 'UM/UIM type (TNI: Add-On)').value, one(plan(r), 'UM/UIM type (TNI: Add-On)').source], ['Add-On', 'standard']);
+    assert.deepEqual([one(plan(r), 'Uninsured motorist deductible (TNI: $1,000)').value, one(plan(r), 'Uninsured motorist deductible (TNI: $1,000)').source], ['$1,000', 'standard']);
+  }
+  // Property damage liability and UMPD stay the agent's (W43-33).
+  for (const name of ['Property damage liability', 'Uninsured motorist property damage']) {
     for (const r of [intake(), with_({ 'garaging.state': 'TX' })]) {
       const s = one(plan(r), name);
       agents(s);
